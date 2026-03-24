@@ -23,6 +23,12 @@ importers:
 
   apps/api:
     dependencies:
+      '@clokr/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@clokr/types':
+        specifier: workspace:*
+        version: link:../../packages/types
       '@fastify/cors':
         specifier: ^11.0.0
         version: 11.2.0
@@ -41,12 +47,6 @@ importers:
       '@fastify/swagger-ui':
         specifier: ^5.0.0
         version: 5.2.5
-      '@salon/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@salon/types':
-        specifier: workspace:*
-        version: link:../../packages/types
       bcryptjs:
         specifier: ^3.0.0
         version: 3.0.3
@@ -84,7 +84,7 @@ importers:
 
   apps/web:
     dependencies:
-      '@salon/types':
+      '@clokr/types':
         specifier: workspace:*
         version: link:../../packages/types
       '@tanstack/svelte-query':

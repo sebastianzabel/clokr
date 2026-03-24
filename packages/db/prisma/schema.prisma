@@ -5,7 +5,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ─────────────────────────────────────────────
@@ -20,10 +19,11 @@ model Tenant {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  employees      Employee[]
-  leaveTypes     LeaveType[]
-  publicHolidays PublicHoliday[]
-  config         TenantConfig?
+  employees        Employee[]
+  leaveTypes       LeaveType[]
+  publicHolidays   PublicHoliday[]
+  config           TenantConfig?
+  companyShutdowns CompanyShutdown[]
 }
 
 // ─────────────────────────────────────────────
@@ -144,9 +144,10 @@ model Employee {
   timeEntries      TimeEntry[]
   leaveEntitlements LeaveEntitlement[]
   leaveRequests    LeaveRequest[]
-  absences         Absence[]
-  overtimePlans    OvertimePlan[]
-  invitations      Invitation[]
+  absences              Absence[]
+  overtimePlans         OvertimePlan[]
+  invitations           Invitation[]
+  shutdownExceptions    CompanyShutdownException[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -429,5 +430,43 @@ enum AbsenceType {
   SICK_CHILD        // Kindkrank
   SPECIAL_LEAVE     // Sonderurlaub
   UNPAID_LEAVE      // Unbezahlter Urlaub
+  MATERNITY         // Mutterschutz
+  PARENTAL          // Elternzeit
   OTHER
+}
+
+// ─────────────────────────────────────────────
+// BETRIEBSURLAUB
+// ─────────────────────────────────────────────
+
+model CompanyShutdown {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  name                String                         // z.B. "Weihnachtsschließung 2025"
+  startDate           DateTime @db.Date
+  endDate             DateTime @db.Date
+  deductsFromVacation Boolean  @default(true)        // zieht vom Urlaubskonto ab
+  notes               String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  tenant              Tenant   @relation(fields: [tenantId], references: [id])
+  exceptions          CompanyShutdownException[]
+
+  @@index([tenantId])
+  @@index([tenantId, startDate])
+}
+
+/// Mitarbeiter, die vom Betriebsurlaub AUSGENOMMEN sind
+model CompanyShutdownException {
+  id           String   @id @default(uuid())
+  shutdownId   String
+  employeeId   String
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  shutdown     CompanyShutdown @relation(fields: [shutdownId], references: [id], onDelete: Cascade)
+  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([shutdownId, employeeId])
 }

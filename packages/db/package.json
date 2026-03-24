@@ -10,7 +10,10 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@prisma/client": "^7.0.0"
+    "@prisma/adapter-pg": "^7.5.0",
+    "@prisma/client": "^7.0.0",
+    "@types/pg": "^8.20.0",
+    "pg": "^8.20.0"
   },
   "devDependencies": {
     "prisma": "^7.0.0",

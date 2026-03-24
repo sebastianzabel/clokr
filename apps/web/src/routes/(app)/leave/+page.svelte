@@ -7,7 +7,7 @@
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status   = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
-  type TypeCode = "VACATION" | "OVERTIME_COMP" | "SPECIAL" | "UNPAID" | "SICK" | "SICK_CHILD" | "EDUCATION" | "HOLIDAY";
+  type TypeCode = "VACATION" | "OVERTIME_COMP" | "SPECIAL" | "UNPAID" | "SICK" | "SICK_CHILD" | "EDUCATION" | "HOLIDAY" | "MATERNITY" | "PARENTAL";
 
   interface LeaveRequest {
     id:         string;
@@ -46,6 +46,8 @@
     { code: "SICK",          label: "Krankmeldung" },
     { code: "SICK_CHILD",    label: "Kinderkrank" },
     { code: "UNPAID",        label: "Unbezahlter Urlaub" },
+    { code: "MATERNITY",     label: "Mutterschutz" },
+    { code: "PARENTAL",      label: "Elternzeit" },
   ];
 
   function typeName(code: TypeCode): string {

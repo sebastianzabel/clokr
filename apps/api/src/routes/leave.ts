@@ -4,7 +4,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
-const TYPE_CODES = ["VACATION", "OVERTIME_COMP", "SPECIAL", "UNPAID", "SICK", "SICK_CHILD", "EDUCATION"] as const;
+const TYPE_CODES = ["VACATION", "OVERTIME_COMP", "SPECIAL", "UNPAID", "SICK", "SICK_CHILD", "EDUCATION", "MATERNITY", "PARENTAL"] as const;
 type TypeCode = typeof TYPE_CODES[number];
 
 const LEAVE_TYPE_DEFS: Record<TypeCode, { name: string; isPaid: boolean; requiresApproval: boolean }> = {
@@ -15,6 +15,8 @@ const LEAVE_TYPE_DEFS: Record<TypeCode, { name: string; isPaid: boolean; require
   SICK:          { name: "Krankmeldung",          isPaid: true,  requiresApproval: false },
   SICK_CHILD:    { name: "Kinderkrank",           isPaid: true,  requiresApproval: false },
   EDUCATION:     { name: "Bildungsurlaub",        isPaid: true,  requiresApproval: true  },
+  MATERNITY:     { name: "Mutterschutz",          isPaid: true,  requiresApproval: false },
+  PARENTAL:      { name: "Elternzeit",            isPaid: false, requiresApproval: true  },
 };
 
 // Legacy-Namen aus alten Seed-Skripten → werden beim ersten Zugriff umbenannt

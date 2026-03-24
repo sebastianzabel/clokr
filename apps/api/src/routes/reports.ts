@@ -141,22 +141,45 @@ export async function reportRoutes(app: FastifyInstance) {
           }
         }
 
-        // Urlaubstage im Monat (genehmigte Anträge, nicht Krank)
-        const vacationDays = emp.leaveRequests
-          .filter((lr) => lr.leaveType.name !== "Krankmeldung" && lr.leaveType.name !== "Kinderkrank")
-          .reduce((sum, lr) => {
-            return sum + daysInRange(lr.startDate, lr.endDate);
-          }, 0);
+        // Abwesenheiten aufgeschlüsselt nach Typ
+        const SICK_NAMES     = ["Krankmeldung", "Kinderkrank"];
+        const nonSickLeave   = emp.leaveRequests.filter(lr => !SICK_NAMES.includes(lr.leaveType.name));
+
+        function daysForTypeName(typeName: string) {
+          return emp.leaveRequests
+            .filter(lr => lr.leaveType.name === typeName)
+            .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
+        }
+
+        const vacationDays       = daysForTypeName("Urlaub");
+        const overtimeCompDays   = daysForTypeName("Überstundenausgleich");
+        const specialLeaveDays   = daysForTypeName("Sonderurlaub");
+        const educationDays      = daysForTypeName("Bildungsurlaub");
+        const unpaidDays         = daysForTypeName("Unbezahlter Urlaub");
+        const maternityDays      = daysForTypeName("Mutterschutz");
+        const parentalDays       = daysForTypeName("Elternzeit");
+
+        const totalAbsenceDays = nonSickLeave.reduce((sum, lr) =>
+          sum + daysInRange(lr.startDate, lr.endDate), 0);
 
         return {
           employeeName:   `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
-          workedHours:  Math.round(workedMin / 60 * 100) / 100,
-          shouldHours:  Math.round(shouldMin / 60 * 100) / 100,
-          sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
+          workedHours:    Math.round(workedMin / 60 * 100) / 100,
+          shouldHours:    Math.round(shouldMin / 60 * 100) / 100,
+          // Krankheit
+          sickDays:             sickDaysWithAttest + sickDaysWithoutAttest,
           sickDaysWithAttest,
           sickDaysWithoutAttest,
+          // Abwesenheiten nach Grund
           vacationDays,
+          overtimeCompDays,
+          specialLeaveDays,
+          educationDays,
+          unpaidDays,
+          maternityDays,
+          parentalDays,
+          totalAbsenceDays,
         };
       });
 
@@ -213,41 +236,73 @@ export async function reportRoutes(app: FastifyInstance) {
           timeEntries: {
             where: { date: { gte: start, lte: end }, endTime: { not: null } },
           },
-          leaveEntitlements: {
-            where: { year: y },
-            include: { leaveType: true },
-          },
           absences: {
-            where: { startDate: { gte: start }, endDate: { lte: end } },
+            where: { startDate: { lte: end }, endDate: { gte: start } },
+          },
+          leaveRequests: {
+            where: { status: "APPROVED", startDate: { lte: end }, endDate: { gte: start } },
+            include: { leaveType: true },
           },
         },
       });
 
       // DATEV LODAS CSV Format
+      // Lohnarten:
+      //   100 = Normalstunden          | 200 = Krankheit (AU)
+      //   201 = Krankheit Kind         | 300 = Urlaub
+      //   301 = Überstundenausgleich   | 302 = Sonderurlaub
+      //   303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
+      //   310 = Mutterschutz           | 320 = Elternzeit
       const lines: string[] = [];
-      lines.push("Personalnummer;Lohnart;Menge;Einheit;Monat;Jahr");
+      lines.push("Personalnummer;Lohnart;Menge;Einheit;Monat;Jahr;Abwesenheitsgrund");
+
+      function daysInMonthRange(from: Date, to: Date): number {
+        const s  = from < start ? start : from;
+        const e2 = to   > end   ? end   : to;
+        return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+      }
+
+      function daysForName(emp: typeof employees[0], name: string): number {
+        return emp.leaveRequests
+          .filter(lr => lr.leaveType.name === name)
+          .reduce((sum, lr) => sum + daysInMonthRange(lr.startDate, lr.endDate), 0);
+      }
 
       for (const emp of employees) {
+        const pn = emp.employeeNumber;
+
         const workedMinutes = emp.timeEntries.reduce((sum, e) => {
           if (!e.endTime) return sum;
           return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - e.breakMinutes;
         }, 0);
         const workedHours = (workedMinutes / 60).toFixed(2);
 
-        const sickDays = emp.absences
-          .filter((a) => a.type === "SICK")
-          .reduce((sum, a) => sum + Number(a.days), 0);
+        // Krankheit aus Absence-Modell
+        const sickDays      = emp.absences.filter(a => a.type === "SICK")
+          .reduce((sum, a) => sum + daysInMonthRange(a.startDate, a.endDate), 0);
+        const sickChildDays = emp.absences.filter(a => a.type === "SICK_CHILD")
+          .reduce((sum, a) => sum + daysInMonthRange(a.startDate, a.endDate), 0);
 
-        const vacationUsed = emp.leaveEntitlements
-          .filter((le) => le.leaveType.isPaid)
-          .reduce((sum, le) => sum + Number(le.usedDays), 0);
+        // Abwesenheiten aus LeaveRequest
+        const vacationDays     = daysForName(emp, "Urlaub");
+        const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
+        const specialDays      = daysForName(emp, "Sonderurlaub");
+        const educationDays    = daysForName(emp, "Bildungsurlaub");
+        const unpaidDays       = daysForName(emp, "Unbezahlter Urlaub");
+        const maternityDays    = daysForName(emp, "Mutterschutz");
+        const parentalDays     = daysForName(emp, "Elternzeit");
 
-        // Lohnart 100 = Normalstunden
-        lines.push(`${emp.employeeNumber};100;${workedHours};Std;${month};${year}`);
-        // Lohnart 200 = Krankheitstage
-        if (sickDays > 0) lines.push(`${emp.employeeNumber};200;${sickDays};Tag;${month};${year}`);
-        // Lohnart 300 = Urlaubstage
-        if (vacationUsed > 0) lines.push(`${emp.employeeNumber};300;${vacationUsed};Tag;${month};${year}`);
+        // Ausgabe
+        lines.push(`${pn};100;${workedHours};Std;${month};${year};Arbeitszeit`);
+        if (sickDays      > 0) lines.push(`${pn};200;${sickDays};Tag;${month};${year};Krankheit`);
+        if (sickChildDays > 0) lines.push(`${pn};201;${sickChildDays};Tag;${month};${year};Krankheit Kind`);
+        if (vacationDays  > 0) lines.push(`${pn};300;${vacationDays};Tag;${month};${year};Urlaub`);
+        if (overtimeCompDays > 0) lines.push(`${pn};301;${overtimeCompDays};Tag;${month};${year};Überstundenausgleich`);
+        if (specialDays   > 0) lines.push(`${pn};302;${specialDays};Tag;${month};${year};Sonderurlaub`);
+        if (educationDays > 0) lines.push(`${pn};303;${educationDays};Tag;${month};${year};Bildungsurlaub`);
+        if (unpaidDays    > 0) lines.push(`${pn};304;${unpaidDays};Tag;${month};${year};Unbezahlter Urlaub`);
+        if (maternityDays > 0) lines.push(`${pn};310;${maternityDays};Tag;${month};${year};Mutterschutz`);
+        if (parentalDays  > 0) lines.push(`${pn};320;${parentalDays};Tag;${month};${year};Elternzeit`);
       }
 
       await app.audit({
