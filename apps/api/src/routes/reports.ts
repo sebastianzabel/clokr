@@ -227,44 +227,76 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
-      // DATEV LODAS CSV Format
-      // Lohnarten:
+      // ── DATEV LODAS ASCII-Import Format ────────────────────────────
+      // 11 Felder, Semikolon-getrennt, Dezimal-Komma
+      // Personalnummer;Kalendertag;Ausfallschlüssel;Lohnartennummer;
+      // Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;
+      // Abweichende Lohnveränderung;Kostenstellennummer;Kostenträger
+      //
+      // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
+      // Lohnarten (konfigurierbar im Mandant):
       //   100 = Normalstunden          | 200 = Krankheit (AU)
       //   201 = Krankheit Kind         | 300 = Urlaub
       //   301 = Überstundenausgleich   | 302 = Sonderurlaub
       //   303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
       //   310 = Mutterschutz           | 320 = Elternzeit
-      const lines: string[] = [];
-      lines.push("Personalnummer;Lohnart;Menge;Einheit;Monat;Jahr;Abwesenheitsgrund");
 
-      function daysInMonthRange(from: Date, to: Date): number {
-        const s  = from < start ? start : from;
-        const e2 = to   > end   ? end   : to;
-        return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+      const lines: string[] = [];
+      // DATEV header row
+      lines.push("Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger");
+
+      /** Dezimal mit Komma formatieren */
+      function dec(n: number, digits = 2): string {
+        return n.toFixed(digits).replace(".", ",");
+      }
+
+      /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
+      function workDaysInMonthRange(from: Date, to: Date): number {
+        const s = from < start ? start : from;
+        const e2 = to > end ? end : to;
+        let count = 0;
+        const cur = new Date(s);
+        while (cur <= e2) {
+          const dow = cur.getUTCDay();
+          if (dow !== 0 && dow !== 6) count++;
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+        return count;
       }
 
       function daysForName(emp: typeof employees[0], name: string): number {
         return emp.leaveRequests
           .filter(lr => lr.leaveType.name === name)
-          .reduce((sum, lr) => sum + daysInMonthRange(lr.startDate, lr.endDate), 0);
+          .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
       }
+
+      /** DATEV-Zeile: 11 Felder, leere Felder = Semikolon */
+      function datevLine(pn: string, tag: string, ausfall: string, lohnart: number, stunden: number, tage: number): string {
+        return `${pn};${tag};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
+      }
+
+      const m = parseInt(month);
 
       for (const emp of employees) {
         const pn = emp.employeeNumber;
+        // Kalendertag = letzter Tag des Monats (DATEV-Konvention für Monatswerte)
+        const lastDay = new Date(y, m, 0).getDate();
+        const tag = String(lastDay).padStart(2, "0");
 
+        // Arbeitsstunden
         const workedMinutes = emp.timeEntries.reduce((sum, e) => {
           if (!e.endTime) return sum;
           return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - e.breakMinutes;
         }, 0);
-        const workedHours = (workedMinutes / 60).toFixed(2);
+        const workedHours = workedMinutes / 60;
 
         // Krankheit aus Absence-Modell
-        const sickDays      = emp.absences.filter(a => a.type === "SICK")
-          .reduce((sum, a) => sum + daysInMonthRange(a.startDate, a.endDate), 0);
+        const sickDays = emp.absences.filter(a => a.type === "SICK")
+          .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
         const sickChildDays = emp.absences.filter(a => a.type === "SICK_CHILD")
-          .reduce((sum, a) => sum + daysInMonthRange(a.startDate, a.endDate), 0);
+          .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
 
-        // Abwesenheiten aus LeaveRequest
+        // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
         const vacationDays     = daysForName(emp, "Urlaub");
         const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
         const specialDays      = daysForName(emp, "Sonderurlaub");
@@ -273,17 +305,17 @@ export async function reportRoutes(app: FastifyInstance) {
         const maternityDays    = daysForName(emp, "Mutterschutz");
         const parentalDays     = daysForName(emp, "Elternzeit");
 
-        // Ausgabe
-        lines.push(`${pn};100;${workedHours};Std;${month};${year};Arbeitszeit`);
-        if (sickDays      > 0) lines.push(`${pn};200;${sickDays};Tag;${month};${year};Krankheit`);
-        if (sickChildDays > 0) lines.push(`${pn};201;${sickChildDays};Tag;${month};${year};Krankheit Kind`);
-        if (vacationDays  > 0) lines.push(`${pn};300;${vacationDays};Tag;${month};${year};Urlaub`);
-        if (overtimeCompDays > 0) lines.push(`${pn};301;${overtimeCompDays};Tag;${month};${year};Überstundenausgleich`);
-        if (specialDays   > 0) lines.push(`${pn};302;${specialDays};Tag;${month};${year};Sonderurlaub`);
-        if (educationDays > 0) lines.push(`${pn};303;${educationDays};Tag;${month};${year};Bildungsurlaub`);
-        if (unpaidDays    > 0) lines.push(`${pn};304;${unpaidDays};Tag;${month};${year};Unbezahlter Urlaub`);
-        if (maternityDays > 0) lines.push(`${pn};310;${maternityDays};Tag;${month};${year};Mutterschutz`);
-        if (parentalDays  > 0) lines.push(`${pn};320;${parentalDays};Tag;${month};${year};Elternzeit`);
+        // DATEV-Zeilen (Format: 11 Felder, Semikolon-getrennt)
+        lines.push(datevLine(pn, tag, "",  100, workedHours, 0));
+        if (sickDays      > 0) lines.push(datevLine(pn, tag, "K", 200, 0, sickDays));
+        if (sickChildDays > 0) lines.push(datevLine(pn, tag, "K", 201, 0, sickChildDays));
+        if (vacationDays  > 0) lines.push(datevLine(pn, tag, "U", 300, 0, vacationDays));
+        if (overtimeCompDays > 0) lines.push(datevLine(pn, tag, "U", 301, 0, overtimeCompDays));
+        if (specialDays   > 0) lines.push(datevLine(pn, tag, "S", 302, 0, specialDays));
+        if (educationDays > 0) lines.push(datevLine(pn, tag, "S", 303, 0, educationDays));
+        if (unpaidDays    > 0) lines.push(datevLine(pn, tag, "",  304, 0, unpaidDays));
+        if (maternityDays > 0) lines.push(datevLine(pn, tag, "",  310, 0, maternityDays));
+        if (parentalDays  > 0) lines.push(datevLine(pn, tag, "",  320, 0, parentalDays));
       }
 
       await app.audit({
