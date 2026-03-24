@@ -17,17 +17,17 @@ const createEmployeeSchema = z.object({
 });
 
 const updateEmployeeSchema = z.object({
-  firstName:      z.string().min(1).optional(),
-  lastName:       z.string().min(1).optional(),
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
   employeeNumber: z.string().min(1).optional(),
-  hireDate:       z.string().datetime().optional(),
-  role:           z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
-  nfcCardId:      z.string().nullable().optional(),
+  hireDate: z.string().datetime().optional(),
+  role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
+  nfcCardId: z.string().nullable().optional(),
 });
 
 function deriveInvitationStatus(
   isActive: boolean,
-  invitations: { expiresAt: Date; acceptedAt: Date | null }[]
+  invitations: { expiresAt: Date; acceptedAt: Date | null }[],
 ): "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE" {
   if (isActive) return invitations.length > 0 ? "ACCEPTED" : "NONE";
   if (invitations.length === 0) return "EXPIRED";
@@ -201,11 +201,11 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       const updates: Record<string, unknown> = {};
-      if (body.firstName      !== undefined) updates.firstName      = body.firstName;
-      if (body.lastName       !== undefined) updates.lastName       = body.lastName;
+      if (body.firstName !== undefined) updates.firstName = body.firstName;
+      if (body.lastName !== undefined) updates.lastName = body.lastName;
       if (body.employeeNumber !== undefined) updates.employeeNumber = body.employeeNumber;
-      if (body.hireDate       !== undefined) updates.hireDate       = new Date(body.hireDate);
-      if (body.nfcCardId      !== undefined) updates.nfcCardId      = body.nfcCardId;
+      if (body.hireDate !== undefined) updates.hireDate = new Date(body.hireDate);
+      if (body.nfcCardId !== undefined) updates.nfcCardId = body.nfcCardId;
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
 
@@ -230,7 +230,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
-      if (!employee.user.isActive) return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
+      if (!employee.user.isActive)
+        return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
 
       const effectiveExitDate = exitDate ? new Date(exitDate) : new Date();
 
@@ -262,6 +263,53 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
 
       return { success: true };
+    },
+  });
+
+  // PATCH /api/v1/employees/:id/reactivate
+  app.patch("/:id/reactivate", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.user.isActive)
+        return reply.code(409).send({ error: "Mitarbeiter ist bereits aktiv" });
+
+      await app.prisma.$transaction([
+        app.prisma.user.update({
+          where: { id: employee.userId },
+          data: { isActive: true },
+        }),
+        app.prisma.employee.update({
+          where: { id },
+          data: { exitDate: null },
+        }),
+      ]);
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: id,
+        newValue: { isActive: true, exitDate: null },
+      });
+
+      const updated = await app.prisma.employee.findUnique({
+        where: { id },
+        include: {
+          user: { select: { email: true, role: true, isActive: true } },
+          workSchedule: true,
+          overtimeAccount: { select: { balanceHours: true } },
+        },
+      });
+
+      return updated;
     },
   });
 

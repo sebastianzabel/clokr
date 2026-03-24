@@ -1,7 +1,13 @@
 import { FastifyInstance } from "fastify";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
-import { getTenantTimezone, monthRangeUtc, calcExpectedMinutesTz, getDayOfWeekInTz, getDayHoursFromSchedule } from "../utils/timezone";
+import {
+  getTenantTimezone,
+  monthRangeUtc,
+  calcExpectedMinutesTz,
+  getDayOfWeekInTz,
+  getDayHoursFromSchedule,
+} from "../utils/timezone";
 import { generateMonthlyReportPdf, generateVacationOverviewPdf } from "../utils/pdf";
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -44,21 +50,42 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       // Soll-Stunden: kalenderbasiert über Wochentag-Soll aus WorkSchedule (TZ-aware)
-      function calcShouldMinutes(schedule: { mondayHours: unknown; tuesdayHours: unknown; wednesdayHours: unknown; thursdayHours: unknown; fridayHours: unknown; saturdayHours: unknown; sundayHours: unknown } | null): number {
+      function calcShouldMinutes(
+        schedule: {
+          mondayHours: unknown;
+          tuesdayHours: unknown;
+          wednesdayHours: unknown;
+          thursdayHours: unknown;
+          fridayHours: unknown;
+          saturdayHours: unknown;
+          sundayHours: unknown;
+        } | null,
+        hireDate?: Date,
+      ): number {
         if (!schedule) return 0;
-        return calcExpectedMinutesTz(schedule as Record<string, unknown>, start, end, tz);
+        // Tage vor hireDate überspringen
+        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+        return calcExpectedMinutesTz(schedule as Record<string, unknown>, effectiveStart, end, tz);
       }
 
       // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat, TZ-aware)
       function absenceMinutes(
-        schedule: { mondayHours: unknown; tuesdayHours: unknown; wednesdayHours: unknown; thursdayHours: unknown; fridayHours: unknown; saturdayHours: unknown; sundayHours: unknown } | null,
+        schedule: {
+          mondayHours: unknown;
+          tuesdayHours: unknown;
+          wednesdayHours: unknown;
+          thursdayHours: unknown;
+          fridayHours: unknown;
+          saturdayHours: unknown;
+          sundayHours: unknown;
+        } | null,
         absStart: Date,
         absEnd: Date,
       ): number {
         if (!schedule) return 0;
         // Schnittmenge mit Monatsgrenzen
         const rangeStart = absStart < start ? start : absStart;
-        const rangeEnd   = absEnd   > end   ? end   : absEnd;
+        const rangeEnd = absEnd > end ? end : absEnd;
         let min = 0;
         const cur = new Date(rangeStart);
         while (cur <= rangeEnd) {
@@ -77,9 +104,11 @@ export async function reportRoutes(app: FastifyInstance) {
         }, 0);
 
         // Soll-Minuten: Gesamtmonat minus genehmigte Abwesenheitstage
-        const rawShouldMin = calcShouldMinutes(emp.workSchedule);
-        const absenceMin = emp.leaveRequests.reduce((sum, lr) =>
-          sum + absenceMinutes(emp.workSchedule, lr.startDate, lr.endDate), 0);
+        const rawShouldMin = calcShouldMinutes(emp.workSchedule, emp.hireDate);
+        const absenceMin = emp.leaveRequests.reduce(
+          (sum, lr) => sum + absenceMinutes(emp.workSchedule, lr.startDate, lr.endDate),
+          0,
+        );
         const shouldMin = Math.max(0, rawShouldMin - absenceMin);
 
         // Kranktage aus Absence-Modell (direkt erfasste)
@@ -93,7 +122,7 @@ export async function reportRoutes(app: FastifyInstance) {
 
         // Kranktage aus LeaveRequest, aufgeteilt nach Attest-Zeitraum
         const sickLeaveRequests = emp.leaveRequests.filter(
-          (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank"
+          (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
         );
 
         function daysInRange(from: Date, to: Date): number {
@@ -102,17 +131,18 @@ export async function reportRoutes(app: FastifyInstance) {
           return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
         }
 
-        let sickDaysWithAttest    = 0;
+        let sickDaysWithAttest = 0;
         let sickDaysWithoutAttest = sickDaysAbsence;
 
         for (const lr of sickLeaveRequests) {
           const totalDays = daysInRange(lr.startDate, lr.endDate);
           if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
             // Schnittmenge: Antragszeitraum ∩ Attest-Zeitraum ∩ Monat
-            const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
-            const attestTo   = lr.attestValidTo   < lr.endDate   ? lr.attestValidTo   : lr.endDate;
+            const attestFrom =
+              lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
+            const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
             const attestDays = daysInRange(attestFrom, attestTo);
-            sickDaysWithAttest    += attestDays;
+            sickDaysWithAttest += attestDays;
             sickDaysWithoutAttest += Math.max(0, totalDays - attestDays);
           } else if (lr.attestPresent) {
             // Attest vorhanden, aber kein Datum → ganzer Zeitraum attestiert
@@ -123,34 +153,38 @@ export async function reportRoutes(app: FastifyInstance) {
         }
 
         // Abwesenheiten aufgeschlüsselt nach Typ
-        const SICK_NAMES     = ["Krankmeldung", "Kinderkrank"];
-        const nonSickLeave   = emp.leaveRequests.filter(lr => !SICK_NAMES.includes(lr.leaveType.name));
+        const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
+        const nonSickLeave = emp.leaveRequests.filter(
+          (lr) => !SICK_NAMES.includes(lr.leaveType.name),
+        );
 
         function daysForTypeName(typeName: string) {
           return emp.leaveRequests
-            .filter(lr => lr.leaveType.name === typeName)
+            .filter((lr) => lr.leaveType.name === typeName)
             .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
         }
 
-        const vacationDays       = daysForTypeName("Urlaub");
-        const overtimeCompDays   = daysForTypeName("Überstundenausgleich");
-        const specialLeaveDays   = daysForTypeName("Sonderurlaub");
-        const educationDays      = daysForTypeName("Bildungsurlaub");
-        const unpaidDays         = daysForTypeName("Unbezahlter Urlaub");
-        const maternityDays      = daysForTypeName("Mutterschutz");
-        const parentalDays       = daysForTypeName("Elternzeit");
+        const vacationDays = daysForTypeName("Urlaub");
+        const overtimeCompDays = daysForTypeName("Überstundenausgleich");
+        const specialLeaveDays = daysForTypeName("Sonderurlaub");
+        const educationDays = daysForTypeName("Bildungsurlaub");
+        const unpaidDays = daysForTypeName("Unbezahlter Urlaub");
+        const maternityDays = daysForTypeName("Mutterschutz");
+        const parentalDays = daysForTypeName("Elternzeit");
 
-        const totalAbsenceDays = nonSickLeave.reduce((sum, lr) =>
-          sum + daysInRange(lr.startDate, lr.endDate), 0);
+        const totalAbsenceDays = nonSickLeave.reduce(
+          (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
+          0,
+        );
 
         return {
-          employeeId:     emp.id,
-          employeeName:   `${emp.firstName} ${emp.lastName}`,
+          employeeId: emp.id,
+          employeeName: `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
-          workedHours:    Math.round(workedMin / 60 * 100) / 100,
-          shouldHours:    Math.round(shouldMin / 60 * 100) / 100,
+          workedHours: Math.round((workedMin / 60) * 100) / 100,
+          shouldHours: Math.round((shouldMin / 60) * 100) / 100,
           // Krankheit
-          sickDays:             sickDaysWithAttest + sickDaysWithoutAttest,
+          sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
           sickDaysWithAttest,
           sickDaysWithoutAttest,
           // Abwesenheiten nach Grund
@@ -243,7 +277,9 @@ export async function reportRoutes(app: FastifyInstance) {
 
       const lines: string[] = [];
       // DATEV header row
-      lines.push("Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger");
+      lines.push(
+        "Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger",
+      );
 
       /** Dezimal mit Komma formatieren */
       function dec(n: number, digits = 2): string {
@@ -264,14 +300,21 @@ export async function reportRoutes(app: FastifyInstance) {
         return count;
       }
 
-      function daysForName(emp: typeof employees[0], name: string): number {
+      function daysForName(emp: (typeof employees)[0], name: string): number {
         return emp.leaveRequests
-          .filter(lr => lr.leaveType.name === name)
+          .filter((lr) => lr.leaveType.name === name)
           .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
       }
 
       /** DATEV-Zeile: 11 Felder, leere Felder = Semikolon */
-      function datevLine(pn: string, tag: string, ausfall: string, lohnart: number, stunden: number, tage: number): string {
+      function datevLine(
+        pn: string,
+        tag: string,
+        ausfall: string,
+        lohnart: number,
+        stunden: number,
+        tage: number,
+      ): string {
         return `${pn};${tag};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
       }
 
@@ -291,31 +334,33 @@ export async function reportRoutes(app: FastifyInstance) {
         const workedHours = workedMinutes / 60;
 
         // Krankheit aus Absence-Modell
-        const sickDays = emp.absences.filter(a => a.type === "SICK")
+        const sickDays = emp.absences
+          .filter((a) => a.type === "SICK")
           .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
-        const sickChildDays = emp.absences.filter(a => a.type === "SICK_CHILD")
+        const sickChildDays = emp.absences
+          .filter((a) => a.type === "SICK_CHILD")
           .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
 
         // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-        const vacationDays     = daysForName(emp, "Urlaub");
+        const vacationDays = daysForName(emp, "Urlaub");
         const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
-        const specialDays      = daysForName(emp, "Sonderurlaub");
-        const educationDays    = daysForName(emp, "Bildungsurlaub");
-        const unpaidDays       = daysForName(emp, "Unbezahlter Urlaub");
-        const maternityDays    = daysForName(emp, "Mutterschutz");
-        const parentalDays     = daysForName(emp, "Elternzeit");
+        const specialDays = daysForName(emp, "Sonderurlaub");
+        const educationDays = daysForName(emp, "Bildungsurlaub");
+        const unpaidDays = daysForName(emp, "Unbezahlter Urlaub");
+        const maternityDays = daysForName(emp, "Mutterschutz");
+        const parentalDays = daysForName(emp, "Elternzeit");
 
         // DATEV-Zeilen (Format: 11 Felder, Semikolon-getrennt)
-        lines.push(datevLine(pn, tag, "",  100, workedHours, 0));
-        if (sickDays      > 0) lines.push(datevLine(pn, tag, "K", 200, 0, sickDays));
+        lines.push(datevLine(pn, tag, "", 100, workedHours, 0));
+        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", 200, 0, sickDays));
         if (sickChildDays > 0) lines.push(datevLine(pn, tag, "K", 201, 0, sickChildDays));
-        if (vacationDays  > 0) lines.push(datevLine(pn, tag, "U", 300, 0, vacationDays));
+        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", 300, 0, vacationDays));
         if (overtimeCompDays > 0) lines.push(datevLine(pn, tag, "U", 301, 0, overtimeCompDays));
-        if (specialDays   > 0) lines.push(datevLine(pn, tag, "S", 302, 0, specialDays));
+        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", 302, 0, specialDays));
         if (educationDays > 0) lines.push(datevLine(pn, tag, "S", 303, 0, educationDays));
-        if (unpaidDays    > 0) lines.push(datevLine(pn, tag, "",  304, 0, unpaidDays));
-        if (maternityDays > 0) lines.push(datevLine(pn, tag, "",  310, 0, maternityDays));
-        if (parentalDays  > 0) lines.push(datevLine(pn, tag, "",  320, 0, parentalDays));
+        if (unpaidDays > 0) lines.push(datevLine(pn, tag, "", 304, 0, unpaidDays));
+        if (maternityDays > 0) lines.push(datevLine(pn, tag, "", 310, 0, maternityDays));
+        if (parentalDays > 0) lines.push(datevLine(pn, tag, "", 320, 0, parentalDays));
       }
 
       await app.audit({
@@ -379,9 +424,14 @@ export async function reportRoutes(app: FastifyInstance) {
       }
 
       // Soll-Minuten
-      function calcShouldMinutes(schedule: Record<string, unknown> | null): number {
+      function calcShouldMinutes(
+        schedule: Record<string, unknown> | null,
+        hireDate?: Date,
+      ): number {
         if (!schedule) return 0;
-        return calcExpectedMinutesTz(schedule, start, end, tz);
+        // Tage vor hireDate überspringen
+        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+        return calcExpectedMinutesTz(schedule, effectiveStart, end, tz);
       }
 
       function absenceMinutes(
@@ -391,7 +441,7 @@ export async function reportRoutes(app: FastifyInstance) {
       ): number {
         if (!schedule) return 0;
         const rangeStart = absStart < start ? start : absStart;
-        const rangeEnd   = absEnd   > end   ? end   : absEnd;
+        const rangeEnd = absEnd > end ? end : absEnd;
         let min = 0;
         const cur = new Date(rangeStart);
         while (cur <= rangeEnd) {
@@ -407,13 +457,24 @@ export async function reportRoutes(app: FastifyInstance) {
         return sum + slotMin - Number(e.breakMinutes ?? 0);
       }, 0);
 
-      const rawShouldMin = calcShouldMinutes(emp.workSchedule as unknown as Record<string, unknown>);
-      const absenceMin = emp.leaveRequests.reduce((sum, lr) =>
-        sum + absenceMinutes(emp.workSchedule as unknown as Record<string, unknown>, lr.startDate, lr.endDate), 0);
+      const rawShouldMin = calcShouldMinutes(
+        emp.workSchedule as unknown as Record<string, unknown>,
+        emp.hireDate,
+      );
+      const absenceMin = emp.leaveRequests.reduce(
+        (sum, lr) =>
+          sum +
+          absenceMinutes(
+            emp.workSchedule as unknown as Record<string, unknown>,
+            lr.startDate,
+            lr.endDate,
+          ),
+        0,
+      );
       const shouldMin = Math.max(0, rawShouldMin - absenceMin);
 
-      const workedHours = Math.round(workedMin / 60 * 100) / 100;
-      const targetHours = Math.round(shouldMin / 60 * 100) / 100;
+      const workedHours = Math.round((workedMin / 60) * 100) / 100;
+      const targetHours = Math.round((shouldMin / 60) * 100) / 100;
 
       // Sick days
       const sickDaysAbsence = emp.absences
@@ -441,7 +502,7 @@ export async function reportRoutes(app: FastifyInstance) {
         const totalDays = daysInRange(lr.startDate, lr.endDate);
         if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
           const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
-          const attestTo   = lr.attestValidTo   < lr.endDate   ? lr.attestValidTo   : lr.endDate;
+          const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
           sickDaysWithAttest += daysInRange(attestFrom, attestTo);
           sickDaysTotal += totalDays;
         } else if (lr.attestPresent) {
@@ -455,18 +516,32 @@ export async function reportRoutes(app: FastifyInstance) {
       const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
       function daysForTypeName(typeName: string) {
         return emp!.leaveRequests
-          .filter(lr => lr.leaveType.name === typeName)
+          .filter((lr) => lr.leaveType.name === typeName)
           .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
       }
 
       const vacationDays = daysForTypeName("Urlaub");
-      const nonSickLeave = emp.leaveRequests.filter(lr => !SICK_NAMES.includes(lr.leaveType.name));
-      const totalAbsenceDays = nonSickLeave.reduce((sum, lr) =>
-        sum + daysInRange(lr.startDate, lr.endDate), 0);
+      const nonSickLeave = emp.leaveRequests.filter(
+        (lr) => !SICK_NAMES.includes(lr.leaveType.name),
+      );
+      const totalAbsenceDays = nonSickLeave.reduce(
+        (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
+        0,
+      );
 
       const monthNames = [
-        "Januar", "Februar", "März", "April", "Mai", "Juni",
-        "Juli", "August", "September", "Oktober", "November", "Dezember",
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
       ];
 
       // Time entries for table
@@ -475,7 +550,13 @@ export async function reportRoutes(app: FastifyInstance) {
         start: formatInTimeZone(e.startTime, tz, "HH:mm"),
         end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
         breakMin: Number(e.breakMinutes ?? 0),
-        netHours: Math.round(((e.endTime!.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) / 60 * 100) / 100,
+        netHours:
+          Math.round(
+            (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 -
+              Number(e.breakMinutes ?? 0)) /
+              60) *
+              100,
+          ) / 100,
         note: (e as Record<string, unknown>).note as string | undefined,
       }));
 
@@ -502,7 +583,10 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       reply.header("Content-Type", "application/pdf");
-      reply.header("Content-Disposition", `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`);
+      reply.header(
+        "Content-Disposition",
+        `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`,
+      );
       return reply.send(pdfBuffer);
     },
   });
@@ -532,22 +616,25 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       // Group by employee and aggregate (only "Urlaub" type)
-      const empMap = new Map<string, {
-        name: string;
-        employeeNumber: string;
-        totalDays: number;
-        usedDays: number;
-        remainingDays: number;
-        carriedOver: number;
-      }>();
+      const empMap = new Map<
+        string,
+        {
+          name: string;
+          employeeNumber: string;
+          totalDays: number;
+          usedDays: number;
+          remainingDays: number;
+          carriedOver: number;
+        }
+      >();
 
       for (const e of entitlements) {
         if (e.leaveType.name !== "Urlaub") continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
-        const total     = Number(e.totalDays);
-        const carried   = Number(e.carriedOverDays);
-        const used      = Number(e.usedDays);
+        const total = Number(e.totalDays);
+        const carried = Number(e.carriedOverDays);
+        const used = Number(e.usedDays);
         const remaining = total + carried - used;
 
         if (existing) {

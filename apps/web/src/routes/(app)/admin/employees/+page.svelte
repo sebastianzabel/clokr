@@ -213,6 +213,16 @@
     }
   }
 
+  async function reactivate(emp: Employee) {
+    if (!confirm(`${emp.firstName} ${emp.lastName} wirklich reaktivieren?`)) return;
+    try {
+      await api.patch(`/employees/${emp.id}/reactivate`, {});
+      await loadEmployees();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Fehler beim Reaktivieren");
+    }
+  }
+
   function confirmDelete(emp: Employee) {
     deletingEmployee = emp;
     showDeleteConfirm = true;
@@ -356,6 +366,10 @@
                     {#if emp.user.isActive}
                       <button class="btn btn-sm btn-ghost" onclick={() => deactivate(emp)}
                         >Deaktivieren</button
+                      >
+                    {:else}
+                      <button class="btn btn-sm btn-ghost" onclick={() => reactivate(emp)}
+                        >Reaktivieren</button
                       >
                     {/if}
                     <button class="btn btn-sm btn-danger-ghost" onclick={() => confirmDelete(emp)}

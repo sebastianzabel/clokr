@@ -99,10 +99,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Mitarbeiter anhand NFC-Karten-ID ermitteln
       const employee = await app.prisma.employee.findUnique({
         where: { nfcCardId: body.nfcCardId },
-        include: { tenant: true },
+        include: { tenant: true, user: true },
       });
       if (!employee) {
         return reply.code(404).send({ error: "Unbekannte Karte" });
+      }
+      if (!employee.user.isActive) {
+        return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
 
       const now = new Date();
@@ -196,6 +199,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Prüfen ob Mitarbeiter aktiv ist
+      const employeeRecord = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { user: true },
+      });
+      if (employeeRecord && !employeeRecord.user.isActive) {
+        return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
+      }
 
       // Prüfen ob bereits eingestempelt
       const activeEntry = await app.prisma.timeEntry.findFirst({
@@ -313,6 +325,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         body.employeeId && isManager ? body.employeeId : (user.employeeId ?? undefined);
 
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht ermittelbar" });
+
+      // Prüfen ob Mitarbeiter aktiv ist
+      const targetEmployee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { user: true },
+      });
+      if (targetEmployee && !targetEmployee.user.isActive) {
+        return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
+      }
 
       const newStart = new Date(body.startTime);
       const newEnd = body.endTime ? new Date(body.endTime) : null;
@@ -456,10 +477,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
-  // Tenant-Timezone laden
+  // Tenant-Timezone laden + hireDate
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true },
+    select: { tenantId: true, hireDate: true },
   });
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
@@ -487,8 +508,10 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Soll-Minuten (TZ-aware Wochentag-Zuordnung)
-  const expectedMinutes = calcExpectedMinutesTz(schedule, monthStart, monthEnd, tz);
+  // Soll-Minuten (TZ-aware Wochentag-Zuordnung), Tage vor hireDate überspringen
+  const effectiveStart =
+    employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
+  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
@@ -498,6 +521,8 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     },
   });
   const holidayMinutes = holidays.reduce((sum, h) => {
+    // Feiertage vor hireDate überspringen
+    if (employee?.hireDate && h.date < employee.hireDate) return sum;
     const dow = getDayOfWeekInTz(h.date, tz);
     return sum + getDayHoursFromSchedule(schedule, dow) * 60;
   }, 0);
