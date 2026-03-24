@@ -16,11 +16,14 @@
     }
   });
 
-  const tabs = [
-    { href: "/admin/employees", label: "Mitarbeiter" },
-    { href: "/admin/vacation",  label: "Urlaub & Zeiten" },
-    { href: "/admin/system",    label: "System" },
-  ];
+  const isAdmin = $derived($authStore.user?.role === "ADMIN");
+
+  const tabs = $derived([
+    { href: "/admin/employees", label: "Mitarbeiter",    show: true },
+    { href: "/admin/vacation",  label: "Urlaub & Zeiten",show: true },
+    { href: "/admin/system",    label: "System",         show: true },
+    { href: "/admin/audit",     label: "Audit Log",      show: isAdmin },
+  ].filter(t => t.show));
 
   let pathname = $derived($page.url.pathname);
 </script>

@@ -18,6 +18,7 @@ import { auditPlugin } from "./plugins/audit";
 import { prismaPlugin } from "./plugins/prisma";
 import { mailerPlugin } from "./plugins/mailer";
 import { invitationRoutes } from "./routes/invitations";
+import { auditLogRoutes } from "./routes/audit-logs";
 
 export async function buildApp() {
   const app = Fastify({
@@ -52,7 +53,7 @@ export async function buildApp() {
   await app.register(swagger, {
     openapi: {
       info: {
-        title: "Salon Timetrack API",
+        title: "Clokr API",
         description: "Zeiterfassung & Urlaubsplanung API",
         version: "1.0.0",
       },
@@ -87,6 +88,7 @@ export async function buildApp() {
   await app.register(settingsRoutes,    { prefix: "/api/v1/settings" });
   await app.register(holidayRoutes,     { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes,  { prefix: "/api/v1/invitations" });
+  await app.register(auditLogRoutes,    { prefix: "/api/v1/audit-logs" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
