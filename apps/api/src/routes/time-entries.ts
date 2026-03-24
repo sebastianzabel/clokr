@@ -549,20 +549,21 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Soll-Minuten (TZ-aware Wochentag-Zuordnung), Tage vor hireDate überspringen
+  // Soll-Minuten (TZ-aware Wochentag-Zuordnung), nur bis heute, Tage vor hireDate überspringen
   const effectiveStart =
     employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
-  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+  const today = new Date(dateStrInTz(now, tz) + "T23:59:59Z");
+  const effectiveEnd = today < monthEnd ? today : monthEnd;
+  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
-      date: { gte: monthStart, lte: monthEnd },
+      date: { gte: monthStart, lte: effectiveEnd },
     },
   });
   const holidayMinutes = holidays.reduce((sum, h) => {
-    // Feiertage vor hireDate überspringen
     if (employee?.hireDate && h.date < employee.hireDate) return sum;
     const dow = getDayOfWeekInTz(h.date, tz);
     return sum + getDayHoursFromSchedule(schedule, dow) * 60;
@@ -573,7 +574,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     where: {
       employeeId,
       status: "APPROVED",
-      startDate: { lte: monthEnd },
+      startDate: { lte: effectiveEnd },
       endDate: { gte: monthStart },
     },
   });
@@ -583,7 +584,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       calcExpectedMinutesTz(
         schedule,
         lr.startDate < monthStart ? monthStart : lr.startDate,
-        lr.endDate > monthEnd ? monthEnd : lr.endDate,
+        lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate,
         tz,
       )
     );
