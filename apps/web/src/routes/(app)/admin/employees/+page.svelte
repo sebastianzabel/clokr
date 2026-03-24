@@ -52,6 +52,7 @@
   let eLastName = $state("");
   let eEmployeeNumber = $state("");
   let eRole: Role = $state("EMPLOYEE");
+  let eNfcCardId = $state("");
 
   // Delete confirm
   let showDeleteConfirm = $state(false);
@@ -136,6 +137,7 @@
     eLastName = emp.lastName;
     eEmployeeNumber = emp.employeeNumber;
     eRole = emp.user.role;
+    eNfcCardId = emp.nfcCardId ?? "";
     editError = "";
     showEditModal = true;
   }
@@ -150,10 +152,11 @@
         lastName: eLastName,
         employeeNumber: eEmployeeNumber,
         role: eRole,
+        nfcCardId: eNfcCardId || null,
       });
       employees = employees.map(e =>
         e.id === editingEmployee!.id
-          ? { ...e, firstName: eFirstName, lastName: eLastName, employeeNumber: eEmployeeNumber, user: { ...e.user, role: eRole } }
+          ? { ...e, firstName: eFirstName, lastName: eLastName, employeeNumber: eEmployeeNumber, nfcCardId: eNfcCardId || null, user: { ...e.user, role: eRole } }
           : e
       );
       showEditModal = false;
@@ -439,6 +442,11 @@
               <option value="MANAGER">Manager</option>
               <option value="ADMIN">Administrator</option>
             </select>
+          </div>
+          <div class="form-group form-group--full">
+            <label class="form-label" for="e-nfc">NFC-Karten-ID</label>
+            <input id="e-nfc" type="text" bind:value={eNfcCardId} class="form-input" placeholder="z.B. NFC-A1B2C3D4" />
+            <p class="hint">Optional. Ermöglicht Stempeln per NFC-Karte.</p>
           </div>
         </div>
       </div>

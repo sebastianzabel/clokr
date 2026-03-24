@@ -1,6 +1,8 @@
 import { FastifyInstance } from "fastify";
+import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
 import { getTenantTimezone, monthRangeUtc, calcExpectedMinutesTz, getDayOfWeekInTz, getDayHoursFromSchedule } from "../utils/timezone";
+import { generateMonthlyReportPdf, generateVacationOverviewPdf } from "../utils/pdf";
 
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=

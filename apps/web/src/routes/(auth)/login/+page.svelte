@@ -83,6 +83,10 @@
         />
       </div>
 
+      <div class="forgot-password-link">
+        <a href="/forgot-password">Passwort vergessen?</a>
+      </div>
+
       <button type="submit" disabled={loading} class="btn btn-primary login-submit">
         {#if loading}
           <span class="login-spinner"></span>
@@ -168,6 +172,21 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .forgot-password-link {
+    text-align: right;
+    margin-top: -0.5rem;
+  }
+
+  .forgot-password-link a {
+    font-size: 0.8125rem;
+    color: var(--color-brand);
+    text-decoration: none;
+  }
+
+  .forgot-password-link a:hover {
+    text-decoration: underline;
   }
 
   .login-footer {
