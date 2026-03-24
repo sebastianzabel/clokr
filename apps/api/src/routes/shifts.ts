@@ -148,6 +148,37 @@ export async function shiftRoutes(app: FastifyInstance) {
     },
   });
 
+  // PUT /:id — update existing shift
+  app.put("/:id", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = shiftSchema.partial().parse(req.body);
+
+      const existing = await app.prisma.shift.findUnique({ where: { id } });
+      if (!existing) return reply.code(404).send({ error: "Schicht nicht gefunden" });
+
+      const updated = await app.prisma.shift.update({
+        where: { id },
+        data: {
+          ...(body.templateId !== undefined ? { templateId: body.templateId || null } : {}),
+          ...(body.date ? { date: new Date(body.date) } : {}),
+          ...(body.startTime ? { startTime: body.startTime } : {}),
+          ...(body.endTime ? { endTime: body.endTime } : {}),
+          ...(body.label !== undefined ? { label: body.label || null } : {}),
+          ...(body.note !== undefined ? { note: body.note || null } : {}),
+        },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
+          template: { select: { name: true, color: true } },
+        },
+      });
+
+      return updated;
+    },
+  });
+
   // POST /bulk — create multiple shifts at once
   app.post("/bulk", {
     schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },

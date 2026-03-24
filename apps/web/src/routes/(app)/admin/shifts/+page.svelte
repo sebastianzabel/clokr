@@ -44,6 +44,7 @@
   let templates: ShiftTemplate[] = $state([]);
   let loading = $state(true);
   let error = $state("");
+  let timeEntries: Array<{ employeeId: string; date: string; startTime: string; endTime: string | null; breakMinutes: number }> = $state([]);
 
   // Current week reference date (Monday)
   let currentDate = $state(getMondayOfWeek(new Date()));
@@ -59,6 +60,9 @@
   let modalNote = $state("");
   let modalError = $state("");
   let saving = $state(false);
+
+  // Edit state
+  let editingShiftId: string | null = $state(null);
 
   // Quick-assign mode
   let quickMode = $state(false);
@@ -114,6 +118,16 @@
     return shift.template?.color ?? "#6B7280";
   }
 
+  function getActualHours(employeeId: string, date: string): number | null {
+    const entries = timeEntries.filter(e => e.employeeId === employeeId && (e.date as string).startsWith(date) && e.endTime);
+    if (entries.length === 0) return null;
+    return entries.reduce((sum, e) => {
+      const start = new Date(e.startTime).getTime();
+      const end = new Date(e.endTime!).getTime();
+      return sum + (end - start) / 3600000 - (e.breakMinutes ?? 0) / 60;
+    }, 0);
+  }
+
   // ── Lade-Funktionen ───────────────────────────────────────────────────────
   async function loadWeek() {
     loading = true;
@@ -123,6 +137,15 @@
       weekDays = data.weekDays;
       employees = data.employees;
       shifts = data.shifts;
+
+      // Also load time entries for the same week
+      try {
+        const from = weekDays[0];
+        const to = weekDays[6];
+        timeEntries = await api.get<any[]>(`/time-entries?from=${from}&to=${to}`);
+      } catch {
+        // ignore
+      }
     } catch {
       error = "Fehler beim Laden der Schichtdaten.";
     } finally {
@@ -182,6 +205,7 @@
       return;
     }
     // Normaler Modus: Modal öffnen
+    editingShiftId = null;
     modalEmployeeId = employeeId;
     modalDate = date;
     modalTemplateId = "";
@@ -210,17 +234,31 @@
     saving = true;
     modalError = "";
     try {
-      const shift = await api.post<Shift>("/shifts", {
-        employeeId: modalEmployeeId,
-        templateId: modalTemplateId || undefined,
-        date: modalDate,
-        startTime: modalStartTime,
-        endTime: modalEndTime,
-        label: modalLabel || undefined,
-        note: modalNote || undefined,
-      });
-      shifts = [...shifts, shift];
+      if (editingShiftId) {
+        // Update existing
+        const updated = await api.put<Shift>(`/shifts/${editingShiftId}`, {
+          templateId: modalTemplateId || undefined,
+          startTime: modalStartTime,
+          endTime: modalEndTime,
+          label: modalLabel || undefined,
+          note: modalNote || undefined,
+        });
+        shifts = shifts.map(s => s.id === editingShiftId ? updated : s);
+      } else {
+        // Create new
+        const shift = await api.post<Shift>("/shifts", {
+          employeeId: modalEmployeeId,
+          templateId: modalTemplateId || undefined,
+          date: modalDate,
+          startTime: modalStartTime,
+          endTime: modalEndTime,
+          label: modalLabel || undefined,
+          note: modalNote || undefined,
+        });
+        shifts = [...shifts, shift];
+      }
       showModal = false;
+      editingShiftId = null;
     } catch {
       modalError = "Speichern fehlgeschlagen.";
     } finally {
@@ -236,6 +274,19 @@
     } catch {
       alert("Löschen fehlgeschlagen.");
     }
+  }
+
+  function openEditShift(shift: Shift) {
+    editingShiftId = shift.id;
+    modalEmployeeId = shift.employeeId;
+    modalDate = shift.date.split("T")[0];
+    modalTemplateId = shift.templateId ?? "";
+    modalStartTime = shift.startTime;
+    modalEndTime = shift.endTime;
+    modalLabel = shift.label ?? "";
+    modalNote = shift.note ?? "";
+    modalError = "";
+    showModal = true;
   }
 
   // ── Template-Verwaltung ───────────────────────────────────────────────────
@@ -440,15 +491,25 @@
                   <div
                     class="shift-block"
                     style="background: {shiftColor(shift)}22; border-left: 3px solid {shiftColor(shift)}"
-                    onclick={(e: MouseEvent) => { e.stopPropagation(); deleteShift(shift.id); }}
-                    title="Klicken zum Löschen"
+                    onclick={(e: MouseEvent) => { e.stopPropagation(); openEditShift(shift); }}
+                    title="Klicken zum Bearbeiten"
                   >
                     <span class="shift-block__label">{shift.label ?? shift.startTime + "–" + shift.endTime}</span>
                     <span class="shift-block__time">{shift.startTime}–{shift.endTime}</span>
+                    {@const actual = getActualHours(emp.id, day)}
+                    {#if actual !== null}
+                      <span class="shift-block__actual" class:shift-block__actual--over={actual > parseFloat(shift.endTime.replace(":", ".")) - parseFloat(shift.startTime.replace(":", "."))}>
+                        IST: {actual.toFixed(1)}h
+                      </span>
+                    {/if}
                   </div>
                 {/each}
                 {#if cellShifts.length === 0}
                   <span class="grid-cell__plus">+</span>
+                  {@const actual = getActualHours(emp.id, day)}
+                  {#if actual !== null && actual > 0}
+                    <span class="cell-actual">{actual.toFixed(1)}h ohne Schicht</span>
+                  {/if}
                 {/if}
               </td>
             {/each}
@@ -465,7 +526,7 @@
   <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) showModal = false; }}>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shift-modal-title">
       <div class="modal-header">
-        <h3 id="shift-modal-title" class="modal-title">Schicht zuweisen</h3>
+        <h3 id="shift-modal-title" class="modal-title">{editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}</h3>
         <button class="modal-close" onclick={() => showModal = false} aria-label="Schließen">✕</button>
       </div>
       <div class="modal-body">
@@ -506,6 +567,11 @@
         </div>
       </div>
       <div class="modal-footer">
+        {#if editingShiftId}
+          <button class="btn btn-ghost" style="color: var(--color-error, #dc2626); margin-right: auto;" onclick={() => { deleteShift(editingShiftId!); showModal = false; editingShiftId = null; }}>
+            Löschen
+          </button>
+        {/if}
         <button class="btn btn-secondary" onclick={() => showModal = false}>Abbrechen</button>
         <button class="btn btn-primary" onclick={saveShift} disabled={saving}>
           {saving ? "Speichern …" : "Speichern"}
@@ -793,6 +859,25 @@
     display: block;
     font-size: 0.6875rem;
     color: var(--color-text-muted);
+  }
+
+  .shift-block__actual {
+    display: block;
+    font-size: 0.625rem;
+    color: var(--color-green, #16a34a);
+    font-weight: 600;
+  }
+
+  .shift-block__actual--over {
+    color: var(--color-red, #dc2626);
+  }
+
+  .cell-actual {
+    display: block;
+    text-align: center;
+    font-size: 0.6875rem;
+    color: var(--color-text-muted);
+    padding: 0.25rem;
   }
 
   /* ── Skeleton ── */
