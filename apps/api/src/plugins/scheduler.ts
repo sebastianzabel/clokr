@@ -1,16 +1,21 @@
 import fp from "fastify-plugin";
-import cron from "node-cron";
+import cron, { type ScheduledTask } from "node-cron";
 
 /**
  * Background scheduler for recurring tasks.
  * Currently: Phorest shift sync (per-tenant cron).
  */
 export const schedulerPlugin = fp(async (app) => {
-  const tasks: cron.ScheduledTask[] = [];
+  const tasks: ScheduledTask[] = [];
 
   async function syncPhorestForTenant(tenantId: string) {
     const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-    if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !cfg?.phorestPassword || !cfg?.phorestAutoSync) {
+    if (
+      !cfg?.phorestBusinessId ||
+      !cfg?.phorestUsername ||
+      !cfg?.phorestPassword ||
+      !cfg?.phorestAutoSync
+    ) {
       return;
     }
 
@@ -21,7 +26,9 @@ export const schedulerPlugin = fp(async (app) => {
     app.log.info({ tenantId }, "Phorest Auto-Sync gestartet");
 
     try {
-      const auth = Buffer.from(`global/${cfg.phorestUsername}:${cfg.phorestPassword}`).toString("base64");
+      const auth = Buffer.from(`global/${cfg.phorestUsername}:${cfg.phorestPassword}`).toString(
+        "base64",
+      );
       const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
 
       // Sync next 7 days
@@ -32,9 +39,12 @@ export const schedulerPlugin = fp(async (app) => {
       const endStr = endDate.toISOString().split("T")[0];
 
       // 1. Load staff
-      const staffRes = await fetch(`${baseUrl}/api/business/${biz}/branch/${branch}/staff?size=200&page=0`, { headers });
+      const staffRes = await fetch(
+        `${baseUrl}/api/business/${biz}/branch/${branch}/staff?size=200&page=0`,
+        { headers },
+      );
       if (!staffRes.ok) throw new Error(`Staff API ${staffRes.status}`);
-      const staffData = await staffRes.json();
+      const staffData = (await staffRes.json()) as Record<string, any>;
       const phorestStaff = staffData._embedded?.staff ?? staffData.staff ?? [];
 
       // 2. Map to Clokr employees
@@ -60,8 +70,9 @@ export const schedulerPlugin = fp(async (app) => {
         { headers },
       );
       if (!wttRes.ok) throw new Error(`WorkTimeTables API ${wttRes.status}`);
-      const wttData = await wttRes.json();
-      const entries = wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
+      const wttData = (await wttRes.json()) as Record<string, any>;
+      const entries =
+        wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
 
       // 4. Create shifts
       let created = 0;
