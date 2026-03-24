@@ -409,7 +409,7 @@
 
 <style>
   .dashboard {
-    max-width: 960px;
+    /* max-width inherited from .app-main (1600px) */
   }
 
   /* Clock Card */

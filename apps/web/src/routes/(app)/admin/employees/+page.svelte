@@ -457,7 +457,7 @@
 {/if}
 
 <style>
-  .page { max-width: 1100px; }
+  .page { /* max-width inherited from .app-main (1600px) */ }
 
   .page-header {
     display: flex;

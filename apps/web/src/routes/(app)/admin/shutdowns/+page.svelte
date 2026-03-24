@@ -60,8 +60,7 @@
     loading = true;
     error   = "";
     try {
-      const res = await api.get(`/company-shutdowns?year=${filterYear}`);
-      shutdowns = await res.json();
+      shutdowns = await api.get(`/company-shutdowns?year=${filterYear}`);
     } catch {
       error = "Fehler beim Laden";
     } finally {
@@ -71,8 +70,7 @@
 
   async function loadEmployees() {
     try {
-      const res = await api.get("/employees?limit=500");
-      const data = await res.json();
+      const data = await api.get<any>("/employees?limit=500");
       allEmployees = data.employees ?? data;
     } catch {
       // ignore
@@ -132,9 +130,9 @@
         notes:               formNotes || undefined,
       };
       if (editId) {
-        await api.patch(`/company-shutdowns/${editId}`, { json: body });
+        await api.patch(`/company-shutdowns/${editId}`, body);
       } else {
-        await api.post("/company-shutdowns", { json: body });
+        await api.post("/company-shutdowns", body);
       }
       closeForm();
       await loadShutdowns();
@@ -170,9 +168,9 @@
     if (!addExceptionEmpId || !exceptionShutdownId) return;
     savingException = true;
     try {
-      await api.post(`/company-shutdowns/${exceptionShutdownId}/exceptions`, {
-        json: { employeeId: addExceptionEmpId, reason: addExceptionReason || undefined },
-      });
+      await api.post(`/company-shutdowns/${exceptionShutdownId}/exceptions`,
+        { employeeId: addExceptionEmpId, reason: addExceptionReason || undefined },
+      );
       addExceptionEmpId  = "";
       addExceptionReason = "";
       await loadShutdowns();
@@ -213,10 +211,8 @@
       : allEmployees
   );
 
-  const years = $derived(() => {
-    const y = new Date().getFullYear();
-    return [y - 1, y, y + 1, y + 2].map(String);
-  });
+  const currentYear = new Date().getFullYear();
+  const years = [currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(String);
 </script>
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
@@ -227,7 +223,7 @@
   </div>
   <div class="header-actions">
     <select class="form-input" bind:value={filterYear} onchange={loadShutdowns}>
-      {#each years() as y}
+      {#each years as y}
         <option value={y}>{y}</option>
       {/each}
     </select>

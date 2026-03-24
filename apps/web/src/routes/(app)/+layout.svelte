@@ -274,6 +274,7 @@
     padding: 2rem;
     min-height: 100vh;
     min-width: 0;
+    max-width: 1600px;
     padding-bottom: 5rem; /* space for mobile nav */
   }
 

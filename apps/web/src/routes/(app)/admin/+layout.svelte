@@ -54,7 +54,7 @@
 
 <style>
   .admin-shell {
-    max-width: 1200px;
+    /* max-width inherited from .app-main (1600px) */
   }
 
   .admin-header {
