@@ -71,6 +71,9 @@ model TenantConfig {
   phorestBaseUrl    String?  @default("https://api.phorest.com/third-party-api-server")
   phorestAutoSync   Boolean  @default(false)
   phorestSyncCron   String   @default("0 3 * * *") // Default: täglich 03:00
+  // Benachrichtigungen
+  clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
+  missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 

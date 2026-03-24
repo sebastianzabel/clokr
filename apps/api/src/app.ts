@@ -19,6 +19,7 @@ import { prismaPlugin } from "./plugins/prisma";
 import { mailerPlugin } from "./plugins/mailer";
 import { notifyPlugin } from "./plugins/notify";
 import { schedulerPlugin } from "./plugins/scheduler";
+import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
@@ -87,24 +88,25 @@ export async function buildApp() {
   await app.register(mailerPlugin);
   await app.register(notifyPlugin);
   await app.register(schedulerPlugin);
+  await app.register(attendanceCheckerPlugin);
 
   // ── Routes ────────────────────────────────────────────────
-  await app.register(authRoutes,      { prefix: "/api/v1/auth" });
-  await app.register(employeeRoutes,  { prefix: "/api/v1/employees" });
+  await app.register(authRoutes, { prefix: "/api/v1/auth" });
+  await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
-  await app.register(leaveRoutes,     { prefix: "/api/v1/leave" });
-  await app.register(overtimeRoutes,  { prefix: "/api/v1/overtime" });
-  await app.register(reportRoutes,    { prefix: "/api/v1/reports" });
-  await app.register(settingsRoutes,    { prefix: "/api/v1/settings" });
-  await app.register(holidayRoutes,     { prefix: "/api/v1/holidays" });
-  await app.register(invitationRoutes,  { prefix: "/api/v1/invitations" });
-  await app.register(auditLogRoutes,         { prefix: "/api/v1/audit-logs" });
-  await app.register(companyShutdownRoutes,  { prefix: "/api/v1/company-shutdowns" });
-  await app.register(dashboardRoutes,        { prefix: "/api/v1/dashboard" });
-  await app.register(notificationRoutes,    { prefix: "/api/v1/notifications" });
-  await app.register(shiftRoutes,            { prefix: "/api/v1/shifts" });
-  await app.register(integrationRoutes,      { prefix: "/api/v1/integrations" });
-  await app.register(importRoutes,           { prefix: "/api/v1/imports" });
+  await app.register(leaveRoutes, { prefix: "/api/v1/leave" });
+  await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
+  await app.register(reportRoutes, { prefix: "/api/v1/reports" });
+  await app.register(settingsRoutes, { prefix: "/api/v1/settings" });
+  await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
+  await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
+  await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });
+  await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
+  await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
+  await app.register(notificationRoutes, { prefix: "/api/v1/notifications" });
+  await app.register(shiftRoutes, { prefix: "/api/v1/shifts" });
+  await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
+  await app.register(importRoutes, { prefix: "/api/v1/imports" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));

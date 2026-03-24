@@ -6,46 +6,50 @@ import { FederalState } from "@clokr/db";
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
 const tenantConfigSchema = z.object({
-  defaultWeeklyHours:    z.number().min(1).max(60).optional(),
-  defaultMondayHours:    z.number().min(0).max(24).optional(),
-  defaultTuesdayHours:   z.number().min(0).max(24).optional(),
+  defaultWeeklyHours: z.number().min(1).max(60).optional(),
+  defaultMondayHours: z.number().min(0).max(24).optional(),
+  defaultTuesdayHours: z.number().min(0).max(24).optional(),
   defaultWednesdayHours: z.number().min(0).max(24).optional(),
-  defaultThursdayHours:  z.number().min(0).max(24).optional(),
-  defaultFridayHours:    z.number().min(0).max(24).optional(),
-  defaultSaturdayHours:  z.number().min(0).max(24).optional(),
-  defaultSundayHours:    z.number().min(0).max(24).optional(),
-  overtimeThreshold:        z.number().min(1).max(500).optional(),
-  allowOvertimePayout:      z.boolean().optional(),
-  federalState:             z.string().refine((s) => VALID_FEDERAL_STATES.includes(s)).optional(),
-  carryOverDeadlineDay:     z.number().int().min(1).max(31).optional(),
-  carryOverDeadlineMonth:   z.number().int().min(1).max(12).optional(),
-  defaultVacationDays:      z.number().int().min(1).max(365).optional(),
-  timezone:                 z.string().min(1).max(100).optional(),
+  defaultThursdayHours: z.number().min(0).max(24).optional(),
+  defaultFridayHours: z.number().min(0).max(24).optional(),
+  defaultSaturdayHours: z.number().min(0).max(24).optional(),
+  defaultSundayHours: z.number().min(0).max(24).optional(),
+  overtimeThreshold: z.number().min(1).max(500).optional(),
+  allowOvertimePayout: z.boolean().optional(),
+  federalState: z
+    .string()
+    .refine((s) => VALID_FEDERAL_STATES.includes(s))
+    .optional(),
+  carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
+  carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
+  defaultVacationDays: z.number().int().min(1).max(365).optional(),
+  timezone: z.string().min(1).max(100).optional(),
+  clockOutReminderHours: z.number().int().min(1).max(48).optional(),
+  missingEntriesDays: z.number().int().min(1).max(90).optional(),
 });
 
 const vacationEntitlementSchema = z.object({
-  year:             z.number().int().min(2000).max(2100),
-  totalDays:        z.number().min(0).max(365),
-  carriedOverDays:  z.number().min(0).max(365).optional(),
+  year: z.number().int().min(2000).max(2100),
+  totalDays: z.number().min(0).max(365),
+  carriedOverDays: z.number().min(0).max(365).optional(),
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
 });
 
 const employeeScheduleSchema = z.object({
-  weeklyHours:    z.number().min(1).max(60),
-  mondayHours:    z.number().min(0).max(24),
-  tuesdayHours:   z.number().min(0).max(24),
+  weeklyHours: z.number().min(1).max(60),
+  mondayHours: z.number().min(0).max(24),
+  tuesdayHours: z.number().min(0).max(24),
   wednesdayHours: z.number().min(0).max(24),
-  thursdayHours:  z.number().min(0).max(24),
-  fridayHours:    z.number().min(0).max(24),
-  saturdayHours:  z.number().min(0).max(24),
-  sundayHours:    z.number().min(0).max(24),
-  overtimeThreshold:   z.number().min(1).max(500),
+  thursdayHours: z.number().min(0).max(24),
+  fridayHours: z.number().min(0).max(24),
+  saturdayHours: z.number().min(0).max(24),
+  sundayHours: z.number().min(0).max(24),
+  overtimeThreshold: z.number().min(1).max(500),
   allowOvertimePayout: z.boolean(),
   validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
 export async function settingsRoutes(app: FastifyInstance) {
-
   // GET /api/v1/settings/work  — globale Vorgaben
   app.get("/work", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
@@ -59,19 +63,21 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       const base = config ?? {
         tenantId,
-        defaultWeeklyHours:      40,
-        defaultMondayHours:      8,
-        defaultTuesdayHours:     8,
-        defaultWednesdayHours:   8,
-        defaultThursdayHours:    8,
-        defaultFridayHours:      8,
-        defaultSaturdayHours:    0,
-        defaultSundayHours:      0,
-        overtimeThreshold:       60,
-        allowOvertimePayout:     false,
-        carryOverDeadlineDay:    31,
-        carryOverDeadlineMonth:  3,
-        defaultVacationDays:     30,
+        defaultWeeklyHours: 40,
+        defaultMondayHours: 8,
+        defaultTuesdayHours: 8,
+        defaultWednesdayHours: 8,
+        defaultThursdayHours: 8,
+        defaultFridayHours: 8,
+        defaultSaturdayHours: 0,
+        defaultSundayHours: 0,
+        overtimeThreshold: 60,
+        allowOvertimePayout: false,
+        carryOverDeadlineDay: 31,
+        carryOverDeadlineMonth: 3,
+        defaultVacationDays: 30,
+        clockOutReminderHours: 10,
+        missingEntriesDays: 7,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
@@ -150,29 +156,29 @@ export async function settingsRoutes(app: FastifyInstance) {
       const schedule = await app.prisma.workSchedule.upsert({
         where: { employeeId },
         update: {
-          weeklyHours:    body.weeklyHours,
-          mondayHours:    body.mondayHours,
-          tuesdayHours:   body.tuesdayHours,
+          weeklyHours: body.weeklyHours,
+          mondayHours: body.mondayHours,
+          tuesdayHours: body.tuesdayHours,
           wednesdayHours: body.wednesdayHours,
-          thursdayHours:  body.thursdayHours,
-          fridayHours:    body.fridayHours,
-          saturdayHours:  body.saturdayHours,
-          sundayHours:    body.sundayHours,
-          overtimeThreshold:   body.overtimeThreshold,
+          thursdayHours: body.thursdayHours,
+          fridayHours: body.fridayHours,
+          saturdayHours: body.saturdayHours,
+          sundayHours: body.sundayHours,
+          overtimeThreshold: body.overtimeThreshold,
           allowOvertimePayout: body.allowOvertimePayout,
           validFrom: new Date(body.validFrom),
         },
         create: {
           employeeId,
-          weeklyHours:    body.weeklyHours,
-          mondayHours:    body.mondayHours,
-          tuesdayHours:   body.tuesdayHours,
+          weeklyHours: body.weeklyHours,
+          mondayHours: body.mondayHours,
+          tuesdayHours: body.tuesdayHours,
           wednesdayHours: body.wednesdayHours,
-          thursdayHours:  body.thursdayHours,
-          fridayHours:    body.fridayHours,
-          saturdayHours:  body.saturdayHours,
-          sundayHours:    body.sundayHours,
-          overtimeThreshold:   body.overtimeThreshold,
+          thursdayHours: body.thursdayHours,
+          fridayHours: body.fridayHours,
+          saturdayHours: body.saturdayHours,
+          sundayHours: body.sundayHours,
+          overtimeThreshold: body.overtimeThreshold,
           allowOvertimePayout: body.allowOvertimePayout,
           validFrom: new Date(body.validFrom),
         },
@@ -247,7 +253,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       };
 
       const entitlement = await app.prisma.leaveEntitlement.upsert({
-        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: vacationType.id, year: body.year } },
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId,
+            leaveTypeId: vacationType.id,
+            year: body.year,
+          },
+        },
         update: data,
         create: { employeeId, leaveTypeId: vacationType.id, year: body.year, ...data },
       });
@@ -278,13 +290,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       const tenantId = await getTenantId(app, req.user.sub);
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       return {
-        smtpHost:         cfg?.smtpHost      ?? null,
-        smtpPort:         cfg?.smtpPort      ?? null,
-        smtpUser:         cfg?.smtpUser      ?? null,
-        smtpPasswordSet:  !!(cfg?.smtpPassword),
-        smtpFromEmail:    cfg?.smtpFromEmail ?? null,
-        smtpFromName:     cfg?.smtpFromName  ?? null,
-        smtpSecure:       cfg?.smtpSecure    ?? false,
+        smtpHost: cfg?.smtpHost ?? null,
+        smtpPort: cfg?.smtpPort ?? null,
+        smtpUser: cfg?.smtpUser ?? null,
+        smtpPasswordSet: !!cfg?.smtpPassword,
+        smtpFromEmail: cfg?.smtpFromEmail ?? null,
+        smtpFromName: cfg?.smtpFromName ?? null,
+        smtpSecure: cfg?.smtpSecure ?? false,
       };
     },
   });
@@ -295,29 +307,29 @@ export async function settingsRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
       const smtpSchema = z.object({
-        smtpHost:      z.string().min(1),
-        smtpPort:      z.number().int().min(1).max(65535),
-        smtpUser:      z.string().min(1),
-        smtpPassword:  z.string().optional(),
+        smtpHost: z.string().min(1),
+        smtpPort: z.number().int().min(1).max(65535),
+        smtpUser: z.string().min(1),
+        smtpPassword: z.string().optional(),
         smtpFromEmail: z.string().email(),
-        smtpFromName:  z.string().min(1),
-        smtpSecure:    z.boolean(),
+        smtpFromName: z.string().min(1),
+        smtpSecure: z.boolean(),
       });
       const body = smtpSchema.parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
 
       const updateData: Record<string, unknown> = {
-        smtpHost:      body.smtpHost,
-        smtpPort:      body.smtpPort,
-        smtpUser:      body.smtpUser,
+        smtpHost: body.smtpHost,
+        smtpPort: body.smtpPort,
+        smtpUser: body.smtpUser,
         smtpFromEmail: body.smtpFromEmail,
-        smtpFromName:  body.smtpFromName,
-        smtpSecure:    body.smtpSecure,
+        smtpFromName: body.smtpFromName,
+        smtpSecure: body.smtpSecure,
       };
       if (body.smtpPassword) updateData.smtpPassword = body.smtpPassword;
 
       await app.prisma.tenantConfig.upsert({
-        where:  { tenantId },
+        where: { tenantId },
         update: updateData,
         create: { tenantId, ...updateData },
       });
@@ -361,7 +373,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       const { twoFaEnabled } = z.object({ twoFaEnabled: z.boolean() }).parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
       await app.prisma.tenantConfig.upsert({
-        where:  { tenantId },
+        where: { tenantId },
         update: { twoFaEnabled },
         create: { tenantId, twoFaEnabled },
       });
@@ -386,12 +398,12 @@ export async function settingsRoutes(app: FastifyInstance) {
       });
 
       return employees.map((e) => ({
-        id:             e.id,
+        id: e.id,
         employeeNumber: e.employeeNumber,
-        firstName:      e.firstName,
-        lastName:       e.lastName,
-        email:          e.user.email,
-        workSchedule:   e.workSchedule,
+        firstName: e.firstName,
+        lastName: e.lastName,
+        email: e.user.email,
+        workSchedule: e.workSchedule,
       }));
     },
   });
