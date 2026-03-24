@@ -17,12 +17,15 @@
   });
 
   const isAdmin = $derived($authStore.user?.role === "ADMIN");
+  const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
   const tabs = $derived([
     { href: "/admin/employees", label: "Mitarbeiter",    show: true },
     { href: "/admin/vacation",  label: "Urlaub & Zeiten",show: true },
+    { href: "/admin/shifts",    label: "Schichtplan",    show: isManager },
     { href: "/admin/shutdowns", label: "Betriebsurlaub", show: true },
     { href: "/admin/system",    label: "System",         show: true },
+    { href: "/admin/import",    label: "Import",          show: isAdmin },
     { href: "/admin/audit",     label: "Audit Log",      show: isAdmin },
   ].filter(t => t.show));
 

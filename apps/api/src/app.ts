@@ -17,10 +17,14 @@ import { holidayRoutes } from "./routes/holidays";
 import { auditPlugin } from "./plugins/audit";
 import { prismaPlugin } from "./plugins/prisma";
 import { mailerPlugin } from "./plugins/mailer";
+import { notifyPlugin } from "./plugins/notify";
+import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./routes/dashboard";
+import { shiftRoutes } from "./routes/shifts";
+import { importRoutes } from "./routes/imports";
 
 export async function buildApp() {
   const app = Fastify({
@@ -79,6 +83,7 @@ export async function buildApp() {
   await app.register(prismaPlugin);
   await app.register(auditPlugin);
   await app.register(mailerPlugin);
+  await app.register(notifyPlugin);
 
   // ── Routes ────────────────────────────────────────────────
   await app.register(authRoutes,      { prefix: "/api/v1/auth" });
@@ -93,6 +98,9 @@ export async function buildApp() {
   await app.register(auditLogRoutes,         { prefix: "/api/v1/audit-logs" });
   await app.register(companyShutdownRoutes,  { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes,        { prefix: "/api/v1/dashboard" });
+  await app.register(notificationRoutes,    { prefix: "/api/v1/notifications" });
+  await app.register(shiftRoutes,            { prefix: "/api/v1/shifts" });
+  await app.register(importRoutes,           { prefix: "/api/v1/imports" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));

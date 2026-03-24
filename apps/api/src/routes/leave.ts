@@ -168,6 +168,22 @@ export async function leaveRoutes(app: FastifyInstance) {
         newValue: { type: body.type, startDate: body.startDate, endDate: body.endDate, days },
       });
 
+      // ── Benachrichtigung: Manager über neuen Antrag informieren ──
+      const typeDef = LEAVE_TYPE_DEFS[body.type];
+      const managers = await app.prisma.user.findMany({
+        where: { role: { in: ["ADMIN", "MANAGER"] }, isActive: true, employee: { tenantId: req.user.tenantId } },
+        select: { id: true },
+      });
+      for (const mgr of managers) {
+        await app.notify({
+          userId: mgr.id,
+          type: "LEAVE_REQUEST",
+          title: "Neuer Urlaubsantrag",
+          message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
+          link: "/admin/vacation",
+        });
+      }
+
       return reply.code(201).send({
         ...request,
         typeCode:  body.type,
@@ -393,6 +409,18 @@ export async function leaveRoutes(app: FastifyInstance) {
         entityId: id,
         newValue: { status: body.status, reviewNote: body.reviewNote },
       });
+
+      // ── Benachrichtigung: Mitarbeiter über Entscheidung informieren ──
+      const requestEmployee = await app.prisma.employee.findUnique({ where: { id: existing.employeeId } });
+      if (requestEmployee) {
+        await app.notify({
+          userId: requestEmployee.userId,
+          type: body.status === "APPROVED" ? "LEAVE_APPROVED" : "LEAVE_REJECTED",
+          title: body.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
+          message: `Ihr ${existing.leaveType.name}-Antrag wurde ${body.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
+          link: "/leave",
+        });
+      }
 
       return {
         ...updated,

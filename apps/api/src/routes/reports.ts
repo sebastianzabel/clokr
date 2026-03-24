@@ -144,6 +144,7 @@ export async function reportRoutes(app: FastifyInstance) {
           sum + daysInRange(lr.startDate, lr.endDate), 0);
 
         return {
+          employeeId:     emp.id,
           employeeName:   `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
           workedHours:    Math.round(workedMin / 60 * 100) / 100,
@@ -295,6 +296,261 @@ export async function reportRoutes(app: FastifyInstance) {
       reply.header("Content-Type", "text/csv; charset=utf-8");
       reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.csv"`);
       return lines.join("\n");
+    },
+  });
+
+  // GET /api/v1/reports/monthly/pdf?employeeId=&year=&month=
+  app.get("/monthly/pdf", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { employeeId, year, month } = req.query as {
+        employeeId: string;
+        year: string;
+        month: string;
+      };
+
+      const y = parseInt(year);
+      const m = parseInt(month);
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, m, tz);
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      const emp = await app.prisma.employee.findFirst({
+        where: {
+          id: employeeId,
+          tenantId: req.user.tenantId,
+        },
+        include: {
+          workSchedule: true,
+          timeEntries: {
+            where: { date: { gte: start, lte: end }, type: "WORK", endTime: { not: null } },
+            orderBy: { date: "asc" },
+          },
+          absences: {
+            where: { startDate: { lte: end }, endDate: { gte: start } },
+          },
+          leaveRequests: {
+            where: { status: "APPROVED", startDate: { lte: end }, endDate: { gte: start } },
+            include: { leaveType: true },
+          },
+        },
+      });
+
+      if (!emp) {
+        reply.code(404);
+        return { error: "Mitarbeiter nicht gefunden" };
+      }
+
+      // Soll-Minuten
+      function calcShouldMinutes(schedule: Record<string, unknown> | null): number {
+        if (!schedule) return 0;
+        return calcExpectedMinutesTz(schedule, start, end, tz);
+      }
+
+      function absenceMinutes(
+        schedule: Record<string, unknown> | null,
+        absStart: Date,
+        absEnd: Date,
+      ): number {
+        if (!schedule) return 0;
+        const rangeStart = absStart < start ? start : absStart;
+        const rangeEnd   = absEnd   > end   ? end   : absEnd;
+        let min = 0;
+        const cur = new Date(rangeStart);
+        while (cur <= rangeEnd) {
+          const dow = getDayOfWeekInTz(cur, tz);
+          min += getDayHoursFromSchedule(schedule, dow) * 60;
+          cur.setDate(cur.getDate() + 1);
+        }
+        return min;
+      }
+
+      const workedMin = emp.timeEntries.reduce((sum, e) => {
+        const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
+        return sum + slotMin - Number(e.breakMinutes ?? 0);
+      }, 0);
+
+      const rawShouldMin = calcShouldMinutes(emp.workSchedule as unknown as Record<string, unknown>);
+      const absenceMin = emp.leaveRequests.reduce((sum, lr) =>
+        sum + absenceMinutes(emp.workSchedule as unknown as Record<string, unknown>, lr.startDate, lr.endDate), 0);
+      const shouldMin = Math.max(0, rawShouldMin - absenceMin);
+
+      const workedHours = Math.round(workedMin / 60 * 100) / 100;
+      const targetHours = Math.round(shouldMin / 60 * 100) / 100;
+
+      // Sick days
+      const sickDaysAbsence = emp.absences
+        .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
+        .reduce((sum, a) => {
+          const s = a.startDate < start ? start : a.startDate;
+          const e2 = a.endDate > end ? end : a.endDate;
+          return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+        }, 0);
+
+      const sickLeaveRequests = emp.leaveRequests.filter(
+        (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
+      );
+
+      function daysInRange(from: Date, to: Date): number {
+        const s = from < start ? start : from;
+        const e2 = to > end ? end : to;
+        return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+      }
+
+      let sickDaysWithAttest = 0;
+      let sickDaysTotal = sickDaysAbsence;
+
+      for (const lr of sickLeaveRequests) {
+        const totalDays = daysInRange(lr.startDate, lr.endDate);
+        if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
+          const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
+          const attestTo   = lr.attestValidTo   < lr.endDate   ? lr.attestValidTo   : lr.endDate;
+          sickDaysWithAttest += daysInRange(attestFrom, attestTo);
+          sickDaysTotal += totalDays;
+        } else if (lr.attestPresent) {
+          sickDaysWithAttest += totalDays;
+          sickDaysTotal += totalDays;
+        } else {
+          sickDaysTotal += totalDays;
+        }
+      }
+
+      const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
+      function daysForTypeName(typeName: string) {
+        return emp!.leaveRequests
+          .filter(lr => lr.leaveType.name === typeName)
+          .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
+      }
+
+      const vacationDays = daysForTypeName("Urlaub");
+      const nonSickLeave = emp.leaveRequests.filter(lr => !SICK_NAMES.includes(lr.leaveType.name));
+      const totalAbsenceDays = nonSickLeave.reduce((sum, lr) =>
+        sum + daysInRange(lr.startDate, lr.endDate), 0);
+
+      const monthNames = [
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember",
+      ];
+
+      // Time entries for table
+      const entries = emp.timeEntries.map((e) => ({
+        date: formatInTimeZone(e.date, tz, "dd.MM.yyyy"),
+        start: formatInTimeZone(e.startTime, tz, "HH:mm"),
+        end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
+        breakMin: Number(e.breakMinutes ?? 0),
+        netHours: Math.round(((e.endTime!.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) / 60 * 100) / 100,
+        note: (e as Record<string, unknown>).note as string | undefined,
+      }));
+
+      const pdfBuffer = await generateMonthlyReportPdf({
+        tenantName: tenant?.name ?? "",
+        employeeName: `${emp.firstName} ${emp.lastName}`,
+        employeeNumber: emp.employeeNumber,
+        month: `${monthNames[m - 1]} ${y}`,
+        workedHours,
+        targetHours,
+        overtimeHours: workedHours - targetHours,
+        sickDays: sickDaysTotal,
+        sickDaysWithAttest,
+        vacationDays,
+        otherAbsenceDays: totalAbsenceDays - vacationDays,
+        entries,
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "MONTHLY_PDF", year, month, employeeId },
+      });
+
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`);
+      return reply.send(pdfBuffer);
+    },
+  });
+
+  // GET /api/v1/reports/leave-overview/pdf?year=
+  app.get("/leave-overview/pdf", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { year } = req.query as { year: string };
+      const y = parseInt(year ?? new Date().getFullYear().toString());
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      const entitlements = await app.prisma.leaveEntitlement.findMany({
+        where: {
+          year: y,
+          employee: { tenantId: req.user.tenantId },
+        },
+        include: {
+          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
+          leaveType: true,
+        },
+      });
+
+      // Group by employee and aggregate (only "Urlaub" type)
+      const empMap = new Map<string, {
+        name: string;
+        employeeNumber: string;
+        totalDays: number;
+        usedDays: number;
+        remainingDays: number;
+        carriedOver: number;
+      }>();
+
+      for (const e of entitlements) {
+        if (e.leaveType.name !== "Urlaub") continue;
+        const key = e.employee.employeeNumber;
+        const existing = empMap.get(key);
+        const total     = Number(e.totalDays);
+        const carried   = Number(e.carriedOverDays);
+        const used      = Number(e.usedDays);
+        const remaining = total + carried - used;
+
+        if (existing) {
+          existing.totalDays += total;
+          existing.carriedOver += carried;
+          existing.usedDays += used;
+          existing.remainingDays += remaining;
+        } else {
+          empMap.set(key, {
+            name: `${e.employee.firstName} ${e.employee.lastName}`,
+            employeeNumber: e.employee.employeeNumber,
+            totalDays: total,
+            carriedOver: carried,
+            usedDays: used,
+            remainingDays: remaining,
+          });
+        }
+      }
+
+      const pdfBuffer = await generateVacationOverviewPdf({
+        tenantName: tenant?.name ?? "",
+        year: y,
+        employees: [...empMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "LEAVE_OVERVIEW_PDF", year },
+      });
+
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `attachment; filename="urlaubsuebersicht-${y}.pdf"`);
+      return reply.send(pdfBuffer);
     },
   });
 }

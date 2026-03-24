@@ -2,6 +2,7 @@
   import { api } from "$api/client";
 
   interface MonthlyRow {
+    employeeId: string;
     employeeName: string;
     workedHours: number;
     shouldHours: number;
@@ -32,6 +33,12 @@
 
   let datevLoading = $state(false);
   let datevError = $state("");
+
+  let leaveYear = $state(currentYear);
+  let leaveLoading = $state(false);
+  let leaveError = $state("");
+
+  let pdfDownloading = $state<string | null>(null);
 
   const months = [
     "Januar", "Februar", "März", "April", "Mai", "Juni",
@@ -89,6 +96,62 @@
       datevError = e instanceof Error ? e.message : "Download fehlgeschlagen";
     } finally {
       datevLoading = false;
+    }
+  }
+
+  async function downloadPdf(url: string, filename: string) {
+    const { authStore } = await import("$stores/auth");
+    const { get } = await import("svelte/store");
+    const auth = get(authStore);
+
+    const res = await fetch(`/api/v1${url}`, {
+      headers: auth.accessToken
+        ? { Authorization: `Bearer ${auth.accessToken}` }
+        : {},
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
+    }
+
+    const blob = await res.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  async function downloadMonthlyPdf(employeeId: string, employeeName: string) {
+    pdfDownloading = employeeId;
+    reportError = "";
+    try {
+      const m = monthlyReport?.month ?? reportMonth;
+      const y = monthlyReport?.year ?? reportYear;
+      await downloadPdf(
+        `/reports/monthly/pdf?employeeId=${employeeId}&month=${m}&year=${y}`,
+        `Monatsbericht_${employeeName.replace(/\s+/g, "_")}_${y}_${String(m).padStart(2, "0")}.pdf`,
+      );
+    } catch (e: unknown) {
+      reportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+    } finally {
+      pdfDownloading = null;
+    }
+  }
+
+  async function downloadLeaveOverviewPdf() {
+    leaveLoading = true;
+    leaveError = "";
+    try {
+      await downloadPdf(
+        `/reports/leave-overview/pdf?year=${leaveYear}`,
+        `Urlaubsuebersicht_${leaveYear}.pdf`,
+      );
+    } catch (e: unknown) {
+      leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+    } finally {
+      leaveLoading = false;
     }
   }
 
@@ -210,6 +273,48 @@
       </div>
     {/if}
   </div>
+
+  <!-- Leave Overview PDF Card -->
+  <div class="card card-body report-card">
+    <div class="report-card-header">
+      <span class="report-icon">🏖</span>
+      <div>
+        <h2 class="report-card-title">Urlaubsübersicht PDF</h2>
+        <p class="report-card-desc text-muted">Jahresübersicht aller Urlaubsansprüche als PDF</p>
+      </div>
+    </div>
+
+    <div class="report-controls">
+      <div class="form-group">
+        <label class="form-label" for="leave-year">Jahr</label>
+        <select id="leave-year" bind:value={leaveYear} class="form-input">
+          {#each years as y}
+            <option value={y}>{y}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+
+    <button
+      class="btn btn-secondary"
+      onclick={downloadLeaveOverviewPdf}
+      disabled={leaveLoading}
+    >
+      {#if leaveLoading}
+        <span class="btn-spinner-dark"></span>
+        Vorbereiten…
+      {:else}
+        PDF herunterladen
+      {/if}
+    </button>
+
+    {#if leaveError}
+      <div class="alert alert-error" role="alert">
+        <span>⚠</span>
+        <span>{leaveError}</span>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <!-- Monthly Report Results -->
@@ -239,6 +344,7 @@
               <th title="Kranktage mit Attest">Krank m. Attest</th>
               <th title="Kranktage ohne Attest">Krank o. Attest</th>
               <th>Urlaubstage</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -254,6 +360,16 @@
                 <td class="{row.sickDaysWithAttest > 0 ? 'text-green' : 'text-muted'}">{row.sickDaysWithAttest}</td>
                 <td class="{row.sickDaysWithoutAttest > 0 ? 'text-yellow' : 'text-muted'}">{row.sickDaysWithoutAttest}</td>
                 <td>{row.vacationDays}</td>
+                <td>
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    onclick={() => downloadMonthlyPdf(row.employeeId, row.employeeName)}
+                    disabled={pdfDownloading === row.employeeId}
+                    title="PDF herunterladen"
+                  >
+                    {pdfDownloading === row.employeeId ? "..." : "PDF"}
+                  </button>
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -266,7 +382,7 @@
 <style>
   .reports-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 1.25rem;
     margin-bottom: 1.75rem;
   }

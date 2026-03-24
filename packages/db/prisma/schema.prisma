@@ -24,6 +24,7 @@ model Tenant {
   publicHolidays   PublicHoliday[]
   config           TenantConfig?
   companyShutdowns CompanyShutdown[]
+  shiftTemplates   ShiftTemplate[]
 }
 
 // ─────────────────────────────────────────────
@@ -82,10 +83,11 @@ model User {
   createdAt    DateTime   @default(now()) @db.Timestamptz
   updatedAt    DateTime   @updatedAt      @db.Timestamptz
 
-  employee     Employee?
+  employee      Employee?
   refreshTokens RefreshToken[]
-  otpTokens    OtpToken[]
-  auditLogs    AuditLog[]
+  otpTokens     OtpToken[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
 }
 
 model RefreshToken {
@@ -150,6 +152,7 @@ model Employee {
   overtimePlans         OvertimePlan[]
   invitations           Invitation[]
   shutdownExceptions    CompanyShutdownException[]
+  shifts                Shift[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -471,4 +474,60 @@ model CompanyShutdownException {
   employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([shutdownId, employeeId])
+}
+
+// ─────────────────────────────────────────────
+// BENACHRICHTIGUNGEN
+// ─────────────────────────────────────────────
+
+model Notification {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String   // LEAVE_REQUEST, LEAVE_APPROVED, LEAVE_REJECTED, OVERTIME_WARNING, MISSING_ENTRY
+  title      String
+  message    String
+  link       String?  // e.g. "/leave" or "/admin/vacation"
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  @@index([userId, read])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────
+// SCHICHTPLANUNG
+// ─────────────────────────────────────────────
+
+model ShiftTemplate {
+  id        String   @id @default(uuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  name      String   // e.g. "Frühschicht", "Spätschicht", "Nachtschicht"
+  startTime String   // "06:00"
+  endTime   String   // "14:00"
+  color     String   @default("#3B82F6")
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  shifts    Shift[]
+
+  @@index([tenantId])
+}
+
+model Shift {
+  id           String         @id @default(uuid())
+  employeeId   String
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  templateId   String?
+  template     ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  date         DateTime       @db.Date
+  startTime    String         // "06:00"
+  endTime      String         // "14:00"
+  label        String?        // Custom label or template name
+  note         String?
+  createdAt    DateTime       @default(now()) @db.Timestamptz
+  createdBy    String?
+
+  @@index([employeeId, date])
+  @@index([date])
 }
