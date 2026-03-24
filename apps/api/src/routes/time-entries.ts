@@ -552,8 +552,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   // Soll-Minuten (TZ-aware Wochentag-Zuordnung), nur bis heute, Tage vor hireDate überspringen
   const effectiveStart =
     employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
-  const today = new Date(dateStrInTz(now, tz) + "T23:59:59Z");
-  const effectiveEnd = today < monthEnd ? today : monthEnd;
+  const todayStr = dateStrInTz(now, tz);
+  const todayDate = new Date(todayStr + "T00:00:00Z");
+  const effectiveEnd = todayDate < monthEnd ? todayDate : monthEnd;
   const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
