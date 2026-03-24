@@ -1,8 +1,7 @@
 node_modules/
 .env
 .env.local
-.claude/settings.local.json
-.claude/skills/next-browser/extensions/
+.claude/
 dist/
 .svelte-kit/
 build/
