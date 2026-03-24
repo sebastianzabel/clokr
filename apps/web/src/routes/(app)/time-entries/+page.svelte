@@ -55,6 +55,7 @@
     status: CalStatus;
     absenceType: string | null;
     absenceHalf: boolean;
+    isBeforeHire: boolean;
   }
 
   interface PublicHoliday {
@@ -100,6 +101,7 @@
   let deleteConfirmId = $state("");
   let absences: Absence[] = [];
   let overtimeTotalHours: number | null = $state(null);
+  let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
 
   // Modal
   let modalOpen = $state(false);
@@ -121,27 +123,32 @@
     error = "";
     try {
       const year = calMonth.getFullYear();
-      const [rawEntries, rawSchedule, rawHolidays, rawAbsences, rawOvertime] = await Promise.all([
-        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
-        employeeId
-          ? api.get<WorkSchedule>(`/settings/work/${employeeId}`).catch(() => null)
-          : Promise.resolve(null),
-        api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
-        employeeId
-          ? api
-              .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${employeeId}`)
-              .catch(() => [] as Absence[])
-          : Promise.resolve([] as Absence[]),
-        employeeId
-          ? api.get<{ balanceHours: number }>(`/overtime/${employeeId}`).catch(() => null)
-          : Promise.resolve(null),
-      ]);
+      const [rawEntries, rawSchedule, rawHolidays, rawAbsences, rawOvertime, rawEmployee] =
+        await Promise.all([
+          api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
+          employeeId
+            ? api.get<WorkSchedule>(`/settings/work/${employeeId}`).catch(() => null)
+            : Promise.resolve(null),
+          api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
+          employeeId
+            ? api
+                .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${employeeId}`)
+                .catch(() => [] as Absence[])
+            : Promise.resolve([] as Absence[]),
+          employeeId
+            ? api.get<{ balanceHours: number }>(`/overtime/${employeeId}`).catch(() => null)
+            : Promise.resolve(null),
+          employeeId
+            ? api.get<{ hireDate?: string }>(`/employees/${employeeId}`).catch(() => null)
+            : Promise.resolve(null),
+        ]);
       entries = rawEntries;
       schedule = rawSchedule;
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
-      calendarDays = buildCalendarDays(calMonth, entries, schedule, holidays, absences);
+      hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
+      calendarDays = buildCalendarDays(calMonth, entries, schedule, holidays, absences, hireDate);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -165,6 +172,7 @@
     sched: WorkSchedule | null,
     hols: Map<string, string>,
     absenceList: Absence[],
+    hireDateStr: string | null = null,
   ): CalDay[] {
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
@@ -193,18 +201,18 @@
     for (let i = firstDow - 1; i >= 0; i--) {
       const d = new Date(monthStart);
       d.setDate(d.getDate() - i - 1);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr));
     }
     const cur = new Date(monthStart);
     while (cur <= monthEnd) {
-      days.push(makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate));
+      days.push(makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr));
       cur.setDate(cur.getDate() + 1);
     }
     const remaining = (7 - ((lastDow + 1) % 7)) % 7;
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(monthEnd);
       d.setDate(d.getDate() + i);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr));
     }
     return days;
   }
@@ -216,6 +224,7 @@
     sched: WorkSchedule | null,
     hols: Map<string, string>,
     absenceByDate: Map<string, { type: string; half: boolean }>,
+    hireDateStr: string | null = null,
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -231,9 +240,11 @@
     const absence = absenceByDate.get(dateStr);
     const absenceType = absence?.type ?? null;
     const absenceHalf = absence?.half ?? false;
+    const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
-    // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht
+    // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
     let expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
+    if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
     else if (absence && !absence.half) expectedMin = 0;
     else if (absence && absence.half) expectedMin = Math.round(expectedMin / 2);
@@ -264,6 +275,7 @@
       status,
       absenceType,
       absenceHalf,
+      isBeforeHire,
     };
   }
 
@@ -625,13 +637,16 @@
           class:is-weekend={day.isWeekend}
           class:is-holiday={day.isHoliday && day.isCurrentMonth}
           class:is-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-          title={day.isHoliday
-            ? day.holidayName
-            : day.absenceType
-              ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-              : undefined}
+          class:cal-day--disabled={day.isBeforeHire && day.isCurrentMonth}
+          title={day.isBeforeHire
+            ? "Vor Eintrittsdatum"
+            : day.isHoliday
+              ? day.holidayName
+              : day.absenceType
+                ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                : undefined}
           onclick={() => {
-            if (day.isCurrentMonth) selectedDate = day.dateStr;
+            if (day.isCurrentMonth && !day.isBeforeHire) selectedDate = day.dateStr;
           }}
         >
           <span class="day-num">{day.dayNum}</span>
@@ -642,7 +657,9 @@
               >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
             >
           {/if}
-          {#if day.isCurrentMonth && day.hasEntries}
+          {#if day.isBeforeHire}
+            <span class="day-before-hire">—</span>
+          {:else if day.isCurrentMonth && day.hasEntries}
             <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
             {#if day.expectedMin > 0}
               {@const b = day.workedMin - day.expectedMin}
@@ -1005,6 +1022,19 @@
     opacity: 0.3;
     cursor: default;
     background: var(--gray-50, #f9fafb);
+  }
+
+  /* Tage vor dem Eintrittsdatum */
+  :global(.cal-day.cal-day--disabled) {
+    opacity: 0.4;
+    pointer-events: none;
+    cursor: default;
+    background: var(--gray-50, #f9fafb) !important;
+  }
+  .day-before-hire {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    opacity: 0.5;
   }
   .cal-day:not(.other-month):hover {
     background: color-mix(in srgb, var(--brand) 8%, transparent);

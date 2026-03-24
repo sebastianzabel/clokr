@@ -335,6 +335,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
 
+      // Prüfen ob das Datum vor dem Eintrittsdatum liegt
+      if (targetEmployee?.hireDate) {
+        const entryDate = new Date(body.date);
+        const hireDate = new Date(targetEmployee.hireDate);
+        // Vergleich nur auf Tagesbasis (ohne Uhrzeit)
+        const entryDay = new Date(
+          entryDate.getFullYear(),
+          entryDate.getMonth(),
+          entryDate.getDate(),
+        );
+        const hireDay = new Date(hireDate.getFullYear(), hireDate.getMonth(), hireDate.getDate());
+        if (entryDay < hireDay) {
+          return reply
+            .code(400)
+            .send({ error: "Zeiteinträge vor dem Eintrittsdatum sind nicht erlaubt" });
+        }
+      }
+
       const newStart = new Date(body.startTime);
       const newEnd = body.endTime ? new Date(body.endTime) : null;
 
@@ -392,6 +410,29 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // Nur eigene Einträge für normale Mitarbeiter
       if (!isManager && existing.employeeId !== user.employeeId) {
         return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Prüfen ob das neue Datum vor dem Eintrittsdatum liegt
+      if (body.date) {
+        const targetEmployee = await app.prisma.employee.findUnique({
+          where: { id: existing.employeeId },
+          select: { hireDate: true },
+        });
+        if (targetEmployee?.hireDate) {
+          const entryDate = new Date(body.date);
+          const hireDate = new Date(targetEmployee.hireDate);
+          const entryDay = new Date(
+            entryDate.getFullYear(),
+            entryDate.getMonth(),
+            entryDate.getDate(),
+          );
+          const hireDay = new Date(hireDate.getFullYear(), hireDate.getMonth(), hireDate.getDate());
+          if (entryDay < hireDay) {
+            return reply
+              .code(400)
+              .send({ error: "Zeiteinträge vor dem Eintrittsdatum sind nicht erlaubt" });
+          }
+        }
       }
 
       // Überlappungsprüfung für geänderte Zeiten

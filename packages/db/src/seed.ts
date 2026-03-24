@@ -67,7 +67,7 @@ async function main() {
       employeeNumber: "001",
       firstName: "Admin",
       lastName: "Clokr",
-      hireDate: new Date("2020-01-01"),
+      hireDate: new Date(),
     },
   });
 
@@ -143,7 +143,7 @@ async function main() {
       employeeNumber: "002",
       firstName: "Max",
       lastName: "Mustermann",
-      hireDate: new Date("2022-03-01"),
+      hireDate: new Date(),
       nfcCardId: "NFC-TEST-001",
     },
   });
