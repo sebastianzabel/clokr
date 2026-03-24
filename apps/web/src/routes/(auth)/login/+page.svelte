@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { preventDefault } from 'svelte/legacy';
+  import { preventDefault } from "svelte/legacy";
 
   import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
@@ -15,7 +15,16 @@
     error = "";
     try {
       const res = await api.post<
-        | { accessToken: string; refreshToken: string; user: { id: string; email: string; role: "ADMIN" | "MANAGER" | "EMPLOYEE"; employeeId: string | null } }
+        | {
+            accessToken: string;
+            refreshToken: string;
+            user: {
+              id: string;
+              email: string;
+              role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+              employeeId: string | null;
+            };
+          }
         | { requiresOtp: true; userId: string }
       >("/auth/login", { email, password });
 
@@ -44,8 +53,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <span class="login-logo-icon">⏱️</span>
-      <h1 class="login-title">Clokr</h1>
+      <img src="/clokr-logo.png" alt="Clokr" class="login-logo-img" />
       <p class="login-subtitle">Bitte melden Sie sich an</p>
     </div>
 
@@ -97,9 +105,7 @@
       </button>
     </form>
 
-    <p class="login-footer">
-      Time tracking &amp; team management
-    </p>
+    <p class="login-footer">Time tracking &amp; team management</p>
   </div>
 </div>
 
@@ -128,18 +134,10 @@
     margin-bottom: 2rem;
   }
 
-  .login-logo-icon {
-    display: inline-block;
-    font-size: 2.5rem;
+  .login-logo-img {
+    max-width: 180px;
+    height: auto;
     margin-bottom: 0.75rem;
-    line-height: 1;
-  }
-
-  .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--color-brand);
-    margin-bottom: 0.375rem;
   }
 
   .login-subtitle {
@@ -171,7 +169,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .forgot-password-link {
