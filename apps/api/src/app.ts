@@ -20,6 +20,7 @@ import { mailerPlugin } from "./plugins/mailer";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
+import { dashboardRoutes } from "./routes/dashboard";
 
 export async function buildApp() {
   const app = Fastify({
@@ -91,6 +92,7 @@ export async function buildApp() {
   await app.register(invitationRoutes,  { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes,         { prefix: "/api/v1/audit-logs" });
   await app.register(companyShutdownRoutes,  { prefix: "/api/v1/company-shutdowns" });
+  await app.register(dashboardRoutes,        { prefix: "/api/v1/dashboard" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));

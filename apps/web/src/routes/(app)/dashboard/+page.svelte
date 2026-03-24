@@ -5,35 +5,75 @@
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
 
+  // ── Types ──────────────────────────────────────────────────────────────────
+  interface DashboardStats {
+    today: { workedHours: number; entries: number };
+    week:  { workedHours: number; targetHours: number };
+    overtime: { balanceHours: number };
+    vacation: { remaining: number; total: number; used: number };
+  }
+
+  interface TeamDay {
+    date: string;
+    status: "present" | "absent" | "clocked_in" | "none";
+    workedHours: number;
+    reason: string | null;
+  }
+
+  interface TeamMember {
+    id: string;
+    name: string;
+    employeeNumber: string;
+    days: TeamDay[];
+  }
+
+  interface TeamWeek {
+    weekStart: string;
+    weekEnd: string;
+    weekDays: string[];
+    team: TeamMember[];
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────────
   let clockedIn = $state(false);
   let activeEntryId: string | null = null;
-  let loading = false;
+  let loading = $state(false);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
-  let overtimeBalance = $state(0);
   let recentEntries: { id: string; endTime: string | null; startTime: string }[] = $state([]);
   let currentTime = $state(new Date());
   let clockStart: Date | null = $state(null);
 
+  let stats: DashboardStats | null = $state(null);
+  let teamWeek: TeamWeek | null = $state(null);
+
   let timer: ReturnType<typeof setInterval>;
 
+  const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
+
+  // ── Load ───────────────────────────────────────────────────────────────────
   onMount(async () => {
     await loadData();
     timer = setInterval(() => { currentTime = new Date(); }, 1000);
   });
 
-  onDestroy(() => {
-    clearInterval(timer);
-  });
+  onDestroy(() => clearInterval(timer));
 
   async function loadData() {
     loading = true;
     try {
       const today = format(new Date(), "yyyy-MM-dd");
-      const entries = await api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-        `/time-entries?from=${today}&to=${today}`
-      );
+
+      // Parallel laden
+      const [entries, dashStats] = await Promise.all([
+        api.get<{ id: string; endTime: string | null; startTime: string }[]>(
+          `/time-entries?from=${today}&to=${today}`
+        ),
+        api.get<DashboardStats>("/dashboard"),
+      ]);
+
       recentEntries = entries;
+      stats = dashStats;
 
       const openEntry = entries.find((e) => !e.endTime);
       if (openEntry) {
@@ -46,15 +86,12 @@
         clockStart = null;
       }
 
-      if ($authStore.user?.role !== "ADMIN") {
-        const employeeId = $authStore.user?.employeeId;
-        if (employeeId) {
-          try {
-            const account = await api.get<{ balanceHours: string }>(`/overtime/${employeeId}`);
-            overtimeBalance = parseFloat(account.balanceHours);
-          } catch {
-            // overtime not available
-          }
+      // Team-Wochenübersicht für Manager/Admin
+      if (isManager) {
+        try {
+          teamWeek = await api.get<TeamWeek>("/dashboard/team-week");
+        } catch {
+          // not available
         }
       }
     } finally {
@@ -62,6 +99,7 @@
     }
   }
 
+  // ── Clock In/Out ───────────────────────────────────────────────────────────
   async function handleClock() {
     clockLoading = true;
     try {
@@ -85,6 +123,7 @@
     }
   }
 
+  // ── Helpers ────────────────────────────────────────────────────────────────
   function formatElapsed(start: Date | null, now: Date): string {
     if (!start) return "–";
     const diff = Math.floor((now.getTime() - start.getTime()) / 1000);
@@ -94,6 +133,10 @@
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
+  function fmtH(hours: number): string {
+    return hours.toFixed(1).replace(".", ",") + "h";
+  }
+
   function greeting(): string {
     const h = new Date().getHours();
     if (h < 12) return "Guten Morgen";
@@ -101,12 +144,28 @@
     return "Guten Abend";
   }
 
+  function dayLabel(dateStr: string): string {
+    const d = new Date(dateStr + "T00:00:00");
+    return format(d, "EEE", { locale: de });
+  }
+
+  function dayNum(dateStr: string): string {
+    return dateStr.slice(8, 10);
+  }
+
+  function isToday(dateStr: string): boolean {
+    return dateStr === format(new Date(), "yyyy-MM-dd");
+  }
+
   let userName = $derived($authStore.user?.email.split("@")[0] ?? "");
   let capitalizedName = $derived(userName.charAt(0).toUpperCase() + userName.slice(1));
-  let overtimeClass =
-    $derived(overtimeBalance >= 60 ? "text-red" :
-    overtimeBalance >= 40 ? "text-yellow" :
-    "text-green");
+
+  let overtimeBalance = $derived(stats?.overtime.balanceHours ?? 0);
+  let overtimeClass = $derived(
+    Math.abs(overtimeBalance) >= 60 ? "text-red" :
+    Math.abs(overtimeBalance) >= 40 ? "text-yellow" :
+    "text-green"
+  );
 
   const quickLinks = [
     { href: "/time-entries", icon: "🕐", label: "Zeiteinträge", desc: "Alle Einträge anzeigen" },
@@ -143,7 +202,7 @@
     {#if clockedIn && clockStart}
       <p class="clock-elapsed text-muted">
         Eingestempelt seit {format(clockStart, "HH:mm")} Uhr
-        · Elapsed: <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
+        · <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
       </p>
     {/if}
 
@@ -179,44 +238,142 @@
   <div class="stats-grid">
     <div class="stat-card">
       <p class="stat-label">Heute</p>
-      <p class="stat-value">
+      <p class="stat-value font-mono">
         {#if clockedIn && clockStart}
-          <span class="font-mono" style="font-size: 1.5rem;">
-            {formatElapsed(clockStart, currentTime)}
-          </span>
-        {:else if recentEntries.length > 0}
-          <span>✓ Erfasst</span>
+          {formatElapsed(clockStart, currentTime)}
+        {:else if stats}
+          {fmtH(stats.today.workedHours)}
         {:else}
           –
         {/if}
       </p>
       <p class="stat-sub">
-        {recentEntries.length > 0 ? `${recentEntries.length} Eintrag/Einträge` : "Noch keine Einträge"}
+        {#if stats}
+          {stats.today.entries} {stats.today.entries === 1 ? "Eintrag" : "Einträge"}
+        {:else}
+          Laden…
+        {/if}
       </p>
     </div>
 
     <div class="stat-card">
       <p class="stat-label">Diese Woche</p>
-      <p class="stat-value">–</p>
-      <p class="stat-sub">Nicht verfügbar</p>
+      <p class="stat-value font-mono">
+        {#if stats}
+          {fmtH(stats.week.workedHours)}
+        {:else}
+          –
+        {/if}
+      </p>
+      <p class="stat-sub">
+        {#if stats}
+          von {fmtH(stats.week.targetHours)} Soll
+        {:else}
+          Laden…
+        {/if}
+      </p>
     </div>
 
     <div class="stat-card">
       <p class="stat-label">Überstunden</p>
-      <p class="stat-value {overtimeClass}">
+      <p class="stat-value {overtimeClass} font-mono">
         {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
       </p>
       <p class="stat-sub">
-        {overtimeBalance >= 60 ? "Kritisch" : overtimeBalance >= 40 ? "Erhöht" : "Normal"}
+        {Math.abs(overtimeBalance) >= 60 ? "Kritisch" : Math.abs(overtimeBalance) >= 40 ? "Erhöht" : "Normal"}
       </p>
     </div>
 
     <div class="stat-card">
       <p class="stat-label">Resturlaub</p>
-      <p class="stat-value">–</p>
-      <p class="stat-sub">Nicht verfügbar</p>
+      <p class="stat-value font-mono">
+        {#if stats}
+          {stats.vacation.remaining}
+        {:else}
+          –
+        {/if}
+      </p>
+      <p class="stat-sub">
+        {#if stats}
+          von {stats.vacation.total} Tagen
+        {:else}
+          Laden…
+        {/if}
+      </p>
     </div>
   </div>
+
+  <!-- Team Wochenübersicht (nur Manager/Admin) -->
+  {#if isManager && teamWeek}
+    <div class="team-section">
+      <h2 class="section-title">Team-Wochenübersicht</h2>
+      <p class="section-sub text-muted">
+        KW {getWeekNumber(teamWeek.weekStart)}: {formatShortDate(teamWeek.weekStart)} – {formatShortDate(teamWeek.weekEnd)}
+      </p>
+
+      <div class="team-grid-wrap">
+        <table class="team-grid">
+          <thead>
+            <tr>
+              <th class="team-grid__name">Mitarbeiter</th>
+              {#each teamWeek.weekDays as day}
+                <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
+                  <span class="day-label">{dayLabel(day)}</span>
+                  <span class="day-num">{dayNum(day)}</span>
+                </th>
+              {/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#each teamWeek.team as member (member.id)}
+              <tr>
+                <td class="team-grid__name">
+                  <span class="member-name">{member.name}</span>
+                </td>
+                {#each member.days as day}
+                  <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
+                    {#if day.status === "present"}
+                      <span class="cell-badge cell-badge--present" title="{day.workedHours.toFixed(1)}h gearbeitet">
+                        {day.workedHours.toFixed(1)}
+                      </span>
+                    {:else if day.status === "clocked_in"}
+                      <span class="cell-badge cell-badge--active" title="Eingestempelt">
+                        ●
+                      </span>
+                    {:else if day.status === "absent"}
+                      <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
+                        {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
+                          🤒
+                        {:else if day.reason === "Urlaub"}
+                          🌴
+                        {:else if day.reason === "Mutterschutz"}
+                          🤰
+                        {:else if day.reason === "Elternzeit"}
+                          👶
+                        {:else}
+                          ✗
+                        {/if}
+                      </span>
+                    {:else}
+                      <span class="cell-badge cell-badge--none">–</span>
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="legend">
+        <span class="legend-item"><span class="cell-badge cell-badge--present">5.0</span> Anwesend</span>
+        <span class="legend-item"><span class="cell-badge cell-badge--active">●</span> Eingestempelt</span>
+        <span class="legend-item"><span class="cell-badge cell-badge--absent">🌴</span> Urlaub</span>
+        <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
+        <span class="legend-item"><span class="cell-badge cell-badge--none">–</span> Keine Daten</span>
+      </div>
+    </div>
+  {/if}
 
   <!-- Quick Links -->
   <div class="quick-links-header">
@@ -235,9 +392,24 @@
   </div>
 </div>
 
+<script lang="ts" context="module">
+  function getWeekNumber(dateStr: string): number {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  }
+
+  function formatShortDate(dateStr: string): string {
+    const d = new Date(dateStr + "T00:00:00");
+    return `${d.getDate()}.${d.getMonth() + 1}.`;
+  }
+</script>
+
 <style>
   .dashboard {
-    max-width: 900px;
+    max-width: 960px;
   }
 
   /* Clock Card */
@@ -272,10 +444,6 @@
     box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
   }
 
-  .clock-status-text {
-    font-weight: 500;
-  }
-
   .clock-time {
     font-size: 3.5rem;
     font-weight: 700;
@@ -284,16 +452,12 @@
     line-height: 1;
   }
 
-  .clock-elapsed {
-    font-size: 0.875rem;
-  }
-
+  .clock-elapsed { font-size: 0.875rem; }
   .clock-break {
     display: flex;
     align-items: center;
     gap: 0.75rem;
   }
-
   .clock-break-input {
     width: 5rem;
     text-align: center;
@@ -310,44 +474,20 @@
     min-width: 160px;
     justify-content: center;
   }
-
-  .clock-btn--in {
-    background-color: var(--color-green);
-    color: #fff;
-    border-color: var(--color-green);
-  }
-
-  .clock-btn--in:hover:not(:disabled) {
-    background-color: #15803d;
-    border-color: #15803d;
-    color: #fff;
-  }
-
-  .clock-btn--out {
-    background-color: var(--color-red);
-    color: #fff;
-    border-color: var(--color-red);
-  }
-
-  .clock-btn--out:hover:not(:disabled) {
-    background-color: #b91c1c;
-    border-color: #b91c1c;
-    color: #fff;
-  }
+  .clock-btn--in { background-color: var(--color-green); color: #fff; border-color: var(--color-green); }
+  .clock-btn--in:hover:not(:disabled) { background-color: #15803d; border-color: #15803d; color: #fff; }
+  .clock-btn--out { background-color: var(--color-red); color: #fff; border-color: var(--color-red); }
+  .clock-btn--out:hover:not(:disabled) { background-color: #b91c1c; border-color: #b91c1c; color: #fff; }
 
   .btn-spinner {
     display: inline-block;
-    width: 1rem;
-    height: 1rem;
+    width: 1rem; height: 1rem;
     border: 2px solid rgba(255, 255, 255, 0.4);
     border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* Stats */
   .stats-grid {
@@ -357,11 +497,142 @@
     margin-bottom: 1.75rem;
   }
 
+  /* ── Team Section ── */
+  .team-section {
+    margin-bottom: 2rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+  }
+
+  .section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+  }
+
+  .section-sub {
+    font-size: 0.8125rem;
+    margin: 0 0 1rem;
+  }
+
+  .team-grid-wrap {
+    overflow-x: auto;
+    margin: 0 -0.25rem;
+  }
+
+  .team-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  .team-grid th,
+  .team-grid td {
+    padding: 0.5rem 0.375rem;
+    text-align: center;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .team-grid__name {
+    text-align: left;
+    white-space: nowrap;
+    padding-left: 0.5rem;
+    padding-right: 1rem;
+    min-width: 140px;
+  }
+
+  .team-grid__day {
+    width: 4.5rem;
+  }
+
+  .team-grid__day--today {
+    background: rgba(79, 70, 229, 0.05);
+  }
+
+  .day-label {
+    display: block;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  .day-num {
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+
+  .member-name {
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .team-grid__cell {
+    min-width: 3rem;
+  }
+
+  /* Cell badges */
+  .cell-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cell-badge--present {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  .cell-badge--active {
+    background: #dbeafe;
+    color: #1d4ed8;
+    animation: pulse-badge 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  .cell-badge--absent {
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 0.875rem;
+  }
+
+  .cell-badge--none {
+    color: var(--color-text-muted);
+    opacity: 0.4;
+  }
+
+  /* Legend */
+  .legend {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
   /* Quick Links */
   .quick-links-header {
     margin-bottom: 0.875rem;
   }
-
   .quick-links-header h2 {
     font-size: 1rem;
     font-weight: 600;
@@ -369,13 +640,11 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-
   .quick-links {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
   }
-
   .quick-link {
     display: flex;
     align-items: center;
@@ -385,47 +654,26 @@
     color: var(--color-text);
     transition: border-color 0.15s, box-shadow 0.15s;
   }
-
   .quick-link:hover {
     border-color: var(--color-brand-light);
     box-shadow: var(--shadow-md);
     color: var(--color-text);
   }
-
-  .quick-link-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-
+  .quick-link-icon { font-size: 1.5rem; flex-shrink: 0; }
   .quick-link-label {
     font-size: 0.9375rem;
     font-weight: 600;
     color: var(--color-text-heading);
     margin-bottom: 0.125rem;
   }
-
-  .quick-link-desc {
-    font-size: 0.8125rem;
-  }
+  .quick-link-desc { font-size: 0.8125rem; }
 
   @media (max-width: 900px) {
-    .stats-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .quick-links {
+    .stats-grid, .quick-links {
       grid-template-columns: repeat(2, 1fr);
     }
   }
-
   @media (max-width: 480px) {
-    .stats-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .quick-links {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .clock-time {
-      font-size: 2.5rem;
-    }
+    .clock-time { font-size: 2.5rem; }
   }
 </style>
