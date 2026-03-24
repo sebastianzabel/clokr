@@ -74,7 +74,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <span class="login-logo-icon">✂️</span>
+      <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
       <p class="login-subtitle">Wir haben einen Code an Ihre E-Mail-Adresse gesendet.</p>
     </div>

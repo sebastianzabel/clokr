@@ -44,7 +44,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <span class="login-logo-icon">✂️</span>
+      <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Clokr</h1>
       <p class="login-subtitle">Bitte melden Sie sich an</p>
     </div>
@@ -94,7 +94,7 @@
     </form>
 
     <p class="login-footer">
-      Zeiterfassung &amp; Teamverwaltung
+      Time tracking &amp; team management
     </p>
   </div>
 </div>
