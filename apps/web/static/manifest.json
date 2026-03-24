@@ -1,7 +1,7 @@
 {
   "name": "Clokr",
-  "short_name": "Zeiterfassung",
-  "description": "Clokr – Zeiterfassung & Urlaubsplanung",
+  "short_name": "Clokr",
+  "description": "Clokr – Time tracking & team management",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#f9fafb",

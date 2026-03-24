@@ -33,7 +33,7 @@
 
   let navItems = $derived([
     { href: "/dashboard",        icon: "🏠",  label: "Dashboard",      show: true },
-    { href: "/time-entries",     icon: "🕐",  label: "Zeiterfassung",  show: true },
+    { href: "/time-entries",     icon: "🕐",  label: "Zeiteinträge",   show: true },
     { href: "/leave",            icon: "🌴",  label: "Abwesenheiten",  show: true },
     { href: "/reports",          icon: "📊",  label: "Berichte",       show: true },
     { href: "/admin",            icon: "⚙️",  label: "Admin",          show: isManager },
@@ -52,8 +52,8 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <span class="brand-icon">✂️</span>
-        <span class="brand-name">Zeiterfassung</span>
+        <span class="brand-icon">⏱️</span>
+        <span class="brand-name">Clokr</span>
       </div>
 
       <nav class="sidebar-nav" aria-label="Hauptnavigation">

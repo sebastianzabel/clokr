@@ -56,7 +56,7 @@ export async function buildApp() {
     openapi: {
       info: {
         title: "Clokr API",
-        description: "Zeiterfassung & Urlaubsplanung API",
+        description: "Time tracking & team management API",
         version: "1.0.0",
       },
       components: {

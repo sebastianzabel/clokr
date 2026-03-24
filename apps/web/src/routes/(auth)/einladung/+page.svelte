@@ -51,7 +51,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <span class="login-logo-icon">✂️</span>
+      <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Clokr</h1>
     </div>
 
