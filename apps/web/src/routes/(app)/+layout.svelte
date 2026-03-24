@@ -290,9 +290,9 @@
   }
 
   .brand-icon-img {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
     flex-shrink: 0;
   }
 

@@ -1,6 +1,8 @@
-# Clokr
+<p align="center">
+  <img src="images/clokr-logo.png" alt="Clokr" width="200" />
+</p>
 
-**Open-source time tracking & workforce management for small businesses.**
+<p align="center"><strong>Open-source time tracking & workforce management for small businesses.</strong></p>
 
 Clokr is a self-hosted web application for tracking working hours, managing leave requests, and handling overtime — built for teams that need a simple but complete solution without a SaaS subscription.
 
@@ -26,15 +28,15 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | SvelteKit + Svelte 5, TypeScript |
-| Backend | Fastify 5, TypeScript |
-| Database | PostgreSQL 16 + Prisma 7 |
-| Cache | Redis 7 |
-| Storage | MinIO (S3-compatible) |
-| Auth | JWT (Access + Refresh) + optional Email OTP |
-| Monorepo | pnpm workspaces |
+| Layer    | Technology                                  |
+| -------- | ------------------------------------------- |
+| Frontend | SvelteKit + Svelte 5, TypeScript            |
+| Backend  | Fastify 5, TypeScript                       |
+| Database | PostgreSQL 16 + Prisma 7                    |
+| Cache    | Redis 7                                     |
+| Storage  | MinIO (S3-compatible)                       |
+| Auth     | JWT (Access + Refresh) + optional Email OTP |
+| Monorepo | pnpm workspaces                             |
 
 ---
 
@@ -87,13 +89,13 @@ docker compose up -d
 
 This starts all services:
 
-| Service | Port | Description |
-|---|---|---|
-| **web** | 3000 | SvelteKit frontend (proxies API) |
-| **api** | 4000 | Fastify backend |
-| **postgres** | 5432 | PostgreSQL 16 |
-| **redis** | 6379 | Redis 7 |
-| **minio** | 9000/9001 | MinIO object storage |
+| Service      | Port      | Description                      |
+| ------------ | --------- | -------------------------------- |
+| **web**      | 3000      | SvelteKit frontend (proxies API) |
+| **api**      | 4000      | Fastify backend                  |
+| **postgres** | 5432      | PostgreSQL 16                    |
+| **redis**    | 6379      | Redis 7                          |
+| **minio**    | 9000/9001 | MinIO object storage             |
 
 The API container automatically runs `prisma db push` and seeds demo data on first startup.
 
@@ -168,10 +170,10 @@ pnpm dev
 
 After seeding:
 
-| Role | Email | Password |
-|---|---|---|
-| Admin | admin@clokr.de | admin1234 |
-| Employee | max@clokr.de | admin1234 |
+| Role     | Email          | Password  |
+| -------- | -------------- | --------- |
+| Admin    | admin@clokr.de | admin1234 |
+| Employee | max@clokr.de   | admin1234 |
 
 ---
 
@@ -195,11 +197,11 @@ clokr/
 
 ## Roles
 
-| Role | Permissions |
-|---|---|
-| `ADMIN` | Full access: employees, system settings, audit log, shifts, imports |
-| `MANAGER` | Approve leave, view reports, manage shifts |
-| `EMPLOYEE` | Own time entries, leave requests, overtime view |
+| Role       | Permissions                                                         |
+| ---------- | ------------------------------------------------------------------- |
+| `ADMIN`    | Full access: employees, system settings, audit log, shifts, imports |
+| `MANAGER`  | Approve leave, view reports, manage shifts                          |
+| `EMPLOYEE` | Own time entries, leave requests, overtime view                     |
 
 ---
 
