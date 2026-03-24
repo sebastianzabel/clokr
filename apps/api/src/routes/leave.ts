@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getTenantTimezone, dateStrInTz, monthRangeUtc } from "../utils/timezone";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = ["VACATION", "OVERTIME_COMP", "SPECIAL", "UNPAID", "SICK", "SICK_CHILD", "EDUCATION", "MATERNITY", "PARENTAL"] as const;
@@ -525,9 +526,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const y = year  ? parseInt(year)  : new Date().getFullYear();
       const m = month ? parseInt(month) : new Date().getMonth() + 1;
 
-      // Etwas Puffer: letzter Tag des Vormonats bis erster Tag des Folgemonats
-      const start = new Date(y, m - 1, 1);
-      const end   = new Date(y, m,     0); // letzter Tag des Monats
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, m, tz);
 
       const [rows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
@@ -660,8 +660,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       for (const row of rows) {
         const isVacation = vacationNames.includes(row.leaveType.name);
         const typeIds    = isVacation ? allVacTypeIds : [row.leaveTypeId];
-        const yearStart  = new Date(row.year, 0, 1);
-        const yearEnd    = new Date(row.year, 11, 31, 23, 59, 59);
+        const yearStart  = new Date(`${row.year}-01-01T00:00:00Z`);
+        const yearEnd    = new Date(`${row.year}-12-31T23:59:59Z`);
         const approved   = await app.prisma.leaveRequest.findMany({
           where: { employeeId, leaveTypeId: { in: typeIds }, status: "APPROVED", startDate: { gte: yearStart }, endDate: { lte: yearEnd } },
         });

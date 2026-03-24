@@ -3,6 +3,15 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { TimeEntrySource } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
+import {
+  getTenantTimezone,
+  todayInTz,
+  dateStrInTz,
+  monthRangeUtc,
+  calcExpectedMinutesTz,
+  getDayOfWeekInTz,
+  getDayHoursFromSchedule,
+} from "../utils/timezone";
 
 const clockInSchema = z.object({
   employeeId: z.string().uuid().optional(), // optional: Manager kann für andere stempeln
@@ -95,10 +104,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       const now = new Date();
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const entry = await app.prisma.timeEntry.create({
         data: {
           employeeId,
-          date: new Date(now.toISOString().split("T")[0]),
+          date: todayInTz(tz),
           startTime: now,
           source: body.source,
           note: body.note,
@@ -338,14 +348,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   });
 }
 
-// ── Hilfsfunktion: Überstundensaldo berechnen (kalenderbasiert) ───────────────
+// ── Hilfsfunktion: Überstundensaldo berechnen (kalenderbasiert, TZ-aware) ────
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
-  // Arbeitsplan laden (mit Fallback auf Tenant-Defaults)
   const schedule = await getEffectiveSchedule(app, employeeId);
 
+  // Tenant-Timezone laden
+  const employee = await app.prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true },
+  });
+  const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
+
+  // Aktuellen Monat in Tenant-TZ berechnen
   const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z"); // Mitte des Tages für Monat-Bestimmung
+  const { start: monthStart, end: monthEnd } = monthRangeUtc(
+    zonedNow.getUTCFullYear(),
+    zonedNow.getUTCMonth() + 1,
+    tz,
+  );
 
   // Tatsächlich gearbeitete Minuten dieses Monats
   const entries = await app.prisma.timeEntry.findMany({
@@ -362,10 +383,10 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Soll-Minuten: pro Kalendertag die jeweilige Tages-Soll-Zeit summieren
-  const expectedMinutes = calcExpectedMinutes(schedule, monthStart, monthEnd);
+  // Soll-Minuten (TZ-aware Wochentag-Zuordnung)
+  const expectedMinutes = calcExpectedMinutesTz(schedule, monthStart, monthEnd, tz);
 
-  // Öffentliche Feiertage abziehen (als "freie Tage" gelten)
+  // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
@@ -373,11 +394,11 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     },
   });
   const holidayMinutes = holidays.reduce((sum, h) => {
-    const dow = h.date.getDay();
-    return sum + getDayHours(schedule, dow) * 60;
+    const dow = getDayOfWeekInTz(h.date, tz);
+    return sum + getDayHoursFromSchedule(schedule, dow) * 60;
   }, 0);
 
-  // Genehmigte Abwesenheiten abziehen (Urlaub, Krank, etc. reduzieren das Soll)
+  // Genehmigte Abwesenheiten abziehen
   const approvedLeave = await app.prisma.leaveRequest.findMany({
     where: {
       employeeId,
@@ -387,15 +408,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     },
   });
   const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-    return sum + calcExpectedMinutes(schedule,
+    return sum + calcExpectedMinutesTz(
+      schedule,
       lr.startDate < monthStart ? monthStart : lr.startDate,
       lr.endDate   > monthEnd   ? monthEnd   : lr.endDate,
+      tz,
     );
   }, 0);
 
   const diffHours = (workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes)) / 60;
 
-  // Saldo direkt setzen (nicht kumulieren – das passiert beim Monatsabschluss)
   const account = await app.prisma.overtimeAccount.upsert({
     where:  { employeeId },
     create: { employeeId, balanceHours: diffHours },
@@ -411,11 +433,10 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
 }
 
 // ── Effektiven Arbeitsplan ermitteln (Employee > TenantConfig > Hardcoded) ────
-async function getEffectiveSchedule(app: FastifyInstance, employeeId: string) {
+export async function getEffectiveSchedule(app: FastifyInstance, employeeId: string) {
   const schedule = await app.prisma.workSchedule.findUnique({ where: { employeeId } });
   if (schedule) return schedule;
 
-  // Fallback: Tenant-Config
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
     select: { tenantId: true },
@@ -424,7 +445,6 @@ async function getEffectiveSchedule(app: FastifyInstance, employeeId: string) {
     ? await app.prisma.tenantConfig.findUnique({ where: { tenantId: employee.tenantId } })
     : null;
 
-  // Synthetisches Schedule-Objekt aus Tenant-Defaults
   return {
     weeklyHours:    tenantConfig?.defaultWeeklyHours    ?? 40,
     mondayHours:    tenantConfig?.defaultMondayHours    ?? 8,
@@ -437,26 +457,4 @@ async function getEffectiveSchedule(app: FastifyInstance, employeeId: string) {
     overtimeThreshold:   tenantConfig?.overtimeThreshold   ?? 60,
     allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
   };
-}
-
-// ── Soll-Minuten für einen Zeitraum berechnen (je Wochentag) ─────────────────
-function calcExpectedMinutes(
-  schedule: { mondayHours: unknown; tuesdayHours: unknown; wednesdayHours: unknown;
-              thursdayHours: unknown; fridayHours: unknown; saturdayHours: unknown; sundayHours: unknown },
-  from: Date,
-  to: Date
-): number {
-  let total = 0;
-  const current = new Date(from);
-  while (current <= to) {
-    total += getDayHours(schedule, current.getDay()) * 60;
-    current.setDate(current.getDate() + 1);
-  }
-  return total;
-}
-
-function getDayHours(schedule: Record<string, unknown>, dow: number): number {
-  const keys = ["sundayHours","mondayHours","tuesdayHours","wednesdayHours",
-                "thursdayHours","fridayHours","saturdayHours"];
-  return Number(schedule[keys[dow]] ?? 0);
 }

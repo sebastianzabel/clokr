@@ -22,16 +22,21 @@ RUN pnpm --filter @clokr/web build
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
-# adapter-node bundles dependencies into the build output
-COPY --from=build /app/apps/web/build/ ./build/
-COPY --from=build /app/apps/web/package.json ./package.json
+# Copy full workspace (adapter-node needs external deps like date-fns)
+COPY --from=build /app/node_modules/ ./node_modules/
+COPY --from=build /app/apps/web/node_modules/ ./apps/web/node_modules/
+COPY --from=build /app/apps/web/build/ ./apps/web/build/
+COPY --from=build /app/apps/web/package.json ./apps/web/
+COPY --from=build /app/package.json ./
+COPY --from=build /app/pnpm-workspace.yaml ./
+COPY --from=build /app/packages/types/package.json ./packages/types/
 
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV API_URL=http://api:4000
 EXPOSE 3000
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://localhost:3000/ || exit 1
 
-CMD ["node", "build/index.js"]
+CMD ["node", "apps/web/build/index.js"]

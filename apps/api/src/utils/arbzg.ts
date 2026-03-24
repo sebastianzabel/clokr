@@ -1,4 +1,5 @@
 import { PrismaClient } from "@clokr/db";
+import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
 
 export interface ArbZGWarning {
   code:     "BREAK_TOO_SHORT" | "MAX_DAILY_EXCEEDED" | "MAX_WEEKLY_EXCEEDED" | "MIN_REST_VIOLATED";
@@ -17,7 +18,14 @@ export async function checkArbZG(
 ): Promise<ArbZGWarning[]> {
   const warnings: ArbZGWarning[] = [];
 
-  const dateStr = changedDate.toISOString().split("T")[0];
+  // Look up tenant timezone for this employee
+  const employee = await prisma.employee.findUniqueOrThrow({
+    where: { id: employeeId },
+    select: { tenantId: true },
+  });
+  const tz = await getTenantTimezone(prisma, employee.tenantId);
+
+  const dateStr = dateStrInTz(changedDate, tz);
 
   // ── 1. Tagessicht: alle abgeschlossenen Slots des Tages ────────────────────
   const daySlots = await prisma.timeEntry.findMany({
@@ -84,7 +92,7 @@ export async function checkArbZG(
     // Vortag prüfen: letzter Slot des Vortages
     const prevDate = new Date(changedDate);
     prevDate.setDate(prevDate.getDate() - 1);
-    const prevDateStr = prevDate.toISOString().split("T")[0];
+    const prevDateStr = dateStrInTz(prevDate, tz);
 
     const prevLastSlot = await prisma.timeEntry.findFirst({
       where: {
@@ -110,7 +118,7 @@ export async function checkArbZG(
     // Folgetag prüfen: erster Slot des Folgetages
     const nextDate = new Date(changedDate);
     nextDate.setDate(nextDate.getDate() + 1);
-    const nextDateStr = nextDate.toISOString().split("T")[0];
+    const nextDateStr = dateStrInTz(nextDate, tz);
 
     const nextFirstSlot = await prisma.timeEntry.findFirst({
       where: {
@@ -136,7 +144,7 @@ export async function checkArbZG(
   }
 
   // ── 2. Wochensicht: § 3 ArbZG – max. 48h / Woche ─────────────────────────
-  const dayOfWeek = changedDate.getDay(); // 0=So, 1=Mo, ...
+  const dayOfWeek = getDayOfWeekInTz(changedDate, tz); // 0=So, 1=Mo, ...
   const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const monday = new Date(changedDate);
   monday.setDate(monday.getDate() - daysFromMonday);

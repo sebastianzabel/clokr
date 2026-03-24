@@ -5,6 +5,7 @@
 
   interface TenantConfig {
     federalState: string;
+    timezone: string;
     defaultWeeklyHours: number;
     defaultMondayHours: number;
     defaultTuesdayHours: number;
@@ -66,6 +67,35 @@
   let smtpTestResult = $state("");
   let smtpTestError = $state("");
 
+  // Timezone
+  let gTimezone = $state("Europe/Berlin");
+  const TIMEZONE_OPTIONS = [
+    "Europe/Berlin",
+    "Europe/Vienna",
+    "Europe/Zurich",
+    "Europe/Amsterdam",
+    "Europe/Brussels",
+    "Europe/Luxembourg",
+    "Europe/Paris",
+    "Europe/London",
+    "Europe/Warsaw",
+    "Europe/Prague",
+    "Europe/Rome",
+    "Europe/Madrid",
+    "Europe/Stockholm",
+    "Europe/Copenhagen",
+    "Europe/Helsinki",
+    "Europe/Athens",
+    "Europe/Istanbul",
+    "Europe/Moscow",
+    "America/New_York",
+    "America/Chicago",
+    "America/Los_Angeles",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "UTC",
+  ];
+
   // 2FA
   let twoFaEnabled = $state(false);
   let twoFaSaving = $state(false);
@@ -75,6 +105,7 @@
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
+      gTimezone = cfg.timezone ?? "Europe/Berlin";
       _gOtherFields = {
         defaultWeeklyHours:    cfg.defaultWeeklyHours,
         defaultMondayHours:    cfg.defaultMondayHours,
@@ -117,7 +148,7 @@
     if (!_gOtherFields) return;
     stateSaving = true; stateError = ""; stateSaved = false;
     try {
-      await api.put("/settings/work", { ..._gOtherFields, federalState: gFederalState });
+      await api.put("/settings/work", { ..._gOtherFields, federalState: gFederalState, timezone: gTimezone });
       stateSaved = true;
       setTimeout(() => (stateSaved = false), 3000);
     } catch (e: unknown) {
@@ -194,6 +225,26 @@
         {/each}
       </select>
     </div>
+  </div>
+
+  <!-- ── Zeitzone ──────────────────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2>Zeitzone</h2>
+    <p class="text-muted">Bestimmt die Zuordnung von Zeitstempeln zu Kalendertagen</p>
+  </div>
+
+  <div class="card card-body settings-card">
+    <div class="form-group" style="max-width:320px;">
+      <label class="form-label" for="g-timezone">Zeitzone (IANA)</label>
+      <select id="g-timezone" bind:value={gTimezone} class="form-input">
+        {#each TIMEZONE_OPTIONS as tz}
+          <option value={tz}>{tz}</option>
+        {/each}
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick={saveFederalState} disabled={stateSaving}>
+      {stateSaving ? "Speichern …" : "Speichern"}
+    </button>
   </div>
 
   <!-- ── Bundesland ────────────────────────────────────────────────────────── -->
