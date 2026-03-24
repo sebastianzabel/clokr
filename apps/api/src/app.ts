@@ -18,6 +18,7 @@ import { auditPlugin } from "./plugins/audit";
 import { prismaPlugin } from "./plugins/prisma";
 import { mailerPlugin } from "./plugins/mailer";
 import { notifyPlugin } from "./plugins/notify";
+import { schedulerPlugin } from "./plugins/scheduler";
 import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
@@ -85,6 +86,7 @@ export async function buildApp() {
   await app.register(auditPlugin);
   await app.register(mailerPlugin);
   await app.register(notifyPlugin);
+  await app.register(schedulerPlugin);
 
   // ── Routes ────────────────────────────────────────────────
   await app.register(authRoutes,      { prefix: "/api/v1/auth" });

@@ -112,6 +112,8 @@
   let phError = $state("");
   let phTesting = $state(false);
   let phTestResult = $state("");
+  let phAutoSync = $state(false);
+  let phSyncCron = $state("0 3 * * *");
   let phSyncStart = $state("");
   let phSyncEnd = $state("");
   let phSyncing = $state(false);
@@ -155,11 +157,13 @@
       } catch { /* ignorieren */ }
 
       try {
-        const ph = await api.get<{ configured: boolean; phorestBusinessId: string | null; phorestBranchId: string | null; phorestUsername: string | null; phorestBaseUrl: string | null }>("/integrations/phorest/config");
+        const ph = await api.get<{ configured: boolean; phorestBusinessId: string | null; phorestBranchId: string | null; phorestUsername: string | null; phorestBaseUrl: string | null; phorestAutoSync: boolean; phorestSyncCron: string | null }>("/integrations/phorest/config");
         phConfigured = ph.configured;
         phBusinessId = ph.phorestBusinessId ?? "";
         phBranchId = ph.phorestBranchId ?? "";
         phUsername = ph.phorestUsername ?? "";
+        phAutoSync = ph.phorestAutoSync ?? false;
+        phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
         // Set default sync range to current week
         const now = new Date();
         const dow = now.getDay();
@@ -238,6 +242,8 @@
         phorestBranchId: phBranchId,
         phorestUsername: phUsername,
         phorestPassword: phPassword,
+        phorestAutoSync: phAutoSync,
+        phorestSyncCron: phSyncCron,
       });
       phConfigured = true;
       phSaved = true;
@@ -492,7 +498,30 @@
 
     {#if phConfigured}
       <hr style="margin: 1.5rem 0; border-color: var(--color-border);">
-      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">Schichten synchronisieren</h3>
+
+      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">Automatischer Sync</h3>
+      <label class="toggle-label" style="margin-bottom: 1rem;">
+        <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
+        <span>
+          <strong>Auto-Sync aktivieren</strong><br>
+          <span class="text-muted" style="font-size:0.8125rem;">Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span>
+        </span>
+      </label>
+
+      {#if phAutoSync}
+        <div class="form-group" style="max-width: 320px; margin-bottom: 1.25rem;">
+          <label class="form-label" for="ph-cron">Zeitplan</label>
+          <select id="ph-cron" bind:value={phSyncCron} class="form-input">
+            <option value="0 3 * * *">Täglich um 03:00</option>
+            <option value="0 */6 * * *">Alle 6 Stunden</option>
+            <option value="0 */2 * * *">Alle 2 Stunden</option>
+            <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
+          </select>
+          <p class="form-hint text-muted">Zeitplan wird beim Speichern der Konfiguration aktiviert.</p>
+        </div>
+      {/if}
+
+      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">Manueller Sync</h3>
       <div class="form-grid">
         <div class="form-group">
           <label class="form-label" for="ph-sync-start">Von</label>

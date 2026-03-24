@@ -69,6 +69,8 @@ model TenantConfig {
   phorestUsername   String?
   phorestPassword   String?
   phorestBaseUrl    String?  @default("https://api.phorest.com/third-party-api-server")
+  phorestAutoSync   Boolean  @default(false)
+  phorestSyncCron   String   @default("0 3 * * *") // Default: täglich 03:00
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
