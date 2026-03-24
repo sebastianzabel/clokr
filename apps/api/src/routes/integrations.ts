@@ -24,7 +24,15 @@ const configSchema = z.object({
   phorestUsername: z.string().min(1),
   phorestPassword: z.string().min(1),
   phorestBaseUrl: z.string().url().optional(),
+  phorestAutoSync: z.boolean().optional(),
+  phorestSyncCron: z.string().optional(),
 });
+
+declare module "fastify" {
+  interface FastifyInstance {
+    refreshScheduler?: () => Promise<void>;
+  }
+}
 
 interface PhorestStaff {
   staffId: string;
@@ -86,6 +94,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestBranchId: true,
           phorestUsername: true,
           phorestBaseUrl: true,
+          phorestAutoSync: true,
+          phorestSyncCron: true,
           // Passwort nicht zurückgeben
         },
       });
@@ -110,6 +120,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestUsername: body.phorestUsername,
           phorestPassword: body.phorestPassword,
           ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
+          ...(body.phorestAutoSync !== undefined ? { phorestAutoSync: body.phorestAutoSync } : {}),
+          ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
         },
       });
 
@@ -117,8 +129,13 @@ export async function integrationRoutes(app: FastifyInstance) {
         userId: req.user.sub,
         action: "UPDATE",
         entity: "PhorestConfig",
-        newValue: { businessId: body.phorestBusinessId, branchId: body.phorestBranchId },
+        newValue: { businessId: body.phorestBusinessId, branchId: body.phorestBranchId, autoSync: body.phorestAutoSync },
       });
+
+      // Scheduler neu laden wenn Auto-Sync geändert
+      if (body.phorestAutoSync !== undefined && app.refreshScheduler) {
+        await app.refreshScheduler();
+      }
 
       return { success: true };
     },
