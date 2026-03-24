@@ -5,7 +5,7 @@
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
   interface Props {
-    children?: import('svelte').Snippet;
+    children?: import("svelte").Snippet;
   }
 
   let { children }: Props = $props();
@@ -28,7 +28,9 @@
 
   async function loadNotifications() {
     try {
-      const res = await api.get<{ notifications: Notification[]; unreadCount: number }>("/notifications");
+      const res = await api.get<{ notifications: Notification[]; unreadCount: number }>(
+        "/notifications",
+      );
       notifications = res.notifications;
       unreadCount = res.unreadCount;
     } catch {}
@@ -36,13 +38,13 @@
 
   async function markRead(id: string) {
     await api.patch(`/notifications/${id}/read`, {});
-    notifications = notifications.map(n => n.id === id ? { ...n, read: true } : n);
+    notifications = notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
     unreadCount = Math.max(0, unreadCount - 1);
   }
 
   async function markAllRead() {
     await api.patch("/notifications/read-all", {});
-    notifications = notifications.map(n => ({ ...n, read: true }));
+    notifications = notifications.map((n) => ({ ...n, read: true }));
     unreadCount = 0;
   }
 
@@ -100,13 +102,15 @@
 
   let isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
-  let navItems = $derived([
-    { href: "/dashboard",        icon: "🏠",  label: "Dashboard",      show: true },
-    { href: "/time-entries",     icon: "🕐",  label: "Zeiteinträge",   show: true },
-    { href: "/leave",            icon: "🌴",  label: "Abwesenheiten",  show: true },
-    { href: "/reports",          icon: "📊",  label: "Berichte",       show: true },
-    { href: "/admin",            icon: "⚙️",  label: "Admin",          show: isManager },
-  ].filter(i => i.show));
+  let navItems = $derived(
+    [
+      { href: "/dashboard", icon: "🏠", label: "Dashboard", show: true },
+      { href: "/time-entries", icon: "🕐", label: "Zeiteinträge", show: true },
+      { href: "/leave", icon: "🌴", label: "Abwesenheiten", show: true },
+      { href: "/reports", icon: "📊", label: "Berichte", show: true },
+      { href: "/admin", icon: "⚙️", label: "Admin", show: isManager },
+    ].filter((i) => i.show),
+  );
 
   let pathname = $derived($page.url.pathname);
 
@@ -123,17 +127,29 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <span class="brand-icon">⏱️</span>
+        <img src="/clokr-icon.png" alt="Clokr" class="brand-icon-img" />
         <span class="brand-name">Clokr</span>
         <div class="notification-wrapper">
           <button
             class="notification-bell"
-            onclick={() => { showNotifications = !showNotifications; }}
+            onclick={() => {
+              showNotifications = !showNotifications;
+            }}
             aria-label="Benachrichtigungen"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
             </svg>
             {#if unreadCount > 0}
               <span class="notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
@@ -172,9 +188,10 @@
 
       <nav class="sidebar-nav" aria-label="Hauptnavigation">
         {#each navItems as item}
-          {@const active = item.href === "/dashboard"
-            ? $page.url.pathname === "/dashboard"
-            : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
+          {@const active =
+            item.href === "/dashboard"
+              ? $page.url.pathname === "/dashboard"
+              : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
           <a
             href={item.href}
             class="nav-item"
@@ -185,7 +202,6 @@
             <span class="nav-label">{item.label}</span>
           </a>
         {/each}
-
       </nav>
 
       <div class="sidebar-footer">
@@ -204,7 +220,11 @@
             </div>
           </div>
         {/if}
-        <button class="btn btn-ghost btn-sm logout-btn" onclick={handleLogout} aria-label="Abmelden">
+        <button
+          class="btn btn-ghost btn-sm logout-btn"
+          onclick={handleLogout}
+          aria-label="Abmelden"
+        >
           Abmelden
         </button>
       </div>
@@ -218,9 +238,10 @@
     <!-- Mobile Bottom Nav -->
     <nav class="mobile-nav" aria-label="Mobile Navigation">
       {#each navItems as item}
-        {@const active = item.href === "/dashboard"
-          ? $page.url.pathname === "/dashboard"
-          : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
+        {@const active =
+          item.href === "/dashboard"
+            ? $page.url.pathname === "/dashboard"
+            : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
         <a
           href={item.href}
           class="mobile-nav-item"
@@ -268,9 +289,11 @@
     flex-shrink: 0;
   }
 
-  .brand-icon {
-    font-size: 1.375rem;
-    line-height: 1;
+  .brand-icon-img {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    flex-shrink: 0;
   }
 
   .brand-name {
@@ -295,7 +318,9 @@
     padding: 0.375rem;
     border-radius: var(--radius-sm);
     color: var(--color-text-muted);
-    transition: background-color 0.12s, color 0.12s;
+    transition:
+      background-color 0.12s,
+      color 0.12s;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -450,7 +475,9 @@
     color: var(--color-text-muted);
     text-decoration: none;
     border-left: 3px solid transparent;
-    transition: background-color 0.12s, color 0.12s;
+    transition:
+      background-color 0.12s,
+      color 0.12s;
     position: relative;
   }
 

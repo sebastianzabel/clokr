@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { preventDefault } from 'svelte/legacy';
+  import { preventDefault } from "svelte/legacy";
 
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
@@ -26,7 +26,12 @@
       const res = await api.post<{
         accessToken: string;
         refreshToken: string;
-        user: { id: string; email: string; role: "ADMIN" | "MANAGER" | "EMPLOYEE"; employeeId: string | null };
+        user: {
+          id: string;
+          email: string;
+          role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+          employeeId: string | null;
+        };
       }>("/auth/verify-otp", { userId, code });
 
       sessionStorage.removeItem("otp_userId");
@@ -74,7 +79,7 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <span class="login-logo-icon">⏱️</span>
+      <img src="/clokr-icon.png" alt="Clokr" class="login-logo-img" style="max-width: 64px;" />
       <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
       <p class="login-subtitle">Wir haben einen Code an Ihre E-Mail-Adresse gesendet.</p>
     </div>
@@ -110,7 +115,11 @@
         />
       </div>
 
-      <button type="submit" disabled={loading || code.length !== 6} class="btn btn-primary login-submit">
+      <button
+        type="submit"
+        disabled={loading || code.length !== 6}
+        class="btn btn-primary login-submit"
+      >
         {#if loading}
           <span class="login-spinner"></span>
           Prüfen…
@@ -150,12 +159,32 @@
     max-width: 420px;
   }
 
-  .login-logo { text-align: center; margin-bottom: 2rem; }
-  .login-logo-icon { display: inline-block; font-size: 2.5rem; margin-bottom: 0.75rem; line-height: 1; }
-  .login-title { font-size: 1.5rem; font-weight: 700; color: var(--color-brand); margin-bottom: 0.375rem; }
-  .login-subtitle { font-size: 0.9375rem; color: var(--color-text-muted); }
+  .login-logo {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .login-logo-icon {
+    display: inline-block;
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    line-height: 1;
+  }
+  .login-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-brand);
+    margin-bottom: 0.375rem;
+  }
+  .login-subtitle {
+    font-size: 0.9375rem;
+    color: var(--color-text-muted);
+  }
 
-  .login-form { display: flex; flex-direction: column; gap: 1.125rem; }
+  .login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.125rem;
+  }
 
   .otp-input {
     text-align: center;
@@ -182,7 +211,11 @@
     animation: spin 0.6s linear infinite;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   .otp-footer {
     text-align: center;
@@ -193,7 +226,11 @@
     gap: 0.5rem;
   }
 
-  .login-footer { font-size: 0.8125rem; color: var(--color-text-muted); margin: 0; }
+  .login-footer {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
 
   .back-link {
     font-size: 0.8125rem;
@@ -210,6 +247,14 @@
     font-size: 0.875rem;
   }
 
-  .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-  .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+  .alert-error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+  .alert-success {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
 </style>

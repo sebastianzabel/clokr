@@ -2,6 +2,7 @@
   "name": "clokr",
   "version": "0.2.0",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
     "dev": "turbo run dev",
@@ -12,15 +13,38 @@
     "db:generate": "pnpm --filter @clokr/db generate",
     "db:studio": "pnpm --filter @clokr/db studio",
     "test": "turbo run test",
-    "test:coverage": "turbo run test:coverage"
+    "test:coverage": "turbo run test:coverage",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.2",
+    "@typescript-eslint/parser": "^8.57.2",
     "@vitest/coverage-v8": "^4.1.1",
+    "eslint": "^10.1.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-svelte": "^3.16.0",
+    "globals": "^17.4.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
+    "prettier-plugin-svelte": "^3.5.1",
+    "svelte-eslint-parser": "^1.6.0",
     "tsx": "^4.0.0",
     "turbo": "^2.0.0",
     "typescript": "^6.0.0",
+    "typescript-eslint": "^8.57.2",
     "vitest": "^4.1.1"
+  },
+  "lint-staged": {
+    "*.{ts,js,svelte}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write"
+    ],
+    "*.{json,css,md,yml,yaml}": [
+      "prettier --write"
+    ]
   },
   "pnpm": {
     "overrides": {
