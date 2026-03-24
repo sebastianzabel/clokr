@@ -44,7 +44,13 @@
   let templates: ShiftTemplate[] = $state([]);
   let loading = $state(true);
   let error = $state("");
-  let timeEntries: Array<{ employeeId: string; date: string; startTime: string; endTime: string | null; breakMinutes: number }> = $state([]);
+  let timeEntries: Array<{
+    employeeId: string;
+    date: string;
+    startTime: string;
+    endTime: string | null;
+    breakMinutes: number;
+  }> = $state([]);
 
   // Current week reference date (Monday)
   let currentDate = $state(getMondayOfWeek(new Date()));
@@ -81,7 +87,7 @@
   const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 
   const quickTemplate = $derived(
-    quickTemplateId ? templates.find(t => t.id === quickTemplateId) : null
+    quickTemplateId ? templates.find((t) => t.id === quickTemplateId) : null,
   );
 
   const weekLabel = $derived(() => {
@@ -111,7 +117,7 @@
   }
 
   function getShiftsForCell(employeeId: string, date: string): Shift[] {
-    return shifts.filter(s => s.employeeId === employeeId && s.date.startsWith(date));
+    return shifts.filter((s) => s.employeeId === employeeId && s.date.startsWith(date));
   }
 
   function shiftColor(shift: Shift): string {
@@ -119,7 +125,9 @@
   }
 
   function getActualHours(employeeId: string, date: string): number | null {
-    const entries = timeEntries.filter(e => e.employeeId === employeeId && (e.date as string).startsWith(date) && e.endTime);
+    const entries = timeEntries.filter(
+      (e) => e.employeeId === employeeId && (e.date as string).startsWith(date) && e.endTime,
+    );
     if (entries.length === 0) return null;
     return entries.reduce((sum, e) => {
       const start = new Date(e.startTime).getTime();
@@ -218,7 +226,7 @@
   }
 
   function onTemplateSelect() {
-    const tpl = templates.find(t => t.id === modalTemplateId);
+    const tpl = templates.find((t) => t.id === modalTemplateId);
     if (tpl) {
       modalStartTime = tpl.startTime;
       modalEndTime = tpl.endTime;
@@ -243,7 +251,7 @@
           label: modalLabel || undefined,
           note: modalNote || undefined,
         });
-        shifts = shifts.map(s => s.id === editingShiftId ? updated : s);
+        shifts = shifts.map((s) => (s.id === editingShiftId ? updated : s));
       } else {
         // Create new
         const shift = await api.post<Shift>("/shifts", {
@@ -270,7 +278,7 @@
     if (!confirm("Schicht wirklich löschen?")) return;
     try {
       await api.delete(`/shifts/${shiftId}`);
-      shifts = shifts.filter(s => s.id !== shiftId);
+      shifts = shifts.filter((s) => s.id !== shiftId);
     } catch {
       alert("Löschen fehlgeschlagen.");
     }
@@ -328,7 +336,7 @@
 
   // Modal employee name
   const modalEmployeeName = $derived(() => {
-    const emp = employees.find(e => e.id === modalEmployeeId);
+    const emp = employees.find((e) => e.id === modalEmployeeId);
     return emp ? `${emp.firstName} ${emp.lastName}` : "";
   });
 </script>
@@ -340,14 +348,17 @@
     <p class="page-subtitle">Wochenansicht der Schichtplanung</p>
   </div>
   <div class="header-actions">
-    <button class="btn btn-secondary btn-sm" onclick={() => showTemplatePanel = !showTemplatePanel}>
+    <button
+      class="btn btn-secondary btn-sm"
+      onclick={() => (showTemplatePanel = !showTemplatePanel)}
+    >
       Vorlagen
     </button>
     <button
       class="btn btn-sm"
       class:btn-primary={quickMode}
       class:btn-secondary={!quickMode}
-      onclick={() => quickMode = !quickMode}
+      onclick={() => (quickMode = !quickMode)}
     >
       Schnellzuweisung {quickMode ? "an" : "aus"}
     </button>
@@ -364,7 +375,7 @@
           class="template-chip"
           class:template-chip--active={quickTemplateId === tpl.id}
           style="--chip-color: {tpl.color}"
-          onclick={() => quickTemplateId = tpl.id}
+          onclick={() => (quickTemplateId = tpl.id)}
         >
           {tpl.name} ({tpl.startTime}–{tpl.endTime})
         </button>
@@ -390,7 +401,10 @@
             <span class="template-item__color" style="background: {tpl.color}"></span>
             <span class="template-item__name">{tpl.name}</span>
             <span class="template-item__times">{tpl.startTime} – {tpl.endTime}</span>
-            <button class="btn btn-ghost btn-sm btn-danger" onclick={() => deleteTemplate(tpl.id, tpl.name)}>
+            <button
+              class="btn btn-ghost btn-sm btn-danger"
+              onclick={() => deleteTemplate(tpl.id, tpl.name)}
+            >
               Löschen
             </button>
           </div>
@@ -408,8 +422,13 @@
       <div class="form-row">
         <div class="form-group">
           <label class="form-label" for="tpl-name">Name</label>
-          <input id="tpl-name" class="form-input" type="text" bind:value={tplName}
-            placeholder="z.B. Frühschicht" />
+          <input
+            id="tpl-name"
+            class="form-input"
+            type="text"
+            bind:value={tplName}
+            placeholder="z.B. Frühschicht"
+          />
         </div>
         <div class="form-group">
           <label class="form-label" for="tpl-start">Start</label>
@@ -421,7 +440,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="tpl-color">Farbe</label>
-          <input id="tpl-color" class="form-input form-input--color" type="color" bind:value={tplColor} />
+          <input
+            id="tpl-color"
+            class="form-input form-input--color"
+            type="color"
+            bind:value={tplColor}
+          />
         </div>
       </div>
       <button class="btn btn-primary btn-sm" onclick={createTemplate} disabled={tplSaving}>
@@ -447,7 +471,7 @@
 <!-- ── Grid ──────────────────────────────────────────────────────────────── -->
 {#if loading}
   <div class="skeleton-list">
-    {#each [1,2,3] as _}
+    {#each [1, 2, 3] as _}
       <div class="skeleton-card"></div>
     {/each}
   </div>
@@ -482,7 +506,9 @@
               <td
                 class="grid-cell"
                 class:grid-cell--empty={cellShifts.length === 0}
-                onclick={() => { if (cellShifts.length === 0) onCellClick(emp.id, day); }}
+                onclick={() => {
+                  if (cellShifts.length === 0) onCellClick(emp.id, day);
+                }}
                 role={cellShifts.length === 0 ? "button" : undefined}
                 tabindex={cellShifts.length === 0 ? 0 : undefined}
               >
@@ -490,14 +516,26 @@
                   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <div
                     class="shift-block"
-                    style="background: {shiftColor(shift)}22; border-left: 3px solid {shiftColor(shift)}"
-                    onclick={(e: MouseEvent) => { e.stopPropagation(); openEditShift(shift); }}
+                    style="background: {shiftColor(shift)}22; border-left: 3px solid {shiftColor(
+                      shift,
+                    )}"
+                    onclick={(e: MouseEvent) => {
+                      e.stopPropagation();
+                      openEditShift(shift);
+                    }}
                     title="Klicken zum Bearbeiten"
                   >
-                    <span class="shift-block__label">{shift.label ?? shift.startTime + "–" + shift.endTime}</span>
+                    <span class="shift-block__label"
+                      >{shift.label ?? shift.startTime + "–" + shift.endTime}</span
+                    >
                     <span class="shift-block__time">{shift.startTime}–{shift.endTime}</span>
                     {#if getActualHours(emp.id, day) !== null}
-                      <span class="shift-block__actual" class:shift-block__actual--over={(getActualHours(emp.id, day) ?? 0) > parseFloat(shift.endTime.replace(":", ".")) - parseFloat(shift.startTime.replace(":", "."))}>
+                      <span
+                        class="shift-block__actual"
+                        class:shift-block__actual--over={(getActualHours(emp.id, day) ?? 0) >
+                          parseFloat(shift.endTime.replace(":", ".")) -
+                            parseFloat(shift.startTime.replace(":", "."))}
+                      >
                         IST: {(getActualHours(emp.id, day) ?? 0).toFixed(1)}h
                       </span>
                     {/if}
@@ -506,7 +544,9 @@
                 {#if cellShifts.length === 0}
                   <span class="grid-cell__plus">+</span>
                   {#if getActualHours(emp.id, day) !== null && (getActualHours(emp.id, day) ?? 0) > 0}
-                    <span class="cell-actual">{(getActualHours(emp.id, day) ?? 0).toFixed(1)}h ohne Schicht</span>
+                    <span class="cell-actual"
+                      >{(getActualHours(emp.id, day) ?? 0).toFixed(1)}h ohne Schicht</span
+                    >
                   {/if}
                 {/if}
               </td>
@@ -521,11 +561,20 @@
 <!-- ── Modal: Schicht erstellen ──────────────────────────────────────────── -->
 {#if showModal}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) showModal = false; }}>
+  <div
+    class="modal-overlay"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) showModal = false;
+    }}
+  >
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shift-modal-title">
       <div class="modal-header">
-        <h3 id="shift-modal-title" class="modal-title">{editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}</h3>
-        <button class="modal-close" onclick={() => showModal = false} aria-label="Schließen">✕</button>
+        <h3 id="shift-modal-title" class="modal-title">
+          {editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}
+        </h3>
+        <button class="modal-close" onclick={() => (showModal = false)} aria-label="Schließen"
+          >✕</button
+        >
       </div>
       <div class="modal-body">
         <p class="modal-context">
@@ -536,7 +585,12 @@
         {/if}
         <div class="form-group">
           <label class="form-label" for="shift-tpl">Vorlage (optional)</label>
-          <select id="shift-tpl" class="form-input" bind:value={modalTemplateId} onchange={onTemplateSelect}>
+          <select
+            id="shift-tpl"
+            class="form-input"
+            bind:value={modalTemplateId}
+            onchange={onTemplateSelect}
+          >
             <option value="">– Benutzerdefiniert –</option>
             {#each templates as tpl (tpl.id)}
               <option value={tpl.id}>{tpl.name} ({tpl.startTime}–{tpl.endTime})</option>
@@ -555,22 +609,40 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="shift-label">Bezeichnung (optional)</label>
-          <input id="shift-label" class="form-input" type="text" bind:value={modalLabel}
-            placeholder="z.B. Frühschicht" />
+          <input
+            id="shift-label"
+            class="form-input"
+            type="text"
+            bind:value={modalLabel}
+            placeholder="z.B. Frühschicht"
+          />
         </div>
         <div class="form-group">
           <label class="form-label" for="shift-note">Notiz (optional)</label>
-          <textarea id="shift-note" class="form-input" rows="2" bind:value={modalNote}
-            placeholder="Zusätzliche Informationen…"></textarea>
+          <textarea
+            id="shift-note"
+            class="form-input"
+            rows="2"
+            bind:value={modalNote}
+            placeholder="Zusätzliche Informationen…"
+          ></textarea>
         </div>
       </div>
       <div class="modal-footer">
         {#if editingShiftId}
-          <button class="btn btn-ghost" style="color: var(--color-error, #dc2626); margin-right: auto;" onclick={() => { deleteShift(editingShiftId!); showModal = false; editingShiftId = null; }}>
+          <button
+            class="btn btn-ghost"
+            style="color: var(--color-error, #dc2626); margin-right: auto;"
+            onclick={() => {
+              deleteShift(editingShiftId!);
+              showModal = false;
+              editingShiftId = null;
+            }}
+          >
             Löschen
           </button>
         {/if}
-        <button class="btn btn-secondary" onclick={() => showModal = false}>Abbrechen</button>
+        <button class="btn btn-secondary" onclick={() => (showModal = false)}>Abbrechen</button>
         <button class="btn btn-primary" onclick={saveShift} disabled={saving}>
           {saving ? "Speichern …" : "Speichern"}
         </button>
@@ -748,7 +820,7 @@
   }
 
   .grid-header {
-    padding: 0.625rem 0.5rem;
+    padding: 0.75rem 0.625rem;
     text-align: center;
     font-size: 0.8125rem;
     font-weight: 600;
@@ -775,7 +847,7 @@
   }
 
   .grid-employee {
-    padding: 0.5rem 0.75rem;
+    padding: 0.625rem 0.875rem;
     border-bottom: 1px solid var(--color-border);
     border-right: 1px solid var(--color-border);
     background: var(--color-surface);
@@ -796,12 +868,12 @@
   }
 
   .grid-cell {
-    padding: 0.25rem;
+    padding: 0.375rem;
     border-bottom: 1px solid var(--color-border);
     border-right: 1px solid var(--color-border);
     vertical-align: top;
     min-width: 90px;
-    min-height: 48px;
+    min-height: 56px;
     position: relative;
   }
 
@@ -832,7 +904,7 @@
 
   /* ── Shift block ── */
   .shift-block {
-    padding: 0.25rem 0.5rem;
+    padding: 0.375rem 0.625rem;
     border-radius: var(--radius-sm, 4px);
     margin-bottom: 0.125rem;
     cursor: pointer;
@@ -845,7 +917,7 @@
 
   .shift-block__label {
     display: block;
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     font-weight: 500;
     color: var(--color-text);
     white-space: nowrap;
@@ -855,7 +927,7 @@
 
   .shift-block__time {
     display: block;
-    font-size: 0.6875rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
   }
 
@@ -893,8 +965,13 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.5; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   /* ── Empty state ── */
@@ -912,7 +989,7 @@
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.4);
+    background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -923,7 +1000,7 @@
   .modal {
     background: var(--color-surface);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
     width: 100%;
     max-width: 520px;
     max-height: 90vh;
@@ -1007,7 +1084,9 @@
     border: 1px solid rgba(220, 38, 38, 0.2);
   }
 
-  .text-muted { color: var(--color-text-muted); }
+  .text-muted {
+    color: var(--color-text-muted);
+  }
 
   :global(.btn-danger) {
     color: var(--color-error, #dc2626) !important;

@@ -31,6 +31,8 @@ export default [
       "svelte/no-navigation-without-resolve": "off",
       "svelte/require-each-key": "warn",
       "svelte/prefer-svelte-reactivity": "off",
+      "svelte/no-unused-svelte-ignore": "off",
+      "@typescript-eslint/no-unused-expressions": "off",
     },
   },
   {

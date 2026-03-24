@@ -268,7 +268,9 @@
   .sidebar {
     width: 240px;
     min-width: 240px;
-    background-color: var(--sidebar-bg, #fff);
+    background-color: var(--glass-bg-strong, var(--sidebar-bg));
+    backdrop-filter: blur(var(--glass-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
     border-right: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
@@ -356,7 +358,9 @@
     right: 0;
     width: 320px;
     max-height: 420px;
-    background: var(--sidebar-bg, #fff);
+    background: var(--glass-bg-strong, var(--color-surface));
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
@@ -576,7 +580,9 @@
     bottom: 0;
     left: 0;
     right: 0;
-    background: var(--sidebar-bg, #fff);
+    background: var(--glass-bg-strong, var(--sidebar-bg));
+    backdrop-filter: blur(var(--glass-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
     border-top: 1px solid var(--color-border);
     z-index: 100;
     padding: 0.25rem 0;
