@@ -19,6 +19,8 @@
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
     federalState: string;
+    clockOutReminderHours: number;
+    missingEntriesDays: number;
   }
 
   interface WorkSchedule {
@@ -90,6 +92,8 @@
   let gCarryOverDay = $state(31);
   let gCarryOverMonth = $state(3);
   let gArbzgEnabled = $state(true);
+  let gClockOutHours = $state(10);
+  let gMissingDays = $state(7);
 
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
@@ -143,6 +147,8 @@
       gVacationDays = Number(cfg.defaultVacationDays) || 30;
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
+      gClockOutHours = cfg.clockOutReminderHours ?? 10;
+      gMissingDays = cfg.missingEntriesDays ?? 7;
 
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
@@ -171,6 +177,8 @@
         carryOverDeadlineDay: gCarryOverDay,
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
+        clockOutReminderHours: gClockOutHours,
+        missingEntriesDays: gMissingDays,
       });
       gSaved = true;
       setTimeout(() => (gSaved = false), 3000);
@@ -459,6 +467,61 @@
           <input type="checkbox" bind:checked={gArbzgEnabled} />
           <span class="switch-slider"></span>
         </label>
+      </div>
+    </div>
+
+    <hr class="settings-divider" />
+
+    <!-- Benachrichtigungen -->
+    <div class="settings-section">
+      <h3 class="section-title">Benachrichtigungen</h3>
+      <p class="text-muted section-desc">
+        Automatische Erinnerungen bei fehlenden oder offenen Zeiteinträgen.
+      </p>
+
+      <div class="inline-settings">
+        <div class="form-group">
+          <label class="form-label" for="g-clockout-hours"
+            >Erinnerung bei offener Stempelung nach</label
+          >
+          <div class="input-suffix-wrap">
+            <input
+              id="g-clockout-hours"
+              type="number"
+              min="1"
+              max="48"
+              step="1"
+              bind:value={gClockOutHours}
+              class="form-input threshold-input"
+            />
+            <span class="input-suffix text-muted">Stunden</span>
+          </div>
+          <p class="form-hint text-muted">
+            Mitarbeiter werden erinnert, wenn sie länger als diese Zeit eingestempelt sind.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="g-missing-days"
+            >Erinnerung bei fehlenden Einträgen nach</label
+          >
+          <div class="input-suffix-wrap">
+            <input
+              id="g-missing-days"
+              type="number"
+              min="1"
+              max="90"
+              step="1"
+              bind:value={gMissingDays}
+              class="form-input threshold-input"
+            />
+            <span class="input-suffix text-muted">Tagen</span>
+          </div>
+          <p class="form-hint text-muted">
+            Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
+            wurden.
+          </p>
+        </div>
       </div>
     </div>
   </div>

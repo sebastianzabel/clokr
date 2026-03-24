@@ -1,0 +1,220 @@
+import fp from "fastify-plugin";
+import cron, { type ScheduledTask } from "node-cron";
+
+/**
+ * Background scheduler for attendance-related notifications:
+ * 1. Clock-out reminder: hourly check for open time entries
+ * 2. Missing entries reminder: daily check for employees without recent entries
+ */
+export const attendanceCheckerPlugin = fp(async (app) => {
+  const tasks: ScheduledTask[] = [];
+
+  /**
+   * Feature 1: "Forgot to clock out" — runs every hour.
+   * Finds TimeEntries where endTime IS NULL and startTime > X hours ago.
+   * Sends one notification per open entry (deduplicates via link field).
+   */
+  async function checkOpenClockEntries() {
+    app.log.info("Attendance-Checker: Prüfe offene Stempelungen");
+
+    try {
+      const tenants = await app.prisma.tenant.findMany({
+        select: { id: true },
+      });
+
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId: tenant.id },
+        });
+        const thresholdHours = cfg?.clockOutReminderHours ?? 10;
+        const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
+
+        // Find open time entries older than threshold
+        const openEntries = await app.prisma.timeEntry.findMany({
+          where: {
+            endTime: null,
+            startTime: { lt: cutoff },
+            employee: { tenantId: tenant.id },
+          },
+          include: {
+            employee: {
+              select: { userId: true, firstName: true },
+            },
+          },
+        });
+
+        for (const entry of openEntries) {
+          // Deduplicate: check if notification already exists for this time entry
+          const existing = await app.prisma.notification.findFirst({
+            where: {
+              userId: entry.employee.userId,
+              type: "CLOCK_OUT_REMINDER",
+              link: `/time-entries?highlight=${entry.id}`,
+            },
+          });
+
+          if (existing) continue;
+
+          const startStr = entry.startTime.toLocaleString("de-DE", {
+            timeZone: cfg?.timezone ?? "Europe/Berlin",
+            hour: "2-digit",
+            minute: "2-digit",
+            day: "2-digit",
+            month: "2-digit",
+          });
+
+          await app.notify({
+            userId: entry.employee.userId,
+            type: "CLOCK_OUT_REMINDER",
+            title: "Offene Stempelung",
+            message: `Du bist seit ${startStr} eingestempelt. Bitte Arbeitszeit korrigieren.`,
+            link: `/time-entries?highlight=${entry.id}`,
+          });
+
+          app.log.info(
+            { userId: entry.employee.userId, timeEntryId: entry.id },
+            "Clock-out Erinnerung gesendet",
+          );
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei offene Stempelungen");
+    }
+  }
+
+  /**
+   * Feature 2: "No time entries" — runs daily at 09:00.
+   * Finds active employees with no time entries in the last X days.
+   * Notifies both the employee and their managers.
+   */
+  async function checkMissingEntries() {
+    app.log.info("Attendance-Checker: Prüfe fehlende Zeiteinträge");
+
+    try {
+      const tenants = await app.prisma.tenant.findMany({
+        select: { id: true },
+      });
+
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId: tenant.id },
+        });
+        const dayThreshold = cfg?.missingEntriesDays ?? 7;
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - dayThreshold);
+
+        // Find all active employees for this tenant
+        const employees = await app.prisma.employee.findMany({
+          where: {
+            tenantId: tenant.id,
+            user: { isActive: true },
+            exitDate: null,
+          },
+          include: {
+            user: { select: { id: true, role: true } },
+          },
+        });
+
+        // Find managers for this tenant
+        const managers = employees.filter(
+          (e) => e.user.role === "ADMIN" || e.user.role === "MANAGER",
+        );
+
+        for (const emp of employees) {
+          // Count time entries in the last X days
+          const recentEntryCount = await app.prisma.timeEntry.count({
+            where: {
+              employeeId: emp.id,
+              date: { gte: cutoffDate },
+            },
+          });
+
+          if (recentEntryCount > 0) continue;
+
+          // Deduplicate: check if notification sent within last 7 days
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+          const existingNotification = await app.prisma.notification.findFirst({
+            where: {
+              userId: emp.user.id,
+              type: "MISSING_ENTRIES",
+              createdAt: { gte: sevenDaysAgo },
+            },
+          });
+
+          if (existingNotification) continue;
+
+          // Notify the employee
+          await app.notify({
+            userId: emp.user.id,
+            type: "MISSING_ENTRIES",
+            title: "Fehlende Zeiteinträge",
+            message: `Du hast seit ${dayThreshold} Tagen keine Zeiteinträge erfasst.`,
+            link: "/time-entries",
+          });
+
+          app.log.info(
+            { userId: emp.user.id, employeeId: emp.id },
+            "Fehlende-Einträge Erinnerung gesendet",
+          );
+
+          // Notify managers about this employee
+          for (const mgr of managers) {
+            if (mgr.user.id === emp.user.id) continue; // Don't notify manager about themselves
+
+            // Deduplicate manager notification too
+            const existingMgrNotif = await app.prisma.notification.findFirst({
+              where: {
+                userId: mgr.user.id,
+                type: "MISSING_ENTRIES",
+                message: { contains: `${emp.firstName} ${emp.lastName}` },
+                createdAt: { gte: sevenDaysAgo },
+              },
+            });
+
+            if (existingMgrNotif) continue;
+
+            await app.notify({
+              userId: mgr.user.id,
+              type: "MISSING_ENTRIES",
+              title: "Fehlende Zeiteinträge",
+              message: `${emp.firstName} ${emp.lastName} hat seit ${dayThreshold} Tagen keine Zeiteinträge erfasst.`,
+              link: "/time-entries",
+            });
+          }
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei fehlende Einträge");
+    }
+  }
+
+  app.addHook("onReady", async () => {
+    try {
+      // Clock-out check: every hour at minute 0
+      const clockOutTask = cron.schedule("0 * * * *", () => {
+        checkOpenClockEntries().catch((err) =>
+          app.log.error({ err }, "Attendance-Checker: Clock-out Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(clockOutTask);
+      app.log.info("Attendance-Checker: Clock-out Erinnerung geplant (stündlich)");
+
+      // Missing entries check: daily at 09:00
+      const missingTask = cron.schedule("0 9 * * *", () => {
+        checkMissingEntries().catch((err) =>
+          app.log.error({ err }, "Attendance-Checker: Fehlende-Einträge Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(missingTask);
+      app.log.info("Attendance-Checker: Fehlende-Einträge Erinnerung geplant (täglich 09:00)");
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
+    }
+  });
+
+  app.addHook("onClose", async () => {
+    for (const task of tasks) task.stop();
+  });
+});
