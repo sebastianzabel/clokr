@@ -1,5 +1,5 @@
 {
-  "name": "salon-timetrack",
+  "name": "clokr",
   "version": "0.2.0",
   "private": true,
   "packageManager": "pnpm@9.0.0",
@@ -8,9 +8,9 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
-    "db:migrate": "pnpm --filter @salon/db migrate",
-    "db:generate": "pnpm --filter @salon/db generate",
-    "db:studio": "pnpm --filter @salon/db studio"
+    "db:migrate": "pnpm --filter @clokr/db migrate",
+    "db:generate": "pnpm --filter @clokr/db generate",
+    "db:studio": "pnpm --filter @clokr/db studio"
   },
   "devDependencies": {
     "turbo": "^2.0.0",

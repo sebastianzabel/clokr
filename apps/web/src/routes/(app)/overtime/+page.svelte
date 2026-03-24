@@ -101,7 +101,7 @@
 </script>
 
 <svelte:head>
-  <title>Überstundenkonto – Salon Zeiterfassung</title>
+  <title>Überstundenkonto – Clokr</title>
 </svelte:head>
 
 <div class="page-header">

@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
-import { Role } from "@salon/db";
+import { Role } from "@clokr/db";
 
 const loginSchema = z.object({
   email: z.string().email(),

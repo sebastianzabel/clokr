@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from "fastify";
-import { Role } from "@salon/db";
+import { Role } from "@clokr/db";
 
 export interface JwtPayload {
   sub: string;       // userId

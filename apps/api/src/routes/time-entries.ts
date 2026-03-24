@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { TimeEntrySource } from "@salon/db";
+import { TimeEntrySource } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
 
 const clockInSchema = z.object({

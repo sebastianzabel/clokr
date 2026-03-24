@@ -38,14 +38,14 @@
 </script>
 
 <svelte:head>
-  <title>Anmelden – Salon Zeiterfassung</title>
+  <title>Anmelden – Clokr</title>
 </svelte:head>
 
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
       <span class="login-logo-icon">✂️</span>
-      <h1 class="login-title">Salon Zeiterfassung</h1>
+      <h1 class="login-title">Clokr</h1>
       <p class="login-subtitle">Bitte melden Sie sich an</p>
     </div>
 

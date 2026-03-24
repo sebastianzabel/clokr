@@ -170,7 +170,7 @@
 </script>
 
 <svelte:head>
-  <title>System – Salon Zeiterfassung</title>
+  <title>System – Clokr</title>
 </svelte:head>
 
 {#if loading}
@@ -265,7 +265,7 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="smtp-from-name">Von Name</label>
-        <input id="smtp-from-name" type="text" bind:value={smtpFromName} class="form-input" placeholder="Salon Zeiterfassung" />
+        <input id="smtp-from-name" type="text" bind:value={smtpFromName} class="form-input" placeholder="Clokr" />
       </div>
       <div class="form-group form-group--full">
         <label class="toggle-label">

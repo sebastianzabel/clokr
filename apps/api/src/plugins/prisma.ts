@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import { PrismaClient } from "@salon/db";
+import { PrismaClient } from "@clokr/db";
 
 declare module "fastify" {
   interface FastifyInstance {

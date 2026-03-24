@@ -1,0 +1,433 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// MULTI-TENANT
+// ─────────────────────────────────────────────
+
+model Tenant {
+  id           String       @id @default(uuid())
+  name         String
+  slug         String       @unique
+  federalState FederalState @default(NIEDERSACHSEN)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  employees      Employee[]
+  leaveTypes     LeaveType[]
+  publicHolidays PublicHoliday[]
+  config         TenantConfig?
+}
+
+// ─────────────────────────────────────────────
+// MANDANTEN-KONFIGURATION (globale Arbeitszeitvorgaben)
+// ─────────────────────────────────────────────
+
+model TenantConfig {
+  id                     String   @id @default(uuid())
+  tenantId               String   @unique
+  // Standard-Wochenstunden (Vorlage für neue Mitarbeiter)
+  defaultWeeklyHours     Decimal  @default(40) @db.Decimal(5, 2)
+  defaultMondayHours     Decimal  @default(8) @db.Decimal(4, 2)
+  defaultTuesdayHours    Decimal  @default(8) @db.Decimal(4, 2)
+  defaultWednesdayHours  Decimal  @default(8) @db.Decimal(4, 2)
+  defaultThursdayHours   Decimal  @default(8) @db.Decimal(4, 2)
+  defaultFridayHours     Decimal  @default(8) @db.Decimal(4, 2)
+  defaultSaturdayHours   Decimal  @default(0) @db.Decimal(4, 2)
+  defaultSundayHours     Decimal  @default(0) @db.Decimal(4, 2)
+  // Überstunden
+  overtimeThreshold      Decimal  @default(60) @db.Decimal(5, 2)
+  allowOvertimePayout    Boolean  @default(false)
+  // Urlaubsanspruch (Basis 5-Tage-Woche)
+  defaultVacationDays    Int      @default(30)
+  // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
+  carryOverDeadlineDay   Int      @default(31)
+  carryOverDeadlineMonth Int      @default(3)
+  // E-Mail / SMTP
+  smtpHost               String?
+  smtpPort               Int?
+  smtpUser               String?
+  smtpPassword           String?
+  smtpFromEmail          String?
+  smtpFromName           String?
+  smtpSecure             Boolean  @default(false)
+  // Sicherheit
+  twoFaEnabled           Boolean  @default(false)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// AUTH
+// ─────────────────────────────────────────────
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(EMPLOYEE)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  employee      Employee?
+  refreshTokens RefreshToken[]
+  otpTokens     OtpToken[]
+  auditLogs     AuditLog[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OtpToken {
+  id        String    @id @default(uuid())
+  userId    String
+  code      String // 6-stellig, bcrypt-gehasht
+  expiresAt DateTime // now + 10 min
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id         String    @id @default(uuid())
+  token      String    @unique
+  employeeId String
+  email      String
+  expiresAt  DateTime
+  acceptedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────
+// MITARBEITER
+// ─────────────────────────────────────────────
+
+model Employee {
+  id             String    @id @default(uuid())
+  tenantId       String
+  userId         String    @unique
+  employeeNumber String
+  firstName      String
+  lastName       String
+  nfcCardId      String?   @unique // NFC Karten-ID
+  hireDate       DateTime
+  exitDate       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
+  user              User               @relation(fields: [userId], references: [id])
+  workSchedule      WorkSchedule?
+  overtimeAccount   OvertimeAccount?
+  timeEntries       TimeEntry[]
+  leaveEntitlements LeaveEntitlement[]
+  leaveRequests     LeaveRequest[]
+  absences          Absence[]
+  overtimePlans     OvertimePlan[]
+  invitations       Invitation[]
+
+  @@unique([tenantId, employeeNumber])
+  @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────
+// ARBEITSZEITMODELL
+// ─────────────────────────────────────────────
+
+model WorkSchedule {
+  id                  String   @id @default(uuid())
+  employeeId          String   @unique
+  weeklyHours         Decimal  @db.Decimal(5, 2) // z.B. 40.00
+  mondayHours         Decimal  @default(8) @db.Decimal(4, 2)
+  tuesdayHours        Decimal  @default(8) @db.Decimal(4, 2)
+  wednesdayHours      Decimal  @default(8) @db.Decimal(4, 2)
+  thursdayHours       Decimal  @default(8) @db.Decimal(4, 2)
+  fridayHours         Decimal  @default(8) @db.Decimal(4, 2)
+  saturdayHours       Decimal  @default(0) @db.Decimal(4, 2)
+  sundayHours         Decimal  @default(0) @db.Decimal(4, 2)
+  overtimeThreshold   Decimal  @default(60) @db.Decimal(5, 2) // Alert ab X Stunden
+  allowOvertimePayout Boolean  @default(false)
+  validFrom           DateTime
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// ZEITERFASSUNG
+// ─────────────────────────────────────────────
+
+model TimeEntry {
+  id           String          @id @default(uuid())
+  employeeId   String
+  date         DateTime        @db.Date
+  startTime    DateTime
+  endTime      DateTime?
+  breakMinutes Int             @default(0)
+  type         TimeEntryType   @default(WORK)
+  source       TimeEntrySource @default(MANUAL)
+  note         String?
+  isLocked     Boolean         @default(false) // nach Monatsabschluss gesperrt
+  lockedAt     DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  createdBy    String? // userId wer es angelegt hat
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, date])
+}
+
+// ─────────────────────────────────────────────
+// ÜBERSTUNDENKONTO
+// ─────────────────────────────────────────────
+
+model OvertimeAccount {
+  id           String   @id @default(uuid())
+  employeeId   String   @unique
+  balanceHours Decimal  @default(0) @db.Decimal(7, 2) // aktueller Saldo
+  updatedAt    DateTime @updatedAt
+
+  employee     Employee              @relation(fields: [employeeId], references: [id])
+  transactions OvertimeTransaction[]
+}
+
+model OvertimeTransaction {
+  id                String                  @id @default(uuid())
+  overtimeAccountId String
+  hours             Decimal                 @db.Decimal(7, 2) // positiv = Überstunden, negativ = Abbau
+  type              OvertimeTransactionType
+  description       String?
+  referenceMonth    String? // "2024-03" für Monatsabschluss
+  createdAt         DateTime                @default(now())
+  createdBy         String?
+
+  overtimeAccount OvertimeAccount @relation(fields: [overtimeAccountId], references: [id])
+}
+
+model OvertimePlan {
+  id            String             @id @default(uuid())
+  employeeId    String
+  hoursToReduce Decimal            @db.Decimal(7, 2)
+  deadline      DateTime
+  status        OvertimePlanStatus @default(ACTIVE)
+  note          String?
+  createdAt     DateTime           @default(now())
+  createdBy     String
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// URLAUB
+// ─────────────────────────────────────────────
+
+model LeaveType {
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String // "Urlaub", "Sonderurlaub", etc.
+  isPaid           Boolean  @default(true)
+  requiresApproval Boolean  @default(true)
+  color            String   @default("#3B82F6")
+  createdAt        DateTime @default(now())
+
+  tenant       Tenant             @relation(fields: [tenantId], references: [id])
+  entitlements LeaveEntitlement[]
+  requests     LeaveRequest[]
+}
+
+model LeaveEntitlement {
+  id                String    @id @default(uuid())
+  employeeId        String
+  leaveTypeId       String
+  year              Int
+  totalDays         Decimal   @db.Decimal(5, 2)
+  usedDays          Decimal   @default(0) @db.Decimal(5, 2)
+  carriedOverDays   Decimal   @default(0) @db.Decimal(5, 2) // Resturlaub Vorjahr
+  carryOverDeadline DateTime? // bis wann Resturlaub genommen werden muss
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([employeeId, leaveTypeId, year])
+}
+
+model LeaveRequest {
+  id              String             @id @default(uuid())
+  employeeId      String
+  leaveTypeId     String
+  startDate       DateTime           @db.Date
+  endDate         DateTime           @db.Date
+  days            Decimal            @db.Decimal(5, 2)
+  halfDay         Boolean            @default(false)
+  status          LeaveRequestStatus @default(PENDING)
+  note            String?
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  reviewNote      String?
+  // Attest (nur für SICK / SICK_CHILD)
+  attestPresent   Boolean            @default(false)
+  attestValidFrom DateTime?          @db.Date
+  attestValidTo   DateTime?          @db.Date
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// ABWESENHEITEN
+// ─────────────────────────────────────────────
+
+model Absence {
+  id           String      @id @default(uuid())
+  employeeId   String
+  type         AbsenceType
+  startDate    DateTime    @db.Date
+  endDate      DateTime    @db.Date
+  days         Decimal     @db.Decimal(5, 2)
+  note         String?
+  documentPath String? // Pfad zur AU-Bescheinigung (MinIO)
+  createdAt    DateTime    @default(now())
+  createdBy    String
+
+  employee Employee @relation(fields: [employeeId], references: [id])
+}
+
+// ─────────────────────────────────────────────
+// FEIERTAGE
+// ─────────────────────────────────────────────
+
+model PublicHoliday {
+  id           String       @id @default(uuid())
+  tenantId     String
+  date         DateTime     @db.Date
+  name         String
+  federalState FederalState
+  year         Int
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, date])
+  @@index([tenantId, year])
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG (DSGVO)
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT
+  entity    String // "TimeEntry", "LeaveRequest", etc.
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+enum FederalState {
+  NIEDERSACHSEN
+  BAYERN
+  BERLIN
+  BRANDENBURG
+  BREMEN
+  HAMBURG
+  HESSEN
+  MECKLENBURG_VORPOMMERN
+  NORDRHEIN_WESTFALEN
+  RHEINLAND_PFALZ
+  SAARLAND
+  SACHSEN
+  SACHSEN_ANHALT
+  SCHLESWIG_HOLSTEIN
+  THUERINGEN
+  BADEN_WUERTTEMBERG
+}
+
+enum TimeEntryType {
+  WORK
+  OVERTIME
+  PUBLIC_HOLIDAY
+}
+
+enum TimeEntrySource {
+  NFC
+  MOBILE
+  MANUAL
+  CORRECTION
+}
+
+enum OvertimeTransactionType {
+  ACCRUAL // Überstunden angesammelt (Monatsabschluss)
+  REDUCTION // Abbau (Freizeit genommen)
+  PAYOUT // Ausbezahlt
+  CORRECTION // Manuelle Korrektur
+}
+
+enum OvertimePlanStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  CANCELLATION_REQUESTED
+}
+
+enum AbsenceType {
+  SICK // Krankheit
+  SICK_CHILD // Kindkrank
+  SPECIAL_LEAVE // Sonderurlaub
+  UNPAID_LEAVE // Unbezahlter Urlaub
+  OTHER
+}

@@ -117,7 +117,7 @@
 </script>
 
 <svelte:head>
-  <title>Dashboard – Salon Zeiterfassung</title>
+  <title>Dashboard – Clokr</title>
 </svelte:head>
 
 <div class="dashboard">

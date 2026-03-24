@@ -569,7 +569,7 @@
 </script>
 
 <svelte:head>
-  <title>Abwesenheiten – Salon Zeiterfassung</title>
+  <title>Abwesenheiten – Clokr</title>
 </svelte:head>
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->

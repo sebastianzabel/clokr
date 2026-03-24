@@ -1,4 +1,4 @@
-import { PrismaClient } from "@salon/db";
+import { PrismaClient } from "@clokr/db";
 
 export interface ArbZGWarning {
   code:     "BREAK_TOO_SHORT" | "MAX_DAILY_EXCEEDED" | "MAX_WEEKLY_EXCEEDED" | "MIN_REST_VIOLATED";

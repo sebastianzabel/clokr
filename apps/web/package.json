@@ -1,5 +1,5 @@
 {
-  "name": "@salon/web",
+  "name": "@clokr/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "typecheck": "svelte-kit sync && tsc --noEmit"
   },
   "dependencies": {
-    "@salon/types": "workspace:*",
+    "@clokr/types": "workspace:*",
     "@tanstack/svelte-query": "^6.0.0",
     "date-fns": "^4.0.0"
   },

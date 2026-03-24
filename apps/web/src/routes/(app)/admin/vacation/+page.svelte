@@ -227,7 +227,7 @@
 </script>
 
 <svelte:head>
-  <title>Urlaub & Zeiten – Salon Zeiterfassung</title>
+  <title>Urlaub & Zeiten – Clokr</title>
 </svelte:head>
 
 {#if loading}

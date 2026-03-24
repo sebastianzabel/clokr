@@ -45,14 +45,14 @@
 </script>
 
 <svelte:head>
-  <title>Konto aktivieren – Salon Zeiterfassung</title>
+  <title>Konto aktivieren – Clokr</title>
 </svelte:head>
 
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
       <span class="login-logo-icon">✂️</span>
-      <h1 class="login-title">Salon Zeiterfassung</h1>
+      <h1 class="login-title">Clokr</h1>
     </div>
 
     {#if pageState === "invalid"}

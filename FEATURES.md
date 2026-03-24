@@ -1,4 +1,4 @@
-# Salon Zeiterfassung – Feature-Übersicht
+# Clokr – Feature-Übersicht
 
 > Stand: März 2026
 

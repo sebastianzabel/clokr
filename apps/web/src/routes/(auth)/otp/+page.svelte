@@ -68,7 +68,7 @@
 </script>
 
 <svelte:head>
-  <title>2FA-Code – Salon Zeiterfassung</title>
+  <title>2FA-Code – Clokr</title>
 </svelte:head>
 
 <div class="login-page">

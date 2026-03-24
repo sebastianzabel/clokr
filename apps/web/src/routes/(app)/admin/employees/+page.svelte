@@ -220,7 +220,7 @@
 </script>
 
 <svelte:head>
-  <title>Mitarbeiter – Salon Zeiterfassung</title>
+  <title>Mitarbeiter – Clokr</title>
 </svelte:head>
 
 <div class="page">

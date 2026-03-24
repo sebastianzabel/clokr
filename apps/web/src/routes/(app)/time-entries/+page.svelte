@@ -414,7 +414,7 @@
   let selectedLabel = $derived(format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }));
 </script>
 
-<svelte:head><title>Zeiteinträge – Salon Zeiterfassung</title></svelte:head>
+<svelte:head><title>Zeiteinträge – Clokr</title></svelte:head>
 
 <div class="page-header">
   <div class="header-row">

@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { FederalState } from "@salon/db";
+import { FederalState } from "@clokr/db";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 

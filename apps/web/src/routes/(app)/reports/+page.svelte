@@ -107,7 +107,7 @@
 </script>
 
 <svelte:head>
-  <title>Berichte – Salon Zeiterfassung</title>
+  <title>Berichte – Clokr</title>
 </svelte:head>
 
 <div class="page-header">
