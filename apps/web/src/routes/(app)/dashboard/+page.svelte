@@ -1,17 +1,62 @@
+<script lang="ts" context="module">
+  function getWeekNumber(dateStr: string): number {
+    const d = new Date(dateStr + "T00:00:00");
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+    const week1 = new Date(d.getFullYear(), 0, 4);
+    return (
+      1 +
+      Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7)
+    );
+  }
+
+  function formatShortDate(dateStr: string): string {
+    const d = new Date(dateStr + "T00:00:00");
+    return `${d.getDate()}.${d.getMonth() + 1}.`;
+  }
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
-  import { Chart, BarController, LineController, DoughnutController, BarElement, LineElement, PointElement, ArcElement, CategoryScale, LinearScale, Tooltip, Legend, Filler } from "chart.js";
+  import {
+    Chart,
+    BarController,
+    LineController,
+    DoughnutController,
+    BarElement,
+    LineElement,
+    PointElement,
+    ArcElement,
+    CategoryScale,
+    LinearScale,
+    Tooltip,
+    Legend,
+    Filler,
+  } from "chart.js";
 
-  Chart.register(BarController, LineController, DoughnutController, BarElement, LineElement, PointElement, ArcElement, CategoryScale, LinearScale, Tooltip, Legend, Filler);
+  Chart.register(
+    BarController,
+    LineController,
+    DoughnutController,
+    BarElement,
+    LineElement,
+    PointElement,
+    ArcElement,
+    CategoryScale,
+    LinearScale,
+    Tooltip,
+    Legend,
+    Filler,
+  );
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
     today: { workedHours: number; entries: number };
-    week:  { workedHours: number; targetHours: number };
+    week: { workedHours: number; targetHours: number };
     overtime: { balanceHours: number };
     vacation: { remaining: number; total: number; used: number };
   }
@@ -49,7 +94,12 @@
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
-  let todayShift: { startTime: string; endTime: string; label: string | null; template: { name: string; color: string } | null } | null = $state(null);
+  let todayShift: {
+    startTime: string;
+    endTime: string;
+    label: string | null;
+    template: { name: string; color: string } | null;
+  } | null = $state(null);
 
   // Charts
   let weeklyChartEl: HTMLCanvasElement;
@@ -74,7 +124,9 @@
   // ── Load ───────────────────────────────────────────────────────────────────
   onMount(async () => {
     await loadData();
-    timer = setInterval(() => { currentTime = new Date(); }, 1000);
+    timer = setInterval(() => {
+      currentTime = new Date();
+    }, 1000);
   });
 
   onDestroy(() => {
@@ -92,7 +144,7 @@
       // Parallel laden
       const [entries, dashStats] = await Promise.all([
         api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-          `/time-entries?from=${today}&to=${today}`
+          `/time-entries?from=${today}&to=${today}`,
         ),
         api.get<DashboardStats>("/dashboard"),
       ]);
@@ -113,8 +165,17 @@
 
       // Load today's shift
       try {
-        const shiftData = await api.get<{ weekDays: string[]; shifts: Array<{ date: string; startTime: string; endTime: string; label: string | null; template: { name: string; color: string } | null }> }>(`/shifts/week?date=${today}`);
-        const myShifts = shiftData.shifts.filter(s => s.date.startsWith(today));
+        const shiftData = await api.get<{
+          weekDays: string[];
+          shifts: Array<{
+            date: string;
+            startTime: string;
+            endTime: string;
+            label: string | null;
+            template: { name: string; color: string } | null;
+          }>;
+        }>(`/shifts/week?date=${today}`);
+        const myShifts = shiftData.shifts.filter((s) => s.date.startsWith(today));
         todayShift = myShifts.length > 0 ? myShifts[0] : null;
       } catch {
         todayShift = null;
@@ -151,15 +212,24 @@
       const reports: MonthlyReport[] = [];
       for (const m of months) {
         try {
-          const r = await api.get<MonthlyReport>(`/reports/monthly?month=${m.month}`);
+          const [y, mo] = m.month.split("-");
+          const r = await api.get<MonthlyReport>(`/reports/monthly?year=${y}&month=${mo}`);
           reports.push(r);
         } catch {
-          reports.push({ workedMinutes: 0, shouldMinutes: 0, sickDays: 0, vacationDays: 0, otherAbsenceDays: 0 });
+          reports.push({
+            workedMinutes: 0,
+            shouldMinutes: 0,
+            sickDays: 0,
+            vacationDays: 0,
+            otherAbsenceDays: 0,
+          });
         }
       }
 
-      const labels = months.map(m => m.label);
-      const brandColor = getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim() || "#6d28d9";
+      const labels = months.map((m) => m.label);
+      const brandColor =
+        getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim() ||
+        "#6d28d9";
 
       // Weekly hours bar chart (Soll vs Ist)
       if (weeklyChartEl) {
@@ -171,13 +241,13 @@
             datasets: [
               {
                 label: "Ist (h)",
-                data: reports.map(r => +(r.workedMinutes / 60).toFixed(1)),
+                data: reports.map((r) => +(r.workedMinutes / 60).toFixed(1)),
                 backgroundColor: brandColor,
                 borderRadius: 4,
               },
               {
                 label: "Soll (h)",
-                data: reports.map(r => +(r.shouldMinutes / 60).toFixed(1)),
+                data: reports.map((r) => +(r.shouldMinutes / 60).toFixed(1)),
                 backgroundColor: "#e5e7eb",
                 borderRadius: 4,
               },
@@ -186,7 +256,9 @@
           options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+            plugins: {
+              legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+            },
             scales: {
               y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
               x: { grid: { display: false }, ticks: { font: { size: 10 } } },
@@ -197,25 +269,32 @@
 
       // Overtime trend line chart
       if (overtimeChartEl) {
-        const overtimeData = reports.map(r => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1));
+        const overtimeData = reports.map(
+          (r) => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1),
+        );
         let cumulative = 0;
-        const cumulativeData = overtimeData.map(v => { cumulative += v; return +cumulative.toFixed(1); });
+        const cumulativeData = overtimeData.map((v) => {
+          cumulative += v;
+          return +cumulative.toFixed(1);
+        });
 
         overtimeChart?.destroy();
         overtimeChart = new Chart(overtimeChartEl, {
           type: "line",
           data: {
             labels,
-            datasets: [{
-              label: "Überstunden kumuliert (h)",
-              data: cumulativeData,
-              borderColor: brandColor,
-              backgroundColor: brandColor + "20",
-              fill: true,
-              tension: 0.3,
-              pointRadius: 4,
-              pointBackgroundColor: brandColor,
-            }],
+            datasets: [
+              {
+                label: "Überstunden kumuliert (h)",
+                data: cumulativeData,
+                borderColor: brandColor,
+                backgroundColor: brandColor + "20",
+                fill: true,
+                tension: 0.3,
+                pointRadius: 4,
+                pointBackgroundColor: brandColor,
+              },
+            ],
           },
           options: {
             responsive: true,
@@ -241,17 +320,21 @@
             type: "doughnut",
             data: {
               labels: ["Krank", "Urlaub", "Sonstige"],
-              datasets: [{
-                data: [totalSick, totalVac, totalOther],
-                backgroundColor: ["#ef4444", "#3b82f6", "#f59e0b"],
-                borderWidth: 0,
-              }],
+              datasets: [
+                {
+                  data: [totalSick, totalVac, totalOther],
+                  backgroundColor: ["#ef4444", "#3b82f6", "#f59e0b"],
+                  borderWidth: 0,
+                },
+              ],
             },
             options: {
               responsive: true,
               maintainAspectRatio: false,
               cutout: "65%",
-              plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+              plugins: {
+                legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+              },
             },
           });
         }
@@ -324,9 +407,11 @@
 
   let overtimeBalance = $derived(stats?.overtime.balanceHours ?? 0);
   let overtimeClass = $derived(
-    Math.abs(overtimeBalance) >= 60 ? "text-red" :
-    Math.abs(overtimeBalance) >= 40 ? "text-yellow" :
-    "text-green"
+    Math.abs(overtimeBalance) >= 60
+      ? "text-red"
+      : Math.abs(overtimeBalance) >= 40
+        ? "text-yellow"
+        : "text-green",
   );
 
   const quickLinks = [
@@ -359,7 +444,12 @@
 
     {#if todayShift}
       <div class="shift-info">
-        <span class="shift-info__badge" style="background: {todayShift.template?.color ?? '#6B7280'}22; border-left: 3px solid {todayShift.template?.color ?? '#6B7280'}; padding: 0.375rem 0.75rem; border-radius: 4px; font-size: 0.8125rem;">
+        <span
+          class="shift-info__badge"
+          style="background: {todayShift.template?.color ??
+            '#6B7280'}22; border-left: 3px solid {todayShift.template?.color ??
+            '#6B7280'}; padding: 0.375rem 0.75rem; border-radius: 4px; font-size: 0.8125rem;"
+        >
           {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
         </span>
       </div>
@@ -371,8 +461,8 @@
 
     {#if clockedIn && clockStart}
       <p class="clock-elapsed text-muted">
-        Eingestempelt seit {format(clockStart, "HH:mm")} Uhr
-        · <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
+        Eingestempelt seit {format(clockStart, "HH:mm")} Uhr ·
+        <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
       </p>
     {/if}
 
@@ -450,7 +540,11 @@
         {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
       </p>
       <p class="stat-sub">
-        {Math.abs(overtimeBalance) >= 60 ? "Kritisch" : Math.abs(overtimeBalance) >= 40 ? "Erhöht" : "Normal"}
+        {Math.abs(overtimeBalance) >= 60
+          ? "Kritisch"
+          : Math.abs(overtimeBalance) >= 40
+            ? "Erhöht"
+            : "Normal"}
       </p>
     </div>
 
@@ -502,7 +596,9 @@
     <div class="team-section">
       <h2 class="section-title">Team-Wochenübersicht</h2>
       <p class="section-sub text-muted">
-        KW {getWeekNumber(teamWeek.weekStart)}: {formatShortDate(teamWeek.weekStart)} – {formatShortDate(teamWeek.weekEnd)}
+        KW {getWeekNumber(teamWeek.weekStart)}: {formatShortDate(teamWeek.weekStart)} – {formatShortDate(
+          teamWeek.weekEnd,
+        )}
       </p>
 
       <div class="team-grid-wrap">
@@ -527,13 +623,14 @@
                 {#each member.days as day}
                   <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
                     {#if day.status === "present"}
-                      <span class="cell-badge cell-badge--present" title="{day.workedHours.toFixed(1)}h gearbeitet">
+                      <span
+                        class="cell-badge cell-badge--present"
+                        title="{day.workedHours.toFixed(1)}h gearbeitet"
+                      >
                         {day.workedHours.toFixed(1)}
                       </span>
                     {:else if day.status === "clocked_in"}
-                      <span class="cell-badge cell-badge--active" title="Eingestempelt">
-                        ●
-                      </span>
+                      <span class="cell-badge cell-badge--active" title="Eingestempelt"> ● </span>
                     {:else if day.status === "absent"}
                       <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
                         {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
@@ -560,11 +657,18 @@
       </div>
 
       <div class="legend">
-        <span class="legend-item"><span class="cell-badge cell-badge--present">5.0</span> Anwesend</span>
-        <span class="legend-item"><span class="cell-badge cell-badge--active">●</span> Eingestempelt</span>
-        <span class="legend-item"><span class="cell-badge cell-badge--absent">🌴</span> Urlaub</span>
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--present">5.0</span> Anwesend</span
+        >
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--active">●</span> Eingestempelt</span
+        >
+        <span class="legend-item"><span class="cell-badge cell-badge--absent">🌴</span> Urlaub</span
+        >
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
-        <span class="legend-item"><span class="cell-badge cell-badge--none">–</span> Keine Daten</span>
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--none">–</span> Keine Daten</span
+        >
       </div>
     </div>
   {/if}
@@ -585,21 +689,6 @@
     {/each}
   </div>
 </div>
-
-<script lang="ts" context="module">
-  function getWeekNumber(dateStr: string): number {
-    const d = new Date(dateStr + "T00:00:00");
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-    const week1 = new Date(d.getFullYear(), 0, 4);
-    return 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-  }
-
-  function formatShortDate(dateStr: string): string {
-    const d = new Date(dateStr + "T00:00:00");
-    return `${d.getDate()}.${d.getMonth() + 1}.`;
-  }
-</script>
 
 <style>
   .dashboard {
@@ -651,7 +740,9 @@
     line-height: 1;
   }
 
-  .clock-elapsed { font-size: 0.875rem; }
+  .clock-elapsed {
+    font-size: 0.875rem;
+  }
   .clock-break {
     display: flex;
     align-items: center;
@@ -673,20 +764,41 @@
     min-width: 160px;
     justify-content: center;
   }
-  .clock-btn--in { background-color: var(--color-green); color: #fff; border-color: var(--color-green); }
-  .clock-btn--in:hover:not(:disabled) { background-color: #15803d; border-color: #15803d; color: #fff; }
-  .clock-btn--out { background-color: var(--color-red); color: #fff; border-color: var(--color-red); }
-  .clock-btn--out:hover:not(:disabled) { background-color: #b91c1c; border-color: #b91c1c; color: #fff; }
+  .clock-btn--in {
+    background-color: var(--color-green);
+    color: #fff;
+    border-color: var(--color-green);
+  }
+  .clock-btn--in:hover:not(:disabled) {
+    background-color: #15803d;
+    border-color: #15803d;
+    color: #fff;
+  }
+  .clock-btn--out {
+    background-color: var(--color-red);
+    color: #fff;
+    border-color: var(--color-red);
+  }
+  .clock-btn--out:hover:not(:disabled) {
+    background-color: #b91c1c;
+    border-color: #b91c1c;
+    color: #fff;
+  }
 
   .btn-spinner {
     display: inline-block;
-    width: 1rem; height: 1rem;
+    width: 1rem;
+    height: 1rem;
     border: 2px solid rgba(255, 255, 255, 0.4);
     border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   /* Stats */
   .stats-grid {
@@ -733,7 +845,9 @@
     .charts-grid {
       grid-template-columns: 1fr;
     }
-    .chart-wrap { height: 180px; }
+    .chart-wrap {
+      height: 180px;
+    }
   }
 
   /* ── Team Section ── */
@@ -837,8 +951,13 @@
   }
 
   @keyframes pulse-badge {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   .cell-badge--absent {
@@ -891,28 +1010,38 @@
     padding: 1.125rem 1.25rem;
     text-decoration: none;
     color: var(--color-text);
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
   }
   .quick-link:hover {
     border-color: var(--color-brand-light);
     box-shadow: var(--shadow-md);
     color: var(--color-text);
   }
-  .quick-link-icon { font-size: 1.5rem; flex-shrink: 0; }
+  .quick-link-icon {
+    font-size: 1.5rem;
+    flex-shrink: 0;
+  }
   .quick-link-label {
     font-size: 0.9375rem;
     font-weight: 600;
     color: var(--color-text-heading);
     margin-bottom: 0.125rem;
   }
-  .quick-link-desc { font-size: 0.8125rem; }
+  .quick-link-desc {
+    font-size: 0.8125rem;
+  }
 
   @media (max-width: 900px) {
-    .stats-grid, .quick-links {
+    .stats-grid,
+    .quick-links {
       grid-template-columns: repeat(2, 1fr);
     }
   }
   @media (max-width: 480px) {
-    .clock-time { font-size: 2.5rem; }
+    .clock-time {
+      font-size: 2.5rem;
+    }
   }
 </style>

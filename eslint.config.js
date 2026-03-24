@@ -30,6 +30,7 @@ export default [
       // SvelteKit uses goto() and href without resolve() by design
       "svelte/no-navigation-without-resolve": "off",
       "svelte/require-each-key": "warn",
+      "svelte/prefer-svelte-reactivity": "off",
     },
   },
   {
