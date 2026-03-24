@@ -364,7 +364,7 @@ async function issueTokens(
   const accessToken = app.jwt.sign(payload);
   // Add jti (JWT ID) to ensure uniqueness even for same-second tokens
   const refreshToken = app.jwt.sign(
-    { ...payload, jti: crypto.randomUUID() },
+    { ...payload, jti: crypto.randomUUID() } as any,
     { expiresIn: "7d" },
   );
 
