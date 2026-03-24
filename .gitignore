@@ -1,13 +1,46 @@
+# Dependencies
 node_modules/
+
+# Environment
 .env
 .env.local
-.claude/
+.env.*.local
+
+# Build output
 dist/
-.svelte-kit/
 build/
+.svelte-kit/
+*.tsbuildinfo
+
+# Turbo
 .turbo/
-*.log
-.DS_Store
-coverage/
+
+# Prisma generated client
 prisma/generated/
 packages/db/generated/
+
+# Test coverage
+coverage/
+
+# Claude Code
+.claude/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Misc
+*.tgz
+.cache/
+tmp/
