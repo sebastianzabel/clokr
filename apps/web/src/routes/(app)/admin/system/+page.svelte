@@ -261,7 +261,7 @@
       </div>
       <div class="form-group">
         <label class="form-label" for="smtp-from-email">Von E-Mail</label>
-        <input id="smtp-from-email" type="email" bind:value={smtpFromEmail} class="form-input" placeholder="noreply@salon.de" />
+        <input id="smtp-from-email" type="email" bind:value={smtpFromEmail} class="form-input" placeholder="noreply@clokr.de" />
       </div>
       <div class="form-group">
         <label class="form-label" for="smtp-from-name">Von Name</label>

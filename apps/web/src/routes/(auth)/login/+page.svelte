@@ -65,7 +65,7 @@
           bind:value={email}
           required
           class="form-input"
-          placeholder="max@salon.de"
+          placeholder="max@clokr.de"
           autocomplete="email"
         />
       </div>
@@ -94,7 +94,7 @@
     </form>
 
     <p class="login-footer">
-      Salon Management &amp; Zeiterfassung
+      Zeiterfassung &amp; Teamverwaltung
     </p>
   </div>
 </div>

@@ -1,0 +1,10 @@
+node_modules
+.svelte-kit
+dist
+build
+.turbo
+.claude
+.git
+*.log
+.DS_Store
+coverage

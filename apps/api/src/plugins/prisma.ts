@@ -1,5 +1,7 @@
 import fp from "fastify-plugin";
 import { PrismaClient } from "@clokr/db";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -8,7 +10,11 @@ declare module "fastify" {
 }
 
 export const prismaPlugin = fp(async (app) => {
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const adapter = new PrismaPg(pool as any);
+
   const prisma = new PrismaClient({
+    adapter,
     log: app.log.level === "debug" ? ["query", "error", "warn"] : ["error"],
   });
 
@@ -18,5 +24,6 @@ export const prismaPlugin = fp(async (app) => {
 
   app.addHook("onClose", async () => {
     await prisma.$disconnect();
+    await pool.end();
   });
 });

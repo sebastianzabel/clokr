@@ -1,23 +1,26 @@
 import { PrismaClient } from "../generated/client";
-import { createHash } from "crypto";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
 
 // Einfaches bcrypt-ähnliches Hash für Seed (ohne bcrypt dependency im db package)
 // Wir nutzen einen festen Hash für "admin1234" – nur für Dev!
 // Generiert mit: bcrypt.hashSync("admin1234", 12)
 const ADMIN_PASSWORD_HASH = "$2a$12$Ueek/KvgJbd3YjYSzydoMeerrFf2nKJoDdhHgzV05hYcS9ZTRArm2";
 
-const prisma = new PrismaClient();
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool as any);
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log("🌱 Starte Seed...");
 
   // Tenant anlegen
   const tenant = await prisma.tenant.upsert({
-    where: { slug: "zweihaar-salon" },
+    where: { slug: "demo-clokr" },
     update: {},
     create: {
-      name: "Zweihaar Salon",
-      slug: "zweihaar-salon",
+      name: "Clokr Demo",
+      slug: "demo-clokr",
       federalState: "NIEDERSACHSEN",
     },
   });
@@ -45,10 +48,10 @@ async function main() {
 
   // Admin User anlegen
   const adminUser = await prisma.user.upsert({
-    where: { email: "admin@salon.de" },
+    where: { email: "admin@clokr.de" },
     update: {},
     create: {
-      email: "admin@salon.de",
+      email: "admin@clokr.de",
       passwordHash: ADMIN_PASSWORD_HASH,
       role: "ADMIN",
     },
@@ -63,7 +66,7 @@ async function main() {
       userId: adminUser.id,
       employeeNumber: "001",
       firstName: "Admin",
-      lastName: "Salon",
+      lastName: "Clokr",
       hireDate: new Date("2020-01-01"),
     },
   });
@@ -122,10 +125,10 @@ async function main() {
 
   // Test-Mitarbeiter anlegen
   const empUser = await prisma.user.upsert({
-    where: { email: "max@salon.de" },
+    where: { email: "max@clokr.de" },
     update: {},
     create: {
-      email: "max@salon.de",
+      email: "max@clokr.de",
       passwordHash: ADMIN_PASSWORD_HASH, // gleicher Hash, Passwort: admin1234
       role: "EMPLOYEE",
     },
@@ -182,10 +185,13 @@ async function main() {
   console.log(`✅ Mitarbeiter: ${empUser.email} / Passwort: admin1234`);
   console.log("\n🎉 Seed abgeschlossen!");
   console.log("\n📋 Login-Daten:");
-  console.log("   Admin:      admin@salon.de  /  admin1234");
-  console.log("   Mitarbeiter: max@salon.de    /  admin1234");
+  console.log("   Admin:       admin@clokr.de  /  admin1234");
+  console.log("   Mitarbeiter: max@clokr.de    /  admin1234");
 }
 
 main()
   .catch(console.error)
-  .finally(() => prisma.$disconnect());
+  .finally(async () => {
+    await prisma.$disconnect();
+    await pool.end();
+  });

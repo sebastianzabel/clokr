@@ -101,8 +101,8 @@ After seeding:
 
 | Role | Email | Password |
 |---|---|---|
-| Admin | admin@salon.de | admin1234 |
-| Employee | max@salon.de | admin1234 |
+| Admin | admin@clokr.de | admin1234 |
+| Employee | max@clokr.de | admin1234 |
 
 ---
 

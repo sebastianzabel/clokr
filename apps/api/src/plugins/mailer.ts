@@ -46,7 +46,7 @@ export const mailerPlugin = fp(async (app) => {
     const user      = dbCfg?.smtpUser      ?? process.env.SMTP_USER;
     const password  = dbCfg?.smtpPassword  ?? process.env.SMTP_PASSWORD;
     const fromEmail = dbCfg?.smtpFromEmail ?? process.env.SMTP_FROM_EMAIL;
-    const fromName  = dbCfg?.smtpFromName  ?? process.env.SMTP_FROM_NAME ?? "Salon Timetrack";
+    const fromName  = dbCfg?.smtpFromName  ?? process.env.SMTP_FROM_NAME ?? "Clokr";
     const secure    = dbCfg?.smtpSecure    ?? (process.env.SMTP_SECURE === "true");
 
     if (!host || !port || !user || !password || !fromEmail) return null;
@@ -68,11 +68,11 @@ export const mailerPlugin = fp(async (app) => {
     await transporter.sendMail({
       from: `"${cfg.smtpFromName}" <${cfg.smtpFromEmail}>`,
       to,
-      subject: "Willkommen bei Salon Timetrack – Konto aktivieren",
+      subject: "Willkommen bei Clokr – Konto aktivieren",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
           <h2 style="color:#6d28d9">Willkommen, ${firstName}!</h2>
-          <p>Sie wurden zu <strong>Salon Timetrack</strong> eingeladen.</p>
+          <p>Sie wurden zu <strong>Clokr</strong> eingeladen.</p>
           <p>Bitte klicken Sie auf den folgenden Link, um Ihr Passwort zu setzen und Ihr Konto zu aktivieren. Der Link ist <strong>24 Stunden</strong> gültig.</p>
           <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#6d28d9;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Konto aktivieren</a>
           <p style="color:#666;font-size:13px">Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br><a href="${link}">${link}</a></p>
@@ -94,11 +94,11 @@ export const mailerPlugin = fp(async (app) => {
     await transporter.sendMail({
       from: `"${cfg.smtpFromName}" <${cfg.smtpFromEmail}>`,
       to,
-      subject: "Ihr Anmeldecode – Salon Timetrack",
+      subject: "Ihr Anmeldecode – Clokr",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
           <h2 style="color:#6d28d9">Hallo, ${firstName}!</h2>
-          <p>Ihr Anmeldecode für <strong>Salon Timetrack</strong> lautet:</p>
+          <p>Ihr Anmeldecode für <strong>Clokr</strong> lautet:</p>
           <div style="text-align:center;margin:24px 0">
             <span style="display:inline-block;font-size:36px;font-weight:700;letter-spacing:10px;color:#1f2937;background:#f3f4f6;padding:16px 32px;border-radius:8px">${code}</span>
           </div>
@@ -121,7 +121,7 @@ export const mailerPlugin = fp(async (app) => {
       from: `"${cfg.smtpFromName}" <${cfg.smtpFromEmail}>`,
       to,
       subject: "SMTP-Testverbindung erfolgreich",
-      html: `<p>Die SMTP-Verbindung von <strong>Salon Timetrack</strong> wurde erfolgreich getestet.</p>`,
+      html: `<p>Die SMTP-Verbindung von <strong>Clokr</strong> wurde erfolgreich getestet.</p>`,
     });
   }
 

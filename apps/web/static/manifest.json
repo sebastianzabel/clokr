@@ -1,7 +1,7 @@
 {
   "name": "Clokr",
   "short_name": "Zeiterfassung",
-  "description": "Zeiterfassung & Urlaubsplanung für den Salon",
+  "description": "Clokr – Zeiterfassung & Urlaubsplanung",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#f9fafb",
