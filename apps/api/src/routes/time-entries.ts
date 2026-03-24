@@ -13,6 +13,11 @@ import {
   getDayHoursFromSchedule,
 } from "../utils/timezone";
 
+const nfcPunchSchema = z.object({
+  nfcCardId: z.string().min(1),
+  terminalSecret: z.string().optional(),
+});
+
 const clockInSchema = z.object({
   employeeId: z.string().uuid().optional(), // optional: Manager kann für andere stempeln
   nfcCardId: z.string().optional(),
@@ -36,7 +41,10 @@ const manualEntrySchema = z.object({
 });
 
 const updateEntrySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional().nullable(),
   breakMinutes: z.number().int().min(0).optional(),
@@ -50,7 +58,7 @@ async function checkOverlap(
   employeeId: string,
   startTime: Date,
   endTime: Date | null,
-  excludeId?: string
+  excludeId?: string,
 ): Promise<string | null> {
   // Kein endTime = offener Eintrag → als "läuft noch" behandeln
   const effectiveEnd = endTime ?? new Date("9999-12-31");
@@ -61,8 +69,8 @@ async function checkOverlap(
       id: excludeId ? { not: excludeId } : undefined,
       startTime: { lt: effectiveEnd },
       OR: [
-        { endTime: null },                        // aktiver Eintrag läuft noch
-        { endTime: { gt: startTime } },           // abgeschlossener Eintrag endet nach neuem Start
+        { endTime: null }, // aktiver Eintrag läuft noch
+        { endTime: { gt: startTime } }, // abgeschlossener Eintrag endet nach neuem Start
       ],
     },
   });
@@ -75,6 +83,100 @@ async function checkOverlap(
 }
 
 export async function timeEntryRoutes(app: FastifyInstance) {
+  // POST /api/v1/time-entries/nfc-punch  (kein JWT – Terminal-Gerät)
+  app.post("/nfc-punch", {
+    schema: { tags: ["Zeiterfassung"] },
+    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    handler: async (req, reply) => {
+      const body = nfcPunchSchema.parse(req.body);
+
+      // Optionale Terminal-Authentifizierung
+      const secret = process.env.NFC_TERMINAL_SECRET;
+      if (secret && body.terminalSecret !== secret) {
+        return reply.code(403).send({ error: "Ungültiges Terminal-Secret" });
+      }
+
+      // Mitarbeiter anhand NFC-Karten-ID ermitteln
+      const employee = await app.prisma.employee.findUnique({
+        where: { nfcCardId: body.nfcCardId },
+        include: { tenant: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: "Unbekannte Karte" });
+      }
+
+      const now = new Date();
+      const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+      const today = todayInTz(tz);
+
+      // Offenen Eintrag von heute suchen
+      const openEntry = await app.prisma.timeEntry.findFirst({
+        where: {
+          employeeId: employee.id,
+          date: today,
+          endTime: null,
+        },
+      });
+
+      if (openEntry) {
+        // Ausstempeln
+        const updated = await app.prisma.timeEntry.update({
+          where: { id: openEntry.id },
+          data: { endTime: now },
+        });
+
+        await updateOvertimeAccount(app, employee.id);
+
+        await app.audit({
+          action: "NFC_CLOCK_OUT",
+          entity: "TimeEntry",
+          entityId: updated.id,
+          oldValue: openEntry,
+          newValue: updated,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+
+        return {
+          action: "OUT" as const,
+          employee: {
+            firstName: employee.firstName,
+            lastName: employee.lastName,
+            employeeNumber: employee.employeeNumber,
+          },
+          time: now.toISOString(),
+        };
+      }
+
+      // Einstempeln
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: employee.id,
+          date: today,
+          startTime: now,
+          source: "NFC",
+        },
+      });
+
+      await app.audit({
+        action: "NFC_CLOCK_IN",
+        entity: "TimeEntry",
+        entityId: entry.id,
+        newValue: entry,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return {
+        action: "IN" as const,
+        employee: {
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          employeeNumber: employee.employeeNumber,
+        },
+        time: now.toISOString(),
+      };
+    },
+  });
+
   // POST /api/v1/time-entries/clock-in
   app.post("/clock-in", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
@@ -207,14 +309,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 
       // Mitarbeiter ID ermitteln
-      const employeeId = body.employeeId && isManager
-        ? body.employeeId
-        : (user.employeeId ?? undefined);
+      const employeeId =
+        body.employeeId && isManager ? body.employeeId : (user.employeeId ?? undefined);
 
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht ermittelbar" });
 
       const newStart = new Date(body.startTime);
-      const newEnd   = body.endTime ? new Date(body.endTime) : null;
+      const newEnd = body.endTime ? new Date(body.endTime) : null;
 
       // Zeitvalidierung
       if (newEnd && newEnd <= newStart) {
@@ -274,9 +375,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Überlappungsprüfung für geänderte Zeiten
       const updatedStart = body.startTime ? new Date(body.startTime) : existing.startTime;
-      const updatedEnd   = "endTime" in body
-        ? (body.endTime ? new Date(body.endTime as string) : null)
-        : existing.endTime;
+      const updatedEnd =
+        "endTime" in body
+          ? body.endTime
+            ? new Date(body.endTime as string)
+            : null
+          : existing.endTime;
 
       if (updatedEnd && updatedEnd <= updatedStart) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
@@ -287,11 +391,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
       const patch: Record<string, unknown> = { source: "CORRECTION" };
-      if (body.date)                        patch.date         = new Date(body.date);
-      if (body.startTime)                   patch.startTime    = new Date(body.startTime);
-      if ("endTime" in body)                patch.endTime      = body.endTime ? new Date(body.endTime as string) : null;
-      if (body.breakMinutes !== undefined)  patch.breakMinutes = body.breakMinutes;
-      if ("note" in body)                   patch.note         = body.note ?? null;
+      if (body.date) patch.date = new Date(body.date);
+      if (body.startTime) patch.startTime = new Date(body.startTime);
+      if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
+      if (body.breakMinutes !== undefined) patch.breakMinutes = body.breakMinutes;
+      if ("note" in body) patch.note = body.note ?? null;
 
       const updated = await app.prisma.timeEntry.update({
         where: { id },
@@ -372,9 +476,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
-      date:    { gte: monthStart, lte: monthEnd },
+      date: { gte: monthStart, lte: monthEnd },
       endTime: { not: null },
-      type:    "WORK",
+      type: "WORK",
     },
   });
 
@@ -402,24 +506,28 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const approvedLeave = await app.prisma.leaveRequest.findMany({
     where: {
       employeeId,
-      status:    "APPROVED",
+      status: "APPROVED",
       startDate: { lte: monthEnd },
-      endDate:   { gte: monthStart },
+      endDate: { gte: monthStart },
     },
   });
   const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-    return sum + calcExpectedMinutesTz(
-      schedule,
-      lr.startDate < monthStart ? monthStart : lr.startDate,
-      lr.endDate   > monthEnd   ? monthEnd   : lr.endDate,
-      tz,
+    return (
+      sum +
+      calcExpectedMinutesTz(
+        schedule,
+        lr.startDate < monthStart ? monthStart : lr.startDate,
+        lr.endDate > monthEnd ? monthEnd : lr.endDate,
+        tz,
+      )
     );
   }, 0);
 
-  const diffHours = (workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes)) / 60;
+  const diffHours =
+    (workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes)) / 60;
 
   const account = await app.prisma.overtimeAccount.upsert({
-    where:  { employeeId },
+    where: { employeeId },
     create: { employeeId, balanceHours: diffHours },
     update: { balanceHours: diffHours },
   });
@@ -427,7 +535,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const threshold = Number(schedule.overtimeThreshold);
   if (Number(account.balanceHours) >= threshold) {
     app.log.warn(
-      `⚠️  Mitarbeiter ${employeeId} hat ${account.balanceHours}h Überstunden (Threshold: ${threshold}h)`
+      `⚠️  Mitarbeiter ${employeeId} hat ${account.balanceHours}h Überstunden (Threshold: ${threshold}h)`,
     );
   }
 }
@@ -446,15 +554,15 @@ export async function getEffectiveSchedule(app: FastifyInstance, employeeId: str
     : null;
 
   return {
-    weeklyHours:    tenantConfig?.defaultWeeklyHours    ?? 40,
-    mondayHours:    tenantConfig?.defaultMondayHours    ?? 8,
-    tuesdayHours:   tenantConfig?.defaultTuesdayHours   ?? 8,
+    weeklyHours: tenantConfig?.defaultWeeklyHours ?? 40,
+    mondayHours: tenantConfig?.defaultMondayHours ?? 8,
+    tuesdayHours: tenantConfig?.defaultTuesdayHours ?? 8,
     wednesdayHours: tenantConfig?.defaultWednesdayHours ?? 8,
-    thursdayHours:  tenantConfig?.defaultThursdayHours  ?? 8,
-    fridayHours:    tenantConfig?.defaultFridayHours    ?? 8,
-    saturdayHours:  tenantConfig?.defaultSaturdayHours  ?? 0,
-    sundayHours:    tenantConfig?.defaultSundayHours    ?? 0,
-    overtimeThreshold:   tenantConfig?.overtimeThreshold   ?? 60,
+    thursdayHours: tenantConfig?.defaultThursdayHours ?? 8,
+    fridayHours: tenantConfig?.defaultFridayHours ?? 8,
+    saturdayHours: tenantConfig?.defaultSaturdayHours ?? 0,
+    sundayHours: tenantConfig?.defaultSundayHours ?? 0,
+    overtimeThreshold: tenantConfig?.overtimeThreshold ?? 60,
     allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
   };
 }

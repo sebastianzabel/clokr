@@ -74,31 +74,33 @@ server.tool(
       };
     }
     return {
-      content: [{ type: "text" as const, text: `❌ Login failed (${status}): ${JSON.stringify(data)}` }],
+      content: [
+        { type: "text" as const, text: `❌ Login failed (${status}): ${JSON.stringify(data)}` },
+      ],
     };
   },
 );
 
 // ── Employees ───────────────────────────────────────────────────────────────
 
-server.tool(
-  "list_employees",
-  "List all employees in the tenant",
-  {},
-  async () => {
-    const { status, data } = await apiCall("GET", "employees");
-    if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
-    }
-    const emps = data as any[];
-    const summary = emps.map(
-      (e) => `• ${e.employeeNumber} — ${e.lastName}, ${e.firstName} (${e.user?.email}) [${e.user?.role}] ${e.user?.isActive ? "✅" : "❌"}`,
-    );
+server.tool("list_employees", "List all employees in the tenant", {}, async () => {
+  const { status, data } = await apiCall("GET", "employees");
+  if (status !== 200) {
     return {
-      content: [{ type: "text" as const, text: `${emps.length} Mitarbeiter:\n${summary.join("\n")}` }],
+      content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
     };
-  },
-);
+  }
+  const emps = data as any[];
+  const summary = emps.map(
+    (e) =>
+      `• ${e.employeeNumber} — ${e.lastName}, ${e.firstName} (${e.user?.email}) [${e.user?.role}] ${e.user?.isActive ? "✅" : "❌"}`,
+  );
+  return {
+    content: [
+      { type: "text" as const, text: `${emps.length} Mitarbeiter:\n${summary.join("\n")}` },
+    ],
+  };
+});
 
 // ── Dashboard ───────────────────────────────────────────────────────────────
 
@@ -109,7 +111,9 @@ server.tool(
   async () => {
     const { status, data } = await apiCall("GET", "dashboard");
     if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
+      return {
+        content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+      };
     }
     const d = data as any;
     return {
@@ -141,35 +145,43 @@ server.tool(
   async ({ from, to }) => {
     const { status, data } = await apiCall("GET", "time-entries", undefined, { from, to });
     if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
+      return {
+        content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+      };
     }
     const entries = data as any[];
     if (entries.length === 0) {
       return { content: [{ type: "text" as const, text: "Keine Zeiteinträge im Zeitraum." }] };
     }
     const lines = entries.map((e) => {
-      const start = new Date(e.startTime).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-      const end = e.endTime ? new Date(e.endTime).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "offen";
+      const start = new Date(e.startTime).toLocaleTimeString("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      const end = e.endTime
+        ? new Date(e.endTime).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
+        : "offen";
       return `• ${e.date?.split("T")[0]} ${start}–${end} (${e.breakMinutes}min Pause) ${e.note ?? ""}`;
     });
     return {
-      content: [{ type: "text" as const, text: `${entries.length} Einträge:\n${lines.join("\n")}` }],
+      content: [
+        { type: "text" as const, text: `${entries.length} Einträge:\n${lines.join("\n")}` },
+      ],
     };
   },
 );
 
-server.tool(
-  "clock_in",
-  "Clock in (start time tracking)",
-  {},
-  async () => {
-    const { status, data } = await apiCall("POST", "time-entries/clock-in", { source: "MANUAL" });
-    if (status === 201 || status === 200) {
-      return { content: [{ type: "text" as const, text: `✅ Eingestempelt! Entry ID: ${(data as any).entry?.id}` }] };
-    }
-    return { content: [{ type: "text" as const, text: `❌ ${status}: ${JSON.stringify(data)}` }] };
-  },
-);
+server.tool("clock_in", "Clock in (start time tracking)", {}, async () => {
+  const { status, data } = await apiCall("POST", "time-entries/clock-in", { source: "MANUAL" });
+  if (status === 201 || status === 200) {
+    return {
+      content: [
+        { type: "text" as const, text: `✅ Eingestempelt! Entry ID: ${(data as any).entry?.id}` },
+      ],
+    };
+  }
+  return { content: [{ type: "text" as const, text: `❌ ${status}: ${JSON.stringify(data)}` }] };
+});
 
 server.tool(
   "clock_out",
@@ -179,9 +191,18 @@ server.tool(
     breakMinutes: z.number().default(0).describe("Break minutes"),
   },
   async ({ entryId, breakMinutes }) => {
-    const { status, data } = await apiCall("POST", `time-entries/${entryId}/clock-out`, { breakMinutes });
+    const { status, data } = await apiCall("POST", `time-entries/${entryId}/clock-out`, {
+      breakMinutes,
+    });
     if (status === 200) {
-      return { content: [{ type: "text" as const, text: `✅ Ausgestempelt! ${JSON.stringify((data as any).warnings ?? [])}` }] };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `✅ Ausgestempelt! ${JSON.stringify((data as any).warnings ?? [])}`,
+          },
+        ],
+      };
     }
     return { content: [{ type: "text" as const, text: `❌ ${status}: ${JSON.stringify(data)}` }] };
   },
@@ -193,14 +214,19 @@ server.tool(
   "list_shifts",
   "List shifts for a week (provide any date in the week)",
   {
-    date: z.string().default("").describe("Any date in the week (YYYY-MM-DD), defaults to current week"),
+    date: z
+      .string()
+      .default("")
+      .describe("Any date in the week (YYYY-MM-DD), defaults to current week"),
   },
   async ({ date }) => {
     const query: Record<string, string> = {};
     if (date) query.date = date;
     const { status, data } = await apiCall("GET", "shifts/week", undefined, query);
     if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
+      return {
+        content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+      };
     }
     const d = data as any;
     const lines: string[] = [`Woche: ${d.weekDays?.[0]} – ${d.weekDays?.[6]}`];
@@ -210,7 +236,9 @@ server.tool(
         lines.push(`  ${emp.lastName}, ${emp.firstName}: keine Schichten`);
       } else {
         const shifts = empShifts
-          .map((s: any) => `${s.date?.split("T")[0]} ${s.startTime}–${s.endTime} (${s.label ?? ""})`)
+          .map(
+            (s: any) => `${s.date?.split("T")[0]} ${s.startTime}–${s.endTime} (${s.label ?? ""})`,
+          )
           .join(", ");
         lines.push(`  ${emp.lastName}, ${emp.firstName}: ${shifts}`);
       }
@@ -221,25 +249,25 @@ server.tool(
 
 // ── Leave / Absences ────────────────────────────────────────────────────────
 
-server.tool(
-  "list_leave_requests",
-  "List leave/absence requests",
-  {},
-  async () => {
-    const { status, data } = await apiCall("GET", "leave/requests");
-    if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
-    }
-    const reqs = data as any[];
-    if (reqs.length === 0) {
-      return { content: [{ type: "text" as const, text: "Keine Anträge vorhanden." }] };
-    }
-    const lines = reqs.map(
-      (r) => `• ${r.startDate?.split("T")[0]}–${r.endDate?.split("T")[0]} ${r.typeCode} [${r.status}] ${r.days} Tage`,
-    );
-    return { content: [{ type: "text" as const, text: `${reqs.length} Anträge:\n${lines.join("\n")}` }] };
-  },
-);
+server.tool("list_leave_requests", "List leave/absence requests", {}, async () => {
+  const { status, data } = await apiCall("GET", "leave/requests");
+  if (status !== 200) {
+    return {
+      content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+    };
+  }
+  const reqs = data as any[];
+  if (reqs.length === 0) {
+    return { content: [{ type: "text" as const, text: "Keine Anträge vorhanden." }] };
+  }
+  const lines = reqs.map(
+    (r) =>
+      `• ${r.startDate?.split("T")[0]}–${r.endDate?.split("T")[0]} ${r.typeCode} [${r.status}] ${r.days} Tage`,
+  );
+  return {
+    content: [{ type: "text" as const, text: `${reqs.length} Anträge:\n${lines.join("\n")}` }],
+  };
+});
 
 // ── Reports ─────────────────────────────────────────────────────────────────
 
@@ -253,7 +281,9 @@ server.tool(
     const [year, m] = month.split("-");
     const { status, data } = await apiCall("GET", "reports/monthly", undefined, { year, month: m });
     if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
+      return {
+        content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+      };
     }
     const d = data as any;
     const lines = (d.rows ?? []).map(
@@ -277,13 +307,16 @@ server.tool(
   async ({ employeeId }) => {
     const { status, data } = await apiCall("GET", `overtime/${employeeId}`);
     if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
+      return {
+        content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
+      };
     }
     const d = data as any;
     const txLines = (d.transactions ?? [])
       .slice(0, 10)
       .map(
-        (t: any) => `  ${t.createdAt?.split("T")[0]} ${t.type} ${t.hours >= 0 ? "+" : ""}${t.hours}h ${t.description ?? ""}`,
+        (t: any) =>
+          `  ${t.createdAt?.split("T")[0]} ${t.type} ${t.hours >= 0 ? "+" : ""}${t.hours}h ${t.description ?? ""}`,
       );
     return {
       content: [
@@ -302,27 +335,49 @@ server.tool(
 
 // ── Notifications ───────────────────────────────────────────────────────────
 
-server.tool(
-  "notifications",
-  "Get current notifications",
-  {},
-  async () => {
-    const { status, data } = await apiCall("GET", "notifications");
-    if (status !== 200) {
-      return { content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }] };
-    }
-    const d = data as any;
-    const lines = (d.notifications ?? []).map(
-      (n: any) => `${n.read ? "📖" : "🔔"} ${n.title}: ${n.message} (${n.createdAt?.split("T")[0]})`,
-    );
+server.tool("notifications", "Get current notifications", {}, async () => {
+  const { status, data } = await apiCall("GET", "notifications");
+  if (status !== 200) {
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `${d.unreadCount} ungelesen\n${lines.join("\n") || "Keine Benachrichtigungen."}`,
-        },
-      ],
+      content: [{ type: "text" as const, text: `Error ${status}: ${JSON.stringify(data)}` }],
     };
+  }
+  const d = data as any;
+  const lines = (d.notifications ?? []).map(
+    (n: any) => `${n.read ? "📖" : "🔔"} ${n.title}: ${n.message} (${n.createdAt?.split("T")[0]})`,
+  );
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `${d.unreadCount} ungelesen\n${lines.join("\n") || "Keine Benachrichtigungen."}`,
+      },
+    ],
+  };
+});
+
+// ── NFC Punch ──────────────────────────────────────────────────────────────
+
+server.tool(
+  "nfc_punch",
+  "Simulate an NFC card punch (clock in or out) for an employee by their NFC card ID",
+  {
+    nfcCardId: z.string().describe("The NFC card ID assigned to the employee"),
+  },
+  async ({ nfcCardId }) => {
+    const { status, data } = await apiCall("POST", "time-entries/nfc-punch", { nfcCardId });
+    if (status === 200 || status === 201) {
+      const d = data as any;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `${d.action === "IN" ? "✅ Eingestempelt" : "🔴 Ausgestempelt"}: ${d.employee?.firstName} ${d.employee?.lastName} (${d.employee?.employeeNumber}) um ${new Date(d.time).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`,
+          },
+        ],
+      };
+    }
+    return { content: [{ type: "text" as const, text: `❌ ${status}: ${JSON.stringify(data)}` }] };
   },
 );
 
