@@ -101,6 +101,22 @@
   let twoFaSaving = $state(false);
   let twoFaError = $state("");
 
+  // Phorest
+  let phBusinessId = $state("");
+  let phBranchId = $state("");
+  let phUsername = $state("");
+  let phPassword = $state("");
+  let phConfigured = $state(false);
+  let phSaving = $state(false);
+  let phSaved = $state(false);
+  let phError = $state("");
+  let phTesting = $state(false);
+  let phTestResult = $state("");
+  let phSyncStart = $state("");
+  let phSyncEnd = $state("");
+  let phSyncing = $state(false);
+  let phSyncResult: { created: number; skipped: number; unmapped: number; errors: number } | null = $state(null);
+
   onMount(async () => {
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
@@ -136,6 +152,21 @@
       try {
         const sec = await api.get<{ twoFaEnabled: boolean }>("/settings/security");
         twoFaEnabled = sec.twoFaEnabled;
+      } catch { /* ignorieren */ }
+
+      try {
+        const ph = await api.get<{ configured: boolean; phorestBusinessId: string | null; phorestBranchId: string | null; phorestUsername: string | null; phorestBaseUrl: string | null }>("/integrations/phorest/config");
+        phConfigured = ph.configured;
+        phBusinessId = ph.phorestBusinessId ?? "";
+        phBranchId = ph.phorestBranchId ?? "";
+        phUsername = ph.phorestUsername ?? "";
+        // Set default sync range to current week
+        const now = new Date();
+        const dow = now.getDay();
+        const mon = new Date(now); mon.setDate(mon.getDate() - (dow === 0 ? 6 : dow - 1));
+        const sun = new Date(mon); sun.setDate(sun.getDate() + 6);
+        phSyncStart = mon.toISOString().split("T")[0];
+        phSyncEnd = sun.toISOString().split("T")[0];
       } catch { /* ignorieren */ }
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -196,6 +227,51 @@
       twoFaError = e instanceof Error ? e.message : "Fehler";
     } finally {
       twoFaSaving = false;
+    }
+  }
+
+  async function savePhorest() {
+    phSaving = true; phError = ""; phSaved = false;
+    try {
+      await api.put("/integrations/phorest/config", {
+        phorestBusinessId: phBusinessId,
+        phorestBranchId: phBranchId,
+        phorestUsername: phUsername,
+        phorestPassword: phPassword,
+      });
+      phConfigured = true;
+      phSaved = true;
+    } catch (e: unknown) {
+      phError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      phSaving = false;
+    }
+  }
+
+  async function testPhorest() {
+    phTesting = true; phTestResult = "";
+    try {
+      const res = await api.post<{ success: boolean; message?: string; error?: string }>("/integrations/phorest/test", {});
+      phTestResult = res.success ? `✅ ${res.message}` : `❌ ${res.error}`;
+    } catch (e: unknown) {
+      phTestResult = `❌ ${e instanceof Error ? e.message : "Fehler"}`;
+    } finally {
+      phTesting = false;
+    }
+  }
+
+  async function syncPhorest() {
+    phSyncing = true; phSyncResult = null; phError = "";
+    try {
+      const res = await api.post<{ created: number; skipped: number; unmapped: number; errors: number }>("/integrations/phorest/sync-shifts", {
+        startDate: phSyncStart,
+        endDate: phSyncEnd,
+      });
+      phSyncResult = res;
+    } catch (e: unknown) {
+      phError = e instanceof Error ? e.message : "Sync fehlgeschlagen";
+    } finally {
+      phSyncing = false;
     }
   }
 </script>
@@ -366,6 +442,81 @@
         <span class="text-muted" style="font-size:0.875rem;">Nach dem Login wird ein 6-stelliger Code per E-Mail gesendet. Gilt für alle Benutzer.</span>
       </span>
     </label>
+  </div>
+
+  <!-- ── Phorest-Integration ─────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2>Phorest-Integration</h2>
+    <p class="text-muted">Schichten aus Phorest Salon-Software importieren</p>
+  </div>
+
+  <div class="card card-body settings-card">
+    {#if phError}
+      <div class="alert alert-error" role="alert" style="margin-bottom:1rem;"><span>⚠</span><span>{phError}</span></div>
+    {/if}
+    {#if phSaved}
+      <div class="alert alert-success" style="margin-bottom:1rem;">Phorest-Konfiguration gespeichert.</div>
+    {/if}
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="ph-biz">Business ID</label>
+        <input id="ph-biz" type="text" bind:value={phBusinessId} class="form-input" placeholder="z.B. abc123def456" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ph-branch">Branch ID</label>
+        <input id="ph-branch" type="text" bind:value={phBranchId} class="form-input" placeholder="z.B. branch-001" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
+        <input id="ph-user" type="text" bind:value={phUsername} class="form-input" placeholder="api@salon.de" />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ph-pass">API-Passwort</label>
+        <input id="ph-pass" type="password" bind:value={phPassword} class="form-input" placeholder="••••••••" />
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
+      <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
+        {phSaving ? "Speichern…" : "Konfiguration speichern"}
+      </button>
+      <button class="btn btn-ghost" onclick={testPhorest} disabled={phTesting || !phConfigured}>
+        {phTesting ? "Teste…" : "Verbindung testen"}
+      </button>
+    </div>
+
+    {#if phTestResult}
+      <p style="margin-top:0.75rem; font-size:0.875rem;">{phTestResult}</p>
+    {/if}
+
+    {#if phConfigured}
+      <hr style="margin: 1.5rem 0; border-color: var(--color-border);">
+      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">Schichten synchronisieren</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ph-sync-start">Von</label>
+          <input id="ph-sync-start" type="date" bind:value={phSyncStart} class="form-input" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ph-sync-end">Bis</label>
+          <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick={syncPhorest} disabled={phSyncing || !phSyncStart || !phSyncEnd}>
+        {phSyncing ? "Synchronisiere…" : "Schichten importieren"}
+      </button>
+      <p class="form-hint text-muted">Mitarbeiter werden automatisch per E-Mail oder Name zugeordnet.</p>
+
+      {#if phSyncResult}
+        <div style="margin-top:1rem; padding:0.75rem 1rem; background: var(--color-bg-subtle); border-radius: var(--radius-md); font-size: 0.875rem;">
+          <strong>{phSyncResult.created}</strong> Schichten importiert,
+          <strong>{phSyncResult.skipped}</strong> übersprungen (bereits vorhanden),
+          <strong>{phSyncResult.unmapped}</strong> ohne Zuordnung,
+          <strong>{phSyncResult.errors}</strong> Fehler
+        </div>
+      {/if}
+    {/if}
   </div>
 
 {/if}

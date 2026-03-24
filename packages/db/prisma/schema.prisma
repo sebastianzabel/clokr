@@ -63,6 +63,12 @@ model TenantConfig {
   twoFaEnabled  Boolean  @default(false)
   // Zeitzone (IANA)
   timezone      String   @default("Europe/Berlin")
+  // Phorest-Integration
+  phorestBusinessId String?
+  phorestBranchId   String?
+  phorestUsername   String?
+  phorestPassword   String?
+  phorestBaseUrl    String?  @default("https://api.phorest.com/third-party-api-server")
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 

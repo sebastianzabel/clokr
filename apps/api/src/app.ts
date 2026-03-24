@@ -24,6 +24,7 @@ import { auditLogRoutes } from "./routes/audit-logs";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./routes/dashboard";
 import { shiftRoutes } from "./routes/shifts";
+import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
 
 export async function buildApp() {
@@ -100,6 +101,7 @@ export async function buildApp() {
   await app.register(dashboardRoutes,        { prefix: "/api/v1/dashboard" });
   await app.register(notificationRoutes,    { prefix: "/api/v1/notifications" });
   await app.register(shiftRoutes,            { prefix: "/api/v1/shifts" });
+  await app.register(integrationRoutes,      { prefix: "/api/v1/integrations" });
   await app.register(importRoutes,           { prefix: "/api/v1/imports" });
 
   // ── Health ────────────────────────────────────────────────

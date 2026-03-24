@@ -496,19 +496,17 @@
                   >
                     <span class="shift-block__label">{shift.label ?? shift.startTime + "–" + shift.endTime}</span>
                     <span class="shift-block__time">{shift.startTime}–{shift.endTime}</span>
-                    {@const actual = getActualHours(emp.id, day)}
-                    {#if actual !== null}
-                      <span class="shift-block__actual" class:shift-block__actual--over={actual > parseFloat(shift.endTime.replace(":", ".")) - parseFloat(shift.startTime.replace(":", "."))}>
-                        IST: {actual.toFixed(1)}h
+                    {#if getActualHours(emp.id, day) !== null}
+                      <span class="shift-block__actual" class:shift-block__actual--over={(getActualHours(emp.id, day) ?? 0) > parseFloat(shift.endTime.replace(":", ".")) - parseFloat(shift.startTime.replace(":", "."))}>
+                        IST: {(getActualHours(emp.id, day) ?? 0).toFixed(1)}h
                       </span>
                     {/if}
                   </div>
                 {/each}
                 {#if cellShifts.length === 0}
                   <span class="grid-cell__plus">+</span>
-                  {@const actual = getActualHours(emp.id, day)}
-                  {#if actual !== null && actual > 0}
-                    <span class="cell-actual">{actual.toFixed(1)}h ohne Schicht</span>
+                  {#if getActualHours(emp.id, day) !== null && (getActualHours(emp.id, day) ?? 0) > 0}
+                    <span class="cell-actual">{(getActualHours(emp.id, day) ?? 0).toFixed(1)}h ohne Schicht</span>
                   {/if}
                 {/if}
               </td>
