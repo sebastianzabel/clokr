@@ -549,6 +549,33 @@
   let vacSummaryLeft               = $derived(vacSummaryTotal + vacSummaryCarryOver - vacSummaryUsed - vacSummaryPlanned);
   let showVacSummary               = $derived(vacationBalance !== null);
 
+  // ── iCal-Download ────────────────────────────────────────────────────────
+  let icalDownloading = $state(false);
+
+  async function downloadIcal(endpoint: "personal" | "team") {
+    icalDownloading = true;
+    try {
+      const auth = $authStore;
+      const res = await fetch(`/api/v1/leave/ical/${endpoint}`, {
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+      });
+      if (!res.ok) throw new Error("Download fehlgeschlagen");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = endpoint === "team" ? "clokr-team-abwesenheiten.ics" : "clokr-abwesenheiten.ics";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Download";
+    } finally {
+      icalDownloading = false;
+    }
+  }
+
   // Filters for list view
   let filterLeaveStatus = $state<Status | "">("");
   let filterLeaveType   = $state<TypeCode | "">("");
@@ -911,6 +938,27 @@
       <span class="legend-item"><span class="legend-dot" style="background:#9e9e9e"></span>Abwesend</span>
       <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
       <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
+    </div>
+  </div>
+
+  <!-- iCal-Download -->
+  <div class="ical-section">
+    <div class="ical-header">
+      <span class="ical-icon">📥</span>
+      <div>
+        <p class="ical-title">Kalender exportieren</p>
+        <p class="ical-desc">Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)</p>
+      </div>
+    </div>
+    <div class="ical-actions">
+      <button class="btn btn-ghost btn-sm" onclick={() => downloadIcal("personal")} disabled={icalDownloading}>
+        {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
+      </button>
+      {#if isManager}
+        <button class="btn btn-ghost btn-sm" onclick={() => downloadIcal("team")} disabled={icalDownloading}>
+          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
+        </button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -1643,6 +1691,44 @@
     flex-shrink: 0; display: inline-block;
   }
   .legend-pending { font-style: italic; }
+
+  /* ── iCal ────────────────────────────────────────────────────────── */
+  .ical-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: var(--gray-50, #f9fafb);
+    border: 1px solid var(--gray-200);
+    border-radius: 10px;
+    padding: 0.875rem 1.25rem;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+  }
+  .ical-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex: 1;
+    min-width: 0;
+  }
+  .ical-icon { font-size: 1.25rem; flex-shrink: 0; }
+  .ical-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--color-text);
+  }
+  .ical-desc {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+  .ical-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
 
   /* ── Responsive ───────────────────────────────────────────────────── */
   @media (max-width: 700px) {

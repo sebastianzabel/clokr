@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc } from "../utils/timezone";
+import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = ["VACATION", "OVERTIME_COMP", "SPECIAL", "UNPAID", "SICK", "SICK_CHILD", "EDUCATION", "MATERNITY", "PARENTAL"] as const;
@@ -627,6 +628,127 @@ export async function leaveRoutes(app: FastifyInstance) {
       if (!employeeId) return { balanceHours: 0 };
       const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
       return { balanceHours: account ? Number(account.balanceHours) : 0 };
+    },
+  });
+
+  // ── GET /ical/personal  – iCal-Export eigener Abwesenheiten ─────────────
+  app.get("/ical/personal", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      if (!employeeId) return reply.code(400).send({ error: "Kein Mitarbeiter-Profil" });
+
+      const [requests, absences] = await Promise.all([
+        app.prisma.leaveRequest.findMany({
+          where:   { employeeId, status: "APPROVED" },
+          include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
+        }),
+        app.prisma.absence.findMany({
+          where:   { employeeId },
+          include: { employee: { select: { firstName: true, lastName: true } } },
+        }),
+      ]);
+
+      const events: ICalEvent[] = requests.map(r => {
+        const typeCode = TYPE_CODES.find(c => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
+        const summary  = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
+        return {
+          uid:        `leave-${r.id}@clokr`,
+          summary,
+          dtstart:    r.startDate.toISOString().split("T")[0],
+          dtend:      addOneDay(r.endDate.toISOString().split("T")[0]),
+          description: r.note ?? undefined,
+          status:     "CONFIRMED",
+          categories: typeCode ?? "VACATION",
+        };
+      });
+
+      for (const a of absences) {
+        const summary = a.type === "SICK" ? "Krankmeldung"
+                      : a.type === "SICK_CHILD" ? "Kinderkrank"
+                      : a.type === "MATERNITY" ? "Mutterschutz"
+                      : a.type === "PARENTAL" ? "Elternzeit"
+                      : a.type === "SPECIAL_LEAVE" ? "Sonderurlaub"
+                      : a.type === "UNPAID_LEAVE" ? "Unbezahlter Urlaub"
+                      : "Abwesenheit";
+        events.push({
+          uid:        `absence-${a.id}@clokr`,
+          summary,
+          dtstart:    a.startDate.toISOString().split("T")[0],
+          dtend:      addOneDay(a.endDate.toISOString().split("T")[0]),
+          description: a.note ?? undefined,
+          status:     "CONFIRMED",
+          categories: a.type,
+        });
+      }
+
+      const ical = generateICal("Clokr – Meine Abwesenheiten", events);
+      reply
+        .header("Content-Type", "text/calendar; charset=utf-8")
+        .header("Content-Disposition", 'attachment; filename="clokr-abwesenheiten.ics"')
+        .send(ical);
+    },
+  });
+
+  // ── GET /ical/team  – iCal-Export aller Team-Abwesenheiten ─────────────
+  app.get("/ical/team", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+
+      const [requests, absences] = await Promise.all([
+        app.prisma.leaveRequest.findMany({
+          where:   { employee: { tenantId }, status: "APPROVED" },
+          include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
+        }),
+        app.prisma.absence.findMany({
+          where:   { employee: { tenantId } },
+          include: { employee: { select: { firstName: true, lastName: true } } },
+        }),
+      ]);
+
+      const events: ICalEvent[] = requests.map(r => {
+        const name     = `${r.employee.firstName} ${r.employee.lastName}`;
+        const typeCode = TYPE_CODES.find(c => LEAVE_TYPE_DEFS[c].name === r.leaveType.name);
+        const typeName = LEAVE_TYPE_DEFS[typeCode as TypeCode]?.name ?? r.leaveType.name;
+        return {
+          uid:        `leave-${r.id}@clokr`,
+          summary:    `${name} \u2014 ${typeName}`,
+          dtstart:    r.startDate.toISOString().split("T")[0],
+          dtend:      addOneDay(r.endDate.toISOString().split("T")[0]),
+          description: r.note ?? undefined,
+          status:     "CONFIRMED",
+          categories: typeCode ?? "VACATION",
+        };
+      });
+
+      for (const a of absences) {
+        const name    = `${a.employee.firstName} ${a.employee.lastName}`;
+        const summary = a.type === "SICK" ? "Krankmeldung"
+                      : a.type === "SICK_CHILD" ? "Kinderkrank"
+                      : a.type === "MATERNITY" ? "Mutterschutz"
+                      : a.type === "PARENTAL" ? "Elternzeit"
+                      : a.type === "SPECIAL_LEAVE" ? "Sonderurlaub"
+                      : a.type === "UNPAID_LEAVE" ? "Unbezahlter Urlaub"
+                      : "Abwesenheit";
+        events.push({
+          uid:        `absence-${a.id}@clokr`,
+          summary:    `${name} \u2014 ${summary}`,
+          dtstart:    a.startDate.toISOString().split("T")[0],
+          dtend:      addOneDay(a.endDate.toISOString().split("T")[0]),
+          description: a.note ?? undefined,
+          status:     "CONFIRMED",
+          categories: a.type,
+        });
+      }
+
+      const ical = generateICal("Clokr – Team-Abwesenheiten", events);
+      reply
+        .header("Content-Type", "text/calendar; charset=utf-8")
+        .header("Content-Disposition", 'attachment; filename="clokr-team-abwesenheiten.ics"')
+        .send(ical);
     },
   });
 

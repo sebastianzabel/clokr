@@ -15,6 +15,7 @@ interface SmtpConfig {
 export interface MailerService {
   sendInvitation(params: { to: string; firstName: string; token: string }): Promise<void>;
   sendOtp(params: { to: string; firstName: string; code: string }): Promise<void>;
+  sendPasswordReset(params: { to: string; firstName: string; token: string }): Promise<void>;
   sendTestMail(to: string, smtpOverride?: Partial<SmtpConfig>): Promise<void>;
   getSmtpConfig(tenantId: string): Promise<SmtpConfig | null>;
 }
@@ -108,6 +109,34 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
+  async function sendPasswordReset({ to, firstName, token }: { to: string; firstName: string; token: string }) {
+    const tenant = await app.prisma.tenant.findFirst();
+    if (!tenant) throw new Error("Kein Tenant gefunden");
+
+    const cfg = await getSmtpConfig(tenant.id);
+    if (!cfg) throw new Error("SMTP nicht konfiguriert");
+
+    const link = `${appUrl}/reset-password?token=${token}`;
+    const transporter = createTransporter(cfg);
+
+    await transporter.sendMail({
+      from: `"${cfg.smtpFromName}" <${cfg.smtpFromEmail}>`,
+      to,
+      subject: "Passwort zurücksetzen – Clokr",
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+          <h2 style="color:#6d28d9">Hallo, ${firstName}!</h2>
+          <p>Sie haben angefordert, Ihr Passwort für <strong>Clokr</strong> zurückzusetzen.</p>
+          <p>Klicken Sie auf den folgenden Button, um ein neues Passwort zu vergeben. Der Link ist <strong>1 Stunde</strong> gültig.</p>
+          <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#6d28d9;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Passwort zurücksetzen</a>
+          <p style="color:#666;font-size:13px">Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br><a href="${link}">${link}</a></p>
+          <p style="color:#666;font-size:13px">Falls Sie diese Anfrage nicht gestellt haben, können Sie diese E-Mail ignorieren.</p>
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
+          <p style="color:#9ca3af;font-size:12px">Diese E-Mail wurde automatisch gesendet. Bitte nicht antworten.</p>
+        </div>`,
+    });
+  }
+
   async function sendTestMail(to: string, smtpOverride?: Partial<SmtpConfig>) {
     const tenant = await app.prisma.tenant.findFirst();
     if (!tenant) throw new Error("Kein Tenant gefunden");
@@ -125,5 +154,5 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
-  app.decorate("mailer", { sendInvitation, sendOtp, sendTestMail, getSmtpConfig });
+  app.decorate("mailer", { sendInvitation, sendOtp, sendPasswordReset, sendTestMail, getSmtpConfig });
 });

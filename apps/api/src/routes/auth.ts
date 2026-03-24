@@ -18,6 +18,15 @@ const verifyOtpSchema = z.object({
   code: z.string().length(6),
 });
 
+const forgotPasswordSchema = z.object({
+  email: z.string().email(),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8),
+});
+
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/v1/auth/login
   app.post("/login", {
@@ -232,6 +241,106 @@ export async function authRoutes(app: FastifyInstance) {
         where: { token: refreshToken },
         data: { revokedAt: new Date() },
       });
+      return { success: true };
+    },
+  });
+
+  // POST /api/v1/auth/forgot-password
+  app.post("/forgot-password", {
+    config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
+    schema: { tags: ["Auth"] },
+    handler: async (req, reply) => {
+      const { email } = forgotPasswordSchema.parse(req.body);
+
+      const user = await app.prisma.user.findUnique({
+        where: { email },
+        include: { employee: true },
+      });
+
+      // Always return success to avoid leaking user existence
+      if (!user || !user.isActive) {
+        return { success: true };
+      }
+
+      // Invalidate previous reset tokens
+      await app.prisma.otpToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+
+      // Generate reset token
+      const rawToken = crypto.randomBytes(32).toString("hex");
+
+      await app.prisma.otpToken.create({
+        data: {
+          userId: user.id,
+          code: rawToken,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+        },
+      });
+
+      // Send reset email (fire-and-forget on mail error)
+      try {
+        await app.mailer.sendPasswordReset({
+          to: user.email,
+          firstName: user.employee?.firstName ?? user.email,
+          token: rawToken,
+        });
+      } catch (err) {
+        app.log.error({ err }, "Passwort-Reset-Mail konnte nicht gesendet werden");
+      }
+
+      return { success: true };
+    },
+  });
+
+  // POST /api/v1/auth/reset-password
+  app.post("/reset-password", {
+    config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
+    schema: { tags: ["Auth"] },
+    handler: async (req, reply) => {
+      const { token, password } = resetPasswordSchema.parse(req.body);
+
+      const otpToken = await app.prisma.otpToken.findFirst({
+        where: { code: token, usedAt: null },
+      });
+
+      if (!otpToken) {
+        return reply.code(400).send({ error: "Ungültiger oder abgelaufener Link" });
+      }
+
+      if (otpToken.expiresAt < new Date()) {
+        return reply.code(410).send({ error: "Der Link ist abgelaufen. Bitte fordern Sie einen neuen an." });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      // Update password
+      await app.prisma.user.update({
+        where: { id: otpToken.userId },
+        data: { passwordHash },
+      });
+
+      // Mark token as used
+      await app.prisma.otpToken.update({
+        where: { id: otpToken.id },
+        data: { usedAt: new Date() },
+      });
+
+      // Revoke all refresh tokens for user
+      await app.prisma.refreshToken.updateMany({
+        where: { userId: otpToken.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+
+      await app.audit({
+        userId: otpToken.userId,
+        action: "PASSWORD_RESET",
+        entity: "User",
+        entityId: otpToken.userId,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       return { success: true };
     },
   });

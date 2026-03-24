@@ -2,8 +2,11 @@
   import { onMount, onDestroy } from "svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { format } from "date-fns";
+  import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
+  import { Chart, BarController, LineController, DoughnutController, BarElement, LineElement, PointElement, ArcElement, CategoryScale, LinearScale, Tooltip, Legend, Filler } from "chart.js";
+
+  Chart.register(BarController, LineController, DoughnutController, BarElement, LineElement, PointElement, ArcElement, CategoryScale, LinearScale, Tooltip, Legend, Filler);
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface DashboardStats {
@@ -47,6 +50,22 @@
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
 
+  // Charts
+  let weeklyChartEl: HTMLCanvasElement;
+  let overtimeChartEl: HTMLCanvasElement;
+  let absenceChartEl: HTMLCanvasElement;
+  let weeklyChart: Chart | null = null;
+  let overtimeChart: Chart | null = null;
+  let absenceChart: Chart | null = null;
+
+  interface MonthlyReport {
+    workedMinutes: number;
+    shouldMinutes: number;
+    sickDays: number;
+    vacationDays: number;
+    otherAbsenceDays: number;
+  }
+
   let timer: ReturnType<typeof setInterval>;
 
   const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
@@ -57,7 +76,12 @@
     timer = setInterval(() => { currentTime = new Date(); }, 1000);
   });
 
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => {
+    clearInterval(timer);
+    weeklyChart?.destroy();
+    overtimeChart?.destroy();
+    absenceChart?.destroy();
+  });
 
   async function loadData() {
     loading = true;
@@ -94,8 +118,136 @@
           // not available
         }
       }
+
+      // Load chart data (last 6 months)
+      loadCharts();
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadCharts() {
+    try {
+      const now = new Date();
+      const months: { label: string; month: string }[] = [];
+      for (let i = 5; i >= 0; i--) {
+        const d = subMonths(now, i);
+        months.push({
+          label: format(d, "MMM yy", { locale: de }),
+          month: format(d, "yyyy-MM"),
+        });
+      }
+
+      const reports: MonthlyReport[] = [];
+      for (const m of months) {
+        try {
+          const r = await api.get<MonthlyReport>(`/reports/monthly?month=${m.month}`);
+          reports.push(r);
+        } catch {
+          reports.push({ workedMinutes: 0, shouldMinutes: 0, sickDays: 0, vacationDays: 0, otherAbsenceDays: 0 });
+        }
+      }
+
+      const labels = months.map(m => m.label);
+      const brandColor = getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim() || "#6d28d9";
+
+      // Weekly hours bar chart (Soll vs Ist)
+      if (weeklyChartEl) {
+        weeklyChart?.destroy();
+        weeklyChart = new Chart(weeklyChartEl, {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Ist (h)",
+                data: reports.map(r => +(r.workedMinutes / 60).toFixed(1)),
+                backgroundColor: brandColor,
+                borderRadius: 4,
+              },
+              {
+                label: "Soll (h)",
+                data: reports.map(r => +(r.shouldMinutes / 60).toFixed(1)),
+                backgroundColor: "#e5e7eb",
+                borderRadius: 4,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+            scales: {
+              y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
+              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            },
+          },
+        });
+      }
+
+      // Overtime trend line chart
+      if (overtimeChartEl) {
+        const overtimeData = reports.map(r => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1));
+        let cumulative = 0;
+        const cumulativeData = overtimeData.map(v => { cumulative += v; return +cumulative.toFixed(1); });
+
+        overtimeChart?.destroy();
+        overtimeChart = new Chart(overtimeChartEl, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              label: "Überstunden kumuliert (h)",
+              data: cumulativeData,
+              borderColor: brandColor,
+              backgroundColor: brandColor + "20",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: brandColor,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
+              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+            },
+          },
+        });
+      }
+
+      // Absence doughnut chart
+      if (absenceChartEl) {
+        const totalSick = reports.reduce((s, r) => s + r.sickDays, 0);
+        const totalVac = reports.reduce((s, r) => s + r.vacationDays, 0);
+        const totalOther = reports.reduce((s, r) => s + (r.otherAbsenceDays ?? 0), 0);
+
+        absenceChart?.destroy();
+        if (totalSick + totalVac + totalOther > 0) {
+          absenceChart = new Chart(absenceChartEl, {
+            type: "doughnut",
+            data: {
+              labels: ["Krank", "Urlaub", "Sonstige"],
+              datasets: [{
+                data: [totalSick, totalVac, totalOther],
+                backgroundColor: ["#ef4444", "#3b82f6", "#f59e0b"],
+                borderWidth: 0,
+              }],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              cutout: "65%",
+              plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+            },
+          });
+        }
+      }
+    } catch {
+      // Charts are optional, don't break dashboard
     }
   }
 
@@ -303,6 +455,30 @@
     </div>
   </div>
 
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="chart-card card card-body">
+      <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
+      <div class="chart-wrap">
+        <canvas bind:this={weeklyChartEl}></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card card card-body">
+      <h3 class="chart-title">Überstunden-Trend</h3>
+      <div class="chart-wrap">
+        <canvas bind:this={overtimeChartEl}></canvas>
+      </div>
+    </div>
+
+    <div class="chart-card chart-card--sm card card-body">
+      <h3 class="chart-title">Abwesenheiten (6 Monate)</h3>
+      <div class="chart-wrap chart-wrap--doughnut">
+        <canvas bind:this={absenceChartEl}></canvas>
+      </div>
+    </div>
+  </div>
+
   <!-- Team Wochenübersicht (nur Manager/Admin) -->
   {#if isManager && teamWeek}
     <div class="team-section">
@@ -495,6 +671,46 @@
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
     margin-bottom: 1.75rem;
+  }
+
+  /* Charts */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 240px;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+  }
+
+  .chart-card {
+    padding: 1rem 1.25rem;
+  }
+
+  .chart-title {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    margin: 0 0 0.75rem;
+  }
+
+  .chart-wrap {
+    position: relative;
+    height: 200px;
+  }
+
+  .chart-wrap--doughnut {
+    height: 180px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  @media (max-width: 900px) {
+    .charts-grid {
+      grid-template-columns: 1fr;
+    }
+    .chart-wrap { height: 180px; }
   }
 
   /* ── Team Section ── */
