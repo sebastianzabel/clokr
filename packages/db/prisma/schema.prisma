@@ -20,9 +20,50 @@ model Tenant {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  employees    Employee[]
-  leaveTypes   LeaveType[]
+  employees      Employee[]
+  leaveTypes     LeaveType[]
   publicHolidays PublicHoliday[]
+  config         TenantConfig?
+}
+
+// ─────────────────────────────────────────────
+// MANDANTEN-KONFIGURATION (globale Arbeitszeitvorgaben)
+// ─────────────────────────────────────────────
+
+model TenantConfig {
+  id                   String   @id @default(uuid())
+  tenantId             String   @unique
+  // Standard-Wochenstunden (Vorlage für neue Mitarbeiter)
+  defaultWeeklyHours   Decimal  @db.Decimal(5, 2)  @default(40)
+  defaultMondayHours   Decimal  @db.Decimal(4, 2)  @default(8)
+  defaultTuesdayHours  Decimal  @db.Decimal(4, 2)  @default(8)
+  defaultWednesdayHours Decimal @db.Decimal(4, 2)  @default(8)
+  defaultThursdayHours Decimal  @db.Decimal(4, 2)  @default(8)
+  defaultFridayHours   Decimal  @db.Decimal(4, 2)  @default(8)
+  defaultSaturdayHours Decimal  @db.Decimal(4, 2)  @default(0)
+  defaultSundayHours   Decimal  @db.Decimal(4, 2)  @default(0)
+  // Überstunden
+  overtimeThreshold    Decimal  @db.Decimal(5, 2)  @default(60)
+  allowOvertimePayout  Boolean  @default(false)
+  // Urlaubsanspruch (Basis 5-Tage-Woche)
+  defaultVacationDays  Int    @default(30)
+  // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
+  carryOverDeadlineDay   Int    @default(31)
+  carryOverDeadlineMonth Int    @default(3)
+  // E-Mail / SMTP
+  smtpHost      String?
+  smtpPort      Int?
+  smtpUser      String?
+  smtpPassword  String?
+  smtpFromEmail String?
+  smtpFromName  String?
+  smtpSecure    Boolean  @default(false)
+  // Sicherheit
+  twoFaEnabled  Boolean  @default(false)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  tenant               Tenant   @relation(fields: [tenantId], references: [id])
 }
 
 // ─────────────────────────────────────────────
@@ -41,6 +82,7 @@ model User {
 
   employee     Employee?
   refreshTokens RefreshToken[]
+  otpTokens    OtpToken[]
   auditLogs    AuditLog[]
 }
 
@@ -53,6 +95,29 @@ model RefreshToken {
   revokedAt DateTime?
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model OtpToken {
+  id        String    @id @default(uuid())
+  userId    String
+  code      String                          // 6-stellig, bcrypt-gehasht
+  expiresAt DateTime                        // now + 10 min
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Invitation {
+  id          String    @id @default(uuid())
+  token       String    @unique
+  employeeId  String
+  email       String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 // ─────────────────────────────────────────────
@@ -81,6 +146,7 @@ model Employee {
   leaveRequests    LeaveRequest[]
   absences         Absence[]
   overtimePlans    OvertimePlan[]
+  invitations      Invitation[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -224,6 +290,10 @@ model LeaveRequest {
   reviewedBy   String?
   reviewedAt   DateTime?
   reviewNote   String?
+  // Attest (nur für SICK / SICK_CHILD)
+  attestPresent    Boolean   @default(false)
+  attestValidFrom  DateTime? @db.Date
+  attestValidTo    DateTime? @db.Date
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
@@ -351,6 +421,7 @@ enum LeaveRequestStatus {
   APPROVED
   REJECTED
   CANCELLED
+  CANCELLATION_REQUESTED
 }
 
 enum AbsenceType {

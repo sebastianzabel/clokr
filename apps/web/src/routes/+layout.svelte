@@ -1,16 +1,16 @@
 <script lang="ts">
-  import { page } from "$app/stores";
-  import { goto } from "$app/navigation";
-  import { authStore } from "$stores/auth";
-  import { onMount } from "svelte";
+  import "../app.css";
+  import { theme } from "$stores/theme";
 
-  const publicRoutes = ["/login"];
+  // Importing the store initializes its subscription, which applies
+  // data-theme to <html> and persists the value to localStorage.
+  theme.subscribe(() => {});
 
-  onMount(() => {
-    if (!$authStore.accessToken && !publicRoutes.includes($page.url.pathname)) {
-      goto("/login");
-    }
-  });
+  interface Props {
+    children?: import('svelte').Snippet;
+  }
+
+  let { children }: Props = $props();
 </script>
 
-<slot />
+{@render children?.()}

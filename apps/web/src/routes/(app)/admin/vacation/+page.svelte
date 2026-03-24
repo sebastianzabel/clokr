@@ -1,0 +1,702 @@
+<script lang="ts">
+  import { run, self } from 'svelte/legacy';
+
+  import { onMount } from "svelte";
+  import { api } from "$api/client";
+
+  interface TenantConfig {
+    defaultWeeklyHours:    number;
+    defaultMondayHours:    number;
+    defaultTuesdayHours:   number;
+    defaultWednesdayHours: number;
+    defaultThursdayHours:  number;
+    defaultFridayHours:    number;
+    defaultSaturdayHours:  number;
+    defaultSundayHours:    number;
+    overtimeThreshold:     number;
+    allowOvertimePayout:   boolean;
+    defaultVacationDays:   number;
+    carryOverDeadlineDay:  number;
+    carryOverDeadlineMonth: number;
+    federalState:          string;
+  }
+
+  interface WorkSchedule {
+    weeklyHours:    number;
+    mondayHours:    number;
+    tuesdayHours:   number;
+    wednesdayHours: number;
+    thursdayHours:  number;
+    fridayHours:    number;
+    saturdayHours:  number;
+    sundayHours:    number;
+    overtimeThreshold:   number;
+    allowOvertimePayout: boolean;
+    validFrom: string;
+  }
+
+  interface EmployeeRow {
+    id:             string;
+    employeeNumber: string;
+    firstName:      string;
+    lastName:       string;
+    email:          string;
+    workSchedule:   WorkSchedule | null;
+  }
+
+  interface VacationEntitlement {
+    year:             number;
+    totalDays:        number | null;
+    usedDays:         number;
+    carriedOverDays:  number;
+    carryOverDeadline: string | null;
+  }
+
+  let loading = $state(true);
+  let error   = $state("");
+
+  // Global
+  let gMon = $state(8), gTue = $state(8), gWed = $state(8), gThu = $state(8), gFri = $state(8), gSat = $state(0), gSun = $state(0);
+  let gThreshold    = $state(60);
+  let gPayout       = $state(false);
+  let gVacationDays = $state(30);
+  let gSaving = $state(false);
+  let gSaved  = $state(false);
+  let gError  = $state("");
+
+  // Resturlaub-Verfall
+  const MONTHS = [
+    "Januar","Februar","März","April","Mai","Juni",
+    "Juli","August","September","Oktober","November","Dezember"
+  ];
+  const MONTH_MAX_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  let gCarryOverDay   = $state(31);
+  let gCarryOverMonth = $state(3);
+
+  let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
+  run(() => {
+    gCarryOverDay = gMaxDay;
+  });
+
+  // Mitarbeiter-Liste
+  let employees: EmployeeRow[] = $state([]);
+
+  // Mitarbeiter-Modal
+  let empModal: EmployeeRow | null = $state(null);
+  let eMon = $state(8), eTue = $state(8), eWed = $state(8), eThu = $state(8), eFri = $state(8), eSat = $state(0), eSun = $state(0);
+  let eThreshold = $state(60);
+  let ePayout    = $state(false);
+  let eValidFrom = $state(new Date().toISOString().split("T")[0]);
+  let eSaving    = $state(false);
+  let eError     = $state("");
+
+  // Urlaubsanspruch im Modal
+  let eVacYear    = new Date().getFullYear();
+  let eVacTotal: number | null = $state(null);
+  let eVacCarried = $state(0);
+  let eVacDeadline = $state("");
+  let eVacLoading  = $state(false);
+
+  let gWeekly = $derived(gMon + gTue + gWed + gThu + gFri + gSat + gSun);
+  let eWeekly = $derived(eMon + eTue + eWed + eThu + eFri + eSat + eSun);
+  let eWorkingDays = $derived([eMon, eTue, eWed, eThu, eFri, eSat, eSun].filter(h => h > 0).length);
+  let eVacSuggestion = $derived(Math.round(gVacationDays * eWorkingDays / 5));
+
+  onMount(async () => {
+    try {
+      const cfg = await api.get<TenantConfig>("/settings/work");
+      gMon = Number(cfg.defaultMondayHours);
+      gTue = Number(cfg.defaultTuesdayHours);
+      gWed = Number(cfg.defaultWednesdayHours);
+      gThu = Number(cfg.defaultThursdayHours);
+      gFri = Number(cfg.defaultFridayHours);
+      gSat = Number(cfg.defaultSaturdayHours);
+      gSun = Number(cfg.defaultSundayHours);
+      gThreshold      = Number(cfg.overtimeThreshold);
+      gPayout         = cfg.allowOvertimePayout;
+      gVacationDays   = Number(cfg.defaultVacationDays) || 30;
+      gCarryOverDay   = cfg.carryOverDeadlineDay   ?? 31;
+      gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
+
+      employees = await api.get<EmployeeRow[]>("/settings/employees");
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Laden";
+    } finally {
+      loading = false;
+    }
+  });
+
+  async function saveGlobal() {
+    gSaving = true; gError = ""; gSaved = false;
+    try {
+      await api.put("/settings/work", {
+        defaultWeeklyHours:    gWeekly,
+        defaultMondayHours:    gMon,
+        defaultTuesdayHours:   gTue,
+        defaultWednesdayHours: gWed,
+        defaultThursdayHours:  gThu,
+        defaultFridayHours:    gFri,
+        defaultSaturdayHours:  gSat,
+        defaultSundayHours:    gSun,
+        overtimeThreshold:     gThreshold,
+        allowOvertimePayout:   gPayout,
+        carryOverDeadlineDay:   gCarryOverDay,
+        carryOverDeadlineMonth: gCarryOverMonth,
+        defaultVacationDays:    gVacationDays,
+      });
+      gSaved = true;
+      setTimeout(() => (gSaved = false), 3000);
+    } catch (e: unknown) {
+      gError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      gSaving = false;
+    }
+  }
+
+  async function openEmpModal(emp: EmployeeRow) {
+    empModal = emp;
+    const s = emp.workSchedule;
+    eMon = s ? Number(s.mondayHours)    : gMon;
+    eTue = s ? Number(s.tuesdayHours)   : gTue;
+    eWed = s ? Number(s.wednesdayHours) : gWed;
+    eThu = s ? Number(s.thursdayHours)  : gThu;
+    eFri = s ? Number(s.fridayHours)    : gFri;
+    eSat = s ? Number(s.saturdayHours)  : gSat;
+    eSun = s ? Number(s.sundayHours)    : gSun;
+    eThreshold = s ? Number(s.overtimeThreshold)   : gThreshold;
+    ePayout    = s ? s.allowOvertimePayout          : gPayout;
+    eValidFrom = s ? s.validFrom.split("T")[0] : new Date().toISOString().split("T")[0];
+    eError     = "";
+
+    eVacLoading = true;
+    eVacTotal   = null;
+    eVacCarried = 0;
+    eVacDeadline = "";
+    try {
+      const vac = await api.get<VacationEntitlement>(`/settings/vacation/${emp.id}?year=${eVacYear}`);
+      eVacTotal    = vac.totalDays;
+      eVacCarried  = vac.carriedOverDays;
+      eVacDeadline = vac.carryOverDeadline ? vac.carryOverDeadline.split("T")[0] : "";
+    } catch {
+      // kein Eintrag vorhanden
+    } finally {
+      eVacLoading = false;
+    }
+  }
+
+  function closeEmpModal() { empModal = null; }
+
+  async function saveEmployee() {
+    if (!empModal) return;
+    eSaving = true; eError = "";
+    try {
+      const updated = await api.put<WorkSchedule>(`/settings/work/${empModal.id}`, {
+        weeklyHours:    eWeekly,
+        mondayHours:    eMon,
+        tuesdayHours:   eTue,
+        wednesdayHours: eWed,
+        thursdayHours:  eThu,
+        fridayHours:    eFri,
+        saturdayHours:  eSat,
+        sundayHours:    eSun,
+        overtimeThreshold:   eThreshold,
+        allowOvertimePayout: ePayout,
+        validFrom:           eValidFrom,
+      });
+
+      if (eVacTotal !== null) {
+        await api.put(`/settings/vacation/${empModal.id}`, {
+          year:             eVacYear,
+          totalDays:        eVacTotal,
+          carriedOverDays:  eVacCarried,
+          carryOverDeadline: eVacDeadline || null,
+        });
+      }
+
+      employees = employees.map((e: any) =>
+        e.id === empModal!.id ? { ...e, workSchedule: updated } : e
+      );
+      closeEmpModal();
+    } catch (e: unknown) {
+      eError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      eSaving = false;
+    }
+  }
+</script>
+
+<svelte:head>
+  <title>Urlaub & Zeiten – Salon Zeiterfassung</title>
+</svelte:head>
+
+{#if loading}
+  <div class="card card-body" style="height:220px;"></div>
+{:else if error}
+  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+{:else}
+
+  <!-- ── Globale Vorgaben ───────────────────────────────────────────────────── -->
+  <div class="card card-body settings-card">
+    <h2 class="settings-heading">Globale Standard-Arbeitszeit</h2>
+    <p class="text-muted settings-desc">
+      Gilt für alle Mitarbeiter ohne individuelle Einstellung.
+    </p>
+
+    <div class="day-grid">
+      <div class="day-input"><label class="day-label form-label">Mo</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gMon} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">Di</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gTue} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">Mi</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gWed} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">Do</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gThu} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">Fr</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gFri} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">Sa</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gSat} class="form-input day-field" /></div>
+      <div class="day-input"><label class="day-label form-label">So</label>
+        <input type="number" min="0" max="24" step="0.5" bind:value={gSun} class="form-input day-field" /></div>
+      <div class="day-input total-col">
+        <span class="day-label form-label">Σ/Wo</span>
+        <span class="weekly-total">{gWeekly.toFixed(1)}&thinsp;h</span>
+      </div>
+    </div>
+
+    <div class="extra-row">
+      <div class="form-group">
+        <label class="form-label" for="g-threshold">Warnschwelle Überstunden</label>
+        <div class="input-suffix-wrap">
+          <input id="g-threshold" type="number" min="1" max="500" step="1"
+            bind:value={gThreshold} class="form-input threshold-input" />
+          <span class="input-suffix text-muted">Stunden</span>
+        </div>
+        <p class="form-hint text-muted">Ab diesem Saldo erscheint die Kritisch-Warnung.</p>
+      </div>
+
+      <div class="form-group">
+        <span class="form-label">Überstunden-Auszahlung</span>
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={gPayout} class="toggle-cb" />
+          <span>Standard: Auszahlung {gPayout ? "erlaubt" : "gesperrt"}</span>
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="g-vac-days">Urlaubsanspruch (Basis 5-Tage-Woche)</label>
+        <div class="input-suffix-wrap">
+          <input id="g-vac-days" type="number" min="1" max="365" step="1"
+            bind:value={gVacationDays} class="form-input threshold-input" />
+          <span class="input-suffix text-muted">Tage</span>
+        </div>
+        <p class="form-hint text-muted">Wird bei Teilzeit anteilig berechnet (z.B. 4-Tage-Woche → {Math.round(gVacationDays * 4 / 5)} Tage).</p>
+      </div>
+
+      <div class="form-group">
+        <span class="form-label">Resturlaub verfällt am</span>
+        <div class="carryover-row">
+          <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select">
+            {#each MONTHS as m, i}
+              <option value={i + 1}>{m}</option>
+            {/each}
+          </select>
+          <input id="g-co-day" type="number" min="1" max={gMaxDay} step="1"
+            bind:value={gCarryOverDay} class="form-input co-day-input" />
+          <span class="text-muted" style="font-size:0.875rem">des Folgejahres</span>
+        </div>
+        <p class="form-hint text-muted">
+          Nicht genommener Urlaub wird bis zu diesem Datum ins Folgejahr übertragen.
+        </p>
+      </div>
+    </div>
+
+    {#if gError}
+      <div class="alert alert-error" role="alert" style="margin:0.75rem 0 0;">
+        <span>⚠</span><span>{gError}</span>
+      </div>
+    {/if}
+    <div class="form-actions">
+      <button class="btn btn-primary" onclick={saveGlobal} disabled={gSaving}>
+        {gSaving ? "Speichern…" : "Globale Vorgaben speichern"}
+      </button>
+      {#if gSaved}
+        <span class="saved-hint">✓ Gespeichert</span>
+      {/if}
+    </div>
+  </div>
+
+  <!-- ── Pro-Mitarbeiter ────────────────────────────────────────────────────── -->
+  {#if employees.length > 0}
+    <div class="section-label">
+      <h2>Arbeitszeit & Urlaub pro Mitarbeiter</h2>
+      <p class="text-muted">Individuelle Abweichungen von der globalen Vorgabe</p>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Nr.</th>
+            <th>Mitarbeiter</th>
+            <th class="text-center">Mo</th>
+            <th class="text-center">Di</th>
+            <th class="text-center">Mi</th>
+            <th class="text-center">Do</th>
+            <th class="text-center">Fr</th>
+            <th class="text-center">Sa</th>
+            <th class="text-center">So</th>
+            <th class="text-center">Σ/Wo</th>
+            <th>Schwelle</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each employees as emp}
+            {@const s = emp.workSchedule}
+            <tr>
+              <td class="text-muted font-mono">{emp.employeeNumber}</td>
+              <td class="font-medium">{emp.firstName} {emp.lastName}</td>
+              <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1)    : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.tuesdayHours).toFixed(1)   : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.thursdayHours).toFixed(1)  : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1)    : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.saturdayHours).toFixed(1)  : "—"}</td>
+              <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1)    : "—"}</td>
+              <td class="font-mono text-center font-medium">
+                {#if s}
+                  {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                {:else}
+                  <span class="badge badge-gray">Global</span>
+                {/if}
+              </td>
+              <td class="font-mono">{s ? Number(s.overtimeThreshold).toFixed(0) + " h" : "—"}</td>
+              <td>
+                <button class="btn btn-ghost btn-sm" onclick={() => openEmpModal(emp)}>
+                  Bearbeiten
+                </button>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+
+{/if}
+
+<!-- ── Mitarbeiter-Modal ────────────────────────────────────────────────────── -->
+{#if empModal}
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div class="modal-backdrop" onclick={self(closeEmpModal)} role="dialog" aria-modal="true">
+    <div class="modal-card card">
+      <div class="modal-header">
+        <h2>Einstellungen: {empModal.firstName} {empModal.lastName}</h2>
+        <button class="btn-icon modal-close" onclick={closeEmpModal} aria-label="Schließen">✕</button>
+      </div>
+
+      <div class="modal-body">
+        {#if eError}
+          <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+            <span>⚠</span><span>{eError}</span>
+          </div>
+        {/if}
+
+        <h3 class="modal-section-heading">Arbeitszeit</h3>
+        <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
+          Wochenstunden werden automatisch aus den Tagen summiert.
+        </p>
+
+        <div class="day-grid">
+          <div class="day-input"><label class="day-label form-label">Mo</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eMon} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">Di</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eTue} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">Mi</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eWed} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">Do</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eThu} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">Fr</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eFri} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">Sa</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eSat} class="form-input day-field" /></div>
+          <div class="day-input"><label class="day-label form-label">So</label>
+            <input type="number" min="0" max="24" step="0.5" bind:value={eSun} class="form-input day-field" /></div>
+          <div class="day-input total-col">
+            <span class="day-label form-label">Σ</span>
+            <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
+          </div>
+        </div>
+
+        <div class="extra-row" style="margin-top:1rem;">
+          <div class="form-group">
+            <label class="form-label" for="e-threshold">Warnschwelle</label>
+            <div class="input-suffix-wrap">
+              <input id="e-threshold" type="number" min="1" max="500"
+                bind:value={eThreshold} class="form-input threshold-input" />
+              <span class="input-suffix text-muted">Stunden</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <span class="form-label">Auszahlung</span>
+            <label class="toggle-label">
+              <input type="checkbox" bind:checked={ePayout} class="toggle-cb" />
+              <span>{ePayout ? "Erlaubt" : "Gesperrt"}</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label" for="e-valid-from">Gültig ab</label>
+          <input id="e-valid-from" type="date" bind:value={eValidFrom}
+            class="form-input" style="max-width:180px;" />
+        </div>
+
+        <hr class="modal-divider" />
+        <h3 class="modal-section-heading">Urlaubsanspruch {eVacYear}</h3>
+
+        {#if eVacLoading}
+          <p class="text-muted" style="font-size:0.875rem;">Lade…</p>
+        {:else}
+          <p class="form-hint text-muted" style="margin-bottom:0.875rem;">
+            Berechnet aus Arbeitstagen: {eWorkingDays} Tage/Woche →
+            <strong>{eVacSuggestion} Urlaubstage</strong> vorgeschlagen.
+          </p>
+
+          <div class="extra-row">
+            <div class="form-group">
+              <label class="form-label" for="e-vac-total">Urlaubstage gesamt</label>
+              <div class="input-suffix-wrap">
+                <input id="e-vac-total" type="number" min="0" max="365" step="0.5"
+                  bind:value={eVacTotal} placeholder={String(eVacSuggestion)}
+                  class="form-input threshold-input" />
+                <span class="input-suffix text-muted">Tage</span>
+              </div>
+              <p class="form-hint text-muted">Leer lassen für automatischen Wert ({eVacSuggestion})</p>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="e-vac-carried">Resturlaub Vorjahr</label>
+              <div class="input-suffix-wrap">
+                <input id="e-vac-carried" type="number" min="0" max="365" step="0.5"
+                  bind:value={eVacCarried} class="form-input threshold-input" />
+                <span class="input-suffix text-muted">Tage</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="e-vac-deadline">Resturlaub verfällt am</label>
+              <input id="e-vac-deadline" type="date" bind:value={eVacDeadline}
+                class="form-input" style="max-width:180px;" />
+              <p class="form-hint text-muted">Leer lassen für globale Einstellung</p>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick={closeEmpModal} disabled={eSaving}>Abbrechen</button>
+        <button class="btn btn-primary" onclick={saveEmployee} disabled={eSaving}>
+          {eSaving ? "Speichern…" : "Speichern"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<style>
+  .settings-card   { margin-bottom: 2rem; }
+  .settings-heading { font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem; }
+  .settings-desc   { font-size: 0.875rem; margin-bottom: 1.25rem; }
+
+  .section-label   { margin: 2rem 0 0.875rem; }
+  .section-label h2 { font-size: 1rem; font-weight: 600; }
+  .section-label p  { font-size: 0.875rem; margin-top: 0.125rem; }
+
+  .day-grid {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    margin-bottom: 1.25rem;
+  }
+
+  .day-input {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .day-label {
+    font-size: 0.6875rem !important;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0 !important;
+  }
+
+  .day-field {
+    width: 58px;
+    text-align: center;
+    padding: 0.375rem 0.25rem;
+    font-size: 0.9375rem;
+  }
+
+  .total-col {
+    border-left: 1px solid var(--gray-200);
+    padding-left: 0.75rem;
+    margin-left: 0.25rem;
+  }
+
+  .weekly-total {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--color-brand);
+    font-family: var(--font-mono);
+    line-height: 2.1;
+  }
+
+  .extra-row {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .input-suffix-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .threshold-input { max-width: 100px; }
+  .input-suffix { font-size: 0.875rem; white-space: nowrap; }
+  .form-hint { font-size: 0.8125rem; margin-top: 0.25rem; }
+
+  .toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    font-weight: 500;
+    margin-top: 0.375rem;
+  }
+
+  .toggle-cb {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--color-brand);
+  }
+
+  .carryover-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .co-day-input    { width: 72px; text-align: center; }
+  .co-month-select { min-width: 140px; }
+
+  .form-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
+  }
+
+  .saved-hint { color: var(--color-green, #16a34a); font-weight: 500; font-size: 0.9375rem; }
+
+  .text-center { text-align: center; }
+  .btn-sm { padding: 0.25rem 0.625rem; font-size: 0.8125rem; }
+
+  /* Modal */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 1rem;
+    backdrop-filter: blur(2px);
+  }
+
+  .modal-card {
+    width: 100%;
+    max-width: 580px;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 0;
+    overflow-x: hidden;
+    animation: modal-in 0.18s ease;
+  }
+
+  @keyframes modal-in {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem 1rem;
+    border-bottom: 1px solid var(--gray-200);
+    position: sticky;
+    top: 0;
+    background: #fff;
+    z-index: 1;
+  }
+
+  .modal-header h2 { font-size: 1.0625rem; font-weight: 600; margin: 0; }
+
+  .btn-icon {
+    background: none; border: none; cursor: pointer;
+    padding: 0.25rem; border-radius: 4px;
+    font-size: 1rem; color: var(--color-text-muted);
+  }
+
+  .modal-body { padding: 1.25rem 1.5rem; }
+
+  .modal-section-heading {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--color-text-heading);
+    margin-bottom: 0.5rem;
+  }
+
+  .modal-divider {
+    border: none;
+    border-top: 1px solid var(--color-border-subtle);
+    margin: 1.5rem 0 1rem;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid var(--gray-200);
+    background: var(--gray-50, #f9fafb);
+    position: sticky;
+    bottom: 0;
+  }
+
+  .alert {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+  }
+  .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+  .badge { display: inline-flex; align-items: center; padding: 0.2rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+  .badge-gray { background: #f3f4f6; color: #6b7280; }
+</style>

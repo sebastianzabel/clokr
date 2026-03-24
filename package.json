@@ -1,6 +1,6 @@
 {
   "name": "salon-timetrack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "packageManager": "pnpm@9.0.0",
   "scripts": {
@@ -14,7 +14,12 @@
   },
   "devDependencies": {
     "turbo": "^2.0.0",
-    "typescript": "^5.4.0",
-    "@types/node": "^20.0.0"
+    "typescript": "^6.0.0",
+    "@types/node": "^25.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@fastify/swagger>esbuild": "0.21.5"
+    }
   }
 }

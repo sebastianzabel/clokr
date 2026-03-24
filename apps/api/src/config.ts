@@ -1,3 +1,7 @@
+import { config as dotenvConfig } from "dotenv";
+import { resolve } from "path";
+dotenvConfig({ path: resolve(__dirname, "../.env") });
+
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -11,6 +15,14 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  APP_URL: z.string().default("http://localhost:5173"),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().optional(),
+  SMTP_USER: z.string().optional(),
+  SMTP_PASSWORD: z.string().optional(),
+  SMTP_FROM_EMAIL: z.string().optional(),
+  SMTP_FROM_NAME: z.string().optional(),
+  SMTP_SECURE: z.string().default("false"),
 });
 
 const parsed = envSchema.safeParse(process.env);

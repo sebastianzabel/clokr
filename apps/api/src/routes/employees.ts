@@ -1,11 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 const createEmployeeSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   employeeNumber: z.string().min(1),
@@ -15,21 +15,49 @@ const createEmployeeSchema = z.object({
   nfcCardId: z.string().optional(),
 });
 
+const updateEmployeeSchema = z.object({
+  firstName:      z.string().min(1).optional(),
+  lastName:       z.string().min(1).optional(),
+  employeeNumber: z.string().min(1).optional(),
+  hireDate:       z.string().datetime().optional(),
+  role:           z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
+  nfcCardId:      z.string().nullable().optional(),
+});
+
+function deriveInvitationStatus(
+  isActive: boolean,
+  invitations: { expiresAt: Date; acceptedAt: Date | null }[]
+): "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE" {
+  if (isActive) return invitations.length > 0 ? "ACCEPTED" : "NONE";
+  if (invitations.length === 0) return "EXPIRED";
+  const latest = invitations[0];
+  if (latest.acceptedAt) return "ACCEPTED";
+  if (latest.expiresAt > new Date()) return "PENDING";
+  return "EXPIRED";
+}
+
 export async function employeeRoutes(app: FastifyInstance) {
   // GET /api/v1/employees
   app.get("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      return app.prisma.employee.findMany({
+      const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
           workSchedule: true,
           overtimeAccount: { select: { balanceHours: true } },
+          invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
         orderBy: { lastName: "asc" },
       });
+
+      return employees.map((e: any) => ({
+        ...e,
+        invitationStatus: deriveInvitationStatus(e.user.isActive, e.invitations),
+        invitations: undefined,
+      }));
     },
   });
 
@@ -41,7 +69,6 @@ export async function employeeRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const user = req.user;
 
-      // Mitarbeiter darf nur eigenes Profil sehen
       if (user.role === "EMPLOYEE" && user.employeeId !== id) {
         return reply.code(403).send({ error: "Forbidden" });
       }
@@ -53,33 +80,41 @@ export async function employeeRoutes(app: FastifyInstance) {
           workSchedule: true,
           overtimeAccount: true,
           leaveEntitlements: { include: { leaveType: true } },
+          invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
       });
 
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
-      return employee;
+
+      return {
+        ...employee,
+        invitationStatus: deriveInvitationStatus(employee.user.isActive, employee.invitations),
+        invitations: undefined,
+      };
     },
   });
 
-  // POST /api/v1/employees
+  // POST /api/v1/employees — Anlegen + Einladungsmail
   app.post("/", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
       const body = createEmployeeSchema.parse(req.body);
 
-      const passwordHash = await bcrypt.hash(body.password, 12);
+      // Zufälliger unusable passwordHash — User ist inaktiv bis Einladung akzeptiert
+      const dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
-      const result = await app.prisma.$transaction(async (tx) => {
+      const { employee, invitationToken } = await app.prisma.$transaction(async (tx: any) => {
         const user = await tx.user.create({
           data: {
             email: body.email,
-            passwordHash,
+            passwordHash: dummyHash,
             role: body.role,
+            isActive: false,
           },
         });
 
-        const employee = await tx.employee.create({
+        const emp = await tx.employee.create({
           data: {
             tenantId: req.user.tenantId,
             userId: user.id,
@@ -93,28 +128,229 @@ export async function employeeRoutes(app: FastifyInstance) {
 
         await tx.workSchedule.create({
           data: {
-            employeeId: employee.id,
+            employeeId: emp.id,
             weeklyHours: body.weeklyHours,
             validFrom: new Date(body.hireDate),
           },
         });
 
         await tx.overtimeAccount.create({
-          data: { employeeId: employee.id, balanceHours: 0 },
+          data: { employeeId: emp.id, balanceHours: 0 },
         });
 
-        return { user, employee };
+        const token = crypto.randomBytes(32).toString("hex");
+        await tx.invitation.create({
+          data: {
+            token,
+            employeeId: emp.id,
+            email: body.email,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          },
+        });
+
+        return { employee: emp, invitationToken: token };
       });
 
       await app.audit({
         userId: req.user.sub,
         action: "CREATE",
         entity: "Employee",
-        entityId: result.employee.id,
-        newValue: { ...result.employee, email: body.email },
+        entityId: employee.id,
+        newValue: { ...employee, email: body.email },
       });
 
-      return reply.code(201).send(result.employee);
+      let emailError: string | undefined;
+      try {
+        await app.mailer.sendInvitation({
+          to: body.email,
+          firstName: body.firstName,
+          token: invitationToken,
+        });
+      } catch (err) {
+        emailError = "E-Mail konnte nicht gesendet werden. Bitte SMTP-Einstellungen prüfen.";
+        app.log.error({ err }, "Einladungsmail konnte nicht gesendet werden");
+      }
+
+      return reply.code(201).send({
+        ...employee,
+        invitationStatus: "PENDING",
+        ...(emailError ? { emailError } : {}),
+      });
+    },
+  });
+
+  // PATCH /api/v1/employees/:id — Profil aktualisieren
+  app.patch("/:id", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = updateEmployeeSchema.parse(req.body);
+
+      const employee = await app.prisma.employee.findUnique({ where: { id } });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      const updates: Record<string, unknown> = {};
+      if (body.firstName      !== undefined) updates.firstName      = body.firstName;
+      if (body.lastName       !== undefined) updates.lastName       = body.lastName;
+      if (body.employeeNumber !== undefined) updates.employeeNumber = body.employeeNumber;
+      if (body.hireDate       !== undefined) updates.hireDate       = new Date(body.hireDate);
+      if (body.nfcCardId      !== undefined) updates.nfcCardId      = body.nfcCardId;
+
+      const updated = await app.prisma.employee.update({ where: { id }, data: updates });
+
+      if (body.role !== undefined) {
+        await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
+      }
+
+      return updated;
+    },
+  });
+
+  // PATCH /api/v1/employees/:id/deactivate
+  app.patch("/:id/deactivate", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { exitDate } = z.object({ exitDate: z.string().optional() }).parse(req.body ?? {});
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (!employee.user.isActive) return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
+
+      const effectiveExitDate = exitDate ? new Date(exitDate) : new Date();
+
+      await app.prisma.$transaction([
+        app.prisma.user.update({
+          where: { id: employee.userId },
+          data: { isActive: false },
+        }),
+        app.prisma.employee.update({
+          where: { id },
+          data: { exitDate: effectiveExitDate },
+        }),
+        app.prisma.refreshToken.updateMany({
+          where: { userId: employee.userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        }),
+        app.prisma.otpToken.updateMany({
+          where: { userId: employee.userId, usedAt: null },
+          data: { usedAt: new Date() },
+        }),
+      ]);
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: id,
+        newValue: { isActive: false, exitDate: effectiveExitDate },
+      });
+
+      return { success: true };
+    },
+  });
+
+  // POST /api/v1/employees/:id/resend-invitation
+  app.post("/:id/resend-invitation", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.user.isActive) {
+        return reply.code(409).send({ error: "Mitarbeiter hat Einladung bereits akzeptiert" });
+      }
+
+      // Alte Invitations ablaufen lassen
+      await app.prisma.invitation.updateMany({
+        where: { employeeId: id, acceptedAt: null },
+        data: { expiresAt: new Date() },
+      });
+
+      const token = crypto.randomBytes(32).toString("hex");
+      await app.prisma.invitation.create({
+        data: {
+          token,
+          employeeId: id,
+          email: employee.user.email,
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+      });
+
+      try {
+        await app.mailer.sendInvitation({
+          to: employee.user.email,
+          firstName: employee.firstName,
+          token,
+        });
+      } catch (err) {
+        app.log.error({ err }, "Einladungsmail konnte nicht gesendet werden");
+        return reply.code(502).send({ error: "E-Mail konnte nicht gesendet werden" });
+      }
+
+      return { success: true, message: "Einladung erneut gesendet" };
+    },
+  });
+
+  // DELETE /api/v1/employees/:id — DSGVO Hard-Delete
+  app.delete("/:id", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true, overtimeAccount: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      const userId = employee.userId;
+      const overtimeAccountId = employee.overtimeAccount?.id;
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "Employee",
+        entityId: id,
+        oldValue: { email: employee.user.email, employeeNumber: employee.employeeNumber },
+      });
+
+      // Schrittweise löschen in korrekter Reihenfolge (FK-Constraints)
+      await app.prisma.$transaction(async (tx: any) => {
+        // AuditLog anonymisieren (userId → null), nicht löschen
+        await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
+
+        await tx.timeEntry.deleteMany({ where: { employeeId: id } });
+        await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
+        await tx.absence.deleteMany({ where: { employeeId: id } });
+        await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
+        await tx.overtimePlan.deleteMany({ where: { employeeId: id } });
+
+        if (overtimeAccountId) {
+          await tx.overtimeTransaction.deleteMany({ where: { overtimeAccountId } });
+          await tx.overtimeAccount.delete({ where: { id: overtimeAccountId } });
+        }
+
+        await tx.workSchedule.deleteMany({ where: { employeeId: id } });
+        await tx.invitation.deleteMany({ where: { employeeId: id } });
+        await tx.otpToken.deleteMany({ where: { userId } });
+        await tx.refreshToken.deleteMany({ where: { userId } });
+        await tx.employee.delete({ where: { id } });
+        await tx.user.delete({ where: { id: userId } });
+      });
+
+      return reply.code(204).send();
     },
   });
 }

@@ -20,7 +20,8 @@ async function request<T>(
   const auth = get(authStore);
 
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    // Content-Type nur setzen wenn ein Body mitkommt
+    ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
     ...(options.headers as Record<string, string>),
   };
 
@@ -40,6 +41,9 @@ async function request<T>(
     window.location.href = "/login";
     throw new ApiError(401, "Unauthorized");
   }
+
+  // 204 No Content – kein Body
+  if (res.status === 204) return undefined as T;
 
   const data = res.headers.get("content-type")?.includes("application/json")
     ? await res.json()
@@ -75,6 +79,8 @@ export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
+  put: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),

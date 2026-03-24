@@ -1,43 +1,64 @@
 import { writable } from "svelte/store";
+import { browser } from "$app/environment";
+
+interface AuthUser {
+  id: string;
+  email: string;
+  role: "ADMIN" | "MANAGER" | "EMPLOYEE";
+  employeeId: string | null;
+}
 
 interface AuthState {
   accessToken: string | null;
   refreshToken: string | null;
-  user: {
-    id: string;
-    email: string;
-    role: "ADMIN" | "MANAGER" | "EMPLOYEE";
-  } | null;
+  user: AuthUser | null;
+}
+
+function loadUser(): AuthUser | null {
+  if (!browser) return null;
+  try {
+    const raw = localStorage.getItem("user");
+    return raw ? (JSON.parse(raw) as AuthUser) : null;
+  } catch {
+    return null;
+  }
 }
 
 function createAuthStore() {
   const initial: AuthState = {
-    accessToken: typeof localStorage !== "undefined" ? localStorage.getItem("accessToken") : null,
-    refreshToken: typeof localStorage !== "undefined" ? localStorage.getItem("refreshToken") : null,
-    user: null,
+    accessToken: browser ? localStorage.getItem("accessToken") : null,
+    refreshToken: browser ? localStorage.getItem("refreshToken") : null,
+    user: loadUser(),
   };
 
   const { subscribe, set, update } = writable<AuthState>(initial);
 
   return {
     subscribe,
-    login(accessToken: string, refreshToken: string, user: AuthState["user"]) {
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken);
+    login(accessToken: string, refreshToken: string, user: AuthUser) {
+      if (browser) {
+        localStorage.setItem("accessToken", accessToken);
+        localStorage.setItem("refreshToken", refreshToken);
+        localStorage.setItem("user", JSON.stringify(user));
+      }
       set({ accessToken, refreshToken, user });
     },
     setTokens(accessToken: string, refreshToken: string) {
-      localStorage.setItem("accessToken", accessToken);
-      localStorage.setItem("refreshToken", refreshToken);
+      if (browser) {
+        localStorage.setItem("accessToken", accessToken);
+        localStorage.setItem("refreshToken", refreshToken);
+      }
       update((s) => ({ ...s, accessToken, refreshToken }));
     },
     logout() {
-      localStorage.removeItem("accessToken");
-      localStorage.removeItem("refreshToken");
+      if (browser) {
+        localStorage.removeItem("accessToken");
+        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("user");
+      }
       set({ accessToken: null, refreshToken: null, user: null });
     },
   };
 }
 
 export const authStore = createAuthStore();
-export const isAuthenticated = { subscribe: (run: (v: boolean) => void) => authStore.subscribe((s) => run(!!s.accessToken)) };
