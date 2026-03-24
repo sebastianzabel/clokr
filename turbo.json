@@ -12,6 +12,12 @@
     "lint": {},
     "typecheck": {
       "dependsOn": ["^build"]
+    },
+    "test": {
+      "cache": false
+    },
+    "test:coverage": {
+      "cache": false
     }
   }
 }

@@ -253,7 +253,11 @@ async function issueTokens(
   };
 
   const accessToken = app.jwt.sign(payload);
-  const refreshToken = app.jwt.sign(payload, { expiresIn: "7d" });
+  // Add jti (JWT ID) to ensure uniqueness even for same-second tokens
+  const refreshToken = app.jwt.sign(
+    { ...payload, jti: crypto.randomUUID() },
+    { expiresIn: "7d" },
+  );
 
   await app.prisma.refreshToken.create({
     data: {

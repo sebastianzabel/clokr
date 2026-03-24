@@ -40,6 +40,8 @@
   let cHireDate = $state(new Date().toISOString().split("T")[0]);
   let cRole: Role = $state("EMPLOYEE");
   let cWeeklyHours = $state(40);
+  let cUsePassword = $state(false);
+  let cPassword = $state("");
 
   // Edit modal
   let showEditModal = $state(false);
@@ -97,6 +99,7 @@
     cFirstName = ""; cLastName = ""; cEmail = ""; cEmployeeNumber = "";
     cHireDate = new Date().toISOString().split("T")[0];
     cRole = "EMPLOYEE"; cWeeklyHours = 40;
+    cUsePassword = false; cPassword = "";
     createError = ""; createEmailError = "";
     showCreateModal = true;
   }
@@ -106,7 +109,7 @@
     createError = "";
     createEmailError = "";
     try {
-      const res = await api.post<Employee & { emailError?: string }>("/employees", {
+      const payload: Record<string, unknown> = {
         email: cEmail,
         firstName: cFirstName,
         lastName: cLastName,
@@ -114,7 +117,9 @@
         hireDate: new Date(cHireDate).toISOString(),
         role: cRole,
         weeklyHours: cWeeklyHours,
-      });
+      };
+      if (cUsePassword && cPassword) payload.password = cPassword;
+      const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
       if (res.emailError) createEmailError = res.emailError;
       employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
       if (!res.emailError) showCreateModal = false;
@@ -371,7 +376,23 @@
               <input id="c-hours" type="number" bind:value={cWeeklyHours} class="form-input" min="1" max="60" step="0.5" />
             </div>
           </div>
-          <p class="hint">Eine Einladungsmail wird automatisch gesendet.</p>
+
+          <div class="form-group form-group--full" style="margin-top: 1rem;">
+            <label class="form-label toggle-label">
+              <input type="checkbox" bind:checked={cUsePassword} />
+              Passwort direkt setzen (statt Einladungsmail)
+            </label>
+          </div>
+
+          {#if cUsePassword}
+            <div class="form-group form-group--full">
+              <label class="form-label" for="c-password">Passwort</label>
+              <input id="c-password" type="password" bind:value={cPassword} class="form-input" minlength="8" placeholder="Mindestens 8 Zeichen" required />
+            </div>
+            <p class="hint">Mitarbeiter kann sich sofort anmelden. Kein Einladungslink nötig.</p>
+          {:else}
+            <p class="hint">Eine Einladungsmail wird automatisch gesendet.</p>
+          {/if}
         {/if}
       </div>
       {#if !createEmailError}

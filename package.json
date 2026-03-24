@@ -10,12 +10,16 @@
     "typecheck": "turbo run typecheck",
     "db:migrate": "pnpm --filter @clokr/db migrate",
     "db:generate": "pnpm --filter @clokr/db generate",
-    "db:studio": "pnpm --filter @clokr/db studio"
+    "db:studio": "pnpm --filter @clokr/db studio",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage"
   },
   "devDependencies": {
+    "@types/node": "^25.0.0",
+    "@vitest/coverage-v8": "^4.1.1",
     "turbo": "^2.0.0",
     "typescript": "^6.0.0",
-    "@types/node": "^25.0.0"
+    "vitest": "^4.1.1"
   },
   "pnpm": {
     "overrides": {

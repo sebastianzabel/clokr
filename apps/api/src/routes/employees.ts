@@ -13,6 +13,7 @@ const createEmployeeSchema = z.object({
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
   weeklyHours: z.number().positive().default(40),
   nfcCardId: z.string().optional(),
+  password: z.string().min(8).optional(),
 });
 
 const updateEmployeeSchema = z.object({
@@ -101,16 +102,18 @@ export async function employeeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = createEmployeeSchema.parse(req.body);
 
-      // Zufälliger unusable passwordHash — User ist inaktiv bis Einladung akzeptiert
-      const dummyHash = await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
+      const directPassword = !!body.password;
+      const passwordHash = directPassword
+        ? await bcrypt.hash(body.password!, 12)
+        : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
       const { employee, invitationToken } = await app.prisma.$transaction(async (tx: any) => {
         const user = await tx.user.create({
           data: {
             email: body.email,
-            passwordHash: dummyHash,
+            passwordHash,
             role: body.role,
-            isActive: false,
+            isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
           },
         });
 
@@ -138,15 +141,19 @@ export async function employeeRoutes(app: FastifyInstance) {
           data: { employeeId: emp.id, balanceHours: 0 },
         });
 
-        const token = crypto.randomBytes(32).toString("hex");
-        await tx.invitation.create({
-          data: {
-            token,
-            employeeId: emp.id,
-            email: body.email,
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-          },
-        });
+        // Einladung nur erstellen wenn kein Passwort gesetzt
+        let token: string | null = null;
+        if (!directPassword) {
+          token = crypto.randomBytes(32).toString("hex");
+          await tx.invitation.create({
+            data: {
+              token,
+              employeeId: emp.id,
+              email: body.email,
+              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            },
+          });
+        }
 
         return { employee: emp, invitationToken: token };
       });
@@ -156,24 +163,27 @@ export async function employeeRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "Employee",
         entityId: employee.id,
-        newValue: { ...employee, email: body.email },
+        newValue: { ...employee, email: body.email, directPassword },
       });
 
+      // Einladungsmail nur senden wenn kein direktes Passwort
       let emailError: string | undefined;
-      try {
-        await app.mailer.sendInvitation({
-          to: body.email,
-          firstName: body.firstName,
-          token: invitationToken,
-        });
-      } catch (err) {
-        emailError = "E-Mail konnte nicht gesendet werden. Bitte SMTP-Einstellungen prüfen.";
-        app.log.error({ err }, "Einladungsmail konnte nicht gesendet werden");
+      if (!directPassword && invitationToken) {
+        try {
+          await app.mailer.sendInvitation({
+            to: body.email,
+            firstName: body.firstName,
+            token: invitationToken,
+          });
+        } catch (err) {
+          emailError = "E-Mail konnte nicht gesendet werden. Bitte SMTP-Einstellungen prüfen.";
+          app.log.error({ err }, "Einladungsmail konnte nicht gesendet werden");
+        }
       }
 
       return reply.code(201).send({
         ...employee,
-        invitationStatus: "PENDING",
+        invitationStatus: directPassword ? "ACCEPTED" : "PENDING",
         ...(emailError ? { emailError } : {}),
       });
     },
