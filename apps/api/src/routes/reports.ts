@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { requireRole } from "../middleware/auth";
+import { getTenantTimezone, monthRangeUtc, calcExpectedMinutesTz, getDayOfWeekInTz, getDayHoursFromSchedule } from "../utils/timezone";
 
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
@@ -14,9 +15,8 @@ export async function reportRoutes(app: FastifyInstance) {
       };
 
       const y = parseInt(year);
-      const m = parseInt(month) - 1;
-      const start = new Date(y, m, 1);
-      const end   = new Date(y, m + 1, 0, 23, 59, 59, 999);
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const employees = await app.prisma.employee.findMany({
@@ -41,48 +41,27 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
-      // Soll-Stunden: kalenderbasiert über Wochentag-Soll aus WorkSchedule
+      // Soll-Stunden: kalenderbasiert über Wochentag-Soll aus WorkSchedule (TZ-aware)
       function calcShouldMinutes(schedule: { mondayHours: unknown; tuesdayHours: unknown; wednesdayHours: unknown; thursdayHours: unknown; fridayHours: unknown; saturdayHours: unknown; sundayHours: unknown } | null): number {
-        const dow = [
-          Number(schedule?.sundayHours    ?? 0),  // 0
-          Number(schedule?.mondayHours    ?? 8),  // 1
-          Number(schedule?.tuesdayHours   ?? 8),  // 2
-          Number(schedule?.wednesdayHours ?? 8),  // 3
-          Number(schedule?.thursdayHours  ?? 8),  // 4
-          Number(schedule?.fridayHours    ?? 8),  // 5
-          Number(schedule?.saturdayHours  ?? 0),  // 6
-        ];
-        let totalMin = 0;
-        const cur = new Date(start);
-        while (cur <= end) {
-          totalMin += dow[cur.getDay()] * 60;
-          cur.setDate(cur.getDate() + 1);
-        }
-        return totalMin;
+        if (!schedule) return 0;
+        return calcExpectedMinutesTz(schedule as Record<string, unknown>, start, end, tz);
       }
 
-      // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat)
+      // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat, TZ-aware)
       function absenceMinutes(
         schedule: { mondayHours: unknown; tuesdayHours: unknown; wednesdayHours: unknown; thursdayHours: unknown; fridayHours: unknown; saturdayHours: unknown; sundayHours: unknown } | null,
         absStart: Date,
         absEnd: Date,
       ): number {
-        const dow = [
-          Number(schedule?.sundayHours    ?? 0),
-          Number(schedule?.mondayHours    ?? 8),
-          Number(schedule?.tuesdayHours   ?? 8),
-          Number(schedule?.wednesdayHours ?? 8),
-          Number(schedule?.thursdayHours  ?? 8),
-          Number(schedule?.fridayHours    ?? 8),
-          Number(schedule?.saturdayHours  ?? 0),
-        ];
+        if (!schedule) return 0;
         // Schnittmenge mit Monatsgrenzen
         const rangeStart = absStart < start ? start : absStart;
         const rangeEnd   = absEnd   > end   ? end   : absEnd;
         let min = 0;
         const cur = new Date(rangeStart);
         while (cur <= rangeEnd) {
-          min += dow[cur.getDay()] * 60;
+          const dow = getDayOfWeekInTz(cur, tz);
+          min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
           cur.setDate(cur.getDate() + 1);
         }
         return min;
@@ -225,9 +204,8 @@ export async function reportRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
       const y = parseInt(year);
-      const m = parseInt(month) - 1;
-      const start = new Date(y, m, 1);
-      const end = new Date(y, m + 1, 0);
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null },

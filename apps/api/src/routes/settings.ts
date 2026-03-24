@@ -20,6 +20,7 @@ const tenantConfigSchema = z.object({
   carryOverDeadlineDay:     z.number().int().min(1).max(31).optional(),
   carryOverDeadlineMonth:   z.number().int().min(1).max(12).optional(),
   defaultVacationDays:      z.number().int().min(1).max(365).optional(),
+  timezone:                 z.string().min(1).max(100).optional(),
 });
 
 const vacationEntitlementSchema = z.object({
