@@ -49,6 +49,7 @@
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
+  let todayShift: { startTime: string; endTime: string; label: string | null; template: { name: string; color: string } | null } | null = $state(null);
 
   // Charts
   let weeklyChartEl: HTMLCanvasElement;
@@ -108,6 +109,15 @@
         clockedIn = false;
         activeEntryId = null;
         clockStart = null;
+      }
+
+      // Load today's shift
+      try {
+        const shiftData = await api.get<{ weekDays: string[]; shifts: Array<{ date: string; startTime: string; endTime: string; label: string | null; template: { name: string; color: string } | null }> }>(`/shifts/week?date=${today}`);
+        const myShifts = shiftData.shifts.filter(s => s.date.startsWith(today));
+        todayShift = myShifts.length > 0 ? myShifts[0] : null;
+      } catch {
+        todayShift = null;
       }
 
       // Team-Wochenübersicht für Manager/Admin
@@ -346,6 +356,14 @@
         {clockedIn ? "Eingestempelt" : "Ausgestempelt"}
       </span>
     </div>
+
+    {#if todayShift}
+      <div class="shift-info">
+        <span class="shift-info__badge" style="background: {todayShift.template?.color ?? '#6B7280'}22; border-left: 3px solid {todayShift.template?.color ?? '#6B7280'}; padding: 0.375rem 0.75rem; border-radius: 4px; font-size: 0.8125rem;">
+          {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
+        </span>
+      </div>
+    {/if}
 
     <div class="clock-time font-mono">
       {format(currentTime, "HH:mm:ss")}
@@ -596,6 +614,11 @@
     flex-direction: column;
     align-items: center;
     gap: 1rem;
+  }
+
+  .shift-info {
+    display: flex;
+    justify-content: center;
   }
 
   .clock-status {
