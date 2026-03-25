@@ -40,6 +40,9 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
 - **§ 3 Weekly max: 48h** — hard weekly cap (Mo-Sa = 6 Werktage)
 - **§ 4 Breaks**: >6h work = min 30min break; >9h work = min 45min break
 - **§ 5 Rest period**: min 11h between end of work and start of next day
+- **§ 8 BUrlG**: No work during approved vacation — time entry creation
+  (manual, clock-in, NFC) is BLOCKED when approved leave exists on that day.
+  Employee must cancel the leave first before tracking time.
 
 ## Schedule Types
 
