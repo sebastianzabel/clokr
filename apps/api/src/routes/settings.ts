@@ -64,10 +64,10 @@ const employeeScheduleSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .optional(),
   })
-  .refine(
-    (data) => data.type !== "MONTHLY_HOURS" || (data.monthlyHours != null && data.monthlyHours > 0),
-    { message: "monthlyHours muss bei MONTHLY_HOURS angegeben werden", path: ["monthlyHours"] },
-  );
+  .refine((data) => data.type !== "MONTHLY_HOURS" || data.monthlyHours != null, {
+    message: "monthlyHours muss bei MONTHLY_HOURS angegeben werden",
+    path: ["monthlyHours"],
+  });
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
