@@ -34,7 +34,10 @@ const resetPasswordSchema = z.object({
 
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/v1/auth/login
+  const isTest = process.env.NODE_ENV === "test";
+
   app.post("/login", {
+    config: { rateLimit: { max: isTest ? 1000 : 5, timeWindow: "15 minutes" } },
     schema: {
       tags: ["Auth"],
       body: {

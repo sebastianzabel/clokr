@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { preventDefault } from 'svelte/legacy';
+  import { preventDefault } from "svelte/legacy";
 
   import { api } from "$api/client";
 
@@ -31,13 +31,18 @@
     <div class="login-logo">
       <span class="login-logo-icon">⏱️</span>
       <h1 class="login-title">Passwort vergessen</h1>
-      <p class="login-subtitle">Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.</p>
+      <p class="login-subtitle">
+        Geben Sie Ihre E-Mail-Adresse ein, um einen Link zum Zurücksetzen zu erhalten.
+      </p>
     </div>
 
     {#if success}
       <div class="alert alert-success" role="alert">
         <span>✓</span>
-        <span>Falls ein Konto mit dieser E-Mail existiert, haben wir einen Link zum Zurücksetzen gesendet.</span>
+        <span
+          >Falls ein Konto mit dieser E-Mail existiert, haben wir einen Link zum Zurücksetzen
+          gesendet.</span
+        >
       </div>
       <div class="back-footer">
         <a href="/login" class="back-link">Zurück zur Anmeldung</a>
@@ -92,7 +97,7 @@
   }
 
   .login-card {
-    background: #fff;
+    background: var(--color-surface, #fff);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
@@ -101,12 +106,32 @@
     max-width: 420px;
   }
 
-  .login-logo { text-align: center; margin-bottom: 2rem; }
-  .login-logo-icon { display: inline-block; font-size: 2.5rem; margin-bottom: 0.75rem; line-height: 1; }
-  .login-title { font-size: 1.5rem; font-weight: 700; color: var(--color-brand); margin-bottom: 0.375rem; }
-  .login-subtitle { font-size: 0.9375rem; color: var(--color-text-muted); }
+  .login-logo {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .login-logo-icon {
+    display: inline-block;
+    font-size: 2.5rem;
+    margin-bottom: 0.75rem;
+    line-height: 1;
+  }
+  .login-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-brand);
+    margin-bottom: 0.375rem;
+  }
+  .login-subtitle {
+    font-size: 0.9375rem;
+    color: var(--color-text-muted);
+  }
 
-  .login-form { display: flex; flex-direction: column; gap: 1.125rem; }
+  .login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.125rem;
+  }
 
   .login-submit {
     width: 100%;
@@ -125,7 +150,11 @@
     animation: spin 0.6s linear infinite;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
 
   .back-footer {
     text-align: center;
@@ -147,6 +176,14 @@
     font-size: 0.875rem;
   }
 
-  .alert-error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
-  .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+  .alert-error {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fecaca;
+  }
+  .alert-success {
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+  }
 </style>

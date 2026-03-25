@@ -42,6 +42,19 @@ export async function buildApp() {
   });
 
   // ── Security ──────────────────────────────────────────────
+  // Global error handler: ZodErrors → 400
+  app.setErrorHandler((error, _req, reply) => {
+    if (error.name === "ZodError") {
+      return reply
+        .code(400)
+        .send({ error: "Validierungsfehler", details: JSON.parse(error.message) });
+    }
+    app.log.error(error);
+    return reply
+      .code(error.statusCode ?? 500)
+      .send({ error: error.message ?? "Interner Serverfehler" });
+  });
+
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, {
     origin: config.CORS_ORIGIN,
