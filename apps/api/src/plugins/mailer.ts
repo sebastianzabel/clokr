@@ -98,10 +98,10 @@ export const mailerPlugin = fp(async (app) => {
       subject: "Willkommen bei Clokr – Konto aktivieren",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#6d28d9">Willkommen, ${firstName}!</h2>
+          <h2 style="color:#2563eb">Willkommen, ${firstName}!</h2>
           <p>Sie wurden zu <strong>Clokr</strong> eingeladen.</p>
           <p>Bitte klicken Sie auf den folgenden Link, um Ihr Passwort zu setzen und Ihr Konto zu aktivieren. Der Link ist <strong>24 Stunden</strong> gültig.</p>
-          <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#6d28d9;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Konto aktivieren</a>
+          <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Konto aktivieren</a>
           <p style="color:#666;font-size:13px">Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br><a href="${link}">${link}</a></p>
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
           <p style="color:#9ca3af;font-size:12px">Diese E-Mail wurde automatisch gesendet. Bitte nicht antworten.</p>
@@ -131,7 +131,7 @@ export const mailerPlugin = fp(async (app) => {
       subject: "Ihr Anmeldecode – Clokr",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#6d28d9">Hallo, ${firstName}!</h2>
+          <h2 style="color:#2563eb">Hallo, ${firstName}!</h2>
           <p>Ihr Anmeldecode für <strong>Clokr</strong> lautet:</p>
           <div style="text-align:center;margin:24px 0">
             <span style="display:inline-block;font-size:36px;font-weight:700;letter-spacing:10px;color:#1f2937;background:#f3f4f6;padding:16px 32px;border-radius:8px">${code}</span>
@@ -165,10 +165,10 @@ export const mailerPlugin = fp(async (app) => {
       subject: "Passwort zurücksetzen – Clokr",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#6d28d9">Hallo, ${firstName}!</h2>
+          <h2 style="color:#2563eb">Hallo, ${firstName}!</h2>
           <p>Sie haben angefordert, Ihr Passwort für <strong>Clokr</strong> zurückzusetzen.</p>
           <p>Klicken Sie auf den folgenden Button, um ein neues Passwort zu vergeben. Der Link ist <strong>1 Stunde</strong> gültig.</p>
-          <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#6d28d9;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Passwort zurücksetzen</a>
+          <a href="${link}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Passwort zurücksetzen</a>
           <p style="color:#666;font-size:13px">Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br><a href="${link}">${link}</a></p>
           <p style="color:#666;font-size:13px">Falls Sie diese Anfrage nicht gestellt haben, können Sie diese E-Mail ignorieren.</p>
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">

@@ -170,6 +170,11 @@
     text-align: center;
     margin-bottom: 1.5rem;
   }
+  .login-logo-img {
+    max-width: 160px;
+    height: auto;
+    margin-bottom: 0.75rem;
+  }
   .login-logo-icon {
     display: inline-block;
     font-size: 2.5rem;
