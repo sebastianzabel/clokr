@@ -573,6 +573,24 @@
   let selectedLabel = $derived(
     format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }),
   );
+
+  // ArbZG-Verstoß-Map: dateStr → true wenn Verstoß an diesem Tag
+  let arbzgDayMap = $derived.by(() => {
+    if (!arbzgEnabled) return new Map<string, boolean>();
+    const map = new Map<string, boolean>();
+    // Group entries by date
+    const byDate = new Map<string, TimeEntry[]>();
+    for (const e of entries) {
+      const d = e.date.split("T")[0];
+      if (!byDate.has(d)) byDate.set(d, []);
+      byDate.get(d)!.push(e);
+    }
+    for (const [dateStr, dayEntries] of byDate) {
+      const warnings = checkArbZGFrontend(dayEntries);
+      if (warnings.length > 0) map.set(dateStr, true);
+    }
+    return map;
+  });
 </script>
 
 <svelte:head><title>Zeiteinträge – Clokr</title></svelte:head>
@@ -681,6 +699,7 @@
           class:is-holiday={day.isHoliday && day.isCurrentMonth}
           class:is-selected={day.dateStr === selectedDate && day.isCurrentMonth}
           class:cal-day--disabled={day.isBeforeHire && day.isCurrentMonth}
+          class:cal-day--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
           title={day.isBeforeHire
             ? "Vor Eintrittsdatum"
             : day.isHoliday
@@ -1075,6 +1094,11 @@
     pointer-events: none;
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
+  }
+
+  :global(.cal-day.cal-day--arbzg-warn) {
+    border-left: 3px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
   }
   .day-before-hire {
     font-size: 0.75rem;
