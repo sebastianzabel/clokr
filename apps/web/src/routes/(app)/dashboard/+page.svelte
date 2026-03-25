@@ -108,10 +108,19 @@
   // Charts
   let weeklyChartEl: HTMLCanvasElement;
   let overtimeChartEl: HTMLCanvasElement;
-  let absenceChartEl: HTMLCanvasElement;
+  let sickChartEl: HTMLCanvasElement;
   let weeklyChart: Chart | null = null;
   let overtimeChart: Chart | null = null;
-  let absenceChart: Chart | null = null;
+  let sickChart: Chart | null = null;
+
+  interface UpcomingLeave {
+    employeeName: string;
+    startDate: string;
+    endDate: string;
+    days: number;
+    type: string;
+  }
+  let upcomingLeaves: UpcomingLeave[] = $state([]);
 
   interface MonthlyReportRow {
     workedHours: number;
@@ -147,7 +156,7 @@
     clearInterval(timer);
     weeklyChart?.destroy();
     overtimeChart?.destroy();
-    absenceChart?.destroy();
+    sickChart?.destroy();
   });
 
   async function loadData() {
@@ -363,35 +372,65 @@
         });
       }
 
-      // Absence doughnut chart
-      if (absenceChartEl) {
-        const totalSick = reports.reduce((s, r) => s + r.sickDays, 0);
-        const totalVac = reports.reduce((s, r) => s + r.vacationDays, 0);
-        const totalOther = reports.reduce((s, r) => s + (r.otherAbsenceDays ?? 0), 0);
-
-        absenceChart?.destroy();
-        if (totalSick + totalVac + totalOther > 0) {
-          absenceChart = new Chart(absenceChartEl, {
-            type: "doughnut",
-            data: {
-              labels: ["Krank", "Urlaub", "Sonstige"],
-              datasets: [
-                {
-                  data: [totalSick, totalVac, totalOther],
-                  backgroundColor: ["#ef4444", "#3b82f6", "#f59e0b"],
-                  borderWidth: 0,
-                },
-              ],
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              cutout: "65%",
-              plugins: {
-                legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+      // Sick days trend line chart
+      if (sickChartEl) {
+        sickChart?.destroy();
+        sickChart = new Chart(sickChartEl, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [
+              {
+                label: "Krankheitstage",
+                data: reports.map((r) => r.sickDays),
+                borderColor: "#ef4444",
+                backgroundColor: "rgba(239, 68, 68, 0.1)",
+                fill: true,
+                tension: 0.3,
+                pointRadius: 4,
+                pointBackgroundColor: "#ef4444",
               },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { stepSize: 1, font: { size: 10 } },
+                grid: { color: "#f3f4f6" },
+              },
+              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
             },
-          });
+          },
+        });
+      }
+
+      // Load upcoming leaves
+      if (isManager) {
+        try {
+          const leaves = await api.get<
+            {
+              startDate: string;
+              endDate: string;
+              days: number;
+              employee: { firstName: string; lastName: string };
+              leaveType: { name: string };
+            }[]
+          >("/leave/requests?status=APPROVED&upcoming=true");
+          upcomingLeaves = (leaves ?? [])
+            .map((l) => ({
+              employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
+              startDate: l.startDate?.split("T")[0] ?? "",
+              endDate: l.endDate?.split("T")[0] ?? "",
+              days: Number(l.days ?? 0),
+              type: l.leaveType?.name ?? "Urlaub",
+            }))
+            .slice(0, 8);
+        } catch {
+          upcomingLeaves = [];
         }
       }
     } catch {
@@ -639,12 +678,38 @@
     </div>
 
     <div class="chart-card chart-card--sm card card-body">
-      <h3 class="chart-title">Abwesenheiten (6 Monate)</h3>
-      <div class="chart-wrap chart-wrap--doughnut">
-        <canvas bind:this={absenceChartEl}></canvas>
+      <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
+      <div class="chart-wrap">
+        <canvas bind:this={sickChartEl}></canvas>
       </div>
     </div>
   </div>
+
+  <!-- Anstehende Urlaube (nur Manager/Admin) -->
+  {#if isManager && upcomingLeaves.length > 0}
+    <div class="upcoming-section card card-body">
+      <h3 class="chart-title">Anstehende Urlaube</h3>
+      <div class="upcoming-list">
+        {#each upcomingLeaves as leave}
+          <div class="upcoming-item">
+            <span class="upcoming-name">{leave.employeeName}</span>
+            <span class="upcoming-dates">
+              {new Date(leave.startDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}
+              – {new Date(leave.endDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}
+            </span>
+            <span class="upcoming-days">{leave.days} {leave.days === 1 ? "Tag" : "Tage"}</span>
+            <span class="upcoming-type badge badge-blue">{leave.type}</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Team Wochenübersicht (nur Manager/Admin) -->
   {#if isManager && teamWeek}
@@ -936,11 +1001,47 @@
     height: 200px;
   }
 
-  .chart-wrap--doughnut {
-    height: 180px;
+  .upcoming-section {
+    margin-top: 1.25rem;
+  }
+
+  .upcoming-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+  }
+
+  .upcoming-item {
     display: flex;
     align-items: center;
-    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.875rem;
+  }
+
+  .upcoming-item:last-child {
+    border-bottom: none;
+  }
+
+  .upcoming-name {
+    font-weight: 500;
+    min-width: 120px;
+  }
+
+  .upcoming-dates {
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .upcoming-days {
+    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+  }
+
+  .upcoming-type {
+    margin-left: auto;
   }
 
   @media (max-width: 900px) {

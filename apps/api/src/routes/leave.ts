@@ -228,10 +228,11 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
-      const { status, employeeId, year } = req.query as {
+      const { status, employeeId, year, upcoming } = req.query as {
         status?: string;
         employeeId?: string;
         year?: string;
+        upcoming?: string;
       };
 
       // Für Manager: PENDING-Filter schließt CANCELLATION_REQUESTED immer ein
@@ -250,17 +251,21 @@ export async function leaveRoutes(app: FastifyInstance) {
               }
             : { employeeId: user.employeeId ?? "" }),
           ...(statusFilter !== undefined ? { status: statusFilter } : {}),
-          ...(year
+          ...(upcoming === "true"
             ? {
-                startDate: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-12-31`) },
+                endDate: { gte: new Date() },
               }
-            : {}),
+            : year
+              ? {
+                  startDate: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-12-31`) },
+                }
+              : {}),
         },
         include: {
           leaveType: true,
           employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: upcoming === "true" ? { startDate: "asc" } : { createdAt: "desc" },
       });
 
       return rows.map((r) => ({
