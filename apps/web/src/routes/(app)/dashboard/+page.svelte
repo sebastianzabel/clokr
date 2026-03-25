@@ -677,7 +677,7 @@
       </div>
     </div>
 
-    <div class="chart-card chart-card--sm card card-body">
+    <div class="chart-card card card-body">
       <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
       <div class="chart-wrap">
         <canvas bind:this={sickChartEl}></canvas>
@@ -978,7 +978,7 @@
   /* Charts */
   .charts-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr 240px;
+    grid-template-columns: repeat(3, 1fr);
     gap: 1rem;
     margin-bottom: 1.75rem;
   }
