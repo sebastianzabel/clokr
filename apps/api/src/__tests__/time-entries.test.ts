@@ -2,6 +2,12 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
+function pastDate(daysAgo: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return d.toISOString().split("T")[0];
+}
+
 describe("Time Entries API", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
@@ -71,16 +77,17 @@ describe("Time Entries API", () => {
       expect(res.statusCode).toBe(409);
     });
 
-    it("returns ArbZG warnings when daily hours exceed 8h", async () => {
+    it("returns ArbZG warnings when daily hours exceed 10h", async () => {
+      const d = pastDate(3);
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-03-25",
-          startTime: "2026-03-25T06:00:00.000Z",
-          endTime: "2026-03-25T17:00:00.000Z",
+          date: d,
+          startTime: `${d}T06:00:00.000Z`,
+          endTime: `${d}T17:00:00.000Z`,
           breakMinutes: 45,
         },
       });
@@ -95,15 +102,16 @@ describe("Time Entries API", () => {
     });
 
     it("rejects entry with endTime before startTime", async () => {
+      const d = pastDate(4);
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-03-26",
-          startTime: "2026-03-26T16:00:00.000Z",
-          endTime: "2026-03-26T08:00:00.000Z",
+          date: d,
+          startTime: `${d}T16:00:00.000Z`,
+          endTime: `${d}T08:00:00.000Z`,
           breakMinutes: 0,
         },
       });
@@ -112,18 +120,20 @@ describe("Time Entries API", () => {
     });
 
     it("employee can create their own entry", async () => {
+      const d = pastDate(10);
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
-          date: "2026-03-27",
-          startTime: "2026-03-27T08:00:00.000Z",
-          endTime: "2026-03-27T16:00:00.000Z",
+          date: d,
+          startTime: `${d}T08:00:00.000Z`,
+          endTime: `${d}T16:00:00.000Z`,
           breakMinutes: 30,
         },
       });
 
+      if (res.statusCode !== 201) console.log("EMPLOYEE CREATE FAIL:", res.body);
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
       expect(body.entry.employeeId).toBe(data.employee.id);
