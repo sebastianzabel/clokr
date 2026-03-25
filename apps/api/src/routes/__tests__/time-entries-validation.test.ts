@@ -115,62 +115,58 @@ describe("Time Entry Validation Rules", () => {
       expect(body.error).toContain("BUrlG");
     });
 
-    it("blocks POST /clock-in when approved vacation exists today", async () => {
-      // We can only test clock-in for "today" if we have approved leave today.
-      // Create approved leave for today.
+    it("blocks manual time entry when approved vacation exists", async () => {
       const todayStr = new Date().toISOString().split("T")[0];
 
-      const createRes = await app.inject({
-        method: "POST",
-        url: "/api/v1/leave/requests",
-        headers: { authorization: `Bearer ${data.empToken}` },
-        payload: {
-          type: "VACATION",
-          startDate: todayStr,
-          endDate: todayStr,
+      // Create approved leave directly in DB
+      const leaveType = await app.prisma.leaveType.findFirst({
+        where: { tenantId: data.tenant.id },
+      });
+      const lt =
+        leaveType ??
+        (await app.prisma.leaveType.create({
+          data: {
+            tenantId: data.tenant.id,
+            name: "Jahresurlaub",
+            isPaid: true,
+            requiresApproval: true,
+            color: "#3B82F6",
+          },
+        }));
+
+      const leaveReq = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: lt.id,
+          startDate: new Date(todayStr + "T00:00:00Z"),
+          endDate: new Date(todayStr + "T00:00:00Z"),
+          days: 1,
+          status: "APPROVED",
+          reviewedBy: data.adminUser.id,
+          reviewedAt: new Date(),
         },
       });
 
-      if (createRes.statusCode === 201) {
-        const reqId = JSON.parse(createRes.body).id;
+      // Manual entry on vacation day should be blocked
+      const now = new Date();
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          date: todayStr,
+          startTime: new Date(todayStr + "T08:00:00Z").toISOString(),
+          endTime: new Date(todayStr + "T16:00:00Z").toISOString(),
+          breakMinutes: 30,
+        },
+      });
 
-        const approveRes = await app.inject({
-          method: "PATCH",
-          url: `/api/v1/leave/requests/${reqId}/review`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { status: "APPROVED" },
-        });
-        expect(approveRes.statusCode).toBe(200);
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      expect(body.error).toContain("BUrlG");
 
-        // Close any open entries first
-        const openEntries = await app.prisma.timeEntry.findMany({
-          where: { employeeId: data.employee.id, endTime: null },
-        });
-        for (const e of openEntries) {
-          await app.prisma.timeEntry.update({
-            where: { id: e.id },
-            data: { endTime: new Date() },
-          });
-        }
-
-        const clockInRes = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries/clock-in",
-          headers: { authorization: `Bearer ${data.empToken}` },
-          payload: { source: "MANUAL" },
-        });
-
-        expect(clockInRes.statusCode).toBe(409);
-        const body = JSON.parse(clockInRes.body);
-        expect(body.error).toContain("BUrlG");
-
-        // Clean up: delete the leave request so other tests are not affected
-        await app.inject({
-          method: "DELETE",
-          url: `/api/v1/leave/requests/${reqId}`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-        });
-      }
+      // Clean up
+      await app.prisma.leaveRequest.delete({ where: { id: leaveReq.id } });
     });
 
     it("allows time entry after cancelling the leave request", async () => {
