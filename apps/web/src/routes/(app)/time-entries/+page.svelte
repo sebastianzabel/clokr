@@ -497,7 +497,7 @@
       const gap =
         (new Date(sorted[i].startTime).getTime() - new Date(sorted[i - 1].endTime!).getTime()) /
         60000;
-      if (gap > 0) gapBreak += gap;
+      if (gap > 0 && gap <= 120) gapBreak += gap; // Lücken > 2h sind separate Schichten, keine Pausen
     }
     const totalBreak = explicitBreak + gapBreak;
 
