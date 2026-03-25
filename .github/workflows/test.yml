@@ -1,0 +1,57 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: clokr
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: clokr
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
+      JWT_SECRET: test-jwt-secret-min-32-characters-long
+      JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
+      ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Push schema to test DB
+        run: pnpm --filter @clokr/db exec prisma db push
+
+      - name: Run tests
+        run: cd apps/api && npx vitest run
+
+      - name: Type check API
+        run: npx tsc --noEmit -p apps/api/tsconfig.json
