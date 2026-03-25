@@ -1,17 +1,28 @@
 #!/bin/sh
-set -e
 
 echo "🔄 Syncing database schema..."
 cd /app/packages/db
-npx prisma migrate deploy || {
-  echo "⚠️  Migration failed, falling back to db push..."
-  npx prisma db push --url "$DATABASE_URL"
-}
+
+# Check if migration directory has migrations
+if [ -d "prisma/migrations" ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+  echo "📦 Running migrations..."
+  npx prisma migrate deploy || {
+    echo "❌ Migration failed!"
+    exit 1
+  }
+else
+  echo "📦 No migrations found, using db push..."
+  npx prisma db push || {
+    echo "❌ Database sync failed!"
+    exit 1
+  }
+fi
+
+echo "✅ Database schema synced"
 
 if [ "${SEED_DEMO_DATA:-true}" = "true" ]; then
   echo "🌱 Running database seed..."
-  cd /app/packages/db
-  npx tsx src/seed.ts || echo "ℹ️  Seed skipped"
+  npx tsx src/seed.ts || echo "ℹ️  Seed skipped (may already exist)"
 else
   echo "ℹ️  Seed skipped (SEED_DEMO_DATA=false)"
 fi
