@@ -1,6 +1,6 @@
 # ── Stage 1: Install dependencies ───────────────────────────────────────────
-FROM node:22-alpine AS deps
-RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
+FROM node:24-alpine AS deps
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -21,7 +21,7 @@ COPY apps/web/ ./apps/web/
 RUN pnpm --filter @clokr/web build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
-FROM node:22-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 
 # Copy full workspace (adapter-node needs external deps like date-fns)
