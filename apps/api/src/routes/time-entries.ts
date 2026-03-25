@@ -94,6 +94,36 @@ async function checkOverlap(
   return `Überschneidung mit bestehendem Eintrag (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
 }
 
+/** § 8 BUrlG: Prüft ob genehmigter Urlaub oder Abwesenheit an dem Tag vorliegt */
+async function hasApprovedLeaveOnDate(
+  prisma: any,
+  employeeId: string,
+  dateStr: string,
+): Promise<string | null> {
+  const leave = await prisma.leaveRequest.findFirst({
+    where: {
+      employeeId,
+      status: "APPROVED",
+      startDate: { lte: new Date(dateStr + "T23:59:59Z") },
+      endDate: { gte: new Date(dateStr + "T00:00:00Z") },
+    },
+    include: { leaveType: { select: { name: true } } },
+  });
+  if (leave) return leave.leaveType.name;
+
+  const absence = await prisma.absence.findFirst({
+    where: {
+      employeeId,
+      startDate: { lte: new Date(dateStr + "T23:59:59Z") },
+      endDate: { gte: new Date(dateStr + "T00:00:00Z") },
+      type: { in: ["MATERNITY", "PARENTAL"] },
+    },
+  });
+  if (absence) return absence.type === "MATERNITY" ? "Mutterschutz" : "Elternzeit";
+
+  return null;
+}
+
 export async function timeEntryRoutes(app: FastifyInstance) {
   // POST /api/v1/time-entries/nfc-punch  (kein JWT – Terminal-Gerät)
   app.post("/nfc-punch", {
@@ -123,6 +153,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const now = new Date();
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const today = todayInTz(tz);
+      const todayStr = dateStrInTz(now, tz);
 
       // Offenen Eintrag von heute suchen
       const openEntry = await app.prisma.timeEntry.findFirst({
@@ -232,6 +263,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         };
       }
 
+      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+      const leaveReason = await hasApprovedLeaveOnDate(app.prisma, employee.id, todayStr);
+      if (leaveReason) {
+        return reply.code(409).send({
+          error: `§ 8 BUrlG: Heute ist ${leaveReason} genehmigt. Bitte zuerst stornieren.`,
+          action: "BLOCKED",
+        });
+      }
+
       // Einstempeln
       const entry = await app.prisma.timeEntry.create({
         data: {
@@ -289,6 +329,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       });
       if (employeeRecord && !employeeRecord.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
+      }
+
+      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+      const empTenantId = employeeRecord?.tenantId;
+      if (empTenantId) {
+        const clockTz = await getTenantTimezone(app.prisma, empTenantId);
+        const clockTodayStr = dateStrInTz(new Date(), clockTz);
+        const clockLeave = await hasApprovedLeaveOnDate(app.prisma, employeeId, clockTodayStr);
+        if (clockLeave) {
+          return reply.code(409).send({
+            error: `§ 8 BUrlG: Heute ist ${clockLeave} genehmigt. Bitte zuerst stornieren.`,
+          });
+        }
       }
 
       // Prüfen ob bereits eingestempelt
@@ -456,6 +509,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             .code(400)
             .send({ error: "Endzeit darf max. 30 Minuten in der Zukunft liegen" });
         }
+      }
+
+      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+      const manualEmployeeId = body.employeeId ?? req.user.employeeId ?? "";
+      const manualLeave = await hasApprovedLeaveOnDate(app.prisma, manualEmployeeId, entryDateStr);
+      if (manualLeave) {
+        return reply.code(409).send({
+          error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave} genehmigt. Bitte zuerst stornieren.`,
+        });
       }
 
       // Zeitvalidierung

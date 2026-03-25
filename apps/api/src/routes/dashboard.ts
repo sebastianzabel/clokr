@@ -235,6 +235,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           if (isClockedIn) {
             status = "clocked_in";
+          } else if (isPresent) {
+            // Tatsächliche Anwesenheit hat Vorrang (auch bei genehmigtem Urlaub)
+            status = "present";
           } else if (leave) {
             status = "absent";
             reason = leave.leaveType.name;
@@ -250,8 +253,6 @@ export async function dashboardRoutes(app: FastifyInstance) {
                     : absence.type === "PARENTAL"
                       ? "Elternzeit"
                       : absence.type.toString();
-          } else if (isPresent) {
-            status = "present";
           } else if (isFuture && (shift || isWorkday)) {
             status = "scheduled";
           } else if (!isFuture && (shift || isWorkday)) {
