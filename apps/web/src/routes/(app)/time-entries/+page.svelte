@@ -525,6 +525,7 @@
   let monthlyTarget = $derived(
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
+  let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
   let mBalance = $derived(
     isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
   );
@@ -585,22 +586,26 @@
 <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
 {#if schedule}
   <div class="month-stats-card card">
+    {#if !isMonthlyHours || hasMonthlyTarget}
+      <div class="mstat-item">
+        <span class="mstat-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
+        <span class="mstat-value"
+          >{fmtMin(hasMonthlyTarget ? monthlyTarget : totalExpected)}&thinsp;h</span
+        >
+      </div>
+      <div class="mstat-sep"></div>
+    {/if}
     <div class="mstat-item">
-      <span class="mstat-label">{isMonthlyHours ? "Soll (Monat)" : "Soll (bisher)"}</span>
-      <span class="mstat-value"
-        >{fmtMin(isMonthlyHours ? monthlyTarget : totalExpected)}&thinsp;h</span
-      >
-    </div>
-    <div class="mstat-sep"></div>
-    <div class="mstat-item">
-      <span class="mstat-label">Ist</span>
+      <span class="mstat-label">{isMonthlyHours && !hasMonthlyTarget ? "Geleistet" : "Ist"}</span>
       <span class="mstat-value">{fmtMin(totalWorked)}&thinsp;h</span>
     </div>
-    <div class="mstat-sep"></div>
-    <div class="mstat-item">
-      <span class="mstat-label">Monat-Saldo</span>
-      <span class="mstat-value bal {balClass(mBalance)}">{fmtBalance(mBalance)}</span>
-    </div>
+    {#if !isMonthlyHours || hasMonthlyTarget}
+      <div class="mstat-sep"></div>
+      <div class="mstat-item">
+        <span class="mstat-label">Monat-Saldo</span>
+        <span class="mstat-value bal {balClass(mBalance)}">{fmtBalance(mBalance)}</span>
+      </div>
+    {/if}
     {#if overtimeTotalHours !== null}
       <div class="mstat-sep"></div>
       <div class="mstat-item mstat-item--total">

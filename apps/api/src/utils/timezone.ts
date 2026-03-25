@@ -159,9 +159,10 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
 ): number {
-  // Minijobber / flexible monthly hours: return full monthly budget
-  if (String(schedule.type ?? "") === "MONTHLY_HOURS" && schedule.monthlyHours != null) {
-    return Number(schedule.monthlyHours) * 60;
+  // Minijobber / flexible monthly hours: return monthly budget (or 0 if not set = pure tracking)
+  if (String(schedule.type ?? "") === "MONTHLY_HOURS") {
+    const mh = Number(schedule.monthlyHours ?? 0);
+    return mh > 0 ? mh * 60 : 0;
   }
 
   const DOW_KEYS = [
