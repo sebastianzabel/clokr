@@ -2,7 +2,7 @@ name: clokr
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: clokr
@@ -102,7 +102,7 @@ services:
         condition: service_healthy
 
   backup:
-    image: postgres:17-alpine
+    image: postgres:18-alpine
     environment:
       PGHOST: postgres
       PGUSER: clokr
