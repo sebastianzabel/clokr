@@ -63,9 +63,12 @@
 
   interface TeamDay {
     date: string;
-    status: "present" | "absent" | "clocked_in" | "none";
+    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none";
     workedHours: number;
     reason: string | null;
+    shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
+    isWorkday?: boolean;
+    expectedHours?: number;
   }
 
   interface TeamMember {
@@ -692,6 +695,14 @@
                       >
                         {day.workedHours.toFixed(1)}
                       </span>
+                      {#if day.shift}
+                        <span
+                          class="shift-label"
+                          style={day.shift.color ? `color: ${day.shift.color}` : ""}
+                        >
+                          {day.shift.startTime}–{day.shift.endTime}
+                        </span>
+                      {/if}
                     {:else if day.status === "clocked_in"}
                       <span class="cell-badge cell-badge--active" title="Eingestempelt"> ● </span>
                     {:else if day.status === "absent"}
@@ -706,6 +717,29 @@
                           👶
                         {:else}
                           ✗
+                        {/if}
+                      </span>
+                    {:else if day.status === "missing"}
+                      <span
+                        class="cell-badge cell-badge--missing"
+                        title="Fehlt! {day.shift
+                          ? day.shift.startTime + '–' + day.shift.endTime
+                          : 'Arbeitstag'}"
+                      >
+                        ⚠️
+                      </span>
+                    {:else if day.status === "scheduled"}
+                      <span
+                        class="cell-badge cell-badge--scheduled"
+                        title={day.shift
+                          ? (day.shift.label ?? day.shift.startTime + "–" + day.shift.endTime)
+                          : "Arbeitstag"}
+                        style={day.shift?.color ? `border-color: ${day.shift.color}` : ""}
+                      >
+                        {#if day.shift}
+                          <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
+                        {:else}
+                          <span class="shift-time">{day.expectedHours}h</span>
                         {/if}
                       </span>
                     {:else}
@@ -729,6 +763,11 @@
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🌴</span> Urlaub</span
         >
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
+        <span class="legend-item"><span class="cell-badge cell-badge--missing">⚠️</span> Fehlt</span
+        >
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--scheduled">9–17</span> Geplant</span
+        >
         <span class="legend-item"
           ><span class="cell-badge cell-badge--none">–</span> Keine Daten</span
         >
@@ -1000,6 +1039,10 @@
 
   .team-grid__cell {
     min-width: 3rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
   }
 
   /* Cell badges */
@@ -1042,9 +1085,35 @@
     font-size: 0.875rem;
   }
 
+  .cell-badge--missing {
+    background: #fecaca;
+    color: #991b1b;
+    font-size: 0.875rem;
+  }
+
+  .cell-badge--scheduled {
+    background: var(--color-bg-subtle, #f3f4f6);
+    color: var(--color-text-muted);
+    border: 1px dashed var(--color-border);
+    font-size: 0.6875rem;
+  }
+
   .cell-badge--none {
     color: var(--color-text-muted);
     opacity: 0.4;
+  }
+
+  .shift-label {
+    display: block;
+    font-size: 0.625rem;
+    line-height: 1;
+    margin-top: 2px;
+    opacity: 0.7;
+  }
+
+  .shift-time {
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Legend */

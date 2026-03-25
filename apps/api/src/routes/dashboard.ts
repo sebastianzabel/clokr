@@ -7,6 +7,8 @@ import {
   dateStrInTz,
   weekRangeUtc,
   calcExpectedMinutesTz,
+  getDayOfWeekInTz,
+  getDayHoursFromSchedule,
 } from "../utils/timezone";
 
 export async function dashboardRoutes(app: FastifyInstance) {
@@ -150,6 +152,24 @@ export async function dashboardRoutes(app: FastifyInstance) {
         select: { employeeId: true, startDate: true, endDate: true, type: true },
       });
 
+      // Schichten der Woche
+      const shifts = await app.prisma.shift.findMany({
+        where: {
+          employee: { tenantId },
+          date: { gte: weekStart, lte: weekEnd },
+        },
+        include: { template: { select: { name: true, color: true } } },
+      });
+
+      // Aktuelle Schedules aller MA (bulk, latest per employee)
+      const allSchedules = await app.prisma.workSchedule.findMany({
+        where: {
+          employeeId: { in: employees.map((e) => e.id) },
+          validFrom: { lte: weekEnd },
+        },
+        orderBy: { validFrom: "desc" },
+      });
+
       // Pro Mitarbeiter die Woche aufbereiten
       const team = employees.map((emp) => {
         const days = weekDays.map((dayStr) => {
@@ -185,8 +205,33 @@ export async function dashboardRoutes(app: FastifyInstance) {
               dateStrInTz(a.endDate, tz) >= dayStr,
           );
 
-          let status: "present" | "absent" | "clocked_in" | "none" = "none";
+          // Find shift for this employee + day
+          const dayShifts = shifts.filter(
+            (s) => s.employeeId === emp.id && dateStrInTz(s.date, tz) === dayStr,
+          );
+          const shift =
+            dayShifts.length > 0
+              ? {
+                  startTime: dayShifts[0].startTime,
+                  endTime: dayShifts[0].endTime,
+                  label: dayShifts[0].label ?? dayShifts[0].template?.name ?? null,
+                  color: dayShifts[0].template?.color ?? null,
+                }
+              : null;
+
+          // Check if this is a workday from the schedule
+          const empSchedule = allSchedules.find((s) => s.employeeId === emp.id);
+          const dayDate = new Date(dayStr + "T12:00:00Z");
+          const dow = getDayOfWeekInTz(dayDate, tz);
+          const expectedHours = empSchedule ? getDayHoursFromSchedule(empSchedule as any, dow) : 0;
+          const isWorkday = expectedHours > 0;
+
+          let status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" =
+            "none";
           let reason: string | null = null;
+
+          const todayStr = dateStrInTz(new Date(), tz);
+          const isFuture = dayStr > todayStr;
 
           if (isClockedIn) {
             status = "clocked_in";
@@ -207,9 +252,21 @@ export async function dashboardRoutes(app: FastifyInstance) {
                       : absence.type.toString();
           } else if (isPresent) {
             status = "present";
+          } else if (isFuture && (shift || isWorkday)) {
+            status = "scheduled";
+          } else if (!isFuture && (shift || isWorkday)) {
+            status = "missing";
           }
 
-          return { date: dayStr, status, workedHours: round(workedMinutes / 60), reason };
+          return {
+            date: dayStr,
+            status,
+            workedHours: round(workedMinutes / 60),
+            reason,
+            shift,
+            isWorkday,
+            expectedHours,
+          };
         });
 
         return {
