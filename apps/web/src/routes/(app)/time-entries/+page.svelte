@@ -19,6 +19,8 @@
   }
 
   interface WorkSchedule {
+    type?: "FIXED_WEEKLY" | "MONTHLY_HOURS";
+    monthlyHours?: number | null;
     mondayHours: string | number;
     tuesdayHours: string | number;
     wednesdayHours: string | number;
@@ -148,7 +150,15 @@
       absences = rawAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
-      calendarDays = buildCalendarDays(calMonth, entries, schedule, holidays, absences, hireDate);
+      calendarDays = buildCalendarDays(
+        calMonth,
+        entries,
+        schedule,
+        holidays,
+        absences,
+        hireDate,
+        schedule?.type === "MONTHLY_HOURS",
+      );
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -173,6 +183,7 @@
     hols: Map<string, string>,
     absenceList: Absence[],
     hireDateStr: string | null = null,
+    monthly: boolean = false,
   ): CalDay[] {
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
@@ -201,18 +212,20 @@
     for (let i = firstDow - 1; i >= 0; i--) {
       const d = new Date(monthStart);
       d.setDate(d.getDate() - i - 1);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
     }
     const cur = new Date(monthStart);
     while (cur <= monthEnd) {
-      days.push(makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr));
+      days.push(
+        makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr, monthly),
+      );
       cur.setDate(cur.getDate() + 1);
     }
     const remaining = (7 - ((lastDow + 1) % 7)) % 7;
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(monthEnd);
       d.setDate(d.getDate() + i);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
     }
     return days;
   }
@@ -225,6 +238,7 @@
     hols: Map<string, string>,
     absenceByDate: Map<string, { type: string; half: boolean }>,
     hireDateStr: string | null = null,
+    monthly: boolean = false,
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -243,7 +257,8 @@
     const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
-    let expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
+    // Bei MONTHLY_HOURS gibt es kein tägliches Soll
+    let expectedMin = monthly ? 0 : sched ? getDayExpected(sched, date) * 60 : 0;
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
     else if (absence && !absence.half) expectedMin = 0;
@@ -252,7 +267,12 @@
     let status: CalStatus = "noExpect";
     if (isFuture) status = "future";
     else if (absence && !absence.half && !isFuture) status = "absence";
-    else if (isToday && !hasEntries) status = "today-empty";
+    else if (monthly) {
+      // Monatsstunden: kein tägliches Soll, nur zeigen ob gearbeitet wurde
+      if (isToday) status = hasEntries ? "today-ok" : "today-empty";
+      else if (hasEntries) status = "noExpect";
+      else status = "noExpect";
+    } else if (isToday && !hasEntries) status = "today-empty";
     else if (isToday && workedMin >= expectedMin) status = "today-ok";
     else if (isToday) status = "today-partial";
     else if (!hasEntries && expectedMin > 0 && !isHoliday) status = "missing";
@@ -501,6 +521,10 @@
   }
 
   // ── Reaktive Ableitungen ───────────────────────────────────────────────────
+  let isMonthlyHours = $derived(schedule?.type === "MONTHLY_HOURS");
+  let monthlyTarget = $derived(
+    isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
+  );
   let selectedSlots = $derived(
     entries
       .filter((e) => (e.date ?? e.startTime).split("T")[0] === selectedDate)
@@ -560,8 +584,10 @@
 {#if schedule}
   <div class="month-stats-card card">
     <div class="mstat-item">
-      <span class="mstat-label">Soll (bisher)</span>
-      <span class="mstat-value">{fmtMin(totalExpected)}&thinsp;h</span>
+      <span class="mstat-label">{isMonthlyHours ? "Soll (Monat)" : "Soll (bisher)"}</span>
+      <span class="mstat-value"
+        >{fmtMin(isMonthlyHours ? monthlyTarget : totalExpected)}&thinsp;h</span
+      >
     </div>
     <div class="mstat-sep"></div>
     <div class="mstat-item">
@@ -571,7 +597,8 @@
     <div class="mstat-sep"></div>
     <div class="mstat-item">
       <span class="mstat-label">Monat-Saldo</span>
-      <span class="mstat-value bal {balClass(totalBalance)}">{fmtBalance(totalBalance)}</span>
+      {@const mBalance = isMonthlyHours ? totalWorked - monthlyTarget : totalBalance}
+      <span class="mstat-value bal {balClass(mBalance)}">{fmtBalance(mBalance)}</span>
     </div>
     {#if overtimeTotalHours !== null}
       <div class="mstat-sep"></div>
@@ -661,11 +688,11 @@
             <span class="day-before-hire">—</span>
           {:else if day.isCurrentMonth && day.hasEntries}
             <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-            {#if day.expectedMin > 0}
+            {#if !isMonthlyHours && day.expectedMin > 0}
               {@const b = day.workedMin - day.expectedMin}
               <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
             {/if}
-          {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture}
+          {:else if day.isCurrentMonth && !isMonthlyHours && day.expectedMin > 0 && !day.isFuture}
             <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
           {/if}
         </div>
@@ -709,11 +736,13 @@
       <span class="day-detail-label">{selectedLabel}</span>
       {#if schedule}
         <div class="day-detail-stats">
-          <span class="dstat">Soll <strong>{fmtMin(selectedExpected)}&thinsp;h</strong></span>
+          {#if !isMonthlyHours}
+            <span class="dstat">Soll <strong>{fmtMin(selectedExpected)}&thinsp;h</strong></span>
+          {/if}
           <span class="dstat">Ist <strong>{fmtMin(selectedWorked)}&thinsp;h</strong></span>
           {#if selectedSlots.some((s) => !s.endTime)}
             <span class="badge badge-green" style="font-size:0.75rem;">Aktiv</span>
-          {:else}
+          {:else if !isMonthlyHours}
             <span class="dstat bal {balClass(selectedBalance)}">
               Saldo <strong>{fmtBalance(selectedBalance)}</strong>
             </span>

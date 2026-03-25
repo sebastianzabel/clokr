@@ -12,6 +12,8 @@ const employeeRowSchema = z.object({
   hireDate: z.string(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
   weeklyHours: z.coerce.number().positive().default(40),
+  scheduleType: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  monthlyHours: z.coerce.number().min(0).max(999).optional(),
   password: z.string().min(8).optional(),
 });
 
@@ -39,14 +41,19 @@ function parseCsv(text: string): Record<string, string>[] {
 
   // Detect separator (semicolon or comma)
   const sep = lines[0].includes(";") ? ";" : ",";
-  const headers = lines[0].split(sep).map(h => h.trim().replace(/^["']|["']$/g, ""));
+  const headers = lines[0].split(sep).map((h) => h.trim().replace(/^["']|["']$/g, ""));
 
-  return lines.slice(1).filter(l => l.trim()).map(line => {
-    const values = line.split(sep).map(v => v.trim().replace(/^["']|["']$/g, ""));
-    const row: Record<string, string> = {};
-    headers.forEach((h, i) => { row[h] = values[i] ?? ""; });
-    return row;
-  });
+  return lines
+    .slice(1)
+    .filter((l) => l.trim())
+    .map((line) => {
+      const values = line.split(sep).map((v) => v.trim().replace(/^["']|["']$/g, ""));
+      const row: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        row[h] = values[i] ?? "";
+      });
+      return row;
+    });
 }
 
 export async function importRoutes(app: FastifyInstance) {
@@ -69,9 +76,23 @@ export async function importRoutes(app: FastifyInstance) {
             email: raw.email || raw.Email || raw["E-Mail"] || "",
             firstName: raw.firstName || raw.vorname || raw.Vorname || "",
             lastName: raw.lastName || raw.nachname || raw.Nachname || "",
-            employeeNumber: raw.employeeNumber || raw.nr || raw.Nr || raw["Mitarbeiter-Nr"] || raw["Mitarbeiter-Nr."] || "",
+            employeeNumber:
+              raw.employeeNumber ||
+              raw.nr ||
+              raw.Nr ||
+              raw["Mitarbeiter-Nr"] ||
+              raw["Mitarbeiter-Nr."] ||
+              "",
             role: raw.role || raw.Rolle || "EMPLOYEE",
             weeklyHours: raw.weeklyHours || raw.wochenstunden || raw.Wochenstunden || "40",
+            scheduleType:
+              raw.schedule_type || raw.scheduleType || raw.modell || raw.Modell || "FIXED_WEEKLY",
+            monthlyHours:
+              raw.monthly_hours ||
+              raw.monthlyHours ||
+              raw.monatsstunden ||
+              raw.Monatsstunden ||
+              undefined,
             password: raw.password || raw.Passwort || undefined,
           });
 
@@ -104,7 +125,9 @@ export async function importRoutes(app: FastifyInstance) {
             await tx.workSchedule.create({
               data: {
                 employeeId: emp.id,
+                type: data.scheduleType,
                 weeklyHours: data.weeklyHours,
+                monthlyHours: data.monthlyHours ?? null,
                 validFrom: new Date(data.hireDate),
               },
             });
@@ -116,12 +139,16 @@ export async function importRoutes(app: FastifyInstance) {
 
           results.push({ row: i + 1, status: "ok", email: data.email });
         } catch (e: any) {
-          results.push({ row: i + 1, status: "error", error: e.message?.slice(0, 200) ?? "Unknown error" });
+          results.push({
+            row: i + 1,
+            status: "error",
+            error: e.message?.slice(0, 200) ?? "Unknown error",
+          });
         }
       }
 
-      const okCount = results.filter(r => r.status === "ok").length;
-      const errorCount = results.filter(r => r.status === "error").length;
+      const okCount = results.filter((r) => r.status === "ok").length;
+      const errorCount = results.filter((r) => r.status === "error").length;
 
       await app.audit({
         userId: req.user.sub,
@@ -147,7 +174,7 @@ export async function importRoutes(app: FastifyInstance) {
         where: { tenantId: req.user.tenantId },
         select: { id: true, employeeNumber: true },
       });
-      const empMap = new Map(employees.map(e => [e.employeeNumber, e.id]));
+      const empMap = new Map(employees.map((e) => [e.employeeNumber, e.id]));
 
       const results: { row: number; status: "ok" | "error"; error?: string }[] = [];
 
@@ -155,7 +182,13 @@ export async function importRoutes(app: FastifyInstance) {
         try {
           const raw = rows[i];
           const data = timeEntryRowSchema.parse({
-            employeeNumber: raw.employeeNumber || raw.nr || raw.Nr || raw["Mitarbeiter-Nr"] || raw["Mitarbeiter-Nr."] || "",
+            employeeNumber:
+              raw.employeeNumber ||
+              raw.nr ||
+              raw.Nr ||
+              raw["Mitarbeiter-Nr"] ||
+              raw["Mitarbeiter-Nr."] ||
+              "",
             date: parseDate(raw.date || raw.datum || raw.Datum || ""),
             startTime: raw.startTime || raw.start || raw.Start || raw.von || raw.Von || "",
             endTime: raw.endTime || raw.end || raw.Ende || raw.bis || raw.Bis || "",
@@ -164,7 +197,8 @@ export async function importRoutes(app: FastifyInstance) {
           });
 
           const employeeId = empMap.get(data.employeeNumber);
-          if (!employeeId) throw new Error(`Mitarbeiter-Nr. "${data.employeeNumber}" nicht gefunden`);
+          if (!employeeId)
+            throw new Error(`Mitarbeiter-Nr. "${data.employeeNumber}" nicht gefunden`);
 
           const dateStr = data.date;
           const startTime = new Date(`${dateStr}T${data.startTime}:00.000Z`);
@@ -187,12 +221,16 @@ export async function importRoutes(app: FastifyInstance) {
 
           results.push({ row: i + 1, status: "ok" });
         } catch (e: any) {
-          results.push({ row: i + 1, status: "error", error: e.message?.slice(0, 200) ?? "Unknown error" });
+          results.push({
+            row: i + 1,
+            status: "error",
+            error: e.message?.slice(0, 200) ?? "Unknown error",
+          });
         }
       }
 
-      const okCount = results.filter(r => r.status === "ok").length;
-      const errorCount = results.filter(r => r.status === "error").length;
+      const okCount = results.filter((r) => r.status === "ok").length;
+      const errorCount = results.filter((r) => r.status === "error").length;
 
       await app.audit({
         userId: req.user.sub,

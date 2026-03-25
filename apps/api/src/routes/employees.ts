@@ -12,6 +12,8 @@ const createEmployeeSchema = z.object({
   hireDate: z.string().datetime(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
   weeklyHours: z.number().positive().default(40),
+  scheduleType: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  monthlyHours: z.number().min(0).max(999).nullable().optional(),
   nfcCardId: z.string().optional(),
   password: z.string().min(8).optional(),
 });
@@ -132,7 +134,9 @@ export async function employeeRoutes(app: FastifyInstance) {
         await tx.workSchedule.create({
           data: {
             employeeId: emp.id,
+            type: body.scheduleType,
             weeklyHours: body.weeklyHours,
+            monthlyHours: body.monthlyHours ?? null,
             validFrom: new Date(body.hireDate),
           },
         });

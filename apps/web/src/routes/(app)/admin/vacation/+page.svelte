@@ -24,7 +24,9 @@
   }
 
   interface WorkSchedule {
+    type: "FIXED_WEEKLY" | "MONTHLY_HOURS";
     weeklyHours: number;
+    monthlyHours: number | null;
     mondayHours: number;
     tuesdayHours: number;
     wednesdayHours: number;
@@ -105,6 +107,8 @@
 
   // Mitarbeiter-Modal
   let empModal: EmployeeRow | null = $state(null);
+  let eType: "FIXED_WEEKLY" | "MONTHLY_HOURS" = $state("FIXED_WEEKLY");
+  let eMonthlyHours: number = $state(0);
   let eMon = $state(8),
     eTue = $state(8),
     eWed = $state(8),
@@ -192,6 +196,8 @@
   async function openEmpModal(emp: EmployeeRow) {
     empModal = emp;
     const s = emp.workSchedule;
+    eType = s?.type ?? "FIXED_WEEKLY";
+    eMonthlyHours = s?.monthlyHours ? Number(s.monthlyHours) : 0;
     eMon = s ? Number(s.mondayHours) : gMon;
     eTue = s ? Number(s.tuesdayHours) : gTue;
     eWed = s ? Number(s.wednesdayHours) : gWed;
@@ -232,14 +238,16 @@
     eError = "";
     try {
       const updated = await api.put<WorkSchedule>(`/settings/work/${empModal.id}`, {
-        weeklyHours: eWeekly,
-        mondayHours: eMon,
-        tuesdayHours: eTue,
-        wednesdayHours: eWed,
-        thursdayHours: eThu,
-        fridayHours: eFri,
-        saturdayHours: eSat,
-        sundayHours: eSun,
+        type: eType,
+        weeklyHours: eType === "FIXED_WEEKLY" ? eWeekly : 0,
+        monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
+        mondayHours: eType === "FIXED_WEEKLY" ? eMon : 0,
+        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : 0,
+        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : 0,
+        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : 0,
+        fridayHours: eType === "FIXED_WEEKLY" ? eFri : 0,
+        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : 0,
+        sundayHours: eType === "FIXED_WEEKLY" ? eSun : 0,
         overtimeThreshold: eThreshold,
         allowOvertimePayout: ePayout,
         validFrom: eValidFrom,
@@ -571,16 +579,30 @@
             <tr>
               <td class="text-muted font-mono">{emp.employeeNumber}</td>
               <td class="font-medium">{emp.firstName} {emp.lastName}</td>
-              <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td>
-              <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1) : "—"}</td>
+              {#if s?.type === "MONTHLY_HOURS"}
+                <td class="font-mono text-center" colspan="7">
+                  <span class="badge badge-blue">{Number(s.monthlyHours).toFixed(1)} h/Monat</span>
+                </td>
+              {:else}
+                <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1) : "—"}</td>
+                <td class="font-mono text-center">{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td>
+                <td class="font-mono text-center"
+                  >{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td
+                >
+                <td class="font-mono text-center">{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td
+                >
+                <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1) : "—"}</td>
+                <td class="font-mono text-center">{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td
+                >
+                <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1) : "—"}</td>
+              {/if}
               <td class="font-mono text-center font-medium">
                 {#if s}
-                  {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                  {#if s.type === "MONTHLY_HOURS"}
+                    {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
+                  {:else}
+                    {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                  {/if}
                 {:else}
                   <span class="badge badge-gray">Global</span>
                 {/if}
@@ -619,93 +641,123 @@
         {/if}
 
         <h3 class="modal-section-heading">Arbeitszeit</h3>
-        <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-          Wochenstunden werden automatisch aus den Tagen summiert.
-        </p>
 
-        <div class="day-grid">
-          <div class="day-input">
-            <label class="day-label form-label">Mo</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eMon}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">Di</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eTue}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">Mi</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eWed}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">Do</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eThu}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">Fr</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eFri}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">Sa</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eSat}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input">
-            <label class="day-label form-label">So</label>
-            <input
-              type="number"
-              min="0"
-              max="24"
-              step="0.5"
-              bind:value={eSun}
-              class="form-input day-field"
-            />
-          </div>
-          <div class="day-input total-col">
-            <span class="day-label form-label">Σ</span>
-            <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
-          </div>
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label" for="e-type">Arbeitszeitmodell</label>
+          <select id="e-type" bind:value={eType} class="form-input" style="max-width:240px;">
+            <option value="FIXED_WEEKLY">Feste Wochentage</option>
+            <option value="MONTHLY_HOURS">Monatsstunden</option>
+          </select>
         </div>
+
+        {#if eType === "MONTHLY_HOURS"}
+          <div class="form-group" style="margin-bottom:1.25rem;">
+            <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
+            <div class="input-suffix-wrap">
+              <input
+                id="e-monthly-hours"
+                type="number"
+                min="0"
+                max="744"
+                step="0.5"
+                bind:value={eMonthlyHours}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix text-muted">Stunden</span>
+            </div>
+            <p class="form-hint text-muted">
+              Keine festen Wochentage – Soll wird monatlich berechnet.
+            </p>
+          </div>
+        {:else}
+          <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
+            Wochenstunden werden automatisch aus den Tagen summiert.
+          </p>
+
+          <div class="day-grid">
+            <div class="day-input">
+              <label class="day-label form-label">Mo</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eMon}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">Di</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eTue}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">Mi</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eWed}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">Do</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eThu}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">Fr</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eFri}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">Sa</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eSat}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input">
+              <label class="day-label form-label">So</label>
+              <input
+                type="number"
+                min="0"
+                max="24"
+                step="0.5"
+                bind:value={eSun}
+                class="form-input day-field"
+              />
+            </div>
+            <div class="day-input total-col">
+              <span class="day-label form-label">Σ</span>
+              <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
+            </div>
+          </div>
+        {/if}
 
         <div class="extra-row" style="margin-top:1rem;">
           <div class="form-group">

@@ -86,7 +86,10 @@ export function monthRangeUtc(year: number, month: number, tz: string): { start:
  *
  * @returns { start, end, days[] } where days is an array of "YYYY-MM-DD" strings
  */
-export function weekRangeUtc(refDate: Date, tz: string): {
+export function weekRangeUtc(
+  refDate: Date,
+  tz: string,
+): {
   start: Date;
   end: Date;
   days: string[];
@@ -113,7 +116,7 @@ export function weekRangeUtc(refDate: Date, tz: string): {
   const cur = new Date(mondayLocal);
   for (let i = 0; i < 7; i++) {
     days.push(
-      `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`
+      `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, "0")}-${String(cur.getDate()).padStart(2, "0")}`,
     );
     cur.setDate(cur.getDate() + 1);
   }
@@ -148,6 +151,7 @@ export function iterateDaysInTz(
 /**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
+ * Supports MONTHLY_HOURS schedules (Minijobber): returns full monthlyHours budget.
  */
 export function calcExpectedMinutesTz(
   schedule: Record<string, unknown>,
@@ -155,9 +159,19 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
 ): number {
+  // Minijobber / flexible monthly hours: return full monthly budget
+  if (String(schedule.type ?? "") === "MONTHLY_HOURS" && schedule.monthlyHours != null) {
+    return Number(schedule.monthlyHours) * 60;
+  }
+
   const DOW_KEYS = [
-    "sundayHours", "mondayHours", "tuesdayHours", "wednesdayHours",
-    "thursdayHours", "fridayHours", "saturdayHours",
+    "sundayHours",
+    "mondayHours",
+    "tuesdayHours",
+    "wednesdayHours",
+    "thursdayHours",
+    "fridayHours",
+    "saturdayHours",
   ];
   let total = 0;
   iterateDaysInTz(from, to, tz, (dow) => {
@@ -171,8 +185,13 @@ export function calcExpectedMinutesTz(
  */
 export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: number): number {
   const DOW_KEYS = [
-    "sundayHours", "mondayHours", "tuesdayHours", "wednesdayHours",
-    "thursdayHours", "fridayHours", "saturdayHours",
+    "sundayHours",
+    "mondayHours",
+    "tuesdayHours",
+    "wednesdayHours",
+    "thursdayHours",
+    "fridayHours",
+    "saturdayHours",
   ];
   return Number(schedule[DOW_KEYS[dow]] ?? 0);
 }

@@ -35,19 +35,26 @@ const vacationEntitlementSchema = z.object({
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
 });
 
-const employeeScheduleSchema = z.object({
-  weeklyHours: z.number().min(1).max(60),
-  mondayHours: z.number().min(0).max(24),
-  tuesdayHours: z.number().min(0).max(24),
-  wednesdayHours: z.number().min(0).max(24),
-  thursdayHours: z.number().min(0).max(24),
-  fridayHours: z.number().min(0).max(24),
-  saturdayHours: z.number().min(0).max(24),
-  sundayHours: z.number().min(0).max(24),
-  overtimeThreshold: z.number().min(1).max(500),
-  allowOvertimePayout: z.boolean(),
-  validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-});
+const employeeScheduleSchema = z
+  .object({
+    type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+    weeklyHours: z.number().min(1).max(60),
+    monthlyHours: z.number().min(0).max(999).nullable().optional(),
+    mondayHours: z.number().min(0).max(24),
+    tuesdayHours: z.number().min(0).max(24),
+    wednesdayHours: z.number().min(0).max(24),
+    thursdayHours: z.number().min(0).max(24),
+    fridayHours: z.number().min(0).max(24),
+    saturdayHours: z.number().min(0).max(24),
+    sundayHours: z.number().min(0).max(24),
+    overtimeThreshold: z.number().min(1).max(500),
+    allowOvertimePayout: z.boolean(),
+    validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  })
+  .refine(
+    (data) => data.type !== "MONTHLY_HOURS" || (data.monthlyHours != null && data.monthlyHours > 0),
+    { message: "monthlyHours muss bei MONTHLY_HOURS angegeben werden", path: ["monthlyHours"] },
+  );
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
@@ -156,7 +163,9 @@ export async function settingsRoutes(app: FastifyInstance) {
       const schedule = await app.prisma.workSchedule.upsert({
         where: { employeeId },
         update: {
+          type: body.type,
           weeklyHours: body.weeklyHours,
+          monthlyHours: body.monthlyHours ?? null,
           mondayHours: body.mondayHours,
           tuesdayHours: body.tuesdayHours,
           wednesdayHours: body.wednesdayHours,
@@ -170,7 +179,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         },
         create: {
           employeeId,
+          type: body.type,
           weeklyHours: body.weeklyHours,
+          monthlyHours: body.monthlyHours ?? null,
           mondayHours: body.mondayHours,
           tuesdayHours: body.tuesdayHours,
           wednesdayHours: body.wednesdayHours,
