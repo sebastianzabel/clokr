@@ -42,7 +42,7 @@ COPY --from=build /app/pnpm-lock.yaml ./
 RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001
 
 # Entrypoint: db push → seed → start server
-COPY apps/api/docker-entrypoint.sh /docker-entrypoint.sh
+COPY --from=build /app/apps/api/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
 ENV NODE_ENV=production
