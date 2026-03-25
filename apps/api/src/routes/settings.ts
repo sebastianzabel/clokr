@@ -24,6 +24,7 @@ const tenantConfigSchema = z.object({
   carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
   defaultVacationDays: z.number().int().min(1).max(365).optional(),
   timezone: z.string().min(1).max(100).optional(),
+  arbzgEnabled: z.boolean().optional(),
   clockOutReminderHours: z.number().int().min(1).max(48).optional(),
   missingEntriesDays: z.number().int().min(1).max(90).optional(),
 });
@@ -83,6 +84,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         carryOverDeadlineDay: 31,
         carryOverDeadlineMonth: 3,
         defaultVacationDays: 30,
+        arbzgEnabled: true,
         clockOutReminderHours: 10,
         missingEntriesDays: 7,
       };
