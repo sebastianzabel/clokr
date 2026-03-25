@@ -109,6 +109,16 @@
   let overtimeChart: Chart | null = null;
   let absenceChart: Chart | null = null;
 
+  interface MonthlyReportRow {
+    workedHours: number;
+    shouldHours: number;
+    sickDays: number;
+    vacationDays: number;
+    totalAbsenceDays: number;
+  }
+  interface MonthlyReportResponse {
+    rows: MonthlyReportRow[];
+  }
   interface MonthlyReport {
     workedMinutes: number;
     shouldMinutes: number;
@@ -213,8 +223,29 @@
       for (const m of months) {
         try {
           const [y, mo] = m.month.split("-");
-          const r = await api.get<MonthlyReport>(`/reports/monthly?year=${y}&month=${mo}`);
-          reports.push(r);
+          const resp = await api.get<MonthlyReportResponse>(
+            `/reports/monthly?year=${y}&month=${mo}`,
+          );
+          // Aggregate all employee rows into totals
+          const agg = (resp.rows ?? []).reduce(
+            (acc, r) => ({
+              workedMinutes: acc.workedMinutes + (r.workedHours ?? 0) * 60,
+              shouldMinutes: acc.shouldMinutes + (r.shouldHours ?? 0) * 60,
+              sickDays: acc.sickDays + (r.sickDays ?? 0),
+              vacationDays: acc.vacationDays + (r.vacationDays ?? 0),
+              otherAbsenceDays:
+                acc.otherAbsenceDays +
+                ((r.totalAbsenceDays ?? 0) - (r.sickDays ?? 0) - (r.vacationDays ?? 0)),
+            }),
+            {
+              workedMinutes: 0,
+              shouldMinutes: 0,
+              sickDays: 0,
+              vacationDays: 0,
+              otherAbsenceDays: 0,
+            },
+          );
+          reports.push(agg);
         } catch {
           reports.push({
             workedMinutes: 0,

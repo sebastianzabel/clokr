@@ -355,7 +355,7 @@
   .notification-dropdown {
     position: absolute;
     top: calc(100% + 0.5rem);
-    right: 0;
+    left: 0;
     width: 320px;
     max-height: 420px;
     background: var(--glass-bg-strong, var(--color-surface));
