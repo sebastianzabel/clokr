@@ -40,9 +40,54 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 
 ---
 
-## Deployment (Docker Compose)
+## Quick Start (no source code needed)
 
-This is the recommended way to run Clokr in production.
+```bash
+# 1. Download compose file and env template
+curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/.env.example
+cp .env.example .env
+
+# 2. Generate secrets and edit .env
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# Copy the output into JWT_SECRET, JWT_REFRESH_SECRET, ENCRYPTION_KEY
+nano .env
+
+# 3. Start
+docker compose -f docker-compose.prod.yml up -d
+```
+
+**Open `http://localhost:3000`** — first start seeds a demo admin account.
+
+### Updates
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### Pin a version
+
+Set `CLOKR_VERSION=2.1.0` in `.env` to pin to a specific release.
+
+---
+
+## NFC Desktop Client
+
+For NFC-based time tracking with a USB smart card reader (e.g., SCM uTrust 3700 F):
+
+**Download** the latest client from the [Releases page](https://github.com/the operatorZ84/clokr/releases):
+
+- **macOS**: `clokr-nfc-*.dmg`
+- **Windows**: `clokr-nfc-*.msi`
+
+The client runs in the system tray, reads NFC cards via PC/SC, and sends clock-in/out requests to your Clokr server. Works offline — queued punches sync automatically when the connection is restored.
+
+---
+
+## Deployment from Source
+
+For development or custom builds.
 
 ### 1. Clone
 
@@ -55,39 +100,14 @@ cd clokr
 
 ```bash
 cp .env.example .env
-```
-
-Edit `.env` — the key variables:
-
-```env
-# Database (auto-created by docker compose)
-POSTGRES_USER=clokr
-POSTGRES_PASSWORD=changeme
-POSTGRES_DB=clokr
-DATABASE_URL=postgresql://clokr:changeme@postgres:5432/clokr
-
-# Auth
-JWT_SECRET=generate-a-random-64-char-string
-JWT_REFRESH_SECRET=generate-another-random-64-char-string
-
-# App URL (where users access the frontend)
-APP_URL=https://clokr.example.com
-
-# Optional: SMTP for invitations, password reset, 2FA
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASSWORD=
-SMTP_FROM_EMAIL=noreply@example.com
+nano .env  # Set POSTGRES_PASSWORD, JWT_SECRET, ENCRYPTION_KEY
 ```
 
 ### 3. Start
 
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
-
-This starts all services:
 
 | Service      | Port      | Description                      |
 | ------------ | --------- | -------------------------------- |
@@ -97,30 +117,7 @@ This starts all services:
 | **redis**    | 6379      | Redis 7                          |
 | **minio**    | 9000/9001 | MinIO object storage             |
 
-The API container automatically runs `prisma db push` and seeds demo data on first startup.
-
-**Access the app at `http://localhost:3000`.**
-
-### 4. Reverse Proxy (Production)
-
-For production, put a reverse proxy (nginx, Caddy, Traefik) in front of the web container on port 3000:
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name clokr.example.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-### 5. Updates
+### 4. Updates
 
 ```bash
 git pull
