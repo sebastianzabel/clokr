@@ -43,7 +43,7 @@ export async function buildApp() {
 
   // ── Security ──────────────────────────────────────────────
   // Global error handler: ZodErrors → 400
-  app.setErrorHandler((error, _req, reply) => {
+  app.setErrorHandler((error: Error & { statusCode?: number }, _req, reply) => {
     if (error.name === "ZodError") {
       return reply
         .code(400)
