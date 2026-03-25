@@ -5,6 +5,7 @@ import cron, { type ScheduledTask } from "node-cron";
  * Background scheduler for attendance-related notifications:
  * 1. Clock-out reminder: hourly check for open time entries
  * 2. Missing entries reminder: daily check for employees without recent entries
+ * 3. Auto-invalidate stale open entries: hourly invalidation of entries without clock-out
  */
 export const attendanceCheckerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -190,6 +191,119 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     }
   }
 
+  /**
+   * Feature 3: "Auto-invalidate stale open entries" — runs every hour.
+   * Finds TimeEntries where endTime IS NULL and startTime > X hours ago and isInvalid = false.
+   * Marks each entry as invalid and notifies the employee + managers/admins.
+   */
+  async function autoInvalidateOpenEntries() {
+    app.log.info("Attendance-Checker: Prüfe veraltete offene Einträge");
+
+    try {
+      const tenants = await app.prisma.tenant.findMany({
+        select: { id: true },
+      });
+
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId: tenant.id },
+        });
+        const autoDeleteHours = cfg?.autoDeleteOpenHours ?? 14;
+        if (autoDeleteHours === 0) continue; // Feature disabled for this tenant
+
+        const cutoff = new Date(Date.now() - autoDeleteHours * 60 * 60 * 1000);
+
+        // Find open, non-invalid time entries older than threshold
+        const openEntries = await app.prisma.timeEntry.findMany({
+          where: {
+            endTime: null,
+            startTime: { lt: cutoff },
+            isInvalid: false,
+            employee: { tenantId: tenant.id },
+          },
+          include: {
+            employee: {
+              select: {
+                id: true,
+                userId: true,
+                firstName: true,
+                lastName: true,
+                tenantId: true,
+              },
+            },
+          },
+        });
+
+        if (openEntries.length === 0) continue;
+
+        // Find managers/admins for this tenant
+        const managers = await app.prisma.employee.findMany({
+          where: {
+            tenantId: tenant.id,
+            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+          },
+          include: { user: { select: { id: true } } },
+        });
+
+        for (const entry of openEntries) {
+          const startStr = entry.startTime.toLocaleString("de-DE", {
+            timeZone: cfg?.timezone ?? "Europe/Berlin",
+            day: "2-digit",
+            month: "2-digit",
+          });
+
+          // Invalidate the entry instead of deleting
+          await app.prisma.timeEntry.update({
+            where: { id: entry.id },
+            data: {
+              isInvalid: true,
+              invalidReason: "Ausstempeln fehlt",
+            },
+          });
+
+          // Audit log
+          await app.audit({
+            userId: "SYSTEM",
+            action: "UPDATE",
+            entity: "TimeEntry",
+            entityId: entry.id,
+            oldValue: { isInvalid: false },
+            newValue: { isInvalid: true, invalidReason: "Ausstempeln fehlt" },
+          });
+
+          // Notify the employee
+          await app.notify({
+            userId: entry.employee.userId,
+            type: "OPEN_ENTRY_INVALIDATED",
+            title: "Zeiteintrag invalidiert",
+            message: `Dein Eintrag vom ${startStr} wurde automatisch invalidiert, da kein Ausstempeln erfolgte. Bitte trage die Endzeit manuell nach.`,
+            link: `/time-entries?highlight=${entry.id}`,
+          });
+
+          // Notify managers/admins
+          for (const mgr of managers) {
+            if (mgr.user.id === entry.employee.userId) continue;
+
+            await app.notify({
+              userId: mgr.user.id,
+              type: "OPEN_ENTRY_INVALIDATED",
+              title: "Zeiteintrag invalidiert",
+              message: `Der Eintrag von ${entry.employee.firstName} ${entry.employee.lastName} vom ${startStr} wurde automatisch invalidiert (kein Ausstempeln).`,
+              link: "/time-entries",
+            });
+          }
+
+          app.log.info(
+            { userId: entry.employee.userId, timeEntryId: entry.id },
+            "Offener Zeiteintrag automatisch invalidiert",
+          );
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei Auto-Invalidierung offener Einträge");
+    }
+  }
+
   app.addHook("onReady", async () => {
     try {
       // Clock-out check: every hour at minute 0
@@ -200,6 +314,15 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       });
       tasks.push(clockOutTask);
       app.log.info("Attendance-Checker: Clock-out Erinnerung geplant (stündlich)");
+
+      // Auto-invalidate stale open entries: every hour at minute 0
+      const autoInvalidateTask = cron.schedule("0 * * * *", () => {
+        autoInvalidateOpenEntries().catch((err) =>
+          app.log.error({ err }, "Attendance-Checker: Auto-Invalidierung Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(autoInvalidateTask);
+      app.log.info("Attendance-Checker: Auto-Invalidierung offener Einträge geplant (stündlich)");
 
       // Missing entries check: daily at 09:00
       const missingTask = cron.schedule("0 9 * * *", () => {

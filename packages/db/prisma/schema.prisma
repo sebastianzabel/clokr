@@ -77,6 +77,7 @@ model TenantConfig {
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
+  autoDeleteOpenHours    Int @default(14)  // Stunden nach denen offene Einträge auto-gelöscht werden (0 = deaktiviert)
   // Pausen-Slots
   autoBreakEnabled       Boolean @default(false)
   defaultBreakStart      String? @db.VarChar(5)  // e.g. "12:00"
@@ -219,6 +220,8 @@ model TimeEntry {
   note         String?
   isLocked     Boolean         @default(false)  // nach Monatsabschluss gesperrt
   lockedAt     DateTime?       @db.Timestamptz
+  isInvalid    Boolean         @default(false) // automatisch invalidiert (z.B. kein Ausstempeln)
+  invalidReason String?                        // Grund der Invalidierung
   createdAt    DateTime        @default(now()) @db.Timestamptz
   updatedAt    DateTime        @updatedAt      @db.Timestamptz
   createdBy    String?         // userId wer es angelegt hat
