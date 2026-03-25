@@ -1,8 +1,13 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
+import crypto, { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
+
+/** SHA-256 hash for tokens stored in DB. */
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 const createEmployeeSchema = z.object({
   email: z.string().email(),
@@ -155,7 +160,7 @@ export async function employeeRoutes(app: FastifyInstance) {
           token = crypto.randomBytes(32).toString("hex");
           await tx.invitation.create({
             data: {
-              token,
+              token: hashToken(token),
               employeeId: emp.id,
               email: body.email,
               expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -182,6 +187,7 @@ export async function employeeRoutes(app: FastifyInstance) {
             to: body.email,
             firstName: body.firstName,
             token: invitationToken,
+            tenantId: req.user.tenantId,
           });
         } catch (err) {
           emailError = "E-Mail konnte nicht gesendet werden. Bitte SMTP-Einstellungen prüfen.";
@@ -347,10 +353,10 @@ export async function employeeRoutes(app: FastifyInstance) {
         data: { expiresAt: new Date() },
       });
 
-      const token = crypto.randomBytes(32).toString("hex");
+      const rawToken = crypto.randomBytes(32).toString("hex");
       await app.prisma.invitation.create({
         data: {
-          token,
+          token: hashToken(rawToken),
           employeeId: id,
           email: employee.user.email,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
@@ -361,7 +367,8 @@ export async function employeeRoutes(app: FastifyInstance) {
         await app.mailer.sendInvitation({
           to: employee.user.email,
           firstName: employee.firstName,
-          token,
+          token: rawToken,
+          tenantId: req.user.tenantId,
         });
       } catch (err) {
         app.log.error({ err }, "Einladungsmail konnte nicht gesendet werden");

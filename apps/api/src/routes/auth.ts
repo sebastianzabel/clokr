@@ -1,8 +1,13 @@
 import { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-import crypto from "crypto";
+import crypto, { createHash } from "crypto";
 import { z } from "zod";
 import { Role } from "@clokr/db";
+
+/** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -86,6 +91,7 @@ export async function authRoutes(app: FastifyInstance) {
             to: user.email,
             firstName: user.employee?.firstName ?? user.email,
             code,
+            tenantId: user.employee?.tenantId ?? "",
           });
         } catch (err) {
           app.log.error({ err }, "OTP-Mail konnte nicht gesendet werden");
@@ -179,6 +185,7 @@ export async function authRoutes(app: FastifyInstance) {
           to: user.email,
           firstName: user.employee?.firstName ?? user.email,
           code,
+          tenantId: user.employee?.tenantId ?? "",
         });
       } catch (err) {
         app.log.error({ err }, "OTP-Mail konnte nicht gesendet werden");
@@ -196,7 +203,7 @@ export async function authRoutes(app: FastifyInstance) {
       const { refreshToken } = refreshSchema.parse(req.body);
 
       const stored = await app.prisma.refreshToken.findUnique({
-        where: { token: refreshToken },
+        where: { token: hashToken(refreshToken) },
         include: { user: { include: { employee: true } } },
       });
 
@@ -222,7 +229,7 @@ export async function authRoutes(app: FastifyInstance) {
 
       await app.prisma.refreshToken.create({
         data: {
-          token: newRefreshToken,
+          token: hashToken(newRefreshToken),
           userId: stored.user.id,
           expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
         },
@@ -238,7 +245,7 @@ export async function authRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { refreshToken } = refreshSchema.parse(req.body);
       await app.prisma.refreshToken.updateMany({
-        where: { token: refreshToken },
+        where: { token: hashToken(refreshToken) },
         data: { revokedAt: new Date() },
       });
       return { success: true };
@@ -268,13 +275,13 @@ export async function authRoutes(app: FastifyInstance) {
         data: { usedAt: new Date() },
       });
 
-      // Generate reset token
+      // Generate reset token — store hash, send raw
       const rawToken = crypto.randomBytes(32).toString("hex");
 
       await app.prisma.otpToken.create({
         data: {
           userId: user.id,
-          code: rawToken,
+          code: hashToken(rawToken),
           expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
         },
       });
@@ -285,6 +292,7 @@ export async function authRoutes(app: FastifyInstance) {
           to: user.email,
           firstName: user.employee?.firstName ?? user.email,
           token: rawToken,
+          tenantId: user.employee?.tenantId ?? "",
         });
       } catch (err) {
         app.log.error({ err }, "Passwort-Reset-Mail konnte nicht gesendet werden");
@@ -302,7 +310,7 @@ export async function authRoutes(app: FastifyInstance) {
       const { token, password } = resetPasswordSchema.parse(req.body);
 
       const otpToken = await app.prisma.otpToken.findFirst({
-        where: { code: token, usedAt: null },
+        where: { code: hashToken(token), usedAt: null },
       });
 
       if (!otpToken) {
@@ -310,7 +318,9 @@ export async function authRoutes(app: FastifyInstance) {
       }
 
       if (otpToken.expiresAt < new Date()) {
-        return reply.code(410).send({ error: "Der Link ist abgelaufen. Bitte fordern Sie einen neuen an." });
+        return reply
+          .code(410)
+          .send({ error: "Der Link ist abgelaufen. Bitte fordern Sie einen neuen an." });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);
@@ -352,7 +362,12 @@ async function issueTokens(
   app: FastifyInstance,
   req: { ip: string; headers: Record<string, string | string[] | undefined> },
   reply: { send: (data: unknown) => unknown },
-  user: { id: string; email: string; role: Role; employee: { id: string; tenantId: string } | null }
+  user: {
+    id: string;
+    email: string;
+    role: Role;
+    employee: { id: string; tenantId: string } | null;
+  },
 ) {
   const payload = {
     sub: user.id,
@@ -363,14 +378,13 @@ async function issueTokens(
 
   const accessToken = app.jwt.sign(payload);
   // Add jti (JWT ID) to ensure uniqueness even for same-second tokens
-  const refreshToken = app.jwt.sign(
-    { ...payload, jti: crypto.randomUUID() } as any,
-    { expiresIn: "7d" },
-  );
+  const refreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as any, {
+    expiresIn: "7d",
+  });
 
   await app.prisma.refreshToken.create({
     data: {
-      token: refreshToken,
+      token: hashToken(refreshToken),
       userId: user.id,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     },
@@ -392,6 +406,11 @@ async function issueTokens(
   return reply.send({
     accessToken,
     refreshToken,
-    user: { id: user.id, email: user.email, role: user.role, employeeId: user.employee?.id ?? null },
+    user: {
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      employeeId: user.employee?.id ?? null,
+    },
   });
 }

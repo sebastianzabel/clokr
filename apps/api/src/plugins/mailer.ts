@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import nodemailer, { Transporter } from "nodemailer";
 import { config } from "../config";
+import { decryptSafe } from "../utils/crypto";
 
 interface SmtpConfig {
   smtpHost: string;
@@ -13,10 +14,20 @@ interface SmtpConfig {
 }
 
 export interface MailerService {
-  sendInvitation(params: { to: string; firstName: string; token: string }): Promise<void>;
-  sendOtp(params: { to: string; firstName: string; code: string }): Promise<void>;
-  sendPasswordReset(params: { to: string; firstName: string; token: string }): Promise<void>;
-  sendTestMail(to: string, smtpOverride?: Partial<SmtpConfig>): Promise<void>;
+  sendInvitation(params: {
+    to: string;
+    firstName: string;
+    token: string;
+    tenantId: string;
+  }): Promise<void>;
+  sendOtp(params: { to: string; firstName: string; code: string; tenantId: string }): Promise<void>;
+  sendPasswordReset(params: {
+    to: string;
+    firstName: string;
+    token: string;
+    tenantId: string;
+  }): Promise<void>;
+  sendTestMail(to: string, tenantId: string, smtpOverride?: Partial<SmtpConfig>): Promise<void>;
   getSmtpConfig(tenantId: string): Promise<SmtpConfig | null>;
 }
 
@@ -42,25 +53,40 @@ export const mailerPlugin = fp(async (app) => {
     // DB-Config hat Vorrang, Env-Vars als Fallback
     const dbCfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
 
-    const host      = dbCfg?.smtpHost      ?? process.env.SMTP_HOST;
-    const port      = dbCfg?.smtpPort      ?? (process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : undefined);
-    const user      = dbCfg?.smtpUser      ?? process.env.SMTP_USER;
-    const password  = dbCfg?.smtpPassword  ?? process.env.SMTP_PASSWORD;
+    const host = dbCfg?.smtpHost ?? process.env.SMTP_HOST;
+    const port =
+      dbCfg?.smtpPort ?? (process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : undefined);
+    const user = dbCfg?.smtpUser ?? process.env.SMTP_USER;
+    const password = decryptSafe(dbCfg?.smtpPassword) ?? process.env.SMTP_PASSWORD;
     const fromEmail = dbCfg?.smtpFromEmail ?? process.env.SMTP_FROM_EMAIL;
-    const fromName  = dbCfg?.smtpFromName  ?? process.env.SMTP_FROM_NAME ?? "Clokr";
-    const secure    = dbCfg?.smtpSecure    ?? (process.env.SMTP_SECURE === "true");
+    const fromName = dbCfg?.smtpFromName ?? process.env.SMTP_FROM_NAME ?? "Clokr";
+    const secure = dbCfg?.smtpSecure ?? process.env.SMTP_SECURE === "true";
 
     if (!host || !port || !user || !password || !fromEmail) return null;
 
-    return { smtpHost: host, smtpPort: port, smtpUser: user, smtpPassword: password, smtpFromEmail: fromEmail, smtpFromName: fromName, smtpSecure: secure };
+    return {
+      smtpHost: host,
+      smtpPort: port,
+      smtpUser: user,
+      smtpPassword: password,
+      smtpFromEmail: fromEmail,
+      smtpFromName: fromName,
+      smtpSecure: secure,
+    };
   }
 
-  async function sendInvitation({ to, firstName, token }: { to: string; firstName: string; token: string }) {
-    // Tenant aus E-Mail-Adresse ermitteln → ersten Tenant nehmen
-    const tenant = await app.prisma.tenant.findFirst();
-    if (!tenant) throw new Error("Kein Tenant gefunden");
-
-    const cfg = await getSmtpConfig(tenant.id);
+  async function sendInvitation({
+    to,
+    firstName,
+    token,
+    tenantId,
+  }: {
+    to: string;
+    firstName: string;
+    token: string;
+    tenantId: string;
+  }) {
+    const cfg = await getSmtpConfig(tenantId);
     if (!cfg) throw new Error("SMTP nicht konfiguriert");
 
     const link = `${appUrl}/einladung?token=${token}`;
@@ -83,11 +109,18 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
-  async function sendOtp({ to, firstName, code }: { to: string; firstName: string; code: string }) {
-    const tenant = await app.prisma.tenant.findFirst();
-    if (!tenant) throw new Error("Kein Tenant gefunden");
-
-    const cfg = await getSmtpConfig(tenant.id);
+  async function sendOtp({
+    to,
+    firstName,
+    code,
+    tenantId,
+  }: {
+    to: string;
+    firstName: string;
+    code: string;
+    tenantId: string;
+  }) {
+    const cfg = await getSmtpConfig(tenantId);
     if (!cfg) throw new Error("SMTP nicht konfiguriert");
 
     const transporter = createTransporter(cfg);
@@ -109,11 +142,18 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
-  async function sendPasswordReset({ to, firstName, token }: { to: string; firstName: string; token: string }) {
-    const tenant = await app.prisma.tenant.findFirst();
-    if (!tenant) throw new Error("Kein Tenant gefunden");
-
-    const cfg = await getSmtpConfig(tenant.id);
+  async function sendPasswordReset({
+    to,
+    firstName,
+    token,
+    tenantId,
+  }: {
+    to: string;
+    firstName: string;
+    token: string;
+    tenantId: string;
+  }) {
+    const cfg = await getSmtpConfig(tenantId);
     if (!cfg) throw new Error("SMTP nicht konfiguriert");
 
     const link = `${appUrl}/reset-password?token=${token}`;
@@ -137,11 +177,8 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
-  async function sendTestMail(to: string, smtpOverride?: Partial<SmtpConfig>) {
-    const tenant = await app.prisma.tenant.findFirst();
-    if (!tenant) throw new Error("Kein Tenant gefunden");
-
-    const baseCfg = await getSmtpConfig(tenant.id);
+  async function sendTestMail(to: string, tenantId: string, smtpOverride?: Partial<SmtpConfig>) {
+    const baseCfg = await getSmtpConfig(tenantId);
     const cfg = baseCfg ? { ...baseCfg, ...smtpOverride } : (smtpOverride as SmtpConfig);
     if (!cfg?.smtpHost) throw new Error("SMTP nicht konfiguriert");
 
@@ -154,5 +191,11 @@ export const mailerPlugin = fp(async (app) => {
     });
   }
 
-  app.decorate("mailer", { sendInvitation, sendOtp, sendPasswordReset, sendTestMail, getSmtpConfig });
+  app.decorate("mailer", {
+    sendInvitation,
+    sendOtp,
+    sendPasswordReset,
+    sendTestMail,
+    getSmtpConfig,
+  });
 });

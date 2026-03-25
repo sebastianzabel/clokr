@@ -151,8 +151,8 @@
         const from = weekDays[0];
         const to = weekDays[6];
         timeEntries = await api.get<any[]>(`/time-entries?from=${from}&to=${to}`);
-      } catch {
-        // ignore
+      } catch (err) {
+        console.error("Failed to load time entries for shift view:", err);
       }
     } catch {
       error = "Fehler beim Laden der Schichtdaten.";
@@ -164,8 +164,8 @@
   async function loadTemplates() {
     try {
       templates = await api.get<ShiftTemplate[]>("/shifts/templates");
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load shift templates:", err);
     }
   }
 

@@ -200,7 +200,8 @@
         }>(`/shifts/week?date=${today}`);
         const myShifts = shiftData.shifts.filter((s) => s.date.startsWith(today));
         todayShift = myShifts.length > 0 ? myShifts[0] : null;
-      } catch {
+      } catch (err) {
+        console.error("Failed to load today's shift:", err);
         todayShift = null;
       }
 
@@ -222,8 +223,8 @@
       refDate.setDate(refDate.getDate() + weekOffset * 7);
       const dateParam = refDate.toISOString().split("T")[0];
       teamWeek = await api.get<TeamWeek>(`/dashboard/team-week?date=${dateParam}`);
-    } catch {
-      // not available
+    } catch (err) {
+      console.error("Failed to load team week:", err);
     }
   }
 
@@ -279,7 +280,8 @@
             },
           );
           reports.push(agg);
-        } catch {
+        } catch (err) {
+          console.error(`Failed to load chart report for month:`, err);
           reports.push({
             workedMinutes: 0,
             shouldMinutes: 0,
@@ -429,12 +431,13 @@
               type: l.leaveType?.name ?? "Urlaub",
             }))
             .slice(0, 8);
-        } catch {
+        } catch (err) {
+          console.error("Failed to load upcoming leaves:", err);
           upcomingLeaves = [];
         }
       }
-    } catch {
-      // Charts are optional, don't break dashboard
+    } catch (err) {
+      console.error("Failed to load chart data:", err);
     }
   }
 

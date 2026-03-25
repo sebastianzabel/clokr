@@ -1,9 +1,15 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import { createHash } from "crypto";
+
+/** SHA-256 hash for tokens stored in DB. */
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 const acceptSchema = z.object({
-  token:    z.string().min(1),
+  token: z.string().min(1),
   password: z.string().min(8),
 });
 
@@ -16,7 +22,7 @@ export async function invitationRoutes(app: FastifyInstance) {
       const { token, password } = acceptSchema.parse(req.body);
 
       const invitation = await app.prisma.invitation.findUnique({
-        where: { token },
+        where: { token: hashToken(token) },
         include: { employee: { include: { user: true } } },
       });
 
@@ -29,7 +35,11 @@ export async function invitationRoutes(app: FastifyInstance) {
       }
 
       if (invitation.expiresAt < new Date()) {
-        return reply.code(410).send({ error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator." });
+        return reply
+          .code(410)
+          .send({
+            error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
+          });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);

@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { FederalState } from "@clokr/db";
+import { encrypt } from "../utils/crypto";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -412,7 +413,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpFromName: body.smtpFromName,
         smtpSecure: body.smtpSecure,
       };
-      if (body.smtpPassword) updateData.smtpPassword = body.smtpPassword;
+      if (body.smtpPassword) updateData.smtpPassword = encrypt(body.smtpPassword);
 
       await app.prisma.tenantConfig.upsert({
         where: { tenantId },
@@ -431,7 +432,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
       try {
-        await app.mailer.sendTestMail(email);
+        await app.mailer.sendTestMail(email, req.user.tenantId);
         return { success: true, message: "Testmail erfolgreich gesendet" };
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
