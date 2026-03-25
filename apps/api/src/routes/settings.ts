@@ -27,6 +27,12 @@ const tenantConfigSchema = z.object({
   arbzgEnabled: z.boolean().optional(),
   clockOutReminderHours: z.number().int().min(1).max(48).optional(),
   missingEntriesDays: z.number().int().min(1).max(90).optional(),
+  autoBreakEnabled: z.boolean().optional(),
+  defaultBreakStart: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/)
+    .nullable()
+    .optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -87,6 +93,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         arbzgEnabled: true,
         clockOutReminderHours: 10,
         missingEntriesDays: 7,
+        autoBreakEnabled: false,
+        defaultBreakStart: null,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };

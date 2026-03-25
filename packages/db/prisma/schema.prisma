@@ -77,6 +77,9 @@ model TenantConfig {
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
+  // Pausen-Slots
+  autoBreakEnabled       Boolean @default(false)
+  defaultBreakStart      String? @db.VarChar(5)  // e.g. "12:00"
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
@@ -219,8 +222,21 @@ model TimeEntry {
   createdBy    String?         // userId wer es angelegt hat
 
   employee     Employee        @relation(fields: [employeeId], references: [id])
+  breaks       Break[]
 
   @@index([employeeId, date])
+}
+
+model Break {
+  id          String    @id @default(uuid())
+  timeEntryId String
+  startTime   DateTime  @db.Timestamptz
+  endTime     DateTime  @db.Timestamptz
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+
+  timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+
+  @@index([timeEntryId])
 }
 
 // ─────────────────────────────────────────────

@@ -94,6 +94,8 @@
   let gCarryOverDay = $state(31);
   let gCarryOverMonth = $state(3);
   let gArbzgEnabled = $state(true);
+  let gAutoBreak = $state(false);
+  let gDefaultBreakStart = $state("12:00");
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
 
@@ -152,6 +154,8 @@
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
       gArbzgEnabled = cfg.arbzgEnabled ?? true;
+      gAutoBreak = cfg.autoBreakEnabled ?? false;
+      gDefaultBreakStart = cfg.defaultBreakStart ?? "12:00";
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
 
@@ -183,6 +187,8 @@
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
         arbzgEnabled: gArbzgEnabled,
+        autoBreakEnabled: gAutoBreak,
+        defaultBreakStart: gAutoBreak ? gDefaultBreakStart : null,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
       });
@@ -478,6 +484,43 @@
           <span class="switch-slider"></span>
         </label>
       </div>
+    </div>
+
+    <hr class="settings-divider" />
+
+    <!-- Automatische Pausen -->
+    <div class="settings-section">
+      <h3 class="section-title">Pausen</h3>
+      <p class="text-muted section-desc">
+        Automatische Pausenberechnung nach Arbeitszeitgesetz (§ 4 ArbZG).
+      </p>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Automatische Pausen</span>
+          <p class="form-hint text-muted">
+            Nach 6h werden 30 Min., nach 9h werden 45 Min. Pause automatisch eingetragen.
+          </p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={gAutoBreak} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+
+      {#if gAutoBreak}
+        <div class="form-group" style="margin-top: 1rem;">
+          <label class="form-label" for="g-break-start">Standard-Pausenbeginn</label>
+          <input
+            id="g-break-start"
+            type="time"
+            bind:value={gDefaultBreakStart}
+            class="form-input"
+            style="max-width: 140px;"
+          />
+          <p class="form-hint text-muted">Wird als Vorauswahl im Erfassungsformular verwendet.</p>
+        </div>
+      {/if}
     </div>
 
     <hr class="settings-divider" />

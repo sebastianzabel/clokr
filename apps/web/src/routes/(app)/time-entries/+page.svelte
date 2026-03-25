@@ -7,12 +7,19 @@
   import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
 
+  interface Break {
+    id?: string;
+    startTime: string;
+    endTime: string;
+  }
+
   interface TimeEntry {
     id: string;
     date: string;
     startTime: string;
     endTime: string | null;
     breakMinutes: number;
+    breaks?: Break[];
     type: string;
     source: "NFC" | "MOBILE" | "MANUAL" | "CORRECTION";
     note: string | null;
@@ -113,8 +120,18 @@
   let formStart = $state("09:00");
   let formEnd = $state("17:00");
   let formHasEnd = $state(true);
-  let formBreak = $state(0);
+  let formBreaks = $state<{ start: string; end: string }[]>([]);
+  let formBreakTotal = $derived(
+    formBreaks.reduce((sum, b) => {
+      if (!b.start || !b.end) return sum;
+      const [sh, sm] = b.start.split(":").map(Number);
+      const [eh, em] = b.end.split(":").map(Number);
+      const diff = eh * 60 + em - (sh * 60 + sm);
+      return sum + (diff > 0 ? diff : 0);
+    }, 0),
+  );
   let formNote = $state("");
+  let defaultBreakStart: string | null = $state(null);
 
   const employeeId = $authStore.user?.employeeId;
 
@@ -151,7 +168,9 @@
         employeeId
           ? api.get<{ hireDate?: string }>(`/employees/${employeeId}`).catch(() => null)
           : Promise.resolve(null),
-        api.get<{ arbzgEnabled?: boolean }>("/settings/work").catch(() => null),
+        api
+          .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null }>("/settings/work")
+          .catch(() => null),
       ]);
       entries = rawEntries;
       schedule = rawSchedule;
@@ -160,6 +179,7 @@
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
+      defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
       calendarDays = buildCalendarDays(
         calMonth,
         entries,
@@ -385,6 +405,14 @@
           : "Manuell";
   }
 
+  function fmtBreaks(e: TimeEntry): string {
+    if (e.breaks && e.breaks.length > 0) {
+      return e.breaks.map((b) => `${fmtTime(b.startTime)}–${fmtTime(b.endTime)}`).join(", ");
+    }
+    if (e.breakMinutes) return e.breakMinutes + " Min.";
+    return "—";
+  }
+
   function slotNet(e: TimeEntry): string {
     if (!e.endTime) return "läuft…";
     const net =
@@ -394,13 +422,25 @@
   }
 
   // ── Modal ─────────────────────────────────────────────────────────────────
+  function addMinutesToTime(time: string, minutes: number): string {
+    const [h, m] = time.split(":").map(Number);
+    const total = h * 60 + m + minutes;
+    const nh = Math.floor(total / 60) % 24;
+    const nm = total % 60;
+    return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
+  }
+
   function openAdd(forDate?: string) {
     editEntry = null;
     formDate = forDate ?? selectedDate;
     formStart = "09:00";
     formEnd = "17:00";
     formHasEnd = true;
-    formBreak = 0;
+    if (defaultBreakStart) {
+      formBreaks = [{ start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, 30) }];
+    } else {
+      formBreaks = [];
+    }
     formNote = "";
     saveError = "";
     modalOpen = true;
@@ -412,7 +452,14 @@
     formStart = format(new Date(entry.startTime), "HH:mm");
     formHasEnd = !!entry.endTime;
     formEnd = entry.endTime ? format(new Date(entry.endTime), "HH:mm") : "17:00";
-    formBreak = entry.breakMinutes ?? 0;
+    if (entry.breaks && entry.breaks.length > 0) {
+      formBreaks = entry.breaks.map((b) => ({
+        start: format(new Date(b.startTime), "HH:mm"),
+        end: format(new Date(b.endTime), "HH:mm"),
+      }));
+    } else {
+      formBreaks = [];
+    }
     formNote = entry.note ?? "";
     saveError = "";
     modalOpen = true;
@@ -430,6 +477,13 @@
     arbzgWarnings = [];
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
     const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
+    // Convert break slots to full ISO timestamps
+    const breaksPayload = formBreaks
+      .filter((b) => b.start && b.end)
+      .map((b) => ({
+        startTime: new Date(`${formDate}T${b.start}:00`).toISOString(),
+        endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
+      }));
     try {
       let result: { entry: TimeEntry; warnings: ArbZGWarning[] };
       if (editEntry) {
@@ -437,7 +491,8 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreak,
+          breakMinutes: formBreakTotal,
+          breaks: breaksPayload,
           note: formNote || null,
         });
       } else {
@@ -445,7 +500,8 @@
           date: formDate,
           startTime: startISO,
           endTime: endISO,
-          breakMinutes: formBreak,
+          breakMinutes: formBreakTotal,
+          breaks: breaksPayload,
           note: formNote || null,
         });
       }
@@ -827,7 +883,7 @@
                 {#if slot.endTime}{fmtTime(slot.endTime)}
                 {:else}<span class="badge badge-green">Aktiv</span>{/if}
               </td>
-              <td>{slot.breakMinutes ? slot.breakMinutes + " Min." : "—"}</td>
+              <td class="break-cell">{fmtBreaks(slot)}</td>
               <td class="mono fw-med">{slotNet(slot)}</td>
               <td
                 ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
@@ -903,18 +959,44 @@
             />
           </div>
         </div>
-        <div class="form-group">
-          <label class="form-label" for="f-break">Pause (Minuten)</label>
-          <input
-            id="f-break"
-            type="number"
-            min="0"
-            max="480"
-            step="5"
-            bind:value={formBreak}
-            class="form-input"
-            style="max-width:120px;"
-          />
+        <div class="breaks-section">
+          <label class="form-label">Pausen</label>
+          {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
+            <div class="break-legacy">
+              <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
+              <button
+                class="btn btn-sm btn-ghost"
+                type="button"
+                onclick={() => {
+                  formBreaks = [
+                    { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
+                  ];
+                }}>In Slots umwandeln</button
+              >
+            </div>
+          {/if}
+          {#each formBreaks as brk, i}
+            <div class="break-row">
+              <input type="time" bind:value={brk.start} class="form-input" />
+              <span class="break-sep">&ndash;</span>
+              <input type="time" bind:value={brk.end} class="form-input" />
+              <button
+                class="btn-icon"
+                type="button"
+                onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
+                title="Pause entfernen">✕</button
+              >
+            </div>
+          {/each}
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
+            >+ Pause hinzufügen</button
+          >
+          {#if formBreakTotal > 0}
+            <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
+          {/if}
         </div>
         <div class="form-group">
           <label class="form-label" for="f-note"
@@ -1509,6 +1591,43 @@
   .btn-sm {
     padding: 0.35rem 0.75rem;
     font-size: 0.875rem;
+  }
+
+  /* ── Pausen-Slots ──────────────────────────────────────────────── */
+  .breaks-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .break-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .break-row .form-input {
+    flex: 1;
+    min-width: 0;
+  }
+  .break-sep {
+    color: var(--color-text-muted);
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .break-total {
+    font-size: 0.8125rem;
+  }
+  .break-legacy {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 0.625rem;
+    background: var(--gray-50, #f9fafb);
+    border-radius: 6px;
+    font-size: 0.8125rem;
+  }
+  .break-cell {
+    font-size: 0.8125rem;
+    white-space: nowrap;
   }
 
   /* ── ArbZG-Warnungen ──────────────────────────────────────────────── */
