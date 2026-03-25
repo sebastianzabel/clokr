@@ -90,6 +90,7 @@
   let saving = $state(false);
   let saveError = $state("");
   let arbzgWarnings: ArbZGWarning[] = $state([]);
+  let arbzgEnabled = $state(true);
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -125,31 +126,40 @@
     error = "";
     try {
       const year = calMonth.getFullYear();
-      const [rawEntries, rawSchedule, rawHolidays, rawAbsences, rawOvertime, rawEmployee] =
-        await Promise.all([
-          api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
-          employeeId
-            ? api.get<WorkSchedule>(`/settings/work/${employeeId}`).catch(() => null)
-            : Promise.resolve(null),
-          api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
-          employeeId
-            ? api
-                .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${employeeId}`)
-                .catch(() => [] as Absence[])
-            : Promise.resolve([] as Absence[]),
-          employeeId
-            ? api.get<{ balanceHours: number }>(`/overtime/${employeeId}`).catch(() => null)
-            : Promise.resolve(null),
-          employeeId
-            ? api.get<{ hireDate?: string }>(`/employees/${employeeId}`).catch(() => null)
-            : Promise.resolve(null),
-        ]);
+      const [
+        rawEntries,
+        rawSchedule,
+        rawHolidays,
+        rawAbsences,
+        rawOvertime,
+        rawEmployee,
+        rawConfig,
+      ] = await Promise.all([
+        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
+        employeeId
+          ? api.get<WorkSchedule>(`/settings/work/${employeeId}`).catch(() => null)
+          : Promise.resolve(null),
+        api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
+        employeeId
+          ? api
+              .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${employeeId}`)
+              .catch(() => [] as Absence[])
+          : Promise.resolve([] as Absence[]),
+        employeeId
+          ? api.get<{ balanceHours: number }>(`/overtime/${employeeId}`).catch(() => null)
+          : Promise.resolve(null),
+        employeeId
+          ? api.get<{ hireDate?: string }>(`/employees/${employeeId}`).catch(() => null)
+          : Promise.resolve(null),
+        api.get<{ arbzgEnabled?: boolean }>("/settings/work").catch(() => null),
+      ]);
       entries = rawEntries;
       schedule = rawSchedule;
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
+      arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       calendarDays = buildCalendarDays(
         calMonth,
         entries,
@@ -558,7 +568,7 @@
       .filter((d) => d.isCurrentMonth && !d.isFuture)
       .reduce((s, d) => s + d.expectedMin, 0),
   );
-  let dayWarnings = $derived(checkArbZGFrontend(selectedSlots));
+  let dayWarnings = $derived(arbzgEnabled ? checkArbZGFrontend(selectedSlots) : []);
   // Formatierter Label für den ausgewählten Tag
   let selectedLabel = $derived(
     format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }),
@@ -720,7 +730,7 @@
 </div>
 
 <!-- ── ArbZG-Warnungen ─────────────────────────────────────────────────── -->
-{#if arbzgWarnings.length > 0}
+{#if arbzgEnabled && arbzgWarnings.length > 0}
   <div class="arbzg-warnings">
     {#each arbzgWarnings as w (w.code)}
       <div class="arbzg-alert arbzg-{w.severity}" role="alert">

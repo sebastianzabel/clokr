@@ -151,6 +151,7 @@
       gVacationDays = Number(cfg.defaultVacationDays) || 30;
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
+      gArbzgEnabled = cfg.arbzgEnabled ?? true;
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
 
@@ -181,6 +182,7 @@
         carryOverDeadlineDay: gCarryOverDay,
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
+        arbzgEnabled: gArbzgEnabled,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
       });
