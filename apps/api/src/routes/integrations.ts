@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireRole } from "../middleware/auth";
+import { encrypt, decryptSafe } from "../utils/crypto";
 
 /**
  * Phorest API Integration
@@ -118,7 +119,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestBusinessId: body.phorestBusinessId,
           phorestBranchId: body.phorestBranchId,
           phorestUsername: body.phorestUsername,
-          phorestPassword: body.phorestPassword,
+          phorestPassword: encrypt(body.phorestPassword),
           ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
           ...(body.phorestAutoSync !== undefined ? { phorestAutoSync: body.phorestAutoSync } : {}),
           ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
@@ -129,7 +130,11 @@ export async function integrationRoutes(app: FastifyInstance) {
         userId: req.user.sub,
         action: "UPDATE",
         entity: "PhorestConfig",
-        newValue: { businessId: body.phorestBusinessId, branchId: body.phorestBranchId, autoSync: body.phorestAutoSync },
+        newValue: {
+          businessId: body.phorestBusinessId,
+          branchId: body.phorestBranchId,
+          autoSync: body.phorestAutoSync,
+        },
       });
 
       // Scheduler neu laden wenn Auto-Sync geändert
@@ -149,7 +154,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       const cfg = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
       });
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !cfg?.phorestPassword) {
+      const phorestPwd = decryptSafe(cfg?.phorestPassword);
+      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !phorestPwd) {
         return { success: false, error: "Phorest-Zugangsdaten nicht konfiguriert" };
       }
 
@@ -158,10 +164,13 @@ export async function integrationRoutes(app: FastifyInstance) {
           cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server",
           `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
           cfg.phorestUsername,
-          cfg.phorestPassword,
+          phorestPwd,
           { size: "1", page: "0" },
         );
-        return { success: true, message: `Verbindung erfolgreich. ${staff.totalElements ?? "?"} Mitarbeiter gefunden.` };
+        return {
+          success: true,
+          message: `Verbindung erfolgreich. ${staff.totalElements ?? "?"} Mitarbeiter gefunden.`,
+        };
       } catch (err: any) {
         return { success: false, error: err.message };
       }
@@ -178,7 +187,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       const cfg = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
       });
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !cfg?.phorestPassword) {
+      const staffPwd = decryptSafe(cfg?.phorestPassword);
+      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !staffPwd) {
         return { error: "Phorest nicht konfiguriert" };
       }
 
@@ -187,11 +197,15 @@ export async function integrationRoutes(app: FastifyInstance) {
         cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server",
         `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
         cfg.phorestUsername,
-        cfg.phorestPassword,
+        staffPwd,
         { size: "200", page: "0" },
       );
 
-      const phorestStaff: PhorestStaff[] = (phorestData._embedded?.staff ?? phorestData.staff ?? []).map((s: any) => ({
+      const phorestStaff: PhorestStaff[] = (
+        phorestData._embedded?.staff ??
+        phorestData.staff ??
+        []
+      ).map((s: any) => ({
         staffId: s.staffId,
         firstName: s.firstName,
         lastName: s.lastName,
@@ -238,7 +252,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       const cfg = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
       });
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !cfg?.phorestPassword) {
+      const syncPwd = decryptSafe(cfg?.phorestPassword);
+      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !syncPwd) {
         return reply.code(400).send({ error: "Phorest nicht konfiguriert" });
       }
 
@@ -251,11 +266,11 @@ export async function integrationRoutes(app: FastifyInstance) {
         baseUrl,
         `/api/business/${biz}/branch/${branch}/staff`,
         cfg.phorestUsername,
-        cfg.phorestPassword!,
+        syncPwd,
         { size: "200", page: "0" },
       );
 
-      const phorestStaff: PhorestStaff[] = (phorestData._embedded?.staff ?? phorestData.staff ?? []);
+      const phorestStaff: PhorestStaff[] = phorestData._embedded?.staff ?? phorestData.staff ?? [];
 
       const clokrEmployees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId },
@@ -274,22 +289,25 @@ export async function integrationRoutes(app: FastifyInstance) {
       }
 
       // 2. WorkTimeTables aus Phorest laden
-      let workTimes: PhorestWorkTimeEntry[] = [];
+      let wttData;
       try {
-        const wttData = await phorestFetch(
+        wttData = await phorestFetch(
           baseUrl,
           `/api/business/${biz}/branch/${branch}/staffworktimetables`,
           cfg.phorestUsername,
-          cfg.phorestPassword!,
+          syncPwd,
           { start_date: startDate, end_date: endDate },
         );
-        // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
-        const entries = wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
-        workTimes = Array.isArray(entries) ? entries : [];
       } catch (err: any) {
         app.log.error({ err }, "Fehler beim Laden der Phorest WorkTimeTables");
-        return reply.code(502).send({ error: `Phorest WorkTimeTables nicht abrufbar: ${err.message}` });
+        return reply
+          .code(502)
+          .send({ error: `Phorest WorkTimeTables nicht abrufbar: ${err.message}` });
       }
+      // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
+      const entries =
+        wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
+      const workTimes: PhorestWorkTimeEntry[] = Array.isArray(entries) ? entries : [];
 
       // 3. Schichten in Clokr erstellen
       let created = 0;
@@ -353,7 +371,15 @@ export async function integrationRoutes(app: FastifyInstance) {
         userId: req.user.sub,
         action: "IMPORT",
         entity: "Shift",
-        newValue: { source: "Phorest", startDate, endDate, created, skipped, unmapped, errors: errors.length },
+        newValue: {
+          source: "Phorest",
+          startDate,
+          endDate,
+          created,
+          skipped,
+          unmapped,
+          errors: errors.length,
+        },
       });
 
       return {

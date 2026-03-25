@@ -63,6 +63,7 @@ services:
       CORS_ORIGIN: "http://localhost:3000"
       REDIS_URL: "redis://redis:6379"
       APP_URL: "http://localhost:3000"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY:-clokr-dev-encryption-key-min-32-characters-long!!}"
     depends_on:
       postgres:
         condition: service_healthy

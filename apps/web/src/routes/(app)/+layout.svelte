@@ -33,7 +33,9 @@
       );
       notifications = res.notifications;
       unreadCount = res.unreadCount;
-    } catch {}
+    } catch (err) {
+      console.error("Failed to load notifications:", err);
+    }
   }
 
   async function markRead(id: string) {

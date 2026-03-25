@@ -1,5 +1,6 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
+import { decryptSafe } from "../utils/crypto";
 
 /**
  * Background scheduler for recurring tasks.
@@ -26,9 +27,8 @@ export const schedulerPlugin = fp(async (app) => {
     app.log.info({ tenantId }, "Phorest Auto-Sync gestartet");
 
     try {
-      const auth = Buffer.from(`global/${cfg.phorestUsername}:${cfg.phorestPassword}`).toString(
-        "base64",
-      );
+      const phorestPwd = decryptSafe(cfg.phorestPassword) ?? "";
+      const auth = Buffer.from(`global/${cfg.phorestUsername}:${phorestPwd}`).toString("base64");
       const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
 
       // Sync next 7 days

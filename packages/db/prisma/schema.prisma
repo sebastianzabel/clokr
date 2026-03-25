@@ -84,7 +84,7 @@ model TenantConfig {
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
-  tenant               Tenant   @relation(fields: [tenantId], references: [id])
+  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 // ─────────────────────────────────────────────
@@ -159,7 +159,7 @@ model Employee {
   createdAt        DateTime @default(now()) @db.Timestamptz
   updatedAt        DateTime @updatedAt      @db.Timestamptz
 
-  tenant           Tenant          @relation(fields: [tenantId], references: [id])
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user             User            @relation(fields: [userId], references: [id])
   workSchedules    WorkSchedule[]
   overtimeAccount  OvertimeAccount?
@@ -199,7 +199,7 @@ model WorkSchedule {
   createdAt             DateTime @default(now()) @db.Timestamptz
   updatedAt             DateTime @updatedAt      @db.Timestamptz
 
-  employee              Employee @relation(fields: [employeeId], references: [id])
+  employee              Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId, validFrom])
 }
@@ -226,7 +226,7 @@ model TimeEntry {
   updatedAt    DateTime        @updatedAt      @db.Timestamptz
   createdBy    String?         // userId wer es angelegt hat
 
-  employee     Employee        @relation(fields: [employeeId], references: [id])
+  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   breaks       Break[]
 
   @@index([employeeId, date])
@@ -254,7 +254,7 @@ model OvertimeAccount {
   balanceHours Decimal  @db.Decimal(7, 2) @default(0)  // aktueller Saldo
   updatedAt    DateTime @updatedAt @db.Timestamptz
 
-  employee     Employee        @relation(fields: [employeeId], references: [id])
+  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   transactions OvertimeTransaction[]
 }
 
@@ -268,7 +268,9 @@ model OvertimeTransaction {
   createdAt         DateTime            @default(now()) @db.Timestamptz
   createdBy         String?
 
-  overtimeAccount   OvertimeAccount     @relation(fields: [overtimeAccountId], references: [id])
+  overtimeAccount   OvertimeAccount     @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+
+  @@index([overtimeAccountId])
 }
 
 model OvertimePlan {
@@ -281,7 +283,9 @@ model OvertimePlan {
   createdAt    DateTime         @default(now()) @db.Timestamptz
   createdBy    String
 
-  employee     Employee         @relation(fields: [employeeId], references: [id])
+  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
 }
 
 // ─────────────────────────────────────────────
@@ -297,9 +301,11 @@ model LeaveType {
   color        String   @default("#3B82F6")
   createdAt    DateTime @default(now()) @db.Timestamptz
 
-  tenant       Tenant         @relation(fields: [tenantId], references: [id])
+  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entitlements LeaveEntitlement[]
   requests     LeaveRequest[]
+
+  @@index([tenantId])
 }
 
 model LeaveEntitlement {
@@ -314,10 +320,12 @@ model LeaveEntitlement {
   createdAt         DateTime @default(now()) @db.Timestamptz
   updatedAt         DateTime @updatedAt      @db.Timestamptz
 
-  employee          Employee   @relation(fields: [employeeId], references: [id])
-  leaveType         LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  employee          Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType         LeaveType  @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, leaveTypeId, year])
+  @@index([employeeId])
+  @@index([leaveTypeId])
 }
 
 model LeaveRequest {
@@ -340,8 +348,11 @@ model LeaveRequest {
   createdAt    DateTime           @default(now()) @db.Timestamptz
   updatedAt    DateTime           @updatedAt      @db.Timestamptz
 
-  employee     Employee           @relation(fields: [employeeId], references: [id])
-  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id])
+  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([leaveTypeId])
 }
 
 // ─────────────────────────────────────────────
@@ -360,7 +371,9 @@ model Absence {
   createdAt    DateTime     @default(now()) @db.Timestamptz
   createdBy    String
 
-  employee     Employee     @relation(fields: [employeeId], references: [id])
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
 }
 
 // ─────────────────────────────────────────────
@@ -375,7 +388,7 @@ model PublicHoliday {
   federalState FederalState
   year         Int
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id])
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, date])
   @@index([tenantId, year])
@@ -397,7 +410,7 @@ model AuditLog {
   userAgent  String?
   createdAt  DateTime @default(now()) @db.Timestamptz
 
-  user       User?    @relation(fields: [userId], references: [id])
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([entity, entityId])
   @@index([userId])
@@ -497,7 +510,7 @@ model CompanyShutdown {
   createdAt           DateTime @default(now()) @db.Timestamptz
   updatedAt           DateTime @updatedAt      @db.Timestamptz
 
-  tenant              Tenant   @relation(fields: [tenantId], references: [id])
+  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   exceptions          CompanyShutdownException[]
 
   @@index([tenantId])
@@ -544,7 +557,7 @@ model Notification {
 model ShiftTemplate {
   id        String   @id @default(uuid())
   tenantId  String
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   name      String   // e.g. "Frühschicht", "Spätschicht", "Nachtschicht"
   startTime String   // "06:00"
   endTime   String   // "14:00"
@@ -559,7 +572,7 @@ model ShiftTemplate {
 model Shift {
   id           String         @id @default(uuid())
   employeeId   String
-  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   templateId   String?
   template     ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   date         DateTime       @db.Date

@@ -1,18 +1,22 @@
 import { PrismaClient } from "../generated/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import pg from "pg";
+import bcrypt from "bcryptjs";
 
-// Einfaches bcrypt-ähnliches Hash für Seed (ohne bcrypt dependency im db package)
-// Wir nutzen einen festen Hash für "admin1234" – nur für Dev!
-// Generiert mit: bcrypt.hashSync("admin1234", 12)
-const ADMIN_PASSWORD_HASH = "$2a$12$Ueek/KvgJbd3YjYSzydoMeerrFf2nKJoDdhHgzV05hYcS9ZTRArm2";
+const ADMIN_EMAIL = "admin@clokr.de";
+const ADMIN_PASSWORD = "admin1234";
+const EMPLOYEE_EMAIL = "max@clokr.de";
+const EMPLOYEE_PASSWORD = "mitarbeiter5678";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const adapter = new PrismaPg(pool as any);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log("🌱 Starte Seed...");
+  console.log("Starte Seed...");
+
+  const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
+  const employeePasswordHash = await bcrypt.hash(EMPLOYEE_PASSWORD, 12);
 
   // Tenant anlegen
   const tenant = await prisma.tenant.upsert({
@@ -24,7 +28,7 @@ async function main() {
       federalState: "NIEDERSACHSEN",
     },
   });
-  console.log(`✅ Tenant: ${tenant.name}`);
+  console.log(`Tenant: ${tenant.name}`);
 
   // Globale Arbeitszeitvorgaben (TenantConfig)
   await prisma.tenantConfig.upsert({
@@ -44,15 +48,16 @@ async function main() {
       allowOvertimePayout: false,
     },
   });
-  console.log("✅ TenantConfig angelegt");
+  console.log("TenantConfig angelegt");
 
-  // Admin User anlegen
+  // Admin User anlegen — skip password overwrite if user already exists
+  const existingAdmin = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
   const adminUser = await prisma.user.upsert({
-    where: { email: "admin@clokr.de" },
-    update: {},
+    where: { email: ADMIN_EMAIL },
+    update: existingAdmin ? {} : { passwordHash: adminPasswordHash },
     create: {
-      email: "admin@clokr.de",
-      passwordHash: ADMIN_PASSWORD_HASH,
+      email: ADMIN_EMAIL,
+      passwordHash: adminPasswordHash,
       role: "ADMIN",
     },
   });
@@ -87,7 +92,7 @@ async function main() {
     create: { employeeId: adminEmployee.id, balanceHours: 0 },
   });
 
-  console.log(`✅ Admin: ${adminUser.email} / Passwort: admin1234`);
+  console.log(`Admin: ${adminUser.email}`);
 
   // Urlaubs-Typ anlegen
   const leaveType = await prisma.leaveType.upsert({
@@ -102,9 +107,9 @@ async function main() {
       color: "#3B82F6",
     },
   });
-  console.log(`✅ Urlaubstyp: ${leaveType.name}`);
+  console.log(`Urlaubstyp: ${leaveType.name}`);
 
-  // Urlaubsanspruch für Admin anlegen
+  // Urlaubsanspruch fuer Admin anlegen
   await prisma.leaveEntitlement.upsert({
     where: {
       employeeId_leaveTypeId_year: {
@@ -123,13 +128,14 @@ async function main() {
     },
   });
 
-  // Test-Mitarbeiter anlegen
+  // Test-Mitarbeiter anlegen — skip password overwrite if user already exists
+  const existingEmp = await prisma.user.findUnique({ where: { email: EMPLOYEE_EMAIL } });
   const empUser = await prisma.user.upsert({
-    where: { email: "max@clokr.de" },
-    update: {},
+    where: { email: EMPLOYEE_EMAIL },
+    update: existingEmp ? {} : { passwordHash: employeePasswordHash },
     create: {
-      email: "max@clokr.de",
-      passwordHash: ADMIN_PASSWORD_HASH, // gleicher Hash, Passwort: admin1234
+      email: EMPLOYEE_EMAIL,
+      passwordHash: employeePasswordHash,
       role: "EMPLOYEE",
     },
   });
@@ -182,11 +188,15 @@ async function main() {
     },
   });
 
-  console.log(`✅ Mitarbeiter: ${empUser.email} / Passwort: admin1234`);
-  console.log("\n🎉 Seed abgeschlossen!");
-  console.log("\n📋 Login-Daten:");
-  console.log("   Admin:       admin@clokr.de  /  admin1234");
-  console.log("   Mitarbeiter: max@clokr.de    /  admin1234");
+  console.log(`Mitarbeiter: ${empUser.email}`);
+  console.log("\nSeed abgeschlossen!");
+
+  // Only print credentials in non-production environments
+  if (process.env.NODE_ENV !== "production") {
+    console.log("\nLogin-Daten:");
+    console.log(`   Admin:       ${ADMIN_EMAIL}  /  ${ADMIN_PASSWORD}`);
+    console.log(`   Mitarbeiter: ${EMPLOYEE_EMAIL}    /  ${EMPLOYEE_PASSWORD}`);
+  }
 }
 
 main()

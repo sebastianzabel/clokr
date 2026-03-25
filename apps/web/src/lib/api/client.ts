@@ -3,20 +3,19 @@ import { get } from "svelte/store";
 
 const BASE_URL = "/api/v1";
 
+let refreshPromise: Promise<boolean> | null = null;
+
 class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public data?: unknown
+    public data?: unknown,
   ) {
     super(message);
   }
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const auth = get(authStore);
 
   const headers: Record<string, string> = {
@@ -57,6 +56,16 @@ async function request<T>(
 }
 
 async function tryRefresh(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = doRefresh();
+  try {
+    return await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+async function doRefresh(): Promise<boolean> {
   const auth = get(authStore);
   if (!auth.refreshToken) return false;
 
@@ -70,7 +79,8 @@ async function tryRefresh(): Promise<boolean> {
     const data = await res.json();
     authStore.setTokens(data.accessToken, data.refreshToken);
     return true;
-  } catch {
+  } catch (err) {
+    console.error("Failed to refresh token:", err);
     return false;
   }
 }
