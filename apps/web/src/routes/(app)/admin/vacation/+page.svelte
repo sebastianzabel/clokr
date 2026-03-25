@@ -308,8 +308,9 @@
 
       <div class="day-grid">
         <div class="day-input">
-          <label class="day-label form-label">Mo</label>
+          <label class="day-label form-label" for="day-mo">Mo</label>
           <input
+            id="day-mo"
             type="number"
             min="0"
             max="24"
@@ -319,8 +320,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">Di</label>
+          <label class="day-label form-label" for="day-di">Di</label>
           <input
+            id="day-di"
             type="number"
             min="0"
             max="24"
@@ -330,8 +332,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">Mi</label>
+          <label class="day-label form-label" for="day-mi">Mi</label>
           <input
+            id="day-mi"
             type="number"
             min="0"
             max="24"
@@ -341,8 +344,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">Do</label>
+          <label class="day-label form-label" for="day-do">Do</label>
           <input
+            id="day-do"
             type="number"
             min="0"
             max="24"
@@ -352,8 +356,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">Fr</label>
+          <label class="day-label form-label" for="day-fr">Fr</label>
           <input
+            id="day-fr"
             type="number"
             min="0"
             max="24"
@@ -363,8 +368,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">Sa</label>
+          <label class="day-label form-label" for="day-sa">Sa</label>
           <input
+            id="day-sa"
             type="number"
             min="0"
             max="24"
@@ -374,8 +380,9 @@
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label">So</label>
+          <label class="day-label form-label" for="day-so">So</label>
           <input
+            id="day-so"
             type="number"
             min="0"
             max="24"
@@ -452,7 +459,7 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Resturlaub verfällt am</label>
+          <span class="form-label">Resturlaub verfällt am</span>
           <div class="carryover-row">
             <input
               id="g-co-day"
@@ -708,9 +715,8 @@
 
 <!-- ── Mitarbeiter-Modal ────────────────────────────────────────────────────── -->
 {#if empModal}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={self(closeEmpModal)} role="dialog" aria-modal="true">
-    <div class="modal-card card">
+  <div class="modal-backdrop" onclick={self(closeEmpModal)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>Einstellungen: {empModal.firstName} {empModal.lastName}</h2>
         <button class="btn-icon modal-close" onclick={closeEmpModal} aria-label="Schließen"
@@ -761,8 +767,9 @@
 
           <div class="day-grid">
             <div class="day-input">
-              <label class="day-label form-label">Mo</label>
+              <label class="day-label form-label" for="emp-day-mo">Mo</label>
               <input
+                id="emp-day-mo"
                 type="number"
                 min="0"
                 max="24"
@@ -772,8 +779,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">Di</label>
+              <label class="day-label form-label" for="emp-day-di">Di</label>
               <input
+                id="emp-day-di"
                 type="number"
                 min="0"
                 max="24"
@@ -783,8 +791,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">Mi</label>
+              <label class="day-label form-label" for="emp-day-mi">Mi</label>
               <input
+                id="emp-day-mi"
                 type="number"
                 min="0"
                 max="24"
@@ -794,8 +803,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">Do</label>
+              <label class="day-label form-label" for="emp-day-do">Do</label>
               <input
+                id="emp-day-do"
                 type="number"
                 min="0"
                 max="24"
@@ -805,8 +815,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">Fr</label>
+              <label class="day-label form-label" for="emp-day-fr">Fr</label>
               <input
+                id="emp-day-fr"
                 type="number"
                 min="0"
                 max="24"
@@ -816,8 +827,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">Sa</label>
+              <label class="day-label form-label" for="emp-day-sa">Sa</label>
               <input
+                id="emp-day-sa"
                 type="number"
                 min="0"
                 max="24"
@@ -827,8 +839,9 @@
               />
             </div>
             <div class="day-input">
-              <label class="day-label form-label">So</label>
+              <label class="day-label form-label" for="emp-day-so">So</label>
               <input
+                id="emp-day-so"
                 type="number"
                 min="0"
                 max="24"

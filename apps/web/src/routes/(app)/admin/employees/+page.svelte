@@ -394,14 +394,14 @@
 
 <!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
 {#if showCreateModal}
-  <div
-    class="modal-backdrop"
-    onclick={self(() => (showCreateModal = false))}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Mitarbeiter anlegen"
-  >
-    <div class="modal">
+  <div class="modal-backdrop" onclick={self(() => (showCreateModal = false))} role="presentation">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mitarbeiter anlegen"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h2 class="modal-title">Mitarbeiter anlegen</h2>
         <button class="modal-close" onclick={() => (showCreateModal = false)} aria-label="Schließen"
@@ -558,14 +558,14 @@
 
 <!-- ── Bearbeiten Modal ───────────────────────────────────────────────────── -->
 {#if showEditModal && editingEmployee}
-  <div
-    class="modal-backdrop"
-    onclick={self(() => (showEditModal = false))}
-    role="dialog"
-    aria-modal="true"
-    aria-label="Mitarbeiter bearbeiten"
-  >
-    <div class="modal">
+  <div class="modal-backdrop" onclick={self(() => (showEditModal = false))} role="presentation">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mitarbeiter bearbeiten"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h2 class="modal-title">Mitarbeiter bearbeiten</h2>
         <button class="modal-close" onclick={() => (showEditModal = false)} aria-label="Schließen"
@@ -622,8 +622,14 @@
 
 <!-- ── Löschen Bestätigung ───────────────────────────────────────────────── -->
 {#if showDeleteConfirm && deletingEmployee}
-  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Mitarbeiter löschen">
-    <div class="modal modal--sm">
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal modal--sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mitarbeiter löschen"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h2 class="modal-title">Mitarbeiter löschen</h2>
       </div>

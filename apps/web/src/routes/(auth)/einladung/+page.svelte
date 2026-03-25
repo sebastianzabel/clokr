@@ -175,18 +175,6 @@
     height: auto;
     margin-bottom: 0.75rem;
   }
-  .login-logo-icon {
-    display: inline-block;
-    font-size: 2.5rem;
-    margin-bottom: 0.75rem;
-    line-height: 1;
-  }
-  .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--color-brand);
-    margin-bottom: 0;
-  }
   .login-subtitle {
     font-size: 0.9375rem;
     color: var(--color-text-muted);

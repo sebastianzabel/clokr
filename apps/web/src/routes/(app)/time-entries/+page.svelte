@@ -753,7 +753,6 @@
   {:else}
     <div class="cal-grid">
       {#each calendarDays as day (day.dateStr)}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <div
           class="cal-day cal-day--{day.status}{day.absenceType && !day.isWeekend
             ? ' cal-day--abs cal-day--abs-' + day.absenceType.toLowerCase()
@@ -772,8 +771,14 @@
               : day.absenceType
                 ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
                 : undefined}
+          role="button"
+          tabindex="0"
           onclick={() => {
             if (day.isCurrentMonth && !day.isBeforeHire) selectedDate = day.dateStr;
+          }}
+          onkeydown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth && !day.isBeforeHire)
+              selectedDate = day.dateStr;
           }}
         >
           <span class="day-num">{day.dayNum}</span>
@@ -955,9 +960,8 @@
 
 <!-- ── Modal ──────────────────────────────────────────────────────────────── -->
 {#if modalOpen}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={self(closeModal)} role="dialog" aria-modal="true">
-    <div class="modal-card card">
+  <div class="modal-backdrop" onclick={self(closeModal)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>{editEntry ? "Slot bearbeiten" : "Neuen Slot hinzufügen"}</h2>
         <button class="btn-icon modal-close" onclick={closeModal}>✕</button>
@@ -993,7 +997,7 @@
           </div>
         </div>
         <div class="breaks-section">
-          <label class="form-label">Pausen</label>
+          <span class="form-label">Pausen</span>
           {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
             <div class="break-legacy">
               <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>

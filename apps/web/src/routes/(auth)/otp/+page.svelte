@@ -100,6 +100,7 @@
 
       <div class="form-group">
         <label class="form-label" for="otp-code">6-stelliger Code</label>
+        <!-- svelte-ignore a11y_autofocus -->
         <input
           id="otp-code"
           type="text"
@@ -162,12 +163,6 @@
   .login-logo {
     text-align: center;
     margin-bottom: 2rem;
-  }
-  .login-logo-icon {
-    display: inline-block;
-    font-size: 2.5rem;
-    margin-bottom: 0.75rem;
-    line-height: 1;
   }
   .login-title {
     font-size: 1.5rem;

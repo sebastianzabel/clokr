@@ -1319,9 +1319,8 @@
 
 <!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
 {#if reviewModal}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={self(closeReview)} role="dialog" aria-modal="true">
-    <div class="modal-card card">
+  <div class="modal-backdrop" onclick={self(closeReview)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>
           {reviewModal.status === "CANCELLATION_REQUESTED"
@@ -1478,9 +1477,8 @@
 
 <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
 {#if attestModal}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={self(closeAttestModal)} role="dialog" aria-modal="true">
-    <div class="modal-card card">
+  <div class="modal-backdrop" onclick={self(closeAttestModal)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>Attest: {attestModal.employee.firstName} {attestModal.employee.lastName}</h2>
         <button class="btn-icon" onclick={closeAttestModal} aria-label="Schließen">✕</button>

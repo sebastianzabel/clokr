@@ -31,26 +31,26 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
   let shutdowns: CompanyShutdown[] = $state([]);
-  let allEmployees: Employee[]     = $state([]);
-  let loading  = $state(true);
-  let error    = $state("");
+  let allEmployees: Employee[] = $state([]);
+  let loading = $state(true);
+  let error = $state("");
 
   // Formular für neuen Betriebsurlaub
-  let showForm    = $state(false);
-  let saving      = $state(false);
-  let editId      = $state<string | null>(null);
-  let formName    = $state("");
-  let formStart   = $state("");
-  let formEnd     = $state("");
+  let showForm = $state(false);
+  let saving = $state(false);
+  let editId = $state<string | null>(null);
+  let formName = $state("");
+  let formStart = $state("");
+  let formEnd = $state("");
   let formDeducts = $state(true);
-  let formNotes   = $state("");
-  let formError   = $state("");
+  let formNotes = $state("");
+  let formError = $state("");
 
   // Ausnahmen-Verwaltung
   let exceptionShutdownId = $state<string | null>(null);
-  let addExceptionEmpId   = $state("");
-  let addExceptionReason  = $state("");
-  let savingException     = $state(false);
+  let addExceptionEmpId = $state("");
+  let addExceptionReason = $state("");
+  let savingException = $state(false);
 
   // Jahresfilter
   let filterYear = $state(new Date().getFullYear().toString());
@@ -58,7 +58,7 @@
   // ── Lade-Funktionen ───────────────────────────────────────────────────────
   async function loadShutdowns() {
     loading = true;
-    error   = "";
+    error = "";
     try {
       shutdowns = await api.get(`/company-shutdowns?year=${filterYear}`);
     } catch {
@@ -84,30 +84,30 @@
 
   // ── Formular ──────────────────────────────────────────────────────────────
   function openCreate() {
-    editId      = null;
-    formName    = "";
-    formStart   = "";
-    formEnd     = "";
+    editId = null;
+    formName = "";
+    formStart = "";
+    formEnd = "";
     formDeducts = true;
-    formNotes   = "";
-    formError   = "";
-    showForm    = true;
+    formNotes = "";
+    formError = "";
+    showForm = true;
   }
 
   function openEdit(s: CompanyShutdown) {
-    editId      = s.id;
-    formName    = s.name;
-    formStart   = s.startDate.slice(0, 10);
-    formEnd     = s.endDate.slice(0, 10);
+    editId = s.id;
+    formName = s.name;
+    formStart = s.startDate.slice(0, 10);
+    formEnd = s.endDate.slice(0, 10);
     formDeducts = s.deductsFromVacation;
-    formNotes   = s.notes ?? "";
-    formError   = "";
-    showForm    = true;
+    formNotes = s.notes ?? "";
+    formError = "";
+    showForm = true;
   }
 
   function closeForm() {
     showForm = false;
-    editId   = null;
+    editId = null;
   }
 
   async function saveShutdown() {
@@ -119,15 +119,15 @@
       formError = "Startdatum muss vor Enddatum liegen.";
       return;
     }
-    saving    = true;
+    saving = true;
     formError = "";
     try {
       const body = {
-        name:                formName.trim(),
-        startDate:           formStart,
-        endDate:             formEnd,
+        name: formName.trim(),
+        startDate: formStart,
+        endDate: formEnd,
         deductsFromVacation: formDeducts,
-        notes:               formNotes || undefined,
+        notes: formNotes || undefined,
       };
       if (editId) {
         await api.patch(`/company-shutdowns/${editId}`, body);
@@ -156,8 +156,8 @@
   // ── Ausnahmen ─────────────────────────────────────────────────────────────
   function openExceptions(id: string) {
     exceptionShutdownId = id;
-    addExceptionEmpId   = "";
-    addExceptionReason  = "";
+    addExceptionEmpId = "";
+    addExceptionReason = "";
   }
 
   function closeExceptions() {
@@ -168,10 +168,11 @@
     if (!addExceptionEmpId || !exceptionShutdownId) return;
     savingException = true;
     try {
-      await api.post(`/company-shutdowns/${exceptionShutdownId}/exceptions`,
-        { employeeId: addExceptionEmpId, reason: addExceptionReason || undefined },
-      );
-      addExceptionEmpId  = "";
+      await api.post(`/company-shutdowns/${exceptionShutdownId}/exceptions`, {
+        employeeId: addExceptionEmpId,
+        reason: addExceptionReason || undefined,
+      });
+      addExceptionEmpId = "";
       addExceptionReason = "";
       await loadShutdowns();
     } catch {
@@ -202,13 +203,13 @@
   }
 
   const currentShutdown = $derived(
-    exceptionShutdownId ? shutdowns.find(s => s.id === exceptionShutdownId) : null
+    exceptionShutdownId ? shutdowns.find((s) => s.id === exceptionShutdownId) : null,
   );
 
   const availableEmployees = $derived(
     currentShutdown
-      ? allEmployees.filter(e => !currentShutdown.exceptions.some(ex => ex.employeeId === e.id))
-      : allEmployees
+      ? allEmployees.filter((e) => !currentShutdown.exceptions.some((ex) => ex.employeeId === e.id))
+      : allEmployees,
   );
 
   const currentYear = new Date().getFullYear();
@@ -239,7 +240,7 @@
 <!-- ── Inhalt ─────────────────────────────────────────────────────────────── -->
 {#if loading}
   <div class="skeleton-list">
-    {#each [1,2,3] as _}
+    {#each [1, 2, 3] as _}
       <div class="skeleton-card"></div>
     {/each}
   </div>
@@ -269,7 +270,9 @@
                 <span class="badge badge-neutral">Kein Urlaubsabzug</span>
               {/if}
               {#if s.exceptions.length > 0}
-                <span class="badge badge-info">{s.exceptions.length} Ausnahme{s.exceptions.length !== 1 ? "n" : ""}</span>
+                <span class="badge badge-info"
+                  >{s.exceptions.length} Ausnahme{s.exceptions.length !== 1 ? "n" : ""}</span
+                >
               {/if}
             </div>
           </div>
@@ -278,7 +281,10 @@
               Ausnahmen
             </button>
             <button class="btn btn-ghost btn-sm" onclick={() => openEdit(s)}>Bearbeiten</button>
-            <button class="btn btn-ghost btn-sm btn-danger" onclick={() => deleteShutdown(s.id, s.name)}>
+            <button
+              class="btn btn-ghost btn-sm btn-danger"
+              onclick={() => deleteShutdown(s.id, s.name)}
+            >
               Löschen
             </button>
           </div>
@@ -290,7 +296,8 @@
             <span class="exception-list__label">Ausnahmen:</span>
             {#each s.exceptions as ex (ex.id)}
               <span class="exception-chip">
-                {ex.employee.firstName} {ex.employee.lastName}
+                {ex.employee.firstName}
+                {ex.employee.lastName}
                 {#if ex.reason}<span class="exception-chip__reason">({ex.reason})</span>{/if}
               </span>
             {/each}
@@ -303,9 +310,20 @@
 
 <!-- ── Modal: Betriebsurlaub anlegen / bearbeiten ──────────────────────────── -->
 {#if showForm}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) closeForm(); }}>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shutdown-form-title">
+  <div
+    class="modal-overlay"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeForm();
+    }}
+  >
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shutdown-form-title"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h3 id="shutdown-form-title" class="modal-title">
           {editId ? "Betriebsurlaub bearbeiten" : "Betriebsurlaub anlegen"}
@@ -318,8 +336,13 @@
         {/if}
         <div class="form-group">
           <label class="form-label" for="sh-name">Bezeichnung *</label>
-          <input id="sh-name" class="form-input" type="text" bind:value={formName}
-            placeholder="z.B. Weihnachtsschließung 2025" />
+          <input
+            id="sh-name"
+            class="form-input"
+            type="text"
+            bind:value={formName}
+            placeholder="z.B. Weihnachtsschließung 2025"
+          />
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -337,14 +360,19 @@
             Vom Urlaubskonto abziehen
           </label>
           <p class="form-hint">
-            Wenn aktiv, wird der Betriebsurlaub automatisch vom Jahresurlaub der Mitarbeiter abgezogen
-            (außer bei Ausnahmen).
+            Wenn aktiv, wird der Betriebsurlaub automatisch vom Jahresurlaub der Mitarbeiter
+            abgezogen (außer bei Ausnahmen).
           </p>
         </div>
         <div class="form-group">
           <label class="form-label" for="sh-notes">Notiz (optional)</label>
-          <textarea id="sh-notes" class="form-input" rows="2" bind:value={formNotes}
-            placeholder="Interne Anmerkung …"></textarea>
+          <textarea
+            id="sh-notes"
+            class="form-input"
+            rows="2"
+            bind:value={formNotes}
+            placeholder="Interne Anmerkung …"
+          ></textarea>
         </div>
       </div>
       <div class="modal-footer">
@@ -359,9 +387,20 @@
 
 <!-- ── Modal: Ausnahmen verwalten ─────────────────────────────────────────── -->
 {#if exceptionShutdownId && currentShutdown}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-  <div class="modal-overlay" onclick={(e) => { if (e.target === e.currentTarget) closeExceptions(); }}>
-    <div class="modal modal--wide" role="dialog" aria-modal="true" aria-labelledby="exception-title">
+  <div
+    class="modal-overlay"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeExceptions();
+    }}
+  >
+    <div
+      class="modal modal--wide"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="exception-title"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h3 id="exception-title" class="modal-title">
           Ausnahmen: {currentShutdown.name}
@@ -370,8 +409,8 @@
       </div>
       <div class="modal-body">
         <p class="form-hint">
-          Mitarbeiter in dieser Liste sind vom Betriebsurlaub ausgenommen —
-          ihr Urlaubskonto wird nicht belastet.
+          Mitarbeiter in dieser Liste sind vom Betriebsurlaub ausgenommen — ihr Urlaubskonto wird
+          nicht belastet.
         </p>
 
         <!-- Bestehende Ausnahmen -->
@@ -394,8 +433,10 @@
                   <td class="text-muted">{ex.employee.employeeNumber}</td>
                   <td class="text-muted">{ex.reason ?? "–"}</td>
                   <td>
-                    <button class="btn btn-ghost btn-sm btn-danger"
-                      onclick={() => removeException(currentShutdown!.id, ex.employeeId)}>
+                    <button
+                      class="btn btn-ghost btn-sm btn-danger"
+                      onclick={() => removeException(currentShutdown!.id, ex.employeeId)}
+                    >
                       Entfernen
                     </button>
                   </td>
@@ -414,19 +455,28 @@
               <select id="ex-emp" class="form-input" bind:value={addExceptionEmpId}>
                 <option value="">– Mitarbeiter wählen –</option>
                 {#each availableEmployees as emp (emp.id)}
-                  <option value={emp.id}>{emp.firstName} {emp.lastName} ({emp.employeeNumber})</option>
+                  <option value={emp.id}
+                    >{emp.firstName} {emp.lastName} ({emp.employeeNumber})</option
+                  >
                 {/each}
               </select>
             </div>
             <div class="form-group" style="flex:1">
               <label class="form-label" for="ex-reason">Grund (optional)</label>
-              <input id="ex-reason" class="form-input" type="text"
+              <input
+                id="ex-reason"
+                class="form-input"
+                type="text"
                 placeholder="z.B. Notdienstbereitschaft"
-                bind:value={addExceptionReason} />
+                bind:value={addExceptionReason}
+              />
             </div>
           </div>
-          <button class="btn btn-primary" onclick={addException}
-            disabled={!addExceptionEmpId || savingException}>
+          <button
+            class="btn btn-primary"
+            onclick={addException}
+            disabled={!addExceptionEmpId || savingException}
+          >
             {savingException ? "Hinzufügen …" : "Hinzufügen"}
           </button>
         </div>
@@ -574,8 +624,13 @@
   }
 
   @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50%       { opacity: 0.5; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   /* ── Empty state ── */
@@ -598,15 +653,24 @@
     font-weight: 500;
   }
 
-  .badge-neutral { background: var(--color-border); color: var(--color-text-muted); }
-  .badge-warning { background: #fef3c7; color: #92400e; }
-  .badge-info    { background: #dbeafe; color: #1d4ed8; }
+  .badge-neutral {
+    background: var(--color-border);
+    color: var(--color-text-muted);
+  }
+  .badge-warning {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .badge-info {
+    background: #dbeafe;
+    color: #1d4ed8;
+  }
 
   /* ── Modal ── */
   .modal-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.4);
+    background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -617,7 +681,7 @@
   .modal {
     background: var(--color-surface);
     border-radius: var(--radius-lg);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
     width: 100%;
     max-width: 520px;
     max-height: 90vh;
@@ -727,5 +791,7 @@
     border: 1px solid rgba(220, 38, 38, 0.2);
   }
 
-  .text-muted { color: var(--color-text-muted); }
+  .text-muted {
+    color: var(--color-text-muted);
+  }
 </style>

@@ -509,19 +509,30 @@
                 onclick={() => {
                   if (cellShifts.length === 0) onCellClick(emp.id, day);
                 }}
+                onkeydown={(e) => {
+                  if ((e.key === "Enter" || e.key === " ") && cellShifts.length === 0)
+                    onCellClick(emp.id, day);
+                }}
                 role={cellShifts.length === 0 ? "button" : undefined}
                 tabindex={cellShifts.length === 0 ? 0 : undefined}
               >
                 {#each cellShifts as shift (shift.id)}
-                  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
                   <div
                     class="shift-block"
+                    role="button"
+                    tabindex="0"
                     style="background: {shiftColor(shift)}22; border-left: 3px solid {shiftColor(
                       shift,
                     )}"
                     onclick={(e: MouseEvent) => {
                       e.stopPropagation();
                       openEditShift(shift);
+                    }}
+                    onkeydown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.stopPropagation();
+                        openEditShift(shift);
+                      }
                     }}
                     title="Klicken zum Bearbeiten"
                   >
@@ -560,14 +571,20 @@
 
 <!-- ── Modal: Schicht erstellen ──────────────────────────────────────────── -->
 {#if showModal}
-  <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
   <div
     class="modal-overlay"
+    role="presentation"
     onclick={(e) => {
       if (e.target === e.currentTarget) showModal = false;
     }}
   >
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shift-modal-title">
+    <div
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="shift-modal-title"
+      tabindex="-1"
+    >
       <div class="modal-header">
         <h3 id="shift-modal-title" class="modal-title">
           {editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}

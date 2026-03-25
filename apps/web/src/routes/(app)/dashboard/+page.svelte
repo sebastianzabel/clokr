@@ -1,4 +1,4 @@
-<script lang="ts" context="module">
+<script lang="ts" module>
   function getWeekNumber(dateStr: string): number {
     const d = new Date(dateStr + "T00:00:00");
     d.setHours(0, 0, 0, 0);

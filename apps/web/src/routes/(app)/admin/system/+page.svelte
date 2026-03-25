@@ -827,12 +827,6 @@
     align-items: center;
   }
 
-  .section-divider {
-    border: none;
-    border-top: 1px solid var(--color-border);
-    margin: 1.5rem 0;
-  }
-
   .smtp-test-row {
     display: flex;
     gap: 0.75rem;
@@ -889,13 +883,6 @@
 
   .federal-state-select {
     min-width: 220px;
-  }
-
-  .modal-section-heading {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--color-text-heading);
-    margin-bottom: 0.5rem;
   }
 
   .alert {
