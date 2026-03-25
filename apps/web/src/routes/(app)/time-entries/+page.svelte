@@ -518,13 +518,7 @@
       warnings.push({
         code: "MAX_DAILY_EXCEEDED",
         severity: "error",
-        message: `§ 3 ArbZG: Tagesgrenze von 10h überschritten (${(netMin / 60).toFixed(1)}h)`,
-      });
-    else if (netMin > 8 * 60)
-      warnings.push({
-        code: "MAX_DAILY_EXCEEDED",
-        severity: "warning",
-        message: `§ 3 ArbZG: Reguläre Tagessoll von 8h überschritten (${(netMin / 60).toFixed(1)}h) – max. 10h erlaubt`,
+        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10h überschritten (${(netMin / 60).toFixed(1)}h)`,
       });
 
     return warnings;

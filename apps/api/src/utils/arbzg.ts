@@ -2,9 +2,9 @@ import { PrismaClient } from "@clokr/db";
 import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
 
 export interface ArbZGWarning {
-  code:     "BREAK_TOO_SHORT" | "MAX_DAILY_EXCEEDED" | "MAX_WEEKLY_EXCEEDED" | "MIN_REST_VIOLATED";
+  code: "BREAK_TOO_SHORT" | "MAX_DAILY_EXCEEDED" | "MAX_WEEKLY_EXCEEDED" | "MIN_REST_VIOLATED";
   severity: "warning" | "error";
-  message:  string;
+  message: string;
 }
 
 /**
@@ -14,7 +14,7 @@ export interface ArbZGWarning {
 export async function checkArbZG(
   prisma: PrismaClient,
   employeeId: string,
-  changedDate: Date
+  changedDate: Date,
 ): Promise<ArbZGWarning[]> {
   const warnings: ArbZGWarning[] = [];
 
@@ -31,9 +31,9 @@ export async function checkArbZG(
   const daySlots = await prisma.timeEntry.findMany({
     where: {
       employeeId,
-      date:    { gte: new Date(dateStr), lte: new Date(dateStr + "T23:59:59.999Z") },
+      date: { gte: new Date(dateStr), lte: new Date(dateStr + "T23:59:59.999Z") },
       endTime: { not: null },
-      type:    "WORK",
+      type: "WORK",
     },
     orderBy: { startTime: "asc" },
   });
@@ -46,7 +46,7 @@ export async function checkArbZG(
     for (const slot of daySlots) {
       const slotMin = (slot.endTime!.getTime() - slot.startTime.getTime()) / 60000;
       explicitBreakMin += Number(slot.breakMinutes ?? 0);
-      netWorkedMin     += slotMin - Number(slot.breakMinutes ?? 0);
+      netWorkedMin += slotMin - Number(slot.breakMinutes ?? 0);
     }
 
     // Lücken zwischen Slots zählen als Pausen
@@ -61,30 +61,24 @@ export async function checkArbZG(
     // § 4 ArbZG – Ruhepausenvorschrift
     if (netWorkedMin > 9 * 60 && totalBreakMin < 45) {
       warnings.push({
-        code:     "BREAK_TOO_SHORT",
+        code: "BREAK_TOO_SHORT",
         severity: "error",
-        message:  `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+        message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
       });
     } else if (netWorkedMin > 6 * 60 && totalBreakMin < 30) {
       warnings.push({
-        code:     "BREAK_TOO_SHORT",
+        code: "BREAK_TOO_SHORT",
         severity: "warning",
-        message:  `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+        message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
       });
     }
 
-    // § 3 ArbZG – Tägliche Höchstarbeitszeit
+    // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
     if (netWorkedMin > 10 * 60) {
       warnings.push({
-        code:     "MAX_DAILY_EXCEEDED",
+        code: "MAX_DAILY_EXCEEDED",
         severity: "error",
-        message:  `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(netWorkedMin / 60).toFixed(1)} h.`,
-      });
-    } else if (netWorkedMin > 8 * 60) {
-      warnings.push({
-        code:     "MAX_DAILY_EXCEEDED",
-        severity: "warning",
-        message:  `§ 3 ArbZG: Reguläre Arbeitszeit von 8 Stunden überschritten (${(netWorkedMin / 60).toFixed(1)} h). Maximal erlaubt: 10 h.`,
+        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(netWorkedMin / 60).toFixed(1)} h.`,
       });
     }
 
@@ -97,7 +91,7 @@ export async function checkArbZG(
     const prevLastSlot = await prisma.timeEntry.findFirst({
       where: {
         employeeId,
-        date:    { gte: new Date(prevDateStr), lte: new Date(prevDateStr + "T23:59:59.999Z") },
+        date: { gte: new Date(prevDateStr), lte: new Date(prevDateStr + "T23:59:59.999Z") },
         endTime: { not: null },
       },
       orderBy: { endTime: "desc" },
@@ -108,9 +102,9 @@ export async function checkArbZG(
       if (restMin < 11 * 60) {
         const restH = (restMin / 60).toFixed(1);
         warnings.push({
-          code:     "MIN_REST_VIOLATED",
+          code: "MIN_REST_VIOLATED",
           severity: "warning",
-          message:  `§ 5 ArbZG: Mindestruhezeit von 11 Stunden zwischen Arbeitstagen unterschritten. Ruhezeit: ${restH} h.`,
+          message: `§ 5 ArbZG: Mindestruhezeit von 11 Stunden zwischen Arbeitstagen unterschritten. Ruhezeit: ${restH} h.`,
         });
       }
     }
@@ -123,7 +117,7 @@ export async function checkArbZG(
     const nextFirstSlot = await prisma.timeEntry.findFirst({
       where: {
         employeeId,
-        date:    { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
+        date: { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
         endTime: { not: null },
       },
       orderBy: { startTime: "asc" },
@@ -135,9 +129,9 @@ export async function checkArbZG(
       if (restMin < 11 * 60) {
         const restH = (restMin / 60).toFixed(1);
         warnings.push({
-          code:     "MIN_REST_VIOLATED",
+          code: "MIN_REST_VIOLATED",
           severity: "warning",
-          message:  `§ 5 ArbZG: Mindestruhezeit zum Folgetag unterschritten. Ruhezeit: ${restH} h.`,
+          message: `§ 5 ArbZG: Mindestruhezeit zum Folgetag unterschritten. Ruhezeit: ${restH} h.`,
         });
       }
     }
@@ -157,8 +151,8 @@ export async function checkArbZG(
     where: {
       employeeId,
       startTime: { gte: monday, lte: sunday },
-      endTime:   { not: null },
-      type:      "WORK",
+      endTime: { not: null },
+      type: "WORK",
     },
   });
 
@@ -169,9 +163,9 @@ export async function checkArbZG(
 
   if (weeklyNetMin > 48 * 60) {
     warnings.push({
-      code:     "MAX_WEEKLY_EXCEEDED",
+      code: "MAX_WEEKLY_EXCEEDED",
       severity: "error",
-      message:  `§ 3 ArbZG: Wöchentliche Höchstarbeitszeit von 48 Stunden überschritten. Diese Woche: ${(weeklyNetMin / 60).toFixed(1)} h.`,
+      message: `§ 3 ArbZG: Wöchentliche Höchstarbeitszeit von 48 Stunden überschritten. Diese Woche: ${(weeklyNetMin / 60).toFixed(1)} h.`,
     });
   }
 
