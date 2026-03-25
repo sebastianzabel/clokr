@@ -136,7 +136,7 @@
         defaultSundayHours: cfg.defaultSundayHours,
         overtimeThreshold: cfg.overtimeThreshold,
         allowOvertimePayout: cfg.allowOvertimePayout,
-        defaultVacationDays: cfg.defaultVacationDays,
+        defaultVacationDays: Number(cfg.defaultVacationDays),
         carryOverDeadlineDay: cfg.carryOverDeadlineDay,
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
