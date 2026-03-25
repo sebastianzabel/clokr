@@ -6,6 +6,7 @@ import { FederalState } from "@clokr/db";
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
 const tenantConfigSchema = z.object({
+  applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
   defaultWeeklyHours: z.number().min(1).max(60).optional(),
   defaultMondayHours: z.number().min(0).max(24).optional(),
   defaultTuesdayHours: z.number().min(0).max(24).optional(),
@@ -113,7 +114,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       const tenantId = await getTenantId(app, req.user.sub);
 
       // federalState gehört zum Tenant, nicht zur TenantConfig
-      const { federalState, ...configBody } = body;
+      const { federalState, applyToExisting, ...configBody } = body;
 
       const [config] = await Promise.all([
         app.prisma.tenantConfig.upsert({
@@ -129,15 +130,72 @@ export async function settingsRoutes(app: FastifyInstance) {
           : Promise.resolve(null),
       ]);
 
+      // Auf bestehende MA anwenden: Neue Schedule-Version für alle MA,
+      // deren aktueller Schedule noch den alten Defaults entspricht
+      let appliedCount = 0;
+      if (applyToExisting) {
+        const employees = await app.prisma.employee.findMany({
+          where: { tenantId },
+          include: { workSchedules: { orderBy: { validFrom: "desc" }, take: 1 } },
+        });
+
+        const now = new Date();
+        for (const emp of employees) {
+          const current = emp.workSchedules[0];
+          if (!current) {
+            // MA ohne Schedule → neuen mit Defaults erstellen
+            await app.prisma.workSchedule.create({
+              data: {
+                employeeId: emp.id,
+                type: "FIXED_WEEKLY",
+                weeklyHours: configBody.defaultWeeklyHours ?? 40,
+                mondayHours: configBody.defaultMondayHours ?? 8,
+                tuesdayHours: configBody.defaultTuesdayHours ?? 8,
+                wednesdayHours: configBody.defaultWednesdayHours ?? 8,
+                thursdayHours: configBody.defaultThursdayHours ?? 8,
+                fridayHours: configBody.defaultFridayHours ?? 8,
+                saturdayHours: configBody.defaultSaturdayHours ?? 0,
+                sundayHours: configBody.defaultSundayHours ?? 0,
+                overtimeThreshold: configBody.overtimeThreshold ?? 60,
+                allowOvertimePayout: configBody.allowOvertimePayout ?? false,
+                validFrom: now,
+              },
+            });
+            appliedCount++;
+          } else if (current.type === "FIXED_WEEKLY") {
+            // Nur FIXED_WEEKLY MA updaten (nicht Minijobber)
+            await app.prisma.workSchedule.create({
+              data: {
+                employeeId: emp.id,
+                type: "FIXED_WEEKLY",
+                weeklyHours: configBody.defaultWeeklyHours ?? Number(current.weeklyHours),
+                mondayHours: configBody.defaultMondayHours ?? Number(current.mondayHours),
+                tuesdayHours: configBody.defaultTuesdayHours ?? Number(current.tuesdayHours),
+                wednesdayHours: configBody.defaultWednesdayHours ?? Number(current.wednesdayHours),
+                thursdayHours: configBody.defaultThursdayHours ?? Number(current.thursdayHours),
+                fridayHours: configBody.defaultFridayHours ?? Number(current.fridayHours),
+                saturdayHours: configBody.defaultSaturdayHours ?? Number(current.saturdayHours),
+                sundayHours: configBody.defaultSundayHours ?? Number(current.sundayHours),
+                overtimeThreshold:
+                  configBody.overtimeThreshold ?? Number(current.overtimeThreshold),
+                allowOvertimePayout: configBody.allowOvertimePayout ?? current.allowOvertimePayout,
+                validFrom: now,
+              },
+            });
+            appliedCount++;
+          }
+        }
+      }
+
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: config.id,
-        newValue: body,
+        newValue: { ...body, appliedCount },
       });
 
-      return { ...config, federalState: federalState ?? undefined };
+      return { ...config, federalState: federalState ?? undefined, appliedCount };
     },
   });
 

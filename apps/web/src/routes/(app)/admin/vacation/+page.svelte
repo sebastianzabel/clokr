@@ -96,6 +96,7 @@
   let gArbzgEnabled = $state(true);
   let gAutoBreak = $state(false);
   let gDefaultBreakStart = $state("12:00");
+  let gApplyToExisting = $state(false);
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
 
@@ -189,9 +190,12 @@
         arbzgEnabled: gArbzgEnabled,
         autoBreakEnabled: gAutoBreak,
         defaultBreakStart: gAutoBreak ? gDefaultBreakStart : null,
+        applyToExisting: gApplyToExisting,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
       });
+      // Reset nach Speichern
+      gApplyToExisting = false;
       gSaved = true;
       setTimeout(() => (gSaved = false), 3000);
     } catch (e: unknown) {
@@ -584,6 +588,16 @@
       <span>⚠</span><span>{gError}</span>
     </div>
   {/if}
+  <div class="apply-existing-row" style="margin: 1rem 0 0;">
+    <label class="form-label toggle-label">
+      <input type="checkbox" bind:checked={gApplyToExisting} />
+      Auch auf bestehende Mitarbeiter anwenden
+    </label>
+    <p class="form-hint text-muted" style="margin: 0.25rem 0 0 1.5rem;">
+      Erstellt neue Schedule-Versionen ab heute für alle MA mit festem Wochenmodell. Minijobber und
+      MA mit individuellen Einstellungen bleiben unverändert.
+    </p>
+  </div>
   <div class="form-actions">
     <button class="btn btn-primary" onclick={saveGlobal} disabled={gSaving}>
       {gSaving ? "Speichern…" : "Globale Vorgaben speichern"}
