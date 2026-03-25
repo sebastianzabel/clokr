@@ -23,7 +23,17 @@
     "tsx": "^4.0.0",
     "typescript": "^6.0.0"
   },
+  "types": "./generated/client/index.d.ts",
+  "main": "./generated/client/index.js",
   "exports": {
-    ".": "./generated/client/index.js"
+    ".": {
+      "types": "./generated/client/index.d.ts",
+      "default": "./generated/client/index.js"
+    },
+    "./edge": {
+      "types": "./generated/client/edge.d.ts",
+      "default": "./generated/client/edge.js"
+    },
+    "./package.json": "./package.json"
   }
 }

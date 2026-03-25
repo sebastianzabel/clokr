@@ -47,7 +47,7 @@ model TenantConfig {
   overtimeThreshold    Decimal  @db.Decimal(5, 2)  @default(60)
   allowOvertimePayout  Boolean  @default(false)
   // Urlaubsanspruch (Basis 5-Tage-Woche)
-  defaultVacationDays  Int    @default(30)
+  defaultVacationDays  Decimal  @db.Decimal(5, 2)  @default(30)
   // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
   carryOverDeadlineDay   Int    @default(31)
   carryOverDeadlineMonth Int    @default(3)
@@ -305,6 +305,7 @@ model LeaveType {
   entitlements LeaveEntitlement[]
   requests     LeaveRequest[]
 
+  @@unique([tenantId, name])
   @@index([tenantId])
 }
 

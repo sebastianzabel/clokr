@@ -24,7 +24,7 @@ const tenantConfigSchema = z.object({
     .optional(),
   carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
   carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
-  defaultVacationDays: z.number().int().min(1).max(365).optional(),
+  defaultVacationDays: z.number().min(0.5).max(365).multipleOf(0.5).optional(),
   timezone: z.string().min(1).max(100).optional(),
   arbzgEnabled: z.boolean().optional(),
   clockOutReminderHours: z.number().int().min(1).max(48).optional(),
