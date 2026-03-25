@@ -503,6 +503,13 @@
             placeholder="Unverändert lassen"
             autocomplete="new-password"
           />
+          <p class="form-hint">
+            Gmail/Google: <a
+              href="https://myaccount.google.com/apppasswords"
+              target="_blank"
+              rel="noopener">App-Passwort</a
+            > verwenden (2FA erforderlich). Outlook: App-Passwort in den Sicherheitseinstellungen.
+          </p>
         </div>
         <div class="form-group">
           <label class="form-label" for="smtp-from-email">Von E-Mail</label>
