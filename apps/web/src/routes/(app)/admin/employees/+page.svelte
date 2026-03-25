@@ -40,7 +40,9 @@
   let cEmployeeNumber = $state("");
   let cHireDate = $state(new Date().toISOString().split("T")[0]);
   let cRole: Role = $state("EMPLOYEE");
+  let cScheduleType = $state<"FIXED_WEEKLY" | "MONTHLY_HOURS">("FIXED_WEEKLY");
   let cWeeklyHours = $state(40);
+  let cMonthlyHours = $state<number | null>(null);
   let cUsePassword = $state(false);
   let cPassword = $state("");
 
@@ -115,7 +117,9 @@
     cEmployeeNumber = "";
     cHireDate = new Date().toISOString().split("T")[0];
     cRole = "EMPLOYEE";
+    cScheduleType = "FIXED_WEEKLY";
     cWeeklyHours = 40;
+    cMonthlyHours = null;
     cUsePassword = false;
     cPassword = "";
     createError = "";
@@ -135,7 +139,9 @@
         employeeNumber: cEmployeeNumber,
         hireDate: new Date(cHireDate).toISOString(),
         role: cRole,
-        weeklyHours: cWeeklyHours,
+        scheduleType: cScheduleType,
+        weeklyHours: cScheduleType === "FIXED_WEEKLY" ? cWeeklyHours : 0,
+        monthlyHours: cScheduleType === "MONTHLY_HOURS" ? cMonthlyHours : null,
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
@@ -474,17 +480,42 @@
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label" for="c-hours">Wochenstunden</label>
-              <input
-                id="c-hours"
-                type="number"
-                bind:value={cWeeklyHours}
-                class="form-input"
-                min="1"
-                max="60"
-                step="0.5"
-              />
+              <label class="form-label" for="c-schedule-type">Arbeitszeitmodell</label>
+              <select id="c-schedule-type" bind:value={cScheduleType} class="form-input">
+                <option value="FIXED_WEEKLY">Feste Wochenstunden</option>
+                <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
+              </select>
             </div>
+            {#if cScheduleType === "FIXED_WEEKLY"}
+              <div class="form-group">
+                <label class="form-label" for="c-hours">Wochenstunden</label>
+                <input
+                  id="c-hours"
+                  type="number"
+                  bind:value={cWeeklyHours}
+                  class="form-input"
+                  min="1"
+                  max="60"
+                  step="0.5"
+                />
+              </div>
+            {:else}
+              <div class="form-group">
+                <label class="form-label" for="c-monthly-hours"
+                  >Stunden/Monat <span class="text-muted">(optional)</span></label
+                >
+                <input
+                  id="c-monthly-hours"
+                  type="number"
+                  bind:value={cMonthlyHours}
+                  class="form-input"
+                  min="0"
+                  max="200"
+                  step="0.5"
+                  placeholder="z.B. 15 — leer = nur Tracking"
+                />
+              </div>
+            {/if}
           </div>
 
           <div class="form-group form-group--full" style="margin-top: 1rem;">
