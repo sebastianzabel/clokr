@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Default capability for the NFC client",
+  "windows": ["settings"],
+  "permissions": ["core:default", "notification:default", "autostart:default", "core:event:default"]
+}

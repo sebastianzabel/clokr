@@ -47,3 +47,4 @@ backups/
 *.tgz
 .cache/
 tmp/
+apps/nfc-client/src-tauri/target/
