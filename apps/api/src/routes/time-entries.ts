@@ -134,7 +134,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Optionale Terminal-Authentifizierung
       const secret = process.env.NFC_TERMINAL_SECRET;
-      if (secret && body.terminalSecret !== secret) {
+      if (secret && secret.length > 0 && body.terminalSecret !== secret) {
         return reply.code(403).send({ error: "Ungültiges Terminal-Secret" });
       }
 
@@ -155,102 +155,136 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const today = todayInTz(tz);
       const todayStr = dateStrInTz(now, tz);
 
-      // Offenen Eintrag von heute suchen
-      const openEntry = await app.prisma.timeEntry.findFirst({
-        where: {
-          employeeId: employee.id,
-          date: today,
-          endTime: null,
-        },
-      });
-
-      if (openEntry) {
-        // Ausstempeln
-        const updated = await app.prisma.timeEntry.update({
-          where: { id: openEntry.id },
-          data: { endTime: now },
-          include: { breaks: { orderBy: { startTime: "asc" } } },
-        });
-
-        // Check for break gap: if there was a previous completed entry today
-        // that ended within 2h of when this open entry started, treat the gap as a break
-        const previousEntry = await app.prisma.timeEntry.findFirst({
+      // Offenen Eintrag suchen + clock-in/out in einer Transaktion (Race-Condition vermeiden)
+      const txResult = await app.prisma.$transaction(async (tx) => {
+        const openEntry = await tx.timeEntry.findFirst({
           where: {
             employeeId: employee.id,
             date: today,
-            id: { not: openEntry.id },
-            endTime: { not: null },
+            endTime: null,
           },
-          orderBy: { endTime: "desc" },
         });
 
-        if (previousEntry && previousEntry.endTime) {
-          const gapMs = openEntry.startTime.getTime() - previousEntry.endTime.getTime();
-          const gapHours = gapMs / 3600000;
-          if (gapHours > 0 && gapHours <= 2) {
-            // Merge: extend the previous entry to cover the current one,
-            // create a break for the gap, and delete the current entry
-            const breakStart = previousEntry.endTime;
-            const breakEnd = openEntry.startTime;
+        if (openEntry) {
+          // Ausstempeln
+          const updated = await tx.timeEntry.update({
+            where: { id: openEntry.id },
+            data: { endTime: now },
+            include: { breaks: { orderBy: { startTime: "asc" } } },
+          });
 
-            await app.prisma.break.create({
-              data: {
-                timeEntryId: previousEntry.id,
-                startTime: breakStart,
-                endTime: breakEnd,
-              },
-            });
+          // Check for break gap: if there was a previous completed entry today
+          // that ended within 2h of when this open entry started, treat the gap as a break
+          const previousEntry = await tx.timeEntry.findFirst({
+            where: {
+              employeeId: employee.id,
+              date: today,
+              id: { not: openEntry.id },
+              endTime: { not: null },
+            },
+            orderBy: { endTime: "desc" },
+          });
 
-            // Update previous entry to extend endTime to current entry's endTime
-            const allBreaks = await app.prisma.break.findMany({
-              where: { timeEntryId: previousEntry.id },
-            });
-            const totalBreakMins = Math.round(calcBreakMinutes(allBreaks));
+          if (previousEntry && previousEntry.endTime) {
+            const gapMs = openEntry.startTime.getTime() - previousEntry.endTime.getTime();
+            const gapHours = gapMs / 3600000;
+            if (gapHours > 0 && gapHours <= 2) {
+              // Merge: extend the previous entry to cover the current one,
+              // create a break for the gap, and delete the current entry
+              const breakStart = previousEntry.endTime;
+              const breakEnd = openEntry.startTime;
 
-            await app.prisma.timeEntry.update({
-              where: { id: previousEntry.id },
-              data: {
-                endTime: now,
-                breakMinutes: totalBreakMins,
-              },
-            });
+              await tx.break.create({
+                data: {
+                  timeEntryId: previousEntry.id,
+                  startTime: breakStart,
+                  endTime: breakEnd,
+                },
+              });
 
-            // Delete the current (short) entry
-            await app.prisma.timeEntry.delete({ where: { id: openEntry.id } });
+              // Update previous entry to extend endTime to current entry's endTime
+              const allBreaks = await tx.break.findMany({
+                where: { timeEntryId: previousEntry.id },
+              });
+              const totalBreakMins = Math.round(calcBreakMinutes(allBreaks));
 
-            await updateOvertimeAccount(app, employee.id);
+              await tx.timeEntry.update({
+                where: { id: previousEntry.id },
+                data: {
+                  endTime: now,
+                  breakMinutes: totalBreakMins,
+                },
+              });
 
-            await app.audit({
-              action: "NFC_CLOCK_OUT",
-              entity: "TimeEntry",
-              entityId: previousEntry.id,
-              oldValue: previousEntry,
-              newValue: { ...previousEntry, endTime: now, breakMinutes: totalBreakMins },
-              request: { ip: req.ip, headers: req.headers as Record<string, string> },
-            });
+              // Delete the current (short) entry
+              await tx.timeEntry.delete({ where: { id: openEntry.id } });
 
-            return {
-              action: "OUT" as const,
-              employee: {
-                firstName: employee.firstName,
-                lastName: employee.lastName,
-                employeeNumber: employee.employeeNumber,
-              },
-              time: now.toISOString(),
-            };
+              return {
+                action: "OUT" as const,
+                merged: true as const,
+                auditEntityId: previousEntry.id,
+                auditOldValue: previousEntry,
+                auditNewValue: { ...previousEntry, endTime: now, breakMinutes: totalBreakMins },
+              };
+            }
           }
+
+          return {
+            action: "OUT" as const,
+            merged: false as const,
+            updated,
+            openEntry,
+          };
         }
 
+        // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+        const leaveReason = await hasApprovedLeaveOnDate(tx, employee.id, todayStr);
+        if (leaveReason) {
+          return { action: "BLOCKED" as const, leaveReason };
+        }
+
+        // Einstempeln
+        const entry = await tx.timeEntry.create({
+          data: {
+            employeeId: employee.id,
+            date: today,
+            startTime: now,
+            source: "NFC",
+          },
+        });
+
+        return { action: "IN" as const, entry };
+      });
+
+      if (txResult.action === "BLOCKED") {
+        return reply.code(409).send({
+          error: `§ 8 BUrlG: Heute ist ${txResult.leaveReason} genehmigt. Bitte zuerst stornieren.`,
+          action: "BLOCKED",
+        });
+      }
+
+      if (txResult.action === "OUT") {
         await updateOvertimeAccount(app, employee.id);
 
-        await app.audit({
-          action: "NFC_CLOCK_OUT",
-          entity: "TimeEntry",
-          entityId: updated.id,
-          oldValue: openEntry,
-          newValue: updated,
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
-        });
+        if (txResult.merged) {
+          await app.audit({
+            action: "NFC_CLOCK_OUT",
+            entity: "TimeEntry",
+            entityId: txResult.auditEntityId,
+            oldValue: txResult.auditOldValue,
+            newValue: txResult.auditNewValue,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        } else {
+          await app.audit({
+            action: "NFC_CLOCK_OUT",
+            entity: "TimeEntry",
+            entityId: txResult.updated.id,
+            oldValue: txResult.openEntry,
+            newValue: txResult.updated,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
 
         return {
           action: "OUT" as const,
@@ -263,30 +297,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         };
       }
 
-      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
-      const leaveReason = await hasApprovedLeaveOnDate(app.prisma, employee.id, todayStr);
-      if (leaveReason) {
-        return reply.code(409).send({
-          error: `§ 8 BUrlG: Heute ist ${leaveReason} genehmigt. Bitte zuerst stornieren.`,
-          action: "BLOCKED",
-        });
-      }
-
-      // Einstempeln
-      const entry = await app.prisma.timeEntry.create({
-        data: {
-          employeeId: employee.id,
-          date: today,
-          startTime: now,
-          source: "NFC",
-        },
-      });
-
+      // action === "IN"
       await app.audit({
         action: "NFC_CLOCK_IN",
         entity: "TimeEntry",
-        entityId: entry.id,
-        newValue: entry,
+        entityId: txResult.entry.id,
+        newValue: txResult.entry,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -344,25 +360,35 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
-      // Prüfen ob bereits eingestempelt
-      const activeEntry = await app.prisma.timeEntry.findFirst({
-        where: { employeeId, endTime: null },
-      });
-      if (activeEntry) {
-        return reply.code(409).send({ error: "Bereits eingestempelt", entryId: activeEntry.id });
-      }
-
+      // Prüfen ob bereits eingestempelt + erstellen in einer Transaktion (Race-Condition vermeiden)
       const now = new Date();
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const entry = await app.prisma.timeEntry.create({
-        data: {
-          employeeId,
-          date: todayInTz(tz),
-          startTime: now,
-          source: body.source,
-          note: body.note,
-        },
+
+      const txResult = await app.prisma.$transaction(async (tx) => {
+        const activeEntry = await tx.timeEntry.findFirst({
+          where: { employeeId, endTime: null },
+        });
+        if (activeEntry) {
+          return { conflict: true as const, entryId: activeEntry.id };
+        }
+
+        const entry = await tx.timeEntry.create({
+          data: {
+            employeeId,
+            date: todayInTz(tz),
+            startTime: now,
+            source: body.source,
+            note: body.note,
+          },
+        });
+        return { conflict: false as const, entry };
       });
+
+      if (txResult.conflict) {
+        return reply.code(409).send({ error: "Bereits eingestempelt", entryId: txResult.entryId });
+      }
+
+      const entry = txResult.entry;
 
       await app.audit({
         userId: user.sub,

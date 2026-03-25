@@ -26,6 +26,7 @@ RUN pnpm --filter @clokr/api build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:22-alpine AS runtime
+RUN apk add --no-cache su-exec
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 WORKDIR /app
 
@@ -36,6 +37,9 @@ COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
 COPY --from=build /app/pnpm-lock.yaml ./
+
+# Create non-root user
+RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001
 
 # Entrypoint: db push → seed → start server
 COPY apps/api/docker-entrypoint.sh /docker-entrypoint.sh

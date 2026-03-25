@@ -90,6 +90,28 @@ services:
       api:
         condition: service_healthy
 
+  backup:
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: clokr
+      PGPASSWORD: password
+      PGDATABASE: clokr
+    volumes:
+      - ./backups:/backups
+    entrypoint: >
+      sh -c 'while true; do
+        pg_dump -Fc > /backups/clokr_$$(date +%Y%m%d_%H%M%S).dump &&
+        echo "Backup completed" &&
+        find /backups -name "*.dump" -mtime +7 -delete;
+        sleep 86400;
+      done'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - backup
+
 volumes:
   postgres_data:
   redis_data:

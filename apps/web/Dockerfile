@@ -31,9 +31,14 @@ COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
 COPY --from=build /app/packages/types/package.json ./packages/types/
 
+# Create non-root user
+RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV API_URL=http://api:4000
+
+USER clokr
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

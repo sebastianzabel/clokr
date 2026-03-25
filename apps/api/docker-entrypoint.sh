@@ -3,11 +3,19 @@ set -e
 
 echo "🔄 Syncing database schema..."
 cd /app/packages/db
-npx prisma db push --url "$DATABASE_URL" --accept-data-loss
+npx prisma migrate deploy || {
+  echo "⚠️  Migration failed, falling back to db push..."
+  npx prisma db push --url "$DATABASE_URL"
+}
 
-echo "🌱 Seeding database..."
-npx tsx src/seed.ts || echo "ℹ️  Seed skipped (already applied or failed)"
+if [ "${SEED_DEMO_DATA:-true}" = "true" ]; then
+  echo "🌱 Running database seed..."
+  cd /app/packages/db
+  npx tsx src/seed.ts || echo "ℹ️  Seed skipped"
+else
+  echo "ℹ️  Seed skipped (SEED_DEMO_DATA=false)"
+fi
 
 echo "🚀 Starting Clokr API..."
 cd /app
-exec node apps/api/dist/index.js
+exec su-exec clokr node apps/api/dist/index.js

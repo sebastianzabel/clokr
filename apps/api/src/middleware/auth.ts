@@ -2,7 +2,7 @@ import { FastifyRequest, FastifyReply } from "fastify";
 import { Role } from "@clokr/db";
 
 export interface JwtPayload {
-  sub: string;       // userId
+  sub: string; // userId
   role: Role;
   tenantId: string;
   employeeId?: string;
@@ -19,7 +19,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
   try {
     await req.jwtVerify();
   } catch {
-    reply.code(401).send({ error: "Unauthorized" });
+    return reply.code(401).send({ error: "Unauthorized" });
   }
 }
 
@@ -27,7 +27,7 @@ export function requireRole(...roles: Role[]) {
   return async (req: FastifyRequest, reply: FastifyReply) => {
     await requireAuth(req, reply);
     if (!roles.includes(req.user.role)) {
-      reply.code(403).send({ error: "Forbidden" });
+      return reply.code(403).send({ error: "Forbidden" });
     }
   };
 }
