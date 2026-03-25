@@ -525,6 +525,9 @@
   let monthlyTarget = $derived(
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
+  let mBalance = $derived(
+    isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
+  );
   let selectedSlots = $derived(
     entries
       .filter((e) => (e.date ?? e.startTime).split("T")[0] === selectedDate)
@@ -554,7 +557,6 @@
       .filter((d) => d.isCurrentMonth && !d.isFuture)
       .reduce((s, d) => s + d.expectedMin, 0),
   );
-  let totalBalance = $derived(totalWorked - totalExpected);
   let dayWarnings = $derived(checkArbZGFrontend(selectedSlots));
   // Formatierter Label für den ausgewählten Tag
   let selectedLabel = $derived(
@@ -597,7 +599,6 @@
     <div class="mstat-sep"></div>
     <div class="mstat-item">
       <span class="mstat-label">Monat-Saldo</span>
-      {@const mBalance = isMonthlyHours ? totalWorked - monthlyTarget : totalBalance}
       <span class="mstat-value bal {balClass(mBalance)}">{fmtBalance(mBalance)}</span>
     </div>
     {#if overtimeTotalHours !== null}
