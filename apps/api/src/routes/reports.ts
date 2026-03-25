@@ -34,7 +34,7 @@ export async function reportRoutes(app: FastifyInstance) {
           exitDate: null,
         },
         include: {
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
             where: { date: { gte: start, lte: end }, type: "WORK", endTime: { not: null } },
           },
@@ -49,50 +49,60 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
-      // Soll-Stunden: kalenderbasiert über Wochentag-Soll aus WorkSchedule (TZ-aware)
+      // Pick the schedule valid on a given date from a list of versioned schedules
+      function getScheduleForDate(schedules: (typeof employees)[0]["workSchedules"], date: Date) {
+        return (
+          schedules
+            .filter((s) => s.validFrom <= date)
+            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+        );
+      }
+
+      // Soll-Stunden: day-by-day using the schedule valid on each day (TZ-aware)
       function calcShouldMinutes(
-        schedule: {
-          type?: unknown;
-          monthlyHours?: unknown;
-          mondayHours: unknown;
-          tuesdayHours: unknown;
-          wednesdayHours: unknown;
-          thursdayHours: unknown;
-          fridayHours: unknown;
-          saturdayHours: unknown;
-          sundayHours: unknown;
-        } | null,
+        schedules: (typeof employees)[0]["workSchedules"],
         hireDate?: Date,
       ): number {
-        if (!schedule) return 0;
-        // Tage vor hireDate überspringen
+        if (schedules.length === 0) return 0;
         const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-        return calcExpectedMinutesTz(schedule as Record<string, unknown>, effectiveStart, end, tz);
+        // For MONTHLY_HOURS, use the latest schedule
+        const latestSchedule = getScheduleForDate(schedules, end);
+        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
+          const mh = Number(latestSchedule.monthlyHours ?? 0);
+          return mh > 0 ? mh * 60 : 0;
+        }
+        // Day-by-day iteration for FIXED_WEEKLY with versioned schedules
+        let totalMin = 0;
+        const cur = new Date(effectiveStart);
+        while (cur <= end) {
+          const schedule = getScheduleForDate(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return totalMin;
       }
 
       // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat, TZ-aware)
       function absenceMinutes(
-        schedule: {
-          mondayHours: unknown;
-          tuesdayHours: unknown;
-          wednesdayHours: unknown;
-          thursdayHours: unknown;
-          fridayHours: unknown;
-          saturdayHours: unknown;
-          sundayHours: unknown;
-        } | null,
+        schedules: (typeof employees)[0]["workSchedules"],
         absStart: Date,
         absEnd: Date,
       ): number {
-        if (!schedule) return 0;
+        if (schedules.length === 0) return 0;
         // Schnittmenge mit Monatsgrenzen
         const rangeStart = absStart < start ? start : absStart;
         const rangeEnd = absEnd > end ? end : absEnd;
         let min = 0;
         const cur = new Date(rangeStart);
         while (cur <= rangeEnd) {
-          const dow = getDayOfWeekInTz(cur, tz);
-          min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          const schedule = getScheduleForDate(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
           cur.setDate(cur.getDate() + 1);
         }
         return min;
@@ -106,13 +116,14 @@ export async function reportRoutes(app: FastifyInstance) {
         }, 0);
 
         // Soll-Minuten: Gesamtmonat minus genehmigte Abwesenheitstage
-        const rawShouldMin = calcShouldMinutes(emp.workSchedule, emp.hireDate);
-        const isMonthlyHours = String((emp.workSchedule as any)?.type ?? "") === "MONTHLY_HOURS";
+        const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
+        const latestSchedule = getScheduleForDate(emp.workSchedules, end);
+        const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
         // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
         const absenceMin = isMonthlyHours
           ? 0
           : emp.leaveRequests.reduce(
-              (sum, lr) => sum + absenceMinutes(emp.workSchedule, lr.startDate, lr.endDate),
+              (sum, lr) => sum + absenceMinutes(emp.workSchedules, lr.startDate, lr.endDate),
               0,
             );
         const shouldMin = Math.max(0, rawShouldMin - absenceMin);
@@ -253,7 +264,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null },
         include: {
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
             where: { date: { gte: start, lte: end }, endTime: { not: null } },
           },
@@ -409,7 +420,7 @@ export async function reportRoutes(app: FastifyInstance) {
           tenantId: req.user.tenantId,
         },
         include: {
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
             where: { date: { gte: start, lte: end }, type: "WORK", endTime: { not: null } },
             orderBy: { date: "asc" },
@@ -429,30 +440,51 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
-      // Soll-Minuten
-      function calcShouldMinutes(
-        schedule: Record<string, unknown> | null,
-        hireDate?: Date,
-      ): number {
-        if (!schedule) return 0;
-        // Tage vor hireDate überspringen
-        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-        return calcExpectedMinutesTz(schedule, effectiveStart, end, tz);
+      type ScheduleList = NonNullable<typeof emp>["workSchedules"];
+
+      // Pick the schedule valid on a given date
+      function getScheduleForDatePdf(schedules: ScheduleList, date: Date) {
+        return (
+          schedules
+            .filter((s) => s.validFrom <= date)
+            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+        );
       }
 
-      function absenceMinutes(
-        schedule: Record<string, unknown> | null,
-        absStart: Date,
-        absEnd: Date,
-      ): number {
-        if (!schedule) return 0;
+      // Soll-Minuten (day-by-day with versioned schedules)
+      function calcShouldMinutesPdf(schedules: ScheduleList, hireDate?: Date): number {
+        if (schedules.length === 0) return 0;
+        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+        const latestSchedule = getScheduleForDatePdf(schedules, end);
+        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
+          const mh = Number(latestSchedule.monthlyHours ?? 0);
+          return mh > 0 ? mh * 60 : 0;
+        }
+        let totalMin = 0;
+        const cur = new Date(effectiveStart);
+        while (cur <= end) {
+          const schedule = getScheduleForDatePdf(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return totalMin;
+      }
+
+      function absenceMinutesPdf(schedules: ScheduleList, absStart: Date, absEnd: Date): number {
+        if (schedules.length === 0) return 0;
         const rangeStart = absStart < start ? start : absStart;
         const rangeEnd = absEnd > end ? end : absEnd;
         let min = 0;
         const cur = new Date(rangeStart);
         while (cur <= rangeEnd) {
-          const dow = getDayOfWeekInTz(cur, tz);
-          min += getDayHoursFromSchedule(schedule, dow) * 60;
+          const schedule = getScheduleForDatePdf(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
           cur.setDate(cur.getDate() + 1);
         }
         return min;
@@ -463,22 +495,14 @@ export async function reportRoutes(app: FastifyInstance) {
         return sum + slotMin - Number(e.breakMinutes ?? 0);
       }, 0);
 
-      const rawShouldMin = calcShouldMinutes(
-        emp.workSchedule as unknown as Record<string, unknown>,
-        emp.hireDate,
-      );
-      const isMonthlyHoursPdf = String((emp.workSchedule as any)?.type ?? "") === "MONTHLY_HOURS";
+      const rawShouldMin = calcShouldMinutesPdf(emp.workSchedules, emp.hireDate);
+      const latestSchedulePdf = getScheduleForDatePdf(emp.workSchedules, end);
+      const isMonthlyHoursPdf = String(latestSchedulePdf?.type ?? "") === "MONTHLY_HOURS";
       // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
       const absenceMin = isMonthlyHoursPdf
         ? 0
         : emp.leaveRequests.reduce(
-            (sum, lr) =>
-              sum +
-              absenceMinutes(
-                emp.workSchedule as unknown as Record<string, unknown>,
-                lr.startDate,
-                lr.endDate,
-              ),
+            (sum, lr) => sum + absenceMinutesPdf(emp.workSchedules, lr.startDate, lr.endDate),
             0,
           );
       const shouldMin = Math.max(0, rawShouldMin - absenceMin);

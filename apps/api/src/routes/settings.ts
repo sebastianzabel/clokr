@@ -56,7 +56,10 @@ const employeeScheduleSchema = z
     sundayHours: z.number().min(0).max(24),
     overtimeThreshold: z.number().min(1).max(500),
     allowOvertimePayout: z.boolean(),
-    validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    validFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
   })
   .refine(
     (data) => data.type !== "MONTHLY_HOURS" || (data.monthlyHours != null && data.monthlyHours > 0),
@@ -150,7 +153,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
-      const schedule = await app.prisma.workSchedule.findUnique({ where: { employeeId } });
+      const schedule = await app.prisma.workSchedule.findFirst({
+        where: { employeeId },
+        orderBy: { validFrom: "desc" },
+      });
       if (!schedule) return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
 
       return schedule;
@@ -168,42 +174,41 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      const old = await app.prisma.workSchedule.findUnique({ where: { employeeId } });
+      const validFrom = new Date(body.validFrom ?? new Date().toISOString().split("T")[0]);
 
-      const schedule = await app.prisma.workSchedule.upsert({
-        where: { employeeId },
-        update: {
-          type: body.type,
-          weeklyHours: body.weeklyHours,
-          monthlyHours: body.monthlyHours ?? null,
-          mondayHours: body.mondayHours,
-          tuesdayHours: body.tuesdayHours,
-          wednesdayHours: body.wednesdayHours,
-          thursdayHours: body.thursdayHours,
-          fridayHours: body.fridayHours,
-          saturdayHours: body.saturdayHours,
-          sundayHours: body.sundayHours,
-          overtimeThreshold: body.overtimeThreshold,
-          allowOvertimePayout: body.allowOvertimePayout,
-          validFrom: new Date(body.validFrom),
-        },
-        create: {
-          employeeId,
-          type: body.type,
-          weeklyHours: body.weeklyHours,
-          monthlyHours: body.monthlyHours ?? null,
-          mondayHours: body.mondayHours,
-          tuesdayHours: body.tuesdayHours,
-          wednesdayHours: body.wednesdayHours,
-          thursdayHours: body.thursdayHours,
-          fridayHours: body.fridayHours,
-          saturdayHours: body.saturdayHours,
-          sundayHours: body.sundayHours,
-          overtimeThreshold: body.overtimeThreshold,
-          allowOvertimePayout: body.allowOvertimePayout,
-          validFrom: new Date(body.validFrom),
-        },
+      const scheduleData = {
+        type: body.type,
+        weeklyHours: body.weeklyHours,
+        monthlyHours: body.monthlyHours ?? null,
+        mondayHours: body.mondayHours,
+        tuesdayHours: body.tuesdayHours,
+        wednesdayHours: body.wednesdayHours,
+        thursdayHours: body.thursdayHours,
+        fridayHours: body.fridayHours,
+        saturdayHours: body.saturdayHours,
+        sundayHours: body.sundayHours,
+        overtimeThreshold: body.overtimeThreshold,
+        allowOvertimePayout: body.allowOvertimePayout,
+        validFrom,
+      };
+
+      // Check if a schedule with the exact same validFrom exists
+      const existing = await app.prisma.workSchedule.findFirst({
+        where: { employeeId, validFrom },
       });
+
+      let schedule;
+      const old = existing;
+      if (existing) {
+        schedule = await app.prisma.workSchedule.update({
+          where: { id: existing.id },
+          data: scheduleData,
+        });
+      } else {
+        schedule = await app.prisma.workSchedule.create({
+          data: { employeeId, ...scheduleData },
+        });
+      }
 
       await app.audit({
         userId: req.user.sub,
@@ -402,6 +407,20 @@ export async function settingsRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /api/v1/settings/work/:employeeId/history  — alle Schedule-Versionen eines Mitarbeiters
+  app.get("/work/:employeeId/history", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { employeeId } = req.params as { employeeId: string };
+      const schedules = await app.prisma.workSchedule.findMany({
+        where: { employeeId },
+        orderBy: { validFrom: "desc" },
+      });
+      return schedules;
+    },
+  });
+
   // GET /api/v1/settings/employees  — alle Mitarbeiter mit ihren Arbeitszeitmodellen
   app.get("/employees", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
@@ -413,7 +432,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         where: { tenantId },
         include: {
           user: { select: { email: true } },
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "desc" } },
         },
         orderBy: { employeeNumber: "asc" },
       });
@@ -424,7 +443,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         firstName: e.firstName,
         lastName: e.lastName,
         email: e.user.email,
-        workSchedule: e.workSchedule,
+        workSchedule: e.workSchedules[0] ?? null,
       }));
     },
   });

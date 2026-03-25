@@ -160,7 +160,7 @@ model Employee {
 
   tenant           Tenant          @relation(fields: [tenantId], references: [id])
   user             User            @relation(fields: [userId], references: [id])
-  workSchedule     WorkSchedule?
+  workSchedules    WorkSchedule[]
   overtimeAccount  OvertimeAccount?
   timeEntries      TimeEntry[]
   leaveEntitlements LeaveEntitlement[]
@@ -181,7 +181,7 @@ model Employee {
 
 model WorkSchedule {
   id                    String       @id @default(uuid())
-  employeeId            String       @unique
+  employeeId            String
   type                  ScheduleType @default(FIXED_WEEKLY)
   weeklyHours           Decimal      @db.Decimal(5, 2)  // z.B. 40.00
   monthlyHours          Decimal?     @db.Decimal(5, 2)  // z.B. 15.00 für Minijobber
@@ -199,6 +199,8 @@ model WorkSchedule {
   updatedAt             DateTime @updatedAt      @db.Timestamptz
 
   employee              Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, validFrom])
 }
 
 // ─────────────────────────────────────────────

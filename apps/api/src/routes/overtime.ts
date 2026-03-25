@@ -32,13 +32,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       if (!account) return reply.code(404).send({ error: "Konto nicht gefunden" });
 
-      const schedule = await app.prisma.workSchedule.findUnique({ where: { employeeId } });
+      const schedule = await app.prisma.workSchedule.findFirst({
+        where: { employeeId, validFrom: { lte: new Date() } },
+        orderBy: { validFrom: "desc" },
+      });
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
       const balance = Number(account.balanceHours);
 
       return {
         ...account,
-        status: balance >= threshold ? "CRITICAL" : balance >= threshold * 0.67 ? "ELEVATED" : "NORMAL",
+        status:
+          balance >= threshold ? "CRITICAL" : balance >= threshold * 0.67 ? "ELEVATED" : "NORMAL",
         threshold,
       };
     },
@@ -80,8 +84,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = payoutSchema.parse(req.body);
 
-      const schedule = await app.prisma.workSchedule.findUnique({
-        where: { employeeId: body.employeeId },
+      const schedule = await app.prisma.workSchedule.findFirst({
+        where: { employeeId: body.employeeId, validFrom: { lte: new Date() } },
+        orderBy: { validFrom: "desc" },
       });
 
       if (!schedule?.allowOvertimePayout) {

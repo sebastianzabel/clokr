@@ -832,8 +832,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
 }
 
 // ── Effektiven Arbeitsplan ermitteln (Employee > TenantConfig > Hardcoded) ────
-export async function getEffectiveSchedule(app: FastifyInstance, employeeId: string) {
-  const schedule = await app.prisma.workSchedule.findUnique({ where: { employeeId } });
+export async function getEffectiveSchedule(
+  app: FastifyInstance,
+  employeeId: string,
+  forDate?: Date,
+) {
+  const targetDate = forDate ?? new Date();
+  const schedule = await app.prisma.workSchedule.findFirst({
+    where: { employeeId, validFrom: { lte: targetDate } },
+    orderBy: { validFrom: "desc" },
+  });
   if (schedule) return schedule;
 
   const employee = await app.prisma.employee.findUnique({

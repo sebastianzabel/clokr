@@ -49,7 +49,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         where: { tenantId: req.user.tenantId },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
           overtimeAccount: { select: { balanceHours: true } },
           invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
@@ -58,6 +58,8 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       return employees.map((e: any) => ({
         ...e,
+        workSchedule: e.workSchedules[0] ?? null,
+        workSchedules: undefined,
         invitationStatus: deriveInvitationStatus(e.user.isActive, e.invitations),
         invitations: undefined,
       }));
@@ -80,7 +82,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         where: { id },
         include: {
           user: { select: { email: true, role: true, isActive: true } },
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
           overtimeAccount: true,
           leaveEntitlements: { include: { leaveType: true } },
           invitations: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -91,6 +93,8 @@ export async function employeeRoutes(app: FastifyInstance) {
 
       return {
         ...employee,
+        workSchedule: employee.workSchedules[0] ?? null,
+        workSchedules: undefined,
         invitationStatus: deriveInvitationStatus(employee.user.isActive, employee.invitations),
         invitations: undefined,
       };
@@ -308,12 +312,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         where: { id },
         include: {
           user: { select: { email: true, role: true, isActive: true } },
-          workSchedule: true,
+          workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
           overtimeAccount: { select: { balanceHours: true } },
         },
       });
 
-      return updated;
+      return {
+        ...updated,
+        workSchedule: updated?.workSchedules[0] ?? null,
+        workSchedules: undefined,
+      };
     },
   });
 
