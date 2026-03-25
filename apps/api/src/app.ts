@@ -42,18 +42,35 @@ export async function buildApp() {
   });
 
   // ── Security ──────────────────────────────────────────────
-  // Global error handler: ZodErrors → 400
-  app.setErrorHandler((error: Error & { statusCode?: number }, _req, reply) => {
-    if (error.name === "ZodError") {
+  // Global error handler: ZodErrors → 400 with German field messages
+  app.setErrorHandler(
+    (
+      error: Error & { statusCode?: number; issues?: Array<{ path: string[]; message: string }> },
+      _req,
+      reply,
+    ) => {
+      if (error.name === "ZodError" || error.issues) {
+        let parsed: { path: string[]; message: string }[];
+        try {
+          parsed = JSON.parse(error.message);
+        } catch {
+          parsed = [{ path: [], message: error.message }];
+        }
+        const fieldErrors = parsed.map(
+          (i: { path: string[]; message: string }) => `${i.path.join(".") || "Feld"}: ${i.message}`,
+        );
+        return reply.code(400).send({
+          error: "Validierungsfehler",
+          message: fieldErrors.join("; "),
+          details: parsed,
+        });
+      }
+      app.log.error(error);
       return reply
-        .code(400)
-        .send({ error: "Validierungsfehler", details: JSON.parse(error.message) });
-    }
-    app.log.error(error);
-    return reply
-      .code(error.statusCode ?? 500)
-      .send({ error: error.message ?? "Interner Serverfehler" });
-  });
+        .code(error.statusCode ?? 500)
+        .send({ error: error.message ?? "Interner Serverfehler" });
+    },
+  );
 
   await app.register(helmet, { contentSecurityPolicy: false });
   await app.register(cors, {
