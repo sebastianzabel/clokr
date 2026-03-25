@@ -353,18 +353,18 @@
   }
 
   .notification-dropdown {
-    position: absolute;
-    top: calc(100% + 0.5rem);
-    left: 0;
-    width: 320px;
+    position: fixed;
+    top: 3.5rem;
+    left: 240px;
+    width: 340px;
     max-height: 420px;
     background: var(--glass-bg-strong, var(--color-surface));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-    z-index: 200;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+    z-index: 300;
     display: flex;
     flex-direction: column;
     overflow: hidden;
