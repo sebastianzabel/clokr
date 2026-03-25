@@ -30,6 +30,11 @@ const clockOutSchema = z.object({
   note: z.string().optional(),
 });
 
+const breakSlotSchema = z.object({
+  startTime: z.string(),
+  endTime: z.string(),
+});
+
 const manualEntrySchema = z.object({
   employeeId: z.string().uuid().optional(), // optional: fällt auf eigene ID zurück
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -38,6 +43,7 @@ const manualEntrySchema = z.object({
   breakMinutes: z.number().int().min(0).default(0),
   note: z.string().optional().nullable(),
   source: z.nativeEnum(TimeEntrySource).default("MANUAL"),
+  breaks: z.array(breakSlotSchema).optional(),
 });
 
 const updateEntrySchema = z.object({
@@ -50,7 +56,13 @@ const updateEntrySchema = z.object({
   breakMinutes: z.number().int().min(0).optional(),
   note: z.string().optional().nullable(),
   type: z.string().optional(),
+  breaks: z.array(breakSlotSchema).optional(),
 });
+
+// ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
+function calcBreakMinutes(breaks: { startTime: Date; endTime: Date }[]): number {
+  return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
+}
 
 // ── Überlappungsprüfung ────────────────────────────────────────────────────────
 async function checkOverlap(
@@ -126,7 +138,77 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         const updated = await app.prisma.timeEntry.update({
           where: { id: openEntry.id },
           data: { endTime: now },
+          include: { breaks: { orderBy: { startTime: "asc" } } },
         });
+
+        // Check for break gap: if there was a previous completed entry today
+        // that ended within 2h of when this open entry started, treat the gap as a break
+        const previousEntry = await app.prisma.timeEntry.findFirst({
+          where: {
+            employeeId: employee.id,
+            date: today,
+            id: { not: openEntry.id },
+            endTime: { not: null },
+          },
+          orderBy: { endTime: "desc" },
+        });
+
+        if (previousEntry && previousEntry.endTime) {
+          const gapMs = openEntry.startTime.getTime() - previousEntry.endTime.getTime();
+          const gapHours = gapMs / 3600000;
+          if (gapHours > 0 && gapHours <= 2) {
+            // Merge: extend the previous entry to cover the current one,
+            // create a break for the gap, and delete the current entry
+            const breakStart = previousEntry.endTime;
+            const breakEnd = openEntry.startTime;
+
+            await app.prisma.break.create({
+              data: {
+                timeEntryId: previousEntry.id,
+                startTime: breakStart,
+                endTime: breakEnd,
+              },
+            });
+
+            // Update previous entry to extend endTime to current entry's endTime
+            const allBreaks = await app.prisma.break.findMany({
+              where: { timeEntryId: previousEntry.id },
+            });
+            const totalBreakMins = Math.round(calcBreakMinutes(allBreaks));
+
+            await app.prisma.timeEntry.update({
+              where: { id: previousEntry.id },
+              data: {
+                endTime: now,
+                breakMinutes: totalBreakMins,
+              },
+            });
+
+            // Delete the current (short) entry
+            await app.prisma.timeEntry.delete({ where: { id: openEntry.id } });
+
+            await updateOvertimeAccount(app, employee.id);
+
+            await app.audit({
+              action: "NFC_CLOCK_OUT",
+              entity: "TimeEntry",
+              entityId: previousEntry.id,
+              oldValue: previousEntry,
+              newValue: { ...previousEntry, endTime: now, breakMinutes: totalBreakMins },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+
+            return {
+              action: "OUT" as const,
+              employee: {
+                firstName: employee.firstName,
+                lastName: employee.lastName,
+                employeeNumber: employee.employeeNumber,
+              },
+              time: now.toISOString(),
+            };
+          }
+        }
 
         await updateOvertimeAccount(app, employee.id);
 
@@ -303,7 +385,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             lte: to ? new Date(to) : undefined,
           },
         },
-        include: { employee: { select: { firstName: true, lastName: true } } },
+        include: {
+          employee: { select: { firstName: true, lastName: true } },
+          breaks: { orderBy: { startTime: "asc" } },
+        },
         orderBy: { date: "desc" },
       });
 
@@ -358,6 +443,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Zukunfts-Validierung: Datum max heute, Endzeit max now+30min
       const now = new Date();
+      const tz = await getTenantTimezone(app.prisma, targetEmployee?.tenantId ?? req.user.tenantId);
       const todayStr = dateStrInTz(now, tz);
       const entryDateStr = dateStrInTz(new Date(body.date ?? body.startTime), tz);
       if (entryDateStr > todayStr) {
@@ -381,32 +467,108 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlap = await checkOverlap(app, employeeId, newStart, newEnd);
       if (overlap) return reply.code(409).send({ error: overlap });
 
+      // Determine breakMinutes from break slots or body
+      let finalBreakMinutes = body.breakMinutes;
+      const breakSlots: { startTime: Date; endTime: Date }[] = [];
+
+      if (body.breaks && body.breaks.length > 0) {
+        for (const b of body.breaks) {
+          breakSlots.push({ startTime: new Date(b.startTime), endTime: new Date(b.endTime) });
+        }
+        finalBreakMinutes = Math.round(calcBreakMinutes(breakSlots));
+      }
+
       const entry = await app.prisma.timeEntry.create({
         data: {
           employeeId,
           date: new Date(body.date),
           startTime: newStart,
           endTime: newEnd,
-          breakMinutes: body.breakMinutes,
+          breakMinutes: finalBreakMinutes,
           note: body.note,
           source: "MANUAL",
           createdBy: user.sub,
         },
       });
 
+      // Create break slot records
+      if (breakSlots.length > 0) {
+        await app.prisma.break.createMany({
+          data: breakSlots.map((b) => ({
+            timeEntryId: entry.id,
+            startTime: b.startTime,
+            endTime: b.endTime,
+          })),
+        });
+      } else if (newEnd && finalBreakMinutes === 0) {
+        // Auto-break: check tenant config
+        const tenantConfig = targetEmployee
+          ? await app.prisma.tenantConfig.findUnique({
+              where: { tenantId: targetEmployee.tenantId },
+            })
+          : null;
+
+        if (tenantConfig?.autoBreakEnabled) {
+          const workDurationMin = (newEnd.getTime() - newStart.getTime()) / 60000;
+          let autoBreakMin = 0;
+          if (workDurationMin > 9 * 60) autoBreakMin = 45;
+          else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+
+          if (autoBreakMin > 0) {
+            // Determine break start time
+            let breakStartTime: Date;
+            if (tenantConfig.defaultBreakStart) {
+              const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+              breakStartTime = new Date(newStart);
+              breakStartTime.setHours(hh, mm, 0, 0);
+              // If configured break start is outside work period, use middle
+              if (breakStartTime <= newStart || breakStartTime >= newEnd) {
+                const midMs = newStart.getTime() + (newEnd.getTime() - newStart.getTime()) / 2;
+                breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+              }
+            } else {
+              const midMs = newStart.getTime() + (newEnd.getTime() - newStart.getTime()) / 2;
+              breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+            }
+            const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+
+            await app.prisma.break.create({
+              data: {
+                timeEntryId: entry.id,
+                startTime: breakStartTime,
+                endTime: breakEndTime,
+              },
+            });
+
+            await app.prisma.timeEntry.update({
+              where: { id: entry.id },
+              data: { breakMinutes: autoBreakMin },
+            });
+            // Update entry object for response
+            (entry as any).breakMinutes = autoBreakMin;
+          }
+        }
+      }
+
       await updateOvertimeAccount(app, employeeId);
 
       const warnings = await checkArbZG(app.prisma, employeeId, new Date(body.date));
+
+      // Re-fetch entry with breaks for response
+      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
+        where: { id: entry.id },
+        include: { breaks: { orderBy: { startTime: "asc" } } },
+      });
 
       await app.audit({
         userId: user.sub,
         action: "CREATE",
         entity: "TimeEntry",
         entityId: entry.id,
-        newValue: entry,
+        newValue: entryWithBreaks,
       });
 
-      return reply.code(201).send({ entry, warnings });
+      return reply.code(201).send({ entry: entryWithBreaks, warnings });
     },
   });
 
@@ -496,13 +658,34 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
-      if (body.breakMinutes !== undefined) patch.breakMinutes = body.breakMinutes;
+      if (body.breakMinutes !== undefined && !body.breaks) patch.breakMinutes = body.breakMinutes;
       if ("note" in body) patch.note = body.note ?? null;
+
+      // Handle break slots update
+      if (body.breaks) {
+        // Delete existing breaks and create new ones
+        await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
+        const newBreakSlots = body.breaks.map((b) => ({
+          timeEntryId: id,
+          startTime: new Date(b.startTime),
+          endTime: new Date(b.endTime),
+        }));
+        if (newBreakSlots.length > 0) {
+          await app.prisma.break.createMany({ data: newBreakSlots });
+        }
+        // Recalculate breakMinutes from the new break slots
+        patch.breakMinutes = Math.round(
+          calcBreakMinutes(
+            newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
+          ),
+        );
+      }
 
       const updated = await app.prisma.timeEntry.update({
         where: { id },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         data: patch as any,
+        include: { breaks: { orderBy: { startTime: "asc" } } },
       });
 
       await updateOvertimeAccount(app, existing.employeeId);
