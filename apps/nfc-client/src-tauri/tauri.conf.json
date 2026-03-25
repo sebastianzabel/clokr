@@ -23,11 +23,7 @@
         "decorations": true
       }
     ],
-    "trayIcon": {
-      "iconPath": "icons/tray-disconnected.png",
-      "iconAsTemplate": true,
-      "tooltip": "Clokr NFC Terminal"
-    }
+    "trayIcon": null
   },
   "bundle": {
     "active": true,
@@ -38,6 +34,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "frameworks": [],
+      "exceptionDomain": "",
+      "signingIdentity": null
+    }
   }
 }

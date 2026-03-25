@@ -218,7 +218,7 @@
   }
 
   .form-group input:focus {
-    border-color: #7c3aed;
+    border-color: #3b82f6;
   }
 
   .toggle-group {
@@ -262,7 +262,7 @@
   }
 
   .switch input:checked + .slider {
-    background: #7c3aed;
+    background: #3b82f6;
   }
   .switch input:checked + .slider::before {
     transform: translateX(20px);
@@ -277,7 +277,7 @@
 
   .btn-primary {
     padding: 0.5rem 1.5rem;
-    background: #7c3aed;
+    background: #3b82f6;
     color: white;
     border: none;
     border-radius: 6px;
@@ -288,7 +288,7 @@
   }
 
   .btn-primary:hover {
-    background: #6d28d9;
+    background: #2563eb;
   }
   .btn-primary:disabled {
     opacity: 0.5;

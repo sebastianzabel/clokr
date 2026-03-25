@@ -28,6 +28,12 @@ fn main() {
             None,
         ))
         .setup(|app| {
+            // Hide from Dock on macOS (LSUIElement behavior)
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             let cfg = config::load_config();
             let reader_connected = Arc::new(AtomicBool::new(false));
 

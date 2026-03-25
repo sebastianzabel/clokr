@@ -1,7 +1,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
-    AppHandle, Manager,
+    tray::{MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager,
 };
 
 pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +11,10 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let _tray = TrayIconBuilder::new()
         .tooltip("Clokr NFC Terminal")
+        .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png")).expect("tray icon"))
+        .icon_as_template(false)
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id.as_ref() {
             "settings" => {
                 if let Some(window) = app.get_webview_window("settings") {

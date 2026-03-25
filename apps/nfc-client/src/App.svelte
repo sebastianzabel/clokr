@@ -10,7 +10,7 @@
   :global(body) {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: #1a1a2e;
+    background: #1c1c1e;
     color: #e0e0e0;
   }
 
