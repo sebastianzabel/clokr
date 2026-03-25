@@ -1,7 +1,7 @@
 <script lang="ts">
   import { run, preventDefault, self } from "svelte/legacy";
 
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
 
@@ -278,6 +278,11 @@
     loadData();
     loadCalendar();
     loadVacationSummary();
+  });
+
+  onDestroy(() => {
+    if (hoursPreviewTimer) clearTimeout(hoursPreviewTimer);
+    if (overlapTimer) clearTimeout(overlapTimer);
   });
 
   async function loadData() {

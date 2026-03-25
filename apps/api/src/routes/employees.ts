@@ -23,6 +23,8 @@ const createEmployeeSchema = z.object({
   password: z.string().min(8).optional(),
 });
 
+const idParamSchema = z.object({ id: z.string().uuid() });
+
 const updateEmployeeSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
@@ -76,7 +78,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
       const user = req.user;
 
       if (user.role === "EMPLOYEE" && user.employeeId !== id) {
@@ -208,7 +210,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
       const body = updateEmployeeSchema.parse(req.body);
 
       const employee = await app.prisma.employee.findUnique({ where: { id } });
@@ -236,7 +238,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
       const { exitDate } = z.object({ exitDate: z.string().optional() }).parse(req.body ?? {});
 
       const employee = await app.prisma.employee.findUnique({
@@ -285,7 +287,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
 
       const employee = await app.prisma.employee.findUnique({
         where: { id },
@@ -336,7 +338,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
 
       const employee = await app.prisma.employee.findUnique({
         where: { id },
@@ -384,7 +386,7 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
 
       const employee = await app.prisma.employee.findUnique({
         where: { id },

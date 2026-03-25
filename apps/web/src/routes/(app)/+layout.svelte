@@ -122,7 +122,12 @@
   }
 </script>
 
-<svelte:window onclick={handleWindowClick} />
+<svelte:window
+  onclick={handleWindowClick}
+  onkeydown={(e) => {
+    if (e.key === "Escape") showNotifications = false;
+  }}
+/>
 
 {#if $authStore.accessToken}
   <div class="app-shell">

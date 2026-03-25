@@ -37,7 +37,10 @@ const breakSlotSchema = z.object({
 
 const manualEntrySchema = z.object({
   employeeId: z.string().uuid().optional(), // optional: fällt auf eigene ID zurück
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
   startTime: z.string().datetime(),
   endTime: z.string().datetime().optional().nullable(),
   breakMinutes: z.number().int().min(0).default(0),
@@ -46,10 +49,13 @@ const manualEntrySchema = z.object({
   breaks: z.array(breakSlotSchema).optional(),
 });
 
+const idParamSchema = z.object({ id: z.string().uuid() });
+
 const updateEntrySchema = z.object({
   date: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum")
     .optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional().nullable(),
@@ -62,6 +68,36 @@ const updateEntrySchema = z.object({
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
 function calcBreakMinutes(breaks: { startTime: Date; endTime: Date }[]): number {
   return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
+}
+
+// ── Break-Slot-Validierung ──────────────────────────────────────────────────
+function validateBreakSlots(
+  breakSlots: { startTime: Date; endTime: Date }[],
+  workStart: Date,
+  workEnd: Date | null,
+): string | null {
+  for (const b of breakSlots) {
+    if (b.endTime <= b.startTime) {
+      return "Pausenende muss nach Pausenbeginn liegen";
+    }
+    if (workEnd) {
+      if (b.startTime < workStart || b.endTime > workEnd) {
+        return "Pausen müssen innerhalb der Arbeitszeit liegen";
+      }
+    } else {
+      if (b.startTime < workStart) {
+        return "Pausenbeginn darf nicht vor der Startzeit liegen";
+      }
+    }
+  }
+  // Check for overlapping breaks
+  const sorted = [...breakSlots].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].startTime < sorted[i - 1].endTime) {
+      return "Pausen dürfen sich nicht überschneiden";
+    }
+  }
+  return null;
 }
 
 // ── Überlappungsprüfung ────────────────────────────────────────────────────────
@@ -563,6 +599,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         for (const b of body.breaks) {
           breakSlots.push({ startTime: new Date(b.startTime), endTime: new Date(b.endTime) });
         }
+        const breakError = validateBreakSlots(breakSlots, newStart, newEnd);
+        if (breakError) return reply.code(400).send({ error: breakError });
         finalBreakMinutes = Math.round(calcBreakMinutes(breakSlots));
       }
 
@@ -665,7 +703,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
       const body = updateEntrySchema.parse(req.body);
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
@@ -751,13 +789,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Handle break slots update
       if (body.breaks) {
-        // Delete existing breaks and create new ones
-        await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
         const newBreakSlots = body.breaks.map((b) => ({
           timeEntryId: id,
           startTime: new Date(b.startTime),
           endTime: new Date(b.endTime),
         }));
+        // Validate break slots before persisting
+        const breakError = validateBreakSlots(
+          newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
+          updatedStart,
+          updatedEnd,
+        );
+        if (breakError) return reply.code(400).send({ error: breakError });
+        // Delete existing breaks and create new ones
+        await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
         if (newBreakSlots.length > 0) {
           await app.prisma.break.createMany({ data: newBreakSlots });
         }
@@ -832,7 +877,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { id } = req.params as { id: string };
+      const { id } = idParamSchema.parse(req.params);
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 

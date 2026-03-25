@@ -64,6 +64,11 @@ services:
       REDIS_URL: "redis://redis:6379"
       APP_URL: "http://localhost:3000"
       ENCRYPTION_KEY: "${ENCRYPTION_KEY:-clokr-dev-encryption-key-min-32-characters-long!!}"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,6 +92,11 @@ services:
       PORT: "3000"
       ORIGIN: "http://localhost:3000"
       API_URL: "http://api:4000"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
     depends_on:
       api:
         condition: service_healthy

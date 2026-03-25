@@ -64,36 +64,60 @@ async function ensureLeaveType(
   return created.id;
 }
 
-const createSchema = z.object({
-  type: z.enum(TYPE_CODES),
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  halfDay: z.boolean().default(false),
-  note: z.string().optional().nullable(),
-});
+const createSchema = z
+  .object({
+    type: z.enum(TYPE_CODES),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    halfDay: z.boolean().default(false),
+    note: z.string().optional().nullable(),
+  })
+  .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
+    message: "Enddatum muss nach Startdatum liegen",
+    path: ["endDate"],
+  });
 
 const reviewSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
   reviewNote: z.string().optional().nullable(),
 });
 
-const updateSchema = z.object({
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  halfDay: z.boolean().default(false),
-  note: z.string().optional().nullable(),
-});
+const updateSchema = z
+  .object({
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    halfDay: z.boolean().default(false),
+    note: z.string().optional().nullable(),
+  })
+  .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
+    message: "Enddatum muss nach Startdatum liegen",
+    path: ["endDate"],
+  });
 
 const attestSchema = z.object({
   attestPresent: z.boolean(),
   attestValidFrom: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum")
     .nullable()
     .optional(),
   attestValidTo: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum")
     .nullable()
     .optional(),
 });
