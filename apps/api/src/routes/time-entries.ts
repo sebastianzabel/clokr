@@ -767,6 +767,40 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     },
   });
 
+  // PATCH /api/v1/time-entries/:id/revalidate  (Admin/Manager setzt isInvalid zurück)
+  app.patch("/:id/revalidate", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const user = req.user;
+
+      const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
+      if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      if (!existing.isInvalid)
+        return reply.code(400).send({ error: "Eintrag ist nicht invalidiert" });
+
+      const updated = await app.prisma.timeEntry.update({
+        where: { id },
+        data: { isInvalid: false, invalidReason: null },
+        include: { breaks: { orderBy: { startTime: "asc" } } },
+      });
+
+      await updateOvertimeAccount(app, existing.employeeId);
+
+      await app.audit({
+        userId: user.sub,
+        action: "UPDATE",
+        entity: "TimeEntry",
+        entityId: id,
+        oldValue: { isInvalid: true, invalidReason: existing.invalidReason },
+        newValue: { isInvalid: false, invalidReason: null },
+      });
+
+      return updated;
+    },
+  });
+
   // DELETE /api/v1/time-entries/:id
   app.delete("/:id", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
@@ -819,13 +853,14 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     tz,
   );
 
-  // Tatsächlich gearbeitete Minuten dieses Monats
+  // Tatsächlich gearbeitete Minuten dieses Monats (nur valide Einträge)
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
       date: { gte: monthStart, lte: monthEnd },
       endTime: { not: null },
       type: "WORK",
+      isInvalid: false,
     },
   });
 

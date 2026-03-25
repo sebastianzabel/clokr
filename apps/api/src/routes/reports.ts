@@ -36,7 +36,12 @@ export async function reportRoutes(app: FastifyInstance) {
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
-            where: { date: { gte: start, lte: end }, type: "WORK", endTime: { not: null } },
+            where: {
+              date: { gte: start, lte: end },
+              type: "WORK",
+              endTime: { not: null },
+              isInvalid: false,
+            },
           },
           absences: {
             where: { startDate: { lte: end }, endDate: { gte: start } },
@@ -266,7 +271,7 @@ export async function reportRoutes(app: FastifyInstance) {
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
-            where: { date: { gte: start, lte: end }, endTime: { not: null } },
+            where: { date: { gte: start, lte: end }, endTime: { not: null }, isInvalid: false },
           },
           absences: {
             where: { startDate: { lte: end }, endDate: { gte: start } },
@@ -422,7 +427,12 @@ export async function reportRoutes(app: FastifyInstance) {
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
-            where: { date: { gte: start, lte: end }, type: "WORK", endTime: { not: null } },
+            where: {
+              date: { gte: start, lte: end },
+              type: "WORK",
+              endTime: { not: null },
+              isInvalid: false,
+            },
             orderBy: { date: "asc" },
           },
           absences: {

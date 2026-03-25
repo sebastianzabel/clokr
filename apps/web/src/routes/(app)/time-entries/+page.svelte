@@ -23,6 +23,8 @@
     type: string;
     source: "NFC" | "MOBILE" | "MANUAL" | "CORRECTION";
     note: string | null;
+    isInvalid?: boolean;
+    invalidReason?: string | null;
   }
 
   interface WorkSchedule {
@@ -332,7 +334,7 @@
   // ── Hilfsfunktionen ────────────────────────────────────────────────────────
   function sumWorked(slots: TimeEntry[]): number {
     return slots.reduce((sum, e) => {
-      if (!e.endTime) return sum;
+      if (!e.endTime || e.isInvalid) return sum;
       return (
         sum +
         Math.floor((new Date(e.endTime).getTime() - new Date(e.startTime).getTime()) / 60000) -
@@ -531,6 +533,19 @@
     }
   }
 
+  async function revalidateEntry(id: string) {
+    try {
+      await api.patch(`/time-entries/${id}/revalidate`, {});
+      await loadAll();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Revalidieren";
+    }
+  }
+
+  const isManager = $derived(
+    $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
+  );
+
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
     const warnings: ArbZGWarning[] = [];
@@ -605,7 +620,7 @@
   let selectedBalance = $derived(selectedWorked - selectedExpected);
   let totalWorked = $derived(
     entries.reduce((s, e) => {
-      if (!e.endTime) return s;
+      if (!e.endTime || e.isInvalid) return s;
       return (
         s +
         Math.floor((new Date(e.endTime).getTime() - new Date(e.startTime).getTime()) / 60000) -
@@ -877,7 +892,7 @@
         </thead>
         <tbody>
           {#each selectedSlots as slot (slot.id)}
-            <tr class:row-del={deleteConfirmId === slot.id}>
+            <tr class:row-del={deleteConfirmId === slot.id} class:row-invalid={slot.isInvalid}>
               <td class="mono">{fmtTime(slot.startTime)}</td>
               <td class="mono">
                 {#if slot.endTime}{fmtTime(slot.endTime)}
@@ -889,9 +904,27 @@
                 ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
                 ></td
               >
-              <td class="note-cell text-muted">{slot.note ?? "—"}</td>
+              <td class="note-cell text-muted">
+                {#if slot.isInvalid && slot.invalidReason}
+                  <span class="invalid-reason" title={slot.invalidReason}>{slot.invalidReason}</span
+                  >
+                {:else}
+                  {slot.note ?? "—"}
+                {/if}
+              </td>
               <td class="actions-cell">
-                {#if deleteConfirmId === slot.id}
+                {#if slot.isInvalid && isManager}
+                  <span class="row-actions">
+                    <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                      >✏️</button
+                    >
+                    <button
+                      class="btn btn-xs btn-outline"
+                      onclick={() => revalidateEntry(slot.id)}
+                      title="Eintrag revalidieren">Revalidieren</button
+                    >
+                  </span>
+                {:else if deleteConfirmId === slot.id}
                   <span class="del-confirm">
                     <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
                     <button class="btn-icon btn-danger-sm" onclick={() => deleteEntry(slot.id)}
@@ -1490,6 +1523,38 @@
   }
   .row-del td {
     background: #fef2f2;
+  }
+
+  .row-invalid {
+    opacity: 0.5;
+  }
+  .row-invalid td {
+    text-decoration: line-through;
+    background: #fef2f2;
+  }
+  .row-invalid td:last-child {
+    text-decoration: none;
+  }
+  .row-invalid .invalid-reason {
+    color: #dc2626;
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-decoration: none;
+  }
+
+  .btn-xs {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+  .btn-outline {
+    border: 1px solid #3b82f6;
+    color: #3b82f6;
+    background: white;
+    cursor: pointer;
+  }
+  .btn-outline:hover {
+    background: #eff6ff;
   }
 
   .btn-icon {

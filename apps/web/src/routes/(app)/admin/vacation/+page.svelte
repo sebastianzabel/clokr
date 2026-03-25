@@ -21,6 +21,7 @@
     federalState: string;
     clockOutReminderHours: number;
     missingEntriesDays: number;
+    autoDeleteOpenHours: number;
   }
 
   interface WorkSchedule {
@@ -99,6 +100,7 @@
   let gApplyToExisting = $state(false);
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
+  let gAutoDeleteHours = $state(14);
 
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
@@ -159,6 +161,7 @@
       gDefaultBreakStart = cfg.defaultBreakStart ?? "12:00";
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
+      gAutoDeleteHours = cfg.autoDeleteOpenHours ?? 14;
 
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
@@ -193,6 +196,7 @@
         applyToExisting: gApplyToExisting,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
+        autoDeleteOpenHours: gAutoDeleteHours,
       });
       // Reset nach Speichern
       gApplyToExisting = false;
@@ -577,6 +581,28 @@
           <p class="form-hint text-muted">
             Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
             wurden.
+          </p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="g-autodelete-hours"
+            >Auto-Löschung offener Einträge (Stunden, 0 = deaktiviert)</label
+          >
+          <div class="input-suffix-wrap">
+            <input
+              id="g-autodelete-hours"
+              type="number"
+              min="0"
+              max="168"
+              step="1"
+              bind:value={gAutoDeleteHours}
+              class="form-input threshold-input"
+            />
+            <span class="input-suffix text-muted">Stunden</span>
+          </div>
+          <p class="form-hint text-muted">
+            Offene Einträge ohne Ausstempeln werden nach dieser Zeit automatisch gelöscht. 0 =
+            deaktiviert.
           </p>
         </div>
       </div>
