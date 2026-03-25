@@ -76,15 +76,18 @@ async function main() {
     },
   });
 
-  await prisma.workSchedule.upsert({
+  const existingAdminSchedule = await prisma.workSchedule.findFirst({
     where: { employeeId: adminEmployee.id },
-    update: {},
-    create: {
-      employeeId: adminEmployee.id,
-      weeklyHours: 40,
-      validFrom: new Date("2020-01-01"),
-    },
   });
+  if (!existingAdminSchedule) {
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: adminEmployee.id,
+        weeklyHours: 40,
+        validFrom: new Date(),
+      },
+    });
+  }
 
   await prisma.overtimeAccount.upsert({
     where: { employeeId: adminEmployee.id },
@@ -154,15 +157,18 @@ async function main() {
     },
   });
 
-  await prisma.workSchedule.upsert({
+  const existingEmpSchedule = await prisma.workSchedule.findFirst({
     where: { employeeId: emp.id },
-    update: {},
-    create: {
-      employeeId: emp.id,
-      weeklyHours: 40,
-      validFrom: new Date("2022-03-01"),
-    },
   });
+  if (!existingEmpSchedule) {
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        weeklyHours: 40,
+        validFrom: new Date(),
+      },
+    });
+  }
 
   await prisma.overtimeAccount.upsert({
     where: { employeeId: emp.id },
