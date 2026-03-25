@@ -1002,7 +1002,8 @@
   }
 
   .upcoming-section {
-    margin-top: 1.25rem;
+    margin-top: 1.75rem;
+    margin-bottom: 1.75rem;
   }
 
   .upcoming-list {
