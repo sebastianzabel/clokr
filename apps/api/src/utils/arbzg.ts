@@ -53,7 +53,7 @@ export async function checkArbZG(
     let gapBreakMin = 0;
     for (let i = 1; i < daySlots.length; i++) {
       const gap = (daySlots[i].startTime.getTime() - daySlots[i - 1].endTime!.getTime()) / 60000;
-      if (gap > 0) gapBreakMin += gap;
+      if (gap > 0 && gap <= 120) gapBreakMin += gap; // Lücken > 2h sind separate Schichten, keine Pausen
     }
 
     const totalBreakMin = explicitBreakMin + gapBreakMin;

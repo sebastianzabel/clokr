@@ -356,6 +356,22 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const newStart = new Date(body.startTime);
       const newEnd = body.endTime ? new Date(body.endTime) : null;
 
+      // Zukunfts-Validierung: Datum max heute, Endzeit max now+30min
+      const now = new Date();
+      const todayStr = dateStrInTz(now, tz);
+      const entryDateStr = dateStrInTz(new Date(body.date ?? body.startTime), tz);
+      if (entryDateStr > todayStr) {
+        return reply.code(400).send({ error: "Zeiteinträge in der Zukunft sind nicht erlaubt" });
+      }
+      if (newEnd) {
+        const maxEnd = new Date(now.getTime() + 30 * 60 * 1000);
+        if (newEnd > maxEnd) {
+          return reply
+            .code(400)
+            .send({ error: "Endzeit darf max. 30 Minuten in der Zukunft liegen" });
+        }
+      }
+
       // Zeitvalidierung
       if (newEnd && newEnd <= newStart) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
@@ -435,6 +451,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Zukunfts-Validierung
+      const nowEdit = new Date();
+      if (body.date) {
+        const emp = await app.prisma.employee.findUnique({
+          where: { id: existing.employeeId },
+          select: { tenantId: true },
+        });
+        const editTz = await getTenantTimezone(app.prisma, emp!.tenantId);
+        const editTodayStr = dateStrInTz(nowEdit, editTz);
+        const editDateStr = dateStrInTz(new Date(body.date), editTz);
+        if (editDateStr > editTodayStr) {
+          return reply.code(400).send({ error: "Zeiteinträge in der Zukunft sind nicht erlaubt" });
+        }
+      }
+
       // Überlappungsprüfung für geänderte Zeiten
       const updatedStart = body.startTime ? new Date(body.startTime) : existing.startTime;
       const updatedEnd =
@@ -443,6 +474,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             ? new Date(body.endTime as string)
             : null
           : existing.endTime;
+
+      if (updatedEnd) {
+        const maxEndEdit = new Date(nowEdit.getTime() + 30 * 60 * 1000);
+        if (updatedEnd > maxEndEdit) {
+          return reply
+            .code(400)
+            .send({ error: "Endzeit darf max. 30 Minuten in der Zukunft liegen" });
+        }
+      }
 
       if (updatedEnd && updatedEnd <= updatedStart) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
