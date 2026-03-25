@@ -1039,10 +1039,8 @@
 
   .team-grid__cell {
     min-width: 3rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
+    text-align: center;
+    vertical-align: middle;
   }
 
   /* Cell badges */
