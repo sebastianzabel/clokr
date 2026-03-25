@@ -101,6 +101,22 @@
   let twoFaSaving = $state(false);
   let twoFaError = $state("");
 
+  // NFC Terminals
+  interface TerminalKey {
+    id: string;
+    name: string;
+    keyPrefix: string;
+    lastUsedAt: string | null;
+    revokedAt: string | null;
+    createdAt: string;
+  }
+
+  let terminalKeys: TerminalKey[] = $state([]);
+  let terminalLoading = $state(false);
+  let newKeyName = $state("");
+  let newKeyRaw = $state(""); // shown once after creation
+  let showNewKey = $state(false);
+
   // Phorest
   let phBusinessId = $state("");
   let phBranchId = $state("");
@@ -167,6 +183,13 @@
         twoFaEnabled = sec.twoFaEnabled;
       } catch {
         /* ignorieren */
+      }
+
+      try {
+        const res = await api.get<{ keys: TerminalKey[] }>("/terminals");
+        terminalKeys = res.keys;
+      } catch (err) {
+        console.error("Failed to load terminal keys:", err);
       }
 
       try {
@@ -275,6 +298,38 @@
     } finally {
       twoFaSaving = false;
     }
+  }
+
+  async function createTerminalKey() {
+    if (!newKeyName.trim()) return;
+    terminalLoading = true;
+    try {
+      const res = await api.post<{ rawKey: string }>("/terminals", { name: newKeyName.trim() });
+      newKeyRaw = res.rawKey;
+      showNewKey = true;
+      newKeyName = "";
+      // Refresh list
+      const list = await api.get<{ keys: TerminalKey[] }>("/terminals");
+      terminalKeys = list.keys;
+    } catch (err) {
+      console.error("Failed to create terminal key:", err);
+    } finally {
+      terminalLoading = false;
+    }
+  }
+
+  async function revokeTerminalKey(id: string) {
+    try {
+      await api.delete(`/terminals/${id}`);
+      const list = await api.get<{ keys: TerminalKey[] }>("/terminals");
+      terminalKeys = list.keys;
+    } catch (err) {
+      console.error("Failed to revoke terminal key:", err);
+    }
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
   }
 
   async function savePhorest() {
@@ -568,6 +623,105 @@
           <p class="text-danger" style="margin-top:0.5rem;font-size:0.875rem;">⚠ {smtpTestError}</p>
         {/if}
       </div>
+    </div>
+
+    <hr class="sys-divider" />
+
+    <!-- NFC-Terminals -->
+    <div class="sys-section">
+      <h3 class="sys-title">NFC-Terminals</h3>
+      <p class="text-muted" style="margin-bottom: 1rem;">
+        API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
+      </p>
+
+      {#if showNewKey}
+        <div class="alert alert-success" style="margin: 1rem 0;">
+          <div>
+            <strong>Neuer Schlüssel erstellt!</strong>
+            <p style="margin: 0.5rem 0;">
+              Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+            </p>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <code
+                style="flex: 1; padding: 0.5rem; background: var(--color-bg-subtle); border-radius: var(--radius-sm); word-break: break-all; font-size: 0.8125rem;"
+                >{newKeyRaw}</code
+              >
+              <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newKeyRaw)}
+                >Kopieren</button
+              >
+            </div>
+            <button
+              class="btn btn-sm btn-ghost"
+              style="margin-top: 0.5rem;"
+              onclick={() => {
+                showNewKey = false;
+                newKeyRaw = "";
+              }}>Schließen</button
+            >
+          </div>
+        </div>
+      {/if}
+
+      <div style="display: flex; gap: 0.5rem; margin: 1rem 0;">
+        <input
+          type="text"
+          class="form-input"
+          bind:value={newKeyName}
+          placeholder="Terminal-Name (z.B. Kasse 1)"
+          style="flex: 1;"
+        />
+        <button
+          class="btn btn-primary"
+          onclick={createTerminalKey}
+          disabled={terminalLoading || !newKeyName.trim()}
+        >
+          Schlüssel erstellen
+        </button>
+      </div>
+
+      {#if terminalKeys.length > 0}
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Schlüssel</th>
+                <th>Zuletzt verwendet</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each terminalKeys as key (key.id)}
+                <tr class:row-revoked={key.revokedAt}>
+                  <td>{key.name}</td>
+                  <td><code style="font-size: 0.8125rem;">{key.keyPrefix}</code></td>
+                  <td
+                    >{key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString("de-DE") : "Nie"}</td
+                  >
+                  <td>
+                    {#if key.revokedAt}
+                      <span class="badge badge-red">Widerrufen</span>
+                    {:else}
+                      <span class="badge badge-green">Aktiv</span>
+                    {/if}
+                  </td>
+                  <td>
+                    {#if !key.revokedAt}
+                      <button
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => revokeTerminalKey(key.id)}>Widerrufen</button
+                      >
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
+      {/if}
     </div>
   </div>
 
@@ -897,5 +1051,9 @@
     background: #fef2f2;
     color: #991b1b;
     border: 1px solid #fecaca;
+  }
+
+  .row-revoked {
+    opacity: 0.5;
   }
 </style>

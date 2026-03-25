@@ -25,6 +25,7 @@ model Tenant {
   config           TenantConfig?
   companyShutdowns CompanyShutdown[]
   shiftTemplates   ShiftTemplate[]
+  terminalApiKeys  TerminalApiKey[]
 }
 
 // ─────────────────────────────────────────────
@@ -416,6 +417,23 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId])
   @@index([createdAt])
+}
+
+// ─────────────────────────────────────────────
+// NFC TERMINAL API KEYS
+// ─────────────────────────────────────────────
+
+model TerminalApiKey {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  keyHash    String    @unique
+  keyPrefix  String
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
 }
 
 // ─────────────────────────────────────────────

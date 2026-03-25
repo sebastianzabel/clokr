@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { TimeEntrySource } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
@@ -15,7 +16,6 @@ import {
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
-  terminalSecret: z.string().optional(),
 });
 
 const clockInSchema = z.object({
@@ -168,15 +168,34 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const body = nfcPunchSchema.parse(req.body);
 
-      // Optionale Terminal-Authentifizierung
-      const secret = process.env.NFC_TERMINAL_SECRET;
-      if (secret && secret.length > 0 && body.terminalSecret !== secret) {
-        return reply.code(403).send({ error: "Ungültiges Terminal-Secret" });
+      // Extract API key from Authorization header
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.code(401).send({ error: "Terminal API Key erforderlich" });
+      }
+      const rawKey = authHeader.slice(7);
+      const keyHash = createHash("sha256").update(rawKey).digest("hex");
+
+      const apiKey = await app.prisma.terminalApiKey.findUnique({
+        where: { keyHash },
+      });
+      if (!apiKey || apiKey.revokedAt) {
+        return reply.code(401).send({ error: "Ungültiger oder widerrufener API Key" });
       }
 
+      const tenantId = apiKey.tenantId;
+
+      // Update lastUsedAt (fire and forget)
+      app.prisma.terminalApiKey
+        .update({
+          where: { id: apiKey.id },
+          data: { lastUsedAt: new Date() },
+        })
+        .catch(() => {});
+
       // Mitarbeiter anhand NFC-Karten-ID ermitteln
-      const employee = await app.prisma.employee.findUnique({
-        where: { nfcCardId: body.nfcCardId },
+      const employee = await app.prisma.employee.findFirst({
+        where: { nfcCardId: body.nfcCardId, tenantId },
         include: { tenant: true, user: true },
       });
       if (!employee) {

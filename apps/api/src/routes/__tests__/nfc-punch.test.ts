@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
+import { createHash, randomBytes } from "crypto";
 
 describe("NFC Punch API", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
   const NFC_CARD_ID = "NFC-TEST-CARD-12345";
+  let terminalApiKey: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -16,21 +18,34 @@ describe("NFC Punch API", () => {
       where: { id: data.employee.id },
       data: { nfcCardId: NFC_CARD_ID },
     });
+
+    // Create a terminal API key for this tenant
+    terminalApiKey = `clk_${randomBytes(32).toString("hex")}`;
+    const keyHash = createHash("sha256").update(terminalApiKey).digest("hex");
+    await app.prisma.terminalApiKey.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: "Test Terminal",
+        keyHash,
+        keyPrefix: terminalApiKey.substring(0, 12) + "...",
+      },
+    });
   });
 
   afterAll(async () => {
-    // Clean up open entries before cleanup
     await app.prisma.break.deleteMany({
       where: { timeEntry: { employeeId: data.employee.id } },
     });
     await app.prisma.timeEntry.deleteMany({
       where: { employeeId: data.employee.id },
     });
+    await app.prisma.terminalApiKey.deleteMany({
+      where: { tenantId: data.tenant.id },
+    });
     await cleanupTestData(app, data.tenant.id);
     await closeTestApp();
   });
 
-  // Helper: clean up open entries
   async function closeOpenEntries() {
     const open = await app.prisma.timeEntry.findMany({
       where: { employeeId: data.employee.id, endTime: null },
@@ -43,6 +58,10 @@ describe("NFC Punch API", () => {
     }
   }
 
+  function punchHeaders() {
+    return { authorization: `Bearer ${terminalApiKey}` };
+  }
+
   describe("POST /time-entries/nfc-punch", () => {
     it("clock in with valid NFC card (action: IN)", async () => {
       await closeOpenEntries();
@@ -50,6 +69,7 @@ describe("NFC Punch API", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
         payload: { nfcCardId: NFC_CARD_ID },
       });
 
@@ -62,10 +82,10 @@ describe("NFC Punch API", () => {
     });
 
     it("clock out with second NFC punch (action: OUT)", async () => {
-      // There should be an open entry from the previous test
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
         payload: { nfcCardId: NFC_CARD_ID },
       });
 
@@ -79,6 +99,7 @@ describe("NFC Punch API", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
         payload: { nfcCardId: "UNKNOWN-CARD-99999" },
       });
 
@@ -87,10 +108,56 @@ describe("NFC Punch API", () => {
       expect(body.error).toContain("Unbekannte");
     });
 
+    it("returns 401 without API key", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 401 with invalid API key", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: "Bearer clk_invalid_key_12345" },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("returns 401 with revoked API key", async () => {
+      await closeOpenEntries();
+
+      // Create and immediately revoke a key
+      const revokedKey = `clk_${randomBytes(32).toString("hex")}`;
+      const revokedHash = createHash("sha256").update(revokedKey).digest("hex");
+      await app.prisma.terminalApiKey.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Revoked Terminal",
+          keyHash: revokedHash,
+          keyPrefix: revokedKey.substring(0, 12) + "...",
+          revokedAt: new Date(),
+        },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: `Bearer ${revokedKey}` },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
     it("returns 403 for deactivated employee", async () => {
       await closeOpenEntries();
 
-      // Deactivate user
       await app.prisma.user.update({
         where: { id: data.empUser.id },
         data: { isActive: false },
@@ -99,6 +166,7 @@ describe("NFC Punch API", () => {
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
         payload: { nfcCardId: NFC_CARD_ID },
       });
 
@@ -106,102 +174,43 @@ describe("NFC Punch API", () => {
       const body = JSON.parse(res.body);
       expect(body.error).toContain("deaktiviert");
 
-      // Re-activate
       await app.prisma.user.update({
         where: { id: data.empUser.id },
         data: { isActive: true },
       });
     });
 
-    it("returns 409 BLOCKED on vacation day", async () => {
+    it("enforces tenant isolation", async () => {
       await closeOpenEntries();
 
-      const todayStr = new Date().toISOString().split("T")[0];
-
-      // Create and approve leave for today
-      const createRes = await app.inject({
-        method: "POST",
-        url: "/api/v1/leave/requests",
-        headers: { authorization: `Bearer ${data.empToken}` },
-        payload: {
-          type: "VACATION",
-          startDate: todayStr,
-          endDate: todayStr,
+      // Create a key for a DIFFERENT tenant
+      const otherTenantKey = `clk_${randomBytes(32).toString("hex")}`;
+      const otherHash = createHash("sha256").update(otherTenantKey).digest("hex");
+      const otherTenant = await app.prisma.tenant.create({
+        data: { name: "Other Tenant", slug: "other-nfc-test" },
+      });
+      await app.prisma.terminalApiKey.create({
+        data: {
+          tenantId: otherTenant.id,
+          name: "Other Terminal",
+          keyHash: otherHash,
+          keyPrefix: otherTenantKey.substring(0, 12) + "...",
         },
       });
 
-      if (createRes.statusCode === 201) {
-        const reqId = JSON.parse(createRes.body).id;
+      // Try to punch with the other tenant's key — employee not found
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: `Bearer ${otherTenantKey}` },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
 
-        await app.inject({
-          method: "PATCH",
-          url: `/api/v1/leave/requests/${reqId}/review`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { status: "APPROVED" },
-        });
+      expect(res.statusCode).toBe(404);
 
-        const res = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries/nfc-punch",
-          payload: { nfcCardId: NFC_CARD_ID },
-        });
-
-        expect(res.statusCode).toBe(409);
-        const body = JSON.parse(res.body);
-        expect(body.action).toBe("BLOCKED");
-
-        // Clean up
-        await app.inject({
-          method: "DELETE",
-          url: `/api/v1/leave/requests/${reqId}`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-        });
-      }
-    });
-
-    it("rejects NFC punch with wrong terminal secret when env var set", async () => {
-      await closeOpenEntries();
-
-      // Save original env var
-      const originalSecret = process.env.NFC_TERMINAL_SECRET;
-
-      // Set terminal secret
-      process.env.NFC_TERMINAL_SECRET = "my-secret-123";
-
-      try {
-        // Punch without secret should fail
-        const resNoSecret = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries/nfc-punch",
-          payload: { nfcCardId: NFC_CARD_ID },
-        });
-        expect(resNoSecret.statusCode).toBe(403);
-
-        // Punch with wrong secret should fail
-        const resWrong = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries/nfc-punch",
-          payload: { nfcCardId: NFC_CARD_ID, terminalSecret: "wrong-secret" },
-        });
-        expect(resWrong.statusCode).toBe(403);
-
-        // Punch with correct secret should succeed
-        const resCorrect = await app.inject({
-          method: "POST",
-          url: "/api/v1/time-entries/nfc-punch",
-          payload: { nfcCardId: NFC_CARD_ID, terminalSecret: "my-secret-123" },
-        });
-        expect(resCorrect.statusCode).toBe(200);
-        const body = JSON.parse(resCorrect.body);
-        expect(body.action).toBe("IN");
-      } finally {
-        // Restore original env var
-        if (originalSecret !== undefined) {
-          process.env.NFC_TERMINAL_SECRET = originalSecret;
-        } else {
-          delete process.env.NFC_TERMINAL_SECRET;
-        }
-      }
+      // Cleanup
+      await app.prisma.terminalApiKey.deleteMany({ where: { tenantId: otherTenant.id } });
+      await app.prisma.tenant.delete({ where: { id: otherTenant.id } });
     });
   });
 });

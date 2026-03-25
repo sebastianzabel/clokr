@@ -28,6 +28,7 @@ import { dashboardRoutes } from "./routes/dashboard";
 import { shiftRoutes } from "./routes/shifts";
 import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
+import { terminalRoutes } from "./routes/terminals";
 
 export async function buildApp() {
   const app = Fastify({
@@ -137,6 +138,7 @@ export async function buildApp() {
   await app.register(shiftRoutes, { prefix: "/api/v1/shifts" });
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
+  await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
