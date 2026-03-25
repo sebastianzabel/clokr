@@ -622,7 +622,9 @@ export async function getEffectiveSchedule(app: FastifyInstance, employeeId: str
     : null;
 
   return {
+    type: "FIXED_WEEKLY" as const,
     weeklyHours: tenantConfig?.defaultWeeklyHours ?? 40,
+    monthlyHours: null,
     mondayHours: tenantConfig?.defaultMondayHours ?? 8,
     tuesdayHours: tenantConfig?.defaultTuesdayHours ?? 8,
     wednesdayHours: tenantConfig?.defaultWednesdayHours ?? 8,

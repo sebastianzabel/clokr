@@ -174,9 +174,11 @@ model Employee {
 // ─────────────────────────────────────────────
 
 model WorkSchedule {
-  id                    String   @id @default(uuid())
-  employeeId            String   @unique
-  weeklyHours           Decimal  @db.Decimal(5, 2)  // z.B. 40.00
+  id                    String       @id @default(uuid())
+  employeeId            String       @unique
+  type                  ScheduleType @default(FIXED_WEEKLY)
+  weeklyHours           Decimal      @db.Decimal(5, 2)  // z.B. 40.00
+  monthlyHours          Decimal?     @db.Decimal(5, 2)  // z.B. 15.00 für Minijobber
   mondayHours           Decimal  @db.Decimal(4, 2)  @default(8)
   tuesdayHours          Decimal  @db.Decimal(4, 2)  @default(8)
   wednesdayHours        Decimal  @db.Decimal(4, 2)  @default(8)
@@ -449,6 +451,11 @@ enum AbsenceType {
   MATERNITY         // Mutterschutz
   PARENTAL          // Elternzeit
   OTHER
+}
+
+enum ScheduleType {
+  FIXED_WEEKLY      // Feste Wochentage (z.B. Mo-Fr 8h)
+  MONTHLY_HOURS     // Monatsstunden-Budget (z.B. 15h/Monat für Minijobber)
 }
 
 // ─────────────────────────────────────────────

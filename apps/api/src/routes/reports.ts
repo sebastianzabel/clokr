@@ -52,6 +52,8 @@ export async function reportRoutes(app: FastifyInstance) {
       // Soll-Stunden: kalenderbasiert über Wochentag-Soll aus WorkSchedule (TZ-aware)
       function calcShouldMinutes(
         schedule: {
+          type?: unknown;
+          monthlyHours?: unknown;
           mondayHours: unknown;
           tuesdayHours: unknown;
           wednesdayHours: unknown;
@@ -105,10 +107,14 @@ export async function reportRoutes(app: FastifyInstance) {
 
         // Soll-Minuten: Gesamtmonat minus genehmigte Abwesenheitstage
         const rawShouldMin = calcShouldMinutes(emp.workSchedule, emp.hireDate);
-        const absenceMin = emp.leaveRequests.reduce(
-          (sum, lr) => sum + absenceMinutes(emp.workSchedule, lr.startDate, lr.endDate),
-          0,
-        );
+        const isMonthlyHours = String((emp.workSchedule as any)?.type ?? "") === "MONTHLY_HOURS";
+        // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
+        const absenceMin = isMonthlyHours
+          ? 0
+          : emp.leaveRequests.reduce(
+              (sum, lr) => sum + absenceMinutes(emp.workSchedule, lr.startDate, lr.endDate),
+              0,
+            );
         const shouldMin = Math.max(0, rawShouldMin - absenceMin);
 
         // Kranktage aus Absence-Modell (direkt erfasste)
@@ -461,16 +467,20 @@ export async function reportRoutes(app: FastifyInstance) {
         emp.workSchedule as unknown as Record<string, unknown>,
         emp.hireDate,
       );
-      const absenceMin = emp.leaveRequests.reduce(
-        (sum, lr) =>
-          sum +
-          absenceMinutes(
-            emp.workSchedule as unknown as Record<string, unknown>,
-            lr.startDate,
-            lr.endDate,
-          ),
-        0,
-      );
+      const isMonthlyHoursPdf = String((emp.workSchedule as any)?.type ?? "") === "MONTHLY_HOURS";
+      // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
+      const absenceMin = isMonthlyHoursPdf
+        ? 0
+        : emp.leaveRequests.reduce(
+            (sum, lr) =>
+              sum +
+              absenceMinutes(
+                emp.workSchedule as unknown as Record<string, unknown>,
+                lr.startDate,
+                lr.endDate,
+              ),
+            0,
+          );
       const shouldMin = Math.max(0, rawShouldMin - absenceMin);
 
       const workedHours = Math.round((workedMin / 60) * 100) / 100;
