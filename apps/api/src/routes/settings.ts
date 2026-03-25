@@ -48,17 +48,17 @@ const vacationEntitlementSchema = z.object({
 const employeeScheduleSchema = z
   .object({
     type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
-    weeklyHours: z.number().min(1).max(60),
+    weeklyHours: z.number().min(0).max(60).default(40),
     monthlyHours: z.number().min(0).max(999).nullable().optional(),
-    mondayHours: z.number().min(0).max(24),
-    tuesdayHours: z.number().min(0).max(24),
-    wednesdayHours: z.number().min(0).max(24),
-    thursdayHours: z.number().min(0).max(24),
-    fridayHours: z.number().min(0).max(24),
-    saturdayHours: z.number().min(0).max(24),
-    sundayHours: z.number().min(0).max(24),
-    overtimeThreshold: z.number().min(1).max(500),
-    allowOvertimePayout: z.boolean(),
+    mondayHours: z.number().min(0).max(24).default(8),
+    tuesdayHours: z.number().min(0).max(24).default(8),
+    wednesdayHours: z.number().min(0).max(24).default(8),
+    thursdayHours: z.number().min(0).max(24).default(8),
+    fridayHours: z.number().min(0).max(24).default(8),
+    saturdayHours: z.number().min(0).max(24).default(0),
+    sundayHours: z.number().min(0).max(24).default(0),
+    overtimeThreshold: z.number().min(0).max(500).default(60),
+    allowOvertimePayout: z.boolean().default(false),
     validFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
