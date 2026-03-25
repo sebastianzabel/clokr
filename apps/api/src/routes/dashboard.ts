@@ -31,7 +31,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let todayMinutes = 0;
       for (const e of todayEntries) {
         if (e.endTime) {
-          todayMinutes += (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+          todayMinutes +=
+            (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
         }
       }
 
@@ -48,7 +49,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let weekMinutes = 0;
       for (const e of weekEntries) {
         if (e.endTime) {
-          weekMinutes += (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+          weekMinutes +=
+            (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
         }
       }
 
@@ -58,7 +60,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
 
       // ── Überstunden ───────────────────────────────────────────────────
-      const overtimeAccount = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+      const overtimeAccount = await app.prisma.overtimeAccount.findUnique({
+        where: { employeeId },
+      });
       const overtimeBalance = Number(overtimeAccount?.balanceHours ?? 0);
 
       // ── Resturlaub ────────────────────────────────────────────────────
@@ -67,17 +71,20 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: { employeeId, year: yearNow },
       });
       const totalVacation = entitlements.reduce(
-        (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays), 0
+        (sum, e) => sum + Number(e.totalDays) + Number(e.carriedOverDays),
+        0,
       );
-      const usedVacation = entitlements.reduce(
-        (sum, e) => sum + Number(e.usedDays), 0
-      );
+      const usedVacation = entitlements.reduce((sum, e) => sum + Number(e.usedDays), 0);
 
       return {
         today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
-        week:  { workedHours: round(weekMinutes / 60), targetHours: round(weekSollMinutes / 60) },
+        week: { workedHours: round(weekMinutes / 60), targetHours: round(weekSollMinutes / 60) },
         overtime: { balanceHours: round(overtimeBalance) },
-        vacation: { remaining: totalVacation - usedVacation, total: totalVacation, used: usedVacation },
+        vacation: {
+          remaining: totalVacation - usedVacation,
+          total: totalVacation,
+          used: usedVacation,
+        },
       };
     },
   });
@@ -89,9 +96,10 @@ export async function dashboardRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
-      const now = new Date();
+      const query = req.query as { date?: string };
+      const refDate = query.date ? new Date(query.date) : new Date();
 
-      const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(now, tz);
+      const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
 
       // Alle aktiven Mitarbeiter
       const employees = await app.prisma.employee.findMany({
@@ -107,7 +115,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
           date: { gte: weekStart, lte: weekEnd },
           type: "WORK",
         },
-        select: { employeeId: true, date: true, startTime: true, endTime: true, breakMinutes: true },
+        select: {
+          employeeId: true,
+          date: true,
+          startTime: true,
+          endTime: true,
+          breakMinutes: true,
+        },
       });
 
       // Genehmigte Abwesenheiten
@@ -118,7 +132,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
         },
-        select: { employeeId: true, startDate: true, endDate: true, leaveType: { select: { name: true } } },
+        select: {
+          employeeId: true,
+          startDate: true,
+          endDate: true,
+          leaveType: { select: { name: true } },
+        },
       });
 
       // Krankheiten
@@ -135,7 +154,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const team = employees.map((emp) => {
         const days = weekDays.map((dayStr) => {
           const dayEntries = timeEntries.filter(
-            (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr
+            (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
           );
           let workedMinutes = 0;
           let isPresent = false;
@@ -143,7 +162,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           for (const e of dayEntries) {
             if (e.endTime) {
-              workedMinutes += (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+              workedMinutes +=
+                (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
               isPresent = true;
             } else {
               isClockedIn = true;
@@ -155,14 +175,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
             (lr) =>
               lr.employeeId === emp.id &&
               dateStrInTz(lr.startDate, tz) <= dayStr &&
-              dateStrInTz(lr.endDate, tz) >= dayStr
+              dateStrInTz(lr.endDate, tz) >= dayStr,
           );
 
           const absence = absences.find(
             (a) =>
               a.employeeId === emp.id &&
               dateStrInTz(a.startDate, tz) <= dayStr &&
-              dateStrInTz(a.endDate, tz) >= dayStr
+              dateStrInTz(a.endDate, tz) >= dayStr,
           );
 
           let status: "present" | "absent" | "clocked_in" | "none" = "none";
@@ -175,11 +195,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
             reason = leave.leaveType.name;
           } else if (absence) {
             status = "absent";
-            reason = absence.type === "SICK" ? "Krankmeldung" :
-                     absence.type === "SICK_CHILD" ? "Kinderkrank" :
-                     absence.type === "MATERNITY" ? "Mutterschutz" :
-                     absence.type === "PARENTAL" ? "Elternzeit" :
-                     absence.type.toString();
+            reason =
+              absence.type === "SICK"
+                ? "Krankmeldung"
+                : absence.type === "SICK_CHILD"
+                  ? "Kinderkrank"
+                  : absence.type === "MATERNITY"
+                    ? "Mutterschutz"
+                    : absence.type === "PARENTAL"
+                      ? "Elternzeit"
+                      : absence.type.toString();
           } else if (isPresent) {
             status = "present";
           }
@@ -187,7 +212,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           return { date: dayStr, status, workedHours: round(workedMinutes / 60), reason };
         });
 
-        return { id: emp.id, name: `${emp.firstName} ${emp.lastName}`, employeeNumber: emp.employeeNumber, days };
+        return {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          employeeNumber: emp.employeeNumber,
+          days,
+        };
       });
 
       return { weekStart: weekDays[0], weekEnd: weekDays[6], weekDays, team };

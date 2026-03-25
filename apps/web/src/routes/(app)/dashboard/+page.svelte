@@ -94,6 +94,7 @@
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
+  let weekOffset = $state(0);
   let todayShift: {
     startTime: string;
     endTime: string;
@@ -193,11 +194,7 @@
 
       // Team-Wochenübersicht für Manager/Admin
       if (isManager) {
-        try {
-          teamWeek = await api.get<TeamWeek>("/dashboard/team-week");
-        } catch {
-          // not available
-        }
+        await loadTeamWeek();
       }
 
       // Load chart data (last 6 months)
@@ -205,6 +202,30 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function loadTeamWeek() {
+    try {
+      const refDate = new Date();
+      refDate.setDate(refDate.getDate() + weekOffset * 7);
+      const dateParam = refDate.toISOString().split("T")[0];
+      teamWeek = await api.get<TeamWeek>(`/dashboard/team-week?date=${dateParam}`);
+    } catch {
+      // not available
+    }
+  }
+
+  function prevWeek() {
+    weekOffset--;
+    loadTeamWeek();
+  }
+  function nextWeek() {
+    weekOffset++;
+    loadTeamWeek();
+  }
+  function currentWeek() {
+    weekOffset = 0;
+    loadTeamWeek();
   }
 
   async function loadCharts() {
@@ -625,12 +646,23 @@
   <!-- Team Wochenübersicht (nur Manager/Admin) -->
   {#if isManager && teamWeek}
     <div class="team-section">
-      <h2 class="section-title">Team-Wochenübersicht</h2>
-      <p class="section-sub text-muted">
-        KW {getWeekNumber(teamWeek.weekStart)}: {formatShortDate(teamWeek.weekStart)} – {formatShortDate(
-          teamWeek.weekEnd,
-        )}
-      </p>
+      <div class="team-header">
+        <div>
+          <h2 class="section-title" style="margin-bottom:0.125rem;">Team-Wochenübersicht</h2>
+          <p class="section-sub text-muted" style="margin:0;">
+            KW {getWeekNumber(teamWeek.weekStart)}: {formatShortDate(teamWeek.weekStart)} – {formatShortDate(
+              teamWeek.weekEnd,
+            )}
+          </p>
+        </div>
+        <div class="team-nav">
+          <button class="btn btn-sm btn-ghost" onclick={prevWeek} title="Vorherige Woche">‹</button>
+          <button class="btn btn-sm btn-ghost" onclick={currentWeek} disabled={weekOffset === 0}
+            >Heute</button
+          >
+          <button class="btn btn-sm btn-ghost" onclick={nextWeek} title="Nächste Woche">›</button>
+        </div>
+      </div>
 
       <div class="team-grid-wrap">
         <table class="team-grid">
@@ -919,12 +951,25 @@
     border-bottom: 1px solid var(--color-border);
   }
 
+  .team-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1rem;
+  }
+
+  .team-nav {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
   .team-grid__name {
     text-align: left;
     white-space: nowrap;
     padding-left: 0.5rem;
-    padding-right: 1rem;
-    min-width: 140px;
+    padding-right: 0.75rem;
+    width: 1%;
   }
 
   .team-grid__day {
