@@ -145,9 +145,13 @@
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
-      if (res.emailError) createEmailError = res.emailError;
       employees = [...employees, res].sort((a, b) => a.lastName.localeCompare(b.lastName));
-      if (!res.emailError) showCreateModal = false;
+      showCreateModal = false;
+      if (res.emailError) {
+        alert(
+          `Mitarbeiter angelegt, aber Einladungsmail konnte nicht gesendet werden: ${res.emailError}`,
+        );
+      }
     } catch (e: unknown) {
       createError = e instanceof Error ? e.message : "Fehler beim Anlegen";
     } finally {
