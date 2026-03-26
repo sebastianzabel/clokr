@@ -37,7 +37,7 @@ export async function authRoutes(app: FastifyInstance) {
   const isTest = process.env.NODE_ENV === "test";
 
   app.post("/login", {
-    config: { rateLimit: { max: isTest ? 1000 : 5, timeWindow: "15 minutes" } },
+    config: { rateLimit: { max: isTest ? 1000 : 50, timeWindow: "1 minute" } },
     schema: {
       tags: ["Auth"],
       body: {
