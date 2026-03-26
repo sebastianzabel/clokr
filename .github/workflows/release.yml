@@ -1,4 +1,4 @@
-name: Build & Publish Docker Images
+name: Release — Promote & Publish
 
 on:
   push:
@@ -8,7 +8,7 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  build-and-push:
+  promote:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -16,21 +16,9 @@ jobs:
 
     strategy:
       matrix:
-        include:
-          - context: .
-            image: clokr-api
-            dockerfile: ./apps/api/Dockerfile
-          - context: .
-            image: clokr-web
-            dockerfile: ./apps/web/Dockerfile
+        image: [clokr-api, clokr-web]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -43,21 +31,25 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           VERSION=${GITHUB_REF_NAME#v}
+          # The tag points to a commit — get its short SHA
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:latest
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Promote image (retag sha → version + latest)
+        run: |
+          SRC="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}"
+          DST_VER="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}"
+          DST_LAT="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:latest"
+
+          echo "Promoting ${SRC} → ${DST_VER}, ${DST_LAT}"
+
+          crane copy "${SRC}" "${DST_VER}"
+          crane copy "${SRC}" "${DST_LAT}"
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
