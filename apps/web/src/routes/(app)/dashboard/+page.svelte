@@ -151,7 +151,7 @@
     timer = setInterval(() => {
       currentTime = new Date();
     }, 1000);
-    pollInterval = setInterval(loadTeamWeek, 30000); // refresh team-week only for NFC updates
+    pollInterval = setInterval(loadTeamWeek, 5000); // refresh team-week every 5s for NFC updates
   });
 
   onDestroy(() => {
