@@ -16,8 +16,10 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # ── Tests, Lint, Type-Check ─────────────────────────────────────────
+  # ── Tests, Lint, Type-Check (PR only) ───────────────────────────────
+  # No need to re-test on main — the PR was already green before merge.
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     services:
@@ -104,7 +106,6 @@ jobs:
           echo "warnings=${SVELTE_WARNINGS:-0}" >> $GITHUB_OUTPUT
 
       - name: Post PR Summary
-        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -132,7 +133,6 @@ jobs:
             | ${buildIcon} Web Build | Success | ${svelteWarnings} Svelte warnings |
             `;
 
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -157,10 +157,14 @@ jobs:
             }
 
   # ── Docker Build ────────────────────────────────────────────────────
-  # PR:   build only (validates Dockerfile, warms GHA cache)
+  # PR:   build only (validates Dockerfile, warms GHA cache) — no push
   # Main: build + push with sha-<commit> tag (ready for release promotion)
+  #
+  # On PR this depends on tests passing first.
+  # On main push (after merge) it runs immediately — tests already passed in the PR.
   docker:
     needs: test
+    if: always() && (needs.test.result == 'success' || (github.event_name == 'push' && needs.test.result == 'skipped'))
     runs-on: ubuntu-latest
 
     strategy:
