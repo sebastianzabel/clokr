@@ -10,7 +10,11 @@ declare module "fastify" {
 }
 
 export const prismaPlugin = fp(async (app) => {
-  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    min: parseInt(process.env.POOL_MIN || "2"),
+    max: parseInt(process.env.POOL_MAX || "20"),
+  });
   const adapter = new PrismaPg(pool as any);
 
   const prisma = new PrismaClient({

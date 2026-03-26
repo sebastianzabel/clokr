@@ -197,11 +197,11 @@ async function main() {
   console.log(`Mitarbeiter: ${empUser.email}`);
   console.log("\nSeed abgeschlossen!");
 
-  // Only print credentials in non-production environments
   if (process.env.NODE_ENV !== "production") {
     console.log("\nLogin-Daten:");
-    console.log(`   Admin:       ${ADMIN_EMAIL}  /  ${ADMIN_PASSWORD}`);
-    console.log(`   Mitarbeiter: ${EMPLOYEE_EMAIL}    /  ${EMPLOYEE_PASSWORD}`);
+    console.log(`   Admin:       ${ADMIN_EMAIL}`);
+    console.log(`   Mitarbeiter: ${EMPLOYEE_EMAIL}`);
+    console.log("   (Passwörter siehe .env oder Seed-Konfiguration)");
   }
 }
 

@@ -161,7 +161,7 @@ model Employee {
   updatedAt        DateTime @updatedAt      @db.Timestamptz
 
   tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user             User            @relation(fields: [userId], references: [id])
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   workSchedules    WorkSchedule[]
   overtimeAccount  OvertimeAccount?
   timeEntries      TimeEntry[]
@@ -175,6 +175,7 @@ model Employee {
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
+  @@index([userId])
 }
 
 // ─────────────────────────────────────────────
@@ -231,6 +232,7 @@ model TimeEntry {
   breaks       Break[]
 
   @@index([employeeId, date])
+  @@index([date])
 }
 
 model Break {
@@ -354,6 +356,7 @@ model LeaveRequest {
   leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
+  @@index([employeeId, status])
   @@index([leaveTypeId])
 }
 
@@ -566,6 +569,7 @@ model Notification {
   createdAt  DateTime @default(now()) @db.Timestamptz
 
   @@index([userId, read])
+  @@index([userId, createdAt])
   @@index([createdAt])
 }
 

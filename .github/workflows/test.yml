@@ -78,6 +78,10 @@ jobs:
           echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
           echo "suites=${SUITES:-0}" >> $GITHUB_OUTPUT
 
+      - name: Audit dependencies
+        run: pnpm audit --prod || true
+        continue-on-error: true
+
       - name: Build API
         id: build_api
         run: pnpm --filter @clokr/api build

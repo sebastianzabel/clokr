@@ -3,17 +3,17 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 const shutdownBodySchema = z.object({
-  name:                z.string().min(1).max(100),
-  startDate:           z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  endDate:             z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  name: z.string().min(1).max(100),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   deductsFromVacation: z.boolean().default(true),
-  notes:               z.string().optional(),
+  notes: z.string().optional(),
 });
 
 export async function companyShutdownRoutes(app: FastifyInstance) {
   // ── GET /company-shutdowns ──────────────────────────────────────────────────
   app.get("/", { preHandler: requireAuth }, async (req, reply) => {
-    const tenantId = (req as any).tenantId as string;
+    const tenantId = req.user.tenantId;
     const { year } = req.query as { year?: string };
 
     const where: any = { tenantId };
@@ -21,7 +21,7 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
       const y = parseInt(year);
       where.OR = [
         { startDate: { gte: new Date(`${y}-01-01`), lte: new Date(`${y}-12-31`) } },
-        { endDate:   { gte: new Date(`${y}-01-01`), lte: new Date(`${y}-12-31`) } },
+        { endDate: { gte: new Date(`${y}-01-01`), lte: new Date(`${y}-12-31`) } },
       ];
     }
 
@@ -44,7 +44,7 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
 
   // ── POST /company-shutdowns ─────────────────────────────────────────────────
   app.post("/", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = (req as any).tenantId as string;
+    const tenantId = req.user.tenantId;
     const body = shutdownBodySchema.parse(req.body);
 
     if (body.startDate > body.endDate) {
@@ -54,11 +54,11 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
     const shutdown = await app.prisma.companyShutdown.create({
       data: {
         tenantId,
-        name:                body.name,
-        startDate:           new Date(body.startDate),
-        endDate:             new Date(body.endDate),
+        name: body.name,
+        startDate: new Date(body.startDate),
+        endDate: new Date(body.endDate),
         deductsFromVacation: body.deductsFromVacation,
-        notes:               body.notes ?? null,
+        notes: body.notes ?? null,
       },
       include: { exceptions: true },
     });
@@ -68,9 +68,9 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
 
   // ── PATCH /company-shutdowns/:id ────────────────────────────────────────────
   app.patch("/:id", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = (req as any).tenantId as string;
-    const { id }   = req.params as { id: string };
-    const body     = shutdownBodySchema.partial().parse(req.body);
+    const tenantId = req.user.tenantId;
+    const { id } = req.params as { id: string };
+    const body = shutdownBodySchema.partial().parse(req.body);
 
     const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
     if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
@@ -78,13 +78,23 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
     const updated = await app.prisma.companyShutdown.update({
       where: { id },
       data: {
-        ...(body.name                !== undefined && { name:                body.name }),
-        ...(body.startDate           !== undefined && { startDate:           new Date(body.startDate) }),
-        ...(body.endDate             !== undefined && { endDate:             new Date(body.endDate) }),
-        ...(body.deductsFromVacation !== undefined && { deductsFromVacation: body.deductsFromVacation }),
-        ...(body.notes               !== undefined && { notes:               body.notes }),
+        ...(body.name !== undefined && { name: body.name }),
+        ...(body.startDate !== undefined && { startDate: new Date(body.startDate) }),
+        ...(body.endDate !== undefined && { endDate: new Date(body.endDate) }),
+        ...(body.deductsFromVacation !== undefined && {
+          deductsFromVacation: body.deductsFromVacation,
+        }),
+        ...(body.notes !== undefined && { notes: body.notes }),
       },
-      include: { exceptions: { include: { employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } } } } },
+      include: {
+        exceptions: {
+          include: {
+            employee: {
+              select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+            },
+          },
+        },
+      },
     });
 
     return updated;
@@ -92,8 +102,8 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
 
   // ── DELETE /company-shutdowns/:id ───────────────────────────────────────────
   app.delete("/:id", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId = (req as any).tenantId as string;
-    const { id }   = req.params as { id: string };
+    const tenantId = req.user.tenantId;
+    const { id } = req.params as { id: string };
 
     const existing = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
     if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
@@ -105,8 +115,8 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
   // ── POST /company-shutdowns/:id/exceptions ──────────────────────────────────
   // Mitarbeiter zur Ausnahmeliste hinzufügen
   app.post("/:id/exceptions", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId   = (req as any).tenantId as string;
-    const { id }     = req.params as { id: string };
+    const tenantId = req.user.tenantId;
+    const { id } = req.params as { id: string };
     const { employeeId, reason } = req.body as { employeeId: string; reason?: string };
 
     const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
@@ -116,7 +126,7 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
     if (!employee) return reply.status(404).send({ message: "Mitarbeiter nicht gefunden" });
 
     const exception = await app.prisma.companyShutdownException.upsert({
-      where:  { shutdownId_employeeId: { shutdownId: id, employeeId } },
+      where: { shutdownId_employeeId: { shutdownId: id, employeeId } },
       create: { shutdownId: id, employeeId, reason: reason ?? null },
       update: { reason: reason ?? null },
       include: {
@@ -129,17 +139,21 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
 
   // ── DELETE /company-shutdowns/:id/exceptions/:employeeId ────────────────────
   // Ausnahme entfernen
-  app.delete("/:id/exceptions/:employeeId", { preHandler: requireRole("ADMIN") }, async (req, reply) => {
-    const tenantId   = (req as any).tenantId as string;
-    const { id, employeeId } = req.params as { id: string; employeeId: string };
+  app.delete(
+    "/:id/exceptions/:employeeId",
+    { preHandler: requireRole("ADMIN") },
+    async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const { id, employeeId } = req.params as { id: string; employeeId: string };
 
-    const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
-    if (!shutdown) return reply.status(404).send({ message: "Betriebsurlaub nicht gefunden" });
+      const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
+      if (!shutdown) return reply.status(404).send({ message: "Betriebsurlaub nicht gefunden" });
 
-    await app.prisma.companyShutdownException.deleteMany({
-      where: { shutdownId: id, employeeId },
-    });
+      await app.prisma.companyShutdownException.deleteMany({
+        where: { shutdownId: id, employeeId },
+      });
 
-    return reply.status(204).send();
-  });
+      return reply.status(204).send();
+    },
+  );
 }

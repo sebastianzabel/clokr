@@ -557,12 +557,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht ermittelbar" });
 
-      // Prüfen ob Mitarbeiter aktiv ist
-      const targetEmployee = await app.prisma.employee.findUnique({
-        where: { id: employeeId },
+      // Prüfen ob Mitarbeiter existiert, zum Tenant gehört und aktiv ist
+      const targetEmployee = await app.prisma.employee.findFirst({
+        where: { id: employeeId, tenantId: req.user.tenantId },
         include: { user: true },
       });
-      if (targetEmployee && !targetEmployee.user.isActive) {
+      if (!targetEmployee) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+      if (!targetEmployee.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
 
@@ -739,8 +742,16 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 
-      const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
+      const existing = await app.prisma.timeEntry.findUnique({
+        where: { id },
+        include: { employee: { select: { tenantId: true } } },
+      });
       if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Tenant isolation
+      if (existing.employee.tenantId !== user.tenantId) {
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
 
       // Nur eigene Einträge für normale Mitarbeiter
       if (!isManager && existing.employeeId !== user.employeeId) {
