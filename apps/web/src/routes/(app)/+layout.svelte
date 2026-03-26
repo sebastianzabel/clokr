@@ -234,6 +234,7 @@
         >
           Abmelden
         </button>
+        <p class="sidebar-version">v{__APP_VERSION__}</p>
       </div>
     </aside>
 
@@ -522,6 +523,14 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+  }
+
+  .sidebar-version {
+    font-size: 0.6875rem;
+    color: var(--color-text-muted);
+    text-align: center;
+    margin: 0;
+    opacity: 0.6;
   }
 
   .sidebar-user {

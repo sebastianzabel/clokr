@@ -35,11 +35,11 @@ done
 
 echo "✅ Database schema synced"
 
-if [ "${SEED_DEMO_DATA:-true}" = "true" ]; then
+if [ "${SEED_DEMO_DATA:-false}" = "true" ]; then
   echo "🌱 Running database seed..."
   npx tsx src/seed.ts || echo "ℹ️  Seed skipped (may already exist)"
 else
-  echo "ℹ️  Seed skipped (SEED_DEMO_DATA=false)"
+  echo "ℹ️  Seed skipped (SEED_DEMO_DATA not set to true)"
 fi
 
 echo "🚀 Starting Clokr API..."
