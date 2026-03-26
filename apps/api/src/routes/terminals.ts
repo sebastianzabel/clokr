@@ -78,6 +78,10 @@ export async function terminalRoutes(app: FastifyInstance) {
             cards: { type: "array", items: { type: "string" } },
           },
         },
+        401: {
+          type: "object",
+          properties: { error: { type: "string" } },
+        },
       },
     },
     handler: async (req, reply) => {
