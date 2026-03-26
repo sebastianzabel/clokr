@@ -916,7 +916,7 @@
   }
 
   .grid-cell--empty:hover .grid-cell__plus {
-    opacity: 1;
+    opacity: 0.4;
   }
 
   /* ── Shift block ── */

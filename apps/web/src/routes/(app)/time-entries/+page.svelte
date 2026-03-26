@@ -1142,10 +1142,11 @@
     color: var(--color-text-muted);
   }
   .mstat-value {
-    font-size: 1.25rem;
-    font-weight: 700;
+    font-size: 1.5rem;
+    font-weight: 800;
     font-family: var(--font-mono);
     color: var(--color-text);
+    letter-spacing: -0.02em;
   }
   .mstat-value.bal.pos {
     color: #16a34a;
@@ -1180,15 +1181,17 @@
   }
 
   .cal-day {
-    min-height: 100px;
+    min-height: 110px;
     padding: 0.5rem 0.625rem;
     border-right: 1px solid var(--gray-100, #f3f4f6);
     border-bottom: 1px solid var(--gray-100, #f3f4f6);
     display: flex;
     flex-direction: column;
-    gap: 0.15rem;
+    gap: 0.2rem;
     cursor: pointer;
-    transition: background 0.12s;
+    transition:
+      background 0.12s,
+      box-shadow 0.12s;
     position: relative;
   }
   .cal-day:nth-child(7n) {
@@ -1220,6 +1223,7 @@
   }
   .cal-day:not(.other-month):hover {
     background: color-mix(in srgb, var(--brand) 8%, transparent);
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--brand) 25%, transparent);
   }
 
   .cal-day.is-today {
@@ -1329,13 +1333,13 @@
     font-size: 0.7rem;
   }
   .day-worked {
-    font-size: 0.75rem;
-    font-weight: 600;
+    font-size: 0.8125rem;
+    font-weight: 700;
     font-family: var(--font-mono);
     color: var(--color-text);
   }
   .day-bal {
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-family: var(--font-mono);
     font-weight: 600;
   }
@@ -1769,5 +1773,57 @@
   }
   .arbzg-close:hover {
     opacity: 1;
+  }
+
+  /* ── Mobile calendar improvements ──────────────────────────────── */
+  @media (max-width: 640px) {
+    /* Reduce cell height on mobile but keep them tappable */
+    .cal-day {
+      min-height: 72px;
+      padding: 0.375rem 0.375rem;
+    }
+
+    /* Hide balance detail on mobile — show only worked hours */
+    .day-bal,
+    .day-missing {
+      display: none;
+    }
+
+    /* Compact worked-hours display */
+    .day-worked {
+      font-size: 0.6875rem;
+    }
+
+    /* Smaller day numbers on mobile */
+    .day-num {
+      font-size: 0.75rem;
+    }
+
+    /* Holiday/absence labels smaller on mobile */
+    .day-holiday-name,
+    .day-abs-type {
+      font-size: 0.5rem;
+    }
+
+    /* Larger touch target for "+ Slot" button */
+    .day-detail-header .btn-sm {
+      min-height: 44px;
+      min-width: 44px;
+      padding: 0.5rem 1rem;
+      font-size: 0.9375rem;
+    }
+
+    /* Stats bar: stack items vertically on narrow screens */
+    .mstat-item {
+      padding: 0.625rem 0.75rem;
+    }
+    .mstat-value {
+      font-size: 1.25rem;
+    }
+
+    /* Legend wraps tighter */
+    .cal-legend {
+      gap: 0.5rem 0.75rem;
+    }
   }
 </style>

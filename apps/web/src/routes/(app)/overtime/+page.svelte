@@ -57,13 +57,15 @@
   }
 
   function statusLabel(status: OvertimeAccount["status"]): string {
-    return status === "CRITICAL" ? "Kritisch" :
-           status === "ELEVATED" ? "Erhöht" : "Normal";
+    return status === "CRITICAL" ? "Kritisch" : status === "ELEVATED" ? "Erhöht" : "Normal";
   }
 
   function statusBadge(status: OvertimeAccount["status"]): string {
-    return status === "CRITICAL" ? "badge-red" :
-           status === "ELEVATED" ? "badge-yellow" : "badge-green";
+    return status === "CRITICAL"
+      ? "badge-red"
+      : status === "ELEVATED"
+        ? "badge-yellow"
+        : "badge-green";
   }
 
   function hoursSign(hours: string): string {
@@ -96,7 +98,7 @@
   // Filters
   let filterTxType = $state("");
   let filteredTransactions = $derived(
-    account?.transactions.filter(tx => !filterTxType || tx.type === filterTxType) ?? []
+    account?.transactions.filter((tx) => !filterTxType || tx.type === filterTxType) ?? [],
   );
 </script>
 
@@ -149,8 +151,12 @@
       <div
         class="balance-bar"
         style="
-          width: {Math.min(100, Math.abs(balance) / account.threshold * 100)}%;
-          background-color: {balance >= 60 ? 'var(--color-red)' : balance >= 40 ? 'var(--color-yellow)' : 'var(--color-green)'};
+          width: {Math.min(100, (Math.abs(balance) / account.threshold) * 100)}%;
+          background-color: {balance >= 60
+          ? 'var(--color-red)'
+          : balance >= 40
+            ? 'var(--color-yellow)'
+            : 'var(--color-green)'};
         "
       ></div>
     </div>
@@ -170,17 +176,30 @@
       <span class="empty-icon">⏱️</span>
       <h3>Keine Buchungen vorhanden</h3>
       <p class="text-muted">Es sind noch keine Überstundenbuchungen vorhanden.</p>
+      <p class="text-muted empty-subtitle">
+        Überstunden werden automatisch aus der Differenz zwischen Soll- und Ist-Arbeitszeit
+        berechnet.
+      </p>
+      <a href="/time-entries" class="btn btn-outline btn-sm" style="margin-top: 1rem"
+        >Zeiteinträge ansehen</a
+      >
     </div>
   {:else}
     <div class="filter-bar">
-      <select class="form-input filter-select" bind:value={filterTxType} aria-label="Nach Buchungsart filtern">
+      <select
+        class="form-input filter-select"
+        bind:value={filterTxType}
+        aria-label="Nach Buchungsart filtern"
+      >
         <option value="">Alle Arten</option>
         <option value="ACCRUAL">Aufbau</option>
         <option value="REDUCTION">Abbau</option>
         <option value="ADJUSTMENT">Anpassung</option>
         <option value="PAYOUT">Auszahlung</option>
       </select>
-      <span class="filter-count">{filteredTransactions.length} von {account.transactions.length}</span>
+      <span class="filter-count"
+        >{filteredTransactions.length} von {account.transactions.length}</span
+      >
     </div>
 
     <div class="table-wrapper">
@@ -299,8 +318,13 @@
   }
 
   .empty-icon {
-    font-size: 2.5rem;
-    margin-bottom: 0.25rem;
+    font-size: 3.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .empty-subtitle {
+    font-size: 0.875rem;
+    max-width: 28rem;
   }
 
   .empty-state h3 {

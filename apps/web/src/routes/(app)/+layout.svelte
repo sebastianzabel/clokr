@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
+  import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
   interface Props {
     children?: import("svelte").Snippet;
   }
@@ -106,11 +107,11 @@
 
   let navItems = $derived(
     [
-      { href: "/dashboard", icon: "🏠", label: "Dashboard", show: true },
-      { href: "/time-entries", icon: "🕐", label: "Zeiteinträge", show: true },
-      { href: "/leave", icon: "🌴", label: "Abwesenheiten", show: true },
-      { href: "/reports", icon: "📊", label: "Berichte", show: true },
-      { href: "/admin", icon: "⚙️", label: "Admin", show: isManager },
+      { href: "/dashboard", icon: "home", label: "Dashboard", show: true },
+      { href: "/time-entries", icon: "clock", label: "Zeiteinträge", show: true },
+      { href: "/leave", icon: "calendar-off", label: "Abwesenheiten", show: true },
+      { href: "/reports", icon: "bar-chart-3", label: "Berichte", show: true },
+      { href: "/admin", icon: "settings", label: "Admin", show: isManager },
     ].filter((i) => i.show),
   );
 
@@ -122,6 +123,46 @@
   }
 </script>
 
+{#snippet navSvgIcon(name: string, size?: number)}
+  {@const s = size ?? 18}
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width={s}
+    height={s}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    {#if name === "home"}
+      <path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+      <polyline points="9 22 9 12 15 12 15 22" />
+    {:else if name === "clock"}
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    {:else if name === "calendar-off"}
+      <path d="M4.18 4.18A2 2 0 0 0 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.82-1.18" />
+      <path d="M21 15.5V6a2 2 0 0 0-2-2H9.5" />
+      <path d="M16 2v4" />
+      <path d="M3 10h7" />
+      <path d="M21 10h-5.5" />
+      <line x1="2" x2="22" y1="2" y2="22" />
+    {:else if name === "bar-chart-3"}
+      <path d="M3 3v18h18" />
+      <path d="M18 17V9" />
+      <path d="M13 17V5" />
+      <path d="M8 17v-3" />
+    {:else if name === "settings"}
+      <path
+        d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+      />
+      <circle cx="12" cy="12" r="3" />
+    {/if}
+  </svg>
+{/snippet}
+
 <svelte:window
   onclick={handleWindowClick}
   onkeydown={(e) => {
@@ -131,6 +172,7 @@
 
 {#if $authStore.accessToken}
   <div class="app-shell">
+    <a href="#main-content" class="skip-to-content">Zum Inhalt springen</a>
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-brand">
@@ -184,6 +226,20 @@
                       <div class="notification-item-title">{n.title}</div>
                       <div class="notification-item-message">{n.message}</div>
                       <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
+                      {#if n.link}
+                        <svg
+                          class="notification-arrow"
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg
+                        >
+                      {/if}
                     </button>
                   {/each}
                 {/if}
@@ -205,7 +261,7 @@
             class:nav-item--active={active}
             aria-current={active ? "page" : undefined}
           >
-            <span class="nav-icon">{item.icon}</span>
+            <span class="nav-icon">{@render navSvgIcon(item.icon)}</span>
             <span class="nav-label">{item.label}</span>
           </a>
         {/each}
@@ -232,14 +288,91 @@
           onclick={handleLogout}
           aria-label="Abmelden"
         >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline
+              points="16 17 21 12 16 7"
+            /><line x1="21" y1="12" x2="9" y2="12" /></svg
+          >
           Abmelden
         </button>
         <p class="sidebar-version">v{__APP_VERSION__}</p>
       </div>
     </aside>
 
+    <!-- Mobile Header -->
+    <header class="mobile-header">
+      <div class="mobile-header-brand">
+        <img src="/clokr-icon.png" alt="Clokr" class="mobile-header-icon" />
+        <span class="mobile-header-name">Clokr</span>
+      </div>
+      <div class="notification-wrapper">
+        <button
+          class="notification-bell"
+          onclick={() => {
+            showNotifications = !showNotifications;
+          }}
+          aria-label="Benachrichtigungen"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          {#if unreadCount > 0}
+            <span class="notification-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
+          {/if}
+        </button>
+
+        {#if showNotifications}
+          <div class="notification-dropdown notification-dropdown--mobile">
+            <div class="notification-header">
+              <span class="notification-header-title">Benachrichtigungen</span>
+              {#if unreadCount > 0}
+                <button class="notification-mark-all" onclick={markAllRead}>Alle gelesen</button>
+              {/if}
+            </div>
+            <div class="notification-list">
+              {#if notifications.length === 0}
+                <p class="notification-empty">Keine Benachrichtigungen</p>
+              {:else}
+                {#each notifications as n (n.id)}
+                  <button
+                    class="notification-item"
+                    class:notification-item--unread={!n.read}
+                    onclick={() => handleNotificationClick(n)}
+                  >
+                    <div class="notification-item-title">{n.title}</div>
+                    <div class="notification-item-message">{n.message}</div>
+                    <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          </div>
+        {/if}
+      </div>
+    </header>
+
     <!-- Main Content -->
-    <main class="app-main">
+    <main class="app-main" id="main-content">
       {@render children?.()}
     </main>
 
@@ -256,11 +389,13 @@
           class:mobile-nav-item--active={active}
           aria-current={active ? "page" : undefined}
         >
-          <span class="mobile-nav-icon">{item.icon}</span>
+          <span class="mobile-nav-icon">{@render navSvgIcon(item.icon, 20)}</span>
           <span class="mobile-nav-label">{item.label}</span>
         </a>
       {/each}
     </nav>
+
+    <CommandPalette />
   </div>
 {/if}
 
@@ -426,9 +561,24 @@
     background: none;
     border: none;
     border-bottom: 1px solid var(--color-border-subtle);
-    padding: 0.75rem 1rem;
+    padding: 0.75rem 2rem 0.75rem 1rem;
     cursor: pointer;
     transition: background-color 0.12s;
+    position: relative;
+  }
+
+  .notification-arrow {
+    position: absolute;
+    right: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0;
+    color: var(--color-text-muted);
+    transition: opacity 0.15s;
+  }
+
+  .notification-item:hover .notification-arrow {
+    opacity: 0.6;
   }
 
   .notification-item:hover {
@@ -505,10 +655,12 @@
   }
 
   .nav-icon {
-    font-size: 1.125rem;
     flex-shrink: 0;
     width: 1.25rem;
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: inherit;
   }
 
   .nav-label {
@@ -576,6 +728,16 @@
     width: 100%;
     justify-content: center;
     font-size: 0.8125rem;
+    gap: 0.4rem;
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg-subtle);
+    color: var(--color-text-muted);
+  }
+
+  .logout-btn:hover {
+    background-color: var(--color-red-bg);
+    border-color: var(--color-red-border);
+    color: var(--color-red);
   }
 
   /* ── Main Content ──────────────────────────────────────────────────── */
@@ -620,10 +782,26 @@
 
   .mobile-nav-item--active {
     color: var(--color-brand);
+    font-weight: 600;
+    position: relative;
+  }
+
+  .mobile-nav-item--active::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1.5rem;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    background-color: var(--color-brand);
   }
 
   .mobile-nav-icon {
-    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     line-height: 1;
   }
 
@@ -631,14 +809,63 @@
     line-height: 1;
   }
 
+  /* ── Mobile Header ────────────────────────────────────────────────── */
+  .mobile-header {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3.25rem;
+    background: var(--glass-bg-strong, var(--sidebar-bg));
+    backdrop-filter: blur(var(--glass-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
+    border-bottom: 1px solid var(--color-border);
+    z-index: 100;
+    padding: 0 1rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .mobile-header-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .mobile-header-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+  }
+
+  .mobile-header-name {
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--color-brand);
+  }
+
+  .notification-dropdown--mobile {
+    position: fixed;
+    top: 3.25rem;
+    left: 0.5rem;
+    right: 0.5rem;
+    width: auto;
+    max-height: 60vh;
+  }
+
   @media (max-width: 768px) {
+    .mobile-header {
+      display: flex;
+    }
+
     .sidebar {
       display: none;
     }
 
     .app-main {
       margin-left: 0;
-      padding: 1.25rem 1rem;
+      padding: 4.5rem 1rem 5rem;
     }
 
     .mobile-nav {
