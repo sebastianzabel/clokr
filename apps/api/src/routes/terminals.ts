@@ -64,6 +64,45 @@ export async function terminalRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /allowed-cards — list all NFC card IDs for the tenant (Terminal API Key auth)
+  app.get("/allowed-cards", {
+    schema: { tags: ["Terminals"] },
+    handler: async (req, reply) => {
+      const authHeader = req.headers.authorization;
+      if (!authHeader?.startsWith("Bearer ")) {
+        return reply.code(401).send({ error: "Terminal API Key erforderlich" });
+      }
+      const rawKey = authHeader.slice(7);
+      const keyHash = hashKey(rawKey);
+
+      const apiKey = await app.prisma.terminalApiKey.findUnique({
+        where: { keyHash },
+      });
+      if (!apiKey || apiKey.revokedAt) {
+        return reply.code(401).send({ error: "Ungültiger oder widerrufener API Key" });
+      }
+
+      const tenantId = apiKey.tenantId;
+
+      // Update lastUsedAt (fire and forget)
+      app.prisma.terminalApiKey
+        .update({
+          where: { id: apiKey.id },
+          data: { lastUsedAt: new Date() },
+        })
+        .catch(() => {});
+
+      const employees = await app.prisma.employee.findMany({
+        where: { tenantId, nfcCardId: { not: null } },
+        select: { nfcCardId: true },
+      });
+
+      const cards = employees.map((e) => e.nfcCardId).filter((id): id is string => id !== null);
+
+      return { cards };
+    },
+  });
+
   // DELETE /:id — revoke terminal key (ADMIN only)
   app.delete("/:id", {
     schema: { tags: ["Terminals"], security: [{ bearerAuth: [] }] },
