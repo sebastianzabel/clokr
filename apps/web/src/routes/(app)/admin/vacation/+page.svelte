@@ -300,7 +300,9 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {:else}
   <!-- ── Globale Vorgaben ───────────────────────────────────────────────────── -->
-  <div class="card settings-card">
+
+  <!-- Card 1: Arbeitszeit + Überstunden -->
+  <div class="section-group">
     <!-- Arbeitszeit -->
     <div class="settings-section">
       <h3 class="section-title">Wöchentliche Arbeitszeit</h3>
@@ -431,9 +433,10 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <hr class="settings-divider" />
-
+  <!-- Card 2: Urlaubsanspruch -->
+  <div class="section-group">
     <!-- Urlaub -->
     <div class="settings-section">
       <h3 class="section-title">Urlaubsanspruch</h3>
@@ -480,9 +483,10 @@
         </div>
       </div>
     </div>
+  </div>
 
-    <hr class="settings-divider" />
-
+  <!-- Card 3: Compliance + Pausen -->
+  <div class="section-group">
     <!-- Compliance -->
     <div class="settings-section">
       <h3 class="section-title">Compliance</h3>
@@ -503,7 +507,7 @@
 
     <hr class="settings-divider" />
 
-    <!-- Automatische Pausen -->
+    <!-- Pausen -->
     <div class="settings-section">
       <h3 class="section-title">Pausen</h3>
       <p class="text-muted section-desc">
@@ -537,9 +541,10 @@
         </div>
       {/if}
     </div>
+  </div>
 
-    <hr class="settings-divider" />
-
+  <!-- Card 4: Benachrichtigungen -->
+  <div class="section-group">
     <!-- Benachrichtigungen -->
     <div class="settings-section">
       <h3 class="section-title">Benachrichtigungen</h3>
@@ -642,73 +647,83 @@
 
   <!-- ── Pro-Mitarbeiter ────────────────────────────────────────────────────── -->
   {#if employees.length > 0}
-    <div class="section-label">
-      <h2>Arbeitszeit & Urlaub pro Mitarbeiter</h2>
-      <p class="text-muted">Individuelle Abweichungen von der globalen Vorgabe</p>
-    </div>
+    <div class="section-group">
+      <h3>Arbeitszeit & Urlaub pro Mitarbeiter</h3>
+      <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
+        Individuelle Abweichungen von der globalen Vorgabe
+      </p>
 
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Nr.</th>
-            <th>Mitarbeiter</th>
-            <th class="text-center">Mo</th>
-            <th class="text-center">Di</th>
-            <th class="text-center">Mi</th>
-            <th class="text-center">Do</th>
-            <th class="text-center">Fr</th>
-            <th class="text-center">Sa</th>
-            <th class="text-center">So</th>
-            <th class="text-center">Σ/Wo</th>
-            <th>Schwelle</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each employees as emp}
-            {@const s = emp.workSchedule}
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
             <tr>
-              <td class="text-muted font-mono">{emp.employeeNumber}</td>
-              <td class="font-medium">{emp.firstName} {emp.lastName}</td>
-              {#if s?.type === "MONTHLY_HOURS"}
-                <td class="font-mono text-center" colspan="7">
-                  <span class="badge badge-blue">{Number(s.monthlyHours).toFixed(1)} h/Monat</span>
-                </td>
-              {:else}
-                <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1) : "—"}</td>
-                <td class="font-mono text-center">{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td>
-                <td class="font-mono text-center"
-                  >{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td
-                >
-                <td class="font-mono text-center">{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td
-                >
-                <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1) : "—"}</td>
-                <td class="font-mono text-center">{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td
-                >
-                <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1) : "—"}</td>
-              {/if}
-              <td class="font-mono text-center font-medium">
-                {#if s}
-                  {#if s.type === "MONTHLY_HOURS"}
-                    {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
-                  {:else}
-                    {Number(s.weeklyHours).toFixed(1)}&thinsp;h
-                  {/if}
-                {:else}
-                  <span class="badge badge-gray">Global</span>
-                {/if}
-              </td>
-              <td class="font-mono">{s ? Number(s.overtimeThreshold).toFixed(0) + " h" : "—"}</td>
-              <td>
-                <button class="btn btn-ghost btn-sm" onclick={() => openEmpModal(emp)}>
-                  Bearbeiten
-                </button>
-              </td>
+              <th>Nr.</th>
+              <th>Mitarbeiter</th>
+              <th class="text-center">Mo</th>
+              <th class="text-center">Di</th>
+              <th class="text-center">Mi</th>
+              <th class="text-center">Do</th>
+              <th class="text-center">Fr</th>
+              <th class="text-center">Sa</th>
+              <th class="text-center">So</th>
+              <th class="text-center">Σ/Wo</th>
+              <th>Schwelle</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {#each employees as emp}
+              {@const s = emp.workSchedule}
+              <tr>
+                <td class="text-muted font-mono">{emp.employeeNumber}</td>
+                <td class="font-medium">{emp.firstName} {emp.lastName}</td>
+                {#if s?.type === "MONTHLY_HOURS"}
+                  <td class="font-mono text-center" colspan="7">
+                    <span class="badge badge-blue">{Number(s.monthlyHours).toFixed(1)} h/Monat</span
+                    >
+                  </td>
+                {:else}
+                  <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center"
+                    >{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center"
+                    >{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center"
+                    >{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center"
+                    >{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td
+                  >
+                  <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1) : "—"}</td
+                  >
+                {/if}
+                <td class="font-mono text-center font-medium">
+                  {#if s}
+                    {#if s.type === "MONTHLY_HOURS"}
+                      {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
+                    {:else}
+                      {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                    {/if}
+                  {:else}
+                    <span class="badge badge-gray">Global</span>
+                  {/if}
+                </td>
+                <td class="font-mono">{s ? Number(s.overtimeThreshold).toFixed(0) + " h" : "—"}</td>
+                <td>
+                  <button class="btn btn-ghost btn-sm" onclick={() => openEmpModal(emp)}>
+                    Bearbeiten
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     </div>
   {/if}
 {/if}
@@ -966,6 +981,28 @@
 {/if}
 
 <style>
+  .section-group {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+  .section-group > h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    padding: 1.5rem 1.75rem 0.75rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .section-group > .text-muted {
+    padding: 0 1.75rem;
+  }
+  .section-group > .table-wrapper {
+    overflow-x: auto;
+  }
+
   .settings-card {
     padding: 0;
     margin-bottom: 2rem;

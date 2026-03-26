@@ -536,13 +536,6 @@
         ? "text-yellow"
         : "text-green",
   );
-
-  const quickLinks = [
-    { href: "/time-entries", icon: "🕐", label: "Zeiteinträge", desc: "Alle Einträge anzeigen" },
-    { href: "/leave", icon: "🌴", label: "Urlaub", desc: "Antrag stellen" },
-    { href: "/overtime", icon: "⏱️", label: "Überstunden", desc: "Konto einsehen" },
-    { href: "/reports", icon: "📊", label: "Berichte", desc: "Auswertungen" },
-  ];
 </script>
 
 <svelte:head>
@@ -558,11 +551,30 @@
 
   <!-- Clock-in Card -->
   <div class="clock-card card card-body">
-    <div class="clock-status">
-      <span class="clock-dot" class:clock-dot--active={clockedIn}></span>
-      <span class="clock-status-text">
-        {clockedIn ? "Eingestempelt" : "Ausgestempelt"}
-      </span>
+    <div class="clock-main-row">
+      <div class="clock-status">
+        <span class="clock-dot" class:clock-dot--active={clockedIn}></span>
+        <span class="clock-status-text">
+          {clockedIn ? "Eingestempelt" : "Ausgestempelt"}
+        </span>
+      </div>
+
+      <div class="clock-time font-mono">
+        {format(currentTime, "HH:mm:ss")}
+      </div>
+
+      <button
+        onclick={handleClock}
+        disabled={clockLoading}
+        class="btn clock-btn"
+        class:clock-btn--in={!clockedIn}
+        class:clock-btn--out={clockedIn}
+      >
+        {#if clockLoading}
+          <span class="btn-spinner"></span>
+        {/if}
+        {clockedIn ? "Ausstempeln" : "Einstempeln"}
+      </button>
     </div>
 
     {#if todayShift}
@@ -578,43 +590,28 @@
       </div>
     {/if}
 
-    <div class="clock-time font-mono">
-      {format(currentTime, "HH:mm:ss")}
-    </div>
-
-    {#if clockedIn && clockStart}
-      <p class="clock-elapsed text-muted">
-        Eingestempelt seit {format(clockStart, "HH:mm")} Uhr ·
-        <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
-      </p>
-    {/if}
-
     {#if clockedIn}
-      <div class="clock-break">
-        <label class="form-label" for="break-input">Pause (Minuten)</label>
-        <input
-          id="break-input"
-          type="number"
-          bind:value={breakMinutes}
-          min="0"
-          max="480"
-          class="form-input clock-break-input"
-        />
+      <div class="clock-details">
+        {#if clockStart}
+          <p class="clock-elapsed text-muted">
+            Eingestempelt seit {format(clockStart, "HH:mm")} Uhr ·
+            <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
+          </p>
+        {/if}
+
+        <div class="clock-break">
+          <label class="form-label" for="break-input">Pause (Minuten)</label>
+          <input
+            id="break-input"
+            type="number"
+            bind:value={breakMinutes}
+            min="0"
+            max="480"
+            class="form-input clock-break-input"
+          />
+        </div>
       </div>
     {/if}
-
-    <button
-      onclick={handleClock}
-      disabled={clockLoading}
-      class="btn clock-btn"
-      class:clock-btn--in={!clockedIn}
-      class:clock-btn--out={clockedIn}
-    >
-      {#if clockLoading}
-        <span class="btn-spinner"></span>
-      {/if}
-      {clockedIn ? "Ausstempeln" : "Einstempeln"}
-    </button>
   </div>
 
   <!-- Stats Row -->
@@ -868,22 +865,6 @@
       </div>
     </div>
   {/if}
-
-  <!-- Quick Links -->
-  <div class="quick-links-header">
-    <h2>Schnellzugriff</h2>
-  </div>
-  <div class="quick-links">
-    {#each quickLinks as link}
-      <a href={link.href} class="quick-link card">
-        <span class="quick-link-icon">{link.icon}</span>
-        <div>
-          <p class="quick-link-label">{link.label}</p>
-          <p class="quick-link-desc text-muted">{link.desc}</p>
-        </div>
-      </a>
-    {/each}
-  </div>
 </div>
 
 <style>
@@ -893,17 +874,27 @@
 
   /* Clock Card */
   .clock-card {
-    text-align: center;
     margin-bottom: 1.5rem;
     display: flex;
     flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .clock-main-row {
+    display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 1.5rem;
+  }
+
+  .clock-details {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
   }
 
   .shift-info {
     display: flex;
-    justify-content: center;
   }
 
   .clock-status {
@@ -913,6 +904,7 @@
     font-size: 0.9rem;
     font-weight: 500;
     color: var(--color-text-muted);
+    white-space: nowrap;
   }
 
   .clock-dot {
@@ -929,7 +921,7 @@
   }
 
   .clock-time {
-    font-size: 3.5rem;
+    font-size: 2rem;
     font-weight: 700;
     color: var(--color-text-heading);
     letter-spacing: -0.02em;
@@ -959,6 +951,7 @@
     gap: 0.5rem;
     min-width: 160px;
     justify-content: center;
+    margin-left: auto;
   }
   .clock-btn--in {
     background-color: var(--color-green);
@@ -1004,12 +997,30 @@
     margin-bottom: 1.75rem;
   }
 
+  .stats-grid .stat-card {
+    border-left: 3px solid var(--color-brand, #6d28d9);
+  }
+
+  .stats-grid .stat-value {
+    font-size: 2rem;
+  }
+
+  .stats-grid .stat-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.8125rem;
+  }
+
   /* Charts */
   .charts-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
     margin-bottom: 1.75rem;
+  }
+
+  .chart-card:last-child {
+    grid-column: 1 / -1;
   }
 
   .chart-card {
@@ -1027,7 +1038,7 @@
 
   .chart-wrap {
     position: relative;
-    height: 200px;
+    height: 240px;
   }
 
   .upcoming-section {
@@ -1261,61 +1272,26 @@
     gap: 0.375rem;
   }
 
-  /* Quick Links */
-  .quick-links-header {
-    margin-bottom: 0.875rem;
-  }
-  .quick-links-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-  .quick-links {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-  }
-  .quick-link {
-    display: flex;
-    align-items: center;
-    gap: 0.875rem;
-    padding: 1.125rem 1.25rem;
-    text-decoration: none;
-    color: var(--color-text);
-    transition:
-      border-color 0.15s,
-      box-shadow 0.15s;
-  }
-  .quick-link:hover {
-    border-color: var(--color-brand-light);
-    box-shadow: var(--shadow-md);
-    color: var(--color-text);
-  }
-  .quick-link-icon {
-    font-size: 1.5rem;
-    flex-shrink: 0;
-  }
-  .quick-link-label {
-    font-size: 0.9375rem;
-    font-weight: 600;
-    color: var(--color-text-heading);
-    margin-bottom: 0.125rem;
-  }
-  .quick-link-desc {
-    font-size: 0.8125rem;
-  }
-
   @media (max-width: 900px) {
-    .stats-grid,
-    .quick-links {
+    .stats-grid {
       grid-template-columns: repeat(2, 1fr);
     }
   }
+
   @media (max-width: 480px) {
+    .clock-main-row {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.75rem;
+    }
+    .clock-btn {
+      margin-left: 0;
+    }
+    .clock-status {
+      justify-content: center;
+    }
     .clock-time {
-      font-size: 2.5rem;
+      text-align: center;
     }
   }
 </style>
