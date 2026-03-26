@@ -124,6 +124,47 @@
   let attestSaving = $state(false);
   let attestError = $state("");
 
+  // Drag-to-select date range in calendar
+  let dragStart: string | null = $state(null);
+  let dragEnd: string | null = $state(null);
+  let isDragging = $state(false);
+
+  function handleDayMouseDown(dateStr: string, isCurrentMonth: boolean) {
+    if (!isCurrentMonth) return;
+    isDragging = true;
+    dragStart = dateStr;
+    dragEnd = dateStr;
+  }
+
+  function handleDayMouseEnter(dateStr: string) {
+    if (!isDragging || !dragStart) return;
+    dragEnd = dateStr;
+  }
+
+  function handleDayMouseUp() {
+    if (!isDragging || !dragStart || !dragEnd) {
+      isDragging = false;
+      return;
+    }
+    isDragging = false;
+    // Ensure start <= end
+    const start = dragStart < dragEnd ? dragStart : dragEnd;
+    const end = dragStart < dragEnd ? dragEnd : dragStart;
+    formStart = start;
+    formEnd = end;
+    editingRequest = null;
+    showForm = true;
+    dragStart = null;
+    dragEnd = null;
+  }
+
+  function isDayInDragRange(dateStr: string): boolean {
+    if (!isDragging || !dragStart || !dragEnd) return false;
+    const start = dragStart < dragEnd ? dragStart : dragEnd;
+    const end = dragStart < dragEnd ? dragEnd : dragStart;
+    return dateStr >= start && dateStr <= end;
+  }
+
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
@@ -719,6 +760,8 @@
   <title>Abwesenheiten – Clokr</title>
 </svelte:head>
 
+<svelte:window onmouseup={handleDayMouseUp} />
+
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <div class="page-header-row page-header">
   <div>
@@ -1066,10 +1109,16 @@
           absences.filter((e) => e.isOwn || isManager || e.status === "APPROVED").length > 0}
         <div
           class="cal-cell"
+          class:cal-cell--current={day.isCurrentMonth}
           class:cal-other={!day.isCurrentMonth && !hasEntries && !day.isWeekend}
           class:cal-today={day.isToday}
           class:cal-weekend={day.isWeekend}
           class:cal-holiday={isHoliday && day.isCurrentMonth}
+          class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+          role={day.isCurrentMonth ? "button" : undefined}
+          tabindex={day.isCurrentMonth ? 0 : undefined}
+          onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+          onmouseenter={() => handleDayMouseEnter(day.dateStr)}
         >
           <span class="cal-day-num">{day.dayNum}</span>
           {#if isHoliday && day.isCurrentMonth}
@@ -2083,6 +2132,7 @@
   .cal-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
+    user-select: none;
   }
   .cal-header-row {
     border-bottom: 1.5px solid var(--gray-200, #e5e7eb);
@@ -2131,6 +2181,18 @@
   .cal-holiday {
     background: #ede7f6 !important;
     border-left: 3px solid #80377b;
+  }
+
+  .cal-cell--current {
+    cursor: pointer;
+  }
+  .cal-cell--current:hover {
+    background: var(--color-bg-subtle, #f3f0ff);
+  }
+  .cal-cell--drag-selected {
+    background: var(--color-brand-tint, rgba(109, 40, 217, 0.1)) !important;
+    outline: 2px solid var(--color-brand, #6d28d9);
+    outline-offset: -2px;
   }
 
   .cal-day-num {

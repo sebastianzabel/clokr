@@ -232,7 +232,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "LEAVE_REQUEST",
           title: "Neuer Urlaubsantrag",
           message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
-          link: "/admin/vacation",
+          link: "/leave",
         });
       }
 

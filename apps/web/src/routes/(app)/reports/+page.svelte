@@ -41,8 +41,18 @@
   let pdfDownloading = $state<string | null>(null);
 
   const months = [
-    "Januar", "Februar", "März", "April", "Mai", "Juni",
-    "Juli", "August", "September", "Oktober", "November", "Dezember",
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
   ];
 
   const years = Array.from({ length: 5 }, (_, i) => currentYear - i);
@@ -53,7 +63,7 @@
     monthlyReport = null;
     try {
       monthlyReport = await api.get<MonthlyReport>(
-        `/reports/monthly?month=${reportMonth}&year=${reportYear}`
+        `/reports/monthly?month=${reportMonth}&year=${reportYear}`,
       );
     } catch (e: unknown) {
       reportError = e instanceof Error ? e.message : "Fehler beim Laden des Berichts";
@@ -71,14 +81,9 @@
       const { get } = await import("svelte/store");
       const auth = get(authStore);
 
-      const res = await fetch(
-        `/api/v1/reports/datev?month=${datevMonth}&year=${datevYear}`,
-        {
-          headers: auth.accessToken
-            ? { Authorization: `Bearer ${auth.accessToken}` }
-            : {},
-        }
-      );
+      const res = await fetch(`/api/v1/reports/datev?month=${datevMonth}&year=${datevYear}`, {
+        headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+      });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -105,9 +110,7 @@
     const auth = get(authStore);
 
     const res = await fetch(`/api/v1${url}`, {
-      headers: auth.accessToken
-        ? { Authorization: `Bearer ${auth.accessToken}` }
-        : {},
+      headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
     });
 
     if (!res.ok) {
@@ -180,9 +183,11 @@
 
 <div class="reports-grid">
   <!-- Monthly Report Card -->
-  <div class="card card-body report-card">
+  <div class="card card-body report-card report-card--purple">
+    <div class="report-card-icon-section report-card-icon-section--purple">
+      <span class="report-icon-lg">📊</span>
+    </div>
     <div class="report-card-header">
-      <span class="report-icon">📊</span>
       <div>
         <h2 class="report-card-title">Monatsbericht</h2>
         <p class="report-card-desc text-muted">Übersicht aller Mitarbeiter für einen Monat</p>
@@ -208,11 +213,7 @@
       </div>
     </div>
 
-    <button
-      class="btn btn-primary"
-      onclick={loadMonthlyReport}
-      disabled={reportLoading}
-    >
+    <button class="btn btn-primary" onclick={loadMonthlyReport} disabled={reportLoading}>
       {reportLoading ? "Laden…" : "Bericht anzeigen"}
     </button>
 
@@ -225,9 +226,11 @@
   </div>
 
   <!-- DATEV Export Card -->
-  <div class="card card-body report-card">
+  <div class="card card-body report-card report-card--green">
+    <div class="report-card-icon-section report-card-icon-section--green">
+      <span class="report-icon-lg">📁</span>
+    </div>
     <div class="report-card-header">
-      <span class="report-icon">📁</span>
       <div>
         <h2 class="report-card-title">DATEV Export</h2>
         <p class="report-card-desc text-muted">CSV-Datei für DATEV-Lohnabrechnung herunterladen</p>
@@ -253,11 +256,7 @@
       </div>
     </div>
 
-    <button
-      class="btn btn-secondary"
-      onclick={downloadDatev}
-      disabled={datevLoading}
-    >
+    <button class="btn btn-secondary" onclick={downloadDatev} disabled={datevLoading}>
       {#if datevLoading}
         <span class="btn-spinner-dark"></span>
         Vorbereiten…
@@ -275,9 +274,11 @@
   </div>
 
   <!-- Leave Overview PDF Card -->
-  <div class="card card-body report-card">
+  <div class="card card-body report-card report-card--blue">
+    <div class="report-card-icon-section report-card-icon-section--blue">
+      <span class="report-icon-lg">🏖</span>
+    </div>
     <div class="report-card-header">
-      <span class="report-icon">🏖</span>
       <div>
         <h2 class="report-card-title">Urlaubsübersicht PDF</h2>
         <p class="report-card-desc text-muted">Jahresübersicht aller Urlaubsansprüche als PDF</p>
@@ -295,11 +296,7 @@
       </div>
     </div>
 
-    <button
-      class="btn btn-secondary"
-      onclick={downloadLeaveOverviewPdf}
-      disabled={leaveLoading}
-    >
+    <button class="btn btn-secondary" onclick={downloadLeaveOverviewPdf} disabled={leaveLoading}>
       {#if leaveLoading}
         <span class="btn-spinner-dark"></span>
         Vorbereiten…
@@ -322,7 +319,8 @@
   <div class="report-results">
     <div class="section-header">
       <h2>
-        Monatsbericht: {months[monthlyReport.month - 1]} {monthlyReport.year}
+        Monatsbericht: {months[monthlyReport.month - 1]}
+        {monthlyReport.year}
       </h2>
     </div>
 
@@ -357,8 +355,12 @@
                   {row.workedHours - row.shouldHours >= 0 ? "+" : ""}
                   {formatHours(Math.abs(row.workedHours - row.shouldHours))}
                 </td>
-                <td class="{row.sickDaysWithAttest > 0 ? 'text-green' : 'text-muted'}">{row.sickDaysWithAttest}</td>
-                <td class="{row.sickDaysWithoutAttest > 0 ? 'text-yellow' : 'text-muted'}">{row.sickDaysWithoutAttest}</td>
+                <td class={row.sickDaysWithAttest > 0 ? "text-green" : "text-muted"}
+                  >{row.sickDaysWithAttest}</td
+                >
+                <td class={row.sickDaysWithoutAttest > 0 ? "text-yellow" : "text-muted"}
+                  >{row.sickDaysWithoutAttest}</td
+                >
                 <td>{row.vacationDays}</td>
                 <td>
                   <button
@@ -391,19 +393,53 @@
     display: flex;
     flex-direction: column;
     gap: 1.125rem;
+    border-top: 3px solid transparent;
+    overflow: hidden;
+  }
+
+  .report-card--purple {
+    border-top-color: var(--color-brand, #7c3aed);
+  }
+
+  .report-card--green {
+    border-top-color: #16a34a;
+  }
+
+  .report-card--blue {
+    border-top-color: #2563eb;
+  }
+
+  .report-card-icon-section {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: var(--radius-md, 8px);
+    flex-shrink: 0;
+  }
+
+  .report-card-icon-section--purple {
+    background: rgba(124, 58, 237, 0.1);
+  }
+
+  .report-card-icon-section--green {
+    background: rgba(22, 163, 74, 0.1);
+  }
+
+  .report-card-icon-section--blue {
+    background: rgba(37, 99, 235, 0.1);
+  }
+
+  .report-icon-lg {
+    font-size: 1.5rem;
+    line-height: 1;
   }
 
   .report-card-header {
     display: flex;
     align-items: flex-start;
     gap: 0.875rem;
-  }
-
-  .report-icon {
-    font-size: 1.75rem;
-    flex-shrink: 0;
-    line-height: 1;
-    margin-top: 0.125rem;
   }
 
   .report-card-title {
@@ -435,7 +471,9 @@
   }
 
   @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .report-results {
