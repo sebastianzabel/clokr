@@ -78,7 +78,11 @@ describe("Time Entries API", () => {
     });
 
     it("returns ArbZG warnings when daily hours exceed 10h", async () => {
-      const d = pastDate(3);
+      const d = pastDate(5);
+      // Clean any existing entries for this day
+      await app.prisma.timeEntry.deleteMany({
+        where: { employeeId: data.employee.id, date: new Date(d + "T00:00:00Z") },
+      });
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
