@@ -16,7 +16,7 @@ const createEmployeeSchema = z.object({
   employeeNumber: z.string().min(1),
   hireDate: z.string().datetime(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
-  weeklyHours: z.number().positive().default(40),
+  weeklyHours: z.number().min(0).max(60).default(0),
   scheduleType: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
   monthlyHours: z.number().min(0).max(999).nullable().optional(),
   nfcCardId: z.string().optional(),

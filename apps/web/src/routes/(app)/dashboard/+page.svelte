@@ -141,6 +141,7 @@
   }
 
   let timer: ReturnType<typeof setInterval>;
+  let pollInterval: ReturnType<typeof setInterval>;
 
   const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
@@ -150,10 +151,12 @@
     timer = setInterval(() => {
       currentTime = new Date();
     }, 1000);
+    pollInterval = setInterval(loadData, 30000); // refresh every 30s for NFC updates
   });
 
   onDestroy(() => {
     clearInterval(timer);
+    if (pollInterval) clearInterval(pollInterval);
     weeklyChart?.destroy();
     overtimeChart?.destroy();
     sickChart?.destroy();
