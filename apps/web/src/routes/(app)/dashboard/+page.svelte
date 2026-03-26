@@ -151,7 +151,7 @@
     timer = setInterval(() => {
       currentTime = new Date();
     }, 1000);
-    pollInterval = setInterval(loadTeamWeek, 5000); // refresh team-week every 5s for NFC updates
+    pollInterval = setInterval(pollDashboard, 5000); // refresh team-week + clock status every 5s
   });
 
   onDestroy(() => {
@@ -217,6 +217,29 @@
       loadCharts();
     } finally {
       loading = false;
+    }
+  }
+
+  async function pollDashboard() {
+    await loadTeamWeek();
+    // Also refresh clock-in status
+    try {
+      const today = format(new Date(), "yyyy-MM-dd");
+      const entries = await api.get<{ id: string; endTime: string | null; startTime: string }[]>(
+        `/time-entries?from=${today}&to=${today}`,
+      );
+      const openEntry = entries.find((e) => !e.endTime);
+      if (openEntry) {
+        clockedIn = true;
+        activeEntryId = openEntry.id;
+        clockStart = new Date(openEntry.startTime);
+      } else {
+        clockedIn = false;
+        activeEntryId = null;
+        clockStart = null;
+      }
+    } catch (err) {
+      console.error("Failed to poll clock status:", err);
     }
   }
 
