@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -8,11 +8,18 @@ on:
 
 permissions:
   contents: read
+  packages: write
   pull-requests: write
   issues: write
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
+  # ── Tests, Lint, Type-Check (PR only) ───────────────────────────────
+  # No need to re-test on main — the PR was already green before merge.
   test:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     services:
@@ -99,7 +106,6 @@ jobs:
           echo "warnings=${SVELTE_WARNINGS:-0}" >> $GITHUB_OUTPUT
 
       - name: Post PR Summary
-        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -127,7 +133,6 @@ jobs:
             | ${buildIcon} Web Build | Success | ${svelteWarnings} Svelte warnings |
             `;
 
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -150,3 +155,59 @@ jobs:
                 body,
               });
             }
+
+  # ── Docker Build ────────────────────────────────────────────────────
+  # PR:   build only (validates Dockerfile, warms GHA cache) — no push
+  # Main: build + push with sha-<commit> tag (ready for release promotion)
+  #
+  # On PR this depends on tests passing first.
+  # On main push (after merge) it runs immediately — tests already passed in the PR.
+  docker:
+    needs: test
+    if: always() && (needs.test.result == 'success' || (github.event_name == 'push' && needs.test.result == 'skipped'))
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - context: .
+            image: clokr-api
+            dockerfile: ./apps/api/Dockerfile
+          - context: .
+            image: clokr-web
+            dockerfile: ./apps/web/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+          echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          # Only push on merge to main, not on PRs
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
