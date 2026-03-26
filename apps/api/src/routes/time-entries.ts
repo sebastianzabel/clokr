@@ -318,6 +318,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
+      // Load overtime balance for response
+      const getBalance = async () => {
+        const account = await app.prisma.overtimeAccount.findFirst({
+          where: { employeeId: employee.id },
+        });
+        return account ? Number(account.balanceHours) : 0;
+      };
+
       if (txResult.action === "OUT") {
         await updateOvertimeAccount(app, employee.id);
 
@@ -341,6 +349,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           });
         }
 
+        const balanceHours = await getBalance();
         return {
           action: "OUT" as const,
           employee: {
@@ -349,6 +358,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             employeeNumber: employee.employeeNumber,
           },
           time: now.toISOString(),
+          balanceHours,
         };
       }
 
@@ -361,6 +371,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
+      const balanceHours = await getBalance();
       return {
         action: "IN" as const,
         employee: {
@@ -369,6 +380,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           employeeNumber: employee.employeeNumber,
         },
         time: now.toISOString(),
+        balanceHours,
       };
     },
   });
