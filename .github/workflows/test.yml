@@ -54,29 +54,29 @@ jobs:
         id: lint
         run: |
           LINT_OUTPUT=$(pnpm --filter @clokr/api exec eslint src/ --no-warn-ignored 2>&1) || true
-          LINT_ERRORS=$(echo "$LINT_OUTPUT" | grep -c "error" || echo "0")
-          LINT_WARNINGS=$(echo "$LINT_OUTPUT" | grep -c "warning" || echo "0")
-          echo "errors=$LINT_ERRORS" >> $GITHUB_OUTPUT
-          echo "warnings=$LINT_WARNINGS" >> $GITHUB_OUTPUT
+          LINT_ERRORS=$(echo "$LINT_OUTPUT" | grep -c "error" || true)
+          LINT_WARNINGS=$(echo "$LINT_OUTPUT" | grep -c "warning" || true)
+          echo "errors=${LINT_ERRORS:-0}" >> $GITHUB_OUTPUT
+          echo "warnings=${LINT_WARNINGS:-0}" >> $GITHUB_OUTPUT
           echo "$LINT_OUTPUT"
 
       - name: Type check API
         id: typecheck
         run: |
-          npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tee /tmp/tsc-output.txt
-          TSC_ERRORS=$(grep -c "error TS" /tmp/tsc-output.txt || echo "0")
-          echo "errors=$TSC_ERRORS" >> $GITHUB_OUTPUT
+          npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tee /tmp/tsc-output.txt || true
+          TSC_ERRORS=$(grep -c "error TS" /tmp/tsc-output.txt || true)
+          echo "errors=${TSC_ERRORS:-0}" >> $GITHUB_OUTPUT
 
       - name: Run tests
         id: tests
         run: |
           cd apps/api && npx vitest run --reporter=verbose 2>&1 | tee /tmp/test-output.txt
-          PASSED=$(grep -oP '\d+ passed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          FAILED=$(grep -oP '\d+ failed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || echo "0")
-          SUITES=$(grep -oP '\d+ passed' /tmp/test-output.txt | tail -1 | grep -oP '\d+' || echo "0")
-          echo "passed=$PASSED" >> $GITHUB_OUTPUT
-          echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "suites=$SUITES" >> $GITHUB_OUTPUT
+          PASSED=$(grep -oP '\d+ passed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || true)
+          FAILED=$(grep -oP '\d+ failed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || true)
+          SUITES=$(grep -oP '\d+ passed' /tmp/test-output.txt | tail -1 | grep -oP '\d+' || true)
+          echo "passed=${PASSED:-0}" >> $GITHUB_OUTPUT
+          echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
+          echo "suites=${SUITES:-0}" >> $GITHUB_OUTPUT
 
       - name: Build API
         id: build_api
@@ -86,8 +86,8 @@ jobs:
         id: build_web
         run: |
           pnpm --filter @clokr/web build 2>&1 | tee /tmp/web-build.txt
-          SVELTE_WARNINGS=$(grep -c "vite-plugin-svelte" /tmp/web-build.txt || echo "0")
-          echo "warnings=$SVELTE_WARNINGS" >> $GITHUB_OUTPUT
+          SVELTE_WARNINGS=$(grep -c "vite-plugin-svelte" /tmp/web-build.txt || true)
+          echo "warnings=${SVELTE_WARNINGS:-0}" >> $GITHUB_OUTPUT
 
       - name: Post PR Summary
         if: github.event_name == 'pull_request'
