@@ -66,7 +66,20 @@ export async function terminalRoutes(app: FastifyInstance) {
 
   // GET /allowed-cards — list all NFC card IDs for the tenant (Terminal API Key auth)
   app.get("/allowed-cards", {
-    schema: { tags: ["Terminals"] },
+    schema: {
+      tags: ["Terminals"],
+      summary: "List registered NFC card IDs for the tenant",
+      description:
+        "Requires Terminal API Key (Bearer token). Returns all NFC card IDs registered to employees in the tenant. Used by NFC clients for local allowlist caching.",
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            cards: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+    },
     handler: async (req, reply) => {
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {

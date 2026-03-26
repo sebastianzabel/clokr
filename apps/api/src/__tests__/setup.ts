@@ -31,7 +31,8 @@ export async function closeTestApp(): Promise<void> {
  * Uses a unique suffix to avoid conflicts with other tests.
  */
 export async function seedTestData(testApp: FastifyInstance, suffix = "") {
-  const s = (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const s =
+    (suffix ? suffix + "-" : "") + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const prisma = testApp.prisma;
 
   // Create tenant
@@ -221,6 +222,7 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.publicHoliday.deleteMany({ where: { tenantId } });
   await prisma.shiftTemplate.deleteMany({ where: { tenantId } });
   await prisma.companyShutdown.deleteMany({ where: { tenantId } });
+  await prisma.terminalApiKey.deleteMany({ where: { tenantId } });
   await prisma.tenantConfig.deleteMany({ where: { tenantId } });
   await prisma.tenant.delete({ where: { id: tenantId } });
 }
