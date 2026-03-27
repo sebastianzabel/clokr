@@ -25,6 +25,8 @@ RUN pnpm --filter @clokr/web build
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
 RUN apk update && apk upgrade --no-cache
+# Update npm's bundled dependencies to fix CVEs in minimatch/tar
+RUN npm install -g npm@latest 2>/dev/null || true
 WORKDIR /app
 
 # Copy full workspace (adapter-node needs external deps like date-fns)
