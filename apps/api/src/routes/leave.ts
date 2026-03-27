@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
+import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
@@ -471,6 +472,17 @@ export async function leaveRoutes(app: FastifyInstance) {
           entityId: id,
           newValue: { cancellationDecision: body.status, reviewNote: body.reviewNote },
         });
+
+        // Retroactive recalculation: cancellation approved (CANCELLED) affects snapshots
+        if (body.status === "APPROVED") {
+          await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
+            app.log.error(
+              { err, employeeId: existing.employeeId },
+              "Failed to recalculate snapshots after leave cancellation",
+            ),
+          );
+        }
+
         const refreshed = await app.prisma.leaveRequest.findUnique({
           where: { id },
           include: { employee: { select: { firstName: true, lastName: true } }, leaveType: true },
@@ -561,6 +573,16 @@ export async function leaveRoutes(app: FastifyInstance) {
         entityId: id,
         newValue: { status: body.status, reviewNote: body.reviewNote },
       });
+
+      // Retroactive recalculation: leave approval affects snapshots
+      if (body.status === "APPROVED") {
+        await recalculateSnapshots(app, existing.employeeId, existing.startDate).catch((err) =>
+          app.log.error(
+            { err, employeeId: existing.employeeId },
+            "Failed to recalculate snapshots after leave approval",
+          ),
+        );
+      }
 
       // ── Benachrichtigung: Mitarbeiter über Entscheidung informieren ──
       const requestEmployee = await app.prisma.employee.findUnique({

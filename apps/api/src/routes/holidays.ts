@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, FederalStateCode, STATE_MAP } from "../utils/holidays";
+import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 
 export async function holidayRoutes(app: FastifyInstance) {
   // GET /api/v1/holidays?year=2026
@@ -88,6 +89,22 @@ export async function holidayRoutes(app: FastifyInstance) {
           federalState: tenant?.federalState ?? "NIEDERSACHSEN",
         },
       });
+
+      // Retroactive recalculation: find affected employees and recalculate
+      const holidayDate = new Date(body.date);
+      const employees = await app.prisma.employee.findMany({
+        where: { tenantId: req.user.tenantId },
+        select: { id: true },
+      });
+      for (const emp of employees) {
+        await recalculateSnapshots(app, emp.id, holidayDate).catch((err) =>
+          app.log.error(
+            { err, employeeId: emp.id },
+            "Failed to recalculate snapshots after holiday creation",
+          ),
+        );
+      }
+
       return reply.code(201).send({
         ...holiday,
         date: holiday.date.toISOString().split("T")[0],
@@ -116,6 +133,23 @@ export async function holidayRoutes(app: FastifyInstance) {
         oldValue: existing,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      // Retroactive recalculation: find affected employees and recalculate
+      if (existing) {
+        const employees = await app.prisma.employee.findMany({
+          where: { tenantId: req.user.tenantId },
+          select: { id: true },
+        });
+        for (const emp of employees) {
+          await recalculateSnapshots(app, emp.id, existing.date).catch((err) =>
+            app.log.error(
+              { err, employeeId: emp.id },
+              "Failed to recalculate snapshots after holiday deletion",
+            ),
+          );
+        }
+      }
+
       return reply.code(204).send();
     },
   });

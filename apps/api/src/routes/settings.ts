@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { encrypt } from "../utils/crypto";
+import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -279,6 +280,17 @@ export async function settingsRoutes(app: FastifyInstance) {
         oldValue: old,
         newValue: schedule,
       });
+
+      // Retroactive recalculation: if validFrom is in the past,
+      // recalculate affected snapshots
+      if (validFrom < new Date()) {
+        await recalculateSnapshots(app, employeeId, validFrom).catch((err) =>
+          app.log.error(
+            { err, employeeId },
+            "Failed to recalculate snapshots after schedule change",
+          ),
+        );
+      }
 
       return schedule;
     },
