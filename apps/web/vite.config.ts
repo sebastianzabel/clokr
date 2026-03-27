@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, "../../package.json"), "u
 export default defineConfig({
   plugins: [sveltekit()],
   define: {
-    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_VERSION__: JSON.stringify(process.env.APP_VERSION || pkg.version),
   },
   server: {
     port: 5173,

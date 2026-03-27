@@ -1,25 +1,18 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
 permissions:
   contents: read
-  packages: write
+  packages: read
   pull-requests: write
   issues: write
 
-env:
-  REGISTRY: ghcr.io
-
 jobs:
-  # ── Tests, Lint, Type-Check (PR only) ───────────────────────────────
-  # No need to re-test on main — the PR was already green before merge.
+  # ── Tests, Lint, Type-Check ──────────────────────────────────────────
   test:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     services:
@@ -90,12 +83,7 @@ jobs:
           echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
           echo "suites=${SUITES:-0}" >> $GITHUB_OUTPUT
 
-      - name: Audit dependencies
-        run: pnpm audit --prod || true
-        continue-on-error: true
-
       - name: Build API
-        id: build_api
         run: pnpm --filter @clokr/api build
 
       - name: Build Web
@@ -156,15 +144,10 @@ jobs:
               });
             }
 
-  # ── Docker Build ────────────────────────────────────────────────────
-  # PR:   build only (validates Dockerfile, warms GHA cache) — no push
-  # Main: build + push with sha-<commit> tag (ready for release promotion)
-  #
-  # On PR this depends on tests passing first.
-  # On main push (after merge) it runs immediately — tests already passed in the PR.
+  # ── Docker Build Check (no push) ──────────────────────────────────────
+  # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
     needs: test
-    if: always() && (needs.test.result == 'success' || (github.event_name == 'push' && needs.test.result == 'skipped'))
     runs-on: ubuntu-latest
 
     strategy:
@@ -183,31 +166,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        if: github.event_name == 'push'
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        run: |
-          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
-          echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
-          echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
+      - name: Build (no push)
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          # Only push on merge to main, not on PRs
-          push: ${{ github.event_name == 'push' }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}
+          push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max

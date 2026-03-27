@@ -26,7 +26,7 @@ RUN pnpm --filter @clokr/api build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
-RUN apk add --no-cache su-exec
+RUN apk update && apk upgrade --no-cache && apk add --no-cache su-exec
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 

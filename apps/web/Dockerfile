@@ -14,6 +14,8 @@ RUN pnpm install --frozen-lockfile
 # ── Stage 2: Build ──────────────────────────────────────────────────────────
 FROM deps AS build
 WORKDIR /app
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 
 COPY packages/types/ ./packages/types/
 COPY apps/web/ ./apps/web/
@@ -22,6 +24,7 @@ RUN pnpm --filter @clokr/web build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
+RUN apk update && apk upgrade --no-cache
 WORKDIR /app
 
 # Copy full workspace (adapter-node needs external deps like date-fns)
