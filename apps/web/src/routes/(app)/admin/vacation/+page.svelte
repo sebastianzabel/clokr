@@ -1001,6 +1001,7 @@
   }
   .section-group > .table-wrapper {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .settings-card {

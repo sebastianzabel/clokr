@@ -620,6 +620,7 @@
   /* Table */
   .table-wrapper {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .table {
@@ -842,5 +843,24 @@
   .summary-total {
     background: var(--gray-100, #f3f4f6);
     color: var(--gray-600, #4b5563);
+  }
+
+  @media (max-width: 640px) {
+    .control-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .control-group {
+      min-width: 0;
+    }
+
+    .summary-bar {
+      flex-wrap: wrap;
+    }
+
+    .reason-cell {
+      max-width: none;
+    }
   }
 </style>

@@ -713,6 +713,7 @@ select.form-input {
 /* ─── Data Table ─────────────────────────────────────────────────────── */
 .table-wrapper {
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-radius: var(--radius-md);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);

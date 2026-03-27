@@ -826,6 +826,7 @@
   /* ── Grid ── */
   .grid-wrapper {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
   }

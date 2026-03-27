@@ -417,33 +417,35 @@
         {#if currentShutdown.exceptions.length === 0}
           <p class="text-muted" style="margin-bottom: 1.5rem;">Noch keine Ausnahmen angelegt.</p>
         {:else}
-          <table class="data-table" style="margin-bottom: 1.5rem;">
-            <thead>
-              <tr>
-                <th>Mitarbeiter</th>
-                <th>Nr.</th>
-                <th>Grund</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each currentShutdown.exceptions as ex (ex.id)}
+          <div class="table-responsive">
+            <table class="data-table" style="margin-bottom: 1.5rem;">
+              <thead>
                 <tr>
-                  <td>{ex.employee.firstName} {ex.employee.lastName}</td>
-                  <td class="text-muted">{ex.employee.employeeNumber}</td>
-                  <td class="text-muted">{ex.reason ?? "–"}</td>
-                  <td>
-                    <button
-                      class="btn btn-ghost btn-sm btn-danger"
-                      onclick={() => removeException(currentShutdown!.id, ex.employeeId)}
-                    >
-                      Entfernen
-                    </button>
-                  </td>
+                  <th>Mitarbeiter</th>
+                  <th>Nr.</th>
+                  <th>Grund</th>
+                  <th></th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {#each currentShutdown.exceptions as ex (ex.id)}
+                  <tr>
+                    <td>{ex.employee.firstName} {ex.employee.lastName}</td>
+                    <td class="text-muted">{ex.employee.employeeNumber}</td>
+                    <td class="text-muted">{ex.reason ?? "–"}</td>
+                    <td>
+                      <button
+                        class="btn btn-ghost btn-sm btn-danger"
+                        onclick={() => removeException(currentShutdown!.id, ex.employeeId)}
+                      >
+                        Entfernen
+                      </button>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         {/if}
 
         <!-- Mitarbeiter hinzufügen -->
@@ -793,5 +795,16 @@
 
   .text-muted {
     color: var(--color-text-muted);
+  }
+
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  @media (max-width: 640px) {
+    .form-row {
+      flex-direction: column;
+    }
   }
 </style>
