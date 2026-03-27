@@ -14,6 +14,8 @@ RUN pnpm install --frozen-lockfile
 # ── Stage 2: Build ──────────────────────────────────────────────────────────
 FROM deps AS build
 WORKDIR /app
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 
 COPY packages/types/ ./packages/types/
 COPY apps/web/ ./apps/web/
