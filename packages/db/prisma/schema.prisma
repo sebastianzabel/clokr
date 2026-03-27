@@ -19,13 +19,14 @@ model Tenant {
   createdAt    DateTime @default(now()) @db.Timestamptz
   updatedAt    DateTime @updatedAt    @db.Timestamptz
 
-  employees        Employee[]
-  leaveTypes       LeaveType[]
-  publicHolidays   PublicHoliday[]
-  config           TenantConfig?
-  companyShutdowns CompanyShutdown[]
-  shiftTemplates   ShiftTemplate[]
-  terminalApiKeys  TerminalApiKey[]
+  employees         Employee[]
+  leaveTypes        LeaveType[]
+  publicHolidays    PublicHoliday[]
+  config            TenantConfig?
+  companyShutdowns  CompanyShutdown[]
+  shiftTemplates    ShiftTemplate[]
+  terminalApiKeys   TerminalApiKey[]
+  specialLeaveRules SpecialLeaveRule[]
 }
 
 // ─────────────────────────────────────────────
@@ -394,10 +395,30 @@ model LeaveEntitlement {
   @@index([leaveTypeId])
 }
 
+model SpecialLeaveRule {
+  id            String   @id @default(uuid())
+  tenantId      String
+  name          String   // e.g. "Hochzeit", "Geburt eines Kindes"
+  reason        String?  // Description / display text
+  defaultDays   Decimal  @db.Decimal(4, 2) @default(1) // Default entitlement days
+  isStatutory   Boolean  @default(false) // § 616 BGB (cannot be deleted, only deactivated)
+  requiresProof Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now()) @db.Timestamptz
+  updatedAt     DateTime @updatedAt      @db.Timestamptz
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  leaveRequests LeaveRequest[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
 model LeaveRequest {
   id           String             @id @default(uuid())
   employeeId   String
   leaveTypeId  String
+  specialLeaveRuleId String?     // For SPECIAL type: which rule applies
   startDate    DateTime           @db.Date
   endDate      DateTime           @db.Date
   days         Decimal            @db.Decimal(5, 2)
@@ -415,8 +436,9 @@ model LeaveRequest {
   createdAt    DateTime           @default(now()) @db.Timestamptz
   updatedAt    DateTime           @updatedAt      @db.Timestamptz
 
-  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  employee         Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType        LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  specialLeaveRule SpecialLeaveRule?  @relation(fields: [specialLeaveRuleId], references: [id])
 
   @@index([employeeId])
   @@index([employeeId, status])

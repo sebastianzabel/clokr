@@ -85,6 +85,11 @@
   let formSaving = $state(false);
   let formError = $state("");
 
+  // Special leave rules
+  interface SpecialLeaveRule { id: string; name: string; defaultDays: number; isActive: boolean; }
+  let specialLeaveRules: SpecialLeaveRule[] = $state([]);
+  let formSpecialRuleId = $state("");
+
   // Überstunden- / Urlaubskontostand
   let overtimeBalance: number | null = $state(null);
   let vacationBalance = $state<{
@@ -506,12 +511,21 @@
   }
 
   // ── Formular zurücksetzen ─────────────────────────────────────────────────
+  async function loadSpecialLeaveRules() {
+    if (specialLeaveRules.length > 0) return;
+    try {
+      const all = await api.get<SpecialLeaveRule[]>("/special-leave/rules");
+      specialLeaveRules = all.filter((r) => r.isActive);
+    } catch { /* ignore */ }
+  }
+
   function resetForm() {
     showForm = false;
     editingRequest = null;
     formType = "VACATION";
     formStart = formEnd = formNote = "";
     formHalfDay = false;
+    formSpecialRuleId = "";
     overlapEntries = [];
     hoursPreview = null;
     serverDays = null;
@@ -536,6 +550,7 @@
           endDate: formEnd,
           halfDay: formHalfDay,
           note: formNote || null,
+          ...(formType === "SPECIAL" && formSpecialRuleId ? { specialLeaveRuleId: formSpecialRuleId } : {}),
         });
       }
       resetForm();
@@ -894,12 +909,25 @@
     <form onsubmit={preventDefault(submitRequest)} class="form-grid">
       <div class="form-group">
         <label class="form-label" for="f-type">Art der Abwesenheit</label>
-        <select id="f-type" bind:value={formType} class="form-input" disabled={!!editingRequest}>
+        <select id="f-type" bind:value={formType} class="form-input" disabled={!!editingRequest}
+          onchange={() => { if (formType === "SPECIAL") loadSpecialLeaveRules(); }}>
           {#each TYPE_OPTIONS as t}
             <option value={t.code}>{t.label}</option>
           {/each}
         </select>
       </div>
+
+      {#if formType === "SPECIAL"}
+        <div class="form-group">
+          <label class="form-label" for="f-special-rule">Anlass</label>
+          <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
+            <option value="">— Anlass wählen —</option>
+            {#each specialLeaveRules as rule}
+              <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       <div class="form-group">
         <label class="form-label" for="f-start">Von</label>

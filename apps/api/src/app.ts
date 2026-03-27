@@ -31,6 +31,7 @@ import { shiftRoutes } from "./routes/shifts";
 import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
+import { specialLeaveRoutes } from "./routes/special-leave";
 
 export async function buildApp() {
   const app = Fastify({
@@ -143,6 +144,7 @@ export async function buildApp() {
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
+  await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));

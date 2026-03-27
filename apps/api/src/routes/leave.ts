@@ -78,6 +78,7 @@ const createSchema = z
       .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
     halfDay: z.boolean().default(false),
     note: z.string().optional().nullable(),
+    specialLeaveRuleId: z.string().uuid().optional().nullable(),
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
@@ -258,10 +259,29 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Für SPECIAL: specialLeaveRuleId required, validate days against rule
+      if (body.type === "SPECIAL") {
+        if (!body.specialLeaveRuleId) {
+          return reply.code(400).send({ error: "Sonderurlaub erfordert einen Anlass (specialLeaveRuleId)" });
+        }
+        const rule = await app.prisma.specialLeaveRule.findUnique({
+          where: { id: body.specialLeaveRuleId },
+        });
+        if (!rule || !rule.isActive) {
+          return reply.code(400).send({ error: "Ungültiger oder deaktivierter Sonderurlaubs-Anlass" });
+        }
+        if (days > Number(rule.defaultDays)) {
+          return reply.code(400).send({
+            error: `Max. ${Number(rule.defaultDays)} Tage für "${rule.name}" (beantragt: ${days})`,
+          });
+        }
+      }
+
       const request = await app.prisma.leaveRequest.create({
         data: {
           employeeId,
           leaveTypeId,
+          specialLeaveRuleId: body.specialLeaveRuleId ?? null,
           startDate: start,
           endDate: end,
           days,

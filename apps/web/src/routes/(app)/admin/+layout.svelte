@@ -25,6 +25,7 @@
       { href: "/admin/employees", label: "Mitarbeiter", show: true },
       { href: "/admin/vacation", label: "Urlaub & Zeiten", show: true },
       { href: "/admin/shifts", label: "Schichtplan", show: isManager },
+      { href: "/admin/special-leave", label: "Sonderurlaub", show: true },
       { href: "/admin/shutdowns", label: "Betriebsurlaub", show: true },
       { href: "/admin/monatsabschluss", label: "Monatsabschluss", show: isManager },
       { href: "/admin/system", label: "System", show: true },
