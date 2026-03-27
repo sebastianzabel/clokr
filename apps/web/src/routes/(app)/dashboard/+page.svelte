@@ -642,9 +642,14 @@
 
   <!-- Stats Row -->
   <div class="stats-grid">
-    <div class="stat-card">
-      <p class="stat-label">Heute</p>
-      <p class="stat-value font-mono">
+    <div class="stat-card card-animate">
+      <div class="stat-header-row">
+        <p class="stat-label">Heute</p>
+        <span class="stat-icon stat-icon--brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
+      </div>
+      <p class="stat-value font-mono stat-value-animate">
         {#if clockedIn && clockStart}
           {formatElapsed(clockStart, currentTime)}
         {:else if stats}
@@ -662,9 +667,14 @@
       </p>
     </div>
 
-    <div class="stat-card">
-      <p class="stat-label">Diese Woche</p>
-      <p class="stat-value font-mono">
+    <div class="stat-card card-animate">
+      <div class="stat-header-row">
+        <p class="stat-label">Diese Woche</p>
+        <span class="stat-icon stat-icon--brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </span>
+      </div>
+      <p class="stat-value font-mono stat-value-animate">
         {#if stats}
           {fmtH(stats.week.workedHours)}
         {:else}
@@ -680,9 +690,14 @@
       </p>
     </div>
 
-    <div class="stat-card">
-      <p class="stat-label">Überstundensaldo</p>
-      <p class="stat-value {overtimeClass} font-mono">
+    <div class="stat-card card-animate">
+      <div class="stat-header-row">
+        <p class="stat-label">Überstundensaldo</p>
+        <span class="stat-icon stat-icon--brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </span>
+      </div>
+      <p class="stat-value {overtimeClass} font-mono stat-value-animate">
         {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
       </p>
       <p class="stat-sub">
@@ -695,9 +710,14 @@
       </p>
     </div>
 
-    <div class="stat-card">
-      <p class="stat-label">Resturlaub</p>
-      <p class="stat-value font-mono">
+    <div class="stat-card card-animate">
+      <div class="stat-header-row">
+        <p class="stat-label">Resturlaub</p>
+        <span class="stat-icon stat-icon--brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+        </span>
+      </div>
+      <p class="stat-value font-mono stat-value-animate">
         {#if stats}
           {stats.vacation.remaining}
         {:else}
@@ -948,10 +968,10 @@
   }
 
   .clock-time {
-    font-size: 2rem;
+    font-size: 2.5rem;
     font-weight: 700;
     color: var(--color-text-heading);
-    letter-spacing: -0.02em;
+    letter-spacing: -0.03em;
     line-height: 1;
   }
 
@@ -1072,6 +1092,32 @@
     border-left: 3px solid var(--color-brand, #6d28d9);
   }
 
+  .stat-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+
+  .stat-header-row .stat-label {
+    margin-bottom: 0;
+  }
+
+  .stat-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: var(--radius-sm);
+    flex-shrink: 0;
+  }
+
+  .stat-icon--brand {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+  }
+
   .stats-grid .stat-value {
     font-size: 2rem;
   }
@@ -1095,7 +1141,7 @@
   }
 
   .chart-card {
-    padding: 1rem 1.25rem;
+    padding: 1.25rem 1.5rem;
   }
 
   .chart-title {
@@ -1104,7 +1150,7 @@
     color: var(--color-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.03em;
-    margin: 0 0 0.75rem;
+    margin: 0 0 1rem;
   }
 
   .chart-wrap {
@@ -1168,10 +1214,13 @@
   /* ── Team Section ── */
   .team-section {
     margin-bottom: 2rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     padding: 1.25rem;
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
   }
 
   .section-title {
@@ -1229,7 +1278,7 @@
   }
 
   .team-grid__day--today {
-    background: rgba(79, 70, 229, 0.05);
+    background: var(--color-brand-tint);
   }
 
   .day-label {
@@ -1261,22 +1310,25 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 2rem;
-    padding: 0.125rem 0.375rem;
+    min-width: 2.25rem;
+    padding: 0.1875rem 0.4375rem;
     border-radius: 999px;
     font-size: 0.75rem;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
+    transition: transform 0.15s ease;
   }
 
   .cell-badge--present {
-    background: #dcfce7;
-    color: #166534;
+    background: var(--color-green-bg);
+    color: var(--color-green);
+    border: 1px solid var(--color-green-border);
   }
 
   .cell-badge--active {
-    background: #dbeafe;
-    color: #1d4ed8;
+    background: var(--color-blue-bg);
+    color: var(--color-blue);
+    border: 1px solid var(--color-blue-border);
     animation: pulse-badge 2s ease-in-out infinite;
   }
 
@@ -1291,14 +1343,16 @@
   }
 
   .cell-badge--absent {
-    background: #fef3c7;
-    color: #92400e;
+    background: var(--color-yellow-bg);
+    color: var(--color-yellow);
+    border: 1px solid var(--color-yellow-border);
     font-size: 0.875rem;
   }
 
   .cell-badge--missing {
-    background: #fecaca;
-    color: #991b1b;
+    background: var(--color-red-bg);
+    color: var(--color-red);
+    border: 1px solid var(--color-red-border);
     font-size: 0.875rem;
   }
 
@@ -1330,17 +1384,19 @@
   /* Legend */
   .legend {
     display: flex;
-    gap: 1rem;
+    gap: 1.25rem;
     flex-wrap: wrap;
-    margin-top: 0.75rem;
-    font-size: 0.75rem;
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border-subtle);
+    font-size: 0.8125rem;
     color: var(--color-text-muted);
   }
 
   .legend-item {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.5rem;
   }
 
   @media (max-width: 900px) {
