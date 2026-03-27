@@ -89,6 +89,13 @@
     message: string;
   }
 
+  interface Employee {
+    id: string;
+    firstName: string;
+    lastName: string;
+    employeeNumber: string;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
   let schedule: WorkSchedule | null = $state(null);
@@ -135,16 +142,46 @@
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
 
-  const employeeId = $authStore.user?.employeeId;
+  // Manager: employee selector
+  let employees: Employee[] = $state([]);
+  let selectedEmployeeId = $state<string | null>(null);
+
+  const ownEmployeeId = $authStore.user?.employeeId ?? null;
+  // The active employee ID: either the selected employee (for managers) or the logged-in user
+  let employeeId = $derived(selectedEmployeeId ?? ownEmployeeId);
+  let isViewingOther = $derived(
+    selectedEmployeeId !== null && selectedEmployeeId !== ownEmployeeId,
+  );
+  let selectedEmployeeName = $derived.by(() => {
+    if (!isViewingOther) return null;
+    const emp = employees.find((e) => e.id === selectedEmployeeId);
+    return emp ? `${emp.firstName} ${emp.lastName}` : null;
+  });
 
   // ── Laden ─────────────────────────────────────────────────────────────────
-  onMount(loadAll);
+  onMount(async () => {
+    // Load employee list for managers
+    const role = $authStore.user?.role;
+    if (role === "ADMIN" || role === "MANAGER") {
+      try {
+        const rawEmployees = await api.get<Employee[]>("/employees");
+        employees = rawEmployees;
+      } catch {
+        // Ignore — employee selector won't be shown
+      }
+    }
+    await loadAll();
+  });
 
   async function loadAll() {
     loading = true;
     error = "";
     try {
       const year = calMonth.getFullYear();
+      const activeEmpId = employeeId;
+      // When manager views another employee, pass employeeId to the API
+      const empQuery =
+        activeEmpId && activeEmpId !== ownEmployeeId ? `&employeeId=${activeEmpId}` : "";
       const [
         rawEntries,
         rawSchedule,
@@ -154,21 +191,21 @@
         rawEmployee,
         rawConfig,
       ] = await Promise.all([
-        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
-        employeeId
-          ? api.get<WorkSchedule>(`/settings/work/${employeeId}`).catch(() => null)
+        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}${empQuery}`),
+        activeEmpId
+          ? api.get<WorkSchedule>(`/settings/work/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
-        employeeId
+        activeEmpId
           ? api
-              .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${employeeId}`)
+              .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${activeEmpId}`)
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
-        employeeId
-          ? api.get<{ balanceHours: number }>(`/overtime/${employeeId}`).catch(() => null)
+        activeEmpId
+          ? api.get<{ balanceHours: number }>(`/overtime/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
-        employeeId
-          ? api.get<{ hireDate?: string }>(`/employees/${employeeId}`).catch(() => null)
+        activeEmpId
+          ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         api
           .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null }>("/settings/work")
@@ -196,6 +233,11 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function onEmployeeChange(newId: string) {
+    selectedEmployeeId = newId === "" ? null : newId;
+    await loadAll();
   }
 
   async function gotoMonth(dir: 1 | -1) {
@@ -505,6 +547,7 @@
         });
       } else {
         result = await api.post("/time-entries", {
+          ...(isViewingOther ? { employeeId: selectedEmployeeId } : {}),
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -711,6 +754,28 @@
   </button>
 </div>
 
+{#if isManager && employees.length > 0}
+  <div class="employee-selector">
+    <label class="form-label" for="emp-select">Mitarbeiter</label>
+    <select
+      id="emp-select"
+      class="form-input"
+      value={selectedEmployeeId ?? ""}
+      onchange={(e) => onEmployeeChange(e.currentTarget.value)}
+    >
+      <option value="">Meine Einträge</option>
+      {#each employees as emp (emp.id)}
+        {#if emp.id !== ownEmployeeId}
+          <option value={emp.id}>{emp.lastName}, {emp.firstName} ({emp.employeeNumber})</option>
+        {/if}
+      {/each}
+    </select>
+    {#if isViewingOther}
+      <span class="viewing-other-hint">Einträge von {selectedEmployeeName}</span>
+    {/if}
+  </div>
+{/if}
+
 <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -897,7 +962,7 @@
         {#each allEntries as slot (slot.id)}
           {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
           {@const slotArbzg = arbzgDayMap.get(slotDate)}
-          <tr>
+          <tr class:row-invalid={slot.isInvalid}>
             <td class="font-mono"
               >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                 day: "2-digit",
@@ -922,9 +987,26 @@
             <td class="font-mono font-medium">{slotNet(slot)}</td>
             <td><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span></td
             >
-            <td class="note-cell text-muted">{slot.note ?? "---"}</td>
+            <td class="note-cell text-muted">
+              {#if slot.isInvalid && slot.invalidReason}
+                <span class="invalid-reason">{slot.invalidReason}</span>
+              {:else}
+                {slot.note ?? "---"}
+              {/if}
+            </td>
             <td class="action-cell">
-              {#if deleteConfirmId === slot.id}
+              {#if slot.isInvalid && isManager}
+                <span class="row-actions row-actions--visible">
+                  <button
+                    class="btn btn-sm btn-warning"
+                    onclick={() => revalidateEntry(slot.id)}
+                    title="Eintrag revalidieren und freigeben">Freigeben</button
+                  >
+                  <button class="btn-icon" onclick={() => openEdit(slot)} title="Korrigieren"
+                    >✏️</button
+                  >
+                </span>
+              {:else if deleteConfirmId === slot.id}
                 <span class="del-confirm">
                   <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
                   <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
@@ -964,7 +1046,15 @@
   <div class="modal-backdrop" onclick={self(closeModal)} role="presentation">
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
-        <h2>{editEntry ? "Eintrag bearbeiten" : "Neuen Eintrag hinzufügen"}</h2>
+        <h2>
+          {editEntry
+            ? isViewingOther
+              ? `Eintrag korrigieren (${selectedEmployeeName})`
+              : "Eintrag bearbeiten"
+            : isViewingOther
+              ? `Neuer Eintrag für ${selectedEmployeeName}`
+              : "Neuen Eintrag hinzufügen"}
+        </h2>
         <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -1085,6 +1175,46 @@
 
 <style>
   /* page-header-compact → global in app.css */
+
+  /* ── Employee Selector (Manager) ────────────────────────────────── */
+  .employee-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--blue-50, #eff6ff);
+    border: 1px solid var(--blue-200, #bfdbfe);
+    border-radius: 8px;
+  }
+  .employee-selector .form-label {
+    margin: 0;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .employee-selector .form-input {
+    max-width: 320px;
+  }
+  .viewing-other-hint {
+    font-size: 0.85rem;
+    color: var(--blue-700, #1d4ed8);
+    font-weight: 500;
+  }
+
+  /* ── Warning button ────────────────────────────────────────────── */
+  .btn-warning {
+    background: #f59e0b;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .btn-warning:hover {
+    background: #d97706;
+  }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
   .cal-section {
