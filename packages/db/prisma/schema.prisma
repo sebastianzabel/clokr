@@ -94,6 +94,14 @@ model TenantConfig {
   autoCalcPartTimeVacation Boolean @default(true) // Automatische Pro-Rata Berechnung
   fullTimeWorkDaysPerWeek  Int    @default(5)     // Referenz für Vollzeit (5 oder 6)
 
+  // E-Mail-Benachrichtigungen
+  emailNotificationsEnabled  Boolean @default(false) // Master switch
+  emailOnLeaveRequest        Boolean @default(true)  // Neuer Urlaubsantrag
+  emailOnLeaveDecision       Boolean @default(true)  // Urlaub genehmigt/abgelehnt
+  emailOnOvertimeWarning     Boolean @default(false) // Überstunden-Schwellwert
+  emailOnMissingEntries      Boolean @default(false) // Fehlende Zeiteinträge
+  emailOnClockOutReminder    Boolean @default(false) // Vergessene Stempelung
+  emailOnMonthClose          Boolean @default(true)  // Monatsabschluss
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
@@ -123,8 +131,9 @@ model User {
   email        String     @unique
   passwordHash String
   role         Role       @default(EMPLOYEE)
-  isActive     Boolean    @default(true)
-  lastLoginAt  DateTime?  @db.Timestamptz
+  isActive           Boolean    @default(true)
+  emailNotifications Boolean    @default(true) // Per-user email opt-out
+  lastLoginAt        DateTime?  @db.Timestamptz
   createdAt    DateTime   @default(now()) @db.Timestamptz
   updatedAt    DateTime   @updatedAt      @db.Timestamptz
 

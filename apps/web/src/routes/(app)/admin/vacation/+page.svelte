@@ -102,6 +102,20 @@
   let gMissingDays = $state(7);
   let gAutoDeleteHours = $state(14);
 
+  // Abwesenheits-Konfiguration
+  let christmasEveRule = $state("NORMAL");
+  let newYearsEveRule = $state("NORMAL");
+  let vacationLeadTimeDays = $state(0);
+  let vacationMaxAdvanceMonths = $state(0);
+  let halfDayAllowed = $state(true);
+  let sickSelfReport = $state(true);
+  let sickNoteRequiredAfterDays = $state(3);
+  let autoCalcPartTimeVacation = $state(true);
+  let fullTimeWorkDaysPerWeek = $state(5);
+  // Max Minusstunden
+  let maxNegEnabled = $state(false);
+  let maxNegHours = $state(20);
+
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
     gCarryOverDay = gMaxDay;
@@ -163,6 +177,19 @@
       gMissingDays = cfg.missingEntriesDays ?? 7;
       gAutoDeleteHours = cfg.autoDeleteOpenHours ?? 14;
 
+      // Leave/overtime config
+      christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
+      newYearsEveRule = (cfg as any).newYearsEveRule ?? "NORMAL";
+      vacationLeadTimeDays = (cfg as any).vacationLeadTimeDays ?? 0;
+      vacationMaxAdvanceMonths = (cfg as any).vacationMaxAdvanceMonths ?? 0;
+      halfDayAllowed = (cfg as any).halfDayAllowed ?? true;
+      sickSelfReport = (cfg as any).sickSelfReport ?? true;
+      sickNoteRequiredAfterDays = (cfg as any).sickNoteRequiredAfterDays ?? 3;
+      autoCalcPartTimeVacation = (cfg as any).autoCalcPartTimeVacation ?? true;
+      fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
+      const maxNegMinutes = (cfg as any).maxNegativeBalanceMinutes;
+      if (maxNegMinutes != null) { maxNegEnabled = true; maxNegHours = maxNegMinutes / 60; }
+
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -197,6 +224,19 @@
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
         autoDeleteOpenHours: gAutoDeleteHours,
+        christmasEveRule,
+        newYearsEveRule,
+        vacationLeadTimeDays,
+        vacationMaxAdvanceMonths,
+        halfDayAllowed,
+        sickSelfReport,
+        sickNoteRequiredAfterDays,
+        autoCalcPartTimeVacation,
+        fullTimeWorkDaysPerWeek,
+      });
+      // Save max negative via security endpoint
+      await api.put("/settings/security", {
+        maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
       });
       // Reset nach Speichern
       gApplyToExisting = false;
@@ -618,6 +658,101 @@
           </p>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Card 5: Abwesenheiten & Sonderregelungen -->
+  <div class="section-group">
+    <div class="settings-section">
+      <h3 class="section-title">Heiligabend & Silvester</h3>
+      <div class="inline-settings">
+        <div class="form-group">
+          <label class="form-label" for="christmas-rule">Heiligabend (24.12.)</label>
+          <select id="christmas-rule" bind:value={christmasEveRule} class="form-input">
+            <option value="NORMAL">Normaler Arbeitstag</option>
+            <option value="HALF_DAY">Halber Tag frei</option>
+            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newyears-rule">Silvester (31.12.)</label>
+          <select id="newyears-rule" bind:value={newYearsEveRule} class="form-input">
+            <option value="NORMAL">Normaler Arbeitstag</option>
+            <option value="HALF_DAY">Halber Tag frei</option>
+            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3 class="section-title">Urlaubsanträge</h3>
+      <div class="inline-settings">
+        <div class="form-group">
+          <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
+          <input id="lead-time" type="number" min="0" max="365" bind:value={vacationLeadTimeDays} class="form-input" />
+          <p class="form-hint text-muted">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
+          <input id="max-advance" type="number" min="0" max="24" bind:value={vacationMaxAdvanceMonths} class="form-input" />
+          <p class="form-hint text-muted">0 = unbegrenzt.</p>
+        </div>
+      </div>
+      <label class="form-label toggle-label" style="margin-top:0.75rem">
+        <input type="checkbox" bind:checked={halfDayAllowed} />
+        Halbe Tage erlauben
+      </label>
+    </div>
+
+    <div class="settings-section">
+      <h3 class="section-title">Krankmeldungen</h3>
+      <label class="form-label toggle-label">
+        <input type="checkbox" bind:checked={sickSelfReport} />
+        Mitarbeiter dürfen Krankmeldung selbst eintragen
+      </label>
+      <div class="inline-settings" style="margin-top:0.75rem">
+        <div class="form-group">
+          <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tagen)</label>
+          <input id="sick-note-days" type="number" min="1" max="30" bind:value={sickNoteRequiredAfterDays} class="form-input" />
+          <p class="form-hint text-muted">§ 5 EFZG — Standard: 3 Tage.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3 class="section-title">Teilzeit-Urlaub</h3>
+      <label class="form-label toggle-label">
+        <input type="checkbox" bind:checked={autoCalcPartTimeVacation} />
+        Automatische Pro-Rata-Berechnung (BUrlG)
+      </label>
+      {#if autoCalcPartTimeVacation}
+        <div class="inline-settings" style="margin-top:0.75rem">
+          <div class="form-group">
+            <label class="form-label" for="ft-days">Vollzeit-Arbeitstage/Woche</label>
+            <select id="ft-days" bind:value={fullTimeWorkDaysPerWeek} class="form-input">
+              <option value={5}>5 Tage (Mo–Fr)</option>
+              <option value={6}>6 Tage (Mo–Sa)</option>
+            </select>
+          </div>
+        </div>
+      {/if}
+    </div>
+
+    <div class="settings-section">
+      <h3 class="section-title">Max. Minusstunden</h3>
+      <label class="form-label toggle-label">
+        <input type="checkbox" bind:checked={maxNegEnabled} />
+        Limit für negatives Überstundensaldo
+      </label>
+      {#if maxNegEnabled}
+        <div class="inline-settings" style="margin-top:0.75rem">
+          <div class="form-group">
+            <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
+            <input id="max-neg-hours" type="number" min="1" max="999" step="0.5" bind:value={maxNegHours} class="form-input" />
+          </div>
+        </div>
+      {/if}
     </div>
   </div>
 

@@ -319,6 +319,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           title: "Neuer Urlaubsantrag",
           message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
           link: `/leave?request=${request.id}`,
+          tenantId,
         });
       }
 
@@ -679,6 +680,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           title: body.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
           message: `Ihr ${existing.leaveType.name}-Antrag wurde ${body.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
           link: `/leave?request=${existing.id}`,
+          tenantId: requestEmployee.tenantId,
         });
       }
 

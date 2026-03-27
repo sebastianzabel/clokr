@@ -136,6 +136,18 @@
   let autoCalcPartTimeVacation = $state(true);
   let fullTimeWorkDaysPerWeek = $state(5);
 
+  // E-Mail-Benachrichtigungen
+  let emailEnabled = $state(false);
+  let emailOnLeaveRequest = $state(true);
+  let emailOnLeaveDecision = $state(true);
+  let emailOnOvertimeWarning = $state(false);
+  let emailOnMissingEntries = $state(false);
+  let emailOnClockOutReminder = $state(false);
+  let emailOnMonthClose = $state(true);
+  let emailSaving = $state(false);
+  let emailSaved = $state(false);
+  let emailError = $state("");
+
   // NFC Terminals
   interface TerminalKey {
     id: string;
@@ -244,6 +256,13 @@
           maxNegEnabled = true;
           maxNegHours = sec.maxNegativeBalanceMinutes / 60;
         }
+        emailEnabled = (sec as any).emailNotificationsEnabled ?? false;
+        emailOnLeaveRequest = (sec as any).emailOnLeaveRequest ?? true;
+        emailOnLeaveDecision = (sec as any).emailOnLeaveDecision ?? true;
+        emailOnOvertimeWarning = (sec as any).emailOnOvertimeWarning ?? false;
+        emailOnMissingEntries = (sec as any).emailOnMissingEntries ?? false;
+        emailOnClockOutReminder = (sec as any).emailOnClockOutReminder ?? false;
+        emailOnMonthClose = (sec as any).emailOnMonthClose ?? true;
       } catch {
         /* ignorieren */
       }
@@ -398,6 +417,29 @@
       maxNegError = e instanceof Error ? e.message : "Fehler";
     } finally {
       maxNegSaving = false;
+    }
+  }
+
+  async function saveEmailConfig() {
+    emailSaving = true;
+    emailSaved = false;
+    emailError = "";
+    try {
+      await api.put("/settings/security", {
+        emailNotificationsEnabled: emailEnabled,
+        emailOnLeaveRequest,
+        emailOnLeaveDecision,
+        emailOnOvertimeWarning,
+        emailOnMissingEntries,
+        emailOnClockOutReminder,
+        emailOnMonthClose,
+      });
+      emailSaved = true;
+      setTimeout(() => (emailSaved = false), 3000);
+    } catch (e: unknown) {
+      emailError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      emailSaving = false;
     }
   }
 
@@ -686,148 +728,58 @@
 
     <hr class="sys-divider" />
 
-    <!-- Max. Minusstunden -->
+    <!-- E-Mail-Benachrichtigungen -->
     <div class="sys-section">
-      <h3 class="sys-title">Max. Minusstunden</h3>
-      {#if maxNegError}
+      <h3 class="sys-title">E-Mail-Benachrichtigungen</h3>
+      {#if emailError}
         <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
-          <span>⚠</span><span>{maxNegError}</span>
+          <span>⚠</span><span>{emailError}</span>
         </div>
       {/if}
       <div class="toggle-row">
         <div class="toggle-info">
-          <span class="toggle-row-label">Limit für negatives Überstundensaldo</span>
+          <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
           <p class="form-hint text-muted">
-            Begrenzt, wie viele Minusstunden Mitarbeiter ansammeln dürfen.
+            Sendet zusätzlich zur In-App-Benachrichtigung eine E-Mail. SMTP muss konfiguriert sein.
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={maxNegEnabled} />
+          <input type="checkbox" bind:checked={emailEnabled} />
           <span class="switch-slider"></span>
         </label>
       </div>
-      {#if maxNegEnabled}
-        <div class="settings-grid" style="margin-top:0.75rem">
-          <div class="form-group">
-            <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
-            <input id="max-neg-hours" type="number" min="1" max="999" step="0.5" bind:value={maxNegHours} class="form-input" />
-            <p class="form-hint text-muted">Pro Mitarbeiter individuell überschreibbar.</p>
-          </div>
+      {#if emailEnabled}
+        <h4 class="sys-subtitle" style="margin-top:1rem">Benachrichtigungstypen</h4>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Neuer Urlaubsantrag</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnLeaveDecision} /><span class="switch-slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Überstunden-Warnung</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnOvertimeWarning} /><span class="switch-slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Fehlende Zeiteinträge</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnMissingEntries} /><span class="switch-slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Vergessene Stempelung</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnClockOutReminder} /><span class="switch-slider"></span></label>
+        </div>
+        <div class="toggle-row">
+          <span class="toggle-row-label">Monatsabschluss</span>
+          <label class="switch"><input type="checkbox" bind:checked={emailOnMonthClose} /><span class="switch-slider"></span></label>
         </div>
       {/if}
       <div class="settings-actions">
-        <button class="btn btn-primary" onclick={saveMaxNegative} disabled={maxNegSaving}>
-          {maxNegSaving ? "Speichern…" : "Speichern"}
+        <button class="btn btn-primary" onclick={saveEmailConfig} disabled={emailSaving}>
+          {emailSaving ? "Speichern…" : "Speichern"}
         </button>
-        {#if maxNegSaved}
-          <span class="saved-hint">✓ Gespeichert</span>
-        {/if}
-      </div>
-    </div>
-
-    <hr class="sys-divider" />
-
-    <!-- Abwesenheits-Konfiguration -->
-    <div class="sys-section">
-      <h3 class="sys-title">Abwesenheiten & Urlaub</h3>
-      {#if leaveConfigError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
-          <span>⚠</span><span>{leaveConfigError}</span>
-        </div>
-      {/if}
-
-      <h4 class="sys-subtitle">Heiligabend & Silvester</h4>
-      <div class="settings-grid">
-        <div class="form-group">
-          <label class="form-label" for="christmas-rule">Heiligabend (24.12.)</label>
-          <select id="christmas-rule" bind:value={christmasEveRule} class="form-input">
-            <option value="NORMAL">Normaler Arbeitstag</option>
-            <option value="HALF_DAY">Halber Tag frei</option>
-            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="newyears-rule">Silvester (31.12.)</label>
-          <select id="newyears-rule" bind:value={newYearsEveRule} class="form-input">
-            <option value="NORMAL">Normaler Arbeitstag</option>
-            <option value="HALF_DAY">Halber Tag frei</option>
-            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
-          </select>
-        </div>
-      </div>
-
-      <h4 class="sys-subtitle" style="margin-top:1.5rem">Urlaubsanträge</h4>
-      <div class="settings-grid">
-        <div class="form-group">
-          <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
-          <input id="lead-time" type="number" min="0" max="365" bind:value={vacationLeadTimeDays} class="form-input" />
-          <p class="form-hint text-muted">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
-          <input id="max-advance" type="number" min="0" max="24" bind:value={vacationMaxAdvanceMonths} class="form-input" />
-          <p class="form-hint text-muted">0 = unbegrenzt. z. B. 12 = max. 1 Jahr im Voraus.</p>
-        </div>
-      </div>
-      <div class="toggle-row" style="margin-top:0.75rem">
-        <div class="toggle-info">
-          <span class="toggle-row-label">Halbe Tage erlauben</span>
-          <p class="form-hint text-muted">Mitarbeiter können halbe Urlaubstage beantragen.</p>
-        </div>
-        <label class="switch">
-          <input type="checkbox" bind:checked={halfDayAllowed} />
-          <span class="switch-slider"></span>
-        </label>
-      </div>
-
-      <h4 class="sys-subtitle" style="margin-top:1.5rem">Krankmeldungen</h4>
-      <div class="toggle-row">
-        <div class="toggle-info">
-          <span class="toggle-row-label">Selbsteintragen erlauben</span>
-          <p class="form-hint text-muted">Mitarbeiter können Krankmeldungen selbst erstellen.</p>
-        </div>
-        <label class="switch">
-          <input type="checkbox" bind:checked={sickSelfReport} />
-          <span class="switch-slider"></span>
-        </label>
-      </div>
-      <div class="settings-grid" style="margin-top:0.75rem">
-        <div class="form-group">
-          <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tage)</label>
-          <input id="sick-note-days" type="number" min="1" max="30" bind:value={sickNoteRequiredAfterDays} class="form-input" />
-          <p class="form-hint text-muted">Ab dem X. Krankheitstag wird eine AU-Bescheinigung angefordert (§ 5 EFZG).</p>
-        </div>
-      </div>
-
-      <h4 class="sys-subtitle" style="margin-top:1.5rem">Teilzeit-Urlaub</h4>
-      <div class="toggle-row">
-        <div class="toggle-info">
-          <span class="toggle-row-label">Automatische Pro-Rata-Berechnung</span>
-          <p class="form-hint text-muted">Urlaubsanspruch wird automatisch anhand der Arbeitstage/Woche berechnet.</p>
-        </div>
-        <label class="switch">
-          <input type="checkbox" bind:checked={autoCalcPartTimeVacation} />
-          <span class="switch-slider"></span>
-        </label>
-      </div>
-      {#if autoCalcPartTimeVacation}
-        <div class="settings-grid" style="margin-top:0.75rem">
-          <div class="form-group">
-            <label class="form-label" for="ft-days">Vollzeit-Arbeitstage/Woche</label>
-            <select id="ft-days" bind:value={fullTimeWorkDaysPerWeek} class="form-input">
-              <option value={5}>5 Tage (Mo–Fr)</option>
-              <option value={6}>6 Tage (Mo–Sa)</option>
-            </select>
-            <p class="form-hint text-muted">Referenz für die Pro-Rata-Berechnung (BUrlG).</p>
-          </div>
-        </div>
-      {/if}
-
-      <div class="settings-actions">
-        <button class="btn btn-primary" onclick={saveLeaveConfig} disabled={leaveConfigSaving}>
-          {leaveConfigSaving ? "Speichern…" : "Speichern"}
-        </button>
-        {#if leaveConfigSaved}
+        {#if emailSaved}
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>

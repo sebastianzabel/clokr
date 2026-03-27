@@ -513,6 +513,13 @@ export async function settingsRoutes(app: FastifyInstance) {
         passwordRequireDigit: cfg?.passwordRequireDigit ?? true,
         passwordRequireSpecial: cfg?.passwordRequireSpecial ?? true,
         maxNegativeBalanceMinutes: cfg?.maxNegativeBalanceMinutes ?? null,
+        emailNotificationsEnabled: cfg?.emailNotificationsEnabled ?? false,
+        emailOnLeaveRequest: cfg?.emailOnLeaveRequest ?? true,
+        emailOnLeaveDecision: cfg?.emailOnLeaveDecision ?? true,
+        emailOnOvertimeWarning: cfg?.emailOnOvertimeWarning ?? false,
+        emailOnMissingEntries: cfg?.emailOnMissingEntries ?? false,
+        emailOnClockOutReminder: cfg?.emailOnClockOutReminder ?? false,
+        emailOnMonthClose: cfg?.emailOnMonthClose ?? true,
       };
     },
   });
@@ -530,6 +537,13 @@ export async function settingsRoutes(app: FastifyInstance) {
         passwordRequireDigit: z.boolean().optional(),
         passwordRequireSpecial: z.boolean().optional(),
         maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+        emailNotificationsEnabled: z.boolean().optional(),
+        emailOnLeaveRequest: z.boolean().optional(),
+        emailOnLeaveDecision: z.boolean().optional(),
+        emailOnOvertimeWarning: z.boolean().optional(),
+        emailOnMissingEntries: z.boolean().optional(),
+        emailOnClockOutReminder: z.boolean().optional(),
+        emailOnMonthClose: z.boolean().optional(),
       }).parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
@@ -559,6 +573,13 @@ export async function settingsRoutes(app: FastifyInstance) {
         passwordRequireDigit: config.passwordRequireDigit,
         passwordRequireSpecial: config.passwordRequireSpecial,
         maxNegativeBalanceMinutes: config.maxNegativeBalanceMinutes,
+        emailNotificationsEnabled: config.emailNotificationsEnabled,
+        emailOnLeaveRequest: config.emailOnLeaveRequest,
+        emailOnLeaveDecision: config.emailOnLeaveDecision,
+        emailOnOvertimeWarning: config.emailOnOvertimeWarning,
+        emailOnMissingEntries: config.emailOnMissingEntries,
+        emailOnClockOutReminder: config.emailOnClockOutReminder,
+        emailOnMonthClose: config.emailOnMonthClose,
       };
     },
   });
