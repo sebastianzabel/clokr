@@ -128,6 +128,9 @@
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
+  // Team absences toggle (managers/admins)
+  let showTeamAbsences = $state(true);
+
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
   let dragEnd: string | null = $state(null);
@@ -1168,6 +1171,36 @@
           stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
         >
       </button>
+      {#if isManager}
+        <button
+          class="team-toggle"
+          class:team-toggle--active={showTeamAbsences}
+          onclick={() => {
+            showTeamAbsences = !showTeamAbsences;
+          }}
+          title={showTeamAbsences
+            ? "Team-Abwesenheiten ausblenden"
+            : "Team-Abwesenheiten einblenden"}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
+              cx="9"
+              cy="7"
+              r="4"
+            /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg
+          >
+          Team
+        </button>
+      {/if}
     </div>
 
     <!-- Wochentag-Header -->
@@ -1185,7 +1218,9 @@
         {@const absences = entries.filter((e) => !e.isHoliday)}
         {@const isHoliday = holidays.length > 0}
         {@const hasEntries =
-          absences.filter((e) => e.isOwn || isManager || e.status === "APPROVED").length > 0}
+          absences.filter(
+            (e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED")),
+          ).length > 0}
         <div
           class="cal-cell"
           class:cal-cell--current={day.isCurrentMonth}
@@ -1206,7 +1241,7 @@
             </div>
           {/if}
           <div class="cal-chips">
-            {#each absences.filter((e) => e.isOwn || isManager || e.status === "APPROVED") as e}
+            {#each absences.filter((e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED"))) as e}
               <div
                 class="cal-chip"
                 class:cal-chip--pending={e.status === "PENDING" ||
@@ -2534,5 +2569,32 @@
     .form-grid {
       grid-template-columns: 1fr;
     }
+  }
+  .team-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    margin-left: auto;
+  }
+  .team-toggle:hover {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+  }
+  .team-toggle--active {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+    border-color: var(--color-brand);
   }
 </style>
