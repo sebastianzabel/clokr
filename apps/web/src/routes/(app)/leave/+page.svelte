@@ -1218,7 +1218,7 @@
           class:cal-cell--current={day.isCurrentMonth}
           class:cal-other={!day.isCurrentMonth}
           class:cal-today={day.isToday}
-          class:cal-weekend={day.isWeekend}
+          class:cal-weekend={day.isWeekend && day.isCurrentMonth}
           class:cal-holiday={isHoliday && day.isCurrentMonth}
           class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
           role={day.isCurrentMonth ? "button" : undefined}
@@ -2316,7 +2316,7 @@
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
-  .cal-weekend {
+  :global(.cal-cell.cal-weekend:not(.cal-other)) {
     background: #f4f0fa;
   }
   .cal-today {
