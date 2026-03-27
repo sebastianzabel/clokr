@@ -151,6 +151,7 @@ async function hasApprovedLeaveOnDate(
   const absence = await prisma.absence.findFirst({
     where: {
       employeeId,
+      deletedAt: null,
       startDate: { lte: new Date(dateStr + "T23:59:59Z") },
       endDate: { gte: new Date(dateStr + "T00:00:00Z") },
       type: { in: ["MATERNITY", "PARENTAL"] },

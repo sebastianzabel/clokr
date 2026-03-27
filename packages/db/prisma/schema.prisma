@@ -164,6 +164,7 @@ model Employee {
   user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   workSchedules    WorkSchedule[]
   overtimeAccount  OvertimeAccount?
+  saldoSnapshots   SaldoSnapshot[]
   timeEntries      TimeEntry[]
   leaveEntitlements LeaveEntitlement[]
   leaveRequests    LeaveRequest[]
@@ -246,6 +247,36 @@ model Break {
   timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
+}
+
+// ─────────────────────────────────────────────
+// SALDO-SNAPSHOTS (Monatsabschluss / Jahresübertrag)
+// ─────────────────────────────────────────────
+
+model SaldoSnapshot {
+  id              String             @id @default(uuid())
+  employeeId      String
+  periodType      SaldoPeriodType
+  periodStart     DateTime           @db.Date
+  periodEnd       DateTime           @db.Date
+  workedMinutes   Int                // Ist-Arbeitszeit im Zeitraum
+  expectedMinutes Int                // Soll-Arbeitszeit im Zeitraum
+  balanceMinutes  Int                // Differenz (worked - expected)
+  carryOver       Int                // Kumulierter Übertrag bis periodEnd
+  closedAt        DateTime           @db.Timestamptz
+  closedBy        String?            // userId wer abgeschlossen hat (null = SYSTEM)
+  note            String?
+
+  employee        Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, periodType, periodStart])
+  @@index([employeeId])
+  @@index([employeeId, periodType])
+}
+
+enum SaldoPeriodType {
+  MONTHLY
+  YEARLY
 }
 
 // ─────────────────────────────────────────────
