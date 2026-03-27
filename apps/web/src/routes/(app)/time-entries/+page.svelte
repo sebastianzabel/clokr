@@ -619,21 +619,37 @@
   );
   let selectedWorked = $derived(sumWorked(selectedSlots));
   let selectedBalance = $derived(selectedWorked - selectedExpected);
-  // All worked minutes this month (for "Ist" display)
-  let totalWorked = $derived(
-    entries.reduce((s, e) => {
-      if (!e.endTime || e.isInvalid) return s;
-      return (
-        s +
-        Math.floor((new Date(e.endTime).getTime() - new Date(e.startTime).getTime()) / 60000) -
-        (e.breakMinutes ?? 0)
-      );
-    }, 0),
+  // Check if there are entries for today
+  let hasTodayEntries = $derived(
+    entries.some((e) => {
+      const d = (e.date ?? e.startTime).split("T")[0];
+      return d === todayStr && e.endTime && !e.isInvalid;
+    }),
   );
-  // Expected hours including today
+  // Worked + Expected up to cutoff: today if clocked, yesterday otherwise
+  let totalWorked = $derived(
+    entries
+      .filter((e) => {
+        if (!e.endTime || e.isInvalid) return false;
+        if (hasTodayEntries) return true;
+        const d = (e.date ?? e.startTime).split("T")[0];
+        return d < todayStr;
+      })
+      .reduce(
+        (s, e) =>
+          s +
+          Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
+          (e.breakMinutes ?? 0),
+        0,
+      ),
+  );
   let totalExpected = $derived(
     calendarDays
-      .filter((d) => d.isCurrentMonth && !d.isFuture)
+      .filter((d) => {
+        if (!d.isCurrentMonth || d.isFuture) return false;
+        if (hasTodayEntries) return true;
+        return !d.isToday;
+      })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
   let dayWarnings = $derived(arbzgEnabled ? checkArbZGFrontend(selectedSlots) : []);

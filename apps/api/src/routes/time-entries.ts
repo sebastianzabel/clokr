@@ -979,18 +979,33 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     tz,
   );
 
-  // Calculate effective date range: only completed days (up to yesterday)
+  // Determine if today has any entries — if so, include today in calculation
   const effectiveStart =
     employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
   const todayStr = dateStrInTz(now, tz);
   const todayDate = new Date(todayStr + "T00:00:00Z");
-  const effectiveEnd = todayDate < monthEnd ? todayDate : monthEnd;
+  const yesterdayDate = new Date(todayDate.getTime() - 86400000);
 
-  // Worked minutes for ALL days this month (including today)
+  const hasTodayEntries = await app.prisma.timeEntry.count({
+    where: {
+      employeeId,
+      date: todayDate,
+      endTime: { not: null },
+      type: "WORK",
+      isInvalid: false,
+    },
+  });
+
+  // If clocked today → include today, otherwise → only up to yesterday
+  const cutoffDate = hasTodayEntries > 0 ? todayDate : yesterdayDate;
+  const effectiveEnd =
+    cutoffDate < effectiveStart ? effectiveStart : cutoffDate < monthEnd ? cutoffDate : monthEnd;
+
+  // Worked minutes up to cutoff
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
-      date: { gte: monthStart, lte: monthEnd },
+      date: { gte: monthStart, lte: effectiveEnd },
       endTime: { not: null },
       type: "WORK",
       isInvalid: false,
@@ -1002,8 +1017,11 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Expected minutes up to today
-  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
+  // Expected minutes up to same cutoff
+  const expectedMinutes =
+    effectiveEnd < effectiveStart
+      ? 0
+      : calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
