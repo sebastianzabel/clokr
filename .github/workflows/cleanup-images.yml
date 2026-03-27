@@ -1,0 +1,28 @@
+name: Cleanup old container images
+
+# Runs weekly on Sunday at 03:00.
+# Removes old SHA-tagged images from GHCR, keeps release tags and latest.
+
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch: # allow manual trigger
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+
+    strategy:
+      matrix:
+        package: [clokr-api, clokr-web]
+
+    steps:
+      - uses: actions/delete-package-versions@v5
+        with:
+          package-name: ${{ matrix.package }}
+          package-type: container
+          min-versions-to-keep: 10
+          delete-only-untagged-versions: false
+          ignore-versions: "^(latest|main|\\d+\\.\\d+\\.\\d+|\\d+\\.\\d+)$"
