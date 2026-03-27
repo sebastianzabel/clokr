@@ -61,7 +61,13 @@ model TenantConfig {
   smtpFromName  String?
   smtpSecure    Boolean  @default(false)
   // Sicherheit
-  twoFaEnabled  Boolean  @default(false)
+  twoFaEnabled           Boolean  @default(false)
+  // Passwort-Richtlinie (BSI TR-02102-1)
+  passwordMinLength      Int      @default(12)
+  passwordRequireUpper   Boolean  @default(true)
+  passwordRequireLower   Boolean  @default(true)
+  passwordRequireDigit   Boolean  @default(true)
+  passwordRequireSpecial Boolean  @default(true)
   // Zeitzone (IANA)
   timezone      String   @default("Europe/Berlin")
   // Phorest-Integration
@@ -85,6 +91,8 @@ model TenantConfig {
   // Überstunden-Jahresübertrag
   overtimeCarryOverMode  String  @default("FULL") // FULL | CAPPED | RESET
   overtimeCarryOverCap   Int?    // Max. Übertrag in Minuten (nur bei CAPPED)
+  // Max. Minusstunden (null = unbegrenzt, Wert in Minuten)
+  maxNegativeBalanceMinutes Int?
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears     Int     @default(10)
   createdAt            DateTime @default(now()) @db.Timestamptz
@@ -203,6 +211,7 @@ model WorkSchedule {
   sundayHours           Decimal  @db.Decimal(4, 2)  @default(0)
   overtimeThreshold     Decimal  @db.Decimal(5, 2)  @default(60)  // Alert ab X Stunden
   allowOvertimePayout   Boolean  @default(false)
+  maxNegativeBalanceMinutes Int? // Pro-MA Override (null = Tenant-Default)
   validFrom             DateTime @db.Timestamptz
   createdAt             DateTime @default(now()) @db.Timestamptz
   updatedAt             DateTime @updatedAt      @db.Timestamptz

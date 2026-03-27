@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { z } from "zod";
 import { Role } from "@clokr/db";
+import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {
@@ -326,6 +327,19 @@ export async function authRoutes(app: FastifyInstance) {
           .send({ error: "Der Link ist abgelaufen. Bitte fordern Sie einen neuen an." });
       }
 
+      // Load tenant password policy for the user
+      const resetUser = await app.prisma.user.findUnique({
+        where: { id: otpToken.userId },
+        include: { employee: true },
+      });
+      if (resetUser?.employee?.tenantId) {
+        const policy = await loadPasswordPolicy(app, resetUser.employee.tenantId);
+        const check = validatePassword(password, policy);
+        if (!check.valid) {
+          return reply.code(400).send({ error: check.errors.join(". ") });
+        }
+      }
+
       const passwordHash = await bcrypt.hash(password, 12);
 
       // Update password
@@ -355,6 +369,25 @@ export async function authRoutes(app: FastifyInstance) {
       });
 
       return { success: true };
+    },
+  });
+
+  // GET /api/v1/auth/password-policy — public, returns policy for the default tenant
+  // Used by invitation/reset pages to show password requirements
+  app.get("/password-policy", {
+    schema: { tags: ["Auth"] },
+    handler: async () => {
+      const tenant = await app.prisma.tenant.findFirst({
+        include: { config: true },
+      });
+      const cfg = tenant?.config;
+      return {
+        passwordMinLength: cfg?.passwordMinLength ?? 12,
+        passwordRequireUpper: cfg?.passwordRequireUpper ?? true,
+        passwordRequireLower: cfg?.passwordRequireLower ?? true,
+        passwordRequireDigit: cfg?.passwordRequireDigit ?? true,
+        passwordRequireSpecial: cfg?.passwordRequireSpecial ?? true,
+      };
     },
   });
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {
@@ -116,6 +117,13 @@ export async function employeeRoutes(app: FastifyInstance) {
       const body = createEmployeeSchema.parse(req.body);
 
       const directPassword = !!body.password;
+      if (directPassword) {
+        const policy = await loadPasswordPolicy(app, req.user.tenantId);
+        const check = validatePassword(body.password!, policy);
+        if (!check.valid) {
+          return reply.code(400).send({ error: check.errors.join(". ") });
+        }
+      }
       const passwordHash = directPassword
         ? await bcrypt.hash(body.password!, 12)
         : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);

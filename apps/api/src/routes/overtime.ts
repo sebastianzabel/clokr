@@ -44,18 +44,33 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       if (!account) return reply.code(404).send({ error: "Konto nicht gefunden" });
 
-      const schedule = await app.prisma.workSchedule.findFirst({
-        where: { employeeId, validFrom: { lte: new Date() } },
-        orderBy: { validFrom: "desc" },
-      });
+      const [schedule, employee] = await Promise.all([
+        app.prisma.workSchedule.findFirst({
+          where: { employeeId, validFrom: { lte: new Date() } },
+          orderBy: { validFrom: "desc" },
+        }),
+        app.prisma.employee.findUnique({
+          where: { id: employeeId },
+          include: { tenant: { include: { config: true } } },
+        }),
+      ]);
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
       const balance = Number(account.balanceHours);
+      const balanceMinutes = Math.round(balance * 60);
+
+      // Max negative hours: per-employee override > tenant default > null (unlimited)
+      const maxNegMinutes =
+        schedule?.maxNegativeBalanceMinutes ??
+        employee?.tenant?.config?.maxNegativeBalanceMinutes ??
+        null;
 
       return {
         ...account,
         status:
           balance >= threshold ? "CRITICAL" : balance >= threshold * 0.67 ? "ELEVATED" : "NORMAL",
         threshold,
+        maxNegativeBalanceMinutes: maxNegMinutes,
+        isNegativeLimitExceeded: maxNegMinutes != null && balanceMinutes < -maxNegMinutes,
       };
     },
   });

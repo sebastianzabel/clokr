@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { api } from "$api/client";
+  import PasswordStrength from "$lib/components/ui/PasswordStrength.svelte";
 
   let token = $state("");
   let password = $state("");
@@ -10,9 +11,21 @@
   let loading = $state(false);
   let pageState = $state<"form" | "success" | "expired" | "used" | "invalid">("form");
 
-  onMount(() => {
+  let pwPolicy = $state({
+    passwordMinLength: 12,
+    passwordRequireUpper: true,
+    passwordRequireLower: true,
+    passwordRequireDigit: true,
+    passwordRequireSpecial: true,
+  });
+
+  onMount(async () => {
     token = page.url.searchParams.get("token") ?? "";
-    if (!token) pageState = "invalid";
+    if (!token) { pageState = "invalid"; return; }
+    try {
+      const p = await api.get<typeof pwPolicy>("/auth/password-policy");
+      pwPolicy = p;
+    } catch { /* use defaults */ }
   });
 
   async function handleSubmit() {
@@ -20,8 +33,8 @@
       error = "Passwörter stimmen nicht überein";
       return;
     }
-    if (password.length < 8) {
-      error = "Passwort muss mindestens 8 Zeichen haben";
+    if (password.length < pwPolicy.passwordMinLength) {
+      error = `Passwort muss mindestens ${pwPolicy.passwordMinLength} Zeichen haben`;
       return;
     }
     loading = true;
@@ -115,9 +128,10 @@
             required
             minlength="8"
             class="form-input"
-            placeholder="Mindestens 8 Zeichen"
+            placeholder="Mindestens {pwPolicy.passwordMinLength} Zeichen"
             autocomplete="new-password"
           />
+          <PasswordStrength {password} policy={pwPolicy} />
         </div>
 
         <div class="form-group">
