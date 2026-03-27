@@ -5,7 +5,7 @@
 - **Monorepo**: pnpm workspaces (`apps/api`, `apps/web`, `packages/db`)
 - **API**: Fastify + TypeScript, Zod validation, Prisma ORM (PostgreSQL)
 - **Web**: SvelteKit + Svelte 5 (runes: `$state`, `$derived`, `$effect`, `$props`)
-- **DB**: PostgreSQL 17, Prisma schema at `packages/db/prisma/schema.prisma`
+- **DB**: PostgreSQL 18, Prisma schema at `packages/db/prisma/schema.prisma`
 - **Docker**: `docker compose up --build -d` for full stack
 
 ## Commands

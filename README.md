@@ -10,13 +10,16 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 
 ## Features
 
-- **Time Tracking** — Clock in/out, manual entries, monthly calendar view, ArbZG compliance checks
-- **Leave Management** — Vacation, sick leave, maternity/parental leave, overtime compensation; approval workflow for managers
-- **Overtime Account** — Automatic balance tracking with configurable thresholds and payout support
+- **Time Tracking** — Clock in/out, manual entries, monthly calendar view, one entry per day with multiple breaks, ArbZG compliance checks
+- **Leave Management** — Vacation, sick leave, maternity/parental leave, overtime compensation; approval workflow with cancellation flow
+- **Overtime Account** — Snapshot-based balance tracking with monthly closing (Monatsabschluss), yearly carry-over (configurable: FULL/CAPPED/RESET), configurable thresholds and payout support
+- **Monatsabschluss** — Automatic monthly closing with completeness check, sequential validation, manager notifications for missing entries, admin overview with status filter
 - **Shift Planning** — Weekly grid view, templates, quick-assign mode for admins/managers
-- **Employee Management** — Invite-based or direct creation with password, role management, bulk CSV import
+- **Employee Management** — Invite-based or direct creation with password, role management, bulk CSV import, DSGVO-compliant anonymization on deletion
+- **Manager Corrections** — Managers can edit and revalidate employee time entries
 - **Reports** — Monthly summaries, leave overview, PDF export, DATEV CSV export
-- **Notifications** — In-app notification bell with real-time updates on leave approvals/requests
+- **Audit-Proof (Revisionssicher)** — Soft delete, full audit trail (who/when/what/why), isLocked enforcement after month close, data retention with configurable retention periods (default 10 years)
+- **Notifications** — In-app notification bell with real-time updates on leave approvals/requests, auto-close reminders
 - **iCal Export** — Personal and team absence calendars for integration with external tools
 - **2FA** — Optional email OTP for all users
 - **Password Reset** — Self-service via email link
@@ -32,7 +35,7 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 | -------- | ------------------------------------------- |
 | Frontend | SvelteKit + Svelte 5, TypeScript            |
 | Backend  | Fastify 5, TypeScript                       |
-| Database | PostgreSQL 16 + Prisma 7                    |
+| Database | PostgreSQL 18 + Prisma 7                    |
 | Cache    | Redis 7                                     |
 | Storage  | MinIO (S3-compatible)                       |
 | Auth     | JWT (Access + Refresh) + optional Email OTP |
@@ -68,7 +71,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### Pin a version
 
-Set `CLOKR_VERSION=2.1.0` in `.env` to pin to a specific release.
+Set `CLOKR_VERSION=3.1.1` in `.env` to pin to a specific release.
 
 ---
 
@@ -113,7 +116,7 @@ docker compose up --build -d
 | ------------ | --------- | -------------------------------- |
 | **web**      | 3000      | SvelteKit frontend (proxies API) |
 | **api**      | 4000      | Fastify backend                  |
-| **postgres** | 5432      | PostgreSQL 16                    |
+| **postgres** | 5432      | PostgreSQL 18                    |
 | **redis**    | 6379      | Redis 7                          |
 | **minio**    | 9000/9001 | MinIO object storage             |
 
@@ -132,8 +135,8 @@ The API entrypoint auto-migrates the database on startup.
 
 ### Prerequisites
 
-- Node.js 22+
-- pnpm 9+
+- Node.js 24+
+- pnpm 10+
 
 ### Setup
 
@@ -167,10 +170,10 @@ pnpm dev
 
 After seeding:
 
-| Role     | Email          | Password  |
-| -------- | -------------- | --------- |
-| Admin    | admin@clokr.de | admin1234 |
-| Employee | max@clokr.de   | admin1234 |
+| Role     | Email          | Password        |
+| -------- | -------------- | --------------- |
+| Admin    | admin@clokr.de | admin1234       |
+| Employee | max@clokr.de   | mitarbeiter5678 |
 
 ---
 
