@@ -681,11 +681,12 @@
     </div>
 
     <div class="stat-card">
-      <p class="stat-label">Überstunden</p>
+      <p class="stat-label">Überstundensaldo</p>
       <p class="stat-value {overtimeClass} font-mono">
         {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
       </p>
       <p class="stat-sub">
+        Stand heute &middot;
         {Math.abs(overtimeBalance) >= 60
           ? "Kritisch"
           : Math.abs(overtimeBalance) >= 40

@@ -1722,9 +1722,17 @@
   .btn-icon:hover {
     background: var(--gray-100);
   }
+  .btn-icon-danger {
+    color: var(--color-text-muted);
+  }
   .btn-icon-danger:hover {
     background: #fef2f2;
     color: #dc2626;
+  }
+
+  /* Ensure delete confirmation button has white text on red background */
+  .del-confirm :global(.btn-danger) {
+    color: #fff !important;
   }
   .btn-danger-sm {
     color: white;

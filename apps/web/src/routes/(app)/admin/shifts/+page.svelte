@@ -480,6 +480,11 @@
     <p class="empty-state__text">Keine Mitarbeiter vorhanden.</p>
   </div>
 {:else}
+  {#if templates.length === 0}
+    <div class="template-hint">
+      <p class="template-hint__text">Erstellen Sie zuerst eine Schichtvorlage über den "Vorlagen"-Button, um Schichten zuweisen zu können.</p>
+    </div>
+  {/if}
   <div class="grid-wrapper">
     <table class="shift-grid">
       <thead>
@@ -555,8 +560,8 @@
                 {#if cellShifts.length === 0}
                   <span class="grid-cell__plus">+</span>
                   {#if getActualHours(emp.id, day) !== null && (getActualHours(emp.id, day) ?? 0) > 0}
-                    <span class="cell-actual"
-                      >{(getActualHours(emp.id, day) ?? 0).toFixed(1)}h ohne Schicht</span
+                    <span class="cell-actual" title="Arbeitszeit ohne zugewiesene Schicht"
+                      >{(getActualHours(emp.id, day) ?? 0).toFixed(1)}h (ungeplant)</span
                     >
                   {/if}
                 {/if}
@@ -965,7 +970,24 @@
     text-align: center;
     font-size: 0.6875rem;
     color: var(--color-text-muted);
+    opacity: 0.7;
+    font-style: italic;
     padding: 0.25rem;
+  }
+
+  /* ── Template hint ── */
+  .template-hint {
+    background: var(--color-brand-tint, #f3f0ff);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 8px);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .template-hint__text {
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+    margin: 0;
   }
 
   /* ── Skeleton ── */
