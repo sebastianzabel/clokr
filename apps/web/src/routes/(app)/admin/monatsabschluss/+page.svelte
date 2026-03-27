@@ -1,24 +1,36 @@
 <script lang="ts">
   import { api } from "$api/client";
 
+  interface MissingEmployee {
+    employeeName: string;
+    employeeNumber: string;
+    missingDates: string[];
+  }
+
+  interface MonthStatus {
+    month: number;
+    name: string;
+    status: "closed" | "partial" | "ready" | "open" | "blocked" | "future";
+    closedCount: number;
+    totalCount: number;
+    missing?: MissingEmployee[];
+  }
+
+  interface YearStatusResponse {
+    year: number;
+    months: MonthStatus[];
+    autoCloseDeadline: number;
+  }
+
   interface EmployeeStatus {
     employeeId: string;
     employeeName: string;
     employeeNumber: string;
     status: "ready" | "missing" | "closed";
     missingDates?: string[];
-    snapshot?: {
-      id: string;
-      workedMinutes: number;
-      expectedMinutes: number;
-      balanceMinutes: number;
-      carryOver: number;
-      closedAt: string;
-      closedBy: string | null;
-    };
   }
 
-  interface StatusResponse {
+  interface MonthDetailResponse {
     year: number;
     month: number;
     employees: EmployeeStatus[];
@@ -26,125 +38,147 @@
 
   const now = new Date();
   const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1; // 1-based
+  const currentDay = now.getDate();
 
-  // Default to previous month
-  let selectedYear = $state(currentMonth === 1 ? currentYear - 1 : currentYear);
-  let selectedMonth = $state(currentMonth === 1 ? 12 : currentMonth - 1);
-
-  let employeeStatuses: EmployeeStatus[] = $state([]);
+  let selectedYear = $state(currentYear);
   let loading = $state(false);
-  let closing = $state(false);
-  let closingEmployeeId = $state<string | null>(null);
   let error = $state("");
   let success = $state("");
+  let monthStatuses: MonthStatus[] = $state([]);
   let loaded = $state(false);
 
-  const months = [
-    "Januar",
-    "Februar",
-    "März",
-    "April",
-    "Mai",
-    "Juni",
-    "Juli",
-    "August",
-    "September",
-    "Oktober",
-    "November",
-    "Dezember",
-  ];
+  // Expanded month detail
+  let expandedMonth = $state<number | null>(null);
+  let detailLoading = $state(false);
+  let detailEmployees: EmployeeStatus[] = $state([]);
+
+  // Closing state
+  let closing = $state(false);
+  let closingProgress = $state(0);
+  let closingTotal = $state(0);
 
   const years = $derived(Array.from({ length: 5 }, (_, i) => currentYear - i));
 
-  // Only past months are selectable
-  let availableMonths = $derived(
-    months
-      .map((name, i) => ({ name, value: i + 1 }))
-      .filter((m) => selectedYear < currentYear || m.value < currentMonth),
-  );
-
-  // Count helpers for the bottom bar
-  let readyCount = $derived(employeeStatuses.filter((e) => e.status === "ready").length);
-  let closedCount = $derived(employeeStatuses.filter((e) => e.status === "closed").length);
-  let missingCount = $derived(employeeStatuses.filter((e) => e.status === "missing").length);
-
-  // Reset month if it becomes invalid when year changes
-  function onYearChange() {
-    if (selectedYear === currentYear && selectedMonth >= currentMonth) {
-      selectedMonth = currentMonth - 1 || 12;
-      if (selectedMonth === 12 && selectedYear === currentYear) {
-        selectedYear = currentYear - 1;
+  // Determine the first actionable month (first open/ready/partial month)
+  let firstActionableMonth = $derived.by(() => {
+    for (const ms of monthStatuses) {
+      if (ms.status === "open" || ms.status === "ready" || ms.status === "partial") {
+        return ms.month;
       }
     }
-    loadStatus();
-  }
+    return null;
+  });
 
-  async function loadStatus() {
+  // Auto-close hint
+  let autoCloseHint = $derived.by(() => {
+    const hasOpenMonths = monthStatuses.some(
+      (ms) => ms.status === "open" || ms.status === "ready" || ms.status === "partial",
+    );
+    if (!hasOpenMonths) return null;
+    if (currentDay <= 10) {
+      return "Automatischer Abschluss versucht es bis zum 10.";
+    }
+    return "Nur noch manuell möglich";
+  });
+
+  async function loadYearStatus() {
     loading = true;
     error = "";
     success = "";
     loaded = false;
+    expandedMonth = null;
+    detailEmployees = [];
     try {
-      const res = await api.get<StatusResponse>(
-        `/overtime/close-month/status?year=${selectedYear}&month=${selectedMonth}`,
+      const res = await api.get<YearStatusResponse>(
+        `/overtime/close-month/year-status?year=${selectedYear}`,
       );
-      employeeStatuses = res.employees;
+      monthStatuses = res.months;
       loaded = true;
     } catch {
-      error = "Status konnte nicht geladen werden";
+      error = "Jahresstatus konnte nicht geladen werden";
     } finally {
       loading = false;
     }
   }
 
-  async function closeEmployee(employeeId: string) {
-    closingEmployeeId = employeeId;
-    closing = true;
-    error = "";
-    success = "";
+  function onYearChange() {
+    loadYearStatus();
+  }
+
+  async function toggleMonthDetail(month: number) {
+    if (expandedMonth === month) {
+      expandedMonth = null;
+      detailEmployees = [];
+      return;
+    }
+
+    expandedMonth = month;
+    detailLoading = true;
+    detailEmployees = [];
     try {
-      await api.post("/overtime/close-month", {
-        employeeId,
-        year: selectedYear,
-        month: selectedMonth,
-      });
-      success = `${months[selectedMonth - 1]} ${selectedYear} erfolgreich abgeschlossen`;
-      await loadStatus();
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Monatsabschluss";
+      const res = await api.get<MonthDetailResponse>(
+        `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
+      );
+      detailEmployees = res.employees;
+    } catch {
+      error = "Details konnten nicht geladen werden";
     } finally {
-      closing = false;
-      closingEmployeeId = null;
+      detailLoading = false;
     }
   }
 
-  async function closeAllReady() {
+  async function closeMonth(month: number) {
     closing = true;
+    closingProgress = 0;
     error = "";
     success = "";
-    const readyEmployees = employeeStatuses.filter((e) => e.status === "ready");
-    let succeeded = 0;
-    let failed = 0;
 
-    for (const emp of readyEmployees) {
-      closingEmployeeId = emp.employeeId;
-      try {
-        await api.post("/overtime/close-month", {
-          employeeId: emp.employeeId,
-          year: selectedYear,
-          month: selectedMonth,
-        });
-        succeeded++;
-      } catch {
-        failed++;
+    // Load the month detail to find ready employees
+    try {
+      const res = await api.get<MonthDetailResponse>(
+        `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
+      );
+      const readyEmployees = res.employees.filter((e) => e.status === "ready");
+      closingTotal = readyEmployees.length;
+
+      if (readyEmployees.length === 0) {
+        error = "Keine Mitarbeiter bereit zum Abschluss";
+        closing = false;
+        return;
       }
-    }
 
-    success = `${months[selectedMonth - 1]} ${selectedYear}: ${succeeded} abgeschlossen${failed > 0 ? `, ${failed} fehlgeschlagen` : ""}`;
-    closing = false;
-    closingEmployeeId = null;
-    await loadStatus();
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const emp of readyEmployees) {
+        try {
+          await api.post("/overtime/close-month", {
+            employeeId: emp.employeeId,
+            year: selectedYear,
+            month,
+          });
+          succeeded++;
+        } catch {
+          failed++;
+        }
+        closingProgress = succeeded + failed;
+      }
+
+      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
+      success = `${monthName} ${selectedYear}: ${succeeded} abgeschlossen${failed > 0 ? `, ${failed} fehlgeschlagen` : ""}`;
+
+      // Reload year status and detail
+      await loadYearStatus();
+      if (expandedMonth === month) {
+        await toggleMonthDetail(month);
+      }
+    } catch {
+      error = "Fehler beim Monatsabschluss";
+    } finally {
+      closing = false;
+      closingProgress = 0;
+      closingTotal = 0;
+    }
   }
 
   function formatMissingDates(dates: string[]): string {
@@ -156,12 +190,86 @@
       .join(", ");
   }
 
-  function fmtHours(minutes: number): string {
-    const h = Math.floor(Math.abs(minutes) / 60);
-    const m = Math.abs(minutes) % 60;
-    const sign = minutes < 0 ? "-" : "+";
-    return `${sign}${h}:${String(Math.round(m)).padStart(2, "0")}`;
+  function formatMissingShort(dates: string[]): string {
+    if (dates.length <= 3) {
+      return formatMissingDates(dates);
+    }
+    const first3 = dates.slice(0, 3);
+    return formatMissingDates(first3) + ` (+${dates.length - 3})`;
   }
+
+  function statusLabel(status: string): string {
+    switch (status) {
+      case "closed":
+        return "Abgeschlossen";
+      case "partial":
+        return "Teilweise";
+      case "ready":
+        return "Bereit";
+      case "open":
+        return "Offen";
+      case "blocked":
+        return "Blockiert";
+      case "future":
+        return "Zukunft";
+      default:
+        return status;
+    }
+  }
+
+  function statusIcon(status: string): string {
+    switch (status) {
+      case "closed":
+        return "\u2705";
+      case "partial":
+        return "\u26a0\ufe0f";
+      case "ready":
+        return "\ud83d\udfe2";
+      case "open":
+        return "\u274c";
+      case "blocked":
+        return "\ud83d\udd12";
+      case "future":
+        return "\u2014";
+      default:
+        return "";
+    }
+  }
+
+  function reasonText(ms: MonthStatus): string {
+    if (ms.status === "closed") return "\u2014";
+    if (ms.status === "future") return "\u2014";
+    if (ms.status === "blocked") {
+      // Find the first non-closed month before this one
+      const prev = monthStatuses.find(
+        (p) => p.month < ms.month && p.status !== "closed" && p.status !== "future",
+      );
+      return prev ? `${prev.name} noch offen` : "Vorheriger Monat noch offen";
+    }
+    if (ms.status === "open" && ms.missing && ms.missing.length > 0) {
+      return ms.missing
+        .map((m) => `${shortenName(m.employeeName)}: ${formatMissingShort(m.missingDates)}`)
+        .join("; ");
+    }
+    if (ms.status === "partial") {
+      return `${ms.closedCount} von ${ms.totalCount} abgeschlossen`;
+    }
+    if (ms.status === "ready") {
+      return "Alle Mitarbeiter bereit";
+    }
+    return "\u2014";
+  }
+
+  function shortenName(name: string): string {
+    const parts = name.split(" ");
+    if (parts.length >= 2) {
+      return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`;
+    }
+    return name;
+  }
+
+  // Load on mount
+  loadYearStatus();
 </script>
 
 <svelte:head><title>Monatsabschluss - Clokr</title></svelte:head>
@@ -180,19 +288,10 @@
         </select>
       </label>
 
-      <label class="control-group">
-        <span class="control-label">Monat</span>
-        <select class="form-select" bind:value={selectedMonth} onchange={loadStatus}>
-          {#each availableMonths as m (m.value)}
-            <option value={m.value}>{m.name}</option>
-          {/each}
-        </select>
-      </label>
-
       <div class="control-group control-action">
         <span class="control-label">&nbsp;</span>
-        <button class="btn btn-primary" onclick={loadStatus} disabled={loading}>
-          {loading ? "Wird geladen..." : "Status laden"}
+        <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
+          {loading ? "Wird geladen..." : "Aktualisieren"}
         </button>
       </div>
     </div>
@@ -205,110 +304,149 @@
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  {#if loading}
-    <div class="loading-indicator">Lade Status...</div>
-  {:else if loaded}
-    {#if employeeStatuses.length === 0}
-      <p class="text-muted">Keine aktiven Mitarbeiter gefunden.</p>
-    {:else}
-      <!-- Summary bar -->
-      <div class="summary-bar">
-        <div class="summary-item summary-closed">
-          <span class="summary-count">{closedCount}</span>
-          <span class="summary-label">Abgeschlossen</span>
-        </div>
-        <div class="summary-item summary-ready">
-          <span class="summary-count">{readyCount}</span>
-          <span class="summary-label">Bereit</span>
-        </div>
-        <div class="summary-item summary-missing">
-          <span class="summary-count">{missingCount}</span>
-          <span class="summary-label">Fehlend</span>
-        </div>
+  {#if closing}
+    <div class="progress-bar-wrapper">
+      <div class="progress-bar-label">
+        Abschluss läuft... {closingProgress}/{closingTotal}
       </div>
+      <div class="progress-bar-track">
+        <div
+          class="progress-bar-fill"
+          style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
+        ></div>
+      </div>
+    </div>
+  {/if}
 
-      <!-- Employee table -->
+  {#if autoCloseHint && loaded}
+    <div class="auto-close-hint">
+      {autoCloseHint}
+    </div>
+  {/if}
+
+  {#if loading}
+    <div class="loading-indicator">Lade Jahresstatus...</div>
+  {:else if loaded}
+    {#if monthStatuses.length === 0}
+      <p class="text-muted">Keine Daten verfügbar.</p>
+    {:else}
       <div class="table-wrapper">
         <table class="table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Personalnummer</th>
+              <th>Monat</th>
               <th>Status</th>
-              <th>Fehlende Tage</th>
-              <th>Saldo</th>
+              <th>Grund</th>
               <th class="text-right">Aktion</th>
             </tr>
           </thead>
           <tbody>
-            {#each employeeStatuses as emp (emp.employeeId)}
-              <tr class="employee-row" class:row-closed={emp.status === "closed"}>
-                <td class="employee-name">{emp.employeeName}</td>
-                <td class="font-mono">{emp.employeeNumber}</td>
+            {#each monthStatuses as ms (ms.month)}
+              <tr
+                class="month-row"
+                class:row-closed={ms.status === "closed"}
+                class:row-future={ms.status === "future"}
+                class:row-blocked={ms.status === "blocked"}
+                class:row-clickable={ms.status !== "future"}
+                onclick={() => {
+                  if (ms.status !== "future") toggleMonthDetail(ms.month);
+                }}
+              >
+                <td class="month-name">
+                  <span class="month-expand-icon">
+                    {#if expandedMonth === ms.month}
+                      &#9660;
+                    {:else if ms.status !== "future"}
+                      &#9654;
+                    {/if}
+                  </span>
+                  {ms.name}
+                  {selectedYear}
+                </td>
                 <td>
-                  {#if emp.status === "closed"}
-                    <span class="status-badge status-closed">Abgeschlossen</span>
-                  {:else if emp.status === "ready"}
-                    <span class="status-badge status-ready">Bereit</span>
-                  {:else}
-                    <span class="status-badge status-missing">Fehlend</span>
-                  {/if}
+                  <span class="status-badge status-{ms.status}">
+                    {statusIcon(ms.status)}
+                    {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
+                  </span>
                 </td>
-                <td class="missing-dates">
-                  {#if emp.missingDates && emp.missingDates.length > 0}
-                    <span class="dates-text">{formatMissingDates(emp.missingDates)}</span>
-                    <span class="dates-count">({emp.missingDates.length})</span>
-                  {:else}
-                    <span class="text-muted">-</span>
-                  {/if}
-                </td>
-                <td class="font-mono">
-                  {#if emp.snapshot}
-                    <span
-                      class:positive={emp.snapshot.balanceMinutes >= 0}
-                      class:negative={emp.snapshot.balanceMinutes < 0}
-                    >
-                      {fmtHours(emp.snapshot.balanceMinutes)}
-                    </span>
-                  {:else}
-                    <span class="text-muted">-</span>
-                  {/if}
+                <td class="reason-cell">
+                  <span class="reason-text">{reasonText(ms)}</span>
                 </td>
                 <td class="text-right">
-                  {#if emp.status === "ready"}
+                  {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
                     <button
                       class="btn btn-sm btn-primary"
-                      onclick={() => closeEmployee(emp.employeeId)}
                       disabled={closing}
+                      onclick={(e: MouseEvent) => {
+                        e.stopPropagation();
+                        closeMonth(ms.month);
+                      }}
                     >
-                      {closingEmployeeId === emp.employeeId ? "..." : "Abschliessen"}
+                      Abschliessen
                     </button>
-                  {:else if emp.status === "closed"}
-                    <span class="text-muted text-sm">-</span>
                   {:else}
-                    <button class="btn btn-sm btn-ghost" disabled> Fehlend </button>
+                    <span class="text-muted text-sm">&mdash;</span>
                   {/if}
                 </td>
               </tr>
+              {#if expandedMonth === ms.month}
+                <tr class="detail-row">
+                  <td colspan="4">
+                    {#if detailLoading}
+                      <div class="detail-loading">Lade Details...</div>
+                    {:else if detailEmployees.length === 0}
+                      <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
+                    {:else}
+                      <div class="detail-table-wrapper">
+                        <table class="detail-table">
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Personalnummer</th>
+                              <th>Status</th>
+                              <th>Fehlende Tage</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each detailEmployees as emp (emp.employeeId)}
+                              <tr class:detail-row-closed={emp.status === "closed"}>
+                                <td class="employee-name">{emp.employeeName}</td>
+                                <td class="font-mono">{emp.employeeNumber}</td>
+                                <td>
+                                  {#if emp.status === "closed"}
+                                    <span class="status-badge status-closed">Abgeschlossen</span>
+                                  {:else if emp.status === "ready"}
+                                    <span class="status-badge status-ready">Bereit</span>
+                                  {:else}
+                                    <span class="status-badge status-open">Fehlend</span>
+                                  {/if}
+                                </td>
+                                <td class="missing-dates">
+                                  {#if emp.missingDates && emp.missingDates.length > 0}
+                                    <span class="dates-text"
+                                      >{formatMissingDates(emp.missingDates)}</span
+                                    >
+                                    <span class="dates-count">({emp.missingDates.length})</span>
+                                  {:else}
+                                    <span class="text-muted">-</span>
+                                  {/if}
+                                </td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                    {/if}
+                  </td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>
       </div>
-
-      <!-- Batch action bar -->
-      {#if readyCount > 0}
-        <div class="batch-bar">
-          <span class="batch-info">
-            {readyCount} Mitarbeiter bereit zum Abschluss
-          </span>
-          <button class="btn btn-primary" onclick={closeAllReady} disabled={closing}>
-            {closing ? "Wird abgeschlossen..." : `Alle abschliessen (${readyCount})`}
-          </button>
-        </div>
-      {/if}
     {/if}
   {:else}
-    <p class="text-muted">Monat und Jahr auswahlen und "Status laden" klicken.</p>
+    <p class="text-muted">Lade Jahresstatus...</p>
   {/if}
 </div>
 
@@ -391,57 +529,40 @@
     font-size: 0.9rem;
   }
 
-  /* Summary bar */
-  .summary-bar {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .summary-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .auto-close-hint {
     padding: 0.5rem 1rem;
     border-radius: 0.375rem;
-    font-size: 0.85rem;
-    border: 1px solid var(--color-border);
+    font-size: 0.8rem;
+    background: var(--yellow-50, #fefce8);
+    color: var(--yellow-800, #854d0e);
+    border: 1px solid var(--yellow-200, #fef08a);
   }
 
-  .summary-count {
-    font-weight: 700;
-    font-size: 1.1rem;
+  /* Progress bar */
+  .progress-bar-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
   }
 
-  .summary-label {
+  .progress-bar-label {
+    font-size: 0.8rem;
+    font-weight: 500;
     color: var(--color-text-muted);
   }
 
-  .summary-closed {
-    background: var(--green-50, #f0fdf4);
-    border-color: var(--green-200, #bbf7d0);
+  .progress-bar-track {
+    height: 0.5rem;
+    background: var(--gray-200, #e5e7eb);
+    border-radius: 0.25rem;
+    overflow: hidden;
   }
 
-  .summary-closed .summary-count {
-    color: var(--green-700, #15803d);
-  }
-
-  .summary-ready {
-    background: var(--blue-50, #eff6ff);
-    border-color: var(--blue-200, #bfdbfe);
-  }
-
-  .summary-ready .summary-count {
-    color: var(--blue-700, #1d4ed8);
-  }
-
-  .summary-missing {
-    background: var(--red-50, #fef2f2);
-    border-color: var(--red-200, #fecaca);
-  }
-
-  .summary-missing .summary-count {
-    color: var(--red-700, #b91c1c);
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--blue-500, #3b82f6);
+    border-radius: 0.25rem;
+    transition: width 0.3s ease;
   }
 
   /* Table */
@@ -471,7 +592,15 @@
     vertical-align: middle;
   }
 
-  .employee-row:hover {
+  .month-row {
+    transition: background 0.15s;
+  }
+
+  .row-clickable {
+    cursor: pointer;
+  }
+
+  .row-clickable:hover {
     background: var(--gray-50, #f9fafb);
   }
 
@@ -479,8 +608,24 @@
     opacity: 0.7;
   }
 
-  .employee-name {
+  .row-future {
+    opacity: 0.5;
+  }
+
+  .row-blocked {
+    opacity: 0.6;
+  }
+
+  .month-name {
     font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .month-expand-icon {
+    display: inline-block;
+    width: 1rem;
+    font-size: 0.65rem;
+    color: var(--color-text-muted);
   }
 
   .text-right {
@@ -516,19 +661,93 @@
     color: var(--green-700, #15803d);
   }
 
+  .status-partial {
+    background: var(--yellow-100, #fef9c3);
+    color: var(--yellow-800, #854d0e);
+  }
+
   .status-ready {
     background: var(--blue-100, #dbeafe);
     color: var(--blue-700, #1d4ed8);
   }
 
-  .status-missing {
+  .status-open {
     background: var(--red-100, #fee2e2);
     color: var(--red-700, #b91c1c);
   }
 
+  .status-blocked {
+    background: var(--gray-100, #f3f4f6);
+    color: var(--gray-500, #6b7280);
+  }
+
+  .status-future {
+    background: var(--gray-100, #f3f4f6);
+    color: var(--gray-400, #9ca3af);
+  }
+
+  /* Reason column */
+  .reason-cell {
+    max-width: 400px;
+  }
+
+  .reason-text {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+
+  /* Detail row */
+  .detail-row td {
+    padding: 0;
+    background: var(--gray-50, #f9fafb);
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  .detail-loading,
+  .detail-empty {
+    padding: 1rem;
+    text-align: center;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  .detail-table-wrapper {
+    padding: 0.5rem 1rem 1rem;
+  }
+
+  .detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+
+  .detail-table th {
+    text-align: left;
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+    font-weight: 600;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  .detail-table td {
+    padding: 0.375rem 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: middle;
+  }
+
+  .detail-row-closed {
+    opacity: 0.6;
+  }
+
+  .employee-name {
+    font-weight: 500;
+  }
+
   /* Missing dates */
   .missing-dates {
-    max-width: 280px;
+    max-width: 320px;
   }
 
   .dates-text {
@@ -542,35 +761,7 @@
     margin-left: 0.25rem;
   }
 
-  /* Saldo colors */
-  .positive {
-    color: var(--green-600, #16a34a);
-  }
-
-  .negative {
-    color: var(--red-600, #dc2626);
-  }
-
-  /* Batch action bar */
-  .batch-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: var(--blue-50, #eff6ff);
-    border: 1px solid var(--blue-200, #bfdbfe);
-    border-radius: 0.375rem;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
-
-  .batch-info {
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--blue-700, #1d4ed8);
-  }
-
-  /* Buttons (inherit from global styles, add size variants) */
+  /* Buttons */
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8rem;
