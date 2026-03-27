@@ -979,7 +979,14 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     tz,
   );
 
-  // Tatsächlich gearbeitete Minuten dieses Monats (nur valide Einträge)
+  // Calculate effective date range: only completed days (up to yesterday)
+  const effectiveStart =
+    employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
+  const todayStr = dateStrInTz(now, tz);
+  const todayDate = new Date(todayStr + "T00:00:00Z");
+  const effectiveEnd = todayDate < monthEnd ? todayDate : monthEnd;
+
+  // Worked minutes for ALL days this month (including today)
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
@@ -995,18 +1002,8 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Soll-Minuten (TZ-aware Wochentag-Zuordnung), nur bis gestern (today is incomplete)
-  const effectiveStart =
-    employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
-  const todayStr = dateStrInTz(now, tz);
-  const todayDate = new Date(todayStr + "T00:00:00Z");
-  const yesterdayDate = new Date(todayDate.getTime() - 86400000);
-  const effectiveEnd =
-    yesterdayDate < monthStart ? monthStart : yesterdayDate < monthEnd ? yesterdayDate : monthEnd;
-  const expectedMinutes =
-    effectiveEnd < effectiveStart
-      ? 0
-      : calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
+  // Expected minutes up to today
+  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({

@@ -619,6 +619,7 @@
   );
   let selectedWorked = $derived(sumWorked(selectedSlots));
   let selectedBalance = $derived(selectedWorked - selectedExpected);
+  // All worked minutes this month (for "Ist" display)
   let totalWorked = $derived(
     entries.reduce((s, e) => {
       if (!e.endTime || e.isInvalid) return s;
@@ -629,10 +630,10 @@
       );
     }, 0),
   );
-  // Expected hours up to yesterday (today is still in progress)
+  // Expected hours including today
   let totalExpected = $derived(
     calendarDays
-      .filter((d) => d.isCurrentMonth && !d.isFuture && !d.isToday)
+      .filter((d) => d.isCurrentMonth && !d.isFuture)
       .reduce((s, d) => s + d.expectedMin, 0),
   );
   let dayWarnings = $derived(arbzgEnabled ? checkArbZGFrontend(selectedSlots) : []);
