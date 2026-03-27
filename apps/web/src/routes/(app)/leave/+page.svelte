@@ -374,8 +374,9 @@
     error = "";
     try {
       const year = new Date().getFullYear();
+      const myEmployeeId = $authStore.user?.employeeId;
       const [mine, all] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${year}`),
+        api.get<LeaveRequest[]>(`/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`),
         isManager
           ? api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`)
           : Promise.resolve([] as LeaveRequest[]),
@@ -748,7 +749,7 @@
   let vacSummaryLeft = $derived(
     vacSummaryTotal + vacSummaryCarryOver - vacSummaryUsed - vacSummaryPlanned,
   );
-  let showVacSummary = $derived(vacationBalance !== null);
+  let showVacSummary = $state(true);
 
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
