@@ -151,6 +151,7 @@ async function hasApprovedLeaveOnDate(
   const absence = await prisma.absence.findFirst({
     where: {
       employeeId,
+      deletedAt: null,
       startDate: { lte: new Date(dateStr + "T23:59:59Z") },
       endDate: { gte: new Date(dateStr + "T00:00:00Z") },
       type: { in: ["MATERNITY", "PARENTAL"] },
@@ -1007,7 +1008,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   });
 }
 
-// ── Hilfsfunktion: Überstundensaldo berechnen (kalenderbasiert, TZ-aware) ────
+// ── Hilfsfunktion: Überstundensaldo berechnen (snapshot-basiert, TZ-aware) ────
+// Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum
+// seit dem Snapshot neu. Ohne Snapshot: Fallback auf den aktuellen Monat.
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
@@ -1031,25 +1034,41 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   });
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
-  // Aktuellen Monat in Tenant-TZ berechnen
-  const now = new Date();
-  const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z"); // Mitte des Tages für Monat-Bestimmung
-  const { start: monthStart, end: monthEnd } = monthRangeUtc(
-    zonedNow.getUTCFullYear(),
-    zonedNow.getUTCMonth() + 1,
-    tz,
-  );
+  // Letzten Snapshot suchen (Basis für die Berechnung)
+  const lastSnapshot = await app.prisma.saldoSnapshot.findFirst({
+    where: { employeeId, periodType: "MONTHLY" },
+    orderBy: { periodStart: "desc" },
+  });
 
-  // Determine if today has any entries — if so, include today in calculation
-  // Normalize hireDate to start-of-day to avoid time-of-day comparison issues
-  const hireDateNorm = employee?.hireDate
-    ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
-    : null;
-  const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
+  const now = new Date();
   const todayStr = dateStrInTz(now, tz);
   const todayDate = new Date(todayStr + "T00:00:00Z");
   const yesterdayDate = new Date(todayDate.getTime() - 86400000);
 
+  // Berechne den offenen Zeitraum: ab Tag nach Snapshot-Ende bis heute
+  // Ohne Snapshot: ab Monatsanfang (oder Eintrittsdatum)
+  let rangeStart: Date;
+  let snapshotCarryOver = 0;
+
+  if (lastSnapshot) {
+    // Start: Tag nach dem Snapshot-Ende
+    rangeStart = new Date(lastSnapshot.periodEnd.getTime() + 86400000);
+    snapshotCarryOver = lastSnapshot.carryOver;
+  } else {
+    // Kein Snapshot: ab Monatsanfang oder Eintrittsdatum
+    const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
+    const { start: monthStart } = monthRangeUtc(
+      zonedNow.getUTCFullYear(),
+      zonedNow.getUTCMonth() + 1,
+      tz,
+    );
+    const hireDateNorm = employee?.hireDate
+      ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
+      : null;
+    rangeStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
+  }
+
+  // Determine cutoff: include today only if entries exist
   const hasTodayEntries = await app.prisma.timeEntry.count({
     where: {
       employeeId,
@@ -1060,18 +1079,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       isInvalid: false,
     },
   });
-
-  // If clocked today → include today, otherwise → only up to yesterday
   const cutoffDate = hasTodayEntries > 0 ? todayDate : yesterdayDate;
-  const effectiveEnd =
-    cutoffDate < effectiveStart ? effectiveStart : cutoffDate < monthEnd ? cutoffDate : monthEnd;
+  const effectiveEnd = cutoffDate < rangeStart ? rangeStart : cutoffDate;
 
-  // Worked minutes up to cutoff
+  // Worked minutes since snapshot (or month start)
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
       deletedAt: null,
-      date: { gte: monthStart, lte: effectiveEnd },
+      date: { gte: rangeStart, lte: effectiveEnd },
       endTime: { not: null },
       type: "WORK",
       isInvalid: false,
@@ -1083,17 +1099,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Expected minutes up to same cutoff
+  // Expected minutes for same range
   const expectedMinutes =
-    effectiveEnd < effectiveStart
-      ? 0
-      : calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
+    effectiveEnd < rangeStart ? 0 : calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
-      date: { gte: effectiveStart, lte: effectiveEnd },
+      date: { gte: rangeStart, lte: effectiveEnd },
     },
   });
   const holidayMinutes = holidays.reduce((sum, h) => {
@@ -1107,24 +1121,25 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       employeeId,
       status: "APPROVED",
       startDate: { lte: effectiveEnd },
-      endDate: { gte: monthStart },
+      endDate: { gte: rangeStart },
     },
   });
   const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-    // Clamp leave range to effectiveStart..effectiveEnd (same range as expected)
-    const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+    const leaveStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
     const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
     if (leaveStart > leaveEnd) return sum;
     return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
   }, 0);
 
-  const diffHours =
-    (workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes)) / 60;
+  // Saldo = Snapshot-CarryOver + offener Zeitraum
+  const openPeriodBalance =
+    workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
+  const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
   const account = await app.prisma.overtimeAccount.upsert({
     where: { employeeId },
-    create: { employeeId, balanceHours: diffHours },
-    update: { balanceHours: diffHours },
+    create: { employeeId, balanceHours: totalBalanceHours },
+    update: { balanceHours: totalBalanceHours },
   });
 
   const threshold = Number(schedule.overtimeThreshold);

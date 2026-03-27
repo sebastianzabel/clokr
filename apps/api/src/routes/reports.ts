@@ -37,6 +37,7 @@ export async function reportRoutes(app: FastifyInstance) {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
             where: {
+              deletedAt: null,
               date: { gte: start, lte: end },
               type: "WORK",
               endTime: { not: null },
@@ -44,10 +45,15 @@ export async function reportRoutes(app: FastifyInstance) {
             },
           },
           absences: {
-            where: { startDate: { lte: end }, endDate: { gte: start } },
+            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
           },
           leaveRequests: {
-            where: { status: "APPROVED", startDate: { lte: end }, endDate: { gte: start } },
+            where: {
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: end },
+              endDate: { gte: start },
+            },
             include: { leaveType: true },
           },
         },
@@ -271,13 +277,23 @@ export async function reportRoutes(app: FastifyInstance) {
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
-            where: { date: { gte: start, lte: end }, endTime: { not: null }, isInvalid: false },
+            where: {
+              deletedAt: null,
+              date: { gte: start, lte: end },
+              endTime: { not: null },
+              isInvalid: false,
+            },
           },
           absences: {
-            where: { startDate: { lte: end }, endDate: { gte: start } },
+            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
           },
           leaveRequests: {
-            where: { status: "APPROVED", startDate: { lte: end }, endDate: { gte: start } },
+            where: {
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: end },
+              endDate: { gte: start },
+            },
             include: { leaveType: true },
           },
         },
@@ -428,6 +444,7 @@ export async function reportRoutes(app: FastifyInstance) {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
             where: {
+              deletedAt: null,
               date: { gte: start, lte: end },
               type: "WORK",
               endTime: { not: null },
@@ -436,10 +453,15 @@ export async function reportRoutes(app: FastifyInstance) {
             orderBy: { date: "asc" },
           },
           absences: {
-            where: { startDate: { lte: end }, endDate: { gte: start } },
+            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
           },
           leaveRequests: {
-            where: { status: "APPROVED", startDate: { lte: end }, endDate: { gte: start } },
+            where: {
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: end },
+              endDate: { gte: start },
+            },
             include: { leaveType: true },
           },
         },

@@ -206,6 +206,7 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.timeEntry.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.overtimeTransaction.deleteMany({
     where: { overtimeAccount: { employeeId: { in: employeeIds } } },

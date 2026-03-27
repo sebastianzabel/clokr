@@ -146,6 +146,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const overlap = await app.prisma.leaveRequest.findFirst({
         where: {
           employeeId,
+          deletedAt: null,
           status: { in: ["PENDING", "APPROVED"] },
           startDate: { lte: end },
           endDate: { gte: start },
@@ -268,6 +269,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const rows = await app.prisma.leaveRequest.findMany({
         where: {
+          deletedAt: null,
           ...(isManager
             ? {
                 employee: { tenantId: user.tenantId },
@@ -319,6 +321,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const rows = await app.prisma.leaveRequest.findMany({
         where: {
+          deletedAt: null,
           employee: { tenantId: req.user.tenantId },
           employeeId: { not: req.user.employeeId ?? "" },
           status: { in: ["PENDING", "APPROVED"] },
@@ -761,6 +764,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       const [rows, holidayMap] = await Promise.all([
         app.prisma.leaveRequest.findMany({
           where: {
+            deletedAt: null,
             employee: { tenantId: req.user.tenantId },
             status: { in: ["PENDING", "APPROVED", "CANCELLATION_REQUESTED"] },
             startDate: { lte: end },
@@ -871,11 +875,11 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { employeeId, status: "APPROVED" },
+          where: { employeeId, deletedAt: null, status: "APPROVED" },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
-          where: { employeeId },
+          where: { employeeId, deletedAt: null },
           include: { employee: { select: { firstName: true, lastName: true } } },
         }),
       ]);
@@ -937,11 +941,11 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const [requests, absences] = await Promise.all([
         app.prisma.leaveRequest.findMany({
-          where: { employee: { tenantId }, status: "APPROVED" },
+          where: { deletedAt: null, employee: { tenantId }, status: "APPROVED" },
           include: { leaveType: true, employee: { select: { firstName: true, lastName: true } } },
         }),
         app.prisma.absence.findMany({
-          where: { employee: { tenantId } },
+          where: { deletedAt: null, employee: { tenantId } },
           include: { employee: { select: { firstName: true, lastName: true } } },
         }),
       ]);
@@ -1033,6 +1037,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         const approved = await app.prisma.leaveRequest.findMany({
           where: {
             employeeId,
+            deletedAt: null,
             leaveTypeId: { in: typeIds },
             status: "APPROVED",
             startDate: { gte: yearStart },
