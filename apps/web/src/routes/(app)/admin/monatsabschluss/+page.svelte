@@ -1,38 +1,44 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import { api } from "$api/client";
 
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
-  interface Snapshot {
-    id: string;
+  interface EmployeeStatus {
     employeeId: string;
-    periodType: "MONTHLY" | "YEARLY";
-    periodStart: string;
-    periodEnd: string;
-    workedMinutes: number;
-    expectedMinutes: number;
-    balanceMinutes: number;
-    carryOver: number;
-    closedAt: string;
-    closedBy: string | null;
-    note: string | null;
+    employeeName: string;
+    employeeNumber: string;
+    status: "ready" | "missing" | "closed";
+    missingDates?: string[];
+    snapshot?: {
+      id: string;
+      workedMinutes: number;
+      expectedMinutes: number;
+      balanceMinutes: number;
+      carryOver: number;
+      closedAt: string;
+      closedBy: string | null;
+    };
   }
 
-  let employees: Employee[] = $state([]);
-  let selectedEmployeeId = $state("");
-  let selectedYear = $state(new Date().getFullYear());
-  let selectedMonth = $state(new Date().getMonth()); // Previous month (0-indexed for closing)
-  let snapshots: Snapshot[] = $state([]);
+  interface StatusResponse {
+    year: number;
+    month: number;
+    employees: EmployeeStatus[];
+  }
+
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1; // 1-based
+
+  // Default to previous month
+  let selectedYear = $state(currentMonth === 1 ? currentYear - 1 : currentYear);
+  let selectedMonth = $state(currentMonth === 1 ? 12 : currentMonth - 1);
+
+  let employeeStatuses: EmployeeStatus[] = $state([]);
   let loading = $state(false);
   let closing = $state(false);
+  let closingEmployeeId = $state<string | null>(null);
   let error = $state("");
   let success = $state("");
+  let loaded = $state(false);
 
   const months = [
     "Januar",
@@ -49,96 +55,83 @@
     "Dezember",
   ];
 
-  const years = $derived(Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i));
+  const years = $derived(Array.from({ length: 5 }, (_, i) => currentYear - i));
 
-  onMount(async () => {
-    try {
-      const res =
-        await api.get<
-          {
-            id: string;
-            firstName: string;
-            lastName: string;
-            employeeNumber: string;
-            user: { isActive: boolean };
-          }[]
-        >("/employees");
-      employees = res.filter((e) => e.user.isActive);
-      // Default to previous month
-      const now = new Date();
-      if (now.getMonth() === 0) {
-        selectedMonth = 12;
-        selectedYear = now.getFullYear() - 1;
-      } else {
-        selectedMonth = now.getMonth(); // getMonth() is 0-based, so this is prev month (1-based)
+  // Only past months are selectable
+  let availableMonths = $derived(
+    months
+      .map((name, i) => ({ name, value: i + 1 }))
+      .filter((m) => selectedYear < currentYear || m.value < currentMonth),
+  );
+
+  // Count helpers for the bottom bar
+  let readyCount = $derived(employeeStatuses.filter((e) => e.status === "ready").length);
+  let closedCount = $derived(employeeStatuses.filter((e) => e.status === "closed").length);
+  let missingCount = $derived(employeeStatuses.filter((e) => e.status === "missing").length);
+
+  // Reset month if it becomes invalid when year changes
+  function onYearChange() {
+    if (selectedYear === currentYear && selectedMonth >= currentMonth) {
+      selectedMonth = currentMonth - 1 || 12;
+      if (selectedMonth === 12 && selectedYear === currentYear) {
+        selectedYear = currentYear - 1;
       }
-    } catch {
-      error = "Mitarbeiter konnten nicht geladen werden";
     }
-  });
+    loadStatus();
+  }
 
-  async function loadSnapshots() {
-    if (!selectedEmployeeId) return;
+  async function loadStatus() {
     loading = true;
     error = "";
+    success = "";
+    loaded = false;
     try {
-      snapshots = await api.get<Snapshot[]>(`/overtime/snapshots/${selectedEmployeeId}`);
+      const res = await api.get<StatusResponse>(
+        `/overtime/close-month/status?year=${selectedYear}&month=${selectedMonth}`,
+      );
+      employeeStatuses = res.employees;
+      loaded = true;
     } catch {
-      error = "Snapshots konnten nicht geladen werden";
+      error = "Status konnte nicht geladen werden";
     } finally {
       loading = false;
     }
   }
 
-  async function closeMonth() {
-    if (!selectedEmployeeId || !selectedMonth) return;
+  async function closeEmployee(employeeId: string) {
+    closingEmployeeId = employeeId;
     closing = true;
     error = "";
     success = "";
     try {
       await api.post("/overtime/close-month", {
-        employeeId: selectedEmployeeId,
+        employeeId,
         year: selectedYear,
         month: selectedMonth,
       });
       success = `${months[selectedMonth - 1]} ${selectedYear} erfolgreich abgeschlossen`;
-      await loadSnapshots();
+      await loadStatus();
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Monatsabschluss";
     } finally {
       closing = false;
+      closingEmployeeId = null;
     }
   }
 
-  async function closeYear() {
-    if (!selectedEmployeeId) return;
+  async function closeAllReady() {
     closing = true;
     error = "";
     success = "";
-    try {
-      await api.post("/overtime/close-year", {
-        employeeId: selectedEmployeeId,
-        year: selectedYear,
-      });
-      success = `Jahresübertrag ${selectedYear} erfolgreich erstellt`;
-      await loadSnapshots();
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Jahresabschluss";
-    } finally {
-      closing = false;
-    }
-  }
-
-  async function closeMonthForAll() {
-    closing = true;
-    error = "";
-    success = "";
+    const readyEmployees = employeeStatuses.filter((e) => e.status === "ready");
     let succeeded = 0;
     let failed = 0;
-    for (const emp of employees) {
+
+    for (const emp of readyEmployees) {
+      closingEmployeeId = emp.employeeId;
       try {
         await api.post("/overtime/close-month", {
-          employeeId: emp.id,
+          employeeId: emp.employeeId,
           year: selectedYear,
           month: selectedMonth,
         });
@@ -147,25 +140,21 @@
         failed++;
       }
     }
+
     success = `${months[selectedMonth - 1]} ${selectedYear}: ${succeeded} abgeschlossen${failed > 0 ? `, ${failed} fehlgeschlagen` : ""}`;
     closing = false;
-    if (selectedEmployeeId) await loadSnapshots();
+    closingEmployeeId = null;
+    await loadStatus();
   }
 
-  function isMonthClosed(month: number): boolean {
-    return snapshots.some(
-      (s) =>
-        s.periodType === "MONTHLY" &&
-        new Date(s.periodStart).getUTCFullYear() === selectedYear &&
-        new Date(s.periodStart).getUTCMonth() + 1 === month,
-    );
+  function formatMissingDates(dates: string[]): string {
+    return dates
+      .map((d) => {
+        const parts = d.split("-");
+        return `${parts[2]}.${parts[1]}.`;
+      })
+      .join(", ");
   }
-
-  let yearClosed = $derived(
-    snapshots.some(
-      (s) => s.periodType === "YEARLY" && new Date(s.periodStart).getUTCFullYear() === selectedYear,
-    ),
-  );
 
   function fmtHours(minutes: number): string {
     const h = Math.floor(Math.abs(minutes) / 60);
@@ -175,29 +164,17 @@
   }
 </script>
 
-<svelte:head><title>Monatsabschluss – Clokr</title></svelte:head>
+<svelte:head><title>Monatsabschluss - Clokr</title></svelte:head>
 
 <div class="ma-page">
+  <h2 class="page-title">Monatsabschluss</h2>
+
   <div class="ma-controls">
     <div class="control-row">
       <label class="control-group">
-        <span class="control-label">Mitarbeiter</span>
-        <select
-          class="form-select"
-          bind:value={selectedEmployeeId}
-          onchange={() => loadSnapshots()}
-        >
-          <option value="">Bitte wählen...</option>
-          {#each employees as emp}
-            <option value={emp.id}>{emp.firstName} {emp.lastName} ({emp.employeeNumber})</option>
-          {/each}
-        </select>
-      </label>
-
-      <label class="control-group">
         <span class="control-label">Jahr</span>
-        <select class="form-select" bind:value={selectedYear} onchange={() => loadSnapshots()}>
-          {#each years as y}
+        <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
+          {#each years as y (y)}
             <option value={y}>{y}</option>
           {/each}
         </select>
@@ -205,28 +182,19 @@
 
       <label class="control-group">
         <span class="control-label">Monat</span>
-        <select class="form-select" bind:value={selectedMonth}>
-          {#each months as m, i}
-            <option value={i + 1}>{m}</option>
+        <select class="form-select" bind:value={selectedMonth} onchange={loadStatus}>
+          {#each availableMonths as m (m.value)}
+            <option value={m.value}>{m.name}</option>
           {/each}
         </select>
       </label>
-    </div>
 
-    <div class="action-row">
-      <button
-        class="btn btn-primary"
-        onclick={closeMonth}
-        disabled={closing || !selectedEmployeeId}
-      >
-        {closing ? "Wird abgeschlossen..." : "Monat abschließen"}
-      </button>
-      <button class="btn btn-ghost" onclick={closeMonthForAll} disabled={closing}>
-        Alle Mitarbeiter abschließen
-      </button>
-      <button class="btn btn-ghost" onclick={closeYear} disabled={closing || !selectedEmployeeId}>
-        Jahresübertrag {selectedYear}
-      </button>
+      <div class="control-group control-action">
+        <span class="control-label">&nbsp;</span>
+        <button class="btn btn-primary" onclick={loadStatus} disabled={loading}>
+          {loading ? "Wird geladen..." : "Status laden"}
+        </button>
+      </div>
     </div>
   </div>
 
@@ -237,103 +205,110 @@
     <div class="alert alert-success">{success}</div>
   {/if}
 
-  {#if selectedEmployeeId}
-    <!-- Month overview grid -->
-    <div class="month-grid">
-      <h3>Monatsübersicht {selectedYear}</h3>
-      <div class="month-cards">
-        {#each months as m, i}
-          {@const closed = isMonthClosed(i + 1)}
-          {@const snap = snapshots.find(
-            (s) =>
-              s.periodType === "MONTHLY" &&
-              new Date(s.periodStart).getUTCFullYear() === selectedYear &&
-              new Date(s.periodStart).getUTCMonth() + 1 === i + 1,
-          )}
-          <div
-            class="month-card"
-            class:month-card--closed={closed}
-            class:month-card--open={!closed}
-          >
-            <span class="month-name">{m.slice(0, 3)}</span>
-            {#if snap}
-              <span
-                class="month-balance"
-                class:positive={snap.balanceMinutes >= 0}
-                class:negative={snap.balanceMinutes < 0}
-              >
-                {fmtHours(snap.balanceMinutes)}
-              </span>
-              <span class="month-status">Abgeschlossen</span>
-            {:else}
-              <span class="month-status month-status--open">Offen</span>
-            {/if}
-          </div>
-        {/each}
+  {#if loading}
+    <div class="loading-indicator">Lade Status...</div>
+  {:else if loaded}
+    {#if employeeStatuses.length === 0}
+      <p class="text-muted">Keine aktiven Mitarbeiter gefunden.</p>
+    {:else}
+      <!-- Summary bar -->
+      <div class="summary-bar">
+        <div class="summary-item summary-closed">
+          <span class="summary-count">{closedCount}</span>
+          <span class="summary-label">Abgeschlossen</span>
+        </div>
+        <div class="summary-item summary-ready">
+          <span class="summary-count">{readyCount}</span>
+          <span class="summary-label">Bereit</span>
+        </div>
+        <div class="summary-item summary-missing">
+          <span class="summary-count">{missingCount}</span>
+          <span class="summary-label">Fehlend</span>
+        </div>
       </div>
-      {#if yearClosed}
-        <div class="year-badge">Jahresübertrag erstellt</div>
-      {/if}
-    </div>
 
-    <!-- Snapshot history -->
-    {#if snapshots.length > 0}
-      <div class="snapshot-table">
-        <h3>Snapshot-Verlauf</h3>
+      <!-- Employee table -->
+      <div class="table-wrapper">
         <table class="table">
           <thead>
             <tr>
-              <th>Zeitraum</th>
-              <th>Typ</th>
-              <th class="text-right">Ist</th>
-              <th class="text-right">Soll</th>
-              <th class="text-right">Saldo</th>
-              <th class="text-right">Übertrag</th>
-              <th>Abgeschlossen</th>
-              <th>Notiz</th>
+              <th>Name</th>
+              <th>Personalnummer</th>
+              <th>Status</th>
+              <th>Fehlende Tage</th>
+              <th>Saldo</th>
+              <th class="text-right">Aktion</th>
             </tr>
           </thead>
           <tbody>
-            {#each snapshots as snap (snap.id)}
-              <tr>
-                <td class="font-mono">
-                  {new Date(snap.periodStart).toLocaleDateString("de-DE")} – {new Date(
-                    snap.periodEnd,
-                  ).toLocaleDateString("de-DE")}
-                </td>
+            {#each employeeStatuses as emp (emp.employeeId)}
+              <tr class="employee-row" class:row-closed={emp.status === "closed"}>
+                <td class="employee-name">{emp.employeeName}</td>
+                <td class="font-mono">{emp.employeeNumber}</td>
                 <td>
-                  <span class="badge" class:badge--yearly={snap.periodType === "YEARLY"}>
-                    {snap.periodType === "MONTHLY" ? "Monat" : "Jahr"}
-                  </span>
+                  {#if emp.status === "closed"}
+                    <span class="status-badge status-closed">Abgeschlossen</span>
+                  {:else if emp.status === "ready"}
+                    <span class="status-badge status-ready">Bereit</span>
+                  {:else}
+                    <span class="status-badge status-missing">Fehlend</span>
+                  {/if}
                 </td>
-                <td class="text-right font-mono">{(snap.workedMinutes / 60).toFixed(1)}h</td>
-                <td class="text-right font-mono">{(snap.expectedMinutes / 60).toFixed(1)}h</td>
-                <td
-                  class="text-right font-mono"
-                  class:positive={snap.balanceMinutes >= 0}
-                  class:negative={snap.balanceMinutes < 0}
-                >
-                  {fmtHours(snap.balanceMinutes)}
+                <td class="missing-dates">
+                  {#if emp.missingDates && emp.missingDates.length > 0}
+                    <span class="dates-text">{formatMissingDates(emp.missingDates)}</span>
+                    <span class="dates-count">({emp.missingDates.length})</span>
+                  {:else}
+                    <span class="text-muted">-</span>
+                  {/if}
                 </td>
-                <td
-                  class="text-right font-mono"
-                  class:positive={snap.carryOver >= 0}
-                  class:negative={snap.carryOver < 0}
-                >
-                  {fmtHours(snap.carryOver)}
+                <td class="font-mono">
+                  {#if emp.snapshot}
+                    <span
+                      class:positive={emp.snapshot.balanceMinutes >= 0}
+                      class:negative={emp.snapshot.balanceMinutes < 0}
+                    >
+                      {fmtHours(emp.snapshot.balanceMinutes)}
+                    </span>
+                  {:else}
+                    <span class="text-muted">-</span>
+                  {/if}
                 </td>
-                <td class="font-mono">{new Date(snap.closedAt).toLocaleDateString("de-DE")}</td>
-                <td class="text-muted">{snap.note ?? ""}</td>
+                <td class="text-right">
+                  {#if emp.status === "ready"}
+                    <button
+                      class="btn btn-sm btn-primary"
+                      onclick={() => closeEmployee(emp.employeeId)}
+                      disabled={closing}
+                    >
+                      {closingEmployeeId === emp.employeeId ? "..." : "Abschliessen"}
+                    </button>
+                  {:else if emp.status === "closed"}
+                    <span class="text-muted text-sm">-</span>
+                  {:else}
+                    <button class="btn btn-sm btn-ghost" disabled> Fehlend </button>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
         </table>
       </div>
-    {:else if !loading}
-      <p class="text-muted">Noch keine Snapshots für diesen Mitarbeiter.</p>
+
+      <!-- Batch action bar -->
+      {#if readyCount > 0}
+        <div class="batch-bar">
+          <span class="batch-info">
+            {readyCount} Mitarbeiter bereit zum Abschluss
+          </span>
+          <button class="btn btn-primary" onclick={closeAllReady} disabled={closing}>
+            {closing ? "Wird abgeschlossen..." : `Alle abschliessen (${readyCount})`}
+          </button>
+        </div>
+      {/if}
     {/if}
   {:else}
-    <p class="text-muted">Bitte einen Mitarbeiter auswählen.</p>
+    <p class="text-muted">Monat und Jahr auswahlen und "Status laden" klicken.</p>
   {/if}
 </div>
 
@@ -342,6 +317,12 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .page-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
   }
 
   .ma-controls {
@@ -354,13 +335,18 @@
     display: flex;
     gap: 1rem;
     flex-wrap: wrap;
+    align-items: flex-end;
   }
 
   .control-group {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    min-width: 180px;
+    min-width: 160px;
+  }
+
+  .control-action {
+    min-width: auto;
   }
 
   .control-label {
@@ -378,12 +364,6 @@
     background: var(--color-bg);
     font-size: 0.875rem;
     color: var(--color-text);
-  }
-
-  .action-row {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
   }
 
   .alert {
@@ -404,92 +384,69 @@
     border: 1px solid var(--green-200, #bbf7d0);
   }
 
-  /* Month grid */
-  .month-grid {
-    margin-top: 0.5rem;
-  }
-
-  .month-grid h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-  }
-
-  .month-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
-    gap: 0.5rem;
-  }
-
-  .month-card {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.75rem 0.5rem;
-    border-radius: 0.5rem;
-    border: 1px solid var(--color-border);
+  .loading-indicator {
     text-align: center;
+    padding: 2rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
   }
 
-  .month-card--closed {
+  /* Summary bar */
+  .summary-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .summary-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+  }
+
+  .summary-count {
+    font-weight: 700;
+    font-size: 1.1rem;
+  }
+
+  .summary-label {
+    color: var(--color-text-muted);
+  }
+
+  .summary-closed {
     background: var(--green-50, #f0fdf4);
     border-color: var(--green-200, #bbf7d0);
   }
 
-  .month-card--open {
-    background: var(--gray-50, #f9fafb);
+  .summary-closed .summary-count {
+    color: var(--green-700, #15803d);
   }
 
-  .month-name {
-    font-weight: 600;
-    font-size: 0.8rem;
-  }
-
-  .month-balance {
-    font-size: 0.85rem;
-    font-weight: 600;
-    font-family: var(--font-mono, monospace);
-  }
-
-  .month-status {
-    font-size: 0.7rem;
-    color: var(--green-600, #16a34a);
-  }
-
-  .month-status--open {
-    color: var(--color-text-muted);
-  }
-
-  .positive {
-    color: var(--green-600, #16a34a);
-  }
-
-  .negative {
-    color: var(--red-600, #dc2626);
-  }
-
-  .year-badge {
-    margin-top: 0.75rem;
-    padding: 0.5rem 1rem;
+  .summary-ready {
     background: var(--blue-50, #eff6ff);
-    border: 1px solid var(--blue-200, #bfdbfe);
+    border-color: var(--blue-200, #bfdbfe);
+  }
+
+  .summary-ready .summary-count {
     color: var(--blue-700, #1d4ed8);
-    border-radius: 0.375rem;
-    font-size: 0.85rem;
-    font-weight: 500;
-    text-align: center;
   }
 
-  /* Snapshot table */
-  .snapshot-table {
-    margin-top: 0.5rem;
+  .summary-missing {
+    background: var(--red-50, #fef2f2);
+    border-color: var(--red-200, #fecaca);
   }
 
-  .snapshot-table h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
+  .summary-missing .summary-count {
+    color: var(--red-700, #b91c1c);
+  }
+
+  /* Table */
+  .table-wrapper {
+    overflow-x: auto;
   }
 
   .table {
@@ -511,10 +468,27 @@
   .table td {
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--color-border);
+    vertical-align: middle;
+  }
+
+  .employee-row:hover {
+    background: var(--gray-50, #f9fafb);
+  }
+
+  .row-closed {
+    opacity: 0.7;
+  }
+
+  .employee-name {
+    font-weight: 500;
   }
 
   .text-right {
     text-align: right;
+  }
+
+  .text-sm {
+    font-size: 0.8rem;
   }
 
   .font-mono {
@@ -527,18 +501,78 @@
     font-size: 0.85rem;
   }
 
-  .badge {
+  /* Status badges */
+  .status-badge {
     display: inline-block;
     padding: 0.125rem 0.5rem;
     border-radius: 0.25rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     font-weight: 600;
-    background: var(--gray-100, #f3f4f6);
-    color: var(--gray-600, #4b5563);
+    white-space: nowrap;
   }
 
-  .badge--yearly {
+  .status-closed {
+    background: var(--green-100, #dcfce7);
+    color: var(--green-700, #15803d);
+  }
+
+  .status-ready {
     background: var(--blue-100, #dbeafe);
     color: var(--blue-700, #1d4ed8);
+  }
+
+  .status-missing {
+    background: var(--red-100, #fee2e2);
+    color: var(--red-700, #b91c1c);
+  }
+
+  /* Missing dates */
+  .missing-dates {
+    max-width: 280px;
+  }
+
+  .dates-text {
+    font-size: 0.8rem;
+    color: var(--red-600, #dc2626);
+  }
+
+  .dates-count {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    margin-left: 0.25rem;
+  }
+
+  /* Saldo colors */
+  .positive {
+    color: var(--green-600, #16a34a);
+  }
+
+  .negative {
+    color: var(--red-600, #dc2626);
+  }
+
+  /* Batch action bar */
+  .batch-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--blue-50, #eff6ff);
+    border: 1px solid var(--blue-200, #bfdbfe);
+    border-radius: 0.375rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .batch-info {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--blue-700, #1d4ed8);
+  }
+
+  /* Buttons (inherit from global styles, add size variants) */
+  .btn-sm {
+    padding: 0.25rem 0.625rem;
+    font-size: 0.8rem;
   }
 </style>
