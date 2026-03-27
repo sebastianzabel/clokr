@@ -801,26 +801,21 @@
 <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
 {#if schedule}
   <div class="month-summary">
-    {#if !isMonthlyHours || hasMonthlyTarget}
-      <div class="msummary-item">
-        <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
-        <span class="msummary-value"
-          >{fmtMin(hasMonthlyTarget ? monthlyTarget : totalExpected)}h</span
-        >
-      </div>
-    {/if}
     <div class="msummary-item">
-      <span class="msummary-label">{isMonthlyHours && !hasMonthlyTarget ? "Geleistet" : "Ist"}</span
+      <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span>
+      <span class="msummary-value"
+        >{fmtMin(hasMonthlyTarget ? monthlyTarget : isMonthlyHours ? 0 : totalExpected)}h</span
       >
+    </div>
+    <div class="msummary-item">
+      <span class="msummary-label">Ist</span>
       <span class="msummary-value">{fmtMin(totalWorked)}h</span>
     </div>
-    {#if !isMonthlyHours || hasMonthlyTarget}
-      <div class="msummary-divider"></div>
-      <div class="msummary-item">
-        <span class="msummary-label">Monat-Saldo</span>
-        <span class="msummary-value bal {balClass(mBalance)}">{fmtBalance(mBalance)}</span>
-      </div>
-    {/if}
+    <div class="msummary-divider"></div>
+    <div class="msummary-item">
+      <span class="msummary-label">Monat-Saldo</span>
+      <span class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}">{isMonthlyHours && !hasMonthlyTarget ? fmtMin(totalWorked) + "h" : fmtBalance(mBalance)}</span>
+    </div>
     {#if overtimeTotalHours !== null}
       <div class="msummary-divider"></div>
       <div class="msummary-item">
