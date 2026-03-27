@@ -398,6 +398,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const relevantEmployees = employees.filter((emp) => emp.hireDate <= monthEnd);
         const totalCount = relevantEmployees.length;
 
+        // No relevant employees for this month (no one hired yet)
+        if (totalCount === 0) {
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "no_data" as any,
+            closedCount: 0,
+            totalCount: 0,
+          });
+          continue;
+        }
+
         // Check if this is a future month (month hasn't ended yet)
         if (monthEnd > now) {
           months.push({
@@ -596,7 +608,15 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // Auto-close deadline: retry until 10th of following month
       const autoCloseDeadline = 10;
 
-      return { year, months, autoCloseDeadline };
+      // Earliest year with time entries for this tenant
+      const oldest = await app.prisma.timeEntry.findFirst({
+        where: { employee: { tenantId }, deletedAt: null },
+        orderBy: { date: "asc" },
+        select: { date: true },
+      });
+      const earliestYear = oldest ? oldest.date.getFullYear() : year;
+
+      return { year, months, autoCloseDeadline, earliestYear };
     },
   });
 
@@ -621,6 +641,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+      // Reject if employee was hired after this month
+      if (employee.hireDate > monthEnd) {
+        return reply
+          .code(400)
+          .send({ error: "Mitarbeiter war in diesem Monat noch nicht eingestellt" });
+      }
 
       // Sequential validation: all previous months of the same year must be closed
       const MONTH_NAMES_DE = [
