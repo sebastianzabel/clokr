@@ -530,7 +530,7 @@
     return dateStr === format(new Date(), "yyyy-MM-dd");
   }
 
-  let userName = $derived($authStore.user?.email.split("@")[0] ?? "");
+  let userName = $derived($authStore.user?.firstName ?? $authStore.user?.email.split("@")[0] ?? "");
   let capitalizedName = $derived(userName.charAt(0).toUpperCase() + userName.slice(1));
 
   let overtimeBalance = $derived(stats?.overtime.balanceHours ?? 0);
