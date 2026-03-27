@@ -42,6 +42,18 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
 
+### DSGVO Employee Deletion = Anonymization
+
+When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead of hard-deleting:
+
+- **Employee**: firstName → "Gelöscht", lastName/employeeNumber → "GELÖSCHT-XXX", nfcCardId → null
+- **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
+- **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null
+- **Documents**: Absence documentPath → null
+- **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
+- **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
+- **AuditLog**: userId → null (anonymized, not deleted)
+
 ## Data Retention (Aufbewahrungsfristen)
 
 Legal retention periods (Germany):
