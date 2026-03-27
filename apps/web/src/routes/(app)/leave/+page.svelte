@@ -1216,7 +1216,7 @@
         <div
           class="cal-cell"
           class:cal-cell--current={day.isCurrentMonth}
-          class:cal-other={!day.isCurrentMonth && !hasEntries && !day.isWeekend}
+          class:cal-other={!day.isCurrentMonth}
           class:cal-today={day.isToday}
           class:cal-weekend={day.isWeekend}
           class:cal-holiday={isHoliday && day.isCurrentMonth}
@@ -2311,8 +2311,8 @@
     border-right: none;
   }
 
-  .cal-other {
-    opacity: 0.3;
+  :global(.cal-cell.cal-other) {
+    opacity: 0.3 !important;
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
