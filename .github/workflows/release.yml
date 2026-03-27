@@ -2,7 +2,7 @@ name: Release — Promote & Publish
 
 # Triggered when a GitHub Release is published (which creates a git tag).
 # Promotes the existing SHA-tagged image to semver + latest tags.
-# No rebuild — the image tested on main is the image deployed.
+# No rebuild, no rescan — the image was already built and scanned on main.
 
 on:
   release:
@@ -57,11 +57,3 @@ jobs:
           crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}"
           crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.major_minor }}"
           crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:latest"
-
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
-          severity: CRITICAL,HIGH
-          exit-code: 1
-          format: table

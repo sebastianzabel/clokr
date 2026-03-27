@@ -22,6 +22,7 @@ RUN pnpm --filter @clokr/web build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
+RUN apk update && apk upgrade --no-cache
 WORKDIR /app
 
 # Copy full workspace (adapter-node needs external deps like date-fns)
