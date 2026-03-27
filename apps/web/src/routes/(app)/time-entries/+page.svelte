@@ -98,7 +98,6 @@
   let error = $state("");
   let saving = $state(false);
   let saveError = $state("");
-  let arbzgWarnings: ArbZGWarning[] = $state([]);
   let arbzgEnabled = $state(true);
 
   const today = new Date();
@@ -434,8 +433,15 @@
   }
 
   function openAdd(forDate?: string) {
+    const targetDate = forDate ?? selectedDate;
+    // If an entry already exists for this day, open it for editing instead
+    const existing = entries.find((e) => (e.date ?? e.startTime).split("T")[0] === targetDate);
+    if (existing) {
+      openEdit(existing);
+      return;
+    }
     editEntry = null;
-    formDate = forDate ?? selectedDate;
+    formDate = targetDate;
     formStart = "09:00";
     formEnd = "17:00";
     formHasEnd = true;
@@ -477,7 +483,6 @@
   async function saveEntry() {
     saving = true;
     saveError = "";
-    arbzgWarnings = [];
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
     const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
     // Convert break slots to full ISO timestamps
@@ -510,13 +515,6 @@
       }
       closeModal();
       await loadAll();
-      if (result?.warnings?.length) {
-        arbzgWarnings = result.warnings;
-        // nach 10s automatisch ausblenden
-        setTimeout(() => {
-          arbzgWarnings = [];
-        }, 10000);
-      }
     } catch (e: unknown) {
       saveError = e instanceof Error ? e.message : "Fehler beim Speichern";
     } finally {
@@ -577,20 +575,20 @@
       warnings.push({
         code: "BREAK_TOO_SHORT",
         severity: "error",
-        message: `§ 4 ArbZG: Bei über 9h Arbeitszeit mind. 45 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
+        message: `Bei über 9h Arbeitszeit mind. 45 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
       });
     else if (netMin > 6 * 60 && totalBreak < 30)
       warnings.push({
         code: "BREAK_TOO_SHORT",
         severity: "warning",
-        message: `§ 4 ArbZG: Bei über 6h Arbeitszeit mind. 30 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
+        message: `Bei über 6h Arbeitszeit mind. 30 Min. Pause erforderlich (${Math.round(totalBreak)} Min. erfasst)`,
       });
 
     if (netMin > 10 * 60)
       warnings.push({
         code: "MAX_DAILY_EXCEEDED",
         severity: "error",
-        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10h überschritten (${(netMin / 60).toFixed(1)}h)`,
+        message: `Tägliche Höchstarbeitszeit von 10h überschritten (${(netMin / 60).toFixed(1)}h)`,
       });
 
     return warnings;
@@ -652,17 +650,29 @@
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
-  let dayWarnings = $derived(arbzgEnabled ? checkArbZGFrontend(selectedSlots) : []);
+  // ArbZG live check for the modal: existing entries for formDate + current form values
+  let modalWarnings = $derived.by(() => {
+    if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
+    const otherSlots = entries
+      .filter((e) => (e.date ?? e.startTime).split("T")[0] === formDate)
+      .filter((e) => !editEntry || e.id !== editEntry.id);
+    const formEntry = {
+      id: "__form__",
+      startTime: `${formDate}T${formStart}:00`,
+      endTime: `${formDate}T${formEnd}:00`,
+      breakMinutes: formBreakTotal,
+    } as TimeEntry;
+    return checkArbZGFrontend([...otherSlots, formEntry]);
+  });
   // Formatierter Label für den ausgewählten Tag
   let selectedLabel = $derived(
     format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }),
   );
 
-  // ArbZG-Verstoß-Map: dateStr → true wenn Verstoß an diesem Tag
+  // ArbZG-Verstoß-Map: dateStr → warnings[]
   let arbzgDayMap = $derived.by(() => {
-    if (!arbzgEnabled) return new Map<string, boolean>();
-    const map = new Map<string, boolean>();
-    // Group entries by date
+    if (!arbzgEnabled) return new Map<string, ArbZGWarning[]>();
+    const map = new Map<string, ArbZGWarning[]>();
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
       const d = e.date.split("T")[0];
@@ -671,7 +681,7 @@
     }
     for (const [dateStr, dayEntries] of byDate) {
       const warnings = checkArbZGFrontend(dayEntries);
-      if (warnings.length > 0) map.set(dateStr, true);
+      if (warnings.length > 0) map.set(dateStr, warnings);
     }
     return map;
   });
@@ -687,7 +697,7 @@
   );
 </script>
 
-<svelte:head><title>Zeiteinträge – Clokr</title></svelte:head>
+<svelte:head><title>Zeiterfassung – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
@@ -695,9 +705,9 @@
 />
 
 <div class="page-header-compact">
-  <h1>Zeiteinträge</h1>
+  <h1>Zeiterfassung</h1>
   <button class="btn btn-primary" onclick={() => openAdd()}>
-    <span aria-hidden="true">＋</span> Slot hinzufügen
+    <span aria-hidden="true">＋</span> Eintrag hinzufügen
   </button>
 </div>
 
@@ -805,7 +815,7 @@
             class="cal-day cal-day--{day.status}{day.absenceType && !day.isWeekend
               ? ' cal-day--abs cal-day--abs-' + day.absenceType.toLowerCase()
               : ''}"
-            class:other-month={!day.isCurrentMonth && !day.absenceType && !day.isWeekend}
+            class:other-month={!day.isCurrentMonth}
             class:is-today={day.isToday}
             class:is-weekend={day.isWeekend}
             class:is-holiday={day.isHoliday && day.isCurrentMonth}
@@ -865,22 +875,6 @@
       <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
     </div>
   </div>
-
-  <!-- ── ArbZG-Warnungen ─────────────────────────────────────────────────── -->
-  {#if arbzgEnabled && arbzgWarnings.length > 0}
-    <div class="arbzg-warnings">
-      {#each arbzgWarnings as w (w.code)}
-        <div class="arbzg-alert arbzg-{w.severity}" role="alert">
-          <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
-          <span>{w.message}</span>
-          <button
-            class="arbzg-close"
-            onclick={() => (arbzgWarnings = arbzgWarnings.filter((x) => x !== w))}>✕</button
-          >
-        </div>
-      {/each}
-    </div>
-  {/if}
 {/if}
 
 <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
@@ -901,13 +895,23 @@
       </thead>
       <tbody>
         {#each allEntries as slot (slot.id)}
+          {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+          {@const slotArbzg = arbzgDayMap.get(slotDate)}
           <tr>
             <td class="font-mono"
               >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                 day: "2-digit",
                 month: "2-digit",
                 year: "numeric",
-              })}</td
+              })}{#if slotArbzg}
+                <span class="list-arbzg-hint"
+                  >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                    class="arbzg-tooltip"
+                    >{#each slotArbzg as w, i}{w.message}{#if i < slotArbzg.length - 1}<br
+                        />{/if}{/each}</span
+                  ></span
+                >
+              {/if}</td
             >
             <td class="font-mono">{fmtTime(slot.startTime)}</td>
             <td class="font-mono">
@@ -960,7 +964,7 @@
   <div class="modal-backdrop" onclick={self(closeModal)} role="presentation">
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
-        <h2>{editEntry ? "Slot bearbeiten" : "Neuen Slot hinzufügen"}</h2>
+        <h2>{editEntry ? "Eintrag bearbeiten" : "Neuen Eintrag hinzufügen"}</h2>
         <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -1018,7 +1022,7 @@
                   formBreaks = [
                     { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
                   ];
-                }}>In Slots umwandeln</button
+                }}>In Pausen umwandeln</button
               >
             </div>
           {/if}
@@ -1059,10 +1063,20 @@
           />
         </div>
       </div>
+      {#if modalWarnings.length > 0}
+        <div class="modal-arbzg-warnings">
+          {#each modalWarnings as w (w.code)}
+            <div class="arbzg-alert arbzg-{w.severity}" role="alert">
+              <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
+              <span>{w.message}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
         <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>
-          {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Slot hinzufügen"}
+          {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
         </button>
       </div>
     </div>
@@ -1196,10 +1210,10 @@
     border-right: none;
   }
 
-  .cal-day.other-month {
-    opacity: 0.3;
+  :global(.cal-day.other-month) {
+    opacity: 0.3 !important;
     cursor: default;
-    background: var(--gray-50, #f9fafb);
+    background: var(--gray-50, #f9fafb) !important;
   }
 
   /* Tage vor dem Eintrittsdatum */
@@ -1734,11 +1748,37 @@
   }
 
   /* ── ArbZG-Warnungen ──────────────────────────────────────────────── */
-  .arbzg-warnings {
+  .modal-arbzg-warnings {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
+    gap: 0.375rem;
+    padding: 0 1.25rem 0.5rem;
+  }
+  .list-arbzg-hint {
+    margin-left: 0.375rem;
+    cursor: help;
+    font-size: 0.8rem;
+    position: relative;
+  }
+  .arbzg-tooltip {
+    display: none;
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    background: var(--gray-900, #111827);
+    color: #fff;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+    white-space: nowrap;
+    z-index: 50;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    margin-bottom: 0.25rem;
+  }
+  .list-arbzg-hint:hover .arbzg-tooltip {
+    display: block;
   }
   .day-warnings {
     display: flex;
@@ -1787,22 +1827,6 @@
 
   .arbzg-alert span:nth-child(2) {
     flex: 1;
-  }
-
-  .arbzg-close {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: inherit;
-    opacity: 0.6;
-    padding: 0;
-    line-height: 1.5;
-    flex-shrink: 0;
-    transition: opacity 0.15s;
-  }
-  .arbzg-close:hover {
-    opacity: 1;
   }
 
   /* ── Mobile calendar improvements ──────────────────────────────── */

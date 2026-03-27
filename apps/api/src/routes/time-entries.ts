@@ -631,6 +631,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
       }
 
+      // Nur ein Eintrag pro Tag erlaubt
+      const existingEntry = await app.prisma.timeEntry.findFirst({
+        where: { employeeId, date: new Date(body.date) },
+      });
+      if (existingEntry) {
+        return reply
+          .code(409)
+          .send({
+            error:
+              "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
+          });
+      }
+
       // Überlappungsprüfung
       const overlap = await checkOverlap(app, employeeId, newStart, newEnd);
       if (overlap) return reply.code(409).send({ error: overlap });
