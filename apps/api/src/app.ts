@@ -21,6 +21,7 @@ import { notifyPlugin } from "./plugins/notify";
 import { schedulerPlugin } from "./plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { dataRetentionPlugin } from "./plugins/data-retention";
+import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
 import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
@@ -122,6 +123,7 @@ export async function buildApp() {
   await app.register(schedulerPlugin);
   await app.register(attendanceCheckerPlugin);
   await app.register(dataRetentionPlugin);
+  await app.register(autoCloseMonthPlugin);
 
   // ── Routes ────────────────────────────────────────────────
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
