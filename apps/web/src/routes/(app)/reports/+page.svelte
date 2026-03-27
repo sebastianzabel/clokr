@@ -395,6 +395,14 @@
     gap: 1.125rem;
     border-top: 3px solid transparent;
     overflow: hidden;
+    transition:
+      transform 0.2s var(--ease-out, ease),
+      box-shadow 0.2s ease;
+  }
+
+  .report-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-md, 0 8px 20px rgba(0,0,0,0.12));
   }
 
   .report-card--purple {
@@ -402,33 +410,38 @@
   }
 
   .report-card--green {
-    border-top-color: #16a34a;
+    border-top-color: var(--color-green, #16a34a);
   }
 
   .report-card--blue {
-    border-top-color: #2563eb;
+    border-top-color: var(--color-blue, #2563eb);
   }
 
   .report-card-icon-section {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 3rem;
-    height: 3rem;
-    border-radius: var(--radius-md, 8px);
+    width: 3.25rem;
+    height: 3.25rem;
+    border-radius: var(--radius-sm, 8px);
     flex-shrink: 0;
+    transition: transform 0.2s ease;
+  }
+
+  .report-card:hover .report-card-icon-section {
+    transform: scale(1.05);
   }
 
   .report-card-icon-section--purple {
-    background: rgba(124, 58, 237, 0.1);
+    background: var(--color-brand-tint, rgba(124, 58, 237, 0.1));
   }
 
   .report-card-icon-section--green {
-    background: rgba(22, 163, 74, 0.1);
+    background: var(--color-green-bg, rgba(22, 163, 74, 0.1));
   }
 
   .report-card-icon-section--blue {
-    background: rgba(37, 99, 235, 0.1);
+    background: var(--color-blue-bg, rgba(37, 99, 235, 0.1));
   }
 
   .report-icon-lg {
