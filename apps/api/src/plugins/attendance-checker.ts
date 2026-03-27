@@ -33,6 +33,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
         // Find open time entries older than threshold
         const openEntries = await app.prisma.timeEntry.findMany({
           where: {
+            deletedAt: null,
             endTime: null,
             startTime: { lt: cutoff },
             employee: { tenantId: tenant.id },
@@ -126,6 +127,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
           const recentEntryCount = await app.prisma.timeEntry.count({
             where: {
               employeeId: emp.id,
+              deletedAt: null,
               date: { gte: cutoffDate },
             },
           });
@@ -216,6 +218,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
         // Find open, non-invalid time entries older than threshold
         const openEntries = await app.prisma.timeEntry.findMany({
           where: {
+            deletedAt: null,
             endTime: null,
             startTime: { lt: cutoff },
             isInvalid: false,

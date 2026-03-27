@@ -33,13 +33,58 @@
 Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, leave, and payroll must be tamper-proof and traceable:
 
 - **No hard deletes** of time entries, leave requests, or employee records — use soft delete (`deletedAt`) or status changes instead
-- **Audit trail**: Every create, update, and delete must be logged with userId, timestamp, IP, and before/after values
-- **Immutability after lock**: Once a month is closed (`isLocked`), entries MUST NOT be editable or deletable — not even by admins
-- **Data retention**: Records must be retained for the legally required period (currently 2 years for time records per § 16 ArbZG, 6/10 years for payroll-relevant data per AO/HGB)
+- **Soft delete queries**: ALL queries on soft-deletable models (TimeEntry, LeaveRequest, Absence) MUST include `deletedAt: null` in the where clause
+- **Audit trail**: Every create, update, and delete must be logged with userId, timestamp, IP, and before/after values (via `app.audit()`)
+- **Immutability after lock**: Once a month is closed (`isLocked`), entries MUST NOT be editable or deletable — not even by admins. Always check `isLocked` before UPDATE/DELETE.
 - **No silent overwrites**: Any correction to a locked/finalized entry must create a new correction entry with reference to the original, not modify it in place
 - **Traceability**: It must always be possible to reconstruct who changed what, when, and why
+- **CASCADE = Restrict**: Critical relations (Employee→TimeEntry/LeaveRequest/Absence) use `onDelete: Restrict` to prevent silent cascade deletion
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
+
+### DSGVO Employee Deletion = Anonymization
+
+When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead of hard-deleting:
+
+- **Employee**: firstName → "Gelöscht", lastName/employeeNumber → "GELÖSCHT-XXX", nfcCardId → null
+- **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
+- **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null
+- **Documents**: Absence documentPath → null
+- **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
+- **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
+- **AuditLog**: userId → null (anonymized, not deleted)
+
+## Data Retention (Aufbewahrungsfristen)
+
+Legal retention periods (Germany):
+
+| Basis                             | Retention                              | Reference            |
+| --------------------------------- | -------------------------------------- | -------------------- |
+| Arbeitszeitnachweis               | 2 years                                | § 16 Abs. 2 ArbZG    |
+| Lohnkonten                        | 6 years                                | § 41 EStG            |
+| Buchungsbelege (payroll-relevant) | 10 years                               | § 147 AO / § 257 HGB |
+| DSGVO                             | Delete after longest retention expires | Art. 17 DSGVO        |
+
+**Default retention: 10 years** (configurable per tenant, minimum 2 years). Retention period starts at end of calendar year of record creation. Deletion is NOT rolling — it happens annually (Stichtag), e.g., on Jan 1st for records whose retention expired on Dec 31st.
+
+## Saldo Calculation & Monatsabschluss (planned)
+
+**Current state**: Saldo is recalculated from hire date on every request. This does not scale.
+
+**Target architecture** (see issue #6):
+
+- **Monatsabschluss**: Monthly `SaldoSnapshot` freezes worked/expected/balance/carryOver per employee
+- **Current saldo** = last snapshot `carryOver` + entries since snapshot date
+- **Jahresübertrag**: Yearly snapshot at Dec 31st, configurable carry-over rules (FULL / CAPPED / RESET)
+- **Archival**: After retention period, old entries can be soft-deleted/archived because snapshots preserve saldo integrity
+- Corrections to closed months: unlock → correct → re-close (new snapshot with audit trail)
+
+## Time Entry Rules
+
+- **One entry per day** per employee (multiple breaks allowed within that entry)
+- Break model: `Break[]` records with startTime/endTime (legacy: `breakMinutes` integer)
+- `openAdd()` on frontend redirects to edit if entry already exists for that day
+- API POST rejects with 409 if entry already exists for employee+date
 
 ## ArbZG (Arbeitszeitgesetz) Rules
 
@@ -70,13 +115,14 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
 4. Another manager approves cancellation → status = `CANCELLED`, time entries auto-revalidated
 5. If cancellation rejected → status reverts to `APPROVED`, time entries stay invalid
 
-## Overtime Saldo Calculation
+## Overtime Saldo Calculation (current)
 
 - **Saldo = Worked hours − Expected hours** (both calculated for the same date range)
 - **Date range**: From hire date (or month start) up to today (if entries exist) or yesterday
 - Leave, holidays, and absences within this range reduce expected hours
 - Leave/holidays are clamped to the effective range (no over-deduction from pre-hire leave)
 - Saldo recalculates on every GET /overtime/:employeeId request
+- **Note**: This will be replaced by snapshot-based calculation (see "Saldo Calculation & Monatsabschluss" above)
 
 ## Schedule Types
 

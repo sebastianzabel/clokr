@@ -620,6 +620,16 @@ export async function leaveRoutes(app: FastifyInstance) {
         },
       });
 
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "LeaveRequest",
+        entityId: id,
+        oldValue: existing,
+        newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       return {
         ...updated,
         typeCode:
@@ -656,11 +666,29 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: { id },
           data: { status: "CANCELLATION_REQUESTED" },
         });
+        await app.audit({
+          userId: req.user.sub,
+          action: "UPDATE",
+          entity: "LeaveRequest",
+          entityId: id,
+          oldValue: { status: existing.status },
+          newValue: { status: "CANCELLATION_REQUESTED" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
         return reply.code(200).send({ status: "CANCELLATION_REQUESTED" });
       }
 
       // Ausstehender Antrag → sofort zurückziehen
       await app.prisma.leaveRequest.update({ where: { id }, data: { status: "CANCELLED" } });
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "LeaveRequest",
+        entityId: id,
+        oldValue: { status: existing.status },
+        newValue: { status: "CANCELLED" },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
       return reply.code(204).send();
     },
   });

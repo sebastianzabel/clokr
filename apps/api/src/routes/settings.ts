@@ -415,10 +415,33 @@ export async function settingsRoutes(app: FastifyInstance) {
       };
       if (body.smtpPassword) updateData.smtpPassword = encrypt(body.smtpPassword);
 
+      const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       await app.prisma.tenantConfig.upsert({
         where: { tenantId },
         update: updateData,
         create: { tenantId, ...updateData },
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "TenantConfig",
+        entityId: tenantId,
+        oldValue: oldConfig
+          ? {
+              smtpHost: oldConfig.smtpHost,
+              smtpPort: oldConfig.smtpPort,
+              smtpUser: oldConfig.smtpUser,
+              smtpFromEmail: oldConfig.smtpFromEmail,
+            }
+          : null,
+        newValue: {
+          smtpHost: body.smtpHost,
+          smtpPort: body.smtpPort,
+          smtpUser: body.smtpUser,
+          smtpFromEmail: body.smtpFromEmail,
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { success: true };
@@ -459,10 +482,20 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const { twoFaEnabled } = z.object({ twoFaEnabled: z.boolean() }).parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
+      const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       await app.prisma.tenantConfig.upsert({
         where: { tenantId },
         update: { twoFaEnabled },
         create: { tenantId, twoFaEnabled },
+      });
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "TenantConfig",
+        entityId: tenantId,
+        oldValue: { twoFaEnabled: oldConfig?.twoFaEnabled ?? false },
+        newValue: { twoFaEnabled },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
       return { twoFaEnabled };
     },

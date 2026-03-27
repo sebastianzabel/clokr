@@ -58,7 +58,16 @@ export async function shiftRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
+      const existing = await app.prisma.shiftTemplate.findUnique({ where: { id } });
       await app.prisma.shiftTemplate.delete({ where: { id } });
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "ShiftTemplate",
+        entityId: id,
+        oldValue: existing,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
       return reply.code(204).send();
     },
   });
@@ -187,7 +196,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       const { shifts: shiftDefs } = bulkShiftSchema.parse(req.body);
 
       const created = await app.prisma.$transaction(
-        shiftDefs.map(s =>
+        shiftDefs.map((s) =>
           app.prisma.shift.create({
             data: {
               employeeId: s.employeeId,
@@ -199,8 +208,8 @@ export async function shiftRoutes(app: FastifyInstance) {
               note: s.note,
               createdBy: req.user.sub,
             },
-          })
-        )
+          }),
+        ),
       );
 
       return reply.code(201).send({ created: created.length });
@@ -213,7 +222,16 @@ export async function shiftRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
+      const existing = await app.prisma.shift.findUnique({ where: { id } });
       await app.prisma.shift.delete({ where: { id } });
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "Shift",
+        entityId: id,
+        oldValue: existing,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
       return reply.code(204).send();
     },
   });

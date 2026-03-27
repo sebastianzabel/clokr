@@ -229,6 +229,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
       }
 
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: id,
+        oldValue: employee,
+        newValue: { ...updated, role: body.role },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       return updated;
     },
   });
@@ -381,7 +391,9 @@ export async function employeeRoutes(app: FastifyInstance) {
     },
   });
 
-  // DELETE /api/v1/employees/:id — DSGVO Hard-Delete
+  // DELETE /api/v1/employees/:id — DSGVO-konforme Anonymisierung
+  // Personenbezogene Daten werden anonymisiert, sachbezogene Daten (Zeiteinträge,
+  // Urlaubsanträge, Salden) bleiben für die gesetzlichen Aufbewahrungsfristen erhalten.
   app.delete("/:id", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
@@ -395,38 +407,64 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       const userId = employee.userId;
-      const overtimeAccountId = employee.overtimeAccount?.id;
+      const anonymizedLabel = `GELÖSCHT-${employee.employeeNumber || id.slice(0, 8)}`;
 
       await app.audit({
         userId: req.user.sub,
-        action: "DELETE",
+        action: "ANONYMIZE",
         entity: "Employee",
         entityId: id,
         oldValue: { email: employee.user.email, employeeNumber: employee.employeeNumber },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      // Schrittweise löschen in korrekter Reihenfolge (FK-Constraints)
       await app.prisma.$transaction(async (tx: any) => {
-        // AuditLog anonymisieren (userId → null), nicht löschen
+        // AuditLog anonymisieren (userId → null)
         await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
 
-        await tx.timeEntry.deleteMany({ where: { employeeId: id } });
-        await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
-        await tx.absence.deleteMany({ where: { employeeId: id } });
-        await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
-        await tx.overtimePlan.deleteMany({ where: { employeeId: id } });
+        // Employee: personenbezogene Daten anonymisieren, Record behalten
+        await tx.employee.update({
+          where: { id },
+          data: {
+            firstName: "Gelöscht",
+            lastName: anonymizedLabel,
+            employeeNumber: anonymizedLabel,
+            nfcCardId: null,
+          },
+        });
 
-        if (overtimeAccountId) {
-          await tx.overtimeTransaction.deleteMany({ where: { overtimeAccountId } });
-          await tx.overtimeAccount.delete({ where: { id: overtimeAccountId } });
-        }
+        // User: deaktivieren + anonymisieren (kein Login mehr möglich)
+        await tx.user.update({
+          where: { id: userId },
+          data: {
+            email: `deleted-${id.slice(0, 8)}@anonymized.local`,
+            passwordHash: "ANONYMIZED",
+            isActive: false,
+          },
+        });
 
-        await tx.workSchedule.deleteMany({ where: { employeeId: id } });
+        // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
+        await tx.timeEntry.updateMany({
+          where: { employeeId: id, note: { not: null } },
+          data: { note: null },
+        });
+
+        // Notizen in Urlaubsanträgen anonymisieren
+        await tx.leaveRequest.updateMany({
+          where: { employeeId: id, note: { not: null } },
+          data: { note: null },
+        });
+
+        // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
+        await tx.absence.updateMany({
+          where: { employeeId: id },
+          data: { note: null, documentPath: null },
+        });
+
+        // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
         await tx.invitation.deleteMany({ where: { employeeId: id } });
         await tx.otpToken.deleteMany({ where: { userId } });
         await tx.refreshToken.deleteMany({ where: { userId } });
-        await tx.employee.delete({ where: { id } });
-        await tx.user.delete({ where: { id: userId } });
       });
 
       return reply.code(204).send();

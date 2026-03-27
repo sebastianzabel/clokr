@@ -224,11 +224,12 @@ model TimeEntry {
   lockedAt     DateTime?       @db.Timestamptz
   isInvalid    Boolean         @default(false) // automatisch invalidiert (z.B. kein Ausstempeln)
   invalidReason String?                        // Grund der Invalidierung
+  deletedAt    DateTime?       @db.Timestamptz // soft delete
   createdAt    DateTime        @default(now()) @db.Timestamptz
   updatedAt    DateTime        @updatedAt      @db.Timestamptz
   createdBy    String?         // userId wer es angelegt hat
 
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   breaks       Break[]
 
   @@index([employeeId, date])
@@ -349,11 +350,12 @@ model LeaveRequest {
   attestPresent    Boolean   @default(false)
   attestValidFrom  DateTime? @db.Date
   attestValidTo    DateTime? @db.Date
+  deletedAt    DateTime?          @db.Timestamptz // soft delete
   createdAt    DateTime           @default(now()) @db.Timestamptz
   updatedAt    DateTime           @updatedAt      @db.Timestamptz
 
-  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType    LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -373,10 +375,11 @@ model Absence {
   days         Decimal      @db.Decimal(5, 2)
   note         String?
   documentPath String?      // Pfad zur AU-Bescheinigung (MinIO)
+  deletedAt    DateTime?    @db.Timestamptz // soft delete
   createdAt    DateTime     @default(now()) @db.Timestamptz
   createdBy    String
 
-  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
 }
