@@ -176,8 +176,10 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <img src="/clokr-icon.png" alt="Clokr" class="brand-icon-img" />
-        <span class="brand-name">Clokr</span>
+        <div class="brand-logo-block">
+          <img src="/clokr-icon.png" alt="Clokr" class="brand-icon-img" />
+          <span class="brand-name">Clokr</span>
+        </div>
         <div class="notification-wrapper">
           <button
             class="notification-bell"
@@ -426,33 +428,41 @@
   }
 
   .sidebar-brand {
+    position: relative;
     display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    padding: 1.25rem 1.25rem 1rem;
+    justify-content: center;
+    padding: 1.5rem 1.25rem 1rem;
     border-bottom: 1px solid var(--color-border-subtle);
     flex-shrink: 0;
   }
 
+  .brand-logo-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
   .brand-icon-img {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
+    width: 52px;
+    height: 52px;
+    border-radius: 12px;
     flex-shrink: 0;
   }
 
   .brand-name {
-    font-size: 1rem;
-    font-weight: 700;
+    font-size: 1.15rem;
+    font-weight: 800;
     color: var(--color-brand);
-    letter-spacing: -0.01em;
-    flex: 1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
   }
 
   /* ── Notifications ──────────────────────────────────────────────── */
   .notification-wrapper {
-    position: relative;
-    margin-left: auto;
+    position: absolute;
+    top: 1.25rem;
+    right: 1rem;
   }
 
   .notification-bell {
