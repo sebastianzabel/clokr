@@ -81,6 +81,14 @@
     display: flex;
     gap: 0;
     border-bottom: 2px solid var(--color-border);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge */
+  }
+
+  .admin-tabs::-webkit-scrollbar {
+    display: none; /* Chrome/Safari */
   }
 
   .admin-tab {
@@ -95,6 +103,14 @@
       color 0.12s,
       border-color 0.12s;
     white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 640px) {
+    .admin-tab {
+      padding: 0.5rem 0.875rem;
+      font-size: 0.8125rem;
+    }
   }
 
   .admin-tab:hover:not(.admin-tab--active) {
@@ -109,5 +125,15 @@
 
   .admin-content {
     padding-top: 0.5rem;
+  }
+
+  @media (max-width: 640px) {
+    .admin-title {
+      font-size: 1.375rem;
+    }
+
+    .admin-header {
+      margin-bottom: 1.25rem;
+    }
   }
 </style>

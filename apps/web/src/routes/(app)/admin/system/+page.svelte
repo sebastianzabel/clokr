@@ -1056,4 +1056,42 @@
   .row-revoked {
     opacity: 0.5;
   }
+
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .section-label {
+    margin-bottom: 1rem;
+  }
+
+  .settings-card {
+    margin-bottom: 2rem;
+  }
+
+  @media (max-width: 640px) {
+    .smtp-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .form-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .inline-fields {
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .sys-section {
+      padding: 1.25rem 1rem;
+    }
+  }
 </style>

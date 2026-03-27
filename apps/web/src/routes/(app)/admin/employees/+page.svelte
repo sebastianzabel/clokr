@@ -326,7 +326,7 @@
       <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
     </div>
 
-    <div class="card">
+    <div class="card table-responsive">
       <table class="table">
         <thead>
           <tr>
@@ -705,6 +705,11 @@
     overflow: hidden;
   }
 
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .table {
     width: 100%;
     border-collapse: collapse;
@@ -870,6 +875,12 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
+  }
+
+  @media (max-width: 480px) {
+    .form-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .form-group--full {
