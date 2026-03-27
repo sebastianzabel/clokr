@@ -45,10 +45,42 @@ export async function holidayRoutes(app: FastifyInstance) {
         orderBy: { date: "asc" },
       });
 
+      // Heiligabend/Silvester company rules
+      const config = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: tenant?.id ?? req.user.tenantId },
+      });
+      const companyHolidays: typeof computed = [];
+      const christmasRule = config?.christmasEveRule ?? "NORMAL";
+      const newYearsRule = config?.newYearsEveRule ?? "NORMAL";
+      if (christmasRule !== "NORMAL") {
+        companyHolidays.push({
+          id: `company-${y}-12-24`,
+          tenantId: tenant?.id ?? "",
+          date: `${y}-12-24`,
+          name: christmasRule === "FULL_DAY_OFF" ? "Heiligabend (frei)" : "Heiligabend (halber Tag)",
+          federalState: tenant?.federalState ?? "NIEDERSACHSEN",
+          year: y,
+          isManual: false,
+        });
+      }
+      if (newYearsRule !== "NORMAL") {
+        companyHolidays.push({
+          id: `company-${y}-12-31`,
+          tenantId: tenant?.id ?? "",
+          date: `${y}-12-31`,
+          name: newYearsRule === "FULL_DAY_OFF" ? "Silvester (frei)" : "Silvester (halber Tag)",
+          federalState: tenant?.federalState ?? "NIEDERSACHSEN",
+          year: y,
+          isManual: false,
+        });
+      }
+
       // Merge: manuelle überschreiben berechnete am selben Tag
       const manualDates = new Set(manual.map((m) => m.date.toISOString().split("T")[0]));
+      const companyDates = new Set(companyHolidays.map((c) => c.date));
       const merged = [
-        ...computed.filter((c) => !manualDates.has(c.date)),
+        ...computed.filter((c) => !manualDates.has(c.date) && !companyDates.has(c.date)),
+        ...companyHolidays.filter((c) => !manualDates.has(c.date)),
         ...manual.map((m) => ({
           id: m.id,
           tenantId: m.tenantId,

@@ -118,6 +118,24 @@
   let maxNegSaved = $state(false);
   let maxNegError = $state("");
 
+  // Heiligabend / Silvester
+  let christmasEveRule = $state("NORMAL");
+  let newYearsEveRule = $state("NORMAL");
+
+  // Abwesenheits-Konfiguration
+  let vacationLeadTimeDays = $state(0);
+  let vacationMaxAdvanceMonths = $state(0);
+  let halfDayAllowed = $state(true);
+  let sickSelfReport = $state(true);
+  let sickNoteRequiredAfterDays = $state(3);
+  let leaveConfigSaving = $state(false);
+  let leaveConfigSaved = $state(false);
+  let leaveConfigError = $state("");
+
+  // Teilzeit-Urlaub
+  let autoCalcPartTimeVacation = $state(true);
+  let fullTimeWorkDaysPerWeek = $state(5);
+
   // NFC Terminals
   interface TerminalKey {
     id: string;
@@ -173,6 +191,17 @@
         carryOverDeadlineDay: cfg.carryOverDeadlineDay,
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
+
+      // Load holiday/leave/part-time config from same response
+      christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
+      newYearsEveRule = (cfg as any).newYearsEveRule ?? "NORMAL";
+      vacationLeadTimeDays = (cfg as any).vacationLeadTimeDays ?? 0;
+      vacationMaxAdvanceMonths = (cfg as any).vacationMaxAdvanceMonths ?? 0;
+      halfDayAllowed = (cfg as any).halfDayAllowed ?? true;
+      sickSelfReport = (cfg as any).sickSelfReport ?? true;
+      sickNoteRequiredAfterDays = (cfg as any).sickNoteRequiredAfterDays ?? 3;
+      autoCalcPartTimeVacation = (cfg as any).autoCalcPartTimeVacation ?? true;
+      fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
 
       try {
         const smtp = await api.get<{
@@ -369,6 +398,31 @@
       maxNegError = e instanceof Error ? e.message : "Fehler";
     } finally {
       maxNegSaving = false;
+    }
+  }
+
+  async function saveLeaveConfig() {
+    leaveConfigSaving = true;
+    leaveConfigSaved = false;
+    leaveConfigError = "";
+    try {
+      await api.put("/settings/work", {
+        christmasEveRule,
+        newYearsEveRule,
+        vacationLeadTimeDays,
+        vacationMaxAdvanceMonths,
+        halfDayAllowed,
+        sickSelfReport,
+        sickNoteRequiredAfterDays,
+        autoCalcPartTimeVacation,
+        fullTimeWorkDaysPerWeek,
+      });
+      leaveConfigSaved = true;
+      setTimeout(() => (leaveConfigSaved = false), 3000);
+    } catch (e: unknown) {
+      leaveConfigError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      leaveConfigSaving = false;
     }
   }
 
@@ -666,6 +720,114 @@
           {maxNegSaving ? "Speichern…" : "Speichern"}
         </button>
         {#if maxNegSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
+      </div>
+    </div>
+
+    <hr class="sys-divider" />
+
+    <!-- Abwesenheits-Konfiguration -->
+    <div class="sys-section">
+      <h3 class="sys-title">Abwesenheiten & Urlaub</h3>
+      {#if leaveConfigError}
+        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+          <span>⚠</span><span>{leaveConfigError}</span>
+        </div>
+      {/if}
+
+      <h4 class="sys-subtitle">Heiligabend & Silvester</h4>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="form-label" for="christmas-rule">Heiligabend (24.12.)</label>
+          <select id="christmas-rule" bind:value={christmasEveRule} class="form-input">
+            <option value="NORMAL">Normaler Arbeitstag</option>
+            <option value="HALF_DAY">Halber Tag frei</option>
+            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="newyears-rule">Silvester (31.12.)</label>
+          <select id="newyears-rule" bind:value={newYearsEveRule} class="form-input">
+            <option value="NORMAL">Normaler Arbeitstag</option>
+            <option value="HALF_DAY">Halber Tag frei</option>
+            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+          </select>
+        </div>
+      </div>
+
+      <h4 class="sys-subtitle" style="margin-top:1.5rem">Urlaubsanträge</h4>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
+          <input id="lead-time" type="number" min="0" max="365" bind:value={vacationLeadTimeDays} class="form-input" />
+          <p class="form-hint text-muted">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
+          <input id="max-advance" type="number" min="0" max="24" bind:value={vacationMaxAdvanceMonths} class="form-input" />
+          <p class="form-hint text-muted">0 = unbegrenzt. z. B. 12 = max. 1 Jahr im Voraus.</p>
+        </div>
+      </div>
+      <div class="toggle-row" style="margin-top:0.75rem">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Halbe Tage erlauben</span>
+          <p class="form-hint text-muted">Mitarbeiter können halbe Urlaubstage beantragen.</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={halfDayAllowed} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+
+      <h4 class="sys-subtitle" style="margin-top:1.5rem">Krankmeldungen</h4>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Selbsteintragen erlauben</span>
+          <p class="form-hint text-muted">Mitarbeiter können Krankmeldungen selbst erstellen.</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={sickSelfReport} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="settings-grid" style="margin-top:0.75rem">
+        <div class="form-group">
+          <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tage)</label>
+          <input id="sick-note-days" type="number" min="1" max="30" bind:value={sickNoteRequiredAfterDays} class="form-input" />
+          <p class="form-hint text-muted">Ab dem X. Krankheitstag wird eine AU-Bescheinigung angefordert (§ 5 EFZG).</p>
+        </div>
+      </div>
+
+      <h4 class="sys-subtitle" style="margin-top:1.5rem">Teilzeit-Urlaub</h4>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Automatische Pro-Rata-Berechnung</span>
+          <p class="form-hint text-muted">Urlaubsanspruch wird automatisch anhand der Arbeitstage/Woche berechnet.</p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={autoCalcPartTimeVacation} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      {#if autoCalcPartTimeVacation}
+        <div class="settings-grid" style="margin-top:0.75rem">
+          <div class="form-group">
+            <label class="form-label" for="ft-days">Vollzeit-Arbeitstage/Woche</label>
+            <select id="ft-days" bind:value={fullTimeWorkDaysPerWeek} class="form-input">
+              <option value={5}>5 Tage (Mo–Fr)</option>
+              <option value={6}>6 Tage (Mo–Sa)</option>
+            </select>
+            <p class="form-hint text-muted">Referenz für die Pro-Rata-Berechnung (BUrlG).</p>
+          </div>
+        </div>
+      {/if}
+
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick={saveLeaveConfig} disabled={leaveConfigSaving}>
+          {leaveConfigSaving ? "Speichern…" : "Speichern"}
+        </button>
+        {#if leaveConfigSaved}
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>
@@ -1062,6 +1224,15 @@
     font-weight: 600;
     margin-bottom: 0.75rem;
     color: var(--color-text-heading);
+  }
+
+  .sys-subtitle {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 0.5rem;
   }
 
   .inline-fields {

@@ -155,7 +155,71 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
       if (overlap) return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
 
+      // Load tenant config for leave rules
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+
       const leaveTypeId = await ensureLeaveType(app.prisma, tenantId, body.type);
+      const leaveType = await app.prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
+
+      // ── Half-day check ──
+      if (body.halfDay) {
+        const globalHalfDay = tenantConfig?.halfDayAllowed ?? true;
+        const typeHalfDay = leaveType?.allowHalfDay ?? true;
+        if (!globalHalfDay || !typeHalfDay) {
+          return reply.code(400).send({ error: "Halbe Tage sind für diesen Abwesenheitstyp nicht erlaubt" });
+        }
+      }
+
+      // ── Lead time check (not for sick types) ──
+      const isSickType = ["SICK", "SICK_CHILD"].includes(body.type);
+      if (!isSickType) {
+        const leadTimeDays = leaveType?.leadTimeDays ?? tenantConfig?.vacationLeadTimeDays ?? 0;
+        if (leadTimeDays > 0) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const diffMs = start.getTime() - today.getTime();
+          const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          if (diffDays < leadTimeDays) {
+            return reply.code(400).send({
+              error: `Abwesenheit muss mindestens ${leadTimeDays} Tage im Voraus beantragt werden`,
+            });
+          }
+        }
+
+        // ── Max advance months check ──
+        const maxAdvanceMonths = tenantConfig?.vacationMaxAdvanceMonths ?? 0;
+        if (maxAdvanceMonths > 0) {
+          const maxDate = new Date();
+          maxDate.setMonth(maxDate.getMonth() + maxAdvanceMonths);
+          if (end > maxDate) {
+            return reply.code(400).send({
+              error: `Abwesenheit darf maximal ${maxAdvanceMonths} Monate im Voraus beantragt werden`,
+            });
+          }
+        }
+      }
+
+      // ── Max days per year check ──
+      if (leaveType?.maxDaysPerYear) {
+        const yearStart = new Date(start.getFullYear(), 0, 1);
+        const yearEnd = new Date(start.getFullYear(), 11, 31);
+        const usedThisYear = await app.prisma.leaveRequest.aggregate({
+          where: {
+            employeeId,
+            leaveTypeId,
+            deletedAt: null,
+            status: { in: ["PENDING", "APPROVED"] },
+            startDate: { gte: yearStart, lte: yearEnd },
+          },
+          _sum: { days: true },
+        });
+        const used = Number(usedThisYear._sum.days ?? 0);
+        if (used + days > leaveType.maxDaysPerYear) {
+          return reply.code(400).send({
+            error: `Max. ${leaveType.maxDaysPerYear} Tage/Jahr für diesen Typ (bereits ${used} genutzt)`,
+          });
+        }
+      }
 
       // Für VACATION: Resturlaub auto-übertragen (lazy) + verfügbare Tage prüfen
       if (body.type === "VACATION") {

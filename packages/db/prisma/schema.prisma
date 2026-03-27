@@ -80,6 +80,18 @@ model TenantConfig {
   phorestSyncCron   String   @default("0 3 * * *") // Default: täglich 03:00
   // Compliance
   arbzgEnabled           Boolean @default(true)  // ArbZG-Verstöße anzeigen
+  // Heiligabend / Silvester: NORMAL | HALF_DAY | FULL_DAY_OFF
+  christmasEveRule       String  @default("NORMAL")
+  newYearsEveRule        String  @default("NORMAL")
+  // Abwesenheits-Konfiguration
+  vacationLeadTimeDays   Int     @default(0)    // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
+  vacationMaxAdvanceMonths Int   @default(0)    // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
+  halfDayAllowed         Boolean @default(true) // Halbe Tage erlaubt
+  sickSelfReport         Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
+  sickNoteRequiredAfterDays Int  @default(3)    // AU-Pflicht nach X Krankheitstagen
+  // Teilzeit-Urlaub
+  autoCalcPartTimeVacation Boolean @default(true) // Automatische Pro-Rata Berechnung
+  fullTimeWorkDaysPerWeek  Int    @default(5)     // Referenz für Vollzeit (5 oder 6)
 
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
@@ -342,13 +354,16 @@ model OvertimePlan {
 // ─────────────────────────────────────────────
 
 model LeaveType {
-  id           String   @id @default(uuid())
-  tenantId     String
-  name         String   // "Urlaub", "Sonderurlaub", etc.
-  isPaid       Boolean  @default(true)
-  requiresApproval Boolean @default(true)
-  color        String   @default("#3B82F6")
-  createdAt    DateTime @default(now()) @db.Timestamptz
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String   // "Urlaub", "Sonderurlaub", etc.
+  isPaid           Boolean  @default(true)
+  requiresApproval Boolean  @default(true)
+  color            String   @default("#3B82F6")
+  allowHalfDay     Boolean  @default(true)   // Can this type be requested as half-day?
+  maxDaysPerYear   Int?                       // Optional annual limit per employee
+  leadTimeDays     Int?                       // Per-type override for lead time (null = use global)
+  createdAt        DateTime @default(now()) @db.Timestamptz
 
   tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entitlements LeaveEntitlement[]
@@ -367,6 +382,7 @@ model LeaveEntitlement {
   usedDays          Decimal  @db.Decimal(5, 2) @default(0)
   carriedOverDays   Decimal  @db.Decimal(5, 2) @default(0)  // Resturlaub Vorjahr
   carryOverDeadline DateTime? @db.Timestamptz // bis wann Resturlaub genommen werden muss
+  isAutoCalculated  Boolean  @default(false)  // Was this entitlement auto-calculated for part-time?
   createdAt         DateTime @default(now()) @db.Timestamptz
   updatedAt         DateTime @updatedAt      @db.Timestamptz
 

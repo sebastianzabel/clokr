@@ -37,6 +37,18 @@ const tenantConfigSchema = z.object({
     .regex(/^\d{2}:\d{2}$/)
     .nullable()
     .optional(),
+  // Heiligabend/Silvester
+  christmasEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
+  newYearsEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
+  // Leave config
+  vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
+  vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
+  halfDayAllowed: z.boolean().optional(),
+  sickSelfReport: z.boolean().optional(),
+  sickNoteRequiredAfterDays: z.number().int().min(1).max(30).optional(),
+  // Part-time vacation
+  autoCalcPartTimeVacation: z.boolean().optional(),
+  fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -104,6 +116,15 @@ export async function settingsRoutes(app: FastifyInstance) {
         autoDeleteOpenHours: 14,
         autoBreakEnabled: false,
         defaultBreakStart: null,
+        christmasEveRule: "NORMAL",
+        newYearsEveRule: "NORMAL",
+        vacationLeadTimeDays: 0,
+        vacationMaxAdvanceMonths: 0,
+        halfDayAllowed: true,
+        sickSelfReport: true,
+        sickNoteRequiredAfterDays: 3,
+        autoCalcPartTimeVacation: true,
+        fullTimeWorkDaysPerWeek: 5,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
@@ -580,6 +601,54 @@ export async function settingsRoutes(app: FastifyInstance) {
         email: e.user.email,
         workSchedule: e.workSchedules[0] ?? null,
       }));
+    },
+  });
+  // GET /api/v1/settings/leave-types — all leave types with config
+  app.get("/leave-types", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const tenantId = await getTenantId(app, req.user.sub);
+      const types = await app.prisma.leaveType.findMany({
+        where: { tenantId },
+        orderBy: { name: "asc" },
+      });
+      return types;
+    },
+  });
+
+  // PUT /api/v1/settings/leave-types/:id — update leave type config
+  app.put("/leave-types/:id", {
+    schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = z.object({
+        allowHalfDay: z.boolean().optional(),
+        maxDaysPerYear: z.number().int().min(0).nullable().optional(),
+        leadTimeDays: z.number().int().min(0).nullable().optional(),
+        color: z.string().optional(),
+      }).parse(req.body);
+
+      const existing = await app.prisma.leaveType.findUnique({ where: { id } });
+      if (!existing) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });
+
+      const updated = await app.prisma.leaveType.update({
+        where: { id },
+        data: body,
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "LeaveType",
+        entityId: id,
+        oldValue: { allowHalfDay: existing.allowHalfDay, maxDaysPerYear: existing.maxDaysPerYear },
+        newValue: body,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return updated;
     },
   });
 }
