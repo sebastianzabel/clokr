@@ -170,12 +170,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - context: .
-            image: clokr-api
+          - image: clokr-api
             dockerfile: ./apps/api/Dockerfile
-          - context: .
-            image: clokr-web
+            context: .
+          - image: clokr-web
             dockerfile: ./apps/web/Dockerfile
+            context: .
 
     steps:
       - uses: actions/checkout@v4
