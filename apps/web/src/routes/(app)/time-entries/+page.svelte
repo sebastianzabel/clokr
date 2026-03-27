@@ -808,11 +808,11 @@
             role="button"
             tabindex="0"
             onclick={() => {
-              if (day.isCurrentMonth && !day.isBeforeHire) selectedDate = day.dateStr;
+              if (day.isCurrentMonth && !day.isBeforeHire) openAdd(day.dateStr);
             }}
             onkeydown={(e) => {
               if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth && !day.isBeforeHire)
-                selectedDate = day.dateStr;
+                openAdd(day.dateStr);
             }}
           >
             <span class="day-num">{day.dayNum}</span>
@@ -867,131 +867,6 @@
       {/each}
     </div>
   {/if}
-
-  <!-- ── Tagesdetail ──────────────────────────────────────────────────────── -->
-  <div class="day-detail card">
-    <div class="day-detail-header">
-      <div class="day-detail-title">
-        <span class="day-detail-label">{selectedLabel}</span>
-        {#if schedule}
-          <div class="day-detail-stats">
-            {#if !isMonthlyHours}
-              <span class="dstat">Soll <strong>{fmtMin(selectedExpected)}&thinsp;h</strong></span>
-            {/if}
-            <span class="dstat">Ist <strong>{fmtMin(selectedWorked)}&thinsp;h</strong></span>
-            {#if selectedSlots.some((s) => !s.endTime)}
-              <span class="badge badge-green" style="font-size:0.75rem;">Aktiv</span>
-            {:else if !isMonthlyHours}
-              <span class="dstat bal {balClass(selectedBalance)}">
-                Saldo <strong>{fmtBalance(selectedBalance)}</strong>
-              </span>
-            {/if}
-          </div>
-        {/if}
-      </div>
-      <button class="btn btn-primary btn-sm" onclick={() => openAdd(selectedDate)}>
-        <span aria-hidden="true">＋</span> Slot
-      </button>
-    </div>
-
-    {#if dayWarnings.length > 0}
-      <div class="day-warnings">
-        {#each dayWarnings as w (w.code)}
-          <div class="arbzg-alert arbzg-{w.severity}" role="alert">
-            <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
-            <span>{w.message}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if selectedSlots.length === 0}
-      <div class="day-empty">
-        {#if parseISO(selectedDate) > today}
-          <span class="text-muted">Zukünftiger Tag – noch keine Einträge.</span>
-        {:else}
-          <span class="text-muted">Keine Einträge für diesen Tag.</span>
-          <button
-            class="btn btn-ghost btn-sm"
-            onclick={() => openAdd(selectedDate)}
-            style="margin-left:0.5rem;"
-          >
-            Slot hinzufügen
-          </button>
-        {/if}
-      </div>
-    {:else}
-      <div class="slots-wrap">
-        <table class="slots-table">
-          <thead>
-            <tr>
-              <th>Von</th><th>Bis</th><th>Pause</th>
-              <th>Netto</th><th>Quelle</th><th>Notiz</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each selectedSlots as slot (slot.id)}
-              <tr class:row-del={deleteConfirmId === slot.id} class:row-invalid={slot.isInvalid}>
-                <td class="mono">{fmtTime(slot.startTime)}</td>
-                <td class="mono">
-                  {#if slot.endTime}{fmtTime(slot.endTime)}
-                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                </td>
-                <td class="break-cell">{fmtBreaks(slot)}</td>
-                <td class="mono fw-med">{slotNet(slot)}</td>
-                <td
-                  ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
-                  ></td
-                >
-                <td class="note-cell text-muted">
-                  {#if slot.isInvalid && slot.invalidReason}
-                    <span class="invalid-reason" title={slot.invalidReason}
-                      >{slot.invalidReason}</span
-                    >
-                  {:else}
-                    {slot.note ?? "—"}
-                  {/if}
-                </td>
-                <td class="actions-cell">
-                  {#if slot.isInvalid && isManager}
-                    <span class="row-actions">
-                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                        >✏️</button
-                      >
-                      <button
-                        class="btn btn-xs btn-outline"
-                        onclick={() => revalidateEntry(slot.id)}
-                        title="Eintrag revalidieren">Revalidieren</button
-                      >
-                    </span>
-                  {:else if deleteConfirmId === slot.id}
-                    <span class="del-confirm">
-                      <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                      <button class="btn-icon btn-danger-sm" onclick={() => deleteEntry(slot.id)}
-                        >✓</button
-                      >
-                      <button class="btn-icon" onclick={() => (deleteConfirmId = "")}>✕</button>
-                    </span>
-                  {:else}
-                    <span class="row-actions">
-                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                        >✏️</button
-                      >
-                      <button
-                        class="btn-icon btn-icon-danger"
-                        onclick={() => (deleteConfirmId = slot.id)}
-                        title="Löschen">🗑</button
-                      >
-                    </span>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
-  </div>
 {/if}
 
 <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
