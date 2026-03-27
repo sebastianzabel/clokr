@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { updateOvertimeAccount } from "./time-entries";
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -22,6 +23,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
+
+      // Recalculate balance on every read to ensure fresh data
+      await updateOvertimeAccount(app, employeeId).catch(() => {});
 
       const account = await app.prisma.overtimeAccount.findUnique({
         where: { employeeId },

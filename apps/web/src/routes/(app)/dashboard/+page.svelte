@@ -121,6 +121,7 @@
     type: string;
   }
   let upcomingLeaves: UpcomingLeave[] = $state([]);
+  let pendingApprovalCount = $state(0);
 
   interface MonthlyReportRow {
     workedHours: number;
@@ -436,18 +437,21 @@
         });
       }
 
-      // Load upcoming leaves
+      // Load upcoming leaves + pending approval count
       if (isManager) {
         try {
-          const leaves = await api.get<
-            {
-              startDate: string;
-              endDate: string;
-              days: number;
-              employee: { firstName: string; lastName: string };
-              leaveType: { name: string };
-            }[]
-          >("/leave/requests?status=APPROVED&upcoming=true");
+          const [leaves, pending] = await Promise.all([
+            api.get<
+              {
+                startDate: string;
+                endDate: string;
+                days: number;
+                employee: { firstName: string; lastName: string };
+                leaveType: { name: string };
+              }[]
+            >("/leave/requests?status=APPROVED&upcoming=true"),
+            api.get<{ id: string }[]>("/leave/requests?status=PENDING"),
+          ]);
           upcomingLeaves = (leaves ?? [])
             .map((l) => ({
               employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
@@ -457,6 +461,7 @@
               type: l.leaveType?.name ?? "Urlaub",
             }))
             .slice(0, 8);
+          pendingApprovalCount = (pending ?? []).length;
         } catch (err) {
           console.error("Failed to load upcoming leaves:", err);
           upcomingLeaves = [];
@@ -525,7 +530,7 @@
     return dateStr === format(new Date(), "yyyy-MM-dd");
   }
 
-  let userName = $derived($authStore.user?.email.split("@")[0] ?? "");
+  let userName = $derived($authStore.user?.firstName ?? $authStore.user?.email.split("@")[0] ?? "");
   let capitalizedName = $derived(userName.charAt(0).toUpperCase() + userName.slice(1));
 
   let overtimeBalance = $derived(stats?.overtime.balanceHours ?? 0);
@@ -613,6 +618,27 @@
       </div>
     {/if}
   </div>
+
+  <!-- Pending Approvals Banner (Manager only) -->
+  {#if isManager && pendingApprovalCount > 0}
+    <a href="/leave?view=approvals" class="pending-banner">
+      <span class="pending-banner-badge">{pendingApprovalCount}</span>
+      <span class="pending-banner-text">
+        {pendingApprovalCount === 1 ? "offener Antrag" : "offene Anträge"} zur Genehmigung
+      </span>
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg
+      >
+    </a>
+  {/if}
 
   <!-- Stats Row -->
   <div class="stats-grid">
@@ -987,6 +1013,50 @@
     to {
       transform: rotate(360deg);
     }
+  }
+
+  /* Pending Approvals Banner */
+  .pending-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.625rem 1rem;
+    background: var(--color-yellow-bg);
+    border: 1px solid var(--color-yellow-border);
+    border-radius: var(--radius-sm);
+    margin-bottom: 1rem;
+    text-decoration: none;
+    color: var(--color-text);
+    transition:
+      background-color 0.15s,
+      box-shadow 0.15s;
+  }
+  .pending-banner:hover {
+    background: var(--color-yellow-border);
+    box-shadow: var(--shadow-xs);
+  }
+  .pending-banner-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.375rem;
+    height: 1.375rem;
+    padding: 0 0.375rem;
+    border-radius: 9999px;
+    background: var(--color-yellow);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .pending-banner-text {
+    flex: 1;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+  .pending-banner svg {
+    color: var(--color-text-muted);
+    flex-shrink: 0;
   }
 
   /* Stats */

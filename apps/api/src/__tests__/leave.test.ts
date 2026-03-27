@@ -267,5 +267,159 @@ describe("Leave / Absence API", () => {
       expect(deleteRes.statusCode).toBeLessThan(300);
       expect(deleteRes.statusCode).toBeGreaterThanOrEqual(200);
     });
+
+    it("employee cancel of approved leave goes to CANCELLATION_REQUESTED", async () => {
+      // Employee creates a leave request
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2027-01-05",
+          endDate: "2027-01-07",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const { id: requestId } = JSON.parse(createRes.body);
+
+      // Admin approves it
+      const approveRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+      expect(approveRes.statusCode).toBe(200);
+
+      // Employee tries to cancel the approved request
+      const deleteRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/leave/requests/${requestId}`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+
+      expect(deleteRes.statusCode).toBe(200);
+      const body = JSON.parse(deleteRes.body);
+      expect(body.status).toBe("CANCELLATION_REQUESTED");
+    });
+
+    it("manager can directly cancel own approved leave", async () => {
+      // Ensure admin has a leave entitlement for vacation requests
+      const currentYear = new Date().getFullYear();
+      const vacType = await app.prisma.leaveType.findFirst({
+        where: { tenantId: data.tenant.id, name: "Urlaub" },
+      });
+      if (vacType) {
+        await app.prisma.leaveEntitlement.upsert({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: data.adminEmployee.id,
+              leaveTypeId: vacType.id,
+              year: currentYear + 1,
+            },
+          },
+          create: {
+            employeeId: data.adminEmployee.id,
+            leaveTypeId: vacType.id,
+            year: currentYear + 1,
+            totalDays: 30,
+            usedDays: 0,
+          },
+          update: {},
+        });
+      }
+
+      // Admin creates their own leave request
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "VACATION",
+          startDate: "2027-02-01",
+          endDate: "2027-02-03",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const { id: requestId } = JSON.parse(createRes.body);
+
+      // Directly set status to APPROVED via DB (no second admin available)
+      await app.prisma.leaveRequest.update({
+        where: { id: requestId },
+        data: { status: "APPROVED", reviewedBy: "system", reviewedAt: new Date() },
+      });
+
+      // Admin cancels their own approved request — goes through CANCELLATION_REQUESTED
+      // (even managers need another manager to approve cancellation)
+      const deleteRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/leave/requests/${requestId}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(deleteRes.statusCode).toBe(200);
+      const body = JSON.parse(deleteRes.body);
+      expect(body.status).toBe("CANCELLATION_REQUESTED");
+
+      // Verify it's CANCELLATION_REQUESTED in DB (not directly CANCELLED)
+      const updated = await app.prisma.leaveRequest.findUnique({ where: { id: requestId } });
+      expect(updated?.status).toBe("CANCELLATION_REQUESTED");
+    });
+  });
+
+  describe("Self-approval prevention", () => {
+    it("admin cannot approve their own leave request (403)", async () => {
+      // Ensure admin has a leave entitlement
+      const currentYear = new Date().getFullYear();
+      const vacType = await app.prisma.leaveType.findFirst({
+        where: { tenantId: data.tenant.id, name: "Urlaub" },
+      });
+      if (vacType) {
+        await app.prisma.leaveEntitlement.upsert({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: data.adminEmployee.id,
+              leaveTypeId: vacType.id,
+              year: currentYear + 1,
+            },
+          },
+          create: {
+            employeeId: data.adminEmployee.id,
+            leaveTypeId: vacType.id,
+            year: currentYear + 1,
+            totalDays: 30,
+            usedDays: 0,
+          },
+          update: {},
+        });
+      }
+
+      // Admin creates a leave request (PENDING)
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "VACATION",
+          startDate: "2027-03-02",
+          endDate: "2027-03-06",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const { id: requestId } = JSON.parse(createRes.body);
+
+      // Admin tries to approve their OWN request
+      const reviewRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${requestId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+
+      expect(reviewRes.statusCode).toBe(403);
+      const body = JSON.parse(reviewRes.body);
+      expect(body.error).toContain("Eigene Anträge");
+    });
   });
 });

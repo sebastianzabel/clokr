@@ -130,22 +130,22 @@ async function checkOverlap(
   return `Überschneidung mit bestehendem Eintrag (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
 }
 
-/** § 8 BUrlG: Prüft ob genehmigter Urlaub oder Abwesenheit an dem Tag vorliegt */
+/** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
 async function hasApprovedLeaveOnDate(
   prisma: any,
   employeeId: string,
   dateStr: string,
-): Promise<string | null> {
+): Promise<{ type: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null> {
   const leave = await prisma.leaveRequest.findFirst({
     where: {
       employeeId,
-      status: "APPROVED",
+      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
       startDate: { lte: new Date(dateStr + "T23:59:59Z") },
       endDate: { gte: new Date(dateStr + "T00:00:00Z") },
     },
     include: { leaveType: { select: { name: true } } },
   });
-  if (leave) return leave.leaveType.name;
+  if (leave) return { type: leave.leaveType.name, status: leave.status };
 
   const absence = await prisma.absence.findFirst({
     where: {
@@ -155,7 +155,11 @@ async function hasApprovedLeaveOnDate(
       type: { in: ["MATERNITY", "PARENTAL"] },
     },
   });
-  if (absence) return absence.type === "MATERNITY" ? "Mutterschutz" : "Elternzeit";
+  if (absence)
+    return {
+      type: absence.type === "MATERNITY" ? "Mutterschutz" : "Elternzeit",
+      status: "APPROVED" as const,
+    };
 
   return null;
 }
@@ -292,19 +296,21 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           };
         }
 
-        // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
-        const leaveReason = await hasApprovedLeaveOnDate(tx, employee.id, todayStr);
-        if (leaveReason) {
-          return { action: "BLOCKED" as const, leaveReason };
+        // § 8 BUrlG: Check for active leave on this day
+        const leaveCheck = await hasApprovedLeaveOnDate(tx, employee.id, todayStr);
+        if (leaveCheck?.status === "APPROVED") {
+          return { action: "BLOCKED" as const, leaveReason: leaveCheck.type };
         }
 
-        // Einstempeln
+        // Einstempeln — if CANCELLATION_REQUESTED, mark as invalid until cancellation approved
         const entry = await tx.timeEntry.create({
           data: {
             employeeId: employee.id,
             date: today,
             startTime: now,
             source: "NFC",
+            isInvalid: leaveCheck?.status === "CANCELLATION_REQUESTED",
+            invalidReason: leaveCheck ? "Urlaubsstornierung ausstehend" : null,
           },
         });
 
@@ -414,15 +420,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
 
-      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+      // § 8 BUrlG: Check for active leave
+      let clockLeaveCheck: { type: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null =
+        null;
       const empTenantId = employeeRecord?.tenantId;
       if (empTenantId) {
         const clockTz = await getTenantTimezone(app.prisma, empTenantId);
         const clockTodayStr = dateStrInTz(new Date(), clockTz);
-        const clockLeave = await hasApprovedLeaveOnDate(app.prisma, employeeId, clockTodayStr);
-        if (clockLeave) {
+        clockLeaveCheck = await hasApprovedLeaveOnDate(app.prisma, employeeId, clockTodayStr);
+        if (clockLeaveCheck?.status === "APPROVED") {
           return reply.code(409).send({
-            error: `§ 8 BUrlG: Heute ist ${clockLeave} genehmigt. Bitte zuerst stornieren.`,
+            error: `§ 8 BUrlG: Heute ist ${clockLeaveCheck.type} genehmigt. Bitte zuerst stornieren.`,
           });
         }
       }
@@ -446,6 +454,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             startTime: now,
             source: body.source,
             note: body.note,
+            isInvalid: clockLeaveCheck?.status === "CANCELLATION_REQUESTED",
+            invalidReason: clockLeaveCheck ? "Urlaubsstornierung ausstehend" : null,
           },
         });
         return { conflict: false as const, entry };
@@ -607,18 +617,31 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
-      // § 8 BUrlG: Keine Arbeit während genehmigtem Urlaub
+      // § 8 BUrlG: Check for active leave
       const manualEmployeeId = body.employeeId ?? req.user.employeeId ?? "";
       const manualLeave = await hasApprovedLeaveOnDate(app.prisma, manualEmployeeId, entryDateStr);
-      if (manualLeave) {
+      if (manualLeave?.status === "APPROVED") {
         return reply.code(409).send({
-          error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave} genehmigt. Bitte zuerst stornieren.`,
+          error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave.type} genehmigt. Bitte zuerst stornieren.`,
         });
       }
 
       // Zeitvalidierung
       if (newEnd && newEnd <= newStart) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
+      }
+
+      // Nur ein Eintrag pro Tag erlaubt
+      const existingEntry = await app.prisma.timeEntry.findFirst({
+        where: { employeeId, date: new Date(body.date) },
+      });
+      if (existingEntry) {
+        return reply
+          .code(409)
+          .send({
+            error:
+              "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
+          });
       }
 
       // Überlappungsprüfung
@@ -648,6 +671,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           note: body.note,
           source: "MANUAL",
           createdBy: user.sub,
+          isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+          invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
         },
       });
 
@@ -979,11 +1004,36 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     tz,
   );
 
-  // Tatsächlich gearbeitete Minuten dieses Monats (nur valide Einträge)
+  // Determine if today has any entries — if so, include today in calculation
+  // Normalize hireDate to start-of-day to avoid time-of-day comparison issues
+  const hireDateNorm = employee?.hireDate
+    ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
+    : null;
+  const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
+  const todayStr = dateStrInTz(now, tz);
+  const todayDate = new Date(todayStr + "T00:00:00Z");
+  const yesterdayDate = new Date(todayDate.getTime() - 86400000);
+
+  const hasTodayEntries = await app.prisma.timeEntry.count({
+    where: {
+      employeeId,
+      date: todayDate,
+      endTime: { not: null },
+      type: "WORK",
+      isInvalid: false,
+    },
+  });
+
+  // If clocked today → include today, otherwise → only up to yesterday
+  const cutoffDate = hasTodayEntries > 0 ? todayDate : yesterdayDate;
+  const effectiveEnd =
+    cutoffDate < effectiveStart ? effectiveStart : cutoffDate < monthEnd ? cutoffDate : monthEnd;
+
+  // Worked minutes up to cutoff
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
-      date: { gte: monthStart, lte: monthEnd },
+      date: { gte: monthStart, lte: effectiveEnd },
       endTime: { not: null },
       type: "WORK",
       isInvalid: false,
@@ -995,23 +1045,20 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // Soll-Minuten (TZ-aware Wochentag-Zuordnung), nur bis heute, Tage vor hireDate überspringen
-  const effectiveStart =
-    employee?.hireDate && employee.hireDate > monthStart ? employee.hireDate : monthStart;
-  const todayStr = dateStrInTz(now, tz);
-  const todayDate = new Date(todayStr + "T00:00:00Z");
-  const effectiveEnd = todayDate < monthEnd ? todayDate : monthEnd;
-  const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
+  // Expected minutes up to same cutoff
+  const expectedMinutes =
+    effectiveEnd < effectiveStart
+      ? 0
+      : calcExpectedMinutesTz(schedule, effectiveStart, effectiveEnd, tz);
 
   // Öffentliche Feiertage abziehen
   const holidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
-      date: { gte: monthStart, lte: effectiveEnd },
+      date: { gte: effectiveStart, lte: effectiveEnd },
     },
   });
   const holidayMinutes = holidays.reduce((sum, h) => {
-    if (employee?.hireDate && h.date < employee.hireDate) return sum;
     const dow = getDayOfWeekInTz(h.date, tz);
     return sum + getDayHoursFromSchedule(schedule, dow) * 60;
   }, 0);
@@ -1026,15 +1073,11 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     },
   });
   const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-    return (
-      sum +
-      calcExpectedMinutesTz(
-        schedule,
-        lr.startDate < monthStart ? monthStart : lr.startDate,
-        lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate,
-        tz,
-      )
-    );
+    // Clamp leave range to effectiveStart..effectiveEnd (same range as expected)
+    const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+    const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
+    if (leaveStart > leaveEnd) return sum;
+    return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
   }, 0);
 
   const diffHours =

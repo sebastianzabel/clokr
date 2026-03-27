@@ -369,7 +369,7 @@ async function issueTokens(
     id: string;
     email: string;
     role: Role;
-    employee: { id: string; tenantId: string } | null;
+    employee: { id: string; tenantId: string; firstName: string } | null;
   },
 ) {
   const payload = {
@@ -414,6 +414,7 @@ async function issueTokens(
       email: user.email,
       role: user.role,
       employeeId: user.employee?.id ?? null,
+      firstName: user.employee?.firstName ?? null,
     },
   });
 }

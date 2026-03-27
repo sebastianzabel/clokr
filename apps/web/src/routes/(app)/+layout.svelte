@@ -108,7 +108,7 @@
   let navItems = $derived(
     [
       { href: "/dashboard", icon: "home", label: "Dashboard", show: true },
-      { href: "/time-entries", icon: "clock", label: "Zeiteinträge", show: true },
+      { href: "/time-entries", icon: "clock", label: "Zeiterfassung", show: true },
       { href: "/leave", icon: "calendar-off", label: "Abwesenheiten", show: true },
       { href: "/reports", icon: "bar-chart-3", label: "Berichte", show: true },
       { href: "/admin", icon: "settings", label: "Admin", show: isManager },
@@ -747,7 +747,6 @@
     padding: 2rem;
     min-height: 100vh;
     min-width: 0;
-    max-width: 1600px;
     padding-bottom: 5rem; /* space for mobile nav */
   }
 

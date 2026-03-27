@@ -232,7 +232,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "LEAVE_REQUEST",
           title: "Neuer Urlaubsantrag",
           message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
-          link: "/leave",
+          link: `/leave?request=${request.id}`,
         });
       }
 
@@ -362,6 +362,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
       }
 
+      // Block self-approval — managers cannot approve their own requests
+      const reviewerEmployee = await app.prisma.employee.findFirst({
+        where: { userId: req.user.sub },
+        select: { id: true },
+      });
+      if (reviewerEmployee && existing.employeeId === reviewerEmployee.id) {
+        return reply
+          .code(403)
+          .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
+      }
+
       // ── Stornierungsantrag prüfen ────────────────────────────────────────────
       if (existing.status === "CANCELLATION_REQUESTED") {
         if (body.status === "APPROVED") {
@@ -374,6 +385,17 @@ export async function leaveRoutes(app: FastifyInstance) {
               reviewedAt: new Date(),
               reviewNote: body.reviewNote,
             },
+          });
+
+          // Revalidate time entries that were created during CANCELLATION_REQUESTED
+          await app.prisma.timeEntry.updateMany({
+            where: {
+              employeeId: existing.employeeId,
+              date: { gte: existing.startDate, lte: existing.endDate },
+              isInvalid: true,
+              invalidReason: "Urlaubsstornierung ausstehend",
+            },
+            data: { isInvalid: false, invalidReason: null },
           });
 
           const typeCode = TYPE_CODES.find(
@@ -547,7 +569,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: body.status === "APPROVED" ? "LEAVE_APPROVED" : "LEAVE_REJECTED",
           title: body.status === "APPROVED" ? "Antrag genehmigt" : "Antrag abgelehnt",
           message: `Ihr ${existing.leaveType.name}-Antrag wurde ${body.status === "APPROVED" ? "genehmigt" : "abgelehnt"}.`,
-          link: "/leave",
+          link: `/leave?request=${existing.id}`,
         });
       }
 
@@ -628,7 +650,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       if (existing.status === "APPROVED") {
-        // Genehmigter Antrag → Stornierungsantrag stellen (wartet auf Manager-Freigabe)
+        // Approved leave → request cancellation (needs another manager's approval)
+        // Until approved, the leave remains active (blocks time tracking, shown in calendar)
         await app.prisma.leaveRequest.update({
           where: { id },
           data: { status: "CANCELLATION_REQUESTED" },

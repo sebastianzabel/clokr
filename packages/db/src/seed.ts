@@ -13,6 +13,15 @@ const adapter = new PrismaPg(pool as any);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
+  // Skip seed if demo users already exist
+  const existingAdmin = await prisma.user.findFirst({
+    where: { email: ADMIN_EMAIL },
+  });
+  if (existingAdmin) {
+    console.log("ℹ️  Demo-Daten existieren bereits – Seed übersprungen.");
+    return;
+  }
+
   console.log("Starte Seed...");
 
   const adminPasswordHash = await bcrypt.hash(ADMIN_PASSWORD, 12);
