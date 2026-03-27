@@ -871,7 +871,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (overlap) return reply.code(409).send({ error: overlap });
 
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
-      const patch: Record<string, unknown> = { source: "CORRECTION" };
+      // Only set source to CORRECTION when a manager edits another employee's entry
+      const isCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
+      const patch: Record<string, unknown> = isCorrectionByManager ? { source: "CORRECTION" } : {};
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
@@ -918,11 +920,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: user.sub,
-        action: "UPDATE",
+        action: isCorrectionByManager ? "MANAGER_CORRECTION" : "UPDATE",
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
         newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return { entry: updated, warnings };
@@ -930,22 +933,82 @@ export async function timeEntryRoutes(app: FastifyInstance) {
   });
 
   // PATCH /api/v1/time-entries/:id/revalidate  (Admin/Manager setzt isInvalid zurück)
+  // Optionally accepts startTime, endTime, breakMinutes to correct the entry in one step
+  const revalidateSchema = z.object({
+    startTime: z.string().datetime().optional(),
+    endTime: z.string().datetime().optional().nullable(),
+    breakMinutes: z.number().int().min(0).optional(),
+    note: z.string().optional().nullable(),
+  });
+
   app.patch("/:id/revalidate", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
+      const body = revalidateSchema.parse(req.body ?? {});
       const user = req.user;
 
-      const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
+      const existing = await app.prisma.timeEntry.findUnique({
+        where: { id },
+        include: { employee: { select: { tenantId: true } } },
+      });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Tenant isolation
+      if (existing.employee.tenantId !== user.tenantId) {
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
       if (!existing.isInvalid)
         return reply.code(400).send({ error: "Eintrag ist nicht invalidiert" });
 
+      // Gesperrte Einträge dürfen nicht revalidiert werden
+      if (existing.isLocked) {
+        return reply
+          .code(403)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      // Build update data: always revalidate, optionally correct times
+      const updateData: Record<string, unknown> = {
+        isInvalid: false,
+        invalidReason: null,
+      };
+
+      const hasCorrection =
+        body.startTime || body.endTime !== undefined || body.breakMinutes !== undefined;
+      if (hasCorrection) {
+        updateData.source = "CORRECTION";
+        if (body.startTime) updateData.startTime = new Date(body.startTime);
+        if (body.endTime !== undefined) {
+          updateData.endTime = body.endTime ? new Date(body.endTime) : null;
+        }
+        if (body.breakMinutes !== undefined) updateData.breakMinutes = body.breakMinutes;
+
+        // Validate times
+        const newStart = body.startTime ? new Date(body.startTime) : existing.startTime;
+        const newEnd =
+          body.endTime !== undefined
+            ? body.endTime
+              ? new Date(body.endTime)
+              : null
+            : existing.endTime;
+
+        if (newEnd && newEnd <= newStart) {
+          return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
+        }
+
+        // Overlap check
+        const overlap = await checkOverlap(app, existing.employeeId, newStart, newEnd, id);
+        if (overlap) return reply.code(409).send({ error: overlap });
+      }
+      if ("note" in body) updateData.note = body.note ?? null;
+
       const updated = await app.prisma.timeEntry.update({
         where: { id },
-        data: { isInvalid: false, invalidReason: null },
+        data: updateData as any,
         include: { breaks: { orderBy: { startTime: "asc" } } },
       });
 
@@ -953,11 +1016,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: user.sub,
-        action: "UPDATE",
+        action: hasCorrection ? "MANAGER_CORRECTION" : "REVALIDATE",
         entity: "TimeEntry",
         entityId: id,
-        oldValue: { isInvalid: true, invalidReason: existing.invalidReason },
-        newValue: { isInvalid: false, invalidReason: null },
+        oldValue: existing,
+        newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return updated;
