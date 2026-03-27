@@ -692,7 +692,7 @@
 
     <div class="stat-card card-animate">
       <div class="stat-header-row">
-        <p class="stat-label">Überstunden</p>
+        <p class="stat-label">Überstundensaldo</p>
         <span class="stat-icon stat-icon--brand">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </span>
@@ -701,6 +701,7 @@
         {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
       </p>
       <p class="stat-sub">
+        Stand heute &middot;
         {Math.abs(overtimeBalance) >= 60
           ? "Kritisch"
           : Math.abs(overtimeBalance) >= 40

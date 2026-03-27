@@ -627,6 +627,7 @@
   /* Table */
   .table-wrapper {
     overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-md, 14px);
     border: 1px solid var(--glass-border, var(--color-border));
     box-shadow: var(--shadow-xs, 0 1px 3px rgba(0,0,0,0.06));
@@ -881,5 +882,24 @@
     background: var(--gray-100, #f3f4f6);
     color: var(--gray-600, #4b5563);
     border: 1px solid var(--gray-200, #e5e7eb);
+  }
+
+  @media (max-width: 640px) {
+    .control-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .control-group {
+      min-width: 0;
+    }
+
+    .summary-bar {
+      flex-wrap: wrap;
+    }
+
+    .reason-cell {
+      max-width: none;
+    }
   }
 </style>

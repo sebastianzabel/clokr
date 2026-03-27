@@ -228,6 +228,12 @@
     padding: 1rem 1.25rem;
   }
 
+  @media (max-width: 640px) {
+    .detail-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .detail-label {
     font-size: 0.75rem;
     font-weight: 600;
