@@ -147,6 +147,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Krankheiten
       const absences = await app.prisma.absence.findMany({
         where: {
+          deletedAt: null,
           employee: { tenantId },
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
