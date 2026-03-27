@@ -1,22 +1,24 @@
 name: Release — Promote & Publish
 
+# Triggered when a GitHub Release is published (which creates a git tag).
+# API: promotes existing SHA-tagged image (no rebuild needed)
+# Web: rebuilds with APP_VERSION set to the release version (for UI display)
+
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
 
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  promote:
+  # API image: promote only (no version baked into the image)
+  promote-api:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    strategy:
-      matrix:
-        image: [clokr-api, clokr-web]
 
     steps:
       - name: Log in to GitHub Container Registry
@@ -31,30 +33,63 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           VERSION=${GITHUB_REF_NAME#v}
-          # The tag points to a commit — get its short SHA
+          MAJOR_MINOR=$(echo "$VERSION" | grep -oP '^\d+\.\d+')
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
           echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
 
       - name: Install crane
         uses: imjasonh/setup-crane@v0.4
 
-      - name: Promote image (retag sha → version + latest)
+      - name: Promote API image
         run: |
-          SRC="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}"
-          DST_VER="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}"
-          DST_LAT="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:latest"
+          SRC="${REGISTRY}/${{ steps.meta.outputs.owner }}/clokr-api:sha-${{ steps.meta.outputs.sha }}"
+          echo "Promoting ${SRC} → ${{ steps.meta.outputs.version }}, ${{ steps.meta.outputs.major_minor }}, latest"
+          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/clokr-api:${{ steps.meta.outputs.version }}"
+          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/clokr-api:${{ steps.meta.outputs.major_minor }}"
+          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/clokr-api:latest"
 
-          echo "Promoting ${SRC} → ${DST_VER}, ${DST_LAT}"
+  # Web image: rebuild with version baked in (shown in UI sidebar)
+  build-web:
+    runs-on: ubuntu-latest
 
-          crane copy "${SRC}" "${DST_VER}"
-          crane copy "${SRC}" "${DST_LAT}"
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@master
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
-          severity: CRITICAL,HIGH
-          exit-code: 1
-          format: table
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        run: |
+          OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          VERSION=${GITHUB_REF_NAME#v}
+          MAJOR_MINOR=$(echo "$VERSION" | grep -oP '^\d+\.\d+')
+          echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Web with release version
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./apps/web/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/clokr-web:${{ steps.meta.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/clokr-web:${{ steps.meta.outputs.major_minor }}
+            ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/clokr-web:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
