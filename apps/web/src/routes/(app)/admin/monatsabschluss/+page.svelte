@@ -10,7 +10,7 @@
   interface MonthStatus {
     month: number;
     name: string;
-    status: "closed" | "partial" | "ready" | "open" | "blocked" | "future";
+    status: "closed" | "partial" | "ready" | "open" | "blocked" | "future" | "no_data";
     closedCount: number;
     totalCount: number;
     missing?: MissingEmployee[];
@@ -20,6 +20,7 @@
     year: number;
     months: MonthStatus[];
     autoCloseDeadline: number;
+    earliestYear: number;
   }
 
   interface EmployeeStatus {
@@ -46,6 +47,7 @@
   let success = $state("");
   let monthStatuses: MonthStatus[] = $state([]);
   let loaded = $state(false);
+  let earliestYear = $state(currentYear);
 
   // Expanded month detail
   let expandedMonth = $state<number | null>(null);
@@ -57,7 +59,36 @@
   let closingProgress = $state(0);
   let closingTotal = $state(0);
 
-  const years = $derived(Array.from({ length: 5 }, (_, i) => currentYear - i));
+  const years = $derived(
+    Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
+  );
+
+  // Status filter
+  let statusFilter = $state("all");
+  const filterOptions = [
+    { value: "all", label: "Alle" },
+    { value: "open", label: "Offen / Fehlend" },
+    { value: "closed", label: "Abgeschlossen" },
+    { value: "actionable", label: "Handlungsbedarf" },
+  ];
+
+  let filteredMonths = $derived.by(() => {
+    if (statusFilter === "all") return monthStatuses;
+    if (statusFilter === "open")
+      return monthStatuses.filter((ms) =>
+        ["open", "partial", "ready", "blocked"].includes(ms.status),
+      );
+    if (statusFilter === "closed") return monthStatuses.filter((ms) => ms.status === "closed");
+    if (statusFilter === "actionable")
+      return monthStatuses.filter((ms) => ["open", "partial", "ready"].includes(ms.status));
+    return monthStatuses;
+  });
+
+  // Summary counts
+  let closedMonthCount = $derived(monthStatuses.filter((ms) => ms.status === "closed").length);
+  let openMonthCount = $derived(
+    monthStatuses.filter((ms) => ["open", "partial", "ready"].includes(ms.status)).length,
+  );
 
   // Determine the first actionable month (first open/ready/partial month)
   let firstActionableMonth = $derived.by(() => {
@@ -93,6 +124,7 @@
         `/overtime/close-month/year-status?year=${selectedYear}`,
       );
       monthStatuses = res.months;
+      if (res.earliestYear) earliestYear = res.earliestYear;
       loaded = true;
     } catch {
       error = "Jahresstatus konnte nicht geladen werden";
@@ -212,6 +244,8 @@
         return "Blockiert";
       case "future":
         return "Zukunft";
+      case "no_data":
+        return "Keine Daten";
       default:
         return status;
     }
@@ -231,6 +265,8 @@
         return "\ud83d\udd12";
       case "future":
         return "\u2014";
+      case "no_data":
+        return "\u2014";
       default:
         return "";
     }
@@ -239,6 +275,7 @@
   function reasonText(ms: MonthStatus): string {
     if (ms.status === "closed") return "\u2014";
     if (ms.status === "future") return "\u2014";
+    if (ms.status === "no_data") return "Keine Erfassung in diesem Zeitraum";
     if (ms.status === "blocked") {
       // Find the first non-closed month before this one
       const prev = monthStatuses.find(
@@ -268,7 +305,6 @@
     return name;
   }
 
-  // Load on mount
   loadYearStatus();
 </script>
 
@@ -284,6 +320,15 @@
         <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
           {#each years as y (y)}
             <option value={y}>{y}</option>
+          {/each}
+        </select>
+      </label>
+
+      <label class="control-group">
+        <span class="control-label">Filter</span>
+        <select class="form-select" bind:value={statusFilter}>
+          {#each filterOptions as opt (opt.value)}
+            <option value={opt.value}>{opt.label}</option>
           {/each}
         </select>
       </label>
@@ -330,6 +375,12 @@
     {#if monthStatuses.length === 0}
       <p class="text-muted">Keine Daten verfügbar.</p>
     {:else}
+      <div class="summary-bar">
+        <span class="summary-item summary-closed">{closedMonthCount} abgeschlossen</span>
+        <span class="summary-item summary-open">{openMonthCount} offen</span>
+        <span class="summary-item summary-total">{monthStatuses.length} gesamt</span>
+      </div>
+
       <div class="table-wrapper">
         <table class="table">
           <thead>
@@ -341,22 +392,23 @@
             </tr>
           </thead>
           <tbody>
-            {#each monthStatuses as ms (ms.month)}
+            {#each filteredMonths as ms (ms.month)}
               <tr
                 class="month-row"
                 class:row-closed={ms.status === "closed"}
-                class:row-future={ms.status === "future"}
+                class:row-future={ms.status === "future" || ms.status === "no_data"}
                 class:row-blocked={ms.status === "blocked"}
-                class:row-clickable={ms.status !== "future"}
+                class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
                 onclick={() => {
-                  if (ms.status !== "future") toggleMonthDetail(ms.month);
+                  if (ms.status !== "future" && ms.status !== "no_data")
+                    toggleMonthDetail(ms.month);
                 }}
               >
                 <td class="month-name">
                   <span class="month-expand-icon">
                     {#if expandedMonth === ms.month}
                       &#9660;
-                    {:else if ms.status !== "future"}
+                    {:else if ms.status !== "future" && ms.status !== "no_data"}
                       &#9654;
                     {/if}
                   </span>
@@ -765,5 +817,30 @@
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8rem;
+  }
+
+  /* Summary bar */
+  .summary-bar {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .summary-item {
+    padding: 0.25rem 0.75rem;
+    border-radius: 0.25rem;
+    font-weight: 500;
+  }
+  .summary-closed {
+    background: var(--green-50, #f0fdf4);
+    color: var(--green-700, #15803d);
+  }
+  .summary-open {
+    background: var(--red-50, #fef2f2);
+    color: var(--red-700, #b91c1c);
+  }
+  .summary-total {
+    background: var(--gray-100, #f3f4f6);
+    color: var(--gray-600, #4b5563);
   }
 </style>

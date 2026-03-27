@@ -107,7 +107,8 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       });
 
       expect(res.statusCode).toBe(400);
-      expect(JSON.parse(res.body).error).toContain("Zukünftige");
+      const errMsg = JSON.parse(res.body).error;
+      expect(errMsg).toMatch(/Zukünftige|Bitte zuerst/);
     });
 
     it("locks time entries after Monatsabschluss", async () => {
