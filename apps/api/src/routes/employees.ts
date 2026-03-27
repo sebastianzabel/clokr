@@ -229,6 +229,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
       }
 
+      await app.audit({
+        userId: req.user.sub,
+        action: "UPDATE",
+        entity: "Employee",
+        entityId: id,
+        oldValue: employee,
+        newValue: { ...updated, role: body.role },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       return updated;
     },
   });

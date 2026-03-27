@@ -27,7 +27,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       // ── Heute: gearbeitete Stunden ────────────────────────────────────
       const todayEntries = await app.prisma.timeEntry.findMany({
-        where: { employeeId, date: today, type: "WORK" },
+        where: { employeeId, deletedAt: null, date: today, type: "WORK" },
       });
 
       let todayMinutes = 0;
@@ -42,6 +42,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const weekEntries = await app.prisma.timeEntry.findMany({
         where: {
           employeeId,
+          deletedAt: null,
           date: { gte: weekStart, lte: weekEnd },
           type: "WORK",
           endTime: { not: null },
@@ -114,6 +115,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const timeEntries = await app.prisma.timeEntry.findMany({
         where: {
           employee: { tenantId },
+          deletedAt: null,
           date: { gte: weekStart, lte: weekEnd },
           type: "WORK",
         },

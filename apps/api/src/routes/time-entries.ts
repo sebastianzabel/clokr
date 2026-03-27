@@ -114,6 +114,7 @@ async function checkOverlap(
   const overlapping = await app.prisma.timeEntry.findFirst({
     where: {
       employeeId,
+      deletedAt: null,
       id: excludeId ? { not: excludeId } : undefined,
       startTime: { lt: effectiveEnd },
       OR: [
@@ -219,6 +220,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         const openEntry = await tx.timeEntry.findFirst({
           where: {
             employeeId: employee.id,
+            deletedAt: null,
             date: today,
             endTime: null,
           },
@@ -237,6 +239,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           const previousEntry = await tx.timeEntry.findFirst({
             where: {
               employeeId: employee.id,
+              deletedAt: null,
               date: today,
               id: { not: openEntry.id },
               endTime: { not: null },
@@ -275,8 +278,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 },
               });
 
-              // Delete the current (short) entry
-              await tx.timeEntry.delete({ where: { id: openEntry.id } });
+              // Soft delete the current (short) entry (merged into previous)
+              await tx.timeEntry.update({
+                where: { id: openEntry.id },
+                data: { deletedAt: new Date() },
+              });
 
               return {
                 action: "OUT" as const,
@@ -284,6 +290,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 auditEntityId: previousEntry.id,
                 auditOldValue: previousEntry,
                 auditNewValue: { ...previousEntry, endTime: now, breakMinutes: totalBreakMins },
+                auditDeletedEntryId: openEntry.id,
+                auditDeletedEntry: openEntry,
               };
             }
           }
@@ -342,6 +350,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             entityId: txResult.auditEntityId,
             oldValue: txResult.auditOldValue,
             newValue: txResult.auditNewValue,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          // Audit the soft-deleted merged entry separately
+          await app.audit({
+            action: "DELETE",
+            entity: "TimeEntry",
+            entityId: txResult.auditDeletedEntryId,
+            oldValue: txResult.auditDeletedEntry,
             request: { ip: req.ip, headers: req.headers as Record<string, string> },
           });
         } else {
@@ -441,7 +457,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const txResult = await app.prisma.$transaction(async (tx) => {
         const activeEntry = await tx.timeEntry.findFirst({
-          where: { employeeId, endTime: null },
+          where: { employeeId, deletedAt: null, endTime: null },
         });
         if (activeEntry) {
           return { conflict: true as const, entryId: activeEntry.id };
@@ -489,7 +505,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const body = clockOutSchema.parse(req.body);
 
       const entry = await app.prisma.timeEntry.findUnique({ where: { id } });
-      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      if (!entry || entry.deletedAt)
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       if (entry.endTime) return reply.code(409).send({ error: "Bereits ausgestempelt" });
 
       const now = new Date();
@@ -536,6 +553,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const entries = await app.prisma.timeEntry.findMany({
         where: {
           employeeId: isManager && employeeId ? employeeId : (user.employeeId ?? undefined),
+          deletedAt: null,
           date: {
             gte: from ? new Date(from) : undefined,
             lte: to ? new Date(to) : undefined,
@@ -633,15 +651,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Nur ein Eintrag pro Tag erlaubt
       const existingEntry = await app.prisma.timeEntry.findFirst({
-        where: { employeeId, date: new Date(body.date) },
+        where: { employeeId, deletedAt: null, date: new Date(body.date) },
       });
       if (existingEntry) {
-        return reply
-          .code(409)
-          .send({
-            error:
-              "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
-          });
+        return reply.code(409).send({
+          error:
+            "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
+        });
       }
 
       // Überlappungsprüfung
@@ -783,6 +799,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Gesperrte Einträge dürfen nicht bearbeitet werden
+      if (existing.isLocked) {
+        return reply
+          .code(403)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
       // Prüfen ob das neue Datum vor dem Eintrittsdatum liegt
       if (body.date) {
         const targetEmployee = await app.prisma.employee.findUnique({
@@ -914,7 +937,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const user = req.user;
 
       const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
-      if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      if (!existing || existing.deletedAt)
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       if (!existing.isInvalid)
         return reply.code(400).send({ error: "Eintrag ist nicht invalidiert" });
 
@@ -949,13 +973,24 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 
       const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
-      if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      if (!existing || existing.deletedAt)
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
 
       if (!isManager && existing.employeeId !== user.employeeId) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
-      await app.prisma.timeEntry.delete({ where: { id } });
+      if (existing.isLocked) {
+        return reply
+          .code(403)
+          .send({ error: "Eintrag ist gesperrt und kann nicht gelöscht werden" });
+      }
+
+      // Soft delete instead of hard delete
+      await app.prisma.timeEntry.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      });
       await updateOvertimeAccount(app, existing.employeeId);
 
       await app.audit({
@@ -964,6 +999,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return reply.code(204).send();
@@ -1017,6 +1053,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const hasTodayEntries = await app.prisma.timeEntry.count({
     where: {
       employeeId,
+      deletedAt: null,
       date: todayDate,
       endTime: { not: null },
       type: "WORK",
@@ -1033,6 +1070,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const entries = await app.prisma.timeEntry.findMany({
     where: {
       employeeId,
+      deletedAt: null,
       date: { gte: monthStart, lte: effectiveEnd },
       endTime: { not: null },
       type: "WORK",

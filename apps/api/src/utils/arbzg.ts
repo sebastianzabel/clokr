@@ -31,6 +31,7 @@ export async function checkArbZG(
   const daySlots = await prisma.timeEntry.findMany({
     where: {
       employeeId,
+      deletedAt: null,
       date: { gte: new Date(dateStr), lte: new Date(dateStr + "T23:59:59.999Z") },
       endTime: { not: null },
       type: "WORK",
@@ -91,6 +92,7 @@ export async function checkArbZG(
     const prevLastSlot = await prisma.timeEntry.findFirst({
       where: {
         employeeId,
+        deletedAt: null,
         date: { gte: new Date(prevDateStr), lte: new Date(prevDateStr + "T23:59:59.999Z") },
         endTime: { not: null },
       },
@@ -117,6 +119,7 @@ export async function checkArbZG(
     const nextFirstSlot = await prisma.timeEntry.findFirst({
       where: {
         employeeId,
+        deletedAt: null,
         date: { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
         endTime: { not: null },
       },
@@ -150,6 +153,7 @@ export async function checkArbZG(
   const weekSlots = await prisma.timeEntry.findMany({
     where: {
       employeeId,
+      deletedAt: null,
       startTime: { gte: monday, lte: sunday },
       endTime: { not: null },
       type: "WORK",
