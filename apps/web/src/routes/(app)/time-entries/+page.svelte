@@ -659,12 +659,16 @@
 </script>
 
 <svelte:head><title>Zeiteinträge – Clokr</title></svelte:head>
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && modalOpen) closeModal();
+  }}
+/>
 
 <div class="page-header">
   <div class="header-row">
     <div>
       <h1>Zeiteinträge</h1>
-      <p>{schedule ? "Arbeitszeitplan aktiv" : "Kein Arbeitszeitplan hinterlegt"}</p>
     </div>
     <button class="btn btn-primary" onclick={() => openAdd()}>
       <span aria-hidden="true">＋</span> Slot hinzufügen
@@ -964,7 +968,20 @@
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>{editEntry ? "Slot bearbeiten" : "Neuen Slot hinzufügen"}</h2>
-        <button class="btn-icon modal-close" onclick={closeModal}>✕</button>
+        <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" /></svg
+          >
+        </button>
       </div>
       <div class="modal-body">
         {#if saveError}
@@ -1062,10 +1079,15 @@
 <style>
   .header-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .header-row h1 {
+    font-size: 1.375rem;
+    margin: 0;
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
@@ -1127,9 +1149,9 @@
     align-items: center;
     justify-content: center;
     flex: 1;
-    padding: 0.875rem 1.25rem;
-    gap: 0.2rem;
-    min-width: 100px;
+    padding: 0.5rem 0.875rem;
+    gap: 0.125rem;
+    min-width: 80px;
   }
   .mstat-item--total {
     background: var(--gray-50, #f9fafb);
@@ -1142,8 +1164,8 @@
     color: var(--color-text-muted);
   }
   .mstat-value {
-    font-size: 1.5rem;
-    font-weight: 800;
+    font-size: 1.125rem;
+    font-weight: 700;
     font-family: var(--font-mono);
     color: var(--color-text);
     letter-spacing: -0.02em;
@@ -1232,7 +1254,7 @@
 
   /* :global nötig – Svelte doppelt den Scope-Hash bei Compound-Selektoren */
   :global(.cal-day.is-selected:not(.other-month)) {
-    background-color: #80377b !important;
+    background-color: var(--color-brand) !important;
     box-shadow: none !important;
   }
   :global(.cal-day.is-selected:not(.other-month) .day-num),
@@ -1596,20 +1618,36 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 200;
+    z-index: 500;
     padding: 1rem;
-    backdrop-filter: blur(2px);
+    backdrop-filter: blur(4px);
+    animation: backdrop-in 0.15s ease;
+  }
+  @keyframes backdrop-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
   .modal-card {
     width: 100%;
     max-width: 460px;
+    max-height: 88vh;
+    overflow-y: auto;
     padding: 0;
-    overflow: hidden;
-    animation: modal-in 0.18s ease;
+    background: var(--glass-bg-strong, var(--color-surface));
+    backdrop-filter: blur(var(--glass-blur, 16px));
+    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    animation: modal-in 0.2s var(--ease-out);
   }
   @keyframes modal-in {
     from {
@@ -1635,6 +1673,21 @@
   }
   .modal-close {
     color: var(--color-text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.375rem;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+  .modal-close:hover {
+    background-color: var(--color-bg-subtle);
+    color: var(--color-text);
   }
   .modal-body {
     padding: 1.25rem 1.5rem;
