@@ -332,6 +332,274 @@ export async function overtimeRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /api/v1/overtime/close-month/year-status?year=2026  – Year overview for all months
+  app.get("/close-month/year-status", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { year } = z
+        .object({
+          year: z.coerce.number().int().min(2020).max(2099),
+        })
+        .parse(req.query);
+
+      const MONTH_NAMES_DE = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+      ];
+
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const now = new Date();
+
+      // Get all active employees for this tenant
+      const employees = await app.prisma.employee.findMany({
+        where: {
+          tenantId,
+          user: { isActive: true },
+        },
+        include: {
+          user: { select: { isActive: true } },
+          workSchedules: { orderBy: { validFrom: "desc" } },
+        },
+        orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      });
+
+      // Build month statuses
+      const months: {
+        month: number;
+        name: string;
+        status: "closed" | "partial" | "ready" | "open" | "blocked" | "future";
+        closedCount: number;
+        totalCount: number;
+        missing?: {
+          employeeName: string;
+          employeeNumber: string;
+          missingDates: string[];
+        }[];
+      }[] = [];
+
+      let previousOpen = false;
+
+      for (let m = 1; m <= 12; m++) {
+        const { start: monthStart, end: monthEnd } = monthRangeUtc(year, m, tz);
+
+        // Determine which employees are relevant for this month (hired before month end)
+        const relevantEmployees = employees.filter((emp) => emp.hireDate <= monthEnd);
+        const totalCount = relevantEmployees.length;
+
+        // Check if this is a future month (month hasn't ended yet)
+        if (monthEnd > now) {
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "future",
+            closedCount: 0,
+            totalCount,
+          });
+          continue;
+        }
+
+        // If a previous month is still open, this month is blocked
+        if (previousOpen) {
+          // Still count how many are closed
+          const closedSnapshots = await app.prisma.saldoSnapshot.findMany({
+            where: {
+              periodType: "MONTHLY",
+              periodStart: monthStart,
+              employeeId: { in: relevantEmployees.map((e) => e.id) },
+            },
+          });
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "blocked",
+            closedCount: closedSnapshots.length,
+            totalCount,
+          });
+          continue;
+        }
+
+        // Check snapshots for all relevant employees
+        const closedSnapshots = await app.prisma.saldoSnapshot.findMany({
+          where: {
+            periodType: "MONTHLY",
+            periodStart: monthStart,
+            employeeId: { in: relevantEmployees.map((e) => e.id) },
+          },
+        });
+        const closedIds = new Set(closedSnapshots.map((s) => s.employeeId));
+        const closedCount = closedIds.size;
+
+        if (closedCount === totalCount && totalCount > 0) {
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "closed",
+            closedCount,
+            totalCount,
+          });
+          continue;
+        }
+
+        // Not all closed — check for missing data on unclosed employees
+        const unclosedEmployees = relevantEmployees.filter((e) => !closedIds.has(e.id));
+        const missingDetails: {
+          employeeName: string;
+          employeeNumber: string;
+          missingDates: string[];
+        }[] = [];
+
+        let anyMissing = false;
+
+        for (const emp of unclosedEmployees) {
+          const schedule = emp.workSchedules[0];
+
+          // No schedule or MONTHLY_HOURS → no missing dates
+          if (!schedule || String(schedule.type) === "MONTHLY_HOURS") {
+            continue;
+          }
+
+          // Find workdays without time entries (reuses logic from close-month/status)
+          const entries = await app.prisma.timeEntry.findMany({
+            where: {
+              employeeId: emp.id,
+              deletedAt: null,
+              date: { gte: monthStart, lte: monthEnd },
+              endTime: { not: null },
+              type: "WORK",
+            },
+            select: { date: true },
+          });
+          const entryDates = new Set(entries.map((e) => e.date.toISOString().split("T")[0]));
+
+          // Check approved leave and absences
+          const approvedLeave = await app.prisma.leaveRequest.findMany({
+            where: {
+              employeeId: emp.id,
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: monthEnd },
+              endDate: { gte: monthStart },
+            },
+          });
+          const absences = await app.prisma.absence.findMany({
+            where: {
+              employeeId: emp.id,
+              deletedAt: null,
+              startDate: { lte: monthEnd },
+              endDate: { gte: monthStart },
+            },
+          });
+
+          // Build set of leave/absence dates
+          const coveredDates = new Set<string>();
+          for (const lr of approvedLeave) {
+            const s = lr.startDate < monthStart ? monthStart : lr.startDate;
+            const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+            const cur = new Date(s);
+            while (cur <= e) {
+              coveredDates.add(cur.toISOString().split("T")[0]);
+              cur.setDate(cur.getDate() + 1);
+            }
+          }
+          for (const ab of absences) {
+            const s = ab.startDate < monthStart ? monthStart : ab.startDate;
+            const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+            const cur = new Date(s);
+            while (cur <= e) {
+              coveredDates.add(cur.toISOString().split("T")[0]);
+              cur.setDate(cur.getDate() + 1);
+            }
+          }
+
+          // Check holidays
+          const holidays = await app.prisma.publicHoliday.findMany({
+            where: {
+              tenantId,
+              date: { gte: monthStart, lte: monthEnd },
+            },
+          });
+          for (const h of holidays) {
+            coveredDates.add(h.date.toISOString().split("T")[0]);
+          }
+
+          // Iterate workdays and find missing ones
+          const empMissingDates: string[] = [];
+          const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
+          const cur = new Date(effectiveStart);
+          while (cur <= monthEnd) {
+            const dateStr = cur.toISOString().split("T")[0];
+            const dow = getDayOfWeekInTz(cur, tz);
+            const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
+
+            if (expectedHours > 0 && !entryDates.has(dateStr) && !coveredDates.has(dateStr)) {
+              empMissingDates.push(dateStr);
+            }
+
+            cur.setDate(cur.getDate() + 1);
+          }
+
+          if (empMissingDates.length > 0) {
+            anyMissing = true;
+            missingDetails.push({
+              employeeName: `${emp.firstName} ${emp.lastName}`,
+              employeeNumber: emp.employeeNumber,
+              missingDates: empMissingDates,
+            });
+          }
+        }
+
+        if (anyMissing) {
+          previousOpen = true;
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "open",
+            closedCount,
+            totalCount,
+            missing: missingDetails,
+          });
+        } else if (closedCount > 0 && closedCount < totalCount) {
+          // Some closed, rest ready
+          previousOpen = true;
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "partial",
+            closedCount,
+            totalCount,
+          });
+        } else {
+          // None closed or all ready, no missing data
+          previousOpen = true;
+          months.push({
+            month: m,
+            name: MONTH_NAMES_DE[m - 1],
+            status: "ready",
+            closedCount,
+            totalCount,
+          });
+        }
+      }
+
+      // Auto-close deadline: retry until 10th of following month
+      const autoCloseDeadline = 10;
+
+      return { year, months, autoCloseDeadline };
+    },
+  });
+
   const closeMonthSchema = z.object({
     employeeId: z.string().uuid(),
     year: z.number().int().min(2020).max(2099),
@@ -353,6 +621,50 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+      // Sequential validation: all previous months of the same year must be closed
+      const MONTH_NAMES_DE = [
+        "Januar",
+        "Februar",
+        "März",
+        "April",
+        "Mai",
+        "Juni",
+        "Juli",
+        "August",
+        "September",
+        "Oktober",
+        "November",
+        "Dezember",
+      ];
+      // Start from hire date or Jan 1 of the requested year, whichever is later
+      const hireDateNormSeq = employee.hireDate
+        ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
+        : null;
+      const jan1 = new Date(`${year}-01-01T00:00:00Z`);
+      const seqStart = hireDateNormSeq && hireDateNormSeq > jan1 ? hireDateNormSeq : jan1;
+      const seqStartMonth =
+        seqStart.getUTCFullYear() === year
+          ? seqStart.getUTCMonth() + 1 // 1-based month within the year
+          : 1; // hire date is before this year, start from January
+
+      for (let m = seqStartMonth; m < month; m++) {
+        const { start: prevStart } = monthRangeUtc(year, m, tz);
+        const prevSnapshot = await app.prisma.saldoSnapshot.findUnique({
+          where: {
+            employeeId_periodType_periodStart: {
+              employeeId,
+              periodType: "MONTHLY",
+              periodStart: prevStart,
+            },
+          },
+        });
+        if (!prevSnapshot) {
+          return reply.code(400).send({
+            error: `Bitte zuerst ${MONTH_NAMES_DE[m - 1]} ${year} abschließen`,
+          });
+        }
+      }
 
       // Check if snapshot already exists
       const existing = await app.prisma.saldoSnapshot.findUnique({
