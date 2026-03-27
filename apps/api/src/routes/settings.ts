@@ -60,6 +60,7 @@ const employeeScheduleSchema = z
     sundayHours: z.number().min(0).max(24).default(0),
     overtimeThreshold: z.number().min(0).max(500).default(60),
     allowOvertimePayout: z.boolean().default(false),
+    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
     validFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -483,7 +484,15 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const tenantId = await getTenantId(app, req.user.sub);
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-      return { twoFaEnabled: cfg?.twoFaEnabled ?? false };
+      return {
+        twoFaEnabled: cfg?.twoFaEnabled ?? false,
+        passwordMinLength: cfg?.passwordMinLength ?? 12,
+        passwordRequireUpper: cfg?.passwordRequireUpper ?? true,
+        passwordRequireLower: cfg?.passwordRequireLower ?? true,
+        passwordRequireDigit: cfg?.passwordRequireDigit ?? true,
+        passwordRequireSpecial: cfg?.passwordRequireSpecial ?? true,
+        maxNegativeBalanceMinutes: cfg?.maxNegativeBalanceMinutes ?? null,
+      };
     },
   });
 
@@ -492,24 +501,44 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const { twoFaEnabled } = z.object({ twoFaEnabled: z.boolean() }).parse(req.body);
+      const body = z.object({
+        twoFaEnabled: z.boolean().optional(),
+        passwordMinLength: z.number().int().min(8).max(128).optional(),
+        passwordRequireUpper: z.boolean().optional(),
+        passwordRequireLower: z.boolean().optional(),
+        passwordRequireDigit: z.boolean().optional(),
+        passwordRequireSpecial: z.boolean().optional(),
+        maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+      }).parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-      await app.prisma.tenantConfig.upsert({
+      const config = await app.prisma.tenantConfig.upsert({
         where: { tenantId },
-        update: { twoFaEnabled },
-        create: { tenantId, twoFaEnabled },
+        update: body,
+        create: { tenantId, ...body },
       });
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "TenantConfig",
         entityId: tenantId,
-        oldValue: { twoFaEnabled: oldConfig?.twoFaEnabled ?? false },
-        newValue: { twoFaEnabled },
+        oldValue: {
+          twoFaEnabled: oldConfig?.twoFaEnabled ?? false,
+          passwordMinLength: oldConfig?.passwordMinLength ?? 12,
+          maxNegativeBalanceMinutes: oldConfig?.maxNegativeBalanceMinutes ?? null,
+        },
+        newValue: body,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
-      return { twoFaEnabled };
+      return {
+        twoFaEnabled: config.twoFaEnabled,
+        passwordMinLength: config.passwordMinLength,
+        passwordRequireUpper: config.passwordRequireUpper,
+        passwordRequireLower: config.passwordRequireLower,
+        passwordRequireDigit: config.passwordRequireDigit,
+        passwordRequireSpecial: config.passwordRequireSpecial,
+        maxNegativeBalanceMinutes: config.maxNegativeBalanceMinutes,
+      };
     },
   });
 

@@ -101,6 +101,23 @@
   let twoFaSaving = $state(false);
   let twoFaError = $state("");
 
+  // Password policy (BSI)
+  let pwMinLength = $state(12);
+  let pwRequireUpper = $state(true);
+  let pwRequireLower = $state(true);
+  let pwRequireDigit = $state(true);
+  let pwRequireSpecial = $state(true);
+  let pwSaving = $state(false);
+  let pwSaved = $state(false);
+  let pwError = $state("");
+
+  // Max negative hours
+  let maxNegEnabled = $state(false);
+  let maxNegHours = $state(20);
+  let maxNegSaving = $state(false);
+  let maxNegSaved = $state(false);
+  let maxNegError = $state("");
+
   // NFC Terminals
   interface TerminalKey {
     id: string;
@@ -179,8 +196,25 @@
       }
 
       try {
-        const sec = await api.get<{ twoFaEnabled: boolean }>("/settings/security");
+        const sec = await api.get<{
+          twoFaEnabled: boolean;
+          passwordMinLength: number;
+          passwordRequireUpper: boolean;
+          passwordRequireLower: boolean;
+          passwordRequireDigit: boolean;
+          passwordRequireSpecial: boolean;
+          maxNegativeBalanceMinutes: number | null;
+        }>("/settings/security");
         twoFaEnabled = sec.twoFaEnabled;
+        pwMinLength = sec.passwordMinLength;
+        pwRequireUpper = sec.passwordRequireUpper;
+        pwRequireLower = sec.passwordRequireLower;
+        pwRequireDigit = sec.passwordRequireDigit;
+        pwRequireSpecial = sec.passwordRequireSpecial;
+        if (sec.maxNegativeBalanceMinutes != null) {
+          maxNegEnabled = true;
+          maxNegHours = sec.maxNegativeBalanceMinutes / 60;
+        }
       } catch {
         /* ignorieren */
       }
@@ -297,6 +331,44 @@
       twoFaError = e instanceof Error ? e.message : "Fehler";
     } finally {
       twoFaSaving = false;
+    }
+  }
+
+  async function savePasswordPolicy() {
+    pwSaving = true;
+    pwSaved = false;
+    pwError = "";
+    try {
+      await api.put("/settings/security", {
+        passwordMinLength: pwMinLength,
+        passwordRequireUpper: pwRequireUpper,
+        passwordRequireLower: pwRequireLower,
+        passwordRequireDigit: pwRequireDigit,
+        passwordRequireSpecial: pwRequireSpecial,
+      });
+      pwSaved = true;
+      setTimeout(() => (pwSaved = false), 3000);
+    } catch (e: unknown) {
+      pwError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      pwSaving = false;
+    }
+  }
+
+  async function saveMaxNegative() {
+    maxNegSaving = true;
+    maxNegSaved = false;
+    maxNegError = "";
+    try {
+      await api.put("/settings/security", {
+        maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
+      });
+      maxNegSaved = true;
+      setTimeout(() => (maxNegSaved = false), 3000);
+    } catch (e: unknown) {
+      maxNegError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      maxNegSaving = false;
     }
   }
 
@@ -492,6 +564,110 @@
           />
           <span class="switch-slider"></span>
         </label>
+      </div>
+    </div>
+
+    <hr class="sys-divider" />
+
+    <!-- Passwort-Richtlinie (BSI) -->
+    <div class="sys-section">
+      <h3 class="sys-title">Passwort-Richtlinie (BSI)</h3>
+      {#if pwError}
+        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+          <span>⚠</span><span>{pwError}</span>
+        </div>
+      {/if}
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="form-label" for="pw-min-length">Mindestlänge</label>
+          <input id="pw-min-length" type="number" min="8" max="128" bind:value={pwMinLength} class="form-input" />
+          <p class="form-hint text-muted">BSI empfiehlt mindestens 12 Zeichen.</p>
+        </div>
+      </div>
+      <div class="toggle-row" style="margin-top:0.75rem">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Großbuchstabe erforderlich</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={pwRequireUpper} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Kleinbuchstabe erforderlich</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={pwRequireLower} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Ziffer erforderlich</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={pwRequireDigit} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Sonderzeichen erforderlich</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={pwRequireSpecial} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick={savePasswordPolicy} disabled={pwSaving}>
+          {pwSaving ? "Speichern…" : "Speichern"}
+        </button>
+        {#if pwSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
+      </div>
+    </div>
+
+    <hr class="sys-divider" />
+
+    <!-- Max. Minusstunden -->
+    <div class="sys-section">
+      <h3 class="sys-title">Max. Minusstunden</h3>
+      {#if maxNegError}
+        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+          <span>⚠</span><span>{maxNegError}</span>
+        </div>
+      {/if}
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Limit für negatives Überstundensaldo</span>
+          <p class="form-hint text-muted">
+            Begrenzt, wie viele Minusstunden Mitarbeiter ansammeln dürfen.
+          </p>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={maxNegEnabled} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      {#if maxNegEnabled}
+        <div class="settings-grid" style="margin-top:0.75rem">
+          <div class="form-group">
+            <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
+            <input id="max-neg-hours" type="number" min="1" max="999" step="0.5" bind:value={maxNegHours} class="form-input" />
+            <p class="form-hint text-muted">Pro Mitarbeiter individuell überschreibbar.</p>
+          </div>
+        </div>
+      {/if}
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick={saveMaxNegative} disabled={maxNegSaving}>
+          {maxNegSaving ? "Speichern…" : "Speichern"}
+        </button>
+        {#if maxNegSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
       </div>
     </div>
 

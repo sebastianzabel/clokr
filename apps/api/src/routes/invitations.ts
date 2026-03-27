@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { createHash } from "crypto";
+import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {
@@ -40,6 +41,13 @@ export async function invitationRoutes(app: FastifyInstance) {
           .send({
             error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
           });
+      }
+
+      // Validate password against tenant policy
+      const policy = await loadPasswordPolicy(app, invitation.employee.tenantId);
+      const check = validatePassword(password, policy);
+      if (!check.valid) {
+        return reply.code(400).send({ error: check.errors.join(". ") });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);

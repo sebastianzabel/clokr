@@ -1,8 +1,9 @@
 <script lang="ts">
   import { preventDefault } from "svelte/legacy";
-
+  import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
+  import PasswordStrength from "$lib/components/ui/PasswordStrength.svelte";
 
   let password = $state("");
   let confirmPassword = $state("");
@@ -10,9 +11,24 @@
   let loading = $state(false);
   let success = $state(false);
 
+  let pwPolicy = $state({
+    passwordMinLength: 12,
+    passwordRequireUpper: true,
+    passwordRequireLower: true,
+    passwordRequireDigit: true,
+    passwordRequireSpecial: true,
+  });
+
   let token = $derived($page.url.searchParams.get("token") ?? "");
   let passwordMismatch = $derived(confirmPassword.length > 0 && password !== confirmPassword);
-  let canSubmit = $derived(password.length >= 8 && password === confirmPassword && !loading);
+  let canSubmit = $derived(password.length >= pwPolicy.passwordMinLength && password === confirmPassword && !loading);
+
+  onMount(async () => {
+    try {
+      const p = await api.get<typeof pwPolicy>("/auth/password-policy");
+      pwPolicy = p;
+    } catch { /* use defaults */ }
+  });
 
   async function handleSubmit() {
     if (password !== confirmPassword) {
@@ -76,11 +92,12 @@
             type="password"
             bind:value={password}
             required
-            minlength="8"
+            minlength={pwPolicy.passwordMinLength}
             class="form-input"
-            placeholder="Mindestens 8 Zeichen"
+            placeholder="Mindestens {pwPolicy.passwordMinLength} Zeichen"
             autocomplete="new-password"
           />
+          <PasswordStrength {password} policy={pwPolicy} />
         </div>
 
         <div class="form-group">
