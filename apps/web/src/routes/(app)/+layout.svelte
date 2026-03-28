@@ -307,7 +307,7 @@
 
       <div class="sidebar-footer">
         {#if $authStore.user}
-          <div class="sidebar-user">
+          <a href="/settings" class="sidebar-user">
             {#if $authStore.user.employeeId}
               <img
                 src="/api/v1/avatars/{$authStore.user.employeeId}"
@@ -335,10 +335,9 @@
                 {:else}Mitarbeiter{/if}
               </p>
             </div>
-          </div>
+          </a>
         {/if}
         <div class="sidebar-footer-actions">
-          <a href="/settings" class="btn btn-ghost btn-sm" aria-label="Profil">Profil</a>
           <button
             class="btn btn-ghost btn-sm logout-btn"
             onclick={handleLogout}
@@ -755,6 +754,15 @@
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
+    text-decoration: none;
+    color: inherit;
+    padding: 0.375rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+  .sidebar-user:hover {
+    background: var(--color-bg-subtle);
   }
 
   .sidebar-user-avatar-img {
@@ -798,11 +806,7 @@
   }
 
   .sidebar-footer-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-  .sidebar-footer-actions > * {
-    flex: 1;
+    margin-top: 0.5rem;
   }
 
   .logout-btn {
