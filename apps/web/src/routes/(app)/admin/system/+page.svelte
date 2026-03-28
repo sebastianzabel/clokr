@@ -101,6 +101,16 @@
   let twoFaSaving = $state(false);
   let twoFaError = $state("");
 
+  // Session-Management
+  let sessionTimeoutMinutes = $state(60);
+  let refreshTokenDays = $state(7);
+  let rememberMeEnabled = $state(true);
+  let rememberMeDays = $state(30);
+  let maxSessionsPerUser = $state(0);
+  let sessionSaving = $state(false);
+  let sessionSaved = $state(false);
+  let sessionError = $state("");
+
   // Password policy (BSI)
   let pwMinLength = $state(12);
   let pwRequireUpper = $state(true);
@@ -263,6 +273,11 @@
         emailOnMissingEntries = (sec as any).emailOnMissingEntries ?? false;
         emailOnClockOutReminder = (sec as any).emailOnClockOutReminder ?? false;
         emailOnMonthClose = (sec as any).emailOnMonthClose ?? true;
+        sessionTimeoutMinutes = (sec as any).sessionTimeoutMinutes ?? 60;
+        refreshTokenDays = (sec as any).refreshTokenDays ?? 7;
+        rememberMeEnabled = (sec as any).rememberMeEnabled ?? true;
+        rememberMeDays = (sec as any).rememberMeDays ?? 30;
+        maxSessionsPerUser = (sec as any).maxSessionsPerUser ?? 0;
       } catch {
         /* ignorieren */
       }
@@ -379,6 +394,27 @@
       twoFaError = e instanceof Error ? e.message : "Fehler";
     } finally {
       twoFaSaving = false;
+    }
+  }
+
+  async function saveSessionConfig() {
+    sessionSaving = true;
+    sessionSaved = false;
+    sessionError = "";
+    try {
+      await api.put("/settings/security", {
+        sessionTimeoutMinutes,
+        refreshTokenDays,
+        rememberMeEnabled,
+        rememberMeDays,
+        maxSessionsPerUser,
+      });
+      sessionSaved = true;
+      setTimeout(() => (sessionSaved = false), 3000);
+    } catch (e: unknown) {
+      sessionError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      sessionSaving = false;
     }
   }
 
@@ -665,6 +701,96 @@
 
     <hr class="sys-divider" />
 
+    <!-- Session-Management -->
+    <div class="sys-section">
+      <h3 class="sys-title">Session-Management</h3>
+      {#if sessionError}
+        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+          <span>⚠</span><span>{sessionError}</span>
+        </div>
+      {/if}
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="form-label" for="session-timeout">Inaktivitäts-Timeout (Minuten)</label>
+          <input
+            id="session-timeout"
+            type="number"
+            min="0"
+            max="480"
+            bind:value={sessionTimeoutMinutes}
+            class="form-input"
+          />
+          <p class="form-hint text-muted">
+            0 = deaktiviert. Benutzer wird nach Inaktivität ausgeloggt.
+          </p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="refresh-days">Session-Dauer (Tage)</label>
+          <input
+            id="refresh-days"
+            type="number"
+            min="1"
+            max="90"
+            bind:value={refreshTokenDays}
+            class="form-input"
+          />
+          <p class="form-hint text-muted">
+            Wie lange ein Login ohne "Angemeldet bleiben" gültig ist.
+          </p>
+        </div>
+      </div>
+      <div class="toggle-row" style="margin-top:0.75rem">
+        <div class="toggle-info">
+          <span class="toggle-row-label">"Angemeldet bleiben" erlauben</span>
+        </div>
+        <label class="switch">
+          <input type="checkbox" bind:checked={rememberMeEnabled} />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+      {#if rememberMeEnabled}
+        <div class="settings-grid" style="margin-top:0.5rem">
+          <div class="form-group">
+            <label class="form-label" for="remember-days">"Angemeldet bleiben" Dauer (Tage)</label>
+            <input
+              id="remember-days"
+              type="number"
+              min="1"
+              max="365"
+              bind:value={rememberMeDays}
+              class="form-input"
+            />
+          </div>
+        </div>
+      {/if}
+      <div class="settings-grid" style="margin-top:0.75rem">
+        <div class="form-group">
+          <label class="form-label" for="max-sessions">Max. gleichzeitige Sessions</label>
+          <input
+            id="max-sessions"
+            type="number"
+            min="0"
+            max="20"
+            bind:value={maxSessionsPerUser}
+            class="form-input"
+          />
+          <p class="form-hint text-muted">
+            0 = unbegrenzt. Älteste Session wird bei Überschreitung beendet.
+          </p>
+        </div>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick={saveSessionConfig} disabled={sessionSaving}>
+          {sessionSaving ? "Speichern…" : "Speichern"}
+        </button>
+        {#if sessionSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
+      </div>
+    </div>
+
+    <hr class="sys-divider" />
+
     <!-- Passwort-Richtlinie (BSI) -->
     <div class="sys-section">
       <h3 class="sys-title">Passwort-Richtlinie (BSI)</h3>
@@ -676,7 +802,14 @@
       <div class="settings-grid">
         <div class="form-group">
           <label class="form-label" for="pw-min-length">Mindestlänge</label>
-          <input id="pw-min-length" type="number" min="8" max="128" bind:value={pwMinLength} class="form-input" />
+          <input
+            id="pw-min-length"
+            type="number"
+            min="8"
+            max="128"
+            bind:value={pwMinLength}
+            class="form-input"
+          />
           <p class="form-hint text-muted">BSI empfiehlt mindestens 12 Zeichen.</p>
         </div>
       </div>
@@ -752,27 +885,49 @@
         <h4 class="sys-subtitle" style="margin-top:1rem">Benachrichtigungstypen</h4>
         <div class="toggle-row">
           <span class="toggle-row-label">Neuer Urlaubsantrag</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"
+            ></span></label
+          >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnLeaveDecision} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnLeaveDecision} /><span
+              class="switch-slider"
+            ></span></label
+          >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Überstunden-Warnung</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnOvertimeWarning} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnOvertimeWarning} /><span
+              class="switch-slider"
+            ></span></label
+          >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Fehlende Zeiteinträge</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnMissingEntries} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnMissingEntries} /><span
+              class="switch-slider"
+            ></span></label
+          >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Vergessene Stempelung</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnClockOutReminder} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnClockOutReminder} /><span
+              class="switch-slider"
+            ></span></label
+          >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Monatsabschluss</span>
-          <label class="switch"><input type="checkbox" bind:checked={emailOnMonthClose} /><span class="switch-slider"></span></label>
+          <label class="switch"
+            ><input type="checkbox" bind:checked={emailOnMonthClose} /><span class="switch-slider"
+            ></span></label
+          >
         </div>
       {/if}
       <div class="settings-actions">
