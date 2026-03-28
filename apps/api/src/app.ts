@@ -36,6 +36,7 @@ import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
 import { specialLeaveRoutes } from "./routes/special-leave";
 import { avatarRoutes } from "./routes/avatars";
+import { apiKeyRoutes } from "./routes/api-keys";
 
 export async function buildApp() {
   // ── Logger configuration ──────────────────────────────────
@@ -209,6 +210,7 @@ export async function buildApp() {
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
   await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
+  await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
