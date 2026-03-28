@@ -105,6 +105,7 @@
   // Abwesenheits-Konfiguration
   let christmasEveRule = $state("NORMAL");
   let newYearsEveRule = $state("NORMAL");
+  let holidayRulesValidFromYear = $state(new Date().getFullYear());
   let vacationLeadTimeDays = $state(0);
   let vacationMaxAdvanceMonths = $state(0);
   let halfDayAllowed = $state(true);
@@ -184,6 +185,7 @@
 
       // Leave/overtime config
       christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
+      holidayRulesValidFromYear = (cfg as any).holidayRulesValidFromYear ?? 2026;
       newYearsEveRule = (cfg as any).newYearsEveRule ?? "NORMAL";
       vacationLeadTimeDays = (cfg as any).vacationLeadTimeDays ?? 0;
       vacationMaxAdvanceMonths = (cfg as any).vacationMaxAdvanceMonths ?? 0;
@@ -193,7 +195,10 @@
       autoCalcPartTimeVacation = (cfg as any).autoCalcPartTimeVacation ?? true;
       fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
       const maxNegMinutes = (cfg as any).maxNegativeBalanceMinutes;
-      if (maxNegMinutes != null) { maxNegEnabled = true; maxNegHours = maxNegMinutes / 60; }
+      if (maxNegMinutes != null) {
+        maxNegEnabled = true;
+        maxNegHours = maxNegMinutes / 60;
+      }
       reminderPendingEnabled = (cfg as any).reminderPendingLeaveEnabled ?? true;
       reminderPendingHours = (cfg as any).reminderPendingLeaveHours ?? 48;
       reminderUpcomingEnabled = (cfg as any).reminderUpcomingAbsenceEnabled ?? true;
@@ -235,6 +240,7 @@
         autoDeleteOpenHours: gAutoDeleteHours,
         christmasEveRule,
         newYearsEveRule,
+        holidayRulesValidFromYear,
         vacationLeadTimeDays,
         vacationMaxAdvanceMonths,
         halfDayAllowed,
@@ -695,6 +701,21 @@
             <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
           </select>
         </div>
+        <div class="form-group">
+          <label class="form-label" for="holiday-valid-from">Gültig ab Jahr</label>
+          <input
+            id="holiday-valid-from"
+            type="number"
+            min="2020"
+            max="2100"
+            bind:value={holidayRulesValidFromYear}
+            class="form-input"
+          />
+          <p class="form-hint text-muted">
+            Regelung gilt erst ab diesem Jahr. Für vergangene Jahre gelten die Tage als normaler
+            Arbeitstag.
+          </p>
+        </div>
       </div>
     </div>
 
@@ -703,12 +724,26 @@
       <div class="inline-settings">
         <div class="form-group">
           <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
-          <input id="lead-time" type="number" min="0" max="365" bind:value={vacationLeadTimeDays} class="form-input" />
+          <input
+            id="lead-time"
+            type="number"
+            min="0"
+            max="365"
+            bind:value={vacationLeadTimeDays}
+            class="form-input"
+          />
           <p class="form-hint text-muted">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
         </div>
         <div class="form-group">
           <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
-          <input id="max-advance" type="number" min="0" max="24" bind:value={vacationMaxAdvanceMonths} class="form-input" />
+          <input
+            id="max-advance"
+            type="number"
+            min="0"
+            max="24"
+            bind:value={vacationMaxAdvanceMonths}
+            class="form-input"
+          />
           <p class="form-hint text-muted">0 = unbegrenzt.</p>
         </div>
       </div>
@@ -727,7 +762,14 @@
       <div class="inline-settings" style="margin-top:0.75rem">
         <div class="form-group">
           <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tagen)</label>
-          <input id="sick-note-days" type="number" min="1" max="30" bind:value={sickNoteRequiredAfterDays} class="form-input" />
+          <input
+            id="sick-note-days"
+            type="number"
+            min="1"
+            max="30"
+            bind:value={sickNoteRequiredAfterDays}
+            class="form-input"
+          />
           <p class="form-hint text-muted">§ 5 EFZG — Standard: 3 Tage.</p>
         </div>
       </div>
@@ -762,7 +804,15 @@
         <div class="inline-settings" style="margin-top:0.75rem">
           <div class="form-group">
             <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
-            <input id="max-neg-hours" type="number" min="1" max="999" step="0.5" bind:value={maxNegHours} class="form-input" />
+            <input
+              id="max-neg-hours"
+              type="number"
+              min="1"
+              max="999"
+              step="0.5"
+              bind:value={maxNegHours}
+              class="form-input"
+            />
           </div>
         </div>
       {/if}
@@ -777,7 +827,14 @@
         <div class="inline-settings" style="margin-top:0.5rem">
           <div class="form-group">
             <label class="form-label" for="rem-pending-h">Nach (Stunden)</label>
-            <input id="rem-pending-h" type="number" min="1" max="720" bind:value={reminderPendingHours} class="form-input" />
+            <input
+              id="rem-pending-h"
+              type="number"
+              min="1"
+              max="720"
+              bind:value={reminderPendingHours}
+              class="form-input"
+            />
           </div>
         </div>
       {/if}
@@ -789,7 +846,14 @@
         <div class="inline-settings" style="margin-top:0.5rem">
           <div class="form-group">
             <label class="form-label" for="rem-upcoming-d">Tage vorher</label>
-            <input id="rem-upcoming-d" type="number" min="1" max="30" bind:value={reminderUpcomingDays} class="form-input" />
+            <input
+              id="rem-upcoming-d"
+              type="number"
+              min="1"
+              max="30"
+              bind:value={reminderUpcomingDays}
+              class="form-input"
+            />
           </div>
         </div>
       {/if}
