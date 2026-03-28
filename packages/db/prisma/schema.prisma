@@ -69,6 +69,12 @@ model TenantConfig {
   passwordRequireLower   Boolean  @default(true)
   passwordRequireDigit   Boolean  @default(true)
   passwordRequireSpecial Boolean  @default(true)
+  // Session-Management
+  sessionTimeoutMinutes  Int     @default(60)    // Inaktivitäts-Timeout (0 = deaktiviert)
+  refreshTokenDays       Int     @default(7)     // Refresh Token Laufzeit in Tagen
+  rememberMeEnabled      Boolean @default(true)  // "Angemeldet bleiben" Checkbox
+  rememberMeDays         Int     @default(30)    // Refresh Token bei "Remember me"
+  maxSessionsPerUser     Int     @default(0)     // Max gleichzeitige Sessions (0 = unbegrenzt)
   // Zeitzone (IANA)
   timezone      String   @default("Europe/Berlin")
   // Phorest-Integration

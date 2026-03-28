@@ -538,6 +538,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         emailOnMissingEntries: cfg?.emailOnMissingEntries ?? false,
         emailOnClockOutReminder: cfg?.emailOnClockOutReminder ?? false,
         emailOnMonthClose: cfg?.emailOnMonthClose ?? true,
+        sessionTimeoutMinutes: cfg?.sessionTimeoutMinutes ?? 60,
+        refreshTokenDays: cfg?.refreshTokenDays ?? 7,
+        rememberMeEnabled: cfg?.rememberMeEnabled ?? true,
+        rememberMeDays: cfg?.rememberMeDays ?? 30,
+        maxSessionsPerUser: cfg?.maxSessionsPerUser ?? 0,
       };
     },
   });
@@ -563,6 +568,11 @@ export async function settingsRoutes(app: FastifyInstance) {
           emailOnMissingEntries: z.boolean().optional(),
           emailOnClockOutReminder: z.boolean().optional(),
           emailOnMonthClose: z.boolean().optional(),
+          sessionTimeoutMinutes: z.number().int().min(0).max(480).optional(),
+          refreshTokenDays: z.number().int().min(1).max(90).optional(),
+          rememberMeEnabled: z.boolean().optional(),
+          rememberMeDays: z.number().int().min(1).max(365).optional(),
+          maxSessionsPerUser: z.number().int().min(0).max(20).optional(),
         })
         .parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
@@ -600,6 +610,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         emailOnMissingEntries: config.emailOnMissingEntries,
         emailOnClockOutReminder: config.emailOnClockOutReminder,
         emailOnMonthClose: config.emailOnMonthClose,
+        sessionTimeoutMinutes: config.sessionTimeoutMinutes,
+        refreshTokenDays: config.refreshTokenDays,
+        rememberMeEnabled: config.rememberMeEnabled,
+        rememberMeDays: config.rememberMeDays,
+        maxSessionsPerUser: config.maxSessionsPerUser,
       };
     },
   });

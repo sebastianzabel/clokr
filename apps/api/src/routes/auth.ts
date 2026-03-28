@@ -396,7 +396,7 @@ export async function authRoutes(app: FastifyInstance) {
 
 async function issueTokens(
   app: FastifyInstance,
-  req: { ip: string; headers: Record<string, string | string[] | undefined> },
+  req: { ip: string; headers: Record<string, string | string[] | undefined>; body?: unknown },
   reply: { send: (data: unknown) => unknown },
   user: {
     id: string;
@@ -405,24 +405,52 @@ async function issueTokens(
     employee: { id: string; tenantId: string; firstName: string } | null;
   },
 ) {
+  const tenantId = user.employee?.tenantId ?? "";
+
+  // Load session config from tenant
+  const tenantConfig = tenantId
+    ? await app.prisma.tenantConfig.findUnique({ where: { tenantId } })
+    : null;
+
+  const rememberMe = (req.body as { rememberMe?: boolean })?.rememberMe === true;
+  const refreshDays = rememberMe
+    ? (tenantConfig?.rememberMeDays ?? 30)
+    : (tenantConfig?.refreshTokenDays ?? 7);
+
   const payload = {
     sub: user.id,
     role: user.role,
-    tenantId: user.employee?.tenantId ?? "",
+    tenantId,
     employeeId: user.employee?.id,
   };
 
   const accessToken = app.jwt.sign(payload);
-  // Add jti (JWT ID) to ensure uniqueness even for same-second tokens
   const refreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as any, {
-    expiresIn: "7d",
+    expiresIn: `${refreshDays}d`,
   });
+
+  // Enforce max sessions per user
+  const maxSessions = tenantConfig?.maxSessionsPerUser ?? 0;
+  if (maxSessions > 0) {
+    const activeSessions = await app.prisma.refreshToken.findMany({
+      where: { userId: user.id, revokedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "asc" },
+    });
+    // Revoke oldest sessions if over limit (keep maxSessions - 1 to make room for new one)
+    if (activeSessions.length >= maxSessions) {
+      const toRevoke = activeSessions.slice(0, activeSessions.length - maxSessions + 1);
+      await app.prisma.refreshToken.updateMany({
+        where: { id: { in: toRevoke.map((s) => s.id) } },
+        data: { revokedAt: new Date() },
+      });
+    }
+  }
 
   await app.prisma.refreshToken.create({
     data: {
       token: hashToken(refreshToken),
       userId: user.id,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000),
     },
   });
 
@@ -448,6 +476,10 @@ async function issueTokens(
       role: user.role,
       employeeId: user.employee?.id ?? null,
       firstName: user.employee?.firstName ?? null,
+    },
+    sessionConfig: {
+      sessionTimeoutMinutes: tenantConfig?.sessionTimeoutMinutes ?? 60,
+      rememberMeEnabled: tenantConfig?.rememberMeEnabled ?? true,
     },
   });
 }

@@ -10,6 +10,7 @@
   let error = $state("");
   let loading = $state(false);
   let showPassword = $state(false);
+  let rememberMe = $state(false);
 
   async function handleLogin() {
     loading = true;
@@ -25,9 +26,10 @@
               role: "ADMIN" | "MANAGER" | "EMPLOYEE";
               employeeId: string | null;
             };
+            sessionConfig?: { sessionTimeoutMinutes: number; rememberMeEnabled: boolean };
           }
         | { requiresOtp: true; userId: string }
-      >("/auth/login", { email, password });
+      >("/auth/login", { email, password, rememberMe });
 
       if ("requiresOtp" in res && res.requiresOtp) {
         sessionStorage.setItem("otp_userId", res.userId);
@@ -37,6 +39,13 @@
 
       if ("accessToken" in res) {
         authStore.login(res.accessToken, res.refreshToken, res.user);
+        // Store session timeout for inactivity timer
+        if (res.sessionConfig?.sessionTimeoutMinutes) {
+          localStorage.setItem(
+            "clokr_session_timeout",
+            String(res.sessionConfig.sessionTimeoutMinutes),
+          );
+        }
         goto("/dashboard");
       }
     } catch (e: unknown) {
@@ -255,8 +264,12 @@
             </div>
           </div>
 
-          <div class="forgot-password-link">
-            <a href="/forgot-password">Passwort vergessen?</a>
+          <div class="login-options">
+            <label class="remember-me">
+              <input type="checkbox" bind:checked={rememberMe} />
+              Angemeldet bleiben
+            </label>
+            <a href="/forgot-password" class="forgot-link">Passwort vergessen?</a>
           </div>
 
           <button type="submit" disabled={loading} class="btn btn-primary login-submit">
@@ -531,15 +544,30 @@
     }
   }
 
-  .forgot-password-link {
-    text-align: right;
-    margin-top: -0.5rem;
+  .login-options {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: -0.25rem;
   }
-
-  .forgot-password-link a {
+  .remember-me {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+  .remember-me input {
+    cursor: pointer;
+  }
+  .forgot-link {
     font-size: 0.8125rem;
     color: var(--color-brand);
     text-decoration: none;
+  }
+  .forgot-link:hover {
+    text-decoration: underline;
   }
 
   .forgot-password-link a:hover {

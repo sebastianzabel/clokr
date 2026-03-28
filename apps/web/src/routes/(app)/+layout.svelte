@@ -69,17 +69,47 @@
   }
 
   // ── Auth & lifecycle ───────────────────────────────────────────
+  // ── Inactivity timeout ───────────────────────────────────────────
+  let inactivityTimer: ReturnType<typeof setTimeout> | undefined;
+  let sessionTimeoutMs = 60 * 60 * 1000; // Default 60min, updated from login response
+
+  function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    if (sessionTimeoutMs <= 0) return; // 0 = disabled
+    inactivityTimer = setTimeout(() => {
+      authStore.logout();
+      goto("/login?reason=timeout");
+    }, sessionTimeoutMs);
+  }
+
+  const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
+
   onMount(() => {
     if (!$authStore.accessToken) {
       goto("/login");
       return;
     }
+
+    // Load session timeout from stored config
+    const storedTimeout = localStorage.getItem("clokr_session_timeout");
+    if (storedTimeout) sessionTimeoutMs = parseInt(storedTimeout) * 60 * 1000;
+
+    // Start inactivity timer
+    resetInactivityTimer();
+    for (const evt of ACTIVITY_EVENTS) {
+      document.addEventListener(evt, resetInactivityTimer, { passive: true });
+    }
+
     loadNotifications();
     pollInterval = setInterval(loadNotifications, 60_000);
   });
 
   onDestroy(() => {
     if (pollInterval) clearInterval(pollInterval);
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    for (const evt of ACTIVITY_EVENTS) {
+      document.removeEventListener(evt, resetInactivityTimer);
+    }
   });
 
   // Close dropdown on outside click
