@@ -27,6 +27,9 @@ const envSchema = z
     SMTP_FROM_EMAIL: z.string().optional(),
     SMTP_FROM_NAME: z.string().optional(),
     SMTP_SECURE: z.string().default("false"),
+    LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
+    LOG_FILE: z.string().optional(), // Optional file path for log output
+    LOG_FORMAT: z.enum(["json", "ecs", "pretty"]).default("json"), // json, ecs (Elastic Common Schema), pretty (dev)
   })
   .refine((data) => !data.SMTP_HOST || (data.SMTP_PORT && data.SMTP_USER), {
     message: "SMTP_PORT and SMTP_USER required when SMTP_HOST is set",
