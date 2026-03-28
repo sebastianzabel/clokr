@@ -121,6 +121,10 @@
   let reminderPendingHours = $state(48);
   let reminderUpcomingEnabled = $state(true);
   let reminderUpcomingDays = $state(3);
+  // Carry-over / Mindesturlaub
+  let enforceMinVacation = $state(true);
+  let carryOverRequiresReason = $state(true);
+  let vacationReminderStartMonth = $state(10);
 
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
@@ -199,6 +203,9 @@
         maxNegEnabled = true;
         maxNegHours = maxNegMinutes / 60;
       }
+      enforceMinVacation = (cfg as any).enforceMinVacation ?? true;
+      carryOverRequiresReason = (cfg as any).carryOverRequiresReason ?? true;
+      vacationReminderStartMonth = (cfg as any).vacationReminderStartMonth ?? 10;
       reminderPendingEnabled = (cfg as any).reminderPendingLeaveEnabled ?? true;
       reminderPendingHours = (cfg as any).reminderPendingLeaveHours ?? 48;
       reminderUpcomingEnabled = (cfg as any).reminderUpcomingAbsenceEnabled ?? true;
@@ -248,6 +255,9 @@
         sickNoteRequiredAfterDays,
         autoCalcPartTimeVacation,
         fullTimeWorkDaysPerWeek,
+        enforceMinVacation,
+        carryOverRequiresReason,
+        vacationReminderStartMonth,
         reminderPendingLeaveHours: reminderPendingHours,
         reminderUpcomingAbsenceDays: reminderUpcomingDays,
         reminderPendingLeaveEnabled: reminderPendingEnabled,
@@ -712,8 +722,22 @@
             class="form-input"
           />
           <p class="form-hint text-muted">
-            Regelung gilt erst ab diesem Jahr. Für vergangene Jahre gelten die Tage als normaler
-            Arbeitstag.
+            {#if christmasEveRule === "NORMAL" && newYearsEveRule === "NORMAL"}
+              Aktuell keine Sonderregelung aktiv.
+            {:else if christmasEveRule !== "NORMAL" && newYearsEveRule !== "NORMAL"}
+              Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) und
+              Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) gelten
+              ab {holidayRulesValidFromYear}. Für frühere Jahre gelten beide als normaler
+              Arbeitstag.
+            {:else if christmasEveRule !== "NORMAL"}
+              Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"})
+              gilt ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
+              Arbeitstag.
+            {:else}
+              Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) gilt
+              ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
+              Arbeitstag.
+            {/if}
           </p>
         </div>
       </div>
@@ -792,6 +816,38 @@
           </div>
         </div>
       {/if}
+    </div>
+
+    <div class="settings-section">
+      <h3 class="section-title">Urlaubsübertrag & Mindesturlaub (§ 7 BUrlG)</h3>
+      <label class="form-label toggle-label">
+        <input type="checkbox" bind:checked={enforceMinVacation} />
+        Gesetzlichen Mindesturlaub durchsetzen (Warnung wenn nicht genommen)
+      </label>
+      <label class="form-label toggle-label" style="margin-top:0.5rem">
+        <input type="checkbox" bind:checked={carryOverRequiresReason} />
+        Übertrag ins Folgejahr erfordert Begründung (Krankheit, betriebliche Gründe)
+      </label>
+      <div class="inline-settings" style="margin-top:0.75rem">
+        <div class="form-group">
+          <label class="form-label" for="vac-reminder-month">Verfall-Erinnerung ab Monat</label>
+          <select
+            id="vac-reminder-month"
+            bind:value={vacationReminderStartMonth}
+            class="form-input"
+          >
+            <option value={8}>August</option>
+            <option value={9}>September</option>
+            <option value={10}>Oktober</option>
+            <option value={11}>November</option>
+            <option value={12}>Dezember</option>
+          </select>
+          <p class="form-hint text-muted">
+            Ab diesem Monat werden MA über verfallenden Urlaub erinnert (Hinweispflicht EuGH
+            C-684/16).
+          </p>
+        </div>
+      </div>
     </div>
 
     <div class="settings-section">

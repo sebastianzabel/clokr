@@ -5,6 +5,11 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import {
+  splitDaysAcrossYears,
+  calculateStatutoryMinimum,
+  countWorkDaysPerWeek,
+} from "../utils/vacation-calc";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
@@ -167,7 +172,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         const globalHalfDay = tenantConfig?.halfDayAllowed ?? true;
         const typeHalfDay = leaveType?.allowHalfDay ?? true;
         if (!globalHalfDay || !typeHalfDay) {
-          return reply.code(400).send({ error: "Halbe Tage sind für diesen Abwesenheitstyp nicht erlaubt" });
+          return reply
+            .code(400)
+            .send({ error: "Halbe Tage sind für diesen Abwesenheitstyp nicht erlaubt" });
         }
       }
 
@@ -224,21 +231,53 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Für VACATION: Resturlaub auto-übertragen (lazy) + verfügbare Tage prüfen
       if (body.type === "VACATION") {
-        const year = start.getFullYear();
-        // Automatischer Jahresübertrag – passiert transparent beim ersten Antrag im neuen Jahr
-        await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year);
+        const year1 = start.getFullYear();
+        const year2 = end.getFullYear();
+        const isCrossYear = year1 !== year2;
 
-        const entitlement = await app.prisma.leaveEntitlement.findUnique({
-          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+        // Split days across years if cross-year
+        const split = isCrossYear
+          ? splitDaysAcrossYears(start, end, body.halfDay, holidays)
+          : { year1Days: days, year2Days: 0, year1, year2 };
+
+        // ── Year 1: check entitlement ──
+        await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year1);
+        const ent1 = await app.prisma.leaveEntitlement.findUnique({
+          where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year1 } },
         });
-        if (entitlement) {
-          const effectiveCarryOver = getEffectiveCarryOver(entitlement, start);
-          const available =
-            Number(entitlement.totalDays) + effectiveCarryOver - Number(entitlement.usedDays);
-          if (days > available) {
-            return reply
-              .code(400)
-              .send({ error: "Nicht genug Urlaubstage", available, requested: days });
+        if (ent1 && split.year1Days > 0) {
+          const co1 = getEffectiveCarryOver(ent1, start);
+          const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
+          if (split.year1Days > avail1) {
+            return reply.code(400).send({
+              error: `Nicht genug Urlaubstage in ${year1}`,
+              available: avail1,
+              requested: split.year1Days,
+            });
+          }
+        }
+
+        // ── Year 2: check entitlement (cross-year only) ──
+        if (isCrossYear && split.year2Days > 0) {
+          await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year2);
+
+          // Recalculate projected carry-over for year 2
+          // (remaining from year 1 after this booking)
+          await recalculateCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year2);
+
+          const ent2 = await app.prisma.leaveEntitlement.findUnique({
+            where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year2 } },
+          });
+          if (ent2) {
+            const co2 = getEffectiveCarryOver(ent2, end);
+            const avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
+            if (split.year2Days > avail2) {
+              return reply.code(400).send({
+                error: `Nicht genug Urlaubstage in ${year2}`,
+                available: avail2,
+                requested: split.year2Days,
+              });
+            }
           }
         }
       }
@@ -262,13 +301,17 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Für SPECIAL: specialLeaveRuleId required, validate days against rule
       if (body.type === "SPECIAL") {
         if (!body.specialLeaveRuleId) {
-          return reply.code(400).send({ error: "Sonderurlaub erfordert einen Anlass (specialLeaveRuleId)" });
+          return reply
+            .code(400)
+            .send({ error: "Sonderurlaub erfordert einen Anlass (specialLeaveRuleId)" });
         }
         const rule = await app.prisma.specialLeaveRule.findUnique({
           where: { id: body.specialLeaveRuleId },
         });
         if (!rule || !rule.isActive) {
-          return reply.code(400).send({ error: "Ungültiger oder deaktivierter Sonderurlaubs-Anlass" });
+          return reply
+            .code(400)
+            .send({ error: "Ungültiger oder deaktivierter Sonderurlaubs-Anlass" });
         }
         if (days > Number(rule.defaultDays)) {
           return reply.code(400).send({
@@ -603,12 +646,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         );
 
         if (typeCode === "VACATION") {
+          const empForDeduct = await app.prisma.employee.findUnique({
+            where: { id: existing.employeeId },
+          });
+          const holidayMapForDeduct = await getHolidayMap(
+            app.prisma,
+            empForDeduct?.tenantId ?? "",
+            existing.startDate,
+            existing.endDate,
+          );
           await deductVacationDays(
             app.prisma,
             existing.employeeId,
             existing.leaveTypeId,
             existing.startDate,
+            existing.endDate,
             Number(existing.days),
+            new Set(holidayMapForDeduct.keys()),
+            empForDeduct?.tenantId ?? "",
           );
         }
 
@@ -1231,6 +1286,57 @@ async function autoCarryOver(
 }
 
 /**
+ * Recalculates carry-over for a given year based on the previous year's current state.
+ * Called after every booking/cancellation to keep projected carry-over accurate.
+ */
+async function recalculateCarryOver(
+  prisma: FastifyInstance["prisma"],
+  tenantId: string,
+  employeeId: string,
+  leaveTypeId: string,
+  year: number,
+): Promise<void> {
+  const prevYear = year - 1;
+  const prev = await prisma.leaveEntitlement.findUnique({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: prevYear } },
+  });
+  if (!prev) return;
+
+  const remaining = Math.max(
+    0,
+    Number(prev.totalDays) + Number(prev.carriedOverDays) - Number(prev.usedDays),
+  );
+
+  const config = await prisma.tenantConfig.findUnique({ where: { tenantId } });
+  const deadlineDay = config?.carryOverDeadlineDay ?? 31;
+  const deadlineMonth = config?.carryOverDeadlineMonth ?? 3;
+  const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
+
+  const cur = await prisma.leaveEntitlement.findUnique({
+    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
+  });
+
+  if (cur) {
+    await prisma.leaveEntitlement.update({
+      where: { id: cur.id },
+      data: { carriedOverDays: remaining, carryOverDeadline: deadline },
+    });
+  } else {
+    await prisma.leaveEntitlement.create({
+      data: {
+        employeeId,
+        leaveTypeId,
+        year,
+        totalDays: 0,
+        usedDays: 0,
+        carriedOverDays: remaining,
+        carryOverDeadline: deadline,
+      },
+    });
+  }
+}
+
+/**
  * Gibt den effektiven Resturlaub zurück — 0 wenn der Verfall bereits eingetreten ist.
  */
 function getEffectiveCarryOver(
@@ -1252,30 +1358,47 @@ async function deductVacationDays(
   employeeId: string,
   leaveTypeId: string,
   startDate: Date,
-  days: number,
+  endDate: Date,
+  totalDays: number,
+  holidays: Set<string>,
+  tenantId: string,
 ): Promise<void> {
-  const year = startDate.getFullYear();
-  const entitlement = await prisma.leaveEntitlement.findUnique({
-    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-  });
-  if (!entitlement) return;
+  const year1 = startDate.getFullYear();
+  const year2 = endDate.getFullYear();
+  const isCrossYear = year1 !== year2;
 
-  const effectiveCarryOver = getEffectiveCarryOver(entitlement, startDate);
-  const currentUsed = Number(entitlement.usedDays);
+  if (isCrossYear) {
+    // Split days across years
+    const split = splitDaysAcrossYears(startDate, endDate, false, holidays);
 
-  // Wieviel Resturlaub wurde bereits verbraucht?
-  // usedDays enthält den Gesamtverbrauch; Resturlaub gilt als zuerst verbraucht.
-  const carryOverAlreadyUsed = Math.min(currentUsed, effectiveCarryOver);
-  const carryOverRemaining = effectiveCarryOver - carryOverAlreadyUsed;
-  const daysFromCarryOver = Math.min(days, carryOverRemaining);
+    // Deduct from year 1
+    if (split.year1Days > 0) {
+      await prisma.leaveEntitlement.updateMany({
+        where: { employeeId, leaveTypeId, year: year1 },
+        data: { usedDays: { increment: split.year1Days } },
+      });
+    }
 
-  // usedDays einfach um die beantragten Tage erhöhen (Reihenfolge ist nur für Anzeige relevant)
-  await prisma.leaveEntitlement.update({
-    where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-    data: { usedDays: { increment: days } },
-  });
+    // Deduct from year 2
+    if (split.year2Days > 0) {
+      await prisma.leaveEntitlement.updateMany({
+        where: { employeeId, leaveTypeId, year: year2 },
+        data: { usedDays: { increment: split.year2Days } },
+      });
+    }
 
-  void daysFromCarryOver; // Reihenfolge für Audit-Trail, aktuell nur informativ
+    // Recalculate carry-over for year 2 (year 1 remaining changed)
+    await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year2);
+  } else {
+    // Single year: increment usedDays
+    await prisma.leaveEntitlement.updateMany({
+      where: { employeeId, leaveTypeId, year: year1 },
+      data: { usedDays: { increment: totalDays } },
+    });
+
+    // Recalculate next year's carry-over (current year usage changed)
+    await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year1 + 1);
+  }
 }
 
 /**

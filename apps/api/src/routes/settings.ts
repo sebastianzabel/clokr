@@ -50,6 +50,10 @@ const tenantConfigSchema = z.object({
   // Part-time vacation
   autoCalcPartTimeVacation: z.boolean().optional(),
   fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
+  // Carry-over / statutory minimum
+  enforceMinVacation: z.boolean().optional(),
+  carryOverRequiresReason: z.boolean().optional(),
+  vacationReminderStartMonth: z.number().int().min(1).max(12).optional(),
   // Reminders
   reminderPendingLeaveHours: z.number().int().min(1).max(720).optional(),
   reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
@@ -132,6 +136,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         sickNoteRequiredAfterDays: 3,
         autoCalcPartTimeVacation: true,
         fullTimeWorkDaysPerWeek: 5,
+        enforceMinVacation: true,
+        carryOverRequiresReason: true,
+        vacationReminderStartMonth: 10,
         reminderPendingLeaveHours: 48,
         reminderUpcomingAbsenceDays: 3,
         reminderPendingLeaveEnabled: true,
