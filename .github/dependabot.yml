@@ -1,0 +1,60 @@
+version: 2
+
+updates:
+  # ── npm dependencies (pnpm monorepo) ────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "the operatorZ84"
+    labels:
+      - "dependencies"
+    # Group minor/patch updates to reduce PR noise
+    groups:
+      prisma:
+        patterns: ["@prisma/*", "prisma"]
+      svelte:
+        patterns: ["svelte", "svelte-*", "@sveltejs/*"]
+      fastify:
+        patterns: ["fastify", "@fastify/*"]
+      lint-format:
+        patterns: ["eslint*", "prettier*", "typescript-eslint*"]
+      vitest:
+        patterns: ["vitest", "@vitest/*"]
+      minor-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns: ["@prisma/*", "prisma", "svelte*", "@sveltejs/*", "fastify", "@fastify/*"]
+
+  # ── Docker base images ──────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  - package-ecosystem: "docker"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # ── GitHub Actions ──────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "ci"
