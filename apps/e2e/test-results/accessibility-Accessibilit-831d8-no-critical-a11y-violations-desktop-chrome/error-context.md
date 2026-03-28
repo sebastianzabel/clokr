@@ -1,0 +1,338 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+    - link "Zum Inhalt springen" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+    - complementary [ref=e5]:
+        - generic [ref=e6]:
+            - generic [ref=e7]:
+                - img "Clokr" [ref=e8]
+                - generic [ref=e9]: Clokr
+            - button "Benachrichtigungen" [ref=e11] [cursor=pointer]:
+                - img [ref=e12]
+                - generic [ref=e15]: "4"
+        - navigation "Hauptnavigation" [ref=e16]:
+            - link "Dashboard" [ref=e17] [cursor=pointer]:
+                - /url: /dashboard
+                - img [ref=e19]
+                - generic [ref=e22]: Dashboard
+            - link "Zeiterfassung" [ref=e23] [cursor=pointer]:
+                - /url: /time-entries
+                - img [ref=e25]
+                - generic [ref=e28]: Zeiterfassung
+            - link "Abwesenheiten" [ref=e29] [cursor=pointer]:
+                - /url: /leave
+                - img [ref=e31]
+                - generic [ref=e35]: Abwesenheiten
+            - link "Berichte" [ref=e36] [cursor=pointer]:
+                - /url: /reports
+                - img [ref=e38]
+                - generic [ref=e40]: Berichte
+            - link "Admin" [ref=e41] [cursor=pointer]:
+                - /url: /admin
+                - img [ref=e43]
+                - generic [ref=e46]: Admin
+        - generic [ref=e47]:
+            - link "admin@clokr.de Administrator" [ref=e48] [cursor=pointer]:
+                - /url: /settings
+                - generic [ref=e49]:
+                    - paragraph [ref=e50]: admin@clokr.de
+                    - paragraph [ref=e51]: Administrator
+            - button "Abmelden" [ref=e53] [cursor=pointer]:
+                - img [ref=e54]
+                - text: Abmelden
+            - paragraph [ref=e57]: vdev
+    - main [ref=e58]:
+        - generic [ref=e59]:
+            - navigation "Breadcrumb" [ref=e60]:
+                - list [ref=e61]:
+                    - listitem [ref=e62]:
+                        - link "Dashboard" [ref=e63] [cursor=pointer]:
+                            - /url: /dashboard
+                    - listitem [ref=e64]:
+                        - img [ref=e65]
+                        - generic [ref=e67]: Admin
+            - generic [ref=e68]:
+                - heading "Administration" [level=1] [ref=e69]
+                - navigation "Admin-Navigation" [ref=e70]:
+                    - link "Mitarbeiter" [ref=e71] [cursor=pointer]:
+                        - /url: /admin/employees
+                    - link "Urlaub & Zeiten" [ref=e72] [cursor=pointer]:
+                        - /url: /admin/vacation
+                    - link "Schichtplan" [ref=e73] [cursor=pointer]:
+                        - /url: /admin/shifts
+                    - link "Sonderurlaub" [ref=e74] [cursor=pointer]:
+                        - /url: /admin/special-leave
+                    - link "Betriebsurlaub" [ref=e75] [cursor=pointer]:
+                        - /url: /admin/shutdowns
+                    - link "Monatsabschluss" [ref=e76] [cursor=pointer]:
+                        - /url: /admin/monatsabschluss
+                    - link "System" [ref=e77] [cursor=pointer]:
+                        - /url: /admin/system
+                    - link "Import" [ref=e78] [cursor=pointer]:
+                        - /url: /admin/import
+                    - link "Audit Log" [ref=e79] [cursor=pointer]:
+                        - /url: /admin/audit
+            - generic [ref=e80]:
+                - generic [ref=e81]:
+                    - generic [ref=e82]:
+                        - heading "Erscheinungsbild" [level=3] [ref=e83]
+                        - generic [ref=e84]:
+                            - generic [ref=e85]: Theme
+                            - combobox "Theme" [ref=e86] [cursor=pointer]:
+                                - option "Pflaume" [selected]
+                                - option "Nacht"
+                                - option "Wald"
+                                - option "Schiefer"
+                    - separator [ref=e87]
+                    - generic [ref=e88]:
+                        - heading "Region & Zeitzone" [level=3] [ref=e89]
+                        - generic [ref=e90]:
+                            - generic [ref=e91]:
+                                - generic [ref=e92]: Bundesland
+                                - combobox "Bundesland" [ref=e93] [cursor=pointer]:
+                                    - option "Niedersachsen" [selected]
+                                    - option "Baden-Württemberg"
+                                    - option "Bayern"
+                                    - option "Berlin"
+                                    - option "Brandenburg"
+                                    - option "Bremen"
+                                    - option "Hamburg"
+                                    - option "Hessen"
+                                    - option "Mecklenburg-Vorpommern"
+                                    - option "Nordrhein-Westfalen"
+                                    - option "Rheinland-Pfalz"
+                                    - option "Schleswig-Holstein"
+                                    - option "Saarland"
+                                    - option "Sachsen"
+                                    - option "Sachsen-Anhalt"
+                                    - option "Thüringen"
+                                - paragraph [ref=e94]: Bestimmt gesetzliche Feiertage.
+                            - generic [ref=e95]:
+                                - generic [ref=e96]: Zeitzone
+                                - combobox "Zeitzone" [ref=e97] [cursor=pointer]:
+                                    - option "Europe/Berlin" [selected]
+                                    - option "Europe/Vienna"
+                                    - option "Europe/Zurich"
+                                    - option "Europe/Amsterdam"
+                                    - option "Europe/Brussels"
+                                    - option "Europe/Luxembourg"
+                                    - option "Europe/Paris"
+                                    - option "Europe/London"
+                                    - option "Europe/Warsaw"
+                                    - option "Europe/Prague"
+                                    - option "Europe/Rome"
+                                    - option "Europe/Madrid"
+                                    - option "Europe/Stockholm"
+                                    - option "Europe/Copenhagen"
+                                    - option "Europe/Helsinki"
+                                    - option "Europe/Athens"
+                                    - option "Europe/Istanbul"
+                                    - option "Europe/Moscow"
+                                    - option "America/New_York"
+                                    - option "America/Chicago"
+                                    - option "America/Los_Angeles"
+                                    - option "Asia/Tokyo"
+                                    - option "Asia/Shanghai"
+                                    - option "UTC"
+                                - paragraph [ref=e98]: Zuordnung von Zeitstempeln zu Tagen.
+                        - button "Speichern" [ref=e100] [cursor=pointer]
+                    - separator [ref=e101]
+                    - generic [ref=e102]:
+                        - heading "Sicherheit" [level=3] [ref=e103]
+                        - generic [ref=e104]:
+                            - generic [ref=e105]:
+                                - text: 2-Faktor-Authentifizierung (E-Mail OTP)
+                                - paragraph [ref=e106]: Nach dem Login wird ein 6-stelliger Code per E-Mail gesendet.
+                            - generic [ref=e107]:
+                                - checkbox
+                    - separator [ref=e109]
+                    - generic [ref=e110]:
+                        - heading "Session-Management" [level=3] [ref=e111]
+                        - generic [ref=e112]:
+                            - generic [ref=e113]:
+                                - generic [ref=e114]: Inaktivitäts-Timeout (Minuten)
+                                - spinbutton "Inaktivitäts-Timeout (Minuten)" [ref=e115]: "60"
+                                - paragraph [ref=e116]: 0 = deaktiviert. Benutzer wird nach Inaktivität ausgeloggt.
+                            - generic [ref=e117]:
+                                - generic [ref=e118]: Session-Dauer (Tage)
+                                - spinbutton "Session-Dauer (Tage)" [ref=e119]: "7"
+                                - paragraph [ref=e120]: Wie lange ein Login ohne "Angemeldet bleiben" gültig ist.
+                        - generic [ref=e121]:
+                            - generic [ref=e122]: '"Angemeldet bleiben" erlauben'
+                            - generic [ref=e123]:
+                                - checkbox [checked]
+                        - generic [ref=e126]:
+                            - generic [ref=e127]: '"Angemeldet bleiben" Dauer (Tage)'
+                            - spinbutton "\"Angemeldet bleiben\" Dauer (Tage)" [ref=e128]: "30"
+                        - generic [ref=e130]:
+                            - generic [ref=e131]: Max. gleichzeitige Sessions
+                            - spinbutton "Max. gleichzeitige Sessions" [ref=e132]: "0"
+                            - paragraph [ref=e133]: 0 = unbegrenzt. Älteste Session wird bei Überschreitung beendet.
+                        - generic [ref=e134]:
+                            - generic [ref=e135]:
+                                - generic [ref=e136]: Max. Fehlversuche bis Sperre
+                                - spinbutton "Max. Fehlversuche bis Sperre" [ref=e137]: "5"
+                            - generic [ref=e138]:
+                                - generic [ref=e139]: Sperrzeit (Minuten)
+                                - spinbutton "Sperrzeit (Minuten)" [ref=e140]: "15"
+                                - paragraph [ref=e141]: Nach Ablauf wird der Zähler zurückgesetzt. Admin kann manuell entsperren.
+                        - button "Speichern" [ref=e143] [cursor=pointer]
+                    - separator [ref=e144]
+                    - generic [ref=e145]:
+                        - heading "Passwort-Richtlinie (BSI)" [level=3] [ref=e146]
+                        - generic [ref=e148]:
+                            - generic [ref=e149]: Mindestlänge
+                            - spinbutton "Mindestlänge" [ref=e150]: "12"
+                            - paragraph [ref=e151]: BSI empfiehlt mindestens 12 Zeichen.
+                        - generic [ref=e152]:
+                            - generic [ref=e153]: Großbuchstabe erforderlich
+                            - generic [ref=e154]:
+                                - checkbox [checked]
+                        - generic [ref=e156]:
+                            - generic [ref=e157]: Kleinbuchstabe erforderlich
+                            - generic [ref=e158]:
+                                - checkbox [checked]
+                        - generic [ref=e160]:
+                            - generic [ref=e161]: Ziffer erforderlich
+                            - generic [ref=e162]:
+                                - checkbox [checked]
+                        - generic [ref=e164]:
+                            - generic [ref=e165]: Sonderzeichen erforderlich
+                            - generic [ref=e166]:
+                                - checkbox [checked]
+                        - button "Speichern" [ref=e169] [cursor=pointer]
+                    - separator [ref=e170]
+                    - generic [ref=e171]:
+                        - heading "E-Mail-Benachrichtigungen" [level=3] [ref=e172]
+                        - generic [ref=e173]:
+                            - generic [ref=e174]:
+                                - text: E-Mail-Benachrichtigungen aktivieren
+                                - paragraph [ref=e175]: Sendet zusätzlich zur In-App-Benachrichtigung eine E-Mail. SMTP muss konfiguriert sein.
+                            - generic [ref=e176]:
+                                - checkbox
+                        - button "Speichern" [ref=e179] [cursor=pointer]
+                    - separator [ref=e180]
+                    - generic [ref=e181]:
+                        - heading "E-Mail / SMTP" [level=3] [ref=e182]
+                        - generic [ref=e183]:
+                            - generic [ref=e184]:
+                                - generic [ref=e185]: SMTP-Host
+                                - textbox "SMTP-Host" [ref=e186]:
+                                    - /placeholder: smtp.example.com
+                                    - text: smtp.ionos.de
+                            - generic [ref=e187]:
+                                - generic [ref=e188]: Port
+                                - spinbutton "Port" [ref=e189]: "587"
+                            - generic [ref=e190]:
+                                - generic [ref=e191]: Benutzername
+                                - textbox "Benutzername" [ref=e192]:
+                                    - /placeholder: user@example.com
+                                    - text: team@anjaweiss-haarkonzept.de
+                            - generic [ref=e193]:
+                                - generic [ref=e194]:
+                                    - text: Passwort
+                                    - generic [ref=e195]: gespeichert
+                                - textbox "Passwort gespeichert" [ref=e196]:
+                                    - /placeholder: Unverändert lassen
+                                - paragraph [ref=e197]:
+                                    - text: "Gmail/Google:"
+                                    - link "App-Passwort" [ref=e198] [cursor=pointer]:
+                                        - /url: https://myaccount.google.com/apppasswords
+                                    - text: "verwenden (2FA erforderlich). Outlook: App-Passwort in den Sicherheitseinstellungen."
+                            - generic [ref=e199]:
+                                - generic [ref=e200]: Von E-Mail
+                                - textbox "Von E-Mail" [ref=e201]:
+                                    - /placeholder: noreply@clokr.de
+                                    - text: team@anjaweiss-haarkonzept.de
+                            - generic [ref=e202]:
+                                - generic [ref=e203]: Von Name
+                                - textbox "Von Name" [ref=e204]:
+                                    - /placeholder: Clokr
+                                    - text: Clokr
+                            - generic [ref=e206] [cursor=pointer]:
+                                - checkbox "TLS/SSL (Port 465)" [ref=e207]
+                                - generic [ref=e208]: TLS/SSL (Port 465)
+                        - button "SMTP speichern" [ref=e210] [cursor=pointer]
+                        - generic [ref=e211]:
+                            - text: Testmail senden
+                            - generic [ref=e212]:
+                                - textbox "test@example.com" [ref=e213]
+                                - button "Testmail senden" [disabled] [ref=e214]
+                    - separator [ref=e215]
+                    - generic [ref=e216]:
+                        - heading "NFC-Terminals" [level=3] [ref=e217]
+                        - paragraph [ref=e218]: API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
+                        - generic [ref=e219]:
+                            - textbox "Terminal-Name (z.B. Kasse 1)" [ref=e220]
+                            - button "Schlüssel erstellen" [disabled] [ref=e221]
+                        - table [ref=e223]:
+                            - rowgroup [ref=e224]:
+                                - row "Name Schlüssel Zuletzt verwendet Status" [ref=e225]:
+                                    - columnheader "Name" [ref=e226]
+                                    - columnheader "Schlüssel" [ref=e227]
+                                    - columnheader "Zuletzt verwendet" [ref=e228]
+                                    - columnheader "Status" [ref=e229]
+                                    - columnheader [ref=e230]
+                            - rowgroup [ref=e231]:
+                                - row "Kasse clk_74c4c2a6... 26.3.2026, 11:29:03 Aktiv Widerrufen" [ref=e232]:
+                                    - cell "Kasse" [ref=e233]
+                                    - cell "clk_74c4c2a6..." [ref=e234]:
+                                        - code [ref=e235]: clk_74c4c2a6...
+                                    - cell "26.3.2026, 11:29:03" [ref=e236]
+                                    - cell "Aktiv" [ref=e237]:
+                                        - generic [ref=e238]: Aktiv
+                                    - cell "Widerrufen" [ref=e239]:
+                                        - button "Widerrufen" [ref=e240] [cursor=pointer]
+                                - row "bla clk_bea50b11... Nie Widerrufen" [ref=e241]:
+                                    - cell "bla" [ref=e242]
+                                    - cell "clk_bea50b11..." [ref=e243]:
+                                        - code [ref=e244]: clk_bea50b11...
+                                    - cell "Nie" [ref=e245]
+                                    - cell "Widerrufen" [ref=e246]:
+                                        - generic [ref=e247]: Widerrufen
+                                    - cell [ref=e248]
+                - generic [ref=e249]:
+                    - heading "API Keys" [level=2] [ref=e250]
+                    - paragraph [ref=e251]: Schlüssel für externe Integrationen (Lohnsoftware, Automations)
+                - generic [ref=e253]:
+                    - generic [ref=e254]:
+                        - generic [ref=e255]:
+                            - textbox "Name (z.B. DATEV Export)" [ref=e256]
+                            - button "Key erstellen" [disabled] [ref=e257]
+                        - generic [ref=e258]:
+                            - button "Mitarbeiter lesen" [ref=e259] [cursor=pointer]
+                            - button "Zeiteinträge lesen" [ref=e260] [cursor=pointer]
+                            - button "Zeiteinträge schreiben" [ref=e261] [cursor=pointer]
+                            - button "Abwesenheiten lesen" [ref=e262] [cursor=pointer]
+                            - button "Abwesenheiten schreiben" [ref=e263] [cursor=pointer]
+                            - button "Berichte lesen" [ref=e264] [cursor=pointer]
+                            - button "Überstunden lesen" [ref=e265] [cursor=pointer]
+                            - button "Voller Zugriff" [ref=e266] [cursor=pointer]
+                    - paragraph [ref=e267]: Keine API Keys vorhanden.
+                - generic [ref=e268]:
+                    - heading "Phorest-Integration" [level=2] [ref=e269]
+                    - paragraph [ref=e270]: Schichten aus Phorest Salon-Software importieren
+                - generic [ref=e271]:
+                    - generic [ref=e272]:
+                        - generic [ref=e273]:
+                            - generic [ref=e274]: Business ID
+                            - textbox "Business ID" [ref=e275]:
+                                - /placeholder: z.B. abc123def456
+                        - generic [ref=e276]:
+                            - generic [ref=e277]: Branch ID
+                            - textbox "Branch ID" [ref=e278]:
+                                - /placeholder: z.B. branch-001
+                        - generic [ref=e279]:
+                            - generic [ref=e280]: API-Benutzername (E-Mail)
+                            - textbox "API-Benutzername (E-Mail)" [ref=e281]:
+                                - /placeholder: api@salon.de
+                        - generic [ref=e282]:
+                            - generic [ref=e283]: API-Passwort
+                            - textbox "API-Passwort" [ref=e284]:
+                                - /placeholder: ••••••••
+                    - generic [ref=e285]:
+                        - button "Konfiguration speichern" [ref=e286] [cursor=pointer]
+                        - button "Verbindung testen" [disabled] [ref=e287]
+```

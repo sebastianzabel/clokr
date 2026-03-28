@@ -1,0 +1,342 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+    - link "Zum Inhalt springen" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+    - complementary [ref=e5]:
+        - generic [ref=e6]:
+            - generic [ref=e7]:
+                - img "Clokr" [ref=e8]
+                - generic [ref=e9]: Clokr
+            - button "Benachrichtigungen" [ref=e11] [cursor=pointer]:
+                - img [ref=e12]
+                - generic [ref=e15]: "4"
+        - navigation "Hauptnavigation" [ref=e16]:
+            - link "Dashboard" [ref=e17] [cursor=pointer]:
+                - /url: /dashboard
+                - img [ref=e19]
+                - generic [ref=e22]: Dashboard
+            - link "Zeiterfassung" [ref=e23] [cursor=pointer]:
+                - /url: /time-entries
+                - img [ref=e25]
+                - generic [ref=e28]: Zeiterfassung
+            - link "Abwesenheiten" [ref=e29] [cursor=pointer]:
+                - /url: /leave
+                - img [ref=e31]
+                - generic [ref=e35]: Abwesenheiten
+            - link "Berichte" [ref=e36] [cursor=pointer]:
+                - /url: /reports
+                - img [ref=e38]
+                - generic [ref=e40]: Berichte
+            - link "Admin" [ref=e41] [cursor=pointer]:
+                - /url: /admin
+                - img [ref=e43]
+                - generic [ref=e46]: Admin
+        - generic [ref=e47]:
+            - link "admin@clokr.de Administrator" [ref=e48] [cursor=pointer]:
+                - /url: /settings
+                - generic [ref=e49]:
+                    - paragraph [ref=e50]: admin@clokr.de
+                    - paragraph [ref=e51]: Administrator
+            - button "Abmelden" [ref=e53] [cursor=pointer]:
+                - img [ref=e54]
+                - text: Abmelden
+            - paragraph [ref=e57]: vdev
+    - main [ref=e58]:
+        - generic [ref=e59]:
+            - navigation "Breadcrumb" [ref=e60]:
+                - list [ref=e61]:
+                    - listitem [ref=e62]:
+                        - link "Dashboard" [ref=e63] [cursor=pointer]:
+                            - /url: /dashboard
+                    - listitem [ref=e64]:
+                        - img [ref=e65]
+                        - generic [ref=e67]: Admin
+            - generic [ref=e68]:
+                - heading "Administration" [level=1] [ref=e69]
+                - navigation "Admin-Navigation" [ref=e70]:
+                    - link "Mitarbeiter" [ref=e71] [cursor=pointer]:
+                        - /url: /admin/employees
+                    - link "Urlaub & Zeiten" [ref=e72] [cursor=pointer]:
+                        - /url: /admin/vacation
+                    - link "Schichtplan" [ref=e73] [cursor=pointer]:
+                        - /url: /admin/shifts
+                    - link "Sonderurlaub" [ref=e74] [cursor=pointer]:
+                        - /url: /admin/special-leave
+                    - link "Betriebsurlaub" [ref=e75] [cursor=pointer]:
+                        - /url: /admin/shutdowns
+                    - link "Monatsabschluss" [ref=e76] [cursor=pointer]:
+                        - /url: /admin/monatsabschluss
+                    - link "System" [ref=e77] [cursor=pointer]:
+                        - /url: /admin/system
+                    - link "Import" [ref=e78] [cursor=pointer]:
+                        - /url: /admin/import
+                    - link "Audit Log" [ref=e79] [cursor=pointer]:
+                        - /url: /admin/audit
+            - generic [ref=e80]:
+                - generic [ref=e81]:
+                    - generic [ref=e82]:
+                        - heading "Wöchentliche Arbeitszeit" [level=3] [ref=e83]
+                        - paragraph [ref=e84]: Standard-Stunden pro Wochentag für alle Mitarbeiter.
+                        - generic [ref=e85]:
+                            - generic [ref=e86]:
+                                - generic [ref=e87]: Mo
+                                - spinbutton "Mo" [ref=e88]: "8"
+                            - generic [ref=e89]:
+                                - generic [ref=e90]: Di
+                                - spinbutton "Di" [ref=e91]: "8"
+                            - generic [ref=e92]:
+                                - generic [ref=e93]: Mi
+                                - spinbutton "Mi" [ref=e94]: "8"
+                            - generic [ref=e95]:
+                                - generic [ref=e96]: Do
+                                - spinbutton "Do" [ref=e97]: "8"
+                            - generic [ref=e98]:
+                                - generic [ref=e99]: Fr
+                                - spinbutton "Fr" [ref=e100]: "8"
+                            - generic [ref=e101]:
+                                - generic [ref=e102]: Sa
+                                - spinbutton "Sa" [ref=e103]: "0"
+                            - generic [ref=e104]:
+                                - generic [ref=e105]: So
+                                - spinbutton "So" [ref=e106]: "0"
+                            - generic [ref=e107]:
+                                - generic [ref=e108]: Σ/Wo
+                                - generic [ref=e109]: 40.0 h
+                    - separator [ref=e110]
+                    - generic [ref=e111]:
+                        - heading "Überstunden" [level=3] [ref=e112]
+                        - generic [ref=e113]:
+                            - generic [ref=e114]:
+                                - generic [ref=e115]: Warnschwelle
+                                - generic [ref=e116]:
+                                    - spinbutton "Warnschwelle" [ref=e117]: "60"
+                                    - generic [ref=e118]: Stunden
+                                - paragraph [ref=e119]: "Ab diesem Saldo: Kritisch-Warnung."
+                            - generic [ref=e120]:
+                                - generic [ref=e121]: Auszahlung
+                                - generic [ref=e122] [cursor=pointer]:
+                                    - checkbox "Gesperrt" [ref=e123]
+                                    - generic [ref=e124]: Gesperrt
+                - generic [ref=e126]:
+                    - heading "Urlaubsanspruch" [level=3] [ref=e127]
+                    - generic [ref=e128]:
+                        - generic [ref=e129]:
+                            - generic [ref=e130]: Jahresurlaub (Basis 5-Tage-Woche)
+                            - generic [ref=e131]:
+                                - spinbutton "Jahresurlaub (Basis 5-Tage-Woche)" [ref=e132]: "30"
+                                - generic [ref=e133]: Tage
+                            - paragraph [ref=e134]: Teilzeit anteilig (4-Tage-Woche → 24 Tage).
+                        - generic [ref=e135]:
+                            - generic [ref=e136]: Resturlaub verfällt am
+                            - generic [ref=e137]:
+                                - spinbutton [ref=e138]: "31"
+                                - generic [ref=e139]: .
+                                - combobox [ref=e140] [cursor=pointer]:
+                                    - option "Januar"
+                                    - option "Februar"
+                                    - option "März" [selected]
+                                    - option "April"
+                                    - option "Mai"
+                                    - option "Juni"
+                                    - option "Juli"
+                                    - option "August"
+                                    - option "September"
+                                    - option "Oktober"
+                                    - option "November"
+                                    - option "Dezember"
+                                - generic [ref=e141]: des Folgejahres
+                - generic [ref=e142]:
+                    - generic [ref=e143]:
+                        - heading "Compliance" [level=3] [ref=e144]
+                        - generic [ref=e145]:
+                            - generic [ref=e146]:
+                                - text: ArbZG-Verstöße anzeigen
+                                - paragraph [ref=e147]: Prüft Höchstarbeitszeit, Pausen und Ruhezeiten (§§ 3-5 ArbZG).
+                            - generic [ref=e148]:
+                                - checkbox [checked]
+                    - separator [ref=e150]
+                    - generic [ref=e151]:
+                        - heading "Pausen" [level=3] [ref=e152]
+                        - paragraph [ref=e153]: Automatische Pausenberechnung nach Arbeitszeitgesetz (§ 4 ArbZG).
+                        - generic [ref=e154]:
+                            - generic [ref=e155]:
+                                - text: Automatische Pausen
+                                - paragraph [ref=e156]: Nach 6h werden 30 Min., nach 9h werden 45 Min. Pause automatisch eingetragen.
+                            - generic [ref=e157]:
+                                - checkbox
+                - generic [ref=e160]:
+                    - heading "Benachrichtigungen" [level=3] [ref=e161]
+                    - paragraph [ref=e162]: Automatische Erinnerungen bei fehlenden oder offenen Zeiteinträgen.
+                    - generic [ref=e163]:
+                        - generic [ref=e164]:
+                            - generic [ref=e165]: Erinnerung bei offener Stempelung nach
+                            - generic [ref=e166]:
+                                - spinbutton "Erinnerung bei offener Stempelung nach" [ref=e167]: "10"
+                                - generic [ref=e168]: Stunden
+                            - paragraph [ref=e169]: Mitarbeiter werden erinnert, wenn sie länger als diese Zeit eingestempelt sind.
+                        - generic [ref=e170]:
+                            - generic [ref=e171]: Erinnerung bei fehlenden Einträgen nach
+                            - generic [ref=e172]:
+                                - spinbutton "Erinnerung bei fehlenden Einträgen nach" [ref=e173]: "7"
+                                - generic [ref=e174]: Tagen
+                            - paragraph [ref=e175]: Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst wurden.
+                        - generic [ref=e176]:
+                            - generic [ref=e177]: Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)
+                            - generic [ref=e178]:
+                                - spinbutton "Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)" [ref=e179]: "14"
+                                - generic [ref=e180]: Stunden
+                            - paragraph [ref=e181]: Offene Einträge ohne Ausstempeln werden nach dieser Zeit als ungültig markiert und müssen manuell korrigiert werden. 0 = deaktiviert.
+                - generic [ref=e182]:
+                    - generic [ref=e183]:
+                        - heading "Heiligabend & Silvester" [level=3] [ref=e184]
+                        - generic [ref=e185]:
+                            - generic [ref=e186]:
+                                - generic [ref=e187]: Heiligabend (24.12.)
+                                - combobox "Heiligabend (24.12.)" [ref=e188] [cursor=pointer]:
+                                    - option "Normaler Arbeitstag"
+                                    - option "Halber Tag frei"
+                                    - option "Ganzer Tag frei" [selected]
+                            - generic [ref=e189]:
+                                - generic [ref=e190]: Silvester (31.12.)
+                                - combobox "Silvester (31.12.)" [ref=e191] [cursor=pointer]:
+                                    - option "Normaler Arbeitstag"
+                                    - option "Halber Tag frei"
+                                    - option "Ganzer Tag frei" [selected]
+                            - generic [ref=e192]:
+                                - generic [ref=e193]: Gültig ab Jahr
+                                - spinbutton "Gültig ab Jahr" [ref=e194]: "2026"
+                                - paragraph [ref=e195]: Heiligabend (ganzer Tag frei) und Silvester (ganzer Tag frei) gelten ab 2026. Für frühere Jahre gelten beide als normaler Arbeitstag.
+                    - generic [ref=e196]:
+                        - heading "Urlaubsanträge" [level=3] [ref=e197]
+                        - generic [ref=e198]:
+                            - generic [ref=e199]:
+                                - generic [ref=e200]: Vorlaufzeit (Tage)
+                                - spinbutton "Vorlaufzeit (Tage)" [ref=e201]: "0"
+                                - paragraph [ref=e202]: 0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.
+                            - generic [ref=e203]:
+                                - generic [ref=e204]: Max. Vorausbuchung (Monate)
+                                - spinbutton "Max. Vorausbuchung (Monate)" [ref=e205]: "0"
+                                - paragraph [ref=e206]: 0 = unbegrenzt.
+                        - generic [ref=e207] [cursor=pointer]:
+                            - checkbox "Halbe Tage erlauben" [checked] [ref=e208]
+                            - text: Halbe Tage erlauben
+                    - generic [ref=e209]:
+                        - heading "Krankmeldungen" [level=3] [ref=e210]
+                        - generic [ref=e211] [cursor=pointer]:
+                            - checkbox "Mitarbeiter dürfen Krankmeldung selbst eintragen" [checked] [ref=e212]
+                            - text: Mitarbeiter dürfen Krankmeldung selbst eintragen
+                        - generic [ref=e214]:
+                            - generic [ref=e215]: AU-Pflicht nach (Tagen)
+                            - spinbutton "AU-Pflicht nach (Tagen)" [ref=e216]: "3"
+                            - paragraph [ref=e217]: "§ 5 EFZG — Standard: 3 Tage."
+                    - generic [ref=e218]:
+                        - heading "Teilzeit-Urlaub" [level=3] [ref=e219]
+                        - generic [ref=e220] [cursor=pointer]:
+                            - checkbox "Automatische Pro-Rata-Berechnung (BUrlG)" [checked] [ref=e221]
+                            - text: Automatische Pro-Rata-Berechnung (BUrlG)
+                        - generic [ref=e223]:
+                            - generic [ref=e224]: Vollzeit-Arbeitstage/Woche
+                            - combobox "Vollzeit-Arbeitstage/Woche" [ref=e225] [cursor=pointer]:
+                                - option "5 Tage (Mo–Fr)" [selected]
+                                - option "6 Tage (Mo–Sa)"
+                    - generic [ref=e226]:
+                        - heading "Urlaubsübertrag & Mindesturlaub (§ 7 BUrlG)" [level=3] [ref=e227]
+                        - generic [ref=e228] [cursor=pointer]:
+                            - checkbox "Gesetzlichen Mindesturlaub durchsetzen (Warnung wenn nicht genommen)" [checked] [ref=e229]
+                            - text: Gesetzlichen Mindesturlaub durchsetzen (Warnung wenn nicht genommen)
+                        - generic [ref=e230] [cursor=pointer]:
+                            - checkbox "Übertrag ins Folgejahr erfordert Begründung (Krankheit, betriebliche Gründe)" [checked] [ref=e231]
+                            - text: Übertrag ins Folgejahr erfordert Begründung (Krankheit, betriebliche Gründe)
+                        - generic [ref=e233]:
+                            - generic [ref=e234]: Verfall-Erinnerung ab Monat
+                            - combobox "Verfall-Erinnerung ab Monat" [ref=e235] [cursor=pointer]:
+                                - option "August"
+                                - option "September"
+                                - option "Oktober" [selected]
+                                - option "November"
+                                - option "Dezember"
+                            - paragraph [ref=e236]: Ab diesem Monat werden MA über verfallenden Urlaub erinnert (Hinweispflicht EuGH C-684/16).
+                    - generic [ref=e237]:
+                        - heading "Max. Minusstunden" [level=3] [ref=e238]
+                        - generic [ref=e239] [cursor=pointer]:
+                            - checkbox "Limit für negatives Überstundensaldo" [ref=e240]
+                            - text: Limit für negatives Überstundensaldo
+                    - generic [ref=e241]:
+                        - heading "Automatische Erinnerungen" [level=3] [ref=e242]
+                        - generic [ref=e243] [cursor=pointer]:
+                            - checkbox "Offene Urlaubsanträge — Manager erinnern" [checked] [ref=e244]
+                            - text: Offene Urlaubsanträge — Manager erinnern
+                        - generic [ref=e246]:
+                            - generic [ref=e247]: Nach (Stunden)
+                            - spinbutton "Nach (Stunden)" [ref=e248]: "48"
+                        - generic [ref=e249] [cursor=pointer]:
+                            - checkbox "Bevorstehende Abwesenheiten — Mitarbeiter erinnern" [checked] [ref=e250]
+                            - text: Bevorstehende Abwesenheiten — Mitarbeiter erinnern
+                        - generic [ref=e252]:
+                            - generic [ref=e253]: Tage vorher
+                            - spinbutton "Tage vorher" [ref=e254]: "3"
+                - generic [ref=e255]:
+                    - generic [ref=e256] [cursor=pointer]:
+                        - checkbox "Auch auf bestehende Mitarbeiter anwenden" [ref=e257]
+                        - text: Auch auf bestehende Mitarbeiter anwenden
+                    - paragraph [ref=e258]: Erstellt neue Schedule-Versionen ab heute für alle MA mit festem Wochenmodell. Minijobber und MA mit individuellen Einstellungen bleiben unverändert.
+                - button "Globale Vorgaben speichern" [ref=e260] [cursor=pointer]
+                - generic [ref=e261]:
+                    - heading "Arbeitszeit & Urlaub pro Mitarbeiter" [level=3] [ref=e262]
+                    - paragraph [ref=e263]: Individuelle Abweichungen von der globalen Vorgabe
+                    - table [ref=e265]:
+                        - rowgroup [ref=e266]:
+                            - row "Nr. Mitarbeiter Mo Di Mi Do Fr Sa So Σ/Wo Schwelle" [ref=e267]:
+                                - columnheader "Nr." [ref=e268]
+                                - columnheader "Mitarbeiter" [ref=e269]
+                                - columnheader "Mo" [ref=e270]
+                                - columnheader "Di" [ref=e271]
+                                - columnheader "Mi" [ref=e272]
+                                - columnheader "Do" [ref=e273]
+                                - columnheader "Fr" [ref=e274]
+                                - columnheader "Sa" [ref=e275]
+                                - columnheader "So" [ref=e276]
+                                - columnheader "Σ/Wo" [ref=e277]
+                                - columnheader "Schwelle" [ref=e278]
+                                - columnheader [ref=e279]
+                        - rowgroup [ref=e280]:
+                            - row "001 Admin Clokr 8.0 8.0 8.0 8.0 8.0 0.0 0.0 40.0 h 60 h Bearbeiten" [ref=e281]:
+                                - cell "001" [ref=e282]
+                                - cell "Admin Clokr" [ref=e283]
+                                - cell "8.0" [ref=e284]
+                                - cell "8.0" [ref=e285]
+                                - cell "8.0" [ref=e286]
+                                - cell "8.0" [ref=e287]
+                                - cell "8.0" [ref=e288]
+                                - cell "0.0" [ref=e289]
+                                - cell "0.0" [ref=e290]
+                                - cell "40.0 h" [ref=e291]
+                                - cell "60 h" [ref=e292]
+                                - cell "Bearbeiten" [ref=e293]:
+                                    - button "Bearbeiten" [ref=e294] [cursor=pointer]
+                            - row "002 Max Mustermann 8.0 8.0 8.0 8.0 8.0 0.0 0.0 40.0 h 60 h Bearbeiten" [ref=e295]:
+                                - cell "002" [ref=e296]
+                                - cell "Max Mustermann" [ref=e297]
+                                - cell "8.0" [ref=e298]
+                                - cell "8.0" [ref=e299]
+                                - cell "8.0" [ref=e300]
+                                - cell "8.0" [ref=e301]
+                                - cell "8.0" [ref=e302]
+                                - cell "0.0" [ref=e303]
+                                - cell "0.0" [ref=e304]
+                                - cell "40.0 h" [ref=e305]
+                                - cell "60 h" [ref=e306]
+                                - cell "Bearbeiten" [ref=e307]:
+                                    - button "Bearbeiten" [ref=e308] [cursor=pointer]
+                            - row "003 Sebastian Zabel 0.0 h/Monat 0.0 h/Mo 60 h Bearbeiten" [ref=e309]:
+                                - cell "003" [ref=e310]
+                                - cell "Sebastian Zabel" [ref=e311]
+                                - cell "0.0 h/Monat" [ref=e312]:
+                                    - generic [ref=e313]: 0.0 h/Monat
+                                - cell "0.0 h/Mo" [ref=e314]
+                                - cell "60 h" [ref=e315]
+                                - cell "Bearbeiten" [ref=e316]:
+                                    - button "Bearbeiten" [ref=e317] [cursor=pointer]
+```

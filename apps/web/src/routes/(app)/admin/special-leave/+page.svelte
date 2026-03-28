@@ -110,6 +110,8 @@
   }
 </script>
 
+<svelte:head><title>Sonderurlaub – Clokr</title></svelte:head>
+
 <Breadcrumb items={[{ label: "Admin", href: "/admin" }, { label: "Sonderurlaub" }]} />
 
 <div class="page-header">
@@ -118,8 +120,8 @@
 </div>
 
 <p class="text-muted" style="margin-bottom:1.5rem;">
-  Gesetzliche Anlässe (§ 616 BGB) werden automatisch angelegt. Tage und Nachweis­pflicht
-  können angepasst, zusätzliche betriebliche Anlässe hinzugefügt werden.
+  Gesetzliche Anlässe (§ 616 BGB) werden automatisch angelegt. Tage und Nachweis­pflicht können
+  angepasst, zusätzliche betriebliche Anlässe hinzugefügt werden.
 </p>
 
 {#if loading}
@@ -149,18 +151,29 @@
             <td>{Number(rule.defaultDays)}</td>
             <td>{rule.requiresProof ? "Ja" : "Nein"}</td>
             <td>
-              <span class="badge" class:badge-statutory={rule.isStatutory} class:badge-custom={!rule.isStatutory}>
+              <span
+                class="badge"
+                class:badge-statutory={rule.isStatutory}
+                class:badge-custom={!rule.isStatutory}
+              >
                 {rule.isStatutory ? "Gesetzlich" : "Betrieblich"}
               </span>
             </td>
             <td>
-              <span class="status-dot" class:active={rule.isActive} class:deactivated={!rule.isActive}></span>
+              <span
+                class="status-dot"
+                class:active={rule.isActive}
+                class:deactivated={!rule.isActive}
+              ></span>
               {rule.isActive ? "Aktiv" : "Deaktiviert"}
             </td>
             <td class="actions-cell">
-              <button class="btn btn-ghost btn-sm" onclick={() => openEdit(rule)}>Bearbeiten</button>
+              <button class="btn btn-ghost btn-sm" onclick={() => openEdit(rule)}>Bearbeiten</button
+              >
               {#if !rule.isStatutory}
-                <button class="btn btn-ghost btn-sm text-danger" onclick={() => handleDelete(rule)}>Löschen</button>
+                <button class="btn btn-ghost btn-sm text-danger" onclick={() => handleDelete(rule)}
+                  >Löschen</button
+                >
               {/if}
             </td>
           </tr>
@@ -181,15 +194,33 @@
       <div class="modal-body">
         <div class="form-group">
           <label class="form-label" for="cr-name">Anlass</label>
-          <input id="cr-name" class="form-input" bind:value={createName} placeholder="z. B. Ehrenamtlicher Einsatz" />
+          <input
+            id="cr-name"
+            class="form-input"
+            bind:value={createName}
+            placeholder="z. B. Ehrenamtlicher Einsatz"
+          />
         </div>
         <div class="form-group">
           <label class="form-label" for="cr-reason">Beschreibung</label>
-          <input id="cr-reason" class="form-input" bind:value={createReason} placeholder="Optional" />
+          <input
+            id="cr-reason"
+            class="form-input"
+            bind:value={createReason}
+            placeholder="Optional"
+          />
         </div>
         <div class="form-group">
           <label class="form-label" for="cr-days">Tage</label>
-          <input id="cr-days" type="number" class="form-input" min="0.5" max="30" step="0.5" bind:value={createDays} />
+          <input
+            id="cr-days"
+            type="number"
+            class="form-input"
+            min="0.5"
+            max="30"
+            step="0.5"
+            bind:value={createDays}
+          />
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Nachweis erforderlich</span>
@@ -201,7 +232,11 @@
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick={() => (showCreate = false)}>Abbrechen</button>
-        <button class="btn btn-primary" onclick={handleCreate} disabled={creating || !createName.trim()}>
+        <button
+          class="btn btn-primary"
+          onclick={handleCreate}
+          disabled={creating || !createName.trim()}
+        >
           {creating ? "Erstellen…" : "Erstellen"}
         </button>
       </div>
@@ -224,7 +259,15 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="ed-days">Tage</label>
-          <input id="ed-days" type="number" class="form-input" min="0.5" max="30" step="0.5" bind:value={editDays} />
+          <input
+            id="ed-days"
+            type="number"
+            class="form-input"
+            min="0.5"
+            max="30"
+            step="0.5"
+            bind:value={editDays}
+          />
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Nachweis erforderlich</span>
@@ -263,8 +306,14 @@
     font-weight: 700;
   }
 
-  .table-wrap { overflow-x: auto; }
-  .table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  .table-wrap {
+    overflow-x: auto;
+  }
+  .table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
   .table th {
     text-align: left;
     padding: 0.625rem 0.75rem;
@@ -280,8 +329,12 @@
     border-bottom: 1px solid var(--color-border-subtle);
     vertical-align: middle;
   }
-  tr.inactive td { opacity: 0.5; }
-  .text-sm { font-size: 0.8125rem; }
+  tr.inactive td {
+    opacity: 0.5;
+  }
+  .text-sm {
+    font-size: 0.8125rem;
+  }
 
   .badge {
     display: inline-block;
@@ -290,8 +343,14 @@
     font-size: 0.75rem;
     font-weight: 500;
   }
-  .badge-statutory { background: var(--color-blue-bg); color: var(--color-blue); }
-  .badge-custom { background: var(--color-purple-bg); color: var(--color-purple); }
+  .badge-statutory {
+    background: var(--color-blue-bg);
+    color: var(--color-blue);
+  }
+  .badge-custom {
+    background: var(--color-purple-bg);
+    color: var(--color-purple);
+  }
 
   .status-dot {
     display: inline-block;
@@ -300,14 +359,20 @@
     border-radius: 50%;
     margin-right: 0.25rem;
   }
-  .status-dot.active { background: var(--color-green); }
-  .status-dot.deactivated { background: var(--gray-400); }
+  .status-dot.active {
+    background: var(--color-green);
+  }
+  .status-dot.deactivated {
+    background: var(--gray-400);
+  }
 
   .actions-cell {
     text-align: right;
     white-space: nowrap;
   }
-  .text-danger { color: var(--color-red) !important; }
+  .text-danger {
+    color: var(--color-red) !important;
+  }
 
   .toggle-row {
     display: flex;

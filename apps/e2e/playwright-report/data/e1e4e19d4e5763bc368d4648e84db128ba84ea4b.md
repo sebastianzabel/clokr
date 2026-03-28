@@ -1,0 +1,256 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+    - link "Zum Inhalt springen" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+    - complementary [ref=e5]:
+        - generic [ref=e6]:
+            - generic [ref=e7]:
+                - img "Clokr" [ref=e8]
+                - generic [ref=e9]: Clokr
+            - button "Benachrichtigungen" [ref=e11] [cursor=pointer]:
+                - img [ref=e12]
+                - generic [ref=e15]: "4"
+        - navigation "Hauptnavigation" [ref=e16]:
+            - link "Dashboard" [ref=e17] [cursor=pointer]:
+                - /url: /dashboard
+                - img [ref=e19]
+                - generic [ref=e22]: Dashboard
+            - link "Zeiterfassung" [ref=e23] [cursor=pointer]:
+                - /url: /time-entries
+                - img [ref=e25]
+                - generic [ref=e28]: Zeiterfassung
+            - link "Abwesenheiten" [ref=e29] [cursor=pointer]:
+                - /url: /leave
+                - img [ref=e31]
+                - generic [ref=e35]: Abwesenheiten
+            - link "Berichte" [ref=e36] [cursor=pointer]:
+                - /url: /reports
+                - img [ref=e38]
+                - generic [ref=e40]: Berichte
+            - link "Admin" [ref=e41] [cursor=pointer]:
+                - /url: /admin
+                - img [ref=e43]
+                - generic [ref=e46]: Admin
+        - generic [ref=e47]:
+            - link "admin@clokr.de Administrator" [ref=e48] [cursor=pointer]:
+                - /url: /settings
+                - generic [ref=e49]:
+                    - paragraph [ref=e50]: admin@clokr.de
+                    - paragraph [ref=e51]: Administrator
+            - button "Abmelden" [ref=e53] [cursor=pointer]:
+                - img [ref=e54]
+                - text: Abmelden
+            - paragraph [ref=e57]: vdev
+    - main [ref=e58]:
+        - generic [ref=e59]:
+            - generic [ref=e60]:
+                - heading "Guten Tag, Admin!" [level=1] [ref=e61]
+                - paragraph [ref=e62]: Samstag, 28. März 2026
+            - generic [ref=e64]:
+                - generic [ref=e67]: Ausgestempelt
+                - generic [ref=e68]: 13:34:17
+                - button "Einstempeln" [ref=e69] [cursor=pointer]
+            - link "1 offener Antrag zur Genehmigung" [ref=e70] [cursor=pointer]:
+                - /url: /leave?view=approvals
+                - generic [ref=e71]: "1"
+                - generic [ref=e72]: offener Antrag zur Genehmigung
+                - img [ref=e73]
+            - generic [ref=e75]:
+                - generic [ref=e76]:
+                    - generic [ref=e77]:
+                        - paragraph [ref=e78]: Heute
+                        - img [ref=e80]
+                    - paragraph [ref=e83]: 0,0h
+                    - paragraph [ref=e84]: 0 Einträge
+                - generic [ref=e85]:
+                    - generic [ref=e86]:
+                        - paragraph [ref=e87]: Diese Woche
+                        - img [ref=e89]
+                    - paragraph [ref=e91]: 19,5h
+                    - paragraph [ref=e92]: von 40,0h Soll
+                - generic [ref=e93]:
+                    - generic [ref=e94]:
+                        - paragraph [ref=e95]: Überstundensaldo
+                        - img [ref=e97]
+                    - paragraph [ref=e99]: "-4.5h"
+                    - paragraph [ref=e100]: Stand heute · Normal
+                - generic [ref=e101]:
+                    - generic [ref=e102]:
+                        - paragraph [ref=e103]: Resturlaub
+                        - img [ref=e105]
+                    - paragraph [ref=e107]: "30"
+                    - paragraph [ref=e108]: von 30 Tagen
+            - generic [ref=e109]:
+                - heading "Arbeitsstunden (6 Monate)" [level=3] [ref=e111]
+                - heading "Überstunden-Trend" [level=3] [ref=e115]
+                - heading "Krankheitstage (6 Monate)" [level=3] [ref=e119]
+            - generic [ref=e122]:
+                - generic [ref=e123]:
+                    - generic [ref=e124]:
+                        - heading "Team-Wochenübersicht" [level=2] [ref=e125]
+                        - paragraph [ref=e126]: "KW 13: 23.3. – 29.3."
+                    - generic [ref=e127]:
+                        - button "‹" [ref=e128] [cursor=pointer]
+                        - button "Heute" [disabled] [ref=e129]
+                        - button "›" [ref=e130] [cursor=pointer]
+                - table [ref=e132]:
+                    - rowgroup [ref=e133]:
+                        - row "Mitarbeiter Mo. 23 Di. 24 Mi. 25 Do. 26 Fr. 27 Sa. 28 So. 29" [ref=e134]:
+                            - columnheader "Mitarbeiter" [ref=e135]
+                            - columnheader "Mo. 23" [ref=e136]:
+                                - generic [ref=e137]: Mo.
+                                - text: "23"
+                            - columnheader "Di. 24" [ref=e138]:
+                                - generic [ref=e139]: Di.
+                                - text: "24"
+                            - columnheader "Mi. 25" [ref=e140]:
+                                - generic [ref=e141]: Mi.
+                                - text: "25"
+                            - columnheader "Do. 26" [ref=e142]:
+                                - generic [ref=e143]: Do.
+                                - text: "26"
+                            - columnheader "Fr. 27" [ref=e144]:
+                                - generic [ref=e145]: Fr.
+                                - text: "27"
+                            - columnheader "Sa. 28" [ref=e146]:
+                                - generic [ref=e147]: Sa.
+                                - text: "28"
+                            - columnheader "So. 29" [ref=e148]:
+                                - generic [ref=e149]: So.
+                                - text: "29"
+                    - rowgroup [ref=e150]:
+                        - row "Admin Clokr ⚠️ ⚠️ 8.5 8.5 2.5 – –" [ref=e151]:
+                            - cell "Admin Clokr" [ref=e152]
+                            - cell "⚠️" [ref=e153]:
+                                - generic "Fehlt! Arbeitstag" [ref=e154]: ⚠️
+                            - cell "⚠️" [ref=e155]:
+                                - generic "Fehlt! Arbeitstag" [ref=e156]: ⚠️
+                            - cell "8.5" [ref=e157]:
+                                - generic "8.5h gearbeitet" [ref=e158]: "8.5"
+                            - cell "8.5" [ref=e159]:
+                                - generic "8.5h gearbeitet" [ref=e160]: "8.5"
+                            - cell "2.5" [ref=e161]:
+                                - generic "2.5h gearbeitet" [ref=e162]: "2.5"
+                            - cell "–" [ref=e163]:
+                                - generic [ref=e164]: –
+                            - cell "–" [ref=e165]:
+                                - generic [ref=e166]: –
+                        - row "Max Mustermann ⚠️ ⚠️ ⚠️ ⚠️ ⚠️ – –" [ref=e167]:
+                            - cell "Max Mustermann" [ref=e168]
+                            - cell "⚠️" [ref=e169]:
+                                - generic "Fehlt! Arbeitstag" [ref=e170]: ⚠️
+                            - cell "⚠️" [ref=e171]:
+                                - generic "Fehlt! Arbeitstag" [ref=e172]: ⚠️
+                            - cell "⚠️" [ref=e173]:
+                                - generic "Fehlt! Arbeitstag" [ref=e174]: ⚠️
+                            - cell "⚠️" [ref=e175]:
+                                - generic "Fehlt! Arbeitstag" [ref=e176]: ⚠️
+                            - cell "⚠️" [ref=e177]:
+                                - generic "Fehlt! Arbeitstag" [ref=e178]: ⚠️
+                            - cell "–" [ref=e179]:
+                                - generic [ref=e180]: –
+                            - cell "–" [ref=e181]:
+                                - generic [ref=e182]: –
+                        - row "Sebastian Zabel – – – ● – – –" [ref=e183]:
+                            - cell "Sebastian Zabel" [ref=e184]
+                            - cell "–" [ref=e185]:
+                                - generic [ref=e186]: –
+                            - cell "–" [ref=e187]:
+                                - generic [ref=e188]: –
+                            - cell "–" [ref=e189]:
+                                - generic [ref=e190]: –
+                            - cell "●" [ref=e191]:
+                                - generic "Eingestempelt" [ref=e192]: ●
+                            - cell "–" [ref=e193]:
+                                - generic [ref=e194]: –
+                            - cell "–" [ref=e195]:
+                                - generic [ref=e196]: –
+                            - cell "–" [ref=e197]:
+                                - generic [ref=e198]: –
+                - generic [ref=e199]:
+                    - generic [ref=e200]:
+                        - generic [ref=e201]: "5.0"
+                        - text: Anwesend
+                    - generic [ref=e202]:
+                        - generic [ref=e203]: ●
+                        - text: Eingestempelt
+                    - generic [ref=e204]:
+                        - generic [ref=e205]: 🌴
+                        - text: Urlaub
+                    - generic [ref=e206]:
+                        - generic [ref=e207]: 🤒
+                        - text: Krank
+                    - generic [ref=e208]:
+                        - generic [ref=e209]: ⚠️
+                        - text: Fehlt
+                    - generic [ref=e210]:
+                        - generic [ref=e211]: 9–17
+                        - text: Geplant
+                    - generic [ref=e212]:
+                        - generic [ref=e213]: –
+                        - text: Keine Daten
+    - dialog "Schnellsuche" [ref=e215]:
+        - generic [ref=e216]:
+            - img [ref=e217]
+            - textbox "Suche" [active] [ref=e220]:
+                - /placeholder: Suchen oder navigieren...
+            - generic [ref=e221]: ESC
+        - generic [ref=e222]:
+            - generic [ref=e223]: Navigation
+            - button "Dashboard Zur Startseite" [ref=e224] [cursor=pointer]:
+                - img [ref=e226]
+                - generic [ref=e229]:
+                    - generic [ref=e230]: Dashboard
+                    - generic [ref=e231]: Zur Startseite
+                - img [ref=e232]
+            - button "Zeiteinträge Arbeitszeiten verwalten" [ref=e234] [cursor=pointer]:
+                - img [ref=e236]
+                - generic [ref=e239]:
+                    - generic [ref=e240]: Zeiteinträge
+                    - generic [ref=e241]: Arbeitszeiten verwalten
+                - img [ref=e242]
+            - button "Abwesenheiten Urlaub & Krankmeldungen" [ref=e244] [cursor=pointer]:
+                - img [ref=e246]
+                - generic [ref=e248]:
+                    - generic [ref=e249]: Abwesenheiten
+                    - generic [ref=e250]: Urlaub & Krankmeldungen
+                - img [ref=e251]
+            - button "Berichte Auswertungen & Exporte" [ref=e253] [cursor=pointer]:
+                - img [ref=e255]
+                - generic [ref=e257]:
+                    - generic [ref=e258]: Berichte
+                    - generic [ref=e259]: Auswertungen & Exporte
+                - img [ref=e260]
+            - button "Admin Verwaltung" [ref=e262] [cursor=pointer]:
+                - img [ref=e264]
+                - generic [ref=e267]:
+                    - generic [ref=e268]: Admin
+                    - generic [ref=e269]: Verwaltung
+                - img [ref=e270]
+            - generic [ref=e272]: Admin
+            - button "Schichtplan Schichten verwalten" [ref=e273] [cursor=pointer]:
+                - img [ref=e275]
+                - generic [ref=e277]:
+                    - generic [ref=e278]: Schichtplan
+                    - generic [ref=e279]: Schichten verwalten
+                - img [ref=e280]
+            - button "Urlaub & Zeiten Arbeitszeiten konfigurieren" [ref=e282] [cursor=pointer]:
+                - img [ref=e284]
+                - generic [ref=e287]:
+                    - generic [ref=e288]: Urlaub & Zeiten
+                    - generic [ref=e289]: Arbeitszeiten konfigurieren
+                - img [ref=e290]
+        - generic [ref=e292]:
+            - generic [ref=e293]:
+                - generic [ref=e294]: ↑
+                - generic [ref=e295]: ↓
+                - text: Navigieren
+            - generic [ref=e296]:
+                - generic [ref=e297]: ↵
+                - text: Öffnen
+            - generic [ref=e298]:
+                - generic [ref=e299]: ESC
+                - text: Schließen
+```
