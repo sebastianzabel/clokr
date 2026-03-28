@@ -1,0 +1,18 @@
+name: Dependabot Auto-Approve
+
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  auto-approve:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Approve Dependabot PR
+        run: gh pr review "$PR_URL" --approve --body "Auto-approved (Dependabot). CI muss noch grün sein — dann bitte manuell mergen."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
