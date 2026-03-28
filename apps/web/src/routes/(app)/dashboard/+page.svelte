@@ -719,7 +719,7 @@
 
     <div class="stat-card card-animate">
       <div class="stat-header-row">
-        <p class="stat-label">Überstundensaldo</p>
+        <p class="stat-label">Überstunden</p>
         <span class="stat-icon stat-icon--brand">
           <svg
             xmlns="http://www.w3.org/2000/svg"
