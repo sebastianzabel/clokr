@@ -901,6 +901,10 @@
 
   .mobile-nav-label {
     line-height: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
   /* ── Mobile Header ────────────────────────────────────────────────── */
