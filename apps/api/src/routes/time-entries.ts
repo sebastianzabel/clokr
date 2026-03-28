@@ -342,6 +342,68 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       };
 
       if (txResult.action === "OUT") {
+        // Auto-break after NFC clock-out (if no breaks exist)
+        const clockedOutEntryId = txResult.merged ? txResult.auditEntityId : txResult.updated.id;
+        const existingBreaks = await app.prisma.break.findMany({
+          where: { timeEntryId: clockedOutEntryId },
+        });
+        const manualBreakMin = existingBreaks.reduce(
+          (s, b) => s + Math.round((b.endTime.getTime() - b.startTime.getTime()) / 60000),
+          0,
+        );
+
+        if (manualBreakMin === 0) {
+          const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+          if (tenantConfig?.autoBreakEnabled) {
+            const entryForBreak = await app.prisma.timeEntry.findUnique({
+              where: { id: clockedOutEntryId },
+            });
+            if (entryForBreak?.startTime && entryForBreak?.endTime) {
+              const workDurationMin =
+                (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 60000;
+              let autoBreakMin = 0;
+              if (workDurationMin > 9 * 60) autoBreakMin = 45;
+              else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+
+              if (autoBreakMin > 0) {
+                let breakStartTime: Date;
+                if (tenantConfig.defaultBreakStart) {
+                  const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+                  breakStartTime = new Date(entryForBreak.startTime);
+                  breakStartTime.setHours(hh, mm, 0, 0);
+                  if (
+                    breakStartTime <= entryForBreak.startTime ||
+                    breakStartTime >= entryForBreak.endTime
+                  ) {
+                    const midMs =
+                      entryForBreak.startTime.getTime() +
+                      (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 2;
+                    breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+                  }
+                } else {
+                  const midMs =
+                    entryForBreak.startTime.getTime() +
+                    (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 2;
+                  breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+                }
+                const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+
+                await app.prisma.break.create({
+                  data: {
+                    timeEntryId: clockedOutEntryId,
+                    startTime: breakStartTime,
+                    endTime: breakEndTime,
+                  },
+                });
+                await app.prisma.timeEntry.update({
+                  where: { id: clockedOutEntryId },
+                  data: { breakMinutes: autoBreakMin },
+                });
+              }
+            }
+          }
+        }
+
         await updateOvertimeAccount(app, employee.id);
 
         if (txResult.merged) {
@@ -511,18 +573,73 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (entry.endTime) return reply.code(409).send({ error: "Bereits ausgestempelt" });
 
       const now = new Date();
-      const updated = await app.prisma.timeEntry.update({
+      const initialBreakMinutes = body.breakMinutes ?? 0;
+
+      await app.prisma.timeEntry.update({
         where: { id },
         data: {
           endTime: now,
-          breakMinutes: body.breakMinutes,
+          breakMinutes: initialBreakMinutes,
           note: body.note,
         },
       });
 
+      // Auto-break on clock-out if no manual breaks provided
+      if (initialBreakMinutes === 0) {
+        const targetEmployee = await app.prisma.employee.findUnique({
+          where: { id: entry.employeeId },
+        });
+        const tenantConfig = targetEmployee
+          ? await app.prisma.tenantConfig.findUnique({
+              where: { tenantId: targetEmployee.tenantId },
+            })
+          : null;
+
+        if (tenantConfig?.autoBreakEnabled) {
+          const workDurationMin = (now.getTime() - entry.startTime.getTime()) / 60000;
+          let autoBreakMin = 0;
+          if (workDurationMin > 9 * 60) autoBreakMin = 45;
+          else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+
+          if (autoBreakMin > 0) {
+            let breakStartTime: Date;
+            if (tenantConfig.defaultBreakStart) {
+              const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+              breakStartTime = new Date(entry.startTime);
+              breakStartTime.setHours(hh, mm, 0, 0);
+              if (breakStartTime <= entry.startTime || breakStartTime >= now) {
+                const midMs =
+                  entry.startTime.getTime() + (now.getTime() - entry.startTime.getTime()) / 2;
+                breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+              }
+            } else {
+              const midMs =
+                entry.startTime.getTime() + (now.getTime() - entry.startTime.getTime()) / 2;
+              breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+            }
+            const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+
+            await app.prisma.break.create({
+              data: { timeEntryId: id, startTime: breakStartTime, endTime: breakEndTime },
+            });
+            await app.prisma.timeEntry.update({
+              where: { id },
+              data: { breakMinutes: autoBreakMin },
+            });
+            // breakMinutes updated in DB above
+          }
+        }
+      }
+
       await updateOvertimeAccount(app, entry.employeeId);
 
       const warnings = await checkArbZG(app.prisma, entry.employeeId, entry.date);
+
+      // Re-fetch with breaks for response
+      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
+        where: { id },
+        include: { breaks: { orderBy: { startTime: "asc" } } },
+      });
 
       await app.audit({
         userId: req.user.sub,
@@ -530,10 +647,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: entry,
-        newValue: updated,
+        newValue: entryWithBreaks,
       });
 
-      return { success: true, entry: updated, warnings };
+      return { success: true, entry: entryWithBreaks, warnings };
     },
   });
 

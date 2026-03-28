@@ -115,7 +115,7 @@ model TenantConfig {
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
-  autoDeleteOpenHours    Int @default(14)  // Stunden nach denen offene Einträge auto-gelöscht werden (0 = deaktiviert)
+  autoDeleteOpenHours    Int @default(14)  // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
   // Pausen-Slots
   autoBreakEnabled       Boolean @default(false)
   defaultBreakStart      String? @db.VarChar(5)  // e.g. "12:00"
