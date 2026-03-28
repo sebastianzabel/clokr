@@ -272,7 +272,23 @@
       <div class="sidebar-footer">
         {#if $authStore.user}
           <div class="sidebar-user">
-            <div class="sidebar-user-avatar" aria-hidden="true">
+            {#if $authStore.user.employeeId}
+              <img
+                src="/api/v1/avatars/{$authStore.user.employeeId}"
+                alt=""
+                class="sidebar-user-avatar-img"
+                onerror={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none";
+                  if (e.target instanceof HTMLElement && e.target.nextElementSibling)
+                    (e.target.nextElementSibling as HTMLElement).style.display = "flex";
+                }}
+              />
+            {/if}
+            <div
+              class="sidebar-user-avatar"
+              aria-hidden="true"
+              style={$authStore.user.employeeId ? "display:none" : ""}
+            >
               {($authStore.user.email[0] ?? "?").toUpperCase()}
             </div>
             <div class="sidebar-user-info">
@@ -700,6 +716,14 @@
     align-items: center;
     gap: 0.625rem;
     min-width: 0;
+  }
+
+  .sidebar-user-avatar-img {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
   }
 
   .sidebar-user-avatar {

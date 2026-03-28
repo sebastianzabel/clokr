@@ -195,6 +195,7 @@ model Employee {
   firstName        String
   lastName         String
   nfcCardId        String?  @unique  // NFC Karten-ID
+  avatarPath       String?            // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   hireDate         DateTime @db.Timestamptz
   exitDate         DateTime? @db.Timestamptz
   createdAt        DateTime @default(now()) @db.Timestamptz
