@@ -2731,7 +2731,8 @@
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.3rem 0.625rem;
+    padding: 0.375rem 0.625rem;
+    min-height: 32px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: transparent;

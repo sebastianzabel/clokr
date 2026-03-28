@@ -4,41 +4,41 @@
 :root,
 [data-theme="pflaume"] {
   /* Brand — based on Traumhaarvilla Corporate Design */
-  --color-brand: #80377B;
-  --color-brand-dark: #5A1F6E;
-  --color-brand-light: #A85CA3;
-  --color-brand-tint: #FDF5FD;
-  --color-brand-tint-hover: #F0E6EF;
+  --color-brand: #80377b;
+  --color-brand-dark: #5a1f6e;
+  --color-brand-light: #a85ca3;
+  --color-brand-tint: #fdf5fd;
+  --color-brand-tint-hover: #f0e6ef;
 
   /* Surfaces */
   --color-surface: #ffffff;
   --color-surface-raised: #ffffff;
 
   /* Background — warm tones from CD */
-  --color-bg: #FAF9F7;
-  --color-bg-subtle: #F5F3EF;
-  --color-bg-muted: #E8E0EA;
+  --color-bg: #faf9f7;
+  --color-bg-subtle: #f5f3ef;
+  --color-bg-muted: #e8e0ea;
 
   /* Text — warm stone tones from CD */
-  --color-text: #44403C;
-  --color-text-muted: #78746C;
-  --color-text-heading: #1C1917;
+  --color-text: #44403c;
+  --color-text-muted: #78746c;
+  --color-text-heading: #1c1917;
 
   /* Border */
-  --color-border: #E8E0EA;
-  --color-border-subtle: #F0E6EF;
+  --color-border: #e8e0ea;
+  --color-border-subtle: #f0e6ef;
 
   /* Gray scale — warm plum-tinted neutrals */
-  --gray-50: #FAF9F7;
-  --gray-100: #F5F3EF;
-  --gray-200: #E8E0EA;
-  --gray-300: #D5CED8;
-  --gray-400: #A8A49C;
-  --gray-500: #78746C;
-  --gray-600: #5C5650;
-  --gray-700: #44403C;
-  --gray-800: #2A2624;
-  --gray-900: #1C1917;
+  --gray-50: #faf9f7;
+  --gray-100: #f5f3ef;
+  --gray-200: #e8e0ea;
+  --gray-300: #d5ced8;
+  --gray-400: #a8a49c;
+  --gray-500: #78746c;
+  --gray-600: #5c5650;
+  --gray-700: #44403c;
+  --gray-800: #2a2624;
+  --gray-900: #1c1917;
 
   /* Status colors */
   --color-green: #16a34a;
@@ -53,9 +53,9 @@
   --color-blue: #2563eb;
   --color-blue-bg: #eff6ff;
   --color-blue-border: #bfdbfe;
-  --color-purple: #80377B;
-  --color-purple-bg: #FDF5FD;
-  --color-purple-border: #E8C8E5;
+  --color-purple: #80377b;
+  --color-purple-bg: #fdf5fd;
+  --color-purple-border: #e8c8e5;
   --color-orange: #c2410c;
   --color-orange-bg: #fff7ed;
   --color-orange-border: #fed7aa;
@@ -85,7 +85,7 @@
   /* Sidebar */
   --sidebar-bg: #ffffff;
   --sidebar-border: var(--color-border);
-  --sidebar-brand-gradient: linear-gradient(180deg, #ffffff 0%, #FDF5FD 50%, #F0E6EF 100%);
+  --sidebar-brand-gradient: linear-gradient(180deg, #ffffff 0%, #fdf5fd 50%, #f0e6ef 100%);
   --nav-active-bg: var(--color-brand-tint);
   --nav-active-color: var(--color-brand);
   --nav-active-border: var(--color-brand);
@@ -106,9 +106,9 @@
 
 [data-theme="nacht"] {
   /* Brand — plum CD colors adapted for dark mode */
-  --color-brand: #A85CA3;
-  --color-brand-dark: #80377B;
-  --color-brand-light: #D8B4D8;
+  --color-brand: #a85ca3;
+  --color-brand-dark: #80377b;
+  --color-brand-light: #d8b4d8;
   --color-brand-tint: rgba(168, 92, 163, 0.12);
   --color-brand-tint-hover: rgba(168, 92, 163, 0.2);
 
@@ -149,7 +149,7 @@
   --color-blue: #58a6ff;
   --color-blue-bg: rgba(88, 166, 255, 0.1);
   --color-blue-border: rgba(88, 166, 255, 0.25);
-  --color-purple: #D8B4D8;
+  --color-purple: #d8b4d8;
   --color-purple-bg: rgba(168, 92, 163, 0.1);
   --color-purple-border: rgba(168, 92, 163, 0.25);
   --color-orange: #f0883e;
@@ -168,8 +168,8 @@
   --sidebar-border: rgba(255, 255, 255, 0.06);
   --sidebar-brand-gradient: linear-gradient(180deg, #0d1117 0%, #131920 50%, #161b22 100%);
   --nav-active-bg: rgba(168, 92, 163, 0.12);
-  --nav-active-color: #A85CA3;
-  --nav-active-border: #80377B;
+  --nav-active-color: #a85ca3;
+  --nav-active-border: #80377b;
 
   /* Glass surfaces */
   --glass-bg: rgba(22, 27, 34, 0.97);
@@ -500,6 +500,7 @@ button {
 .btn-sm {
   padding: 0.4rem 0.85rem;
   font-size: 0.875rem;
+  min-height: 32px; /* Touch target minimum */
 }
 
 .btn-danger {
@@ -760,6 +761,7 @@ select.form-input {
 }
 
 /* ─── Data Table ─────────────────────────────────────────────────────── */
+.table-wrap,
 .table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
