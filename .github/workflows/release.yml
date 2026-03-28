@@ -41,7 +41,7 @@ jobs:
           echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
 
       - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.5
 
       - name: Promote API image
         run: |
