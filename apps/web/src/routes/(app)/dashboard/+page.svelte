@@ -646,7 +646,18 @@
       <div class="stat-header-row">
         <p class="stat-label">Heute</p>
         <span class="stat-icon stat-icon--brand">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg
+          >
         </span>
       </div>
       <p class="stat-value font-mono stat-value-animate">
@@ -671,7 +682,23 @@
       <div class="stat-header-row">
         <p class="stat-label">Diese Woche</p>
         <span class="stat-icon stat-icon--brand">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line
+              x1="16"
+              y1="2"
+              x2="16"
+              y2="6"
+            /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg
+          >
         </span>
       </div>
       <p class="stat-value font-mono stat-value-animate">
@@ -694,7 +721,17 @@
       <div class="stat-header-row">
         <p class="stat-label">Überstundensaldo</p>
         <span class="stat-icon stat-icon--brand">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg
+          >
         </span>
       </div>
       <p class="stat-value {overtimeClass} font-mono stat-value-animate">
@@ -714,7 +751,18 @@
       <div class="stat-header-row">
         <p class="stat-label">Resturlaub</p>
         <span class="stat-icon stat-icon--brand">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" /></svg
+          >
         </span>
       </div>
       <p class="stat-value font-mono stat-value-animate">
@@ -1408,17 +1456,21 @@
   @media (max-width: 480px) {
     .clock-main-row {
       flex-direction: column;
-      align-items: stretch;
-      gap: 0.75rem;
+      align-items: center;
+      gap: 0.5rem;
     }
     .clock-btn {
       margin-left: 0;
+      width: 100%;
+      padding: 0.625rem 1rem;
+      font-size: 0.9375rem;
     }
     .clock-status {
       justify-content: center;
     }
     .clock-time {
       text-align: center;
+      font-size: 2rem;
     }
   }
 </style>

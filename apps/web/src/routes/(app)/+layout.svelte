@@ -850,18 +850,25 @@
     border-top: 1px solid var(--color-border);
     z-index: 100;
     padding: 0.25rem 0;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .mobile-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .mobile-nav-item {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.2rem;
-    padding: 0.5rem 0.25rem;
+    gap: 0.15rem;
+    padding: 0.375rem 0.125rem;
     text-decoration: none;
     color: var(--color-text-muted);
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     font-weight: 500;
     transition: color 0.12s;
   }
