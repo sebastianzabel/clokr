@@ -42,19 +42,21 @@
 
   <div class="admin-header">
     <h1 class="admin-title">Administration</h1>
-    <nav class="admin-tabs" aria-label="Admin-Navigation">
-      {#each tabs as tab}
-        {@const active = pathname === tab.href || pathname.startsWith(tab.href + "/")}
-        <a
-          href={tab.href}
-          class="admin-tab"
-          class:admin-tab--active={active}
-          aria-current={active ? "page" : undefined}
-        >
-          {tab.label}
-        </a>
-      {/each}
-    </nav>
+    <div class="admin-tabs-wrap">
+      <nav class="admin-tabs" aria-label="Admin-Navigation">
+        {#each tabs as tab}
+          {@const active = pathname === tab.href || pathname.startsWith(tab.href + "/")}
+          <a
+            href={tab.href}
+            class="admin-tab"
+            class:admin-tab--active={active}
+            aria-current={active ? "page" : undefined}
+          >
+            {tab.label}
+          </a>
+        {/each}
+      </nav>
+    </div>
   </div>
 
   <div class="admin-content">
@@ -78,23 +80,41 @@
     margin: 0 0 1.25rem;
   }
 
+  .admin-tabs-wrap {
+    position: relative;
+  }
+  .admin-tabs-wrap::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 2px;
+    width: 2rem;
+    background: linear-gradient(to right, transparent, var(--color-surface));
+    pointer-events: none;
+    z-index: 1;
+  }
   .admin-tabs {
     display: flex;
     gap: 0;
     border-bottom: 2px solid var(--color-border);
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; /* Firefox */
-    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: thin;
+    padding-right: 2rem; /* Space for fade gradient */
   }
 
   .admin-tabs::-webkit-scrollbar {
-    display: none; /* Chrome/Safari */
+    height: 3px;
+  }
+  .admin-tabs::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 3px;
   }
 
   .admin-tab {
     padding: 0.625rem 1.25rem;
-    font-size: 0.9rem;
+    font-size: 0.875rem;
     font-weight: 500;
     color: var(--color-text-muted);
     text-decoration: none;
