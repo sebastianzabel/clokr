@@ -8,7 +8,9 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
 COPY packages/types/package.json ./packages/types/
 
-RUN pnpm install --frozen-lockfile
+# Install deps — use --ignore-scripts to prevent QEMU crashes with native modules (sharp)
+# during cross-platform builds. Native binaries are rebuilt in the runtime stage.
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # ── Stage 2: Build ──────────────────────────────────────────────────────────
 FROM deps AS build
@@ -39,6 +41,10 @@ COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
 COPY --from=build /app/pnpm-lock.yaml ./
+
+# Rebuild native modules (sharp, prisma) for the runtime platform
+# This ensures correct binaries after cross-platform build with --ignore-scripts
+RUN pnpm rebuild sharp 2>/dev/null || npm rebuild sharp 2>/dev/null || true
 
 # Create non-root user
 RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001
