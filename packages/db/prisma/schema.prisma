@@ -94,6 +94,10 @@ model TenantConfig {
   // Teilzeit-Urlaub
   autoCalcPartTimeVacation Boolean @default(true) // Automatische Pro-Rata Berechnung
   fullTimeWorkDaysPerWeek  Int    @default(5)     // Referenz für Vollzeit (5 oder 6)
+  // Carry-Over / Mindesturlaub (§ 3 + § 7 BUrlG)
+  enforceMinVacation       Boolean @default(true) // Warn when statutory minimum not taken
+  carryOverRequiresReason  Boolean @default(true) // Carry-over beyond allowed needs documented reason
+  vacationReminderStartMonth Int   @default(10)   // Month to start vacation expiry reminders (1-12)
 
   // E-Mail-Benachrichtigungen
   emailNotificationsEnabled  Boolean @default(false) // Master switch
@@ -399,6 +403,8 @@ model LeaveEntitlement {
   usedDays          Decimal  @db.Decimal(5, 2) @default(0)
   carriedOverDays   Decimal  @db.Decimal(5, 2) @default(0)  // Resturlaub Vorjahr
   carryOverDeadline DateTime? @db.Timestamptz // bis wann Resturlaub genommen werden muss
+  carryOverReason   String?   // ILLNESS | OPERATIONAL | OTHER (null = automatic)
+  carryOverNote     String?   // Freitext-Begründung für Übertrag
   isAutoCalculated  Boolean  @default(false)  // Was this entitlement auto-calculated for part-time?
   createdAt         DateTime @default(now()) @db.Timestamptz
   updatedAt         DateTime @updatedAt      @db.Timestamptz

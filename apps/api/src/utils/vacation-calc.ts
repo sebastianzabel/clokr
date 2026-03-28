@@ -49,3 +49,79 @@ export function calculatePartTimeVacation(
   // Round to nearest 0.5 (German standard: always round UP to nearest 0.5)
   return Math.ceil(raw * 2) / 2;
 }
+
+/**
+ * Calculate statutory minimum vacation days per § 3 BUrlG.
+ * Formula: Arbeitstage/Woche × 4
+ * (24 Werktage based on 6-day week, pro-rata for fewer days)
+ */
+export function calculateStatutoryMinimum(workDaysPerWeek: number): number {
+  return workDaysPerWeek * 4;
+}
+
+/**
+ * Calculate how many work days fall in each year for a cross-year date range.
+ * Only counts Mon-Fri (or configured work days) and excludes holidays.
+ */
+export function splitDaysAcrossYears(
+  startDate: Date,
+  endDate: Date,
+  halfDay: boolean,
+  holidays: Set<string>,
+): { year1Days: number; year2Days: number; year1: number; year2: number } {
+  const year1 = startDate.getFullYear();
+  const year2 = endDate.getFullYear();
+
+  if (year1 === year2) {
+    // No split needed
+    return {
+      year1Days: countWorkDaysInRange(startDate, endDate, halfDay, holidays),
+      year2Days: 0,
+      year1,
+      year2,
+    };
+  }
+
+  // Year boundary: Dec 31 → Jan 1
+  const year1End = new Date(year1, 11, 31); // Dec 31
+  const year2Start = new Date(year2, 0, 1); // Jan 1
+
+  const year1Days = countWorkDaysInRange(startDate, year1End, false, holidays);
+  const year2Days = countWorkDaysInRange(year2Start, endDate, false, holidays);
+
+  // If halfDay: apply to the shorter portion
+  if (halfDay) {
+    if (year1Days <= year2Days) {
+      return { year1Days: Math.max(0, year1Days - 0.5), year2Days, year1, year2 };
+    } else {
+      return { year1Days, year2Days: Math.max(0, year2Days - 0.5), year1, year2 };
+    }
+  }
+
+  return { year1Days, year2Days, year1, year2 };
+}
+
+/** Count work days (Mon-Fri, excluding holidays) in a date range. */
+function countWorkDaysInRange(
+  start: Date,
+  end: Date,
+  halfDay: boolean,
+  holidays: Set<string>,
+): number {
+  let count = 0;
+  const current = new Date(start);
+  current.setHours(0, 0, 0, 0);
+  const endDate = new Date(end);
+  endDate.setHours(0, 0, 0, 0);
+
+  while (current <= endDate) {
+    const dow = current.getDay();
+    const dateStr = current.toISOString().split("T")[0];
+    if (dow !== 0 && dow !== 6 && !holidays.has(dateStr)) {
+      count++;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return halfDay ? Math.max(0, count - 0.5) : count;
+}

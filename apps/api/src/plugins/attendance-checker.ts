@@ -338,14 +338,22 @@ export const attendanceCheckerPlugin = fp(async (app) => {
         if (pendingRequests.length === 0) continue;
 
         const managers = await app.prisma.user.findMany({
-          where: { role: { in: ["ADMIN", "MANAGER"] }, isActive: true, employee: { tenantId: tenant.id } },
+          where: {
+            role: { in: ["ADMIN", "MANAGER"] },
+            isActive: true,
+            employee: { tenantId: tenant.id },
+          },
           select: { id: true },
         });
 
         for (const req of pendingRequests) {
           for (const mgr of managers) {
             const existing = await app.prisma.notification.findFirst({
-              where: { userId: mgr.id, type: "PENDING_LEAVE_REMINDER", link: `/leave?request=${req.id}` },
+              where: {
+                userId: mgr.id,
+                type: "PENDING_LEAVE_REMINDER",
+                link: `/leave?request=${req.id}`,
+              },
             });
             if (existing) continue;
 
@@ -397,7 +405,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
         });
 
         for (const req of upcoming) {
-          const startStr = req.startDate.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+          const startStr = req.startDate.toLocaleDateString("de-DE", {
+            day: "2-digit",
+            month: "2-digit",
+          });
           const dedupLink = `/leave?request=${req.id}&reminder=upcoming`;
 
           const existing = await app.prisma.notification.findFirst({
@@ -417,6 +428,65 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       }
     } catch (err) {
       app.log.error({ err }, "Reminder: Fehler bei bevorstehenden Abwesenheiten");
+    }
+  }
+
+  /**
+   * Feature 6: Vacation expiry reminder (Hinweispflicht § 7 BUrlG / EuGH C-684/16).
+   * Runs daily. In Q4 (from configured month), warns employees about expiring vacation.
+   */
+  async function checkVacationExpiry() {
+    app.log.info("Reminder: Prüfe verfallenden Urlaub");
+    try {
+      const currentMonth = new Date().getMonth() + 1; // 1-12
+      const currentYear = new Date().getFullYear();
+
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
+        const startMonth = cfg?.vacationReminderStartMonth ?? 10;
+        if (currentMonth < startMonth) continue;
+
+        // Find employees with unused vacation this year
+        const entitlements = await app.prisma.leaveEntitlement.findMany({
+          where: {
+            year: currentYear,
+            employee: { tenantId: tenant.id },
+            leaveType: { name: "Urlaub" },
+          },
+          include: {
+            employee: { select: { id: true, userId: true, firstName: true } },
+          },
+        });
+
+        for (const ent of entitlements) {
+          const total = Number(ent.totalDays) + Number(ent.carriedOverDays);
+          const used = Number(ent.usedDays);
+          const remaining = total - used;
+          if (remaining <= 0) continue;
+
+          // Deduplicate: one reminder per month
+          const dedupLink = `/leave?reminder=expiry-${currentYear}-${currentMonth}`;
+          const existing = await app.prisma.notification.findFirst({
+            where: { userId: ent.employee.userId, type: "VACATION_EXPIRY", link: dedupLink },
+          });
+          if (existing) continue;
+
+          const urgency =
+            currentMonth >= 12 ? "Letzter Monat" : currentMonth >= 11 ? "Dringend" : "Hinweis";
+
+          await app.notify({
+            userId: ent.employee.userId,
+            type: "VACATION_EXPIRY",
+            title: `${urgency}: ${remaining} Urlaubstage verfallen bald`,
+            message: `Du hast noch ${remaining} Urlaubstage in ${currentYear}. Nicht genommener Urlaub verfällt am ${cfg?.carryOverDeadlineDay ?? 31}.${cfg?.carryOverDeadlineMonth ?? 3}.${currentYear + 1}.`,
+            link: dedupLink,
+            tenantId: tenant.id,
+          });
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Reminder: Fehler bei Urlaubsverfall-Prüfung");
     }
   }
 
@@ -466,6 +536,15 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       });
       tasks.push(upcomingTask);
       app.log.info("Reminder: Bevorstehende Abwesenheiten geplant (täglich 08:00)");
+
+      // Vacation expiry: daily at 10:00
+      const expiryTask = cron.schedule("0 10 * * *", () => {
+        checkVacationExpiry().catch((err) =>
+          app.log.error({ err }, "Reminder: Urlaubsverfall Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(expiryTask);
+      app.log.info("Reminder: Urlaubsverfall-Prüfung geplant (täglich 10:00)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }
