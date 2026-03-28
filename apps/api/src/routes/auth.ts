@@ -390,6 +390,58 @@ export async function authRoutes(app: FastifyInstance) {
       };
     },
   });
+
+  // POST /api/v1/auth/change-password — authenticated user changes own password
+  app.post("/change-password", {
+    config: { rateLimit: { max: 5, timeWindow: "15 minutes" } },
+    schema: { tags: ["Auth"], security: [{ bearerAuth: [] }] },
+    preHandler: async (req, reply) => {
+      try {
+        await req.jwtVerify();
+      } catch {
+        return reply.code(401).send({ error: "Unauthorized" });
+      }
+    },
+    handler: async (req, reply) => {
+      const body = z
+        .object({
+          currentPassword: z.string().min(1),
+          newPassword: z.string().min(8),
+        })
+        .parse(req.body);
+
+      const user = await app.prisma.user.findUnique({
+        where: { id: req.user.sub },
+        include: { employee: true },
+      });
+      if (!user) return reply.code(404).send({ error: "Benutzer nicht gefunden" });
+
+      const valid = await bcrypt.compare(body.currentPassword, user.passwordHash);
+      if (!valid) return reply.code(400).send({ error: "Aktuelles Passwort ist falsch" });
+
+      // Validate against tenant password policy
+      if (user.employee?.tenantId) {
+        const policy = await loadPasswordPolicy(app, user.employee.tenantId);
+        const check = validatePassword(body.newPassword, policy);
+        if (!check.valid) {
+          return reply.code(400).send({ error: check.errors.join(". ") });
+        }
+      }
+
+      const passwordHash = await bcrypt.hash(body.newPassword, 12);
+      await app.prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+      await app.audit({
+        userId: user.id,
+        action: "PASSWORD_CHANGE",
+        entity: "User",
+        entityId: user.id,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return { success: true };
+    },
+  });
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
