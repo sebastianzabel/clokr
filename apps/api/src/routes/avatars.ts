@@ -62,10 +62,9 @@ export async function avatarRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/avatars/:employeeId — serve avatar
+  // GET /api/v1/avatars/:employeeId — serve avatar (no auth — used in <img> tags)
   app.get("/:employeeId", {
-    schema: { tags: ["Avatare"], security: [{ bearerAuth: [] }] },
-    preHandler: requireAuth,
+    schema: { tags: ["Avatare"] },
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
