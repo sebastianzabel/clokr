@@ -102,6 +102,11 @@ model TenantConfig {
   emailOnMissingEntries      Boolean @default(false) // Fehlende Zeiteinträge
   emailOnClockOutReminder    Boolean @default(false) // Vergessene Stempelung
   emailOnMonthClose          Boolean @default(true)  // Monatsabschluss
+  // Automatische Erinnerungen
+  reminderPendingLeaveHours    Int     @default(48)   // Manager erinnern nach X Stunden ohne Reaktion
+  reminderUpcomingAbsenceDays  Int     @default(3)    // MA erinnern X Tage vor Abwesenheit
+  reminderPendingLeaveEnabled  Boolean @default(true)
+  reminderUpcomingAbsenceEnabled Boolean @default(true)
   // Benachrichtigungen
   clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
   missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird

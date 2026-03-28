@@ -49,6 +49,11 @@ const tenantConfigSchema = z.object({
   // Part-time vacation
   autoCalcPartTimeVacation: z.boolean().optional(),
   fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
+  // Reminders
+  reminderPendingLeaveHours: z.number().int().min(1).max(720).optional(),
+  reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
+  reminderPendingLeaveEnabled: z.boolean().optional(),
+  reminderUpcomingAbsenceEnabled: z.boolean().optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -125,6 +130,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         sickNoteRequiredAfterDays: 3,
         autoCalcPartTimeVacation: true,
         fullTimeWorkDaysPerWeek: 5,
+        reminderPendingLeaveHours: 48,
+        reminderUpcomingAbsenceDays: 3,
+        reminderPendingLeaveEnabled: true,
+        reminderUpcomingAbsenceEnabled: true,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
