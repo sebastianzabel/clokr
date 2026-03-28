@@ -100,7 +100,7 @@
   let gApplyToExisting = $state(false);
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
-  let gAutoDeleteHours = $state(14);
+  let gAutoInvalidateHours = $state(14);
 
   // Abwesenheits-Konfiguration
   let christmasEveRule = $state("NORMAL");
@@ -185,7 +185,7 @@
       gDefaultBreakStart = cfg.defaultBreakStart ?? "12:00";
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
-      gAutoDeleteHours = cfg.autoDeleteOpenHours ?? 14;
+      gAutoInvalidateHours = cfg.autoDeleteOpenHours ?? 14;
 
       // Leave/overtime config
       christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
@@ -244,7 +244,7 @@
         applyToExisting: gApplyToExisting,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
-        autoDeleteOpenHours: gAutoDeleteHours,
+        autoDeleteOpenHours: gAutoInvalidateHours,
         christmasEveRule,
         newYearsEveRule,
         holidayRulesValidFromYear,
@@ -666,24 +666,24 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="g-autodelete-hours"
-            >Auto-Löschung offener Einträge (Stunden, 0 = deaktiviert)</label
+          <label class="form-label" for="g-autoinvalidate-hours"
+            >Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)</label
           >
           <div class="input-suffix-wrap">
             <input
-              id="g-autodelete-hours"
+              id="g-autoinvalidate-hours"
               type="number"
               min="0"
               max="168"
               step="1"
-              bind:value={gAutoDeleteHours}
+              bind:value={gAutoInvalidateHours}
               class="form-input threshold-input"
             />
             <span class="input-suffix text-muted">Stunden</span>
           </div>
           <p class="form-hint text-muted">
-            Offene Einträge ohne Ausstempeln werden nach dieser Zeit automatisch gelöscht. 0 =
-            deaktiviert.
+            Offene Einträge ohne Ausstempeln werden nach dieser Zeit als ungültig markiert und
+            müssen manuell korrigiert werden. 0 = deaktiviert.
           </p>
         </div>
       </div>

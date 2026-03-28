@@ -30,7 +30,7 @@ const tenantConfigSchema = z.object({
   arbzgEnabled: z.boolean().optional(),
   clockOutReminderHours: z.number().int().min(1).max(48).optional(),
   missingEntriesDays: z.number().int().min(1).max(90).optional(),
-  autoDeleteOpenHours: z.number().int().min(0).max(168).optional(),
+  autoDeleteOpenHours: z.number().int().min(0).max(168).optional(), // legacy name: actually invalidates, not deletes
   autoBreakEnabled: z.boolean().optional(),
   defaultBreakStart: z
     .string()
