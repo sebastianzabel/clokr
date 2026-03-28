@@ -240,14 +240,50 @@
     await loadAll();
   }
 
+  let showMonthPicker = $state(false);
+  let pickerYear = $state(new Date().getFullYear());
+
   async function gotoMonth(dir: 1 | -1) {
     calMonth = dir === 1 ? addMonths(calMonth, 1) : subMonths(calMonth, 1);
     fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
     toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
-    // Selektion auf ersten Tag des neuen Monats setzen
     selectedDate = fromDate;
     await loadAll();
   }
+
+  async function gotoMonthYear(m: number, y: number) {
+    calMonth = new Date(y, m - 1, 1);
+    fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
+    toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
+    selectedDate = fromDate;
+    showMonthPicker = false;
+    await loadAll();
+  }
+
+  async function gotoToday() {
+    const now = new Date();
+    calMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
+    toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
+    selectedDate = format(now, "yyyy-MM-dd");
+    showMonthPicker = false;
+    await loadAll();
+  }
+
+  const MONTH_NAMES_SHORT = [
+    "Jan",
+    "Feb",
+    "Mär",
+    "Apr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Dez",
+  ];
 
   // ── Kalender-Tage aufbauen ─────────────────────────────────────────────────
   function buildCalendarDays(
@@ -802,7 +838,9 @@
 {#if schedule}
   <div class="month-summary">
     <div class="msummary-item">
-      <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span>
+      <span class="msummary-label"
+        >{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span
+      >
       <span class="msummary-value"
         >{fmtMin(hasMonthlyTarget ? monthlyTarget : isMonthlyHours ? 0 : totalExpected)}h</span
       >
@@ -814,7 +852,12 @@
     <div class="msummary-divider"></div>
     <div class="msummary-item">
       <span class="msummary-label">Monat-Saldo</span>
-      <span class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}">{isMonthlyHours && !hasMonthlyTarget ? fmtMin(totalWorked) + "h" : fmtBalance(mBalance)}</span>
+      <span
+        class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}"
+        >{isMonthlyHours && !hasMonthlyTarget
+          ? fmtMin(totalWorked) + "h"
+          : fmtBalance(mBalance)}</span
+      >
     </div>
     {#if overtimeTotalHours !== null}
       <div class="msummary-divider"></div>
@@ -843,7 +886,47 @@
           stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
         >
       </button>
-      <span class="cal-month-title">{format(calMonth, "MMMM yyyy", { locale: de })}</span>
+      <div class="cal-nav-center">
+        <button
+          class="cal-month-title"
+          onclick={() => {
+            pickerYear = calMonth.getFullYear();
+            showMonthPicker = !showMonthPicker;
+          }}
+          title="Monat/Jahr wählen"
+        >
+          {format(calMonth, "MMMM yyyy", { locale: de })}
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
+          >
+        </button>
+        {#if showMonthPicker}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
+          <div class="month-picker">
+            <div class="month-picker-year">
+              <button onclick={() => pickerYear--}>‹</button>
+              <span>{pickerYear}</span>
+              <button onclick={() => pickerYear++}>›</button>
+            </div>
+            <div class="month-picker-grid">
+              {#each MONTH_NAMES_SHORT as name, i}
+                <button
+                  class="month-picker-btn"
+                  class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
+                  onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
+                >
+              {/each}
+            </div>
+            <button class="month-picker-today" onclick={gotoToday}>Heute</button>
+          </div>
+        {/if}
+      </div>
       <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
         <svg
           width="18"
@@ -1247,12 +1330,103 @@
     box-shadow: var(--shadow-sm);
   }
 
+  .cal-nav-center {
+    position: relative;
+  }
   .cal-month-title {
     font-size: 1.125rem;
     font-weight: 700;
     text-transform: capitalize;
     color: var(--color-text-heading);
     letter-spacing: -0.01em;
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+  }
+  .cal-month-title:hover {
+    background: var(--color-bg-subtle);
+  }
+  .month-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+  }
+  .month-picker {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 0.75rem;
+    min-width: 240px;
+    margin-top: 0.25rem;
+  }
+  .month-picker-year {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+  }
+  .month-picker-year button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+  }
+  .month-picker-year button:hover {
+    background: var(--color-bg-subtle);
+  }
+  .month-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.25rem;
+  }
+  .month-picker-btn {
+    padding: 0.375rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+  .month-picker-btn:hover {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+  }
+  .month-picker-btn.active {
+    background: var(--color-brand);
+    color: white;
+  }
+  .month-picker-today {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-brand);
+  }
+  .month-picker-today:hover {
+    background: var(--color-brand-tint);
   }
 
   .bal.pos {
@@ -1382,7 +1556,9 @@
   /* :global nötig – Svelte doppelt den Scope-Hash bei Compound-Selektoren */
   :global(.cal-day.is-selected:not(.other-month)) {
     background-color: var(--color-brand) !important;
-    box-shadow: 0 0 0 2px var(--color-brand), 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+    box-shadow:
+      0 0 0 2px var(--color-brand),
+      0 4px 12px rgba(0, 0, 0, 0.15) !important;
     z-index: 1;
   }
   :global(.cal-day.is-selected:not(.other-month) .day-num),

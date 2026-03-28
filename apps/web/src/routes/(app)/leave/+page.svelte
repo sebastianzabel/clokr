@@ -86,7 +86,12 @@
   let formError = $state("");
 
   // Special leave rules
-  interface SpecialLeaveRule { id: string; name: string; defaultDays: number; isActive: boolean; }
+  interface SpecialLeaveRule {
+    id: string;
+    name: string;
+    defaultDays: number;
+    isActive: boolean;
+  }
   let specialLeaveRules: SpecialLeaveRule[] = $state([]);
   let formSpecialRuleId = $state("");
 
@@ -287,6 +292,9 @@
     }
   }
 
+  let showMonthPicker = $state(false);
+  let pickerYear = $state(new Date().getFullYear());
+
   function prevMonth() {
     if (calMonth === 1) {
       calMonth = 12;
@@ -299,6 +307,19 @@
       calMonth = 1;
       calYear++;
     } else calMonth++;
+    loadCalendar();
+  }
+  function gotoMonthYear(m: number, y: number) {
+    calMonth = m;
+    calYear = y;
+    showMonthPicker = false;
+    loadCalendar();
+  }
+  function gotoToday() {
+    const now = new Date();
+    calMonth = now.getMonth() + 1;
+    calYear = now.getFullYear();
+    showMonthPicker = false;
     loadCalendar();
   }
 
@@ -376,7 +397,9 @@
       const year = new Date().getFullYear();
       const myEmployeeId = $authStore.user?.employeeId;
       const [mine, all] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`),
+        api.get<LeaveRequest[]>(
+          `/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+        ),
         isManager
           ? api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`)
           : Promise.resolve([] as LeaveRequest[]),
@@ -517,7 +540,9 @@
     try {
       const all = await api.get<SpecialLeaveRule[]>("/special-leave/rules");
       specialLeaveRules = all.filter((r) => r.isActive);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
 
   function resetForm() {
@@ -551,7 +576,9 @@
           endDate: formEnd,
           halfDay: formHalfDay,
           note: formNote || null,
-          ...(formType === "SPECIAL" && formSpecialRuleId ? { specialLeaveRuleId: formSpecialRuleId } : {}),
+          ...(formType === "SPECIAL" && formSpecialRuleId
+            ? { specialLeaveRuleId: formSpecialRuleId }
+            : {}),
         });
       }
       resetForm();
@@ -910,8 +937,15 @@
     <form onsubmit={preventDefault(submitRequest)} class="form-grid">
       <div class="form-group">
         <label class="form-label" for="f-type">Art der Abwesenheit</label>
-        <select id="f-type" bind:value={formType} class="form-input" disabled={!!editingRequest}
-          onchange={() => { if (formType === "SPECIAL") loadSpecialLeaveRules(); }}>
+        <select
+          id="f-type"
+          bind:value={formType}
+          class="form-input"
+          disabled={!!editingRequest}
+          onchange={() => {
+            if (formType === "SPECIAL") loadSpecialLeaveRules();
+          }}
+        >
           {#each TYPE_OPTIONS as t}
             <option value={t.code}>{t.label}</option>
           {/each}
@@ -1187,41 +1221,88 @@
           stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
         >
       </button>
-      <span class="cal-nav-title">{MONTH_NAMES[calMonth - 1]} {calYear}</span>
-      <button class="nav-btn" onclick={nextMonth} title="Nächster Monat">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+      <div class="cal-nav-center">
+        <button
+          class="cal-nav-title"
+          onclick={() => {
+            pickerYear = calYear;
+            showMonthPicker = !showMonthPicker;
+          }}
+          title="Monat/Jahr wählen"
         >
-      </button>
-      <button
-        class="team-toggle"
-        class:team-toggle--active={showTeamAbsences}
-        onclick={() => {
-          showTeamAbsences = !showTeamAbsences;
-        }}
-        title={showTeamAbsences ? "Team-Abwesenheiten ausblenden" : "Team-Abwesenheiten einblenden"}
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          ><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path
-            d="M22 21v-2a4 4 0 0 0-3-3.87"
-          /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg
+          {MONTH_NAMES[calMonth - 1]}
+          {calYear}
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
+          >
+        </button>
+        {#if showMonthPicker}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
+          <div class="month-picker">
+            <div class="month-picker-year">
+              <button onclick={() => pickerYear--}>‹</button>
+              <span>{pickerYear}</span>
+              <button onclick={() => pickerYear++}>›</button>
+            </div>
+            <div class="month-picker-grid">
+              {#each MONTH_NAMES as name, i}
+                <button
+                  class="month-picker-btn"
+                  class:active={i + 1 === calMonth && pickerYear === calYear}
+                  onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name.slice(0, 3)}</button
+                >
+              {/each}
+            </div>
+            <button class="month-picker-today" onclick={gotoToday}>Heute</button>
+          </div>
+        {/if}
+      </div>
+      <div class="cal-nav-right">
+        <button class="nav-btn" onclick={nextMonth} title="Nächster Monat">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+          >
+        </button>
+        <button
+          class="team-toggle"
+          class:team-toggle--active={showTeamAbsences}
+          onclick={() => {
+            showTeamAbsences = !showTeamAbsences;
+          }}
+          title={showTeamAbsences
+            ? "Team-Abwesenheiten ausblenden"
+            : "Team-Abwesenheiten einblenden"}
         >
-        Team
-      </button>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
+              cx="9"
+              cy="7"
+              r="4"
+            /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg
+          >
+          Team
+        </button>
+      </div>
     </div>
 
     <!-- Wochentag-Header -->
@@ -2274,30 +2355,139 @@
   }
 
   .cal-nav {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--gray-200, #e5e7eb);
+    background: var(--gray-50, #f9fafb);
+  }
+  .cal-nav-center {
+    justify-self: center;
+  }
+  .cal-nav-right {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.875rem 1.25rem;
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
+    gap: 0.5rem;
+    justify-self: end;
   }
   .nav-btn {
-    background: none;
+    background: var(--color-surface);
     border: 1.5px solid var(--gray-200, #e5e7eb);
     border-radius: 8px;
-    padding: 0.375rem;
+    padding: 0.4375rem;
     cursor: pointer;
     display: flex;
     align-items: center;
     color: var(--color-text);
-    transition: background 0.15s;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-xs);
   }
   .nav-btn:hover {
-    background: var(--gray-100, #f3f4f6);
+    background: var(--color-brand-tint);
+    border-color: var(--color-brand-light);
+    color: var(--color-brand);
+  }
+  .cal-nav-center {
+    position: relative;
   }
   .cal-nav-title {
-    font-size: 1.0625rem;
+    font-size: 1.125rem;
     font-weight: 700;
     text-transform: capitalize;
+    color: var(--color-text-heading);
+    letter-spacing: -0.01em;
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s;
+  }
+  .cal-nav-title:hover {
+    background: var(--color-bg-subtle);
+  }
+  .month-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+  }
+  .month-picker {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: 0.75rem;
+    min-width: 240px;
+    margin-top: 0.25rem;
+  }
+  .month-picker-year {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+    font-size: 0.9375rem;
+  }
+  .month-picker-year button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-text-muted);
+  }
+  .month-picker-year button:hover {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+  }
+  .month-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.25rem;
+  }
+  .month-picker-btn {
+    padding: 0.375rem;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text);
+    transition: all 0.15s;
+  }
+  .month-picker-btn:hover {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+  }
+  .month-picker-btn.active {
+    background: var(--color-brand);
+    color: white;
+  }
+  .month-picker-today {
+    width: 100%;
+    margin-top: 0.5rem;
+    padding: 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: none;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-brand);
+  }
+  .month-picker-today:hover {
+    background: var(--color-brand-tint);
   }
 
   .cal-grid {
