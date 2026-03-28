@@ -77,6 +77,8 @@
   }
 </script>
 
+<svelte:head><title>Profil – Clokr</title></svelte:head>
+
 <div class="settings-page">
   <h1 class="page-title">Mein Profil</h1>
 
