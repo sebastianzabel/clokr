@@ -371,8 +371,8 @@
   <!-- ── Globale Vorgaben ───────────────────────────────────────────────────── -->
 
   <!-- Card 1: Arbeitszeit + Überstunden -->
-  <div class="section-group">
-    <!-- Arbeitszeit -->
+  <details class="section-group" open>
+    <summary class="section-group-header">Arbeitszeit & Überstunden</summary>
     <div class="settings-section">
       <h3 class="section-title">Wöchentliche Arbeitszeit</h3>
       <p class="text-muted section-desc">Standard-Stunden pro Wochentag für alle Mitarbeiter.</p>
@@ -502,11 +502,11 @@
         </div>
       </div>
     </div>
-  </div>
+  </details>
 
   <!-- Card 2: Urlaubsanspruch -->
-  <div class="section-group">
-    <!-- Urlaub -->
+  <details class="section-group" open>
+    <summary class="section-group-header">Urlaubsanspruch</summary>
     <div class="settings-section">
       <h3 class="section-title">Urlaubsanspruch</h3>
 
@@ -552,11 +552,11 @@
         </div>
       </div>
     </div>
-  </div>
+  </details>
 
   <!-- Card 3: Compliance + Pausen -->
-  <div class="section-group">
-    <!-- Compliance -->
+  <details class="section-group">
+    <summary class="section-group-header">Compliance & Pausen</summary>
     <div class="settings-section">
       <h3 class="section-title">Compliance</h3>
 
@@ -610,11 +610,11 @@
         </div>
       {/if}
     </div>
-  </div>
+  </details>
 
   <!-- Card 4: Benachrichtigungen -->
-  <div class="section-group">
-    <!-- Benachrichtigungen -->
+  <details class="section-group">
+    <summary class="section-group-header">Benachrichtigungen</summary>
     <div class="settings-section">
       <h3 class="section-title">Benachrichtigungen</h3>
       <p class="text-muted section-desc">
@@ -688,10 +688,11 @@
         </div>
       </div>
     </div>
-  </div>
+  </details>
 
   <!-- Card 5: Abwesenheiten & Sonderregelungen -->
-  <div class="section-group">
+  <details class="section-group">
+    <summary class="section-group-header">Abwesenheiten & Sonderregelungen</summary>
     <div class="settings-section">
       <h3 class="section-title">Heiligabend & Silvester</h3>
       <div class="inline-settings">
@@ -914,7 +915,7 @@
         </div>
       {/if}
     </div>
-  </div>
+  </details>
 
   {#if gError}
     <div class="alert alert-error" role="alert" style="margin:0.75rem 0 0;">
@@ -1283,6 +1284,34 @@
     padding: 0;
     margin-bottom: 1.5rem;
     overflow: hidden;
+  }
+  .section-group-header {
+    font-size: 1.0625rem;
+    font-weight: 700;
+    padding: 1rem 1.75rem;
+    cursor: pointer;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--color-text-heading);
+    user-select: none;
+    transition: background 0.15s;
+  }
+  .section-group-header:hover {
+    background: var(--color-bg-subtle);
+  }
+  .section-group-header::after {
+    content: "▸";
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    transition: transform 0.2s;
+  }
+  .section-group[open] > .section-group-header::after {
+    transform: rotate(90deg);
+  }
+  .section-group-header::-webkit-details-marker {
+    display: none;
   }
   .section-group > h3 {
     font-size: 1rem;
