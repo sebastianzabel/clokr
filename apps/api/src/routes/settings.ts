@@ -40,6 +40,7 @@ const tenantConfigSchema = z.object({
   // Heiligabend/Silvester
   christmasEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
   newYearsEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
+  holidayRulesValidFromYear: z.number().int().min(2020).max(2100).optional(),
   // Leave config
   vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
   vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
@@ -123,6 +124,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         defaultBreakStart: null,
         christmasEveRule: "NORMAL",
         newYearsEveRule: "NORMAL",
+        holidayRulesValidFromYear: new Date().getFullYear(),
         vacationLeadTimeDays: 0,
         vacationMaxAdvanceMonths: 0,
         halfDayAllowed: true,
@@ -538,22 +540,24 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const body = z.object({
-        twoFaEnabled: z.boolean().optional(),
-        passwordMinLength: z.number().int().min(8).max(128).optional(),
-        passwordRequireUpper: z.boolean().optional(),
-        passwordRequireLower: z.boolean().optional(),
-        passwordRequireDigit: z.boolean().optional(),
-        passwordRequireSpecial: z.boolean().optional(),
-        maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
-        emailNotificationsEnabled: z.boolean().optional(),
-        emailOnLeaveRequest: z.boolean().optional(),
-        emailOnLeaveDecision: z.boolean().optional(),
-        emailOnOvertimeWarning: z.boolean().optional(),
-        emailOnMissingEntries: z.boolean().optional(),
-        emailOnClockOutReminder: z.boolean().optional(),
-        emailOnMonthClose: z.boolean().optional(),
-      }).parse(req.body);
+      const body = z
+        .object({
+          twoFaEnabled: z.boolean().optional(),
+          passwordMinLength: z.number().int().min(8).max(128).optional(),
+          passwordRequireUpper: z.boolean().optional(),
+          passwordRequireLower: z.boolean().optional(),
+          passwordRequireDigit: z.boolean().optional(),
+          passwordRequireSpecial: z.boolean().optional(),
+          maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+          emailNotificationsEnabled: z.boolean().optional(),
+          emailOnLeaveRequest: z.boolean().optional(),
+          emailOnLeaveDecision: z.boolean().optional(),
+          emailOnOvertimeWarning: z.boolean().optional(),
+          emailOnMissingEntries: z.boolean().optional(),
+          emailOnClockOutReminder: z.boolean().optional(),
+          emailOnMonthClose: z.boolean().optional(),
+        })
+        .parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const config = await app.prisma.tenantConfig.upsert({
@@ -653,12 +657,14 @@ export async function settingsRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
-      const body = z.object({
-        allowHalfDay: z.boolean().optional(),
-        maxDaysPerYear: z.number().int().min(0).nullable().optional(),
-        leadTimeDays: z.number().int().min(0).nullable().optional(),
-        color: z.string().optional(),
-      }).parse(req.body);
+      const body = z
+        .object({
+          allowHalfDay: z.boolean().optional(),
+          maxDaysPerYear: z.number().int().min(0).nullable().optional(),
+          leadTimeDays: z.number().int().min(0).nullable().optional(),
+          color: z.string().optional(),
+        })
+        .parse(req.body);
 
       const existing = await app.prisma.leaveType.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ error: "Abwesenheitstyp nicht gefunden" });

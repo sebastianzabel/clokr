@@ -84,6 +84,7 @@ model TenantConfig {
   // Heiligabend / Silvester: NORMAL | HALF_DAY | FULL_DAY_OFF
   christmasEveRule       String  @default("NORMAL")
   newYearsEveRule        String  @default("NORMAL")
+  holidayRulesValidFromYear Int?  // Rules apply from this year onwards (null = current year when saved)
   // Abwesenheits-Konfiguration
   vacationLeadTimeDays   Int     @default(0)    // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
   vacationMaxAdvanceMonths Int   @default(0)    // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)

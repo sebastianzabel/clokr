@@ -50,14 +50,16 @@ export async function holidayRoutes(app: FastifyInstance) {
         where: { tenantId: tenant?.id ?? req.user.tenantId },
       });
       const companyHolidays: typeof computed = [];
-      const christmasRule = config?.christmasEveRule ?? "NORMAL";
-      const newYearsRule = config?.newYearsEveRule ?? "NORMAL";
+      const validFromYear = config?.holidayRulesValidFromYear ?? new Date().getFullYear();
+      const christmasRule = y >= validFromYear ? (config?.christmasEveRule ?? "NORMAL") : "NORMAL";
+      const newYearsRule = y >= validFromYear ? (config?.newYearsEveRule ?? "NORMAL") : "NORMAL";
       if (christmasRule !== "NORMAL") {
         companyHolidays.push({
           id: `company-${y}-12-24`,
           tenantId: tenant?.id ?? "",
           date: `${y}-12-24`,
-          name: christmasRule === "FULL_DAY_OFF" ? "Heiligabend (frei)" : "Heiligabend (halber Tag)",
+          name:
+            christmasRule === "FULL_DAY_OFF" ? "Heiligabend (frei)" : "Heiligabend (halber Tag)",
           federalState: tenant?.federalState ?? "NIEDERSACHSEN",
           year: y,
           isManual: false,
