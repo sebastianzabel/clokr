@@ -22,6 +22,8 @@ import { schedulerPlugin } from "./plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { dataRetentionPlugin } from "./plugins/data-retention";
 import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
+import { storagePlugin } from "./plugins/storage";
+import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
@@ -32,6 +34,7 @@ import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
 import { specialLeaveRoutes } from "./routes/special-leave";
+import { avatarRoutes } from "./routes/avatars";
 
 export async function buildApp() {
   const app = Fastify({
@@ -125,6 +128,8 @@ export async function buildApp() {
   await app.register(attendanceCheckerPlugin);
   await app.register(dataRetentionPlugin);
   await app.register(autoCloseMonthPlugin);
+  await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
+  await app.register(storagePlugin);
 
   // ── Routes ────────────────────────────────────────────────
   await app.register(authRoutes, { prefix: "/api/v1/auth" });
@@ -145,6 +150,7 @@ export async function buildApp() {
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
   await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
+  await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
