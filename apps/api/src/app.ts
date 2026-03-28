@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -37,15 +38,45 @@ import { specialLeaveRoutes } from "./routes/special-leave";
 import { avatarRoutes } from "./routes/avatars";
 
 export async function buildApp() {
+  // ── Logger configuration ──────────────────────────────────
+  const logLevel = config.LOG_LEVEL ?? (config.NODE_ENV === "production" ? "info" : "debug");
+  const logFormat = config.LOG_FORMAT ?? (config.NODE_ENV === "production" ? "json" : "pretty");
+
+  const loggerConfig: Record<string, unknown> = { level: logLevel };
+
+  if (logFormat === "pretty") {
+    loggerConfig.transport = { target: "pino-pretty", options: { colorize: true } };
+  } else if (logFormat === "ecs") {
+    // ECS format: use pino-based serializers for Elastic Common Schema
+    loggerConfig.messageKey = "message";
+    loggerConfig.timestamp = () => `,"@timestamp":"${new Date().toISOString()}"`;
+    loggerConfig.formatters = {
+      level: (label: string) => ({ "log.level": label }),
+    };
+    loggerConfig.base = { "service.name": "clokr-api" };
+  }
+  // "json" = pino default (no extra config needed)
+
+  // File output (in addition to stdout)
+  if (config.LOG_FILE) {
+    loggerConfig.transport = {
+      targets: [
+        ...(logFormat === "pretty"
+          ? [{ target: "pino-pretty", options: { colorize: true }, level: logLevel }]
+          : [{ target: "pino/file", options: { destination: 1 }, level: logLevel }]), // stdout
+        {
+          target: "pino-roll",
+          options: { file: config.LOG_FILE, frequency: "daily", mkdir: true },
+          level: logLevel,
+        },
+      ],
+    };
+  }
+
   const app = Fastify({
     ignoreTrailingSlash: true,
-    logger: {
-      level: config.NODE_ENV === "production" ? "info" : "debug",
-      transport:
-        config.NODE_ENV !== "production"
-          ? { target: "pino-pretty", options: { colorize: true } }
-          : undefined,
-    },
+    logger: loggerConfig,
+    genReqId: () => crypto.randomUUID(), // Consistent request IDs
   });
 
   // ── Security ──────────────────────────────────────────────
@@ -93,6 +124,33 @@ export async function buildApp() {
   await app.register(jwt, {
     secret: config.JWT_SECRET,
     sign: { expiresIn: config.JWT_EXPIRES_IN },
+  });
+
+  // ── Request Context Logging ──────────────────────────────
+  app.addHook("onRequest", (req, _reply, done) => {
+    // Enrich log context with user/tenant info (from JWT if available)
+    const user = (req as { user?: { sub?: string; tenantId?: string; role?: string } }).user;
+    if (user) {
+      req.log = req.log.child({
+        userId: user.sub,
+        tenantId: user.tenantId,
+        role: user.role,
+      });
+    }
+    done();
+  });
+
+  app.addHook("onResponse", (req, reply, done) => {
+    req.log.info({
+      msg: "request completed",
+      http: {
+        method: req.method,
+        url: req.url,
+        status_code: reply.statusCode,
+        response_time: reply.elapsedTime,
+      },
+    });
+    done();
   });
 
   // ── OpenAPI / Swagger ─────────────────────────────────────
