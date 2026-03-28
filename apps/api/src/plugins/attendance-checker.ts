@@ -307,6 +307,119 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     }
   }
 
+  /**
+   * Feature 4: Pending leave request reminder — runs daily at 09:00.
+   * Reminds managers about leave requests that have been PENDING for too long.
+   */
+  async function checkPendingLeaveRequests() {
+    app.log.info("Reminder: Prüfe offene Urlaubsanträge");
+    try {
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
+        if (!cfg?.reminderPendingLeaveEnabled) continue;
+
+        const thresholdHours = cfg.reminderPendingLeaveHours ?? 48;
+        const cutoff = new Date(Date.now() - thresholdHours * 60 * 60 * 1000);
+
+        const pendingRequests = await app.prisma.leaveRequest.findMany({
+          where: {
+            deletedAt: null,
+            status: "PENDING",
+            createdAt: { lt: cutoff },
+            employee: { tenantId: tenant.id },
+          },
+          include: {
+            employee: { select: { firstName: true, lastName: true } },
+            leaveType: { select: { name: true } },
+          },
+        });
+
+        if (pendingRequests.length === 0) continue;
+
+        const managers = await app.prisma.user.findMany({
+          where: { role: { in: ["ADMIN", "MANAGER"] }, isActive: true, employee: { tenantId: tenant.id } },
+          select: { id: true },
+        });
+
+        for (const req of pendingRequests) {
+          for (const mgr of managers) {
+            const existing = await app.prisma.notification.findFirst({
+              where: { userId: mgr.id, type: "PENDING_LEAVE_REMINDER", link: `/leave?request=${req.id}` },
+            });
+            if (existing) continue;
+
+            await app.notify({
+              userId: mgr.id,
+              type: "PENDING_LEAVE_REMINDER",
+              title: "Offener Urlaubsantrag",
+              message: `${req.employee.firstName} ${req.employee.lastName}: ${req.leaveType.name} wartet seit über ${thresholdHours}h auf Genehmigung.`,
+              link: `/leave?request=${req.id}`,
+              tenantId: tenant.id,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Reminder: Fehler bei offenen Urlaubsanträgen");
+    }
+  }
+
+  /**
+   * Feature 5: Upcoming absence reminder — runs daily at 09:00.
+   * Reminds employees about their approved absences starting soon.
+   */
+  async function checkUpcomingAbsences() {
+    app.log.info("Reminder: Prüfe bevorstehende Abwesenheiten");
+    try {
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+      for (const tenant of tenants) {
+        const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: tenant.id } });
+        if (!cfg?.reminderUpcomingAbsenceEnabled) continue;
+
+        const daysAhead = cfg.reminderUpcomingAbsenceDays ?? 3;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const targetDate = new Date(today);
+        targetDate.setDate(targetDate.getDate() + daysAhead);
+
+        const upcoming = await app.prisma.leaveRequest.findMany({
+          where: {
+            deletedAt: null,
+            status: "APPROVED",
+            startDate: { gte: today, lte: targetDate },
+            employee: { tenantId: tenant.id },
+          },
+          include: {
+            employee: { select: { userId: true, firstName: true } },
+            leaveType: { select: { name: true } },
+          },
+        });
+
+        for (const req of upcoming) {
+          const startStr = req.startDate.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+          const dedupLink = `/leave?request=${req.id}&reminder=upcoming`;
+
+          const existing = await app.prisma.notification.findFirst({
+            where: { userId: req.employee.userId, type: "UPCOMING_ABSENCE", link: dedupLink },
+          });
+          if (existing) continue;
+
+          await app.notify({
+            userId: req.employee.userId,
+            type: "UPCOMING_ABSENCE",
+            title: "Bevorstehende Abwesenheit",
+            message: `Dein ${req.leaveType.name} beginnt am ${startStr}.`,
+            link: dedupLink,
+            tenantId: tenant.id,
+          });
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Reminder: Fehler bei bevorstehenden Abwesenheiten");
+    }
+  }
+
   app.addHook("onReady", async () => {
     try {
       // Clock-out check: every hour at minute 0
@@ -335,6 +448,24 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       });
       tasks.push(missingTask);
       app.log.info("Attendance-Checker: Fehlende-Einträge Erinnerung geplant (täglich 09:00)");
+
+      // Pending leave requests: daily at 09:15
+      const pendingLeaveTask = cron.schedule("15 9 * * *", () => {
+        checkPendingLeaveRequests().catch((err) =>
+          app.log.error({ err }, "Reminder: Offene-Anträge Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(pendingLeaveTask);
+      app.log.info("Reminder: Offene Urlaubsanträge geplant (täglich 09:15)");
+
+      // Upcoming absences: daily at 08:00
+      const upcomingTask = cron.schedule("0 8 * * *", () => {
+        checkUpcomingAbsences().catch((err) =>
+          app.log.error({ err }, "Reminder: Bevorstehende-Abwesenheiten Job fehlgeschlagen"),
+        );
+      });
+      tasks.push(upcomingTask);
+      app.log.info("Reminder: Bevorstehende Abwesenheiten geplant (täglich 08:00)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }

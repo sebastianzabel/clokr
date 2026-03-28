@@ -115,6 +115,11 @@
   // Max Minusstunden
   let maxNegEnabled = $state(false);
   let maxNegHours = $state(20);
+  // Erinnerungen
+  let reminderPendingEnabled = $state(true);
+  let reminderPendingHours = $state(48);
+  let reminderUpcomingEnabled = $state(true);
+  let reminderUpcomingDays = $state(3);
 
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
@@ -189,6 +194,10 @@
       fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
       const maxNegMinutes = (cfg as any).maxNegativeBalanceMinutes;
       if (maxNegMinutes != null) { maxNegEnabled = true; maxNegHours = maxNegMinutes / 60; }
+      reminderPendingEnabled = (cfg as any).reminderPendingLeaveEnabled ?? true;
+      reminderPendingHours = (cfg as any).reminderPendingLeaveHours ?? 48;
+      reminderUpcomingEnabled = (cfg as any).reminderUpcomingAbsenceEnabled ?? true;
+      reminderUpcomingDays = (cfg as any).reminderUpcomingAbsenceDays ?? 3;
 
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
@@ -233,6 +242,10 @@
         sickNoteRequiredAfterDays,
         autoCalcPartTimeVacation,
         fullTimeWorkDaysPerWeek,
+        reminderPendingLeaveHours: reminderPendingHours,
+        reminderUpcomingAbsenceDays: reminderUpcomingDays,
+        reminderPendingLeaveEnabled: reminderPendingEnabled,
+        reminderUpcomingAbsenceEnabled: reminderUpcomingEnabled,
       });
       // Save max negative via security endpoint
       await api.put("/settings/security", {
@@ -750,6 +763,33 @@
           <div class="form-group">
             <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
             <input id="max-neg-hours" type="number" min="1" max="999" step="0.5" bind:value={maxNegHours} class="form-input" />
+          </div>
+        </div>
+      {/if}
+    </div>
+    <div class="settings-section">
+      <h3 class="section-title">Automatische Erinnerungen</h3>
+      <label class="form-label toggle-label">
+        <input type="checkbox" bind:checked={reminderPendingEnabled} />
+        Offene Urlaubsanträge — Manager erinnern
+      </label>
+      {#if reminderPendingEnabled}
+        <div class="inline-settings" style="margin-top:0.5rem">
+          <div class="form-group">
+            <label class="form-label" for="rem-pending-h">Nach (Stunden)</label>
+            <input id="rem-pending-h" type="number" min="1" max="720" bind:value={reminderPendingHours} class="form-input" />
+          </div>
+        </div>
+      {/if}
+      <label class="form-label toggle-label" style="margin-top:0.75rem">
+        <input type="checkbox" bind:checked={reminderUpcomingEnabled} />
+        Bevorstehende Abwesenheiten — Mitarbeiter erinnern
+      </label>
+      {#if reminderUpcomingEnabled}
+        <div class="inline-settings" style="margin-top:0.5rem">
+          <div class="form-group">
+            <label class="form-label" for="rem-upcoming-d">Tage vorher</label>
+            <input id="rem-upcoming-d" type="number" min="1" max="30" bind:value={reminderUpcomingDays} class="form-input" />
           </div>
         </div>
       {/if}
