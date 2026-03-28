@@ -29,8 +29,10 @@ RUN pnpm --filter @clokr/api build
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
 RUN apk update && apk upgrade --no-cache && apk add --no-cache su-exec
-# Update npm's bundled dependencies to fix CVEs in minimatch/tar
-RUN npm install -g npm@latest 2>/dev/null || true
+# Update npm to latest (fixes bundled tar/minimatch CVEs) and clean old cache
+RUN npm install -g npm@latest 2>/dev/null || true \
+    && npm cache clean --force 2>/dev/null || true \
+    && rm -rf /tmp/* /root/.npm/_cacache
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 
