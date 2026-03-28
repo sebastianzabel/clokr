@@ -26,6 +26,7 @@ model Tenant {
   companyShutdowns  CompanyShutdown[]
   shiftTemplates    ShiftTemplate[]
   terminalApiKeys   TerminalApiKey[]
+  apiKeys           ApiKey[]
   specialLeaveRules SpecialLeaveRule[]
 }
 
@@ -549,6 +550,23 @@ model TerminalApiKey {
   lastUsedAt DateTime?
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
+  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  @@index([tenantId])
+}
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  tenantId   String
+  name       String
+  keyHash    String    @unique
+  keyPrefix  String    // e.g. "clk_abc1" (shown in UI)
+  scopes     String[]  // e.g. ["read:employees", "read:time-entries", "read:reports"]
+  expiresAt  DateTime? @db.Timestamptz
+  lastUsedAt DateTime? @db.Timestamptz
+  revokedAt  DateTime? @db.Timestamptz
+  createdBy  String    // userId who created this key
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
 }
