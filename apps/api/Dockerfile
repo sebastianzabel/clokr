@@ -8,9 +8,10 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
 COPY packages/types/package.json ./packages/types/
 
-# Install deps — use --ignore-scripts to prevent QEMU crashes with native modules (sharp)
-# during cross-platform builds. Native binaries are rebuilt in the runtime stage.
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# Install deps — skip only sharp's postinstall to prevent QEMU crash on cross-platform builds.
+# All other scripts run normally so pnpm overrides resolve correctly.
+ENV SHARP_IGNORE_GLOBAL_LIBVIPS=1
+RUN pnpm install --frozen-lockfile || pnpm install --frozen-lockfile --ignore-scripts
 
 # ── Stage 2: Build ──────────────────────────────────────────────────────────
 FROM deps AS build

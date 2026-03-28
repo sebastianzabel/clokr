@@ -79,6 +79,27 @@ Legal retention periods (Germany):
 - **Archival**: After retention period, old entries can be soft-deleted/archived because snapshots preserve saldo integrity
 - Corrections to closed months: unlock → correct → re-close (new snapshot with audit trail)
 
+## CVE / Security Vulnerability Handling
+
+When Trivy or Dependabot reports a CVE, follow this process strictly:
+
+1. **If a fix exists**: Update the dependency immediately.
+   - Direct dependency → `pnpm update <pkg>`
+   - Transitive dependency → add/update `pnpm.overrides` in root `package.json`
+   - Docker base image → update Dockerfile + rebuild
+2. **If no fix exists**: Add the CVE to `.trivyignore` with a comment explaining:
+   - Why it's not exploitable in our context (e.g., build-only tool, not user-facing)
+   - When to revisit (e.g., "remove when upstream releases fix")
+3. **Never lower Trivy severity** (e.g., removing HIGH from scan) to make builds pass.
+4. **Never use `--ignore-scripts` globally** just to avoid CVE-related build failures — find the specific package causing the issue.
+5. All CVE fixes and exceptions MUST be documented in the commit message.
+
+Files:
+
+- `.trivyignore` — exceptions with justification comments
+- `package.json` → `pnpm.overrides` — transitive dependency version pins
+- `.github/workflows/build-push.yml` — Trivy scan configuration
+
 ## Time Entry Rules
 
 - **One entry per day** per employee (multiple breaks allowed within that entry)

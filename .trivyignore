@@ -1,0 +1,5 @@
+# pnpm: Present as build tool in Docker image (corepack), not used at runtime.
+# Image uses pnpm@10.33.0 but Trivy detects the packageManager field declaring v9.
+# Runtime pnpm is v10.33.0 (installed via corepack prepare).
+CVE-2025-69262
+CVE-2025-69263
