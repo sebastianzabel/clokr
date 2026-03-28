@@ -62,10 +62,77 @@ export async function authRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "Ungültige Anmeldedaten" });
       }
 
+      // Account-Lockout check
+      const tenantCfg = user.employee?.tenant?.config;
+      const maxAttempts = tenantCfg?.loginMaxAttempts ?? 5;
+      const lockoutMinutes = tenantCfg?.loginLockoutMinutes ?? 15;
+
+      if (user.lockedUntil && user.lockedUntil > new Date()) {
+        const remainingMs = user.lockedUntil.getTime() - Date.now();
+        const remainingMin = Math.ceil(remainingMs / 60000);
+        await app.audit({ action: "LOGIN_LOCKED", entity: "User", entityId: user.id });
+        return reply.code(423).send({
+          error: `Konto temporär gesperrt. Erneuter Versuch in ${remainingMin} Minuten.`,
+          lockedUntil: user.lockedUntil.toISOString(),
+          remainingMinutes: remainingMin,
+        });
+      }
+
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) {
+        const attempts = user.failedLoginAttempts + 1;
+        const lockData: {
+          failedLoginAttempts: number;
+          lastFailedLoginAt: Date;
+          lockedUntil?: Date;
+        } = {
+          failedLoginAttempts: attempts,
+          lastFailedLoginAt: new Date(),
+        };
+
+        // Lock account if max attempts reached
+        if (attempts >= maxAttempts) {
+          lockData.lockedUntil = new Date(Date.now() + lockoutMinutes * 60 * 1000);
+          await app.audit({
+            action: "ACCOUNT_LOCKED",
+            entity: "User",
+            entityId: user.id,
+            newValue: { attempts, lockoutMinutes },
+          });
+
+          // Notify admins
+          const admins = user.employee
+            ? await app.prisma.user.findMany({
+                where: {
+                  role: "ADMIN",
+                  isActive: true,
+                  employee: { tenantId: user.employee.tenantId },
+                },
+                select: { id: true },
+              })
+            : [];
+          for (const admin of admins) {
+            await app.notify({
+              userId: admin.id,
+              type: "ACCOUNT_LOCKED",
+              title: "Konto gesperrt",
+              message: `${user.email} wurde nach ${attempts} Fehlversuchen für ${lockoutMinutes} Minuten gesperrt.`,
+              tenantId: user.employee?.tenantId,
+            });
+          }
+        }
+
+        await app.prisma.user.update({ where: { id: user.id }, data: lockData });
         await app.audit({ action: "LOGIN_FAILED", entity: "User", entityId: user.id });
         return reply.code(401).send({ error: "Ungültige Anmeldedaten" });
+      }
+
+      // Successful login — reset lockout counter
+      if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+        await app.prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginAttempts: 0, lockedUntil: null, lastFailedLoginAt: null },
+        });
       }
 
       // 2FA prüfen

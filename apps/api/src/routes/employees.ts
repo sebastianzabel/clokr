@@ -251,6 +251,35 @@ export async function employeeRoutes(app: FastifyInstance) {
     },
   });
 
+  // PATCH /api/v1/employees/:id/unlock — Admin entsperrt gesperrten Account
+  app.patch("/:id/unlock", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const employee = await app.prisma.employee.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      await app.prisma.user.update({
+        where: { id: employee.userId },
+        data: { failedLoginAttempts: 0, lockedUntil: null, lastFailedLoginAt: null },
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "ACCOUNT_UNLOCKED",
+        entity: "User",
+        entityId: employee.userId,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return { success: true };
+    },
+  });
+
   // PATCH /api/v1/employees/:id/deactivate
   app.patch("/:id/deactivate", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
