@@ -111,6 +111,14 @@
 </script>
 
 <svelte:head><title>Sonderurlaub – Clokr</title></svelte:head>
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape") {
+      showCreate = false;
+      editRule = null;
+    }
+  }}
+/>
 
 <Breadcrumb items={[{ label: "Admin", href: "/admin" }, { label: "Sonderurlaub" }]} />
 

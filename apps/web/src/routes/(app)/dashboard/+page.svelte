@@ -979,6 +979,7 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
+    flex-wrap: wrap;
   }
 
   .clock-details {
@@ -1037,15 +1038,16 @@
   }
 
   .clock-btn {
-    padding: 0.75rem 2.5rem;
+    padding: 0.75rem 2rem;
     font-size: 1rem;
     font-weight: 600;
     border-radius: var(--radius-md);
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    min-width: 160px;
+    min-width: 140px;
     justify-content: center;
+    white-space: nowrap;
     margin-left: auto;
   }
   .clock-btn--in {
@@ -1131,13 +1133,15 @@
   /* Stats */
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 1rem;
     margin-bottom: 1.75rem;
   }
 
   .stats-grid .stat-card {
     border-left: 3px solid var(--color-brand, #6d28d9);
+    overflow: hidden;
+    min-width: 0;
   }
 
   .stat-header-row {
@@ -1449,11 +1453,11 @@
 
   @media (max-width: 900px) {
     .stats-grid {
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
 
-  @media (max-width: 480px) {
+  @media (max-width: 600px) {
     .clock-main-row {
       flex-direction: column;
       align-items: center;
@@ -1462,6 +1466,7 @@
     .clock-btn {
       margin-left: 0;
       width: 100%;
+      min-width: 0;
       padding: 0.625rem 1rem;
       font-size: 0.9375rem;
     }
@@ -1470,7 +1475,7 @@
     }
     .clock-time {
       text-align: center;
-      font-size: 2rem;
+      font-size: 1.75rem;
     }
   }
 </style>

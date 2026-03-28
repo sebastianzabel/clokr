@@ -374,6 +374,17 @@ h6 {
   text-wrap: balance;
 }
 
+/* Inline links in body text — must be distinguishable from surrounding text */
+a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user) {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-brand-light);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):hover {
+  text-decoration-color: var(--color-brand);
+}
+
 h1 {
   font-size: 1.75rem;
   font-weight: 700;
@@ -501,6 +512,15 @@ button {
   padding: 0.4rem 0.85rem;
   font-size: 0.875rem;
   min-height: 32px; /* Touch target minimum */
+}
+
+/* ── Page titles — consistent across all pages ─────────────────────── */
+.page-title {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--color-text-heading);
+  margin-bottom: 1rem;
+  line-height: 1.3;
 }
 
 .btn-danger {

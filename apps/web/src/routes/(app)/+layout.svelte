@@ -552,7 +552,7 @@
     border-radius: 9999px;
     background-color: var(--color-danger, #ef4444);
     color: #fff;
-    font-size: 0.625rem;
+    font-size: 0.6875rem;
     font-weight: 700;
     display: flex;
     align-items: center;
@@ -834,6 +834,7 @@
     padding: 2rem;
     min-height: 100vh;
     min-width: 0;
+    max-width: 1400px;
     padding-bottom: 5rem; /* space for mobile nav */
   }
 
@@ -868,7 +869,7 @@
     padding: 0.375rem 0.125rem;
     text-decoration: none;
     color: var(--color-text-muted);
-    font-size: 0.6rem;
+    font-size: 0.6875rem;
     font-weight: 500;
     transition: color 0.12s;
   }
