@@ -55,8 +55,12 @@ export async function buildApp() {
       level: (label: string) => ({ "log.level": label }),
     };
     loggerConfig.base = { "service.name": "clokr-api" };
+  } else {
+    // "json" format: use string level labels instead of numeric
+    loggerConfig.formatters = {
+      level: (label: string) => ({ level: label }),
+    };
   }
-  // "json" = pino default (no extra config needed)
 
   // File output (in addition to stdout)
   if (config.LOG_FILE) {
@@ -211,6 +215,35 @@ export async function buildApp() {
   await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
+
+  // ── Client Error Logging ─────────────────────────────────
+  app.post("/api/v1/logs/client", {
+    config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+    schema: { tags: ["Logs"] },
+    handler: async (req) => {
+      const body = req.body as {
+        level?: string;
+        message?: string;
+        stack?: string;
+        url?: string;
+        userAgent?: string;
+        userId?: string;
+        extra?: Record<string, unknown>;
+      };
+      const level = body.level === "error" || body.level === "warn" ? body.level : "warn";
+      app.log[level]({
+        msg: `[CLIENT] ${body.message ?? "Unknown error"}`,
+        client: {
+          stack: body.stack,
+          url: body.url,
+          userAgent: body.userAgent,
+          userId: body.userId,
+          ...body.extra,
+        },
+      });
+      return { ok: true };
+    },
+  });
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));

@@ -4,6 +4,7 @@
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
+  import { clientLogger } from "$lib/utils/logger";
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
   interface Props {
     children?: import("svelte").Snippet;
@@ -94,6 +95,9 @@
     const storedTimeout = localStorage.getItem("clokr_session_timeout");
     if (storedTimeout) sessionTimeoutMs = parseInt(storedTimeout) * 60 * 1000;
 
+    // Install client error logging
+    clientLogger.install();
+
     // Start inactivity timer
     resetInactivityTimer();
     for (const evt of ACTIVITY_EVENTS) {
@@ -107,8 +111,10 @@
   onDestroy(() => {
     if (pollInterval) clearInterval(pollInterval);
     if (inactivityTimer) clearTimeout(inactivityTimer);
-    for (const evt of ACTIVITY_EVENTS) {
-      document.removeEventListener(evt, resetInactivityTimer);
+    if (typeof document !== "undefined") {
+      for (const evt of ACTIVITY_EVENTS) {
+        document.removeEventListener(evt, resetInactivityTimer);
+      }
     }
   });
 
@@ -331,27 +337,30 @@
             </div>
           </div>
         {/if}
-        <button
-          class="btn btn-ghost btn-sm logout-btn"
-          onclick={handleLogout}
-          aria-label="Abmelden"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline
-              points="16 17 21 12 16 7"
-            /><line x1="21" y1="12" x2="9" y2="12" /></svg
+        <div class="sidebar-footer-actions">
+          <a href="/settings" class="btn btn-ghost btn-sm" aria-label="Profil">Profil</a>
+          <button
+            class="btn btn-ghost btn-sm logout-btn"
+            onclick={handleLogout}
+            aria-label="Abmelden"
           >
-          Abmelden
-        </button>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              ><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline
+                points="16 17 21 12 16 7"
+              /><line x1="21" y1="12" x2="9" y2="12" /></svg
+            >
+            Abmelden
+          </button>
+        </div>
         <p class="sidebar-version">v{__APP_VERSION__}</p>
       </div>
     </aside>
@@ -786,6 +795,14 @@
   .sidebar-user-role {
     font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+
+  .sidebar-footer-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .sidebar-footer-actions > * {
+    flex: 1;
   }
 
   .logout-btn {

@@ -174,6 +174,35 @@
   let newKeyRaw = $state(""); // shown once after creation
   let showNewKey = $state(false);
 
+  // API Keys
+  interface ApiKeyEntry {
+    id: string;
+    name: string;
+    keyPrefix: string;
+    scopes: string[];
+    expiresAt: string | null;
+    lastUsedAt: string | null;
+    revokedAt: string | null;
+    createdAt: string;
+  }
+  let apiKeys: ApiKeyEntry[] = $state([]);
+  let newApiKeyName = $state("");
+  let newApiKeyScopes = $state<string[]>(["read:employees", "read:time-entries"]);
+  let newApiKeyRaw = $state("");
+  let showNewApiKey = $state(false);
+  let apiKeyLoading = $state(false);
+
+  const API_SCOPES = [
+    { scope: "read:employees", label: "Mitarbeiter lesen" },
+    { scope: "read:time-entries", label: "Zeiteinträge lesen" },
+    { scope: "write:time-entries", label: "Zeiteinträge schreiben" },
+    { scope: "read:leave", label: "Abwesenheiten lesen" },
+    { scope: "write:leave", label: "Abwesenheiten schreiben" },
+    { scope: "read:reports", label: "Berichte lesen" },
+    { scope: "read:overtime", label: "Überstunden lesen" },
+    { scope: "admin", label: "Voller Zugriff" },
+  ];
+
   // Phorest
   let phBusinessId = $state("");
   let phBranchId = $state("");
@@ -287,6 +316,12 @@
         terminalKeys = res.keys;
       } catch (err) {
         console.error("Failed to load terminal keys:", err);
+      }
+
+      try {
+        apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
+      } catch {
+        /* ignore */
       }
 
       try {
@@ -501,6 +536,42 @@
       leaveConfigError = e instanceof Error ? e.message : "Fehler";
     } finally {
       leaveConfigSaving = false;
+    }
+  }
+
+  async function createApiKey() {
+    if (!newApiKeyName.trim() || newApiKeyScopes.length === 0) return;
+    apiKeyLoading = true;
+    try {
+      const res = await api.post<ApiKeyEntry & { rawKey: string }>("/api-keys", {
+        name: newApiKeyName.trim(),
+        scopes: newApiKeyScopes,
+      });
+      newApiKeyRaw = res.rawKey;
+      showNewApiKey = true;
+      newApiKeyName = "";
+      apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Fehler");
+    } finally {
+      apiKeyLoading = false;
+    }
+  }
+
+  async function revokeApiKey(id: string) {
+    try {
+      await api.delete(`/api-keys/${id}`);
+      apiKeys = await api.get<ApiKeyEntry[]>("/api-keys");
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Fehler");
+    }
+  }
+
+  function toggleScope(scope: string) {
+    if (newApiKeyScopes.includes(scope)) {
+      newApiKeyScopes = newApiKeyScopes.filter((s) => s !== scope);
+    } else {
+      newApiKeyScopes = [...newApiKeyScopes, scope];
     }
   }
 
@@ -1166,6 +1237,111 @@
         </div>
       {:else}
         <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
+      {/if}
+    </div>
+  </div>
+
+  <!-- ── API Keys ──────────────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2>API Keys</h2>
+    <p class="text-muted">Schlüssel für externe Integrationen (Lohnsoftware, Automations)</p>
+  </div>
+
+  <div class="card card-body settings-card">
+    <div class="sys-section">
+      {#if showNewApiKey}
+        <div class="alert alert-success" style="margin-bottom:1rem;">
+          <div>
+            <strong>API Key erstellt!</strong>
+            <p style="margin:0.5rem 0">
+              Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+            </p>
+            <div style="display:flex;gap:0.5rem;align-items:center">
+              <code
+                style="flex:1;padding:0.5rem;background:var(--color-bg-subtle);border-radius:var(--radius-sm);word-break:break-all;font-size:0.8125rem"
+                >{newApiKeyRaw}</code
+              >
+              <button
+                class="btn btn-sm btn-ghost"
+                onclick={() => navigator.clipboard.writeText(newApiKeyRaw)}>Kopieren</button
+              >
+            </div>
+            <button
+              class="btn btn-sm btn-ghost"
+              style="margin-top:0.5rem"
+              onclick={() => {
+                showNewApiKey = false;
+                newApiKeyRaw = "";
+              }}>Schließen</button
+            >
+          </div>
+        </div>
+      {/if}
+
+      <div style="margin-bottom:1rem">
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+          <input
+            type="text"
+            class="form-input"
+            bind:value={newApiKeyName}
+            placeholder="Name (z.B. DATEV Export)"
+            style="flex:1"
+          />
+          <button
+            class="btn btn-primary"
+            onclick={createApiKey}
+            disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
+          >
+            Key erstellen
+          </button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.375rem">
+          {#each API_SCOPES as s}
+            <button
+              class="btn btn-sm"
+              class:btn-primary={newApiKeyScopes.includes(s.scope)}
+              class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
+              onclick={() => toggleScope(s.scope)}>{s.label}</button
+            >
+          {/each}
+        </div>
+      </div>
+
+      {#if apiKeys.length > 0}
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th></th></tr>
+            </thead>
+            <tbody>
+              {#each apiKeys as key}
+                <tr class:inactive={!!key.revokedAt}>
+                  <td>{key.name}</td>
+                  <td><code>{key.keyPrefix}…</code></td>
+                  <td style="font-size:0.75rem">{key.scopes.join(", ")}</td>
+                  <td
+                    >{key.lastUsedAt
+                      ? new Date(key.lastUsedAt).toLocaleDateString("de-DE")
+                      : "Nie"}</td
+                  >
+                  <td>
+                    {#if !key.revokedAt}
+                      <button
+                        class="btn btn-sm btn-ghost"
+                        style="color:var(--color-red)"
+                        onclick={() => revokeApiKey(key.id)}>Widerrufen</button
+                      >
+                    {:else}
+                      <span class="text-muted" style="font-size:0.75rem">Widerrufen</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      {:else}
+        <p class="text-muted">Keine API Keys vorhanden.</p>
       {/if}
     </div>
   </div>
