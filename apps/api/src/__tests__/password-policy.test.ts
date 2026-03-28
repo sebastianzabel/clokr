@@ -37,7 +37,6 @@ describe("Password Policy (BSI)", () => {
         email: `weak-pw-${Date.now()}@test.de`,
         firstName: "Test",
         lastName: "Weak",
-        hireDate: "2026-01-01",
         employeeNumber: `PW1-${Date.now()}`,
         hireDate: "2026-01-01T00:00:00Z",
         password: "onlylower1234", // passes Zod min(8) but fails BSI policy (no uppercase, no special)
