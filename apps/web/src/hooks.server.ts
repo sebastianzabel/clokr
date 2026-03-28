@@ -61,6 +61,26 @@ export const handle: Handle = async ({ event, resolve }) => {
   // SSR page requests
   const response = await resolve(event);
 
+  // Content Security Policy
+  const cspMode = process.env.CSP_MODE || "enforce"; // "off", "report-only", "enforce"
+  if (cspMode !== "off") {
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: blob:",
+      "connect-src 'self'",
+      "frame-src 'none'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; ");
+    const headerName =
+      cspMode === "report-only" ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
+    response.headers.set(headerName, csp);
+  }
+
   if (LOG_LEVEL === "debug" || (response.status >= 400 && LOG_LEVEL !== "error")) {
     log(response.status >= 500 ? "error" : response.status >= 400 ? "warn" : "info", "request", {
       method: event.request.method,

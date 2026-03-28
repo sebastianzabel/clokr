@@ -107,6 +107,8 @@
   let rememberMeEnabled = $state(true);
   let rememberMeDays = $state(30);
   let maxSessionsPerUser = $state(0);
+  let loginMaxAttempts = $state(5);
+  let loginLockoutMinutes = $state(15);
   let sessionSaving = $state(false);
   let sessionSaved = $state(false);
   let sessionError = $state("");
@@ -307,6 +309,8 @@
         rememberMeEnabled = (sec as any).rememberMeEnabled ?? true;
         rememberMeDays = (sec as any).rememberMeDays ?? 30;
         maxSessionsPerUser = (sec as any).maxSessionsPerUser ?? 0;
+        loginMaxAttempts = (sec as any).loginMaxAttempts ?? 5;
+        loginLockoutMinutes = (sec as any).loginLockoutMinutes ?? 15;
       } catch {
         /* ignorieren */
       }
@@ -443,6 +447,8 @@
         rememberMeEnabled,
         rememberMeDays,
         maxSessionsPerUser,
+        loginMaxAttempts,
+        loginLockoutMinutes,
       });
       sessionSaved = true;
       setTimeout(() => (sessionSaved = false), 3000);
@@ -847,6 +853,33 @@
           />
           <p class="form-hint text-muted">
             0 = unbegrenzt. Älteste Session wird bei Überschreitung beendet.
+          </p>
+        </div>
+      </div>
+      <div class="settings-grid" style="margin-top:0.75rem">
+        <div class="form-group">
+          <label class="form-label" for="login-max-attempts">Max. Fehlversuche bis Sperre</label>
+          <input
+            id="login-max-attempts"
+            type="number"
+            min="1"
+            max="20"
+            bind:value={loginMaxAttempts}
+            class="form-input"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="login-lockout-min">Sperrzeit (Minuten)</label>
+          <input
+            id="login-lockout-min"
+            type="number"
+            min="1"
+            max="1440"
+            bind:value={loginLockoutMinutes}
+            class="form-input"
+          />
+          <p class="form-hint text-muted">
+            Nach Ablauf wird der Zähler zurückgesetzt. Admin kann manuell entsperren.
           </p>
         </div>
       </div>

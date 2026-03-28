@@ -543,6 +543,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         rememberMeEnabled: cfg?.rememberMeEnabled ?? true,
         rememberMeDays: cfg?.rememberMeDays ?? 30,
         maxSessionsPerUser: cfg?.maxSessionsPerUser ?? 0,
+        loginMaxAttempts: cfg?.loginMaxAttempts ?? 5,
+        loginLockoutMinutes: cfg?.loginLockoutMinutes ?? 15,
       };
     },
   });
@@ -573,6 +575,8 @@ export async function settingsRoutes(app: FastifyInstance) {
           rememberMeEnabled: z.boolean().optional(),
           rememberMeDays: z.number().int().min(1).max(365).optional(),
           maxSessionsPerUser: z.number().int().min(0).max(20).optional(),
+          loginMaxAttempts: z.number().int().min(1).max(20).optional(),
+          loginLockoutMinutes: z.number().int().min(1).max(1440).optional(),
         })
         .parse(req.body);
       const tenantId = await getTenantId(app, req.user.sub);
@@ -615,6 +619,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         rememberMeEnabled: config.rememberMeEnabled,
         rememberMeDays: config.rememberMeDays,
         maxSessionsPerUser: config.maxSessionsPerUser,
+        loginMaxAttempts: config.loginMaxAttempts,
+        loginLockoutMinutes: config.loginLockoutMinutes,
       };
     },
   });

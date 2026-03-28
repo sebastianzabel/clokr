@@ -131,6 +131,9 @@ model TenantConfig {
   overtimeCarryOverCap   Int?    // Max. Übertrag in Minuten (nur bei CAPPED)
   // Max. Minusstunden (null = unbegrenzt, Wert in Minuten)
   maxNegativeBalanceMinutes Int?
+  // Account-Lockout
+  loginMaxAttempts       Int     @default(5)     // Fehlversuche bis Sperre
+  loginLockoutMinutes    Int     @default(15)    // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears     Int     @default(10)
   createdAt            DateTime @default(now()) @db.Timestamptz
@@ -148,9 +151,12 @@ model User {
   email        String     @unique
   passwordHash String
   role         Role       @default(EMPLOYEE)
-  isActive           Boolean    @default(true)
-  emailNotifications Boolean    @default(true) // Per-user email opt-out
-  lastLoginAt        DateTime?  @db.Timestamptz
+  isActive             Boolean    @default(true)
+  emailNotifications   Boolean    @default(true) // Per-user email opt-out
+  failedLoginAttempts  Int        @default(0)
+  lockedUntil          DateTime?  @db.Timestamptz
+  lastFailedLoginAt    DateTime?  @db.Timestamptz
+  lastLoginAt          DateTime?  @db.Timestamptz
   createdAt    DateTime   @default(now()) @db.Timestamptz
   updatedAt    DateTime   @updatedAt      @db.Timestamptz
 
