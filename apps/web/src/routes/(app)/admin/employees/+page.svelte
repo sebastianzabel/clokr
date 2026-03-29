@@ -334,6 +334,7 @@
             <th>Name</th>
             <th>E-Mail</th>
             <th>Rolle</th>
+            <th>Eintritt</th>
             <th>Status</th>
             <th>Letzter Login</th>
             {#if isAdmin}<th>Aktionen</th>{/if}
@@ -348,6 +349,13 @@
               </td>
               <td class="col-email">{emp.user.email}</td>
               <td><span class="badge badge-purple">{roleLabel(emp.user.role)}</span></td>
+              <td class="col-date"
+                >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}</td
+              >
               <td><span class="badge {statusClass(emp)}">{statusLabel(emp)}</span></td>
               <td class="col-login">
                 {emp.user.lastLoginAt
@@ -749,6 +757,7 @@
   .col-email {
     color: var(--color-text-muted);
   }
+  .col-date,
   .col-login {
     color: var(--color-text-muted);
     font-size: 0.8125rem;
