@@ -22,6 +22,12 @@ packages/db/generated/
 # Test coverage
 coverage/
 
+# Playwright test artifacts
+apps/e2e/test-results/
+apps/e2e/playwright-report/
+audit-*.png
+*.webm
+
 # Claude Code
 .claude/
 
