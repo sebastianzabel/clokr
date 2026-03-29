@@ -2,6 +2,7 @@
   import { self } from "svelte/legacy";
 
   import { onMount } from "svelte";
+  import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from "date-fns";
@@ -160,6 +161,17 @@
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
+    // Read URL params
+    const viewParam = $page.url.searchParams.get("view");
+    if (viewParam === "list") teView = "list";
+    const dateParam = $page.url.searchParams.get("date");
+    if (dateParam) {
+      selectedDate = dateParam;
+      calMonth = new Date(dateParam + "T12:00:00");
+      fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
+      toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
+    }
+
     // Load employee list for managers
     const role = $authStore.user?.role;
     if (role === "ADMIN" || role === "MANAGER") {
