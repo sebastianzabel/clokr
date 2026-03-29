@@ -634,7 +634,7 @@
   </div>
 
   <!-- Clock-in Widget -->
-  <div class="clock-card card card-body">
+  <div class="clock-card card card-body card-animate">
     {#if clockedIn}
       <!-- Eingestempelt -->
       <div class="clock-row">
@@ -706,14 +706,14 @@
         {:else if stats}
           {fmtH(stats.today.workedHours)}
         {:else}
-          –
+          <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
           {stats.today.entries} {stats.today.entries === 1 ? "Eintrag" : "Einträge"}
         {:else}
-          Laden…
+          <span class="skeleton-text"></span>
         {/if}
       </p>
     </div>
@@ -745,14 +745,14 @@
         {#if stats}
           {fmtH(stats.week.workedHours)}
         {:else}
-          –
+          <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
           von {fmtH(stats.week.targetHours)} Soll
         {:else}
-          Laden…
+          <span class="skeleton-text"></span>
         {/if}
       </p>
     </div>
@@ -809,14 +809,14 @@
         {#if stats}
           {stats.vacation.remaining}
         {:else}
-          –
+          <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
           von {stats.vacation.total} Tagen
         {:else}
-          Laden…
+          <span class="skeleton-text"></span>
         {/if}
       </p>
     </div>
@@ -824,7 +824,7 @@
 
   <!-- Info Bar: Schicht / Nächster Urlaub -->
   {#if todayShift || myNextLeave}
-    <div class="info-bar">
+    <div class="info-bar card-animate">
       {#if todayShift}
         <div class="info-bar-item">
           <span class="info-bar-icon">📋</span>
@@ -861,11 +861,11 @@
   <div class="widgets-row">
     <!-- My Week Widget -->
     {#if loading && myWeekDays.length === 0}
-      <div class="my-week card card-body">
+      <div class="my-week card card-body card-animate">
         <div class="skeleton-block" style="height:120px;border-radius:var(--radius-sm)"></div>
       </div>
     {:else if myWeekDays.length > 0}
-      <div class="my-week card card-body">
+      <div class="my-week card card-body card-animate">
         <div class="widget-header">
           <h3 class="widget-title">Meine Woche</h3>
           <div class="widget-nav">
@@ -926,50 +926,49 @@
       </div>
     {/if}
 
-    <!-- Open Items Widget — actionable list -->
+    <!-- Open Items Widget -->
     {#if openItems && openItems.total > 0}
-      <div class="open-items card card-body">
+      <div class="open-items card card-body card-animate">
         <h3 class="widget-title">Offene Vorgänge</h3>
         <div class="open-items-list">
-          {#each openItems.missingDays as missDate}
-            {@const d = new Date(missDate + "T12:00:00")}
-            {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-            <div class="open-item">
-              <span class="open-item-icon open-item-icon--warn">⚠</span>
-              <span class="open-item-text"
-                >{dayName}. {d.toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                })}</span
-              >
-              <a
-                href="/time-entries?view=list&date={missDate}"
-                class="btn btn-sm btn-ghost open-item-action">Nachtragen</a
-              >
-            </div>
-          {/each}
-          {#if openItems.pendingRequests > 0}
-            <div class="open-item">
-              <span class="open-item-icon open-item-icon--pending">⏳</span>
-              <span class="open-item-text"
-                >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                  ? "r Antrag"
-                  : " Anträge"} warten auf Genehmigung</span
-              >
-              <a href="/leave?view=requests" class="btn btn-sm btn-ghost open-item-action"
-                >Anzeigen</a
-              >
+          {#if openItems.missingDays.length > 0}
+            <div class="oi-group">
+              <div class="oi-group-header">
+                <span class="oi-dot oi-dot--warn"></span>
+                <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+              </div>
+              {#each openItems.missingDays as missDate}
+                {@const d = new Date(missDate + "T12:00:00")}
+                {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                <a href="/time-entries?view=list&date={missDate}" class="oi-item">
+                  <span
+                    >{dayName}. {d.toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "2-digit",
+                    })}</span
+                  >
+                  <span class="oi-link">Nachtragen →</span>
+                </a>
+              {/each}
             </div>
           {/if}
-          {#if openItems.invalidEntries > 0}
-            <div class="open-item">
-              <span class="open-item-icon open-item-icon--fix">✏️</span>
-              <span class="open-item-text"
-                >{openItems.invalidEntries} Eintrag{openItems.invalidEntries === 1 ? "" : "e"} muss korrigiert
-                werden</span
+          {#if openItems.pendingRequests > 0}
+            <a href="/leave?view=requests" class="oi-row">
+              <span class="oi-dot oi-dot--pending"></span>
+              <span
+                >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                  ? "r Antrag"
+                  : " Anträge"}</span
               >
-              <a href="/time-entries" class="btn btn-sm btn-ghost open-item-action">Korrigieren</a>
-            </div>
+              <span class="oi-link">→</span>
+            </a>
+          {/if}
+          {#if openItems.invalidEntries > 0}
+            <a href="/time-entries" class="oi-row">
+              <span class="oi-dot oi-dot--fix"></span>
+              <span>{openItems.invalidEntries} zu korrigieren</span>
+              <span class="oi-link">→</span>
+            </a>
           {/if}
         </div>
       </div>
@@ -979,21 +978,21 @@
 
   <!-- Charts -->
   <div class="charts-grid">
-    <div class="chart-card card card-body">
+    <div class="chart-card card card-body card-animate">
       <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
       <div class="chart-wrap">
         <canvas bind:this={weeklyChartEl}></canvas>
       </div>
     </div>
 
-    <div class="chart-card card card-body">
+    <div class="chart-card card card-body card-animate">
       <h3 class="chart-title">Überstunden-Trend</h3>
       <div class="chart-wrap">
         <canvas bind:this={overtimeChartEl}></canvas>
       </div>
     </div>
 
-    <div class="chart-card card card-body">
+    <div class="chart-card card card-body card-animate">
       <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
       <div class="chart-wrap">
         <canvas bind:this={sickChartEl}></canvas>
@@ -1010,7 +1009,7 @@
 
   <!-- Anstehende Urlaube (nur Manager/Admin) -->
   {#if isManager && upcomingLeaves.length > 0}
-    <div class="upcoming-section card card-body">
+    <div class="upcoming-section card card-body card-animate">
       <h3 class="chart-title">Anstehende Urlaube</h3>
       <div class="upcoming-list">
         {#each upcomingLeaves as leave}
@@ -1036,7 +1035,7 @@
 
   <!-- Team Wochenübersicht (nur Manager/Admin) -->
   {#if isManager && teamWeek}
-    <div class="team-section">
+    <div class="team-section card-animate">
       <div class="team-header">
         <div>
           <h2 class="section-title" style="margin-bottom:0.125rem;">Team-Wochenübersicht</h2>
@@ -1264,7 +1263,8 @@
   }
 
   /* ── Skeleton loader ────────────────────────────── */
-  .skeleton-block {
+  .skeleton-block,
+  .skeleton-text {
     background: linear-gradient(
       90deg,
       var(--gray-100) 25%,
@@ -1273,6 +1273,13 @@
     );
     background-size: 200% 100%;
     animation: shimmer 1.5s infinite;
+    border-radius: 4px;
+  }
+  .skeleton-text {
+    display: inline-block;
+    width: 4rem;
+    height: 0.875em;
+    vertical-align: middle;
   }
   @keyframes shimmer {
     0% {
@@ -1300,6 +1307,7 @@
   /* ── My Week Widget ──────────────────────────────── */
   .my-week {
     margin-bottom: 0;
+    border-left: 3px solid var(--color-brand);
   }
   .widget-header {
     display: flex;
@@ -1406,43 +1414,77 @@
   /* ── Open Items Widget ─────────────────────────────── */
   .open-items {
     margin-bottom: 0;
+    border-left: 3px solid var(--color-brand);
   }
   .open-items-list {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
-    max-height: 200px;
+    gap: 0.25rem;
+    max-height: 220px;
     overflow-y: auto;
   }
-  .open-item {
+  .oi-group {
+    display: flex;
+    flex-direction: column;
+  }
+  .oi-group-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.625rem 1rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border-subtle);
-    background: var(--color-surface);
-    font-size: 0.875rem;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 0.125rem;
   }
-  .open-item:hover {
-    border-color: var(--color-border);
-  }
-  .open-item-icon {
-    font-size: 1rem;
+  .oi-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
     flex-shrink: 0;
   }
-  .open-item-icon--warn {
-    color: var(--color-red);
+  .oi-dot--warn {
+    background: var(--color-red);
   }
-  .open-item-icon--pending {
-    color: var(--color-yellow);
+  .oi-dot--pending {
+    background: var(--color-yellow);
   }
-  .open-item-icon--fix {
-    color: var(--color-blue);
+  .oi-dot--fix {
+    background: var(--color-blue);
   }
-  .open-item-text {
-    flex: 1;
+  .oi-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.25rem 0 0.25rem 1.25rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    text-decoration: none;
+    border-left: 2px solid var(--color-border-subtle);
+    transition: all 0.12s;
+  }
+  .oi-item:hover {
+    color: var(--color-brand);
+    border-left-color: var(--color-brand);
+  }
+  .oi-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    font-size: 0.8125rem;
+    font-weight: 600;
     color: var(--color-text);
+    text-decoration: none;
+    transition: color 0.12s;
+  }
+  .oi-row:hover {
+    color: var(--color-brand);
+  }
+  .oi-link {
+    margin-left: auto;
+    color: var(--color-brand);
+    font-size: 0.75rem;
+    font-weight: 500;
   }
   .team-divider {
     display: flex;
@@ -1465,12 +1507,6 @@
     color: var(--color-text-muted);
   }
 
-  .open-item-action {
-    flex-shrink: 0;
-    color: var(--color-brand);
-    font-weight: 600;
-  }
-
   .info-bar {
     display: flex;
     gap: 1.5rem;
@@ -1478,6 +1514,7 @@
     padding: 0.625rem 1rem;
     background: var(--color-bg-subtle);
     border: 1px solid var(--color-border-subtle);
+    border-left: 3px solid var(--color-brand);
     border-radius: var(--radius-sm);
     margin-bottom: 1.5rem;
     font-size: 0.875rem;
@@ -1629,6 +1666,7 @@
 
   .chart-card {
     padding: 1.25rem 1.5rem;
+    border-left: 3px solid var(--color-brand);
   }
 
   .chart-title {
@@ -1648,6 +1686,7 @@
   .upcoming-section {
     margin-top: 1.75rem;
     margin-bottom: 1.75rem;
+    border-left: 3px solid var(--color-brand);
   }
 
   .upcoming-list {
@@ -1703,6 +1742,7 @@
     margin-bottom: 2rem;
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
+    border-left: 3px solid var(--color-brand);
     border-radius: var(--radius-md);
     padding: 1.25rem;
     box-shadow: var(--glass-shadow);
