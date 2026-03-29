@@ -105,6 +105,29 @@
     template: { name: string; color: string } | null;
   } | null = $state(null);
 
+  // Next personal absence
+  let myNextLeave: { startDate: string; endDate: string; days: number; type: string } | null =
+    $state(null);
+
+  // My Week widget
+  let myWeekOffset = $state(0);
+  interface MyWeekDay {
+    date: string;
+    workedHours: number;
+    expectedHours: number;
+    status: string;
+    isWorkday: boolean;
+  }
+  let myWeekDays: MyWeekDay[] = $state([]);
+
+  // Open items widget
+  let openItems: {
+    missingDays: string[];
+    pendingRequests: number;
+    invalidEntries: number;
+    total: number;
+  } | null = $state(null);
+
   // Charts
   let weeklyChartEl: HTMLCanvasElement;
   let overtimeChartEl: HTMLCanvasElement;
@@ -209,6 +232,14 @@
         todayShift = null;
       }
 
+      // My Week + Open Items (all users)
+      await loadMyWeek();
+      try {
+        openItems = await api.get<typeof openItems>("/dashboard/open-items");
+      } catch {
+        /* ignore */
+      }
+
       // Team-Wochenübersicht für Manager/Admin
       if (isManager) {
         await loadTeamWeek();
@@ -242,6 +273,33 @@
     } catch (err) {
       console.error("Failed to poll clock status:", err);
     }
+  }
+
+  async function loadMyWeek() {
+    try {
+      const d = new Date();
+      d.setDate(d.getDate() + myWeekOffset * 7);
+      const dateParam = format(d, "yyyy-MM-dd");
+      const weekData = await api.get<{ weekDays: string[]; days: MyWeekDay[] }>(
+        `/dashboard/my-week?date=${dateParam}`,
+      );
+      myWeekDays = weekData.days;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function myWeekPrev() {
+    myWeekOffset--;
+    loadMyWeek();
+  }
+  function myWeekNext() {
+    myWeekOffset++;
+    loadMyWeek();
+  }
+  function myWeekCurrent() {
+    myWeekOffset = 0;
+    loadMyWeek();
   }
 
   async function loadTeamWeek() {
@@ -437,6 +495,27 @@
         });
       }
 
+      // Load own next leave (for all users)
+      try {
+        const myEmployeeId = $authStore.user?.employeeId;
+        const myLeaves = await api.get<
+          { startDate: string; endDate: string; days: number; leaveType: { name: string } }[]
+        >(
+          `/leave/requests?status=APPROVED&upcoming=true${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+        );
+        const next = (myLeaves ?? []).find((l) => new Date(l.startDate) > new Date());
+        myNextLeave = next
+          ? {
+              startDate: next.startDate.split("T")[0],
+              endDate: next.endDate.split("T")[0],
+              days: Number(next.days),
+              type: next.leaveType?.name ?? "Urlaub",
+            }
+          : null;
+      } catch {
+        /* ignore */
+      }
+
       // Load upcoming leaves + pending approval count
       if (isManager) {
         try {
@@ -554,91 +633,52 @@
     <p>{format(new Date(), "EEEE, d. MMMM yyyy", { locale: de })}</p>
   </div>
 
-  <!-- Clock-in Card -->
+  <!-- Clock-in Widget -->
   <div class="clock-card card card-body">
-    <div class="clock-main-row">
-      <div class="clock-status">
-        <span class="clock-dot" class:clock-dot--active={clockedIn}></span>
-        <span class="clock-status-text">
-          {clockedIn ? "Eingestempelt" : "Ausgestempelt"}
-        </span>
+    {#if clockedIn}
+      <!-- Eingestempelt -->
+      <div class="clock-row">
+        <div class="clock-left">
+          <div class="clock-time-small font-mono">{format(currentTime, "HH:mm:ss")}</div>
+          <div class="clock-status">
+            <span class="clock-dot clock-dot--active"></span>
+            <span class="clock-status-text"
+              >Eingestempelt seit {clockStart ? format(clockStart, "HH:mm") : "–"} Uhr</span
+            >
+          </div>
+        </div>
+        <button onclick={handleClock} disabled={clockLoading} class="btn clock-btn clock-btn--out">
+          {#if clockLoading}<span class="btn-spinner"></span>{/if}
+          Ausstempeln
+        </button>
       </div>
-
-      <div class="clock-time font-mono">
-        {format(currentTime, "HH:mm:ss")}
+    {:else}
+      <!-- Ausgestempelt -->
+      <div class="clock-row">
+        <div class="clock-left">
+          <div class="clock-time-small font-mono">{format(currentTime, "HH:mm:ss")}</div>
+          <div class="clock-status">
+            <span class="clock-dot"></span>
+            <span class="clock-status-text">Ausgestempelt</span>
+          </div>
+        </div>
+        <button onclick={handleClock} disabled={clockLoading} class="btn clock-btn clock-btn--in">
+          {#if clockLoading}<span class="btn-spinner"></span>{/if}
+          Einstempeln
+        </button>
       </div>
-
-      <button
-        onclick={handleClock}
-        disabled={clockLoading}
-        class="btn clock-btn"
-        class:clock-btn--in={!clockedIn}
-        class:clock-btn--out={clockedIn}
-      >
-        {#if clockLoading}
-          <span class="btn-spinner"></span>
-        {/if}
-        {clockedIn ? "Ausstempeln" : "Einstempeln"}
-      </button>
-    </div>
-
+    {/if}
     {#if todayShift}
-      <div class="shift-info">
+      <div class="clock-shift">
         <span
-          class="shift-info__badge"
-          style="background: {todayShift.template?.color ??
-            '#6B7280'}22; border-left: 3px solid {todayShift.template?.color ??
-            '#6B7280'}; padding: 0.375rem 0.75rem; border-radius: 4px; font-size: 0.8125rem;"
+          class="clock-shift-badge"
+          style="border-left-color: {todayShift.template?.color ?? '#6B7280'}"
         >
           {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
         </span>
       </div>
     {/if}
-
-    {#if clockedIn}
-      <div class="clock-details">
-        {#if clockStart}
-          <p class="clock-elapsed text-muted">
-            Eingestempelt seit {format(clockStart, "HH:mm")} Uhr ·
-            <span class="font-mono">{formatElapsed(clockStart, currentTime)}</span>
-          </p>
-        {/if}
-
-        <div class="clock-break">
-          <label class="form-label" for="break-input">Pause (Minuten)</label>
-          <input
-            id="break-input"
-            type="number"
-            bind:value={breakMinutes}
-            min="0"
-            max="480"
-            class="form-input clock-break-input"
-          />
-        </div>
-      </div>
-    {/if}
   </div>
-
-  <!-- Pending Approvals Banner (Manager only) -->
-  {#if isManager && pendingApprovalCount > 0}
-    <a href="/leave?view=approvals" class="pending-banner">
-      <span class="pending-banner-badge">{pendingApprovalCount}</span>
-      <span class="pending-banner-text">
-        {pendingApprovalCount === 1 ? "offener Antrag" : "offene Anträge"} zur Genehmigung
-      </span>
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="16"
-        height="16"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg
-      >
-    </a>
-  {/if}
 
   <!-- Stats Row -->
   <div class="stats-grid">
@@ -782,6 +822,161 @@
     </div>
   </div>
 
+  <!-- Info Bar: Schicht / Nächster Urlaub -->
+  {#if todayShift || myNextLeave}
+    <div class="info-bar">
+      {#if todayShift}
+        <div class="info-bar-item">
+          <span class="info-bar-icon">📋</span>
+          <span
+            >Heute: <strong>{todayShift.startTime}–{todayShift.endTime}</strong>{todayShift.label
+              ? ` (${todayShift.label})`
+              : ""}</span
+          >
+        </div>
+      {/if}
+      {#if myNextLeave}
+        <div class="info-bar-item">
+          <span class="info-bar-icon">🌴</span>
+          <span
+            >Nächster {myNextLeave.type}:
+            <strong
+              >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+              })}</strong
+            >
+            ({myNextLeave.days}
+            {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
+          >
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- My Week + Open Items — side by side on desktop -->
+  <div class="widgets-row">
+    <!-- My Week Widget -->
+    {#if loading && myWeekDays.length === 0}
+      <div class="my-week card card-body">
+        <div class="skeleton-block" style="height:120px;border-radius:var(--radius-sm)"></div>
+      </div>
+    {:else if myWeekDays.length > 0}
+      <div class="my-week card card-body">
+        <div class="widget-header">
+          <h3 class="widget-title">Meine Woche</h3>
+          <div class="widget-nav">
+            <button class="btn btn-sm btn-ghost" onclick={myWeekPrev}>‹</button>
+            <button
+              class="btn btn-sm btn-ghost"
+              onclick={myWeekCurrent}
+              disabled={myWeekOffset === 0}>Heute</button
+            >
+            <button class="btn btn-sm btn-ghost" onclick={myWeekNext}>›</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="team-table">
+            <thead>
+              <tr>
+                {#each myWeekDays as day}
+                  {@const d = new Date(day.date + "T12:00:00")}
+                  {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                  {@const isToday = day.date === new Date().toISOString().split("T")[0]}
+                  <th class:is-today={isToday} class:is-weekend={!day.isWorkday}>
+                    <span class="day-label">{dayName}.</span>
+                    {d.getDate()}
+                  </th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                {#each myWeekDays as day}
+                  {@const isToday = day.date === new Date().toISOString().split("T")[0]}
+                  <td class:is-today={isToday}>
+                    <a
+                      href="/time-entries?view=list&date={day.date}"
+                      class="week-cell"
+                      title="{day.workedHours}h / {day.expectedHours}h Soll"
+                    >
+                      {#if day.status === "clocked_in"}
+                        <span class="cell-badge cell-badge--clocked">●</span>
+                      {:else if day.status === "complete"}
+                        <span class="cell-badge cell-badge--ok">{day.workedHours.toFixed(1)}</span>
+                      {:else if day.status === "partial"}
+                        <span class="cell-badge cell-badge--partial"
+                          >{day.workedHours.toFixed(1)}</span
+                        >
+                      {:else if day.status === "missing"}
+                        <span class="cell-badge cell-badge--missing">⚠️</span>
+                      {:else}
+                        <span class="cell-badge cell-badge--none">–</span>
+                      {/if}
+                    </a>
+                  </td>
+                {/each}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Open Items Widget — actionable list -->
+    {#if openItems && openItems.total > 0}
+      <div class="open-items card card-body">
+        <h3 class="widget-title">Offene Vorgänge</h3>
+        <div class="open-items-list">
+          {#each openItems.missingDays as missDate}
+            {@const d = new Date(missDate + "T12:00:00")}
+            {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+            <div class="open-item">
+              <span class="open-item-icon open-item-icon--warn">⚠</span>
+              <span class="open-item-text"
+                >{dayName}. {d.toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                })}</span
+              >
+              <a
+                href="/time-entries?view=list&date={missDate}"
+                class="btn btn-sm btn-ghost open-item-action">Nachtragen</a
+              >
+            </div>
+          {/each}
+          {#if openItems.pendingRequests > 0}
+            <div class="open-item">
+              <span class="open-item-icon open-item-icon--pending">⏳</span>
+              <span class="open-item-text"
+                >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                  ? "r Antrag"
+                  : " Anträge"} warten auf Genehmigung</span
+              >
+              <a href="/leave?view=requests" class="btn btn-sm btn-ghost open-item-action"
+                >Anzeigen</a
+              >
+            </div>
+          {/if}
+          {#if openItems.invalidEntries > 0}
+            <div class="open-item">
+              <span class="open-item-icon open-item-icon--fix">✏️</span>
+              <span class="open-item-text"
+                >{openItems.invalidEntries} Eintrag{openItems.invalidEntries === 1 ? "" : "e"} muss korrigiert
+                werden</span
+              >
+              <a href="/time-entries" class="btn btn-sm btn-ghost open-item-action">Korrigieren</a>
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+  </div>
+  <!-- /widgets-row -->
+
   <!-- Charts -->
   <div class="charts-grid">
     <div class="chart-card card card-body">
@@ -805,6 +1000,13 @@
       </div>
     </div>
   </div>
+
+  <!-- ═══ Team-Bereich (nur Manager/Admin) ═══ -->
+  {#if isManager}
+    <div class="team-divider">
+      <span class="team-divider-label">Team</span>
+    </div>
+  {/if}
 
   <!-- Anstehende Urlaube (nur Manager/Admin) -->
   {#if isManager && upcomingLeaves.length > 0}
@@ -975,32 +1177,25 @@
     gap: 0.75rem;
   }
 
-  .clock-main-row {
+  .clock-row {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 1.5rem;
-    flex-wrap: wrap;
   }
-
-  .clock-details {
+  .clock-left {
     display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-  }
-
-  .shift-info {
-    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
   }
 
   .clock-status {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: var(--color-text-muted);
-    white-space: nowrap;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-text);
   }
 
   .clock-dot {
@@ -1016,39 +1211,34 @@
     box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.2);
   }
 
-  .clock-time {
-    font-size: 2.5rem;
+  .clock-time-small {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text-heading);
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .clock-elapsed-big {
+    font-size: 2rem;
     font-weight: 700;
     color: var(--color-text-heading);
     letter-spacing: -0.03em;
     line-height: 1;
   }
 
-  .clock-elapsed {
-    font-size: 0.875rem;
-  }
-  .clock-break {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  .clock-break-input {
-    width: 5rem;
-    text-align: center;
-  }
-
   .clock-btn {
-    padding: 0.75rem 2rem;
-    font-size: 1rem;
+    padding: 0.625rem 2.5rem;
+    font-size: 0.9375rem;
     font-weight: 600;
     border-radius: var(--radius-md);
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    min-width: 140px;
     justify-content: center;
     white-space: nowrap;
-    margin-left: auto;
+    min-width: 180px;
+    transition: all 0.15s ease;
   }
   .clock-btn--in {
     background-color: var(--color-green);
@@ -1058,7 +1248,8 @@
   .clock-btn--in:hover:not(:disabled) {
     background-color: #15803d;
     border-color: #15803d;
-    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.3);
   }
   .clock-btn--out {
     background-color: var(--color-red);
@@ -1068,7 +1259,251 @@
   .clock-btn--out:hover:not(:disabled) {
     background-color: #b91c1c;
     border-color: #b91c1c;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+  }
+
+  /* ── Skeleton loader ────────────────────────────── */
+  .skeleton-block {
+    background: linear-gradient(
+      90deg,
+      var(--gray-100) 25%,
+      var(--gray-200) 50%,
+      var(--gray-100) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* ── Widgets Row (side by side) ──────────────────── */
+  .widgets-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    align-items: start;
+  }
+  @media (max-width: 768px) {
+    .widgets-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ── My Week Widget ──────────────────────────────── */
+  .my-week {
+    margin-bottom: 0;
+  }
+  .widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+  .widget-nav {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .widget-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    margin-bottom: 0;
+  }
+  .widget-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 0.375rem;
+    border-radius: 999px;
+    background: var(--color-red);
     color: #fff;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    margin-left: 0.375rem;
+    vertical-align: middle;
+  }
+  .my-week .team-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .my-week .team-table th {
+    padding: 0.375rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-align: center;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .my-week .team-table th .day-label {
+    display: block;
+    font-size: 0.625rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .my-week .team-table th.is-today {
+    color: var(--color-brand);
+    font-weight: 700;
+  }
+  .my-week .team-table th.is-weekend {
+    color: var(--gray-400);
+  }
+  .my-week .team-table td {
+    padding: 0.375rem;
+    text-align: center;
+  }
+  .my-week .team-table td.is-today {
+    background: var(--color-brand-tint);
+    border-radius: var(--radius-sm);
+  }
+  .week-cell {
+    display: flex;
+    justify-content: center;
+    text-decoration: none;
+  }
+  .cell-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2rem;
+    padding: 0.25rem 0.375rem;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+  }
+  .cell-badge--ok {
+    background: var(--color-green-bg);
+    color: var(--color-green);
+  }
+  .cell-badge--partial {
+    background: var(--color-yellow-bg);
+    color: var(--color-yellow);
+  }
+  .cell-badge--missing {
+    background: var(--color-red-bg);
+    color: var(--color-red);
+  }
+  .cell-badge--clocked {
+    background: var(--color-blue-bg);
+    color: var(--color-blue);
+  }
+  .cell-badge--none {
+    color: var(--gray-400);
+  }
+
+  /* ── Open Items Widget ─────────────────────────────── */
+  .open-items {
+    margin-bottom: 0;
+  }
+  .open-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .open-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 1rem;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--color-border-subtle);
+    background: var(--color-surface);
+    font-size: 0.875rem;
+  }
+  .open-item:hover {
+    border-color: var(--color-border);
+  }
+  .open-item-icon {
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+  .open-item-icon--warn {
+    color: var(--color-red);
+  }
+  .open-item-icon--pending {
+    color: var(--color-yellow);
+  }
+  .open-item-icon--fix {
+    color: var(--color-blue);
+  }
+  .open-item-text {
+    flex: 1;
+    color: var(--color-text);
+  }
+  .team-divider {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1rem 0 1.5rem;
+  }
+  .team-divider::before,
+  .team-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--color-border);
+  }
+  .team-divider-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+  }
+
+  .open-item-action {
+    flex-shrink: 0;
+    color: var(--color-brand);
+    font-weight: 600;
+  }
+
+  .info-bar {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    padding: 0.625rem 1rem;
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: 1.5rem;
+    font-size: 0.875rem;
+    color: var(--color-text);
+  }
+  .info-bar-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .info-bar-icon {
+    font-size: 1rem;
+  }
+
+  .clock-shift {
+    display: flex;
+    justify-content: center;
+    margin-top: 0.25rem;
+  }
+  .clock-shift-badge {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    padding: 0.25rem 0.75rem;
+    border-left: 3px solid var(--gray-300);
+    background: var(--color-bg-subtle);
+    border-radius: 0 4px 4px 0;
   }
 
   .btn-spinner {
@@ -1458,23 +1893,19 @@
   }
 
   @media (max-width: 600px) {
-    .clock-main-row {
+    .clock-row {
       flex-direction: column;
       align-items: center;
-      gap: 0.5rem;
+      text-align: center;
+    }
+    .clock-left {
+      align-items: center;
     }
     .clock-btn {
-      margin-left: 0;
       width: 100%;
       min-width: 0;
-      padding: 0.625rem 1rem;
-      font-size: 0.9375rem;
     }
-    .clock-status {
-      justify-content: center;
-    }
-    .clock-time {
-      text-align: center;
+    .clock-elapsed-big {
       font-size: 1.75rem;
     }
   }

@@ -64,6 +64,7 @@ services:
       REDIS_URL: "redis://redis:6379"
       APP_URL: "http://localhost:3000"
       ENCRYPTION_KEY: "${ENCRYPTION_KEY:-clokr-dev-encryption-key-min-32-characters-long!!}"
+      SEED_DEMO_DATA: "${SEED_DEMO_DATA:-true}"
     deploy:
       resources:
         limits:

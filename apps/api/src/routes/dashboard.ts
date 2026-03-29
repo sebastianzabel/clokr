@@ -284,6 +284,118 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return { weekStart: weekDays[0], weekEnd: weekDays[6], weekDays, team };
     },
   });
+  // GET /api/v1/dashboard/my-week — persönliche Wochenübersicht (für alle MA)
+  app.get("/my-week", {
+    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const employeeId = req.user.employeeId!;
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const { date } = req.query as { date?: string };
+      const refDate = date ? new Date(date) : new Date();
+      const { start, end, days: weekDays } = weekRangeUtc(refDate, tz);
+
+      const schedule = await getEffectiveSchedule(app, employeeId);
+
+      const entries = await app.prisma.timeEntry.findMany({
+        where: { employeeId, deletedAt: null, type: "WORK", date: { gte: start, lte: end } },
+      });
+
+      const days = weekDays.map((dateStr: string) => {
+        const dayEntries = entries.filter((e: any) => dateStrInTz(e.date, tz) === dateStr);
+        const workedMin = dayEntries.reduce((sum: number, e: any) => {
+          if (!e.endTime) return sum;
+          return (
+            sum +
+            (e.endTime.getTime() - e.startTime.getTime()) / 60000 -
+            Number(e.breakMinutes || 0)
+          );
+        }, 0);
+
+        const dow = getDayOfWeekInTz(new Date(dateStr + "T12:00:00Z"), tz);
+        const expectedMin = schedule ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
+        const isWorkday = expectedMin > 0;
+        const hasEntry = dayEntries.length > 0;
+        const isClockedIn = dayEntries.some((e: any) => !e.endTime);
+        const isPast = new Date(dateStr) < todayInTz(tz);
+
+        let status = "none";
+        if (isClockedIn) status = "clocked_in";
+        else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
+        else if (isPast && isWorkday) status = "missing";
+        else if (isWorkday) status = "scheduled";
+
+        return {
+          date: dateStr,
+          workedHours: round(workedMin / 60),
+          expectedHours: round(expectedMin / 60),
+          status,
+          isWorkday,
+        };
+      });
+
+      return { weekDays, days };
+    },
+  });
+
+  // GET /api/v1/dashboard/open-items — offene Vorgänge für den MA
+  app.get("/open-items", {
+    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const employeeId = req.user.employeeId!;
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const today = todayInTz(tz);
+      const sevenDaysAgo = new Date(today);
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      // 1. Missing time entries (workdays without entries in last 7 days)
+      const schedule = await getEffectiveSchedule(app, employeeId);
+      const recentEntries = await app.prisma.timeEntry.findMany({
+        where: {
+          employeeId,
+          deletedAt: null,
+          type: "WORK",
+          date: { gte: sevenDaysAgo, lt: today },
+        },
+        select: { date: true },
+      });
+      const entryDates = new Set(recentEntries.map((e: any) => dateStrInTz(e.date, tz)));
+
+      const missingDays: string[] = [];
+      const cursor = new Date(sevenDaysAgo);
+      while (cursor < today) {
+        const dateStr = dateStrInTz(cursor, tz);
+        const dow = getDayOfWeekInTz(cursor, tz);
+        const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
+        if (expectedH > 0 && !entryDates.has(dateStr)) {
+          missingDays.push(dateStr);
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+
+      // 2. Pending leave requests
+      const pendingRequests = await app.prisma.leaveRequest.findMany({
+        where: { employeeId, deletedAt: null, status: "PENDING" },
+        select: { id: true, startDate: true, endDate: true },
+      });
+
+      // 3. Invalidated time entries
+      const invalidEntries = await app.prisma.timeEntry.findMany({
+        where: { employeeId, deletedAt: null, isInvalid: true },
+        select: { id: true, date: true, invalidReason: true },
+      });
+
+      return {
+        missingDays,
+        pendingRequests: pendingRequests.length,
+        invalidEntries: invalidEntries.length,
+        total: missingDays.length + pendingRequests.length + invalidEntries.length,
+      };
+    },
+  });
 }
 
 function round(n: number): number {
