@@ -976,34 +976,34 @@
   </div>
   <!-- /widgets-row -->
 
-  <!-- Charts -->
-  <div class="charts-grid">
-    <div class="chart-card card card-body card-animate">
-      <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
-      <div class="chart-wrap">
-        <canvas bind:this={weeklyChartEl}></canvas>
-      </div>
-    </div>
-
-    <div class="chart-card card card-body card-animate">
-      <h3 class="chart-title">Überstunden-Trend</h3>
-      <div class="chart-wrap">
-        <canvas bind:this={overtimeChartEl}></canvas>
-      </div>
-    </div>
-
-    <div class="chart-card card card-body card-animate">
-      <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
-      <div class="chart-wrap">
-        <canvas bind:this={sickChartEl}></canvas>
-      </div>
-    </div>
-  </div>
-
   <!-- ═══ Team-Bereich (nur Manager/Admin) ═══ -->
   {#if isManager}
     <div class="team-divider">
       <span class="team-divider-label">Team</span>
+    </div>
+
+    <!-- Charts (Team-Aggregation) -->
+    <div class="charts-grid">
+      <div class="chart-card card card-body card-animate">
+        <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
+        <div class="chart-wrap">
+          <canvas bind:this={weeklyChartEl}></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card card card-body card-animate">
+        <h3 class="chart-title">Überstunden-Trend</h3>
+        <div class="chart-wrap">
+          <canvas bind:this={overtimeChartEl}></canvas>
+        </div>
+      </div>
+
+      <div class="chart-card card card-body card-animate">
+        <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
+        <div class="chart-wrap">
+          <canvas bind:this={sickChartEl}></canvas>
+        </div>
+      </div>
     </div>
   {/if}
 
