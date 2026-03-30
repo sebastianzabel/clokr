@@ -9,6 +9,7 @@ export default defineConfig({
     // Integration tests share a DB, so run sequentially
     fileParallelism: false,
     testTimeout: 30000,
+    globalSetup: ["./vitest.setup.ts"],
     coverage: {
       provider: "v8",
       include: ["**/*.ts"],
