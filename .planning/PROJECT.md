@@ -31,14 +31,18 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 
 ### Active
 
-- [ ] Comprehensive API test coverage (routes, validation, permissions, edge cases)
 - [ ] E2E test coverage for critical user flows
-- [ ] ArbZG edge case validation (boundary conditions, cross-day shifts)
-- [ ] Code audit: security review, silent failure elimination, error handling
-- [ ] Code audit: compliance verification (soft deletes, audit trail completeness)
 - [ ] Mobile-responsive UI across all views
 - [ ] UI consistency (spacing, colors, components, design system)
 - [ ] UX flow improvements (fewer clicks, better navigation, clearer feedback)
+
+### Validated in Phase 2 (Compliance and API Coverage)
+
+- ✓ Comprehensive API test coverage — tenant isolation, audit trail, time entries, leave lifecycle, overtime/Monatsabschluss, auth/JWT, DSGVO anonymization, NFC punch
+- ✓ ArbZG edge case validation — 24-week rolling average (§3), boundary thresholds, DST transitions, cross-midnight shifts
+- ✓ Code audit: compliance verification — soft deletes enforced (deletedAt), audit trail complete, locked-month immutability
+- ✓ Multi-tenant security hardened — employee GET/PUT routes now include tenantId guard (SEC-02 fix)
+- ✓ DSGVO Art. 44 compliance — Google Fonts self-hosted, no external font CDN requests
 
 ### Out of Scope
 
@@ -93,4 +97,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-03-30 after Phase 1 (Test Infrastructure) completion_
+_Last updated: 2026-03-31 after Phase 2 (Compliance and API Coverage) completion_
