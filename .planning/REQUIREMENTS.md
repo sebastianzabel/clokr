@@ -26,8 +26,8 @@ Requirements for production launch. Each maps to roadmap phases.
 ### Compliance & Security
 
 - [ ] **SEC-01**: ArbZG compliance unit tests (§3 daily max 10h, §3 24-week average, §4 breaks, §5 rest period, cross-midnight shifts)
-- [ ] **SEC-02**: Tenant isolation tests (cross-tenant reads/writes blocked on all resources)
-- [ ] **SEC-03**: Audit trail completeness tests (every mutating endpoint writes AuditLog with required fields)
+- [x] **SEC-02**: Tenant isolation tests (cross-tenant reads/writes blocked on all resources)
+- [x] **SEC-03**: Audit trail completeness tests (every mutating endpoint writes AuditLog with required fields)
 - [x] **SEC-04**: Soft delete enforcement tests (DELETE sets deletedAt, queries filter deletedAt:null, locked-month entries undeletable)
 - [ ] **SEC-05**: Timezone/date boundary tests (DST transitions, Dec 31→Jan 1, leap year, month-close at midnight CET vs UTC)
 
@@ -111,8 +111,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | API-05      | Phase 2 | Pending |
 | API-06      | Phase 2 | Pending |
 | SEC-01      | Phase 2 | Pending |
-| SEC-02      | Phase 2 | Pending |
-| SEC-03      | Phase 2 | Pending |
+| SEC-02      | Phase 2 | Complete |
+| SEC-03      | Phase 2 | Complete |
 | SEC-04      | Phase 2 | Complete |
 | SEC-05      | Phase 2 | Pending |
 | AUDIT-02    | Phase 2 | Complete |

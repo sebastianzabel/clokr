@@ -60,10 +60,10 @@ Plans:
 
 Plans:
 - [ ] 02-01-PLAN.md — ArbZG 24-week rolling average fix + boundary and DST tests (SEC-01, SEC-05)
-- [ ] 02-02-PLAN.md — Tenant isolation and audit trail completeness tests (SEC-02, SEC-03)
+- [x] 02-02-PLAN.md — Tenant isolation and audit trail completeness tests (SEC-02, SEC-03)
 - [x] 02-03-PLAN.md — Time entry CRUD, soft-delete, and locked-month tests (API-01, SEC-04)
 - [x] 02-04-PLAN.md — Leave lifecycle and overtime/Monatsabschluss tests (API-02, API-03)
-- [ ] 02-05-PLAN.md — Auth flow, DSGVO anonymization, NFC punch, and decryptSafe tests (API-04, API-05, API-06)
+- [x] 02-05-PLAN.md — Auth flow, DSGVO anonymization, NFC punch, and decryptSafe tests (API-04, API-05, API-06)
 - [x] 02-06-PLAN.md — Self-host Google Fonts for DSGVO Art. 44 compliance (AUDIT-02)
 
 ### Phase 3: E2E and UI Quality

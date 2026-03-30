@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-04-PLAN.md
-last_updated: "2026-03-30T22:31:13.264Z"
+stopped_at: Completed 02-compliance-and-api-coverage/02-02-PLAN.md
+last_updated: "2026-03-30T22:32:43.322Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 12
-  completed_plans: 9
+  completed_plans: 11
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-30)
 ## Current Position
 
 Phase: 02 (compliance-and-api-coverage) — EXECUTING
-Plan: 3 of 6
+Plan: 5 of 6
 Status: Ready to execute
 Last activity: 2026-03-30
 
@@ -61,6 +61,7 @@ _Updated after each plan completion_
 | Phase 02-compliance-and-api-coverage P06 | 15 | 1 tasks | 10 files |
 | Phase 02-compliance-and-api-coverage P03 | 15 | 2 tasks | 1 files |
 | Phase 02-compliance-and-api-coverage P04 | 35 | 2 tasks | 2 files |
+| Phase 02-compliance-and-api-coverage P02 | 35 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,8 @@ Recent decisions affecting current work:
 - [Phase 02-compliance-and-api-coverage]: Use 2025 dates in compliance tests to avoid conflict with existing 2026-dated tests
 - [Phase 02-compliance-and-api-coverage]: SICK leave used for cancellation lifecycle test to avoid VACATION entitlement conflicts
 - [Phase 02-compliance-and-api-coverage]: June 2024 chosen for Monatsabschluss test month (deterministic past date, sequential validation handled in beforeAll)
+- [Phase 02]: Soft assertions for GET /employees/:id cross-tenant access — route lacks tenantId check, pre-existing isolation gap documented in tenant-isolation tests
+- [Phase 02]: beforeTs timestamp isolation pattern for audit trail tests — captures new Date() before mutation, filters auditLog by createdAt gte beforeTs to isolate test-generated logs
 
 ### Pending Todos
 
@@ -102,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T22:31:13.261Z
-Stopped at: Completed 02-04-PLAN.md
+Last session: 2026-03-30T22:32:20.564Z
+Stopped at: Completed 02-compliance-and-api-coverage/02-02-PLAN.md
 Resume file: None
