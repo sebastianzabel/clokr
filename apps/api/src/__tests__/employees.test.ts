@@ -41,7 +41,7 @@ describe("Employees API", () => {
           hireDate: new Date("2026-01-01").toISOString(),
           role: "EMPLOYEE",
           weeklyHours: 40,
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
 
@@ -53,7 +53,7 @@ describe("Employees API", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
-        payload: { email, password: "test1234" },
+        payload: { email, password: "Test@1234567!" },
       });
       expect(loginRes.statusCode).toBe(200);
     });
@@ -118,7 +118,7 @@ describe("Employees API", () => {
           lastName: "Email",
           employeeNumber: `DE-${uid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
 
@@ -136,7 +136,7 @@ describe("Employees API", () => {
           lastName: "Email",
           employeeNumber: `DE2-${uid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
       expect(res2.statusCode).toBeGreaterThanOrEqual(400);
@@ -182,7 +182,9 @@ describe("Employees API", () => {
           lastName: "Deactivate",
           employeeNumber: `DA-${duid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
         },
       });
       const { id: empId } = JSON.parse(createRes.body);
@@ -200,7 +202,7 @@ describe("Employees API", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
-        payload: { email, password: "test1234" },
+        payload: { email, password: "Test@1234567!" },
       });
       expect(loginRes.statusCode).toBe(401);
     });
