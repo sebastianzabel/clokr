@@ -213,4 +213,81 @@ describe("NFC Punch API", () => {
       await app.prisma.tenant.delete({ where: { id: otherTenant.id } });
     });
   });
+
+  describe("COMPLIANCE: NFC punch and API key scoping", () => {
+    it("valid terminal API key punch succeeds", async () => {
+      await closeOpenEntries();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.action).toBeDefined();
+      expect(body.employee).toBeDefined();
+    });
+
+    it("lastUsedAt is updated after punch", async () => {
+      await closeOpenEntries();
+
+      const before = new Date();
+
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: punchHeaders(),
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      // The update is fire-and-forget — allow up to 200ms for the update to complete
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      const keyHash = createHash("sha256").update(terminalApiKey).digest("hex");
+      const apiKey = await app.prisma.terminalApiKey.findUnique({ where: { keyHash } });
+      expect(apiKey).not.toBeNull();
+      expect(apiKey!.lastUsedAt).not.toBeNull();
+      expect(apiKey!.lastUsedAt!.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
+    });
+
+    it("invalid API key returns 401", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: "Bearer clk_invalidkey999" },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("revoked API key returns 401", async () => {
+      await closeOpenEntries();
+
+      // Create and immediately revoke a key
+      const revokedKey2 = `clk_${randomBytes(32).toString("hex")}`;
+      const revokedHash2 = createHash("sha256").update(revokedKey2).digest("hex");
+      await app.prisma.terminalApiKey.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Revoked Terminal 2",
+          keyHash: revokedHash2,
+          keyPrefix: revokedKey2.substring(0, 12) + "...",
+          revokedAt: new Date(),
+        },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/nfc-punch",
+        headers: { authorization: `Bearer ${revokedKey2}` },
+        payload: { nfcCardId: NFC_CARD_ID },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+  });
 });
