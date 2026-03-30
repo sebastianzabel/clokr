@@ -73,20 +73,25 @@ Plans:
 **Requirements**: E2E-01, E2E-02, E2E-03, E2E-04, E2E-05, UI-01, UI-02, UI-03, UI-04, UI-05
 **Success Criteria** (what must be TRUE):
 
-1. Login → clock-in/out, time entry CRUD, leave approval, admin management, and Monatsabschluss flows each pass in Playwright
+1. Login -> clock-in/out, time entry CRUD, leave approval, admin management, and Monatsabschluss flows each pass in Playwright
 2. Every main view renders without horizontal scroll at 390px viewport width and all interactive elements meet 44px touch target size
 3. Every form validation error and API failure shows a German-language message; locked-month edit attempts show a "Monat ist gesperrt" message
 4. Password policy can be configured by an admin through the settings UI
-   **Plans**: TBD
-   **UI hint**: yes
+
+**Plans**: 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Clock-in/out E2E, time entry CRUD E2E, locked-month German error message (E2E-01, E2E-02, UI-02)
+- [ ] 03-02-PLAN.md — Leave approval E2E, admin employee E2E, Monatsabschluss E2E, password policy E2E (E2E-03, E2E-04, E2E-05, UI-05)
+- [ ] 03-03-PLAN.md — Mobile viewport iPhone 14 fix, touch target 44px, audit test hardening, UX reachability (UI-01, UI-03, UI-04)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3
+Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase                          | Plans Complete | Status      | Completed |
 | ------------------------------ | -------------- | ----------- | --------- |
 | 1. Test Infrastructure         | 6/6 | Complete   | 2026-03-30 |
 | 2. Compliance and API Coverage | 1/6 | In Progress|  |
-| 3. E2E and UI Quality          | 0/?            | Not started | -         |
+| 3. E2E and UI Quality          | 0/3            | Not started | -         |
