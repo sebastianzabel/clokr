@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-03-30T09:13:04.992Z"
+stopped_at: Completed 01-test-infrastructure-05-PLAN.md
+last_updated: "2026-03-30T09:17:29.464Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-30)
 ## Current Position
 
 Phase: 01 (test-infrastructure) — EXECUTING
-Plan: 3 of 6
+Plan: 4 of 6
 Status: Ready to execute
 Last activity: 2026-03-30
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 _Updated after each plan completion_
 | Phase 01 P02 | 8 | 2 tasks | 4 files |
 | Phase 01-test-infrastructure P03 | 5 | 2 tasks | 3 files |
+| Phase 01-test-infrastructure P05 | 6 | 2 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,9 @@ Recent decisions affecting current work:
 - [Phase 01]: rootDir=. in tsconfig.seed.json preserves ../generated/client import path in compiled dist/src/seed.js
 - [Phase 01]: Remove tsx fallback from entrypoint — seed compile failures must surface at build time, not runtime
 - [Phase 01-test-infrastructure]: Keep workers:1 and loginAsAdmin() calls in existing specs — storageState in place, cleanup deferred to Phase 3
+- [Phase 01-test-infrastructure]: vitest globalSetup (not setupFiles) for DATABASE_URL override — runs before worker module load, ensuring test DB URL is active when buildApp() executes
+- [Phase 01-test-infrastructure]: Shell source .env.test in pretest script — dotenv v17.3.1 ships no CLI binary; shell source handles quoted values correctly
+- [Phase 01-test-infrastructure]: try/catch in afterAll around cleanupTestData — prevents orphaned test data when tests fail mid-run
 
 ### Pending Todos
 
@@ -81,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T09:13:04.989Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-03-30T09:17:29.460Z
+Stopped at: Completed 01-test-infrastructure-05-PLAN.md
 Resume file: None

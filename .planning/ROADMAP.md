@@ -40,7 +40,7 @@ Plans:
 - [x] 01-02-PLAN.md — Fix Docker seed compilation for pnpm@10 + Prisma 7 (AUDIT-03)
 - [x] 01-03-PLAN.md — Add Playwright storageState setup project (TEST-02)
 - [ ] 01-04-PLAN.md — Enable no-floating-promises as blocking ESLint error (TEST-04)
-- [ ] 01-05-PLAN.md — Isolate test DB via TEST_DATABASE_URL with ?schema=test (TEST-01)
+- [x] 01-05-PLAN.md — Isolate test DB via TEST_DATABASE_URL with ?schema=test (TEST-01)
 - [ ] 01-06-PLAN.md — Measure baseline coverage and enforce thresholds (TEST-03)
 
 ### Phase 2: Compliance and API Coverage
@@ -78,6 +78,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase                          | Plans Complete | Status      | Completed |
 | ------------------------------ | -------------- | ----------- | --------- |
-| 1. Test Infrastructure         | 2/6 | In Progress|  |
+| 1. Test Infrastructure         | 3/6 | In Progress|  |
 | 2. Compliance and API Coverage | 0/?            | Not started | -         |
 | 3. E2E and UI Quality          | 0/?            | Not started | -         |
