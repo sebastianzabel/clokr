@@ -13,7 +13,7 @@ The app is feature-complete. This milestone pays the quality debt required befor
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Test Infrastructure** - Isolate test DB, wire storageState, enforce coverage thresholds and linting gates
+- [x] **Phase 1: Test Infrastructure** - Isolate test DB, wire storageState, enforce coverage thresholds and linting gates (completed 2026-03-30)
 - [ ] **Phase 2: Compliance and API Coverage** - Write compliance tests for all legal-critical paths, fix confirmed code defects, self-host fonts
 - [ ] **Phase 3: E2E and UI Quality** - Cover critical user flows with E2E tests, fix mobile responsiveness, audit design consistency
 
@@ -41,7 +41,7 @@ Plans:
 - [x] 01-03-PLAN.md — Add Playwright storageState setup project (TEST-02)
 - [x] 01-04-PLAN.md — Enable no-floating-promises as blocking ESLint error (TEST-04)
 - [x] 01-05-PLAN.md — Isolate test DB via TEST_DATABASE_URL with ?schema=test (TEST-01)
-- [ ] 01-06-PLAN.md — Measure baseline coverage and enforce thresholds (TEST-03)
+- [x] 01-06-PLAN.md — Measure baseline coverage and enforce thresholds (TEST-03)
 
 ### Phase 2: Compliance and API Coverage
 
@@ -78,6 +78,6 @@ Phases execute in numeric order: 1 → 2 → 3
 
 | Phase                          | Plans Complete | Status      | Completed |
 | ------------------------------ | -------------- | ----------- | --------- |
-| 1. Test Infrastructure         | 3/6 | In Progress|  |
+| 1. Test Infrastructure         | 6/6 | Complete   | 2026-03-30 |
 | 2. Compliance and API Coverage | 0/?            | Not started | -         |
 | 3. E2E and UI Quality          | 0/?            | Not started | -         |
