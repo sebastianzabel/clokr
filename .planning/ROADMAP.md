@@ -55,7 +55,16 @@ Plans:
 3. Every mutating API endpoint (POST/PUT/DELETE) produces an AuditLog row — verified by test assertions
 4. Soft-delete enforcement verified: DELETE sets deletedAt, queries filter it, locked-month entries are undeletable
 5. Google Fonts CDN requests eliminated — fonts load from local static files, no external Google domains in CSP
-   **Plans**: TBD
+
+**Plans**: 6 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — ArbZG 24-week rolling average fix + boundary and DST tests (SEC-01, SEC-05)
+- [ ] 02-02-PLAN.md — Tenant isolation and audit trail completeness tests (SEC-02, SEC-03)
+- [ ] 02-03-PLAN.md — Time entry CRUD, soft-delete, and locked-month tests (API-01, SEC-04)
+- [ ] 02-04-PLAN.md — Leave lifecycle and overtime/Monatsabschluss tests (API-02, API-03)
+- [ ] 02-05-PLAN.md — Auth flow, DSGVO anonymization, NFC punch, and decryptSafe tests (API-04, API-05, API-06)
+- [ ] 02-06-PLAN.md — Self-host Google Fonts for DSGVO Art. 44 compliance (AUDIT-02)
 
 ### Phase 3: E2E and UI Quality
 
@@ -79,5 +88,5 @@ Phases execute in numeric order: 1 → 2 → 3
 | Phase                          | Plans Complete | Status      | Completed |
 | ------------------------------ | -------------- | ----------- | --------- |
 | 1. Test Infrastructure         | 6/6 | Complete   | 2026-03-30 |
-| 2. Compliance and API Coverage | 0/?            | Not started | -         |
+| 2. Compliance and API Coverage | 0/6            | Not started | -         |
 | 3. E2E and UI Quality          | 0/?            | Not started | -         |
