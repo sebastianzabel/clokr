@@ -62,9 +62,10 @@ export async function avatarRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/avatars/:employeeId — serve avatar (no auth — used in <img> tags)
+  // GET /api/v1/avatars/:employeeId — serve avatar (requires auth — DSGVO Art. 4)
   app.get("/:employeeId", {
-    schema: { tags: ["Avatare"] },
+    schema: { tags: ["Avatare"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
 
@@ -73,10 +74,15 @@ export async function avatarRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Kein Avatar vorhanden" });
       }
 
+      // Tenant scope: only users in the same tenant may access the avatar
+      if (employee.tenantId !== req.user.tenantId) {
+        return reply.code(403).send({ error: "Keine Berechtigung" });
+      }
+
       try {
         const buffer = await app.storage.getBuffer(employee.avatarPath);
         reply.header("Content-Type", "image/webp");
-        reply.header("Cache-Control", "public, max-age=3600");
+        reply.header("Cache-Control", "private, max-age=3600");
         return reply.send(buffer);
       } catch {
         return reply.code(404).send({ error: "Avatar nicht gefunden" });

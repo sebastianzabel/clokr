@@ -28,6 +28,30 @@
   let showNotifications = $state(false);
   let pollInterval: ReturnType<typeof setInterval> | undefined;
 
+  // ── Avatar (auth-gated fetch — DSGVO) ──────────────────────────
+  let sidebarAvatarSrc = $state<string | null>(null);
+
+  $effect(() => {
+    const empId = $authStore.user?.employeeId;
+    const token = $authStore.accessToken;
+    if (!empId || !token) return;
+
+    let objectUrl: string | null = null;
+    fetch(`/api/v1/avatars/${empId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (blob) {
+          objectUrl = URL.createObjectURL(blob);
+          sidebarAvatarSrc = objectUrl;
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  });
+
   async function loadNotifications() {
     try {
       const res = await api.get<{ notifications: Notification[]; unreadCount: number }>(
@@ -308,17 +332,8 @@
       <div class="sidebar-footer">
         {#if $authStore.user}
           <a href="/settings" class="sidebar-user">
-            {#if $authStore.user.employeeId}
-              <img
-                src="/api/v1/avatars/{$authStore.user.employeeId}"
-                alt=""
-                class="sidebar-user-avatar-img"
-                onerror={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                  if (e.target instanceof HTMLElement && e.target.nextElementSibling)
-                    (e.target.nextElementSibling as HTMLElement).style.display = "flex";
-                }}
-              />
+            {#if sidebarAvatarSrc}
+              <img src={sidebarAvatarSrc} alt="" class="sidebar-user-avatar-img" />
             {/if}
             <div
               class="sidebar-user-avatar"
