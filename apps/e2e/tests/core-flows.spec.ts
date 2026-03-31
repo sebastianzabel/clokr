@@ -43,6 +43,11 @@ test.describe("Core Flows", () => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 
+    // Wait for the clock widget to render (either button must be present)
+    await expect(
+      page.locator(".clock-btn--in").or(page.locator(".clock-btn--out")).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
     // Reset state: if already clocked in, clock out first
     const clockOutBtn = page.locator(".clock-btn--out");
     if (await clockOutBtn.isVisible()) {
@@ -54,8 +59,9 @@ test.describe("Core Flows", () => {
     const clockInBtn = page.locator(".clock-btn--in");
     await expect(clockInBtn).toBeVisible();
 
-    // Click to clock in
+    // Click to clock in and wait for network activity to settle
     await clockInBtn.click();
+    await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
     // After clock-in: clock-out button must appear and status text must show
     await expect(page.locator(".clock-btn--out")).toBeVisible({ timeout: 10_000 });
@@ -68,10 +74,16 @@ test.describe("Core Flows", () => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
 
+    // Wait for the clock widget to render (either button must be present)
+    await expect(
+      page.locator(".clock-btn--in").or(page.locator(".clock-btn--out")).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
     // Ensure we are clocked in before testing clock-out
     const clockInBtn = page.locator(".clock-btn--in");
     if (await clockInBtn.isVisible()) {
       await clockInBtn.click();
+      await page.waitForLoadState("networkidle", { timeout: 15_000 });
       await expect(page.locator(".clock-btn--out")).toBeVisible({ timeout: 10_000 });
     }
 
@@ -79,8 +91,9 @@ test.describe("Core Flows", () => {
     const clockOutBtn = page.locator(".clock-btn--out");
     await expect(clockOutBtn).toBeVisible();
 
-    // Click to clock out
+    // Click to clock out and wait for network activity to settle
     await clockOutBtn.click();
+    await page.waitForLoadState("networkidle", { timeout: 15_000 });
 
     // After clock-out: clock-in button must appear and status text must disappear
     await expect(page.locator(".clock-btn--in")).toBeVisible({ timeout: 10_000 });

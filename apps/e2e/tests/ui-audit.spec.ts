@@ -78,7 +78,10 @@ test.describe("UI Audit — Visual & Layout Checks", () => {
     await page.waitForLoadState("networkidle");
     await screenshotPage(page, "admin-vacation");
 
-    for (const section of ["Arbeitszeit", "Urlaubsanspruch", "Heiligabend"]) {
+    // Check always-visible section headers (the <details> summaries are always visible)
+    // "Arbeitszeit" and "Urlaubsanspruch" are in open accordions
+    // "Abwesenheiten & Sonderregelungen" is a summary (always visible even when collapsed)
+    for (const section of ["Arbeitszeit", "Urlaubsanspruch", "Abwesenheiten"]) {
       await expect(page.getByText(section, { exact: false }).first()).toBeVisible();
     }
   });

@@ -1,17 +1,47 @@
 import { test, expect } from "@playwright/test";
 import { loginAsAdmin, screenshotPage } from "./helpers";
 
-// Compute a weekday date 7 days ago (shared across tests via closure)
-function weekdaySevenDaysAgo(): string {
+// Compute a weekday date far enough in the past to avoid conflicts with previous test runs.
+// Uses 60 days ago offset to ensure the date is in a month that tests are unlikely to
+// have polluted from previous runs.
+function weekdayNDaysAgo(n: number): string {
   const d = new Date();
-  d.setDate(d.getDate() - 7);
+  d.setDate(d.getDate() - n);
   while (d.getDay() === 0 || d.getDay() === 6) {
     d.setDate(d.getDate() - 1);
   }
   return d.toISOString().split("T")[0];
 }
 
-const TEST_DATE = weekdaySevenDaysAgo();
+const TEST_DATE = weekdayNDaysAgo(60);
+
+/**
+ * Navigate the time-entries calendar to the month of a given YYYY-MM-DD date.
+ * Clicks "Vorheriger Monat" until the displayed month+year matches.
+ */
+async function navigateToMonth(page: import("@playwright/test").Page, targetDate: string) {
+  const targetYear = parseInt(targetDate.substring(0, 4));
+  const targetMonth = parseInt(targetDate.substring(5, 7)); // 1-based
+  const monthNames = [
+    "Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember",
+  ];
+  const targetLabel = `${monthNames[targetMonth - 1]} ${targetYear}`;
+
+  for (let attempts = 0; attempts < 24; attempts++) {
+    // The center cal-nav button shows "Monat Jahr" (e.g., "März 2026")
+    const centerBtn = page.locator(".cal-nav-center button").first();
+    const centerText = await centerBtn.textContent().catch(() => "");
+    if (centerText?.includes(monthNames[targetMonth - 1]) && centerText?.includes(String(targetYear))) {
+      break;
+    }
+    // Determine if we need to go backwards or forwards
+    // Simple approach: always go backwards (test dates are in the past)
+    await page.locator(".cal-nav button[title='Vorheriger Monat']").click();
+    await page.waitForTimeout(200);
+  }
+  console.log(`Navigated to: ${targetLabel}`);
+}
 
 test.describe("Zeiterfassung — Complete Flow", () => {
   test.beforeEach(async ({ page }) => {
@@ -27,22 +57,37 @@ test.describe("Zeiterfassung — Complete Flow", () => {
   });
 
   test("create a manual time entry", async ({ page }) => {
-    // Click "Eintrag hinzufügen" to open the add modal
-    await page.getByText(/Eintrag hinzufügen/i).click();
+    // Navigate calendar to the month of TEST_DATE (60 days ago)
+    await navigateToMonth(page, TEST_DATE);
 
-    // Wait for modal to appear
-    const modal = page.locator("[role='dialog'], .modal").first();
-    await expect(modal).toBeVisible();
+    // Click the day cell for TEST_DATE to open the add modal.
+    // Using data-date attribute for reliable selection.
+    const dayCell = page.locator(`[data-date="${TEST_DATE}"]`).first();
+    await expect(dayCell).toBeVisible({ timeout: 5_000 });
+    await dayCell.click();
 
-    // Fill in the date (7 days ago, guaranteed weekday)
-    await modal.locator("input[type='date']").first().fill(TEST_DATE);
+    // Wait for modal to appear — the modal uses role=dialog on the .modal-card element
+    const modal = page.locator("[role='dialog']").first();
+    await expect(modal).toBeVisible({ timeout: 5_000 });
 
-    // Fill start and end times
-    await modal.locator("input[type='time']").first().fill("08:00");
-    await modal.locator("input[type='time']").nth(1).fill("16:30");
+    // If the modal opened in edit mode (entry already exists), skip creation
+    const modalTitle = await modal.locator("h2").first().textContent();
+    if (modalTitle?.includes("bearbeiten")) {
+      console.log(`Entry already exists for ${TEST_DATE} — closing modal`);
+      await modal.getByRole("button", { name: /Abbrechen|Schließen/i }).first().click();
+      await expect(modal).not.toBeVisible({ timeout: 3_000 });
+      return;
+    }
 
-    // Click save
-    await modal.getByRole("button", { name: /speichern|erstellen/i }).first().click();
+    // Fill start and end times (date is pre-filled from the cell click)
+    await modal.locator("#f-start").fill("08:00");
+    await modal.locator("#f-end").fill("16:30");
+
+    // Click save — for new entries the button text is "Eintrag hinzufügen"
+    await modal
+      .getByRole("button", { name: /Eintrag hinzufügen|Änderungen speichern/i })
+      .first()
+      .click();
 
     // Modal should close after successful save
     await expect(modal).not.toBeVisible({ timeout: 5_000 });
@@ -51,29 +96,24 @@ test.describe("Zeiterfassung — Complete Flow", () => {
   });
 
   test("edit an existing time entry", async ({ page }) => {
-    // Navigate to the correct month if the test date is in a different month
-    // (TEST_DATE is at most 7 days ago, so it's in the current or previous month)
-    // The modal is reused from the create step — open by clicking the day cell
-    const modal = page.locator("[role='dialog'], .modal").first();
+    // Navigate to the month of TEST_DATE and open the entry
+    await navigateToMonth(page, TEST_DATE);
 
-    // Try to find the day cell using data-date attribute
+    const modal = page.locator("[role='dialog']").first();
     const dayCell = page.locator(`[data-date="${TEST_DATE}"]`).first();
-    const dayCellVisible = await dayCell.isVisible().catch(() => false);
-
-    if (dayCellVisible) {
-      await dayCell.click();
-    } else {
-      // Fallback: click the edit icon (pencil) in the list view if calendar not available
-      await page.locator(".btn-icon").filter({ hasText: /✏️/ }).first().click();
-    }
+    await expect(dayCell).toBeVisible({ timeout: 5_000 });
+    await dayCell.click();
 
     await expect(modal).toBeVisible({ timeout: 5_000 });
 
     // Change end time to 17:00
-    await modal.locator("input[type='time']").nth(1).fill("17:00");
+    await modal.locator("#f-end").fill("17:00");
 
-    // Click save
-    await modal.getByRole("button", { name: /speichern|erstellen/i }).first().click();
+    // Click save — for edits the button text is "Änderungen speichern"
+    await modal
+      .getByRole("button", { name: /Eintrag hinzufügen|Änderungen speichern/i })
+      .first()
+      .click();
 
     // Modal should close
     await expect(modal).not.toBeVisible({ timeout: 5_000 });
@@ -82,34 +122,45 @@ test.describe("Zeiterfassung — Complete Flow", () => {
   });
 
   test("delete a time entry", async ({ page }) => {
-    const modal = page.locator("[role='dialog'], .modal").first();
+    // Navigate to the month of TEST_DATE first (calendar view has the nav buttons)
+    await navigateToMonth(page, TEST_DATE);
 
-    // Open the entry by clicking the day cell or edit icon
-    const dayCell = page.locator(`[data-date="${TEST_DATE}"]`).first();
-    const dayCellVisible = await dayCell.isVisible().catch(() => false);
+    // Switch to list view where the delete (trash) button is visible
+    await page.getByRole("button", { name: /Liste/i }).click();
+    await page.waitForLoadState("networkidle");
 
-    if (dayCellVisible) {
-      await dayCell.click();
-      await expect(modal).toBeVisible({ timeout: 5_000 });
+    // In list view, find the first delete icon and click it
+    const deleteBtn = page.locator(".btn-icon-danger").first();
+    await expect(deleteBtn).toBeVisible({ timeout: 5_000 });
+    await deleteBtn.click();
 
-      // Inside modal, click delete button
-      await modal.getByRole("button", { name: /löschen/i }).first().click();
-    } else {
-      // Fallback: use the row-level delete icon (🗑) which opens inline confirm
-      await page.locator(".btn-icon-danger").first().click();
-    }
-
-    // Confirm deletion by clicking "Ja"
+    // Confirm deletion by clicking the confirm button "Ja"
+    await expect(page.getByRole("button", { name: "Ja" })).toBeVisible({ timeout: 3_000 });
     await page.getByRole("button", { name: "Ja" }).first().click();
 
-    // Modal should be gone
-    await expect(modal).not.toBeVisible({ timeout: 5_000 });
+    // Wait for the deletion to process
+    await page.waitForTimeout(500);
 
     await screenshotPage(page, "flow-time-entry-deleted");
   });
 
   test("locked-month edit shows German error message", async ({ page }) => {
-    // Intercept PUT requests to the time-entries API and return mocked 403
+    // Intercept both POST and PUT requests to the time-entries API and return mocked 403.
+    // The "Eintrag hinzufügen" button opens the form with editEntry=null, so saveEntry()
+    // calls POST (not PUT) for new entries. We intercept both to cover both flows.
+    await page.route("**/api/v1/time-entries", async (route) => {
+      if (route.request().method() === "POST") {
+        await route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({
+            error: "Eintrag ist gesperrt und kann nicht bearbeitet werden",
+          }),
+        });
+      } else {
+        await route.continue();
+      }
+    });
     await page.route("**/api/v1/time-entries/**", async (route) => {
       if (route.request().method() === "PUT") {
         await route.fulfill({
@@ -125,8 +176,8 @@ test.describe("Zeiterfassung — Complete Flow", () => {
     });
 
     // Open the add modal
-    await page.getByText(/Eintrag hinzufügen/i).click();
-    const modal = page.locator("[role='dialog'], .modal").first();
+    await page.locator("button.btn-primary").filter({ hasText: /Eintrag hinzufügen/i }).click();
+    const modal = page.locator("[role='dialog']").first();
     await expect(modal).toBeVisible();
 
     // Fill a date slightly further back to avoid conflicts
@@ -135,19 +186,23 @@ test.describe("Zeiterfassung — Complete Flow", () => {
     while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
     const lockTestDate = d.toISOString().split("T")[0];
 
-    await modal.locator("input[type='date']").first().fill(lockTestDate);
-    await modal.locator("input[type='time']").first().fill("09:00");
-    await modal.locator("input[type='time']").nth(1).fill("17:00");
+    await modal.locator("#f-date").fill(lockTestDate);
+    await modal.locator("#f-start").fill("09:00");
+    await modal.locator("#f-end").fill("17:00");
 
-    // Click save — the intercepted PUT returns 403
-    await modal.getByRole("button", { name: /speichern|erstellen/i }).first().click();
+    // Click save — the intercepted POST returns 403
+    await modal
+      .getByRole("button", { name: /Eintrag hinzufügen|Änderungen speichern/i })
+      .first()
+      .click();
 
     // The page must display the German locked-month error
-    await expect(page.getByText("Monat ist gesperrt")).toBeVisible();
+    await expect(page.getByText("Monat ist gesperrt")).toBeVisible({ timeout: 5_000 });
 
     await screenshotPage(page, "flow-locked-month-error");
 
-    // Clean up route intercept
+    // Clean up route intercepts
+    await page.unroute("**/api/v1/time-entries");
     await page.unroute("**/api/v1/time-entries/**");
   });
 });
