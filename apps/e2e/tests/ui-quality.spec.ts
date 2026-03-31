@@ -23,32 +23,39 @@ function finding(page: string, category: string, severity: UIFinding["severity"]
 test.afterAll(() => {
   if (findings.length === 0) return;
 
+  const criticalFindings = findings.filter((f) => f.severity === "critical");
+  const nonCritical = findings.filter((f) => f.severity !== "good" && f.severity !== "critical");
   const good = findings.filter((f) => f.severity === "good");
-  const issues = findings.filter((f) => f.severity !== "good");
 
   console.log(`\n╔══════════════════════════════════════════╗`);
   console.log(`║     UI QUALITY REPORT                    ║`);
   console.log(`╚══════════════════════════════════════════╝\n`);
 
   if (good.length > 0) {
-    console.log(`✅ GOOD (${good.length}):`);
-    good.forEach((f) => console.log(`  ✓ [${f.page}] ${f.category}: ${f.message}`));
+    console.log(`GOOD (${good.length}):`);
+    good.forEach((f) => console.log(`  [${f.page}] ${f.category}: ${f.message}`));
     console.log();
   }
 
-  if (issues.length > 0) {
-    console.log(`⚠️  ISSUES (${issues.length}):`);
-    for (const f of issues) {
-      const icon = f.severity === "critical" ? "🔴" : f.severity === "major" ? "🟡" : "🔵";
-      console.log(`  ${icon} [${f.page}] ${f.category}: ${f.message}`);
+  if (nonCritical.length > 0) {
+    console.log(`Non-critical issues (${nonCritical.length}):`);
+    for (const f of nonCritical) {
+      console.log(`  [${f.severity}] [${f.page}] ${f.category}: ${f.message}`);
     }
   }
 
-  const c = issues.filter((f) => f.severity === "critical").length;
-  const m = issues.filter((f) => f.severity === "major").length;
-  console.log(
-    `\n📊 ${good.length} good, ${c} critical, ${m} major, ${issues.length - c - m} minor\n`,
-  );
+  if (criticalFindings.length > 0) {
+    console.log(`\nCRITICAL issues (${criticalFindings.length}):`);
+    for (const f of criticalFindings) {
+      console.log(`  [${f.page}] ${f.category}: ${f.message}`);
+    }
+  }
+
+  // Hard fail on critical findings — CI must catch these
+  expect(
+    criticalFindings,
+    criticalFindings.map((f) => `[${f.page}] ${f.category}: ${f.message}`).join("\n"),
+  ).toHaveLength(0);
 });
 
 test.describe("UI Quality — Typography Scale", () => {
