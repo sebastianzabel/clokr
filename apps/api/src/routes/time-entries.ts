@@ -168,9 +168,10 @@ async function hasApprovedLeaveOnDate(
 
 export async function timeEntryRoutes(app: FastifyInstance) {
   // POST /api/v1/time-entries/nfc-punch  (kein JWT – Terminal-Gerät)
+  const isTest = process.env.NODE_ENV === "test";
   app.post("/nfc-punch", {
     schema: { tags: ["Zeiterfassung"] },
-    config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    config: { rateLimit: { max: isTest ? 1000 : 10, timeWindow: "1 minute" } },
     handler: async (req, reply) => {
       const body = nfcPunchSchema.parse(req.body);
 
@@ -670,6 +671,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const entries = await app.prisma.timeEntry.findMany({
         where: {
+          // Tenant isolation: always scope to the requesting user's tenant via employee.tenantId
+          employee: { tenantId: user.tenantId },
           employeeId: isManager && employeeId ? employeeId : (user.employeeId ?? undefined),
           deletedAt: null,
           date: {
@@ -1154,9 +1157,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 
-      const existing = await app.prisma.timeEntry.findUnique({ where: { id } });
+      const existing = await app.prisma.timeEntry.findUnique({
+        where: { id },
+        include: { employee: { select: { tenantId: true } } },
+      });
       if (!existing || existing.deletedAt)
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Tenant isolation: reject cross-tenant deletes
+      if (existing.employee.tenantId !== user.tenantId) {
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
 
       if (!isManager && existing.employeeId !== user.employeeId) {
         return reply.code(403).send({ error: "Kein Zugriff" });

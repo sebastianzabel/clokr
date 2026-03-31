@@ -167,20 +167,21 @@ describe("Overtime Saldo Calculation", () => {
       });
       const balanceBefore = Number(JSON.parse(before.body).balanceHours);
 
-      // Add a 10h entry for a past Monday (2025-03-03)
+      // Add a 10h entry for a recent weekday (within the current month so it affects saldo)
+      const recentDate = pastDate(3);
       await app.prisma.timeEntry.deleteMany({
         where: {
           employeeId: data.employee.id,
-          date: new Date("2025-03-03T00:00:00Z"),
+          date: new Date(recentDate + "T00:00:00Z"),
           deletedAt: null,
         },
       });
       await app.prisma.timeEntry.create({
         data: {
           employeeId: data.employee.id,
-          date: new Date("2025-03-03T00:00:00Z"),
-          startTime: new Date("2025-03-03T07:00:00.000Z"),
-          endTime: new Date("2025-03-03T17:00:00.000Z"),
+          date: new Date(recentDate + "T00:00:00Z"),
+          startTime: new Date(`${recentDate}T07:00:00.000Z`),
+          endTime: new Date(`${recentDate}T17:00:00.000Z`),
           breakMinutes: 0,
           source: "MANUAL",
           type: "WORK",
@@ -345,12 +346,14 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     it("SaldoSnapshot record exists with workedMinutes > 0 after month-close", async () => {
+      // periodStart for June 2024 in Europe/Berlin (UTC+2 in summer) is
+      // "2024-05-31T22:00:00Z" UTC, so we must use a range that includes this offset.
       const snapshot = await app.prisma.saldoSnapshot.findFirst({
         where: {
           employeeId: data.employee.id,
           periodType: "MONTHLY",
           periodStart: {
-            gte: new Date("2024-06-01T00:00:00Z"),
+            gte: new Date("2024-05-31T00:00:00Z"),
             lte: new Date("2024-06-02T00:00:00Z"),
           },
         },

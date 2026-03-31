@@ -160,12 +160,25 @@ describe("ArbZG Compliance Checks", () => {
     // Use a SEPARATE employee to avoid contamination from other test blocks
     let avgEmployee: Employee;
 
+    // Dedicated user for the rolling-average employee (cannot reuse empUser.id — Employee.userId is unique)
+    let avgUserId: string;
+
     beforeAll(async () => {
+      const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      const avgUser = await app.prisma.user.create({
+        data: {
+          email: `avg-${s}@test.de`,
+          passwordHash: "PLACEHOLDER",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      avgUserId = avgUser.id;
       avgEmployee = await app.prisma.employee.create({
         data: {
           tenantId: data.tenant.id,
-          userId: data.empUser.id, // reuse userId is OK — we just need a prisma record
-          employeeNumber: `AZ-AVG-${Date.now()}`,
+          userId: avgUserId,
+          employeeNumber: `AZ-AVG-${s}`,
           firstName: "Rolling",
           lastName: "Average",
           hireDate: new Date("2024-01-01"),
@@ -175,15 +188,18 @@ describe("ArbZG Compliance Checks", () => {
 
     afterAll(async () => {
       // Clean up the separate rolling-average employee and their entries
-      await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee.id } });
-      await app.prisma.workSchedule.deleteMany({ where: { employeeId: avgEmployee.id } });
-      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: avgEmployee.id } });
-      await app.prisma.employee.delete({ where: { id: avgEmployee.id } });
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee?.id } });
+      await app.prisma.workSchedule.deleteMany({ where: { employeeId: avgEmployee?.id } });
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: avgEmployee?.id } });
+      if (avgEmployee?.id) await app.prisma.employee.delete({ where: { id: avgEmployee.id } });
+      if (avgUserId) await app.prisma.user.delete({ where: { id: avgUserId } });
     });
 
     afterAll(async () => {
       // Clean up entries after each test scenario (defensive cleanup)
-      await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee.id } });
+      if (avgEmployee?.id) {
+        await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee.id } });
+      }
     });
 
     /**
@@ -225,8 +241,10 @@ describe("ArbZG Compliance Checks", () => {
         }
       }
 
-      // Use a date within the 24-week window as changedDate
-      const changedDate = new Date("2024-06-03T08:00:00.000Z"); // within the window
+      // Use the last day of the 24-week period as changedDate so all entries are in the window.
+      // Week 24 (w=23) ends on 2024-06-14 (Friday), so changedDate must be >= 2024-06-14.
+      // The window covers changedDate - 167 days = 2024-06-14 - 167 = 2023-12-29 (before all entries).
+      const changedDate = new Date("2024-06-14T17:00:00.000Z"); // end of last entry day
       const warnings = await checkArbZG(app.prisma, avgEmployee.id, changedDate);
       const avgWarn = warnings.find(
         (w) => w.code === "MAX_DAILY_AVG_EXCEEDED" || w.message.includes("24-Wochen"),
