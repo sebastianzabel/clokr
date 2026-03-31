@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 03-e2e-and-ui-quality-02-PLAN.md
-last_updated: "2026-03-31T06:04:30.957Z"
+status: verifying
+stopped_at: Completed 03-e2e-and-ui-quality-03-PLAN.md
+last_updated: "2026-03-31T06:11:26.862Z"
 last_activity: 2026-03-31
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 14
+  completed_plans: 15
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-30)
 
 Phase: 03 (e2e-and-ui-quality) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-31
 
 Progress: [░░░░░░░░░░] 0%
@@ -66,6 +66,7 @@ _Updated after each plan completion_
 | Phase 02 P01 | 5 | 2 tasks | 2 files |
 | Phase 03-e2e-and-ui-quality P01 | 113 | 2 tasks | 3 files |
 | Phase 03-e2e-and-ui-quality P02 | 10 | 2 tasks | 2 files |
+| Phase 03-e2e-and-ui-quality P03 | 4 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,9 @@ Recent decisions affecting current work:
 - [Phase 03-e2e-and-ui-quality]: Employee-creates/admin-approves via explicit Bearer token -- only deterministic path avoiding self-approval block in leave E2E test
 - [Phase 03-e2e-and-ui-quality]: SICK leave type for approval test -- avoids vacation entitlement constraints
 - [Phase 03-e2e-and-ui-quality]: Dynamic year discovery for Monatsabschluss test -- avoids hardcoded date fragility
+- [Phase 03-e2e-and-ui-quality]: iPhone 14 devices preset (390px, isMobile:true, hasTouch:true) replaces raw 375x812 viewport — matches real device characteristics
+- [Phase 03-e2e-and-ui-quality]: Touch target threshold raised from 32px to 44px per WCAG 2.5.5 — critical severity to hard-fail CI
+- [Phase 03-e2e-and-ui-quality]: ui-quality.spec.ts and ux-design-audit.spec.ts afterAll blocks now hard-fail CI via expect(criticalFindings).toHaveLength(0)
 
 ### Pending Todos
 
@@ -116,6 +120,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-31T06:04:30.954Z
-Stopped at: Completed 03-e2e-and-ui-quality-02-PLAN.md
+Last session: 2026-03-31T06:11:26.859Z
+Stopped at: Completed 03-e2e-and-ui-quality-03-PLAN.md
 Resume file: None

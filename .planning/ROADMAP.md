@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Test Infrastructure** - Isolate test DB, wire storageState, enforce coverage thresholds and linting gates (completed 2026-03-30)
 - [ ] **Phase 2: Compliance and API Coverage** - Write compliance tests for all legal-critical paths, fix confirmed code defects, self-host fonts
-- [ ] **Phase 3: E2E and UI Quality** - Cover critical user flows with E2E tests, fix mobile responsiveness, audit design consistency
+- [x] **Phase 3: E2E and UI Quality** - Cover critical user flows with E2E tests, fix mobile responsiveness, audit design consistency (completed 2026-03-31)
 
 ## Phase Details
 
@@ -83,7 +83,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Clock-in/out E2E, time entry CRUD E2E, locked-month German error message (E2E-01, E2E-02, UI-02)
 - [x] 03-02-PLAN.md — Leave approval E2E, admin employee E2E, Monatsabschluss E2E, password policy E2E (E2E-03, E2E-04, E2E-05, UI-05)
-- [ ] 03-03-PLAN.md — Mobile viewport iPhone 14 fix, touch target 44px, audit test hardening, UX reachability (UI-01, UI-03, UI-04)
+- [x] 03-03-PLAN.md — Mobile viewport iPhone 14 fix, touch target 44px, audit test hardening, UX reachability (UI-01, UI-03, UI-04)
 
 ## Progress
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | ------------------------------ | -------------- | ----------- | --------- |
 | 1. Test Infrastructure         | 6/6 | Complete   | 2026-03-30 |
 | 2. Compliance and API Coverage | 1/6 | In Progress|  |
-| 3. E2E and UI Quality          | 2/3 | In Progress|  |
+| 3. E2E and UI Quality          | 3/3 | Complete   | 2026-03-31 |
