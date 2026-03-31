@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-e2e-and-ui-quality-01-PLAN.md
-last_updated: "2026-03-31T03:41:53.073Z"
+stopped_at: Completed 03-e2e-and-ui-quality-02-PLAN.md
+last_updated: "2026-03-31T06:04:30.957Z"
 last_activity: 2026-03-31
 progress:
   total_phases: 3
   completed_phases: 2
   total_plans: 15
-  completed_plans: 13
+  completed_plans: 14
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-30)
 ## Current Position
 
 Phase: 03 (e2e-and-ui-quality) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-03-31
 
@@ -65,6 +65,7 @@ _Updated after each plan completion_
 | Phase 02-compliance-and-api-coverage P05 | 5 | 2 tasks | 3 files |
 | Phase 02 P01 | 5 | 2 tasks | 2 files |
 | Phase 03-e2e-and-ui-quality P01 | 113 | 2 tasks | 3 files |
+| Phase 03-e2e-and-ui-quality P02 | 10 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,9 @@ Recent decisions affecting current work:
 - [Phase 02-compliance-and-api-coverage]: lastUsedAt NFC assertion uses 200ms setTimeout wait for fire-and-forget DB update
 - [Phase 03-e2e-and-ui-quality]: Duck-type (e as any)?.status === 403 for ApiError detection — ApiError not exported from client.ts
 - [Phase 03-e2e-and-ui-quality]: page.route() mock for locked-month 403 test — avoids real locked month dependency in test DB
+- [Phase 03-e2e-and-ui-quality]: Employee-creates/admin-approves via explicit Bearer token -- only deterministic path avoiding self-approval block in leave E2E test
+- [Phase 03-e2e-and-ui-quality]: SICK leave type for approval test -- avoids vacation entitlement constraints
+- [Phase 03-e2e-and-ui-quality]: Dynamic year discovery for Monatsabschluss test -- avoids hardcoded date fragility
 
 ### Pending Todos
 
@@ -112,6 +116,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-31T03:41:53.071Z
-Stopped at: Completed 03-e2e-and-ui-quality-01-PLAN.md
+Last session: 2026-03-31T06:04:30.954Z
+Stopped at: Completed 03-e2e-and-ui-quality-02-PLAN.md
 Resume file: None

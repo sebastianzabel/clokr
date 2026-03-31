@@ -41,9 +41,9 @@ Requirements for production launch. Each maps to roadmap phases.
 
 - [x] **E2E-01**: Login → Dashboard → Clock in/out flow
 - [x] **E2E-02**: Time entry create/edit/delete flow
-- [ ] **E2E-03**: Leave request → approval → calendar display flow
-- [ ] **E2E-04**: Admin employee management flow
-- [ ] **E2E-05**: Monatsabschluss lock/unlock flow (manager)
+- [x] **E2E-03**: Leave request → approval → calendar display flow
+- [x] **E2E-04**: Admin employee management flow
+- [x] **E2E-05**: Monatsabschluss lock/unlock flow (manager)
 
 ### UI Quality
 
@@ -51,7 +51,7 @@ Requirements for production launch. Each maps to roadmap phases.
 - [x] **UI-02**: Consistent error feedback (German-language error messages, retry prompts, locked-month messages)
 - [ ] **UI-03**: Design consistency audit (spacing, colors, loading skeletons, form components)
 - [ ] **UI-04**: UX flow improvements (navigation, fewer clicks, clearer feedback patterns)
-- [ ] **UI-05**: Password policy admin UI (TenantConfig fields exist but no UI)
+- [x] **UI-05**: Password policy admin UI (TenantConfig fields exist but no UI)
 
 ## v2 Requirements
 
@@ -118,14 +118,14 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUDIT-02    | Phase 2 | Complete |
 | E2E-01      | Phase 3 | Complete |
 | E2E-02      | Phase 3 | Complete |
-| E2E-03      | Phase 3 | Pending |
-| E2E-04      | Phase 3 | Pending |
-| E2E-05      | Phase 3 | Pending |
+| E2E-03      | Phase 3 | Complete |
+| E2E-04      | Phase 3 | Complete |
+| E2E-05      | Phase 3 | Complete |
 | UI-01       | Phase 3 | Pending |
 | UI-02       | Phase 3 | Complete |
 | UI-03       | Phase 3 | Pending |
 | UI-04       | Phase 3 | Pending |
-| UI-05       | Phase 3 | Pending |
+| UI-05       | Phase 3 | Complete |
 
 **Coverage:**
 
