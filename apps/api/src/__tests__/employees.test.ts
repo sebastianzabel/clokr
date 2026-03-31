@@ -306,6 +306,44 @@ describe("Employees API", () => {
     });
   });
 
+  describe("DELETE with Content-Type: application/json (empty body)", () => {
+    it("accepts DELETE with Content-Type header and no body", async () => {
+      // Create a throwaway employee for this test
+      const uid = crypto.randomUUID().slice(0, 8);
+      const user = await app.prisma.user.create({
+        data: {
+          email: `ct-test-${uid}@test.local`,
+          passwordHash: "test",
+          role: "EMPLOYEE",
+        },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          userId: user.id,
+          tenantId: data.tenant.id,
+          firstName: "CT",
+          lastName: "Test",
+          employeeNumber: `CT-${uid}`,
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: emp.id, balanceHours: 0 },
+      });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}`,
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "content-type": "application/json",
+        },
+      });
+
+      expect(res.statusCode).toBe(204);
+    });
+  });
+
   it("COMPLIANCE: all SMTP passwords are encrypted", async () => {
     const configs = await app.prisma.tenantConfig.findMany({
       where: { smtpPassword: { not: null } },
