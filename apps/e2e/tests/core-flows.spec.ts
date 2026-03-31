@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { loginAsAdmin } from "./helpers";
+import { loginAsAdmin, screenshotPage } from "./helpers";
 
 test.describe("Core Flows", () => {
   test.beforeEach(async ({ page }) => {
@@ -39,22 +39,53 @@ test.describe("Core Flows", () => {
     }
   });
 
-  test("command palette opens with Ctrl+K", async ({ page }) => {
+  test("clock in and verify running state", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    // Playwright uses Control, not Meta for keyboard shortcuts
-    await page.keyboard.press("Control+k");
-    await expect(
-      page.getByPlaceholder(/suche|search/i).or(page.locator(".command-palette, .cmd-palette")),
-    ).toBeVisible({ timeout: 3000 });
+
+    // Reset state: if already clocked in, clock out first
+    const clockOutBtn = page.locator(".clock-btn--out");
+    if (await clockOutBtn.isVisible()) {
+      await clockOutBtn.click();
+      await expect(page.locator(".clock-btn--in")).toBeVisible({ timeout: 10_000 });
+    }
+
+    // Verify the clock-in button is visible before clicking
+    const clockInBtn = page.locator(".clock-btn--in");
+    await expect(clockInBtn).toBeVisible();
+
+    // Click to clock in
+    await clockInBtn.click();
+
+    // After clock-in: clock-out button must appear and status text must show
+    await expect(page.locator(".clock-btn--out")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Eingestempelt seit/)).toBeVisible();
+
+    await screenshotPage(page, "flow-clock-in-active");
   });
 
-  test("theme switcher works", async ({ page }) => {
+  test("clock out and verify stopped state", async ({ page }) => {
     await page.goto("/dashboard");
-    // Open command palette and search for theme
-    await page.keyboard.press("Meta+k");
-    await page.waitForTimeout(500);
-    // Close it
-    await page.keyboard.press("Escape");
+    await page.waitForLoadState("networkidle");
+
+    // Ensure we are clocked in before testing clock-out
+    const clockInBtn = page.locator(".clock-btn--in");
+    if (await clockInBtn.isVisible()) {
+      await clockInBtn.click();
+      await expect(page.locator(".clock-btn--out")).toBeVisible({ timeout: 10_000 });
+    }
+
+    // Verify the clock-out button is visible before clicking
+    const clockOutBtn = page.locator(".clock-btn--out");
+    await expect(clockOutBtn).toBeVisible();
+
+    // Click to clock out
+    await clockOutBtn.click();
+
+    // After clock-out: clock-in button must appear and status text must disappear
+    await expect(page.locator(".clock-btn--in")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Eingestempelt seit/)).not.toBeVisible();
+
+    await screenshotPage(page, "flow-clock-out-stopped");
   });
 });
