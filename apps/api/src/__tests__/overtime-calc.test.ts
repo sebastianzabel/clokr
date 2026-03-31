@@ -22,7 +22,11 @@ describe("Overtime Saldo Calculation", () => {
   });
 
   afterAll(async () => {
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 
@@ -128,6 +132,237 @@ describe("Overtime Saldo Calculation", () => {
     // Balance should increase by ~10h worked today minus expected hours for today
     // The key assertion: balance increased after adding today's entry
     expect(balance2).toBeGreaterThan(balance1);
+  });
+
+  // ── COMPLIANCE: Overtime saldo read ────────────────────────────────────────
+
+  describe("COMPLIANCE: Overtime saldo read", () => {
+    it("GET overtime endpoint returns numeric balanceHours and account fields", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+
+      // OvertimeAccount fields must be present and numeric
+      expect(typeof Number(body.balanceHours)).toBe("number");
+      expect(isNaN(Number(body.balanceHours))).toBe(false);
+
+      // Status field must be one of the expected values
+      expect(["NORMAL", "ELEVATED", "CRITICAL"]).toContain(body.status);
+
+      // threshold must be a number
+      expect(typeof body.threshold).toBe("number");
+    });
+
+    it("GET overtime returns updated balance after adding a work entry", async () => {
+      // Get balance before
+      const before = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const balanceBefore = Number(JSON.parse(before.body).balanceHours);
+
+      // Add a 10h entry for a recent weekday (within the current month so it affects saldo)
+      const recentDate = pastDate(3);
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: new Date(recentDate + "T00:00:00Z"),
+          deletedAt: null,
+        },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(recentDate + "T00:00:00Z"),
+          startTime: new Date(`${recentDate}T07:00:00.000Z`),
+          endTime: new Date(`${recentDate}T17:00:00.000Z`),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+        },
+      });
+
+      // GET after — balance should have changed
+      const after = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(after.statusCode).toBe(200);
+      const balanceAfter = Number(JSON.parse(after.body).balanceHours);
+
+      // 10h worked vs 8h expected = +2h delta (at minimum, balance should differ)
+      expect(balanceAfter).not.toBe(balanceBefore);
+    });
+  });
+
+  // ── COMPLIANCE: Monatsabschluss (month-close) ───────────────────────────────
+
+  describe("COMPLIANCE: Monatsabschluss (month-close)", () => {
+    const testYear = 2024;
+    const testMonth = 6; // June 2024 — well in the past, deterministic
+
+    beforeAll(async () => {
+      // Ensure any previous snapshots for Jan-Jun 2024 are removed
+      const monthStart = new Date(Date.UTC(testYear, testMonth - 1, 1));
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: { gte: new Date(Date.UTC(testYear, 0, 1)), lte: monthStart },
+        },
+      });
+    });
+
+    it("month-close creates a SaldoSnapshot record", async () => {
+      // Create a work entry for June 2024 (Monday June 3)
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: new Date("2024-06-03T00:00:00Z"),
+        },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2024-06-03T00:00:00Z"),
+          startTime: new Date("2024-06-03T07:00:00.000Z"),
+          endTime: new Date("2024-06-03T17:00:00.000Z"),
+          breakMinutes: 60,
+          source: "MANUAL",
+          type: "WORK",
+        },
+      });
+
+      // POST close-month for June 2024
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { employeeId: data.employee.id, year: testYear, month: testMonth },
+      });
+
+      // May need to close Jan-May 2024 first due to sequential validation
+      // If we get a 400 about needing to close previous months, close them first
+      if (res.statusCode === 400) {
+        const errBody = JSON.parse(res.body);
+        if (errBody.error && errBody.error.includes("zuerst")) {
+          // Close all months from January to May sequentially
+          for (let m = 1; m < testMonth; m++) {
+            await app.prisma.saldoSnapshot.deleteMany({
+              where: {
+                employeeId: data.employee.id,
+                periodType: "MONTHLY",
+                periodStart: new Date(Date.UTC(testYear, m - 1, 1)),
+              },
+            });
+            await app.inject({
+              method: "POST",
+              url: "/api/v1/overtime/close-month",
+              headers: { authorization: `Bearer ${data.adminToken}` },
+              payload: { employeeId: data.employee.id, year: testYear, month: m },
+            });
+          }
+
+          // Retry June
+          const retryRes = await app.inject({
+            method: "POST",
+            url: "/api/v1/overtime/close-month",
+            headers: { authorization: `Bearer ${data.adminToken}` },
+            payload: { employeeId: data.employee.id, year: testYear, month: testMonth },
+          });
+          expect(retryRes.statusCode).toBe(201);
+          const snapshot = JSON.parse(retryRes.body);
+          expect(snapshot.periodType).toBe("MONTHLY");
+          expect(typeof snapshot.workedMinutes).toBe("number");
+          expect(snapshot.workedMinutes).toBeGreaterThan(0);
+          return;
+        }
+      }
+
+      expect(res.statusCode).toBe(201);
+      const snapshot = JSON.parse(res.body);
+      expect(snapshot.periodType).toBe("MONTHLY");
+      // SaldoSnapshot fields must be present
+      expect(typeof snapshot.workedMinutes).toBe("number");
+      expect(snapshot.workedMinutes).toBeGreaterThan(0);
+      expect(typeof snapshot.expectedMinutes).toBe("number");
+      expect(typeof snapshot.balanceMinutes).toBe("number");
+    });
+
+    it("month-close sets isLocked on entries in that month", async () => {
+      // All time entries for June 2024 should now be locked
+      const entries = await app.prisma.timeEntry.findMany({
+        where: {
+          employeeId: data.employee.id,
+          date: {
+            gte: new Date("2024-06-01T00:00:00Z"),
+            lte: new Date("2024-06-30T23:59:59Z"),
+          },
+          deletedAt: null,
+        },
+      });
+
+      expect(entries.length).toBeGreaterThan(0);
+      for (const e of entries) {
+        expect(e.isLocked).toBe(true);
+      }
+    });
+
+    it("rejects editing a time entry in a closed month", async () => {
+      // Find a locked entry from June 2024
+      const locked = await app.prisma.timeEntry.findFirst({
+        where: {
+          employeeId: data.employee.id,
+          date: {
+            gte: new Date("2024-06-01T00:00:00Z"),
+            lte: new Date("2024-06-30T23:59:59Z"),
+          },
+          isLocked: true,
+          deletedAt: null,
+        },
+      });
+      expect(locked).not.toBeNull();
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${locked!.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          date: "2024-06-03",
+          startTime: new Date("2024-06-03T06:00:00Z").toISOString(),
+          endTime: new Date("2024-06-03T16:00:00Z").toISOString(),
+        },
+      });
+
+      // Must be rejected: 403 (gesperrt) per CLAUDE.md Immutability after lock rule
+      expect([403, 409, 422]).toContain(res.statusCode);
+    });
+
+    it("SaldoSnapshot record exists with workedMinutes > 0 after month-close", async () => {
+      // periodStart for June 2024 in Europe/Berlin (UTC+2 in summer) is
+      // "2024-05-31T22:00:00Z" UTC, so we must use a range that includes this offset.
+      const snapshot = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: new Date("2024-05-31T00:00:00Z"),
+            lte: new Date("2024-06-02T00:00:00Z"),
+          },
+        },
+      });
+
+      expect(snapshot).not.toBeNull();
+      expect(snapshot!.workedMinutes).toBeGreaterThan(0);
+      expect(snapshot!.closedAt).not.toBeNull();
+    });
   });
 
   it("overtime saldo only counts leave within effective period", async () => {

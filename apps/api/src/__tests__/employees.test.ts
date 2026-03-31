@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import bcrypt from "bcryptjs";
 
 describe("Employees API", () => {
   let app: FastifyInstance;
@@ -12,7 +13,11 @@ describe("Employees API", () => {
   });
 
   afterAll(async () => {
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 
@@ -37,7 +42,7 @@ describe("Employees API", () => {
           hireDate: new Date("2026-01-01").toISOString(),
           role: "EMPLOYEE",
           weeklyHours: 40,
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
 
@@ -49,7 +54,7 @@ describe("Employees API", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
-        payload: { email, password: "test1234" },
+        payload: { email, password: "Test@1234567!" },
       });
       expect(loginRes.statusCode).toBe(200);
     });
@@ -114,7 +119,7 @@ describe("Employees API", () => {
           lastName: "Email",
           employeeNumber: `DE-${uid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
 
@@ -132,7 +137,7 @@ describe("Employees API", () => {
           lastName: "Email",
           employeeNumber: `DE2-${uid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          password: "Test@1234567!",
         },
       });
       expect(res2.statusCode).toBeGreaterThanOrEqual(400);
@@ -178,7 +183,9 @@ describe("Employees API", () => {
           lastName: "Deactivate",
           employeeNumber: `DA-${duid}`,
           hireDate: new Date("2026-01-01").toISOString(),
-          password: "test1234",
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
         },
       });
       const { id: empId } = JSON.parse(createRes.body);
@@ -196,9 +203,118 @@ describe("Employees API", () => {
       const loginRes = await app.inject({
         method: "POST",
         url: "/api/v1/auth/login",
-        payload: { email, password: "test1234" },
+        payload: { email, password: "Test@1234567!" },
       });
       expect(loginRes.statusCode).toBe(401);
     });
+  });
+
+  describe("COMPLIANCE: DSGVO anonymization (Art. 17)", () => {
+    // Use a separate employee created directly via Prisma to avoid polluting other tests.
+    // Anonymization is irreversible — we must not use data.employee here.
+    let dsgvoEmployeeId: string;
+    let dsgvoUserId: string;
+
+    beforeAll(async () => {
+      const duid = Date.now().toString(36) + "dsgvo";
+      const passwordHash = await bcrypt.hash("dsgvo-test-pw", 10);
+
+      const user = await app.prisma.user.create({
+        data: {
+          email: `dsgvo-${duid}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      dsgvoUserId = user.id;
+
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          firstName: "Datenschutz",
+          lastName: "Testperson",
+          employeeNumber: `DSGVO-${duid}`,
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      dsgvoEmployeeId = employee.id;
+
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: employee.id, balanceHours: 0 },
+      });
+
+      // Create a TimeEntry to verify retention after anonymization
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: employee.id,
+          date: new Date("2025-06-15"),
+          startTime: new Date("2025-06-15T08:00:00Z"),
+          endTime: new Date("2025-06-15T16:00:00Z"),
+          note: "Persönliche Notiz",
+        },
+      });
+    });
+
+    it("DELETE anonymizes, does not hard-delete", async () => {
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${dsgvoEmployeeId}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(204);
+
+      // Employee row must still exist (no hard delete)
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: dsgvoEmployeeId },
+      });
+      expect(employee).not.toBeNull();
+      // firstName anonymized to "Gelöscht"
+      expect(employee!.firstName).toBe("Gelöscht");
+      // nfcCardId cleared
+      expect(employee!.nfcCardId).toBeNull();
+    });
+
+    it("user account is deactivated and anonymized", async () => {
+      const user = await app.prisma.user.findUnique({
+        where: { id: dsgvoUserId },
+      });
+      expect(user).not.toBeNull();
+      expect(user!.isActive).toBe(false);
+      expect(user!.email).toContain("anonymized");
+      expect(user!.passwordHash).toBe("ANONYMIZED");
+    });
+
+    it("TimeEntries preserved after anonymization (retention compliance)", async () => {
+      const count = await app.prisma.timeEntry.count({
+        where: { employeeId: dsgvoEmployeeId },
+      });
+      expect(count).toBeGreaterThanOrEqual(1);
+    });
+
+    it("AuditLog records the anonymization", async () => {
+      const logEntry = await app.prisma.auditLog.findFirst({
+        where: {
+          entity: "Employee",
+          entityId: dsgvoEmployeeId,
+          action: "ANONYMIZE",
+        },
+      });
+      expect(logEntry).not.toBeNull();
+    });
+  });
+
+  it("COMPLIANCE: all SMTP passwords are encrypted", async () => {
+    const configs = await app.prisma.tenantConfig.findMany({
+      where: { smtpPassword: { not: null } },
+      select: { smtpPassword: true },
+    });
+    for (const cfg of configs) {
+      const parts = cfg.smtpPassword!.split(":");
+      expect(parts).toHaveLength(3);
+      expect(cfg.smtpPassword!.length).toBeGreaterThan(50);
+    }
   });
 });

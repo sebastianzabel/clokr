@@ -189,6 +189,15 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
 
 /**
  * Clean up test data for a specific tenant.
+ * MUST be called inside try/catch in afterAll to guarantee cleanup on test failure:
+ *
+ * afterAll(async () => {
+ *   try {
+ *     await cleanupTestData(testApp, tenant.id);
+ *   } catch (err) {
+ *     console.error("Test cleanup failed:", err);
+ *   }
+ * });
  */
 export async function cleanupTestData(testApp: FastifyInstance, tenantId: string) {
   const prisma = testApp.prisma;

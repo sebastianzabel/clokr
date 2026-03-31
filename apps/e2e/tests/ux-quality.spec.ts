@@ -364,7 +364,10 @@ test.describe("UX Quality — Plausibility & Data Consistency", () => {
 
   test("time entries summary matches calendar data", async ({ page }) => {
     await page.goto("/time-entries");
-    await page.waitForLoadState("networkidle");
+    // Use domcontentloaded + explicit wait instead of networkidle — the layout has a 60s
+    // notification polling interval that keeps the network active and causes networkidle to hang.
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(1500);
 
     // Get summary bar values
     const summaryText = await page

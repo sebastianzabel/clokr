@@ -112,7 +112,7 @@ export const schedulerPlugin = fp(async (app) => {
 
   async function setupSchedules() {
     // Cancel existing tasks
-    for (const task of tasks) task.stop();
+    for (const task of tasks) void task.stop();
     tasks.length = 0;
 
     // Load all tenants with auto-sync enabled
@@ -149,7 +149,7 @@ export const schedulerPlugin = fp(async (app) => {
 
   // Cleanup on close
   app.addHook("onClose", async () => {
-    for (const task of tasks) task.stop();
+    for (const task of tasks) void task.stop();
   });
 
   // Expose for manual re-init (e.g. when config changes)

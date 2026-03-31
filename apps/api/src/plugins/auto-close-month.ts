@@ -464,6 +464,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
   app.log.info("Auto-Monatsabschluss: Tägliche Prüfung geplant (06:00)");
 
   app.addHook("onClose", () => {
-    tasks.forEach((t) => t.stop());
+    tasks.forEach((t) => void t.stop());
   });
 });

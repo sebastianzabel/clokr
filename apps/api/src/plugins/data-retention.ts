@@ -125,6 +125,6 @@ export const dataRetentionPlugin = fp(async (app) => {
   (app as any).runRetention = runRetention;
 
   app.addHook("onClose", () => {
-    tasks.forEach((t) => t.stop());
+    tasks.forEach((t) => void t.stop());
   });
 });

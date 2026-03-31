@@ -67,8 +67,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com",
+      "style-src 'self' 'unsafe-inline'",
+      "font-src 'self'",
       "img-src 'self' data: blob:",
       "connect-src 'self'",
       "frame-src 'none'",

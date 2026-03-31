@@ -29,8 +29,7 @@ RUN mkdir -p /app/packages/db/node_modules/@prisma && \
 RUN pnpm --filter @clokr/api build
 
 # Compile seed script for runtime (tsx not available in prod)
-RUN mkdir -p packages/db/dist && \
-    npx tsc packages/db/src/seed.ts --outDir packages/db/dist --esModuleInterop --module commonjs --target es2020 --skipLibCheck 2>/dev/null || true
+RUN pnpm --filter @clokr/db run seed:build
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime

@@ -44,11 +44,11 @@ echo "✅ Database schema synced"
 
 if [ "${SEED_DEMO_DATA:-false}" = "true" ]; then
   echo "🌱 Running database seed..."
-  # Use compiled seed if available, fallback to tsx
-  if [ -f "dist/seed.js" ]; then
-    node dist/seed.js || echo "ℹ️  Seed skipped (may already exist)"
+  if [ -f "dist/src/seed.js" ]; then
+    node dist/src/seed.js || echo "ℹ️  Seed skipped (may already exist)"
   else
-    npx tsx src/seed.ts 2>/dev/null || echo "ℹ️  Seed skipped (tsx not available or already seeded)"
+    echo "❌ dist/src/seed.js not found — seed compilation must have failed at build time"
+    exit 1
   fi
 else
   echo "ℹ️  Seed skipped (SEED_DEMO_DATA not set to true)"

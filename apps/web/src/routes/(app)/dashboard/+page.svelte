@@ -1166,6 +1166,8 @@
 <style>
   .dashboard {
     /* max-width inherited from .app-main (1600px) */
+    /* Prevent chart.js canvas from causing horizontal overflow on narrow viewports */
+    overflow-x: hidden;
   }
 
   /* Clock Card */
@@ -1341,6 +1343,10 @@
     font-weight: 700;
     margin-left: 0.375rem;
     vertical-align: middle;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .my-week .team-table {
     width: 100%;
@@ -1699,10 +1705,11 @@
   .upcoming-item {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
     padding: 0.5rem 0;
     border-bottom: 1px solid var(--color-border);
     font-size: 0.875rem;
+    min-width: 0;
   }
 
   .upcoming-item:last-child {
@@ -1711,7 +1718,11 @@
 
   .upcoming-name {
     font-weight: 500;
-    min-width: 120px;
+    min-width: 80px;
+    flex-shrink: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .upcoming-dates {
@@ -1764,6 +1775,15 @@
   .team-grid-wrap {
     overflow-x: auto;
     margin: 0 -0.25rem;
+    /* Negative margin must not create horizontal page overflow on narrow viewports */
+    max-width: calc(100% + 0.5rem);
+  }
+
+  @media (max-width: 768px) {
+    .team-grid-wrap {
+      margin: 0;
+      max-width: 100%;
+    }
   }
 
   .team-grid {

@@ -30,23 +30,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
 
-  if (res.status === 401) {
-    // Token abgelaufen – versuche zu refreshen
-    const refreshed = await tryRefresh();
-    if (refreshed) {
-      return request<T>(path, options); // Retry
-    }
-    authStore.logout();
-    window.location.href = "/login";
-    throw new ApiError(401, "Unauthorized");
-  }
-
   // 204 No Content – kein Body
   if (res.status === 204) return undefined as T;
 
   const data = res.headers.get("content-type")?.includes("application/json")
     ? await res.json()
     : await res.text();
+
+  if (res.status === 401) {
+    // Auth-Endpunkte selbst (login, otp) sollen kein Auto-Refresh auslösen —
+    // dort bedeutet 401 "falsche Anmeldedaten", nicht "Token abgelaufen".
+    const isAuthEndpoint = path.startsWith("/auth/login") || path.startsWith("/auth/otp");
+    if (!isAuthEndpoint) {
+      // Token abgelaufen – versuche zu refreshen
+      const refreshed = await tryRefresh();
+      if (refreshed) {
+        return request<T>(path, options); // Retry
+      }
+      authStore.logout();
+      window.location.href = "/login";
+    }
+    throw new ApiError(401, (data as { error?: string })?.error ?? "Unauthorized", data);
+  }
 
   if (!res.ok) {
     throw new ApiError(res.status, (data as { error?: string })?.error ?? "Fehler", data);

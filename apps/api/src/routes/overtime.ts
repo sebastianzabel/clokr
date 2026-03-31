@@ -33,7 +33,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const { employeeId } = req.params as { employeeId: string };
 
       // Recalculate balance on every read to ensure fresh data
-      await updateOvertimeAccount(app, employeeId).catch(() => {});
+      await updateOvertimeAccount(app, employeeId).catch((err) => app.log.error({ err }, "Failed to update overtime account"));
 
       const account = await app.prisma.overtimeAccount.findUnique({
         where: { employeeId },
