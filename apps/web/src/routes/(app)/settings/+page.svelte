@@ -22,7 +22,31 @@
 
   // Avatar
   let avatarUploading = $state(false);
-  let avatarKey = $state(0); // Force re-render after upload
+  let avatarKey = $state(0); // Force re-fetch after upload
+  let avatarSrc = $state<string | null>(null);
+
+  $effect(() => {
+    const empId = $authStore.user?.employeeId;
+    const token = $authStore.accessToken;
+    // avatarKey is read to re-run after upload
+    void avatarKey;
+    if (!empId || !token) return;
+
+    let objectUrl: string | null = null;
+    fetch(`/api/v1/avatars/${empId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((blob) => {
+        if (blob) {
+          objectUrl = URL.createObjectURL(blob);
+          avatarSrc = objectUrl;
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  });
 
   onMount(async () => {
     try {
@@ -88,19 +112,8 @@
       <h3 class="section-title">Profilbild</h3>
       <div class="avatar-section">
         <div class="avatar-wrapper">
-          {#if $authStore.user?.employeeId}
-            {#key avatarKey}
-              <img
-                src="/api/v1/avatars/{$authStore.user.employeeId}?v={avatarKey}"
-                alt="Avatar"
-                class="avatar-preview"
-                onerror={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                  const next = (e.target as HTMLElement).nextElementSibling;
-                  if (next) (next as HTMLElement).style.display = "flex";
-                }}
-              />
-            {/key}
+          {#if avatarSrc}
+            <img src={avatarSrc} alt="Avatar" class="avatar-preview" />
           {/if}
           <div class="avatar-initials" style={$authStore.user?.employeeId ? "display:none" : ""}>
             {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
