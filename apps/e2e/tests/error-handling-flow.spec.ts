@@ -10,49 +10,50 @@ test.describe("Error Handling + UX Plausibility", () => {
     await page.goto("/leave");
     await page.waitForLoadState("networkidle");
 
-    // Create first request
-    await page
-      .getByText(/Neuer Antrag/)
-      .first()
-      .click();
-    await page.waitForTimeout(300);
-
     const start = new Date();
     start.setDate(start.getDate() + 60);
     while (start.getDay() === 0 || start.getDay() === 6) start.setDate(start.getDate() + 1);
     const startStr = start.toISOString().split("T")[0];
 
-    const startInput = page.locator("#f-start").first();
-    const endInput = page.locator("#f-end").first();
+    // Helper: open the form if not already open, then fill and submit
+    async function openAndSubmitForm() {
+      // The form dialog is visible when showForm=true
+      const formDialog = page.locator("[role='dialog']").first();
+      const formIsOpen = await formDialog.isVisible().catch(() => false);
 
-    if (await startInput.isVisible()) {
+      if (!formIsOpen) {
+        // The "Neuer Antrag" button is only shown when the form is closed
+        await page.getByText(/Neuer Antrag/).first().click();
+        await page.waitForTimeout(300);
+      }
+
+      const startInput = page.locator("#f-start").first();
+      const endInput = page.locator("#f-end").first();
+
+      if (!(await startInput.isVisible())) return false;
+
       await startInput.fill(startStr);
       await endInput.fill(startStr);
       await page.waitForTimeout(300);
 
-      // Submit
       const submit = page.getByRole("button", { name: /einreichen|antrag/i }).first();
       if (await submit.isVisible()) await submit.click();
       await page.waitForTimeout(1000);
+      return true;
+    }
 
-      // Try same dates again → should get overlap error
-      await page
-        .getByText(/Neuer Antrag/)
-        .first()
-        .click();
-      await page.waitForTimeout(300);
-      await page.locator("#f-start").first().fill(startStr);
-      await page.locator("#f-end").first().fill(startStr);
-      await page.waitForTimeout(300);
+    // Submit first request (might succeed or fail with overlap from a prior run)
+    const filled = await openAndSubmitForm();
 
-      const submit2 = page.getByRole("button", { name: /einreichen|antrag/i }).first();
-      if (await submit2.isVisible()) await submit2.click();
-      await page.waitForTimeout(1000);
+    if (filled) {
+      // Submit the same dates again to trigger overlap error
+      // If the first submit already failed with overlap, the form is still open — reuse it.
+      await openAndSubmitForm();
 
       // Should show error
       await screenshotPage(page, "flow-error-overlap");
       const errorMsg = page.getByText(/Überschneidung|overlap/i);
-      // Error should be visible (either in modal or toast)
+      // Error should be visible (either in dialog or toast)
       if (await errorMsg.isVisible()) {
         expect(await errorMsg.textContent()).toBeTruthy();
       }

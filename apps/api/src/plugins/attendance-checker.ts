@@ -551,6 +551,6 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   });
 
   app.addHook("onClose", async () => {
-    for (const task of tasks) task.stop();
+    for (const task of tasks) void task.stop();
   });
 });

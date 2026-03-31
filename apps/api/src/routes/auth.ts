@@ -296,7 +296,10 @@ export async function authRoutes(app: FastifyInstance) {
       };
 
       const newAccessToken = app.jwt.sign(payload);
-      const newRefreshToken = app.jwt.sign(payload, { expiresIn: "7d" });
+      // Add jti to ensure uniqueness even when payload and timestamp are identical
+      const newRefreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as any, {
+        expiresIn: "7d",
+      });
 
       await app.prisma.refreshToken.create({
         data: {

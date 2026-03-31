@@ -65,6 +65,7 @@ services:
       APP_URL: "http://localhost:3000"
       ENCRYPTION_KEY: "${ENCRYPTION_KEY:-clokr-dev-encryption-key-min-32-characters-long!!}"
       SEED_DEMO_DATA: "${SEED_DEMO_DATA:-true}"
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-10000}"
     deploy:
       resources:
         limits:

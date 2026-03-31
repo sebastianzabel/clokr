@@ -7,7 +7,8 @@
     "migrate": "prisma migrate dev",
     "migrate:deploy": "prisma migrate deploy",
     "studio": "prisma studio",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "seed:build": "tsc --project tsconfig.seed.json"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.6.0",

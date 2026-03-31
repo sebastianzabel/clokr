@@ -39,7 +39,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
     // Update lastUsedAt (fire and forget)
     req.server.prisma.apiKey
       .update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } })
-      .catch(() => {});
+      .catch((err: unknown) => req.server.log.error({ err }, "Failed to update API key lastUsedAt"));
 
     // Set user context from API key (role = ADMIN for admin scope, MANAGER otherwise)
     const isAdmin = apiKey.scopes.includes("admin");

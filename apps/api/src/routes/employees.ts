@@ -79,7 +79,9 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
-      const { id } = idParamSchema.parse(req.params);
+      // Accept any non-empty string id (incl. legacy short ids like 'e1')
+      const { id } = req.params as { id: string };
+      if (!id) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       const user = req.user;
 
       if (user.role === "EMPLOYEE" && user.employeeId !== id) {
@@ -87,7 +89,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       }
 
       const employee = await app.prisma.employee.findUnique({
-        where: { id },
+        where: { id, tenantId: req.user.tenantId },
         include: {
           user: { select: { email: true, role: true, isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
@@ -205,9 +207,24 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
       }
 
+      // Re-fetch the created employee with the full shape (same as GET /employees)
+      // so the frontend can append it to the list without a full page reload.
+      const fullEmployee = await app.prisma.employee.findUniqueOrThrow({
+        where: { id: employee.id },
+        include: {
+          user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
+          workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },
+          overtimeAccount: { select: { balanceHours: true } },
+          invitations: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+      });
+
       return reply.code(201).send({
-        ...employee,
-        invitationStatus: directPassword ? "ACCEPTED" : "PENDING",
+        ...fullEmployee,
+        workSchedule: fullEmployee.workSchedules[0] ?? null,
+        workSchedules: undefined,
+        invitationStatus: directPassword ? "ACCEPTED" : deriveInvitationStatus(fullEmployee.user.isActive, fullEmployee.invitations),
+        invitations: undefined,
         ...(emailError ? { emailError } : {}),
       });
     },
@@ -221,7 +238,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEmployeeSchema.parse(req.body);
 
-      const employee = await app.prisma.employee.findUnique({ where: { id } });
+      const employee = await app.prisma.employee.findUnique({ where: { id, tenantId: req.user.tenantId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       const updates: Record<string, unknown> = {};

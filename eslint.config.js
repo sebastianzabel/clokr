@@ -46,6 +46,20 @@ export default [
       "**/coverage/**",
     ],
   },
+  // Type-aware rules — requires parserOptions.project
+  {
+    files: ["**/*.ts"],
+    languageOptions: {
+      parserOptions: {
+        project: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+    rules: {
+      "@typescript-eslint/no-floating-promises": "error",
+      "@typescript-eslint/no-misused-promises": "error",
+    },
+  },
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",

@@ -767,6 +767,7 @@
         <label class="switch">
           <input
             type="checkbox"
+            aria-label="2-Faktor-Authentifizierung aktivieren"
             checked={twoFaEnabled}
             onchange={toggleTwoFa}
             disabled={twoFaSaving}
@@ -821,7 +822,7 @@
           <span class="toggle-row-label">"Angemeldet bleiben" erlauben</span>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={rememberMeEnabled} />
+          <input type="checkbox" aria-label='"Angemeldet bleiben" erlauben' bind:checked={rememberMeEnabled} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -922,7 +923,7 @@
           <span class="toggle-row-label">Großbuchstabe erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={pwRequireUpper} />
+          <input type="checkbox" aria-label="Großbuchstabe erforderlich" bind:checked={pwRequireUpper} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -931,7 +932,7 @@
           <span class="toggle-row-label">Kleinbuchstabe erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={pwRequireLower} />
+          <input type="checkbox" aria-label="Kleinbuchstabe erforderlich" bind:checked={pwRequireLower} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -940,7 +941,7 @@
           <span class="toggle-row-label">Ziffer erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={pwRequireDigit} />
+          <input type="checkbox" aria-label="Ziffer erforderlich" bind:checked={pwRequireDigit} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -949,7 +950,7 @@
           <span class="toggle-row-label">Sonderzeichen erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={pwRequireSpecial} />
+          <input type="checkbox" aria-label="Sonderzeichen erforderlich" bind:checked={pwRequireSpecial} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -981,7 +982,7 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={emailEnabled} />
+          <input type="checkbox" aria-label="E-Mail-Benachrichtigungen aktivieren" bind:checked={emailEnabled} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -990,14 +991,14 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Neuer Urlaubsantrag</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"
+            ><input type="checkbox" aria-label="Benachrichtigung: Neuer Urlaubsantrag" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"
             ></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnLeaveDecision} /><span
+            ><input type="checkbox" aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt" bind:checked={emailOnLeaveDecision} /><span
               class="switch-slider"
             ></span></label
           >
@@ -1005,7 +1006,7 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Überstunden-Warnung</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnOvertimeWarning} /><span
+            ><input type="checkbox" aria-label="Benachrichtigung: Überstunden-Warnung" bind:checked={emailOnOvertimeWarning} /><span
               class="switch-slider"
             ></span></label
           >
@@ -1013,7 +1014,7 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Fehlende Zeiteinträge</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnMissingEntries} /><span
+            ><input type="checkbox" aria-label="Benachrichtigung: Fehlende Zeiteinträge" bind:checked={emailOnMissingEntries} /><span
               class="switch-slider"
             ></span></label
           >
@@ -1021,7 +1022,7 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Vergessene Stempelung</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnClockOutReminder} /><span
+            ><input type="checkbox" aria-label="Benachrichtigung: Vergessene Stempelung" bind:checked={emailOnClockOutReminder} /><span
               class="switch-slider"
             ></span></label
           >
@@ -1029,7 +1030,7 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Monatsabschluss</span>
           <label class="switch"
-            ><input type="checkbox" bind:checked={emailOnMonthClose} /><span class="switch-slider"
+            ><input type="checkbox" aria-label="Benachrichtigung: Monatsabschluss" bind:checked={emailOnMonthClose} /><span class="switch-slider"
             ></span></label
           >
         </div>

@@ -18,7 +18,11 @@ describe("Time Entries API", () => {
   });
 
   afterAll(async () => {
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 
@@ -232,6 +236,295 @@ describe("Time Entries API", () => {
       expect(body.balanceHours).toBeDefined();
       expect(body.status).toBeDefined();
       expect(["NORMAL", "ELEVATED", "CRITICAL"]).toContain(body.status);
+    });
+  });
+
+  // ── COMPLIANCE: Time entry CRUD completeness ──────────────────────────────
+  describe("COMPLIANCE: Time entry CRUD completeness", () => {
+    const crudCleanupIds: string[] = [];
+
+    afterAll(async () => {
+      if (crudCleanupIds.length > 0) {
+        await app.prisma.timeEntry.deleteMany({
+          where: { id: { in: crudCleanupIds } },
+        });
+      }
+    });
+
+    it("creates a time entry with valid data", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-07",
+          startTime: "2025-04-07T07:00:00Z",
+          endTime: "2025-04-07T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.entry).toBeDefined();
+      expect(body.entry.id).toBeDefined();
+      expect(body.entry.employeeId).toBe(data.employee.id);
+      crudCleanupIds.push(body.entry.id);
+    });
+
+    it("updates an existing time entry", async () => {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-08",
+          startTime: "2025-04-08T07:00:00Z",
+          endTime: "2025-04-08T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = JSON.parse(createRes.body);
+      crudCleanupIds.push(created.entry.id);
+
+      const updateRes = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${created.entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { breakMinutes: 45 },
+      });
+
+      expect(updateRes.statusCode).toBe(200);
+      const updated = JSON.parse(updateRes.body);
+      expect(updated.entry.breakMinutes).toBe(45);
+    });
+
+    it("deletes a time entry via API", async () => {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-09",
+          startTime: "2025-04-09T07:00:00Z",
+          endTime: "2025-04-09T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = JSON.parse(createRes.body);
+      crudCleanupIds.push(created.entry.id);
+
+      const deleteRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/time-entries/${created.entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect([200, 204]).toContain(deleteRes.statusCode);
+    });
+
+    it("rejects duplicate entry for same employee and date with 409", async () => {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-10",
+          startTime: "2025-04-10T07:00:00Z",
+          endTime: "2025-04-10T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = JSON.parse(createRes.body);
+      crudCleanupIds.push(created.entry.id);
+
+      const dupRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-10",
+          startTime: "2025-04-10T09:00:00Z",
+          endTime: "2025-04-10T17:00:00Z",
+          breakMinutes: 30,
+        },
+      });
+
+      expect(dupRes.statusCode).toBe(409);
+      const dupBody = JSON.parse(dupRes.body);
+      expect(dupBody.error).toBeDefined();
+    });
+
+    it("lists time entries with employeeId filter", async () => {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-04-11",
+          startTime: "2025-04-11T07:00:00Z",
+          endTime: "2025-04-11T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = JSON.parse(createRes.body);
+      crudCleanupIds.push(created.entry.id);
+
+      const listRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${data.employee.id}&year=2025&month=4`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(listRes.statusCode).toBe(200);
+      const listBody = JSON.parse(listRes.body);
+      expect(Array.isArray(listBody)).toBe(true);
+      expect(listBody.length).toBeGreaterThanOrEqual(1);
+      const match = listBody.find((e: { employeeId: string }) => e.employeeId === data.employee.id);
+      expect(match).toBeDefined();
+    });
+  });
+
+  // ── COMPLIANCE: Soft delete enforcement ──────────────────────────────────
+  describe("COMPLIANCE: Soft delete enforcement", () => {
+    const softDeleteCleanupIds: string[] = [];
+
+    afterAll(async () => {
+      if (softDeleteCleanupIds.length > 0) {
+        await app.prisma.timeEntry.deleteMany({
+          where: { id: { in: softDeleteCleanupIds } },
+        });
+      }
+    });
+
+    it("DELETE sets deletedAt, does not hard-delete the row", async () => {
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2025-05-05",
+          startTime: "2025-05-05T07:00:00Z",
+          endTime: "2025-05-05T15:30:00Z",
+          breakMinutes: 30,
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      const created = JSON.parse(createRes.body);
+      const entryId = created.entry.id;
+      softDeleteCleanupIds.push(entryId);
+
+      const deleteRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/time-entries/${entryId}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect([200, 204]).toContain(deleteRes.statusCode);
+
+      // Verify row still exists in DB
+      const row = await app.prisma.timeEntry.findUnique({ where: { id: entryId } });
+      expect(row).not.toBeNull();
+      expect(row!.deletedAt).not.toBeNull();
+    });
+
+    it("GET excludes soft-deleted entries", async () => {
+      // Create directly via Prisma and soft-delete it
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2025-05-06"),
+          startTime: new Date("2025-05-06T07:00:00Z"),
+          endTime: new Date("2025-05-06T15:30:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+          deletedAt: new Date(),
+        },
+      });
+      softDeleteCleanupIds.push(entry.id);
+
+      const listRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/time-entries?employeeId=${data.employee.id}&year=2025&month=5`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(listRes.statusCode).toBe(200);
+      const listBody = JSON.parse(listRes.body);
+      const found = listBody.find((e: { id: string }) => e.id === entry.id);
+      expect(found).toBeUndefined();
+    });
+  });
+
+  // ── COMPLIANCE: Locked month immutability ────────────────────────────────
+  describe("COMPLIANCE: Locked month immutability", () => {
+    const lockedCleanupIds: string[] = [];
+
+    afterAll(async () => {
+      if (lockedCleanupIds.length > 0) {
+        await app.prisma.timeEntry.deleteMany({
+          where: { id: { in: lockedCleanupIds } },
+        });
+      }
+    });
+
+    it("rejects PUT on entry in locked month", async () => {
+      // Create locked entry directly via Prisma (isLocked: true)
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2025-01-15"),
+          startTime: new Date("2025-01-15T08:00:00Z"),
+          endTime: new Date("2025-01-15T16:00:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+          isLocked: true,
+        },
+      });
+      lockedCleanupIds.push(entry.id);
+
+      const putRes = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { breakMinutes: 45 },
+      });
+
+      expect([403, 409, 422]).toContain(putRes.statusCode);
+    });
+
+    it("rejects DELETE on entry in locked month", async () => {
+      // Create locked entry directly via Prisma (isLocked: true)
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2025-01-16"),
+          startTime: new Date("2025-01-16T08:00:00Z"),
+          endTime: new Date("2025-01-16T16:00:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+          isLocked: true,
+        },
+      });
+      lockedCleanupIds.push(entry.id);
+
+      const deleteRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect([403, 409, 422]).toContain(deleteRes.statusCode);
     });
   });
 });

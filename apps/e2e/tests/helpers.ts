@@ -2,7 +2,7 @@ import { Page, expect } from "@playwright/test";
 
 export const TEST_ADMIN = {
   email: process.env.TEST_ADMIN_EMAIL || "admin@clokr.de",
-  password: process.env.TEST_ADMIN_PASSWORD || "Admin123!Pass",
+  password: process.env.TEST_ADMIN_PASSWORD || "admin1234",
 };
 
 export async function login(page: Page, email: string, password: string) {

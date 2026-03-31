@@ -531,7 +531,7 @@
         </div>
 
         <div class="form-group">
-          <span class="form-label">Resturlaub verfällt am</span>
+          <label class="form-label" for="g-co-day">Resturlaub verfällt am</label>
           <div class="carryover-row">
             <input
               id="g-co-day"
@@ -541,8 +541,9 @@
               step="1"
               bind:value={gCarryOverDay}
               class="form-input co-day-input"
+              aria-label="Tag des Verfalls"
             /><span class="text-muted">.</span>
-            <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select">
+            <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select" aria-label="Monat des Verfalls">
               {#each MONTHS as m, i}
                 <option value={i + 1}>{m}</option>
               {/each}
@@ -568,7 +569,7 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={gArbzgEnabled} />
+          <input type="checkbox" aria-label="ArbZG-Verstöße anzeigen" bind:checked={gArbzgEnabled} />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -591,7 +592,7 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" bind:checked={gAutoBreak} />
+          <input type="checkbox" aria-label="Automatische Pausen aktivieren" bind:checked={gAutoBreak} />
           <span class="switch-slider"></span>
         </label>
       </div>

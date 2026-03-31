@@ -18,11 +18,15 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
   });
 
   afterAll(async () => {
-    // Clean up snapshots first (not in standard cleanup)
-    await app.prisma.saldoSnapshot.deleteMany({
-      where: { employeeId: { in: [data.employee.id, data.adminEmployee.id] } },
-    });
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      // Clean up snapshots first (not in standard cleanup)
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: { employeeId: { in: [data.employee.id, data.adminEmployee.id] } },
+      });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 

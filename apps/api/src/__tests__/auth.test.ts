@@ -12,7 +12,11 @@ describe("Auth API", () => {
   });
 
   afterAll(async () => {
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 
@@ -108,6 +112,82 @@ describe("Auth API", () => {
       });
 
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe("COMPLIANCE: Auth flow completeness", () => {
+    it("login with valid credentials returns tokens", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: data.adminUser.email, password: "test1234" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.accessToken).toBeDefined();
+      expect(body.refreshToken).toBeDefined();
+    });
+
+    it("login with wrong password returns 401", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: data.adminUser.email, password: "totally-wrong-password" },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    it("refresh token returns new access token", async () => {
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: data.adminUser.email, password: "test1234" },
+      });
+      const { refreshToken } = JSON.parse(loginRes.body);
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/refresh",
+        payload: { refreshToken },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.accessToken).toBeDefined();
+    });
+
+    it("invalid JWT returns 401 on protected endpoint", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/employees",
+        headers: { authorization: "Bearer invalid.token.here" },
+      });
+
+      expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe("COMPLIANCE: Role-based access gates", () => {
+    it("EMPLOYEE cannot access admin endpoints", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("ADMIN can access admin endpoints", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(200);
     });
   });
 });

@@ -24,7 +24,11 @@ describe("Password Policy (BSI)", () => {
   });
 
   afterAll(async () => {
-    await cleanupTestData(app, data.tenant.id);
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
     await closeTestApp();
   });
 

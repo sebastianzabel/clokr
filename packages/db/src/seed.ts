@@ -60,10 +60,10 @@ async function main() {
   console.log("TenantConfig angelegt");
 
   // Admin User anlegen — skip password overwrite if user already exists
-  const existingAdmin = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
+  const existingAdminUser = await prisma.user.findUnique({ where: { email: ADMIN_EMAIL } });
   const adminUser = await prisma.user.upsert({
     where: { email: ADMIN_EMAIL },
-    update: existingAdmin ? {} : { passwordHash: adminPasswordHash },
+    update: existingAdminUser ? {} : { passwordHash: adminPasswordHash },
     create: {
       email: ADMIN_EMAIL,
       passwordHash: adminPasswordHash,

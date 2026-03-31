@@ -21,7 +21,7 @@ export default defineConfig({
   testDir: "./tests",
   timeout: 30_000,
   expect: { timeout: 5_000 },
-  fullyParallel: false, // Sequential — tests share state (login)
+  fullyParallel: true,
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI
@@ -37,16 +37,32 @@ export default defineConfig({
 
   projects: [
     {
+      name: "setup",
+      testMatch: /auth\.setup\.ts/,
+    },
+    {
       name: "desktop-chrome",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: ".auth/admin.json",
+      },
+      dependencies: ["setup"],
     },
     {
       name: "mobile-chrome",
-      use: { ...devices["Pixel 7"] },
+      use: {
+        ...devices["Pixel 7"],
+        storageState: ".auth/admin.json",
+      },
+      dependencies: ["setup"],
     },
     {
       name: "tablet",
-      use: { ...devices["iPad (gen 7)"] },
+      use: {
+        ...devices["iPad (gen 7)"],
+        storageState: ".auth/admin.json",
+      },
+      dependencies: ["setup"],
     },
   ],
 });

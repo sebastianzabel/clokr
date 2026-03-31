@@ -107,7 +107,7 @@ export async function terminalRoutes(app: FastifyInstance) {
           where: { id: apiKey.id },
           data: { lastUsedAt: new Date() },
         })
-        .catch(() => {});
+        .catch((err) => app.log.error({ err }, "Failed to update terminal API key lastUsedAt"));
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId, nfcCardId: { not: null } },

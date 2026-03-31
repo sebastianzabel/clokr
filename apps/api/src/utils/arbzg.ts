@@ -2,7 +2,12 @@ import { PrismaClient } from "@clokr/db";
 import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
 
 export interface ArbZGWarning {
-  code: "BREAK_TOO_SHORT" | "MAX_DAILY_EXCEEDED" | "MAX_WEEKLY_EXCEEDED" | "MIN_REST_VIOLATED";
+  code:
+    | "BREAK_TOO_SHORT"
+    | "MAX_DAILY_EXCEEDED"
+    | "MAX_DAILY_AVG_EXCEEDED"
+    | "MAX_WEEKLY_EXCEEDED"
+    | "MIN_REST_VIOLATED";
   severity: "warning" | "error";
   message: string;
 }
@@ -171,6 +176,47 @@ export async function checkArbZG(
       severity: "error",
       message: `§ 3 ArbZG: Wöchentliche Höchstarbeitszeit von 48 Stunden überschritten. Diese Woche: ${(weeklyNetMin / 60).toFixed(1)} h.`,
     });
+  }
+
+  // ── 3. 24-Wochen-Durchschnitt: § 3 ArbZG – max. 8h/Werktag im Durchschnitt ─
+  // The 8h/day rule in § 3 ArbZG is NOT a daily limit — it is a 24-week rolling average.
+  // A 4-day/39h week (9.75h/day, 4 days) is perfectly legal because:
+  //   936h total / 144 Werktage (24 × 6) = 6.5h/Werktag < 8h → no warning.
+  // Denominator is always 144 Werktage (Mon–Sat × 24 weeks), regardless of how many
+  // days the employee actually worked.
+  {
+    const windowStart = new Date(changedDate);
+    windowStart.setDate(windowStart.getDate() - 167); // 168 days = 24 weeks × 7
+    windowStart.setHours(0, 0, 0, 0);
+
+    const avgEntries = await prisma.timeEntry.findMany({
+      where: {
+        employeeId,
+        deletedAt: null,
+        startTime: { gte: windowStart, lte: changedDate },
+        endTime: { not: null },
+        type: "WORK",
+      },
+      select: { startTime: true, endTime: true, breakMinutes: true },
+    });
+
+    const totalNetMin = avgEntries.reduce((sum, e) => {
+      const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
+      return sum + slotMin - Number(e.breakMinutes ?? 0);
+    }, 0);
+
+    // 24 weeks × 6 Werktage (Mon–Sat) = 144 Werktage
+    const WERKTAGE_IN_24_WEEKS = 144;
+    const avgPerWerktag = totalNetMin / WERKTAGE_IN_24_WEEKS;
+
+    if (avgPerWerktag > 8 * 60) {
+      const avgH = (avgPerWerktag / 60).toFixed(1);
+      warnings.push({
+        code: "MAX_DAILY_AVG_EXCEEDED",
+        severity: "warning",
+        message: `§ 3 ArbZG: 24-Wochen-Durchschnitt von 8 Stunden überschritten. Aktueller Schnitt: ${avgH} h/Tag.`,
+      });
+    }
   }
 
   return warnings;

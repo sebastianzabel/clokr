@@ -2375,7 +2375,8 @@
     background: var(--color-surface);
     border: 1.5px solid var(--gray-200, #e5e7eb);
     border-radius: 8px;
-    padding: 0.4375rem;
+    padding: 0.6875rem;
+    min-height: 44px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -2403,7 +2404,8 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.25rem 0.5rem;
+    padding: 0.6875rem 0.5rem;
+    min-height: 44px;
     border-radius: var(--radius-sm);
     transition: background 0.15s;
   }
@@ -2732,7 +2734,7 @@
     align-items: center;
     gap: 0.375rem;
     padding: 0.375rem 0.625rem;
-    min-height: 32px;
+    min-height: 44px; /* WCAG 2.5.5 touch target */
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     background: transparent;

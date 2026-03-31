@@ -525,8 +525,8 @@
     border: none;
     cursor: pointer;
     padding: 0.375rem;
-    min-width: 32px;
-    min-height: 32px;
+    min-width: 44px;
+    min-height: 44px;
     border-radius: var(--radius-sm);
     color: var(--color-text-muted);
     transition:

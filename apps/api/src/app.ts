@@ -121,7 +121,7 @@ export async function buildApp() {
     credentials: true,
   });
   await app.register(rateLimit, {
-    max: 500,
+    max: config.RATE_LIMIT_MAX,
     timeWindow: "1 minute",
   });
 

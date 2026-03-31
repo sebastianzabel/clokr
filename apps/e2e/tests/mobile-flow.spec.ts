@@ -1,8 +1,11 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, devices } from "@playwright/test";
 import { loginAsAdmin, screenshotPage } from "./helpers";
 
+// test.use() with defaultBrowserType must be top-level (not inside describe)
+const { defaultBrowserType: _bt, ...iphone14Settings } = devices["iPhone 14"];
+test.use(iphone14Settings);
+
 test.describe("Mobile Experience", () => {
-  test.use({ viewport: { width: 375, height: 812 } }); // iPhone 13
 
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
@@ -15,13 +18,12 @@ test.describe("Mobile Experience", () => {
 
     // Clock button should be visible and not overflow
     const clockBtn = page.locator(".clock-btn").first();
-    if (await clockBtn.isVisible()) {
-      const box = await clockBtn.boundingBox();
-      if (box) {
-        // Button should be fully within viewport
-        expect(box.x).toBeGreaterThanOrEqual(0);
-        expect(box.x + box.width).toBeLessThanOrEqual(375 + 5); // 5px tolerance
-      }
+    await expect(clockBtn).toBeVisible();
+    const box = await clockBtn.boundingBox();
+    if (box) {
+      // Button should be fully within viewport
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(390 + 5); // 5px tolerance
     }
 
     await screenshotPage(page, "flow-mobile-dashboard");
@@ -93,12 +95,11 @@ test.describe("Mobile Experience", () => {
 
     // Form elements should be within viewport
     const typeSelect = page.locator("#f-type").first();
-    if (await typeSelect.isVisible()) {
-      const box = await typeSelect.boundingBox();
-      if (box) {
-        expect(box.width).toBeGreaterThan(200); // Not too narrow
-        expect(box.x + box.width).toBeLessThanOrEqual(375 + 5);
-      }
+    await expect(typeSelect).toBeVisible();
+    const box = await typeSelect.boundingBox();
+    if (box) {
+      expect(box.width).toBeGreaterThan(200); // Not too narrow
+      expect(box.x + box.width).toBeLessThanOrEqual(390 + 5);
     }
 
     await screenshotPage(page, "flow-mobile-leave-form");
