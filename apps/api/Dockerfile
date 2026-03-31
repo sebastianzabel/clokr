@@ -31,6 +31,10 @@ RUN pnpm --filter @clokr/api build
 # Compile seed script for runtime (tsx not available in prod)
 RUN pnpm --filter @clokr/db run seed:build
 
+# Copy generated Prisma client into dist/ so compiled seed.js can resolve
+# '../generated/client' relative to dist/src/seed.js → dist/generated/client
+RUN cp -r /app/packages/db/generated /app/packages/db/dist/generated
+
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
 RUN apk update && apk upgrade --no-cache && apk add --no-cache su-exec

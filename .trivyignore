@@ -3,3 +3,9 @@
 # Runtime pnpm is v10.33.0 (installed via corepack prepare).
 CVE-2025-69262
 CVE-2025-69263
+
+# picomatch ReDoS in npm's bundled tinyglobby (/usr/local/lib/node_modules/npm/...).
+# Not exploitable: npm is a build/dev tool in the image, never exposed to user input at runtime.
+# App code already uses picomatch@4.0.4 (pnpm lockfile). Revisit when npm bundles tinyglobby
+# with picomatch>=4.0.4 internally.
+CVE-2026-33671
