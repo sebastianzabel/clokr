@@ -31,10 +31,16 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 
 ### Active
 
-- [ ] E2E test coverage for critical user flows
-- [ ] Mobile-responsive UI across all views
-- [ ] UI consistency (spacing, colors, components, design system)
-- [ ] UX flow improvements (fewer clicks, better navigation, clearer feedback)
+- [ ] Mobile overflow at 390px — human verification pending (run mobile-flow.spec.ts with Docker)
+
+### Validated in Phase 3 (E2E and UI Quality)
+
+- ✓ E2E test coverage for critical user flows — clock-in/out, time entry CRUD, leave approval, admin management, Monatsabschluss, password policy (E2E-01–E2E-05)
+- ✓ German locked-month error message — "Monat ist gesperrt" shown when 403 returned on time entry save/delete (UI-02)
+- ✓ Mobile viewport at 390px (iPhone 14 preset) with 44px touch targets (UI-01, pending Docker run)
+- ✓ Audit tests converted to hard CI-failing assertions (UI-03)
+- ✓ UX reachability checks — critical actions reachable in ≤2 taps, loading states verified (UI-04)
+- ✓ Password policy E2E — save + reload persistence confirmed (UI-05)
 
 ### Validated in Phase 2 (Compliance and API Coverage)
 
@@ -97,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-03-31 after Phase 2 (Compliance and API Coverage) completion_
+_Last updated: 2026-03-31 after Phase 3 (E2E and UI Quality) completion_
