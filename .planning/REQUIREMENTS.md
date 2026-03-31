@@ -47,10 +47,10 @@ Requirements for production launch. Each maps to roadmap phases.
 
 ### UI Quality
 
-- [ ] **UI-01**: Mobile-responsive across all views (no horizontal scroll on 390px, 44px touch targets)
+- [x] **UI-01**: Mobile-responsive across all views (no horizontal scroll on 390px, 44px touch targets)
 - [x] **UI-02**: Consistent error feedback (German-language error messages, retry prompts, locked-month messages)
-- [ ] **UI-03**: Design consistency audit (spacing, colors, loading skeletons, form components)
-- [ ] **UI-04**: UX flow improvements (navigation, fewer clicks, clearer feedback patterns)
+- [x] **UI-03**: Design consistency audit (spacing, colors, loading skeletons, form components)
+- [x] **UI-04**: UX flow improvements (navigation, fewer clicks, clearer feedback patterns)
 - [x] **UI-05**: Password policy admin UI (TenantConfig fields exist but no UI)
 
 ## v2 Requirements
@@ -121,10 +121,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | E2E-03      | Phase 3 | Complete |
 | E2E-04      | Phase 3 | Complete |
 | E2E-05      | Phase 3 | Complete |
-| UI-01       | Phase 3 | Pending |
+| UI-01       | Phase 3 | Complete |
 | UI-02       | Phase 3 | Complete |
-| UI-03       | Phase 3 | Pending |
-| UI-04       | Phase 3 | Pending |
+| UI-03       | Phase 3 | Complete |
+| UI-04       | Phase 3 | Complete |
 | UI-05       | Phase 3 | Complete |
 
 **Coverage:**
