@@ -1,8 +1,11 @@
 import { test, expect, devices } from "@playwright/test";
 import { loginAsAdmin, screenshotPage } from "./helpers";
 
+// test.use() with defaultBrowserType must be top-level (not inside describe)
+const { defaultBrowserType: _bt, ...iphone14Settings } = devices["iPhone 14"];
+test.use(iphone14Settings);
+
 test.describe("Mobile Experience", () => {
-  test.use({ ...devices["iPhone 14"] });
 
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
