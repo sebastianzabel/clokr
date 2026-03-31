@@ -124,6 +124,15 @@ None - no external service configuration required.
 - All requirement IDs E2E-03, E2E-04, E2E-05, UI-05 fulfilled
 - Password policy persistence test (UI-05) verifies real API round-trip via GET /settings/security after reload
 
+## Self-Check: PASSED
+
+- FOUND: apps/e2e/tests/leave-flow.spec.ts
+- FOUND: apps/e2e/tests/admin-settings-flow.spec.ts
+- FOUND: .planning/phases/03-e2e-and-ui-quality/03-02-SUMMARY.md
+- FOUND commit: 355737d (Task 1 - leave flow)
+- FOUND commit: 393d50f (Task 2 - admin settings)
+- FOUND commit: af4b9be (docs/metadata)
+
 ---
 *Phase: 03-e2e-and-ui-quality*
 *Completed: 2026-03-31*
