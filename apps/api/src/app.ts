@@ -84,6 +84,21 @@ export async function buildApp() {
     genReqId: () => crypto.randomUUID(), // Consistent request IDs
   });
 
+  // ── Content-Type Parser ───────────────────────────────────
+  // Handle DELETE (and other) requests that send Content-Type: application/json with empty body.
+  // External API clients (MCP tools, Postman, curl) commonly set this header on all requests.
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
+    if (typeof body === "string" && body.trim() === "") {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
+
   // ── Security ──────────────────────────────────────────────
   // Global error handler: ZodErrors → 400 with German field messages
   app.setErrorHandler(
