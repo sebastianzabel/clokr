@@ -89,6 +89,7 @@
   let clockedIn = $state(false);
   let activeEntryId: string | null = null;
   let loading = $state(false);
+  let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
   let recentEntries: { id: string; endTime: string | null; startTime: string }[] = $state([]);
@@ -548,6 +549,8 @@
       }
     } catch (err) {
       console.error("Failed to load chart data:", err);
+    } finally {
+      chartsLoading = false;
     }
   }
 
@@ -987,21 +990,33 @@
       <div class="chart-card card card-body card-animate">
         <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
         <div class="chart-wrap">
-          <canvas bind:this={weeklyChartEl}></canvas>
+          {#if chartsLoading}
+            <div class="chart-skeleton" aria-hidden="true"></div>
+          {:else}
+            <canvas bind:this={weeklyChartEl} role="img" aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"></canvas>
+          {/if}
         </div>
       </div>
 
       <div class="chart-card card card-body card-animate">
         <h3 class="chart-title">Überstunden-Trend</h3>
         <div class="chart-wrap">
-          <canvas bind:this={overtimeChartEl}></canvas>
+          {#if chartsLoading}
+            <div class="chart-skeleton" aria-hidden="true"></div>
+          {:else}
+            <canvas bind:this={overtimeChartEl} role="img" aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"></canvas>
+          {/if}
         </div>
       </div>
 
       <div class="chart-card card card-body card-animate">
         <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
         <div class="chart-wrap">
-          <canvas bind:this={sickChartEl}></canvas>
+          {#if chartsLoading}
+            <div class="chart-skeleton" aria-hidden="true"></div>
+          {:else}
+            <canvas bind:this={sickChartEl} role="img" aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"></canvas>
+          {/if}
         </div>
       </div>
     </div>
@@ -1687,6 +1702,25 @@
   .chart-wrap {
     position: relative;
     height: 240px;
+  }
+
+  .chart-skeleton {
+    width: 100%;
+    height: 100%;
+    border-radius: var(--radius-sm);
+    background: linear-gradient(
+      90deg,
+      var(--color-bg-subtle) 25%,
+      var(--color-bg-muted) 50%,
+      var(--color-bg-subtle) 75%
+    );
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes skeleton-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 
   .upcoming-section {
