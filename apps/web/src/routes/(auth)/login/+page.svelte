@@ -288,7 +288,7 @@
 
 <style>
   .login-page {
-    min-height: 100vh;
+    min-height: 100dvh;
     background: var(--color-bg);
     display: flex;
     align-items: stretch;
@@ -342,7 +342,7 @@
   .login-container {
     display: flex;
     width: 100%;
-    min-height: 100vh;
+    min-height: 100dvh;
     position: relative;
     z-index: 1;
   }

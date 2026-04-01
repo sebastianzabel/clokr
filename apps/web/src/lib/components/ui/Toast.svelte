@@ -12,6 +12,10 @@
   // Only show the last 5 toasts
   let visible = $derived(items.slice(-5));
 
+  // Respect prefers-reduced-motion — CSS override does not affect JS-driven Svelte transitions
+  const reducedMotion =
+    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
   // Map toast type to status color CSS variable prefix
   function colorVar(type: Toast["type"]): string {
     switch (type) {
@@ -32,9 +36,9 @@
     {#each visible as toast (toast.id)}
       <div
         class="toast toast-{toast.type}"
-        animate:flip={{ duration: 250 }}
-        in:fly={{ x: 360, duration: 350, easing: (t) => 1 - Math.pow(1 - t, 3) }}
-        out:fly={{ x: 360, duration: 250, easing: (t) => t * t }}
+        animate:flip={{ duration: reducedMotion ? 0 : 250 }}
+        in:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 350, easing: (t) => 1 - Math.pow(1 - t, 3) }}
+        out:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 250, easing: (t) => t * t }}
         style="
           --toast-color: var(--color-{colorVar(toast.type)});
           --toast-bg: var(--color-{colorVar(toast.type)}-bg);
@@ -152,6 +156,7 @@
     word-break: break-word;
   }
 
+  /* Visual size stays 24×24, hit area extended to 44×44 via padding (WCAG 2.5.5) */
   .toast-close {
     flex-shrink: 0;
     display: flex;
@@ -164,8 +169,8 @@
     color: var(--color-text-muted);
     cursor: pointer;
     border-radius: 4px;
-    padding: 0;
-    margin: -2px -4px -2px 0;
+    padding: 10px;
+    margin: -10px -10px -10px 0;
     transition:
       background-color 0.15s,
       color 0.15s;

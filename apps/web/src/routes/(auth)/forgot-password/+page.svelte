@@ -88,7 +88,7 @@
 
 <style>
   .login-page {
-    min-height: 100vh;
+    min-height: 100dvh;
     background-color: var(--color-bg-subtle);
     display: flex;
     align-items: center;
