@@ -474,7 +474,7 @@
   /* ── Shell ─────────────────────────────────────────────────────────── */
   .app-shell {
     display: flex;
-    min-height: 100vh;
+    min-height: 100dvh;
     background-color: var(--color-bg);
   }
 
@@ -491,7 +491,7 @@
     position: fixed;
     top: 0;
     left: 0;
-    height: 100vh;
+    height: 100dvh;
     z-index: 100;
     overflow-y: auto;
   }
@@ -693,9 +693,8 @@
   }
 
   .notification-item-time {
-    font-size: 0.6875rem;
+    font-size: 0.75rem; /* increased from 0.6875rem (11px) — opacity+tiny size fails contrast */
     color: var(--color-text-muted);
-    opacity: 0.7;
   }
 
   /* ── Nav ───────────────────────────────────────────────────────────── */
@@ -759,11 +758,10 @@
   }
 
   .sidebar-version {
-    font-size: 0.6875rem;
+    font-size: 0.75rem; /* increased from 0.6875rem (11px) — opacity+tiny size fails contrast */
     color: var(--color-text-muted);
     text-align: center;
     margin: 0;
-    opacity: 0.6;
   }
 
   .sidebar-user {
@@ -846,8 +844,9 @@
   .app-main {
     flex: 1;
     margin-left: 240px;
+    margin-right: auto;
     padding: 2rem;
-    min-height: 100vh;
+    min-height: 100dvh;
     min-width: 0;
     max-width: 1400px;
     padding-bottom: 5rem; /* space for mobile nav */
