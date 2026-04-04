@@ -575,6 +575,12 @@
   }
 
   /* ── Responsive ────────────────────────────────────────── */
+  @media (max-width: 1200px) {
+    .login-brand-features {
+      display: none;
+    }
+  }
+
   @media (max-width: 900px) {
     .login-brand-panel {
       display: none;
