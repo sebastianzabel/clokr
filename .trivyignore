@@ -9,3 +9,16 @@ CVE-2025-69263
 # App code already uses picomatch@4.0.4 (pnpm lockfile). Revisit when npm bundles tinyglobby
 # with picomatch>=4.0.4 internally.
 CVE-2026-33671
+
+# fast-jwt: Cache Confusion via cacheKeyBuilder Collisions (CVE-2026-35039).
+# No fix available as of 2026-04-09. Risk is low: JWT tokens are short-lived access tokens
+# (not cache keys used across tenants). cacheKeyBuilder is used internally by fast-jwt for
+# algorithm validation; not exposed to user-controlled input. Revisit when fast-jwt >6.2.1
+# releases a fix.
+CVE-2026-35039
+
+# fast-jwt: Accepts unknown `crit` header extensions (RFC 7515 §4.1.11) (CVE-2026-35042).
+# No fix available — package marked as "affected". Risk is low in our setup: JWTs are
+# issued exclusively by our API with a fixed algorithm (HS256/RS256 via JWT_SECRET).
+# No external JWTs or untrusted issuers are accepted. Revisit when fast-jwt releases a fix.
+CVE-2026-35042
