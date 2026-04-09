@@ -225,6 +225,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             deletedAt: null,
             date: today,
             endTime: null,
+            isInvalid: false,
           },
         });
 
@@ -521,7 +522,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const txResult = await app.prisma.$transaction(async (tx) => {
         const activeEntry = await tx.timeEntry.findFirst({
-          where: { employeeId, deletedAt: null, endTime: null },
+          where: { employeeId, deletedAt: null, endTime: null, isInvalid: false },
         });
         if (activeEntry) {
           return { conflict: true as const, entryId: activeEntry.id };
