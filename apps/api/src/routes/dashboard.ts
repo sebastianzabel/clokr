@@ -16,8 +16,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
   app.get("/", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
-      const employeeId = req.user.employeeId!;
+    handler: async (req, reply) => {
+      const employeeId = req.user.employeeId;
+      if (!employeeId) {
+        // API-only users (no employee record) receive empty stats rather than a Prisma crash
+        return reply.code(200).send({
+          today: { workedHours: 0, entries: 0 },
+          week: { workedHours: 0, targetHours: 0 },
+          overtime: { balanceHours: 0 },
+          vacation: { remaining: 0, total: 0, used: 0 },
+        });
+      }
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();

@@ -20,6 +20,7 @@
   import { onMount, onDestroy } from "svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -87,7 +88,7 @@
 
   // ── State ──────────────────────────────────────────────────────────────────
   let clockedIn = $state(false);
-  let activeEntryId: string | null = null;
+  let activeEntryId = $state<string | null>(null);
   let loading = $state(false);
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
@@ -192,26 +193,36 @@
     try {
       const today = format(new Date(), "yyyy-MM-dd");
 
-      // Parallel laden
-      const [entries, dashStats] = await Promise.all([
+      // Parallel laden — allSettled so a stats failure doesn't break clock state
+      const [entriesResult, statsResult] = await Promise.allSettled([
         api.get<{ id: string; endTime: string | null; startTime: string }[]>(
           `/time-entries?from=${today}&to=${today}`,
         ),
         api.get<DashboardStats>("/dashboard"),
       ]);
 
-      recentEntries = entries;
-      stats = dashStats;
-
-      const openEntry = entries.find((e) => !e.endTime);
-      if (openEntry) {
-        clockedIn = true;
-        activeEntryId = openEntry.id;
-        clockStart = new Date(openEntry.startTime);
+      if (entriesResult.status === "fulfilled") {
+        const entries = entriesResult.value;
+        recentEntries = entries;
+        const openEntry = entries.find((e) => !e.endTime);
+        if (openEntry) {
+          clockedIn = true;
+          activeEntryId = openEntry.id;
+          clockStart = new Date(openEntry.startTime);
+        } else {
+          clockedIn = false;
+          activeEntryId = null;
+          clockStart = null;
+        }
       } else {
-        clockedIn = false;
-        activeEntryId = null;
-        clockStart = null;
+        console.error("Failed to load time entries:", entriesResult.reason);
+        toasts.error("Zeiteinträge konnten nicht geladen werden");
+      }
+
+      if (statsResult.status === "fulfilled") {
+        stats = statsResult.value;
+      } else {
+        console.error("Failed to load dashboard stats:", statsResult.reason);
       }
 
       // Load today's shift
@@ -573,6 +584,8 @@
         breakMinutes = 0;
       }
       await loadData();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
     } finally {
       clockLoading = false;
     }
@@ -615,7 +628,7 @@
   let userName = $derived($authStore.user?.firstName ?? $authStore.user?.email.split("@")[0] ?? "");
   let capitalizedName = $derived(userName.charAt(0).toUpperCase() + userName.slice(1));
 
-  let overtimeBalance = $derived(stats?.overtime.balanceHours ?? 0);
+  let overtimeBalance = $derived((stats as DashboardStats | null)?.overtime?.balanceHours ?? 0);
   let overtimeClass = $derived(
     Math.abs(overtimeBalance) >= 60
       ? "text-red"
