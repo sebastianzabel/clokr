@@ -113,9 +113,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
 
-      // Alle aktiven Mitarbeiter
+      // Alle aktiven, nicht-anonymisierten Mitarbeiter
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId, exitDate: null },
+        where: { tenantId, exitDate: null, user: { isActive: true } },
         select: { id: true, firstName: true, lastName: true, employeeNumber: true },
         orderBy: { lastName: "asc" },
       });

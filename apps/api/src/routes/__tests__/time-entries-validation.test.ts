@@ -254,4 +254,78 @@ describe("Time Entry Validation Rules", () => {
       });
     });
   });
+
+  describe("Clock-in conflict check ignores invalid open entries", () => {
+    it("allows POST /clock-in when only open entry is auto-invalidated (isInvalid: true)", async () => {
+      // Simulate autoInvalidateOpenEntries: entry from yesterday with endTime null but isInvalid true
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayDate = new Date(yesterday.toISOString().split("T")[0] + "T00:00:00.000Z");
+
+      const staleEntry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: yesterdayDate,
+          startTime: new Date(yesterday.toISOString().split("T")[0] + "T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: true,
+          invalidReason: "Auto-invalidated open entry",
+          source: "MANUAL",
+        },
+      });
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries/clock-in",
+          headers: { authorization: `Bearer ${data.empToken}` },
+          payload: { source: "WEB" },
+        });
+
+        // Should NOT be blocked — invalid entries must not count as "already clocked in"
+        expect(res.statusCode).toBe(201);
+        const body = JSON.parse(res.body);
+        expect(body.success).toBe(true);
+
+        // Clean up the new clock-in entry
+        await app.prisma.timeEntry.deleteMany({
+          where: { employeeId: data.employee.id, endTime: null, isInvalid: false },
+        });
+      } finally {
+        await app.prisma.timeEntry.deleteMany({ where: { id: staleEntry.id } });
+      }
+    });
+
+    it("blocks POST /clock-in with 409 when a valid open entry exists (isInvalid: false)", async () => {
+      const today = new Date();
+      const todayDate = new Date(today.toISOString().split("T")[0] + "T00:00:00.000Z");
+
+      const validOpenEntry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: todayDate,
+          startTime: new Date(today.toISOString().split("T")[0] + "T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: false,
+          source: "MANUAL",
+        },
+      });
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries/clock-in",
+          headers: { authorization: `Bearer ${data.empToken}` },
+          payload: { source: "WEB" },
+        });
+
+        // Valid open entry MUST block clock-in
+        expect(res.statusCode).toBe(409);
+        const body = JSON.parse(res.body);
+        expect(body.error).toContain("Bereits eingestempelt");
+      } finally {
+        await app.prisma.timeEntry.deleteMany({ where: { id: validOpenEntry.id } });
+      }
+    });
+  });
 });
