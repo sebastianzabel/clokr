@@ -211,16 +211,16 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
         <thead>
           <tr>
             <th>#</th>
-            {#each Object.keys(preview[0]) as col}
+            {#each Object.keys(preview[0]) as col (col)}
               <th>{col}</th>
             {/each}
           </tr>
         </thead>
         <tbody>
-          {#each preview as row, i}
+          {#each preview as row, i (i)}
             <tr>
               <td class="text-muted" style="font-size:0.8125rem">{i + 1}</td>
-              {#each Object.values(row) as val}
+              {#each Object.values(row) as val, j (j)}
                 <td style="font-size:0.875rem">{val}</td>
               {/each}
             </tr>
@@ -260,7 +260,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
             </tr>
           </thead>
           <tbody>
-            {#each result.details as detail}
+            {#each result.details as detail (detail.row)}
               <tr>
                 <td style="font-size:0.875rem">{detail.row}</td>
                 <td>

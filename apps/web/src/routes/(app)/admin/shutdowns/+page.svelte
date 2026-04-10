@@ -224,7 +224,7 @@
   </div>
   <div class="header-actions">
     <select class="form-input" bind:value={filterYear} onchange={loadShutdowns}>
-      {#each years as y}
+      {#each years as y (y)}
         <option value={y}>{y}</option>
       {/each}
     </select>
@@ -240,7 +240,7 @@
 <!-- ── Inhalt ─────────────────────────────────────────────────────────────── -->
 {#if loading}
   <div class="skeleton-list">
-    {#each [1, 2, 3] as _}
+    {#each [1, 2, 3] as _, i (i)}
       <div class="skeleton-card"></div>
     {/each}
   </div>

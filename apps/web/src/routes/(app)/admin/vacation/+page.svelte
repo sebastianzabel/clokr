@@ -544,7 +544,7 @@
               aria-label="Tag des Verfalls"
             /><span class="text-muted">.</span>
             <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select" aria-label="Monat des Verfalls">
-              {#each MONTHS as m, i}
+              {#each MONTHS as m, i (i)}
                 <option value={i + 1}>{m}</option>
               {/each}
             </select>
@@ -969,7 +969,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each employees as emp}
+            {#each employees as emp (emp.id)}
               {@const s = emp.workSchedule}
               <tr>
                 <td class="text-muted font-mono">{emp.employeeNumber}</td>

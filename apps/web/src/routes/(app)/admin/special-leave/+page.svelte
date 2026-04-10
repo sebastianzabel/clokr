@@ -148,7 +148,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rules as rule}
+        {#each rules as rule (rule.id)}
           <tr class:inactive={!rule.isActive}>
             <td>
               <strong>{rule.name}</strong>
