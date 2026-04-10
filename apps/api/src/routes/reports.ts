@@ -32,6 +32,7 @@ export async function reportRoutes(app: FastifyInstance) {
           tenantId: req.user.tenantId,
           ...(employeeId ? { id: employeeId } : {}),
           exitDate: null,
+          user: { isActive: true },
         },
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
@@ -273,7 +274,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId: req.user.tenantId, exitDate: null },
+        where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {
