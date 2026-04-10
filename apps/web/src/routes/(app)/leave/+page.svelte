@@ -1510,7 +1510,7 @@
     </div>
 
     <div class="table-wrapper">
-      <table class="data-table">
+      <table class="data-table leave-requests-table">
         <thead>
           <tr>
             {#if isManager}<th>Mitarbeiter</th>{/if}
@@ -2803,5 +2803,17 @@
     background: var(--color-brand-tint);
     color: var(--color-brand);
     border-color: var(--color-brand);
+  }
+
+  /* ── Compact leave-requests table ── */
+  .leave-requests-table th {
+    padding: 0.5rem 1rem;
+  }
+  .leave-requests-table td {
+    padding: 0.5rem 1rem;
+    line-height: 1.35;
+  }
+  .leave-requests-table .action-cell {
+    white-space: nowrap;
   }
 </style>
