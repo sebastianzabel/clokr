@@ -1114,7 +1114,9 @@
     </table>
   </div>
   {#if allEntries.length === 0}
-    <div class="card card-body" style="text-align:center;padding:2rem;">
+    <div class="empty-state card card-body">
+      <span class="empty-icon">📋</span>
+      <h3>Keine Einträge</h3>
       <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
     </div>
   {/if}

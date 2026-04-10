@@ -245,8 +245,10 @@
     {/each}
   </div>
 {:else if shutdowns.length === 0}
-  <div class="empty-state">
-    <p class="empty-state__text">Keine Betriebsurlaube für {filterYear} angelegt.</p>
+  <div class="empty-state card card-body">
+    <span class="empty-icon">🏢</span>
+    <h3>Keine Betriebsurlaube</h3>
+    <p class="empty-state__text text-muted">Keine Betriebsurlaube für {filterYear} angelegt.</p>
     <button class="btn btn-primary" onclick={openCreate}>Ersten anlegen</button>
   </div>
 {:else}
@@ -640,6 +642,12 @@
     text-align: center;
     padding: 3rem 1rem;
     color: var(--color-text-muted);
+  }
+
+  .empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.25rem;
+    display: block;
   }
 
   .empty-state__text {
