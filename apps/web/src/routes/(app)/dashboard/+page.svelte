@@ -17,7 +17,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -339,6 +339,11 @@
   }
 
   async function loadCharts() {
+    // ── Phase 1: fetch data ────────────────────────────────────────────────────
+    let reports: MonthlyReport[] = [];
+    let labels: string[] = [];
+    let brandColor = "";
+
     try {
       const now = new Date();
       const months: { label: string; month: string }[] = [];
@@ -350,7 +355,6 @@
         });
       }
 
-      const reports: MonthlyReport[] = [];
       for (const m of months) {
         try {
           const [y, mo] = m.month.split("-");
@@ -389,179 +393,189 @@
         }
       }
 
-      const labels = months.map((m) => m.label);
-      const brandColor =
+      labels = months.map((m) => m.label);
+      brandColor =
         getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim() ||
         "#6d28d9";
-
-      // Weekly hours bar chart (Soll vs Ist)
-      if (weeklyChartEl) {
-        weeklyChart?.destroy();
-        weeklyChart = new Chart(weeklyChartEl, {
-          type: "bar",
-          data: {
-            labels,
-            datasets: [
-              {
-                label: "Ist (h)",
-                data: reports.map((r) => +(r.workedMinutes / 60).toFixed(1)),
-                backgroundColor: brandColor,
-                borderRadius: 4,
-              },
-              {
-                label: "Soll (h)",
-                data: reports.map((r) => +(r.shouldMinutes / 60).toFixed(1)),
-                backgroundColor: "#e5e7eb",
-                borderRadius: 4,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-              legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
-            },
-            scales: {
-              y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
-              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-            },
-          },
-        });
-      }
-
-      // Overtime trend line chart
-      if (overtimeChartEl) {
-        const overtimeData = reports.map(
-          (r) => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1),
-        );
-        let cumulative = 0;
-        const cumulativeData = overtimeData.map((v) => {
-          cumulative += v;
-          return +cumulative.toFixed(1);
-        });
-
-        overtimeChart?.destroy();
-        overtimeChart = new Chart(overtimeChartEl, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {
-                label: "Überstunden kumuliert (h)",
-                data: cumulativeData,
-                borderColor: brandColor,
-                backgroundColor: brandColor + "20",
-                fill: true,
-                tension: 0.3,
-                pointRadius: 4,
-                pointBackgroundColor: brandColor,
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
-              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-            },
-          },
-        });
-      }
-
-      // Sick days trend line chart
-      if (sickChartEl) {
-        sickChart?.destroy();
-        sickChart = new Chart(sickChartEl, {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {
-                label: "Krankheitstage",
-                data: reports.map((r) => r.sickDays),
-                borderColor: "#ef4444",
-                backgroundColor: "rgba(239, 68, 68, 0.1)",
-                fill: true,
-                tension: 0.3,
-                pointRadius: 4,
-                pointBackgroundColor: "#ef4444",
-              },
-            ],
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-              y: {
-                beginAtZero: true,
-                ticks: { stepSize: 1, font: { size: 10 } },
-                grid: { color: "#f3f4f6" },
-              },
-              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
-            },
-          },
-        });
-      }
-
-      // Load own next leave (for all users)
-      try {
-        const myEmployeeId = $authStore.user?.employeeId;
-        const myLeaves = await api.get<
-          { startDate: string; endDate: string; days: number; leaveType: { name: string } }[]
-        >(
-          `/leave/requests?status=APPROVED&upcoming=true${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
-        );
-        const next = (myLeaves ?? []).find((l) => new Date(l.startDate) > new Date());
-        myNextLeave = next
-          ? {
-              startDate: next.startDate.split("T")[0],
-              endDate: next.endDate.split("T")[0],
-              days: Number(next.days),
-              type: next.leaveType?.name ?? "Urlaub",
-            }
-          : null;
-      } catch {
-        /* ignore */
-      }
-
-      // Load upcoming leaves + pending approval count
-      if (isManager) {
-        try {
-          const [leaves, pending] = await Promise.all([
-            api.get<
-              {
-                startDate: string;
-                endDate: string;
-                days: number;
-                employee: { firstName: string; lastName: string };
-                leaveType: { name: string };
-              }[]
-            >("/leave/requests?status=APPROVED&upcoming=true"),
-            api.get<{ id: string }[]>("/leave/requests?status=PENDING"),
-          ]);
-          upcomingLeaves = (leaves ?? [])
-            .map((l) => ({
-              employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
-              startDate: l.startDate?.split("T")[0] ?? "",
-              endDate: l.endDate?.split("T")[0] ?? "",
-              days: Number(l.days ?? 0),
-              type: l.leaveType?.name ?? "Urlaub",
-            }))
-            .slice(0, 8);
-          pendingApprovalCount = (pending ?? []).length;
-        } catch (err) {
-          console.error("Failed to load upcoming leaves:", err);
-          upcomingLeaves = [];
-        }
-      }
     } catch (err) {
       console.error("Failed to load chart data:", err);
     } finally {
+      // CRITICAL: flip loading flag BEFORE Chart.js instantiation so canvases render into the DOM.
       chartsLoading = false;
+    }
+
+    // ── Phase 2: wait for Svelte to render the {:else} branch (canvases) ──────
+    // Without this tick(), chartsLoading has been set to false but the DOM has not
+    // yet been updated — bind:this refs (weeklyChartEl etc.) are still undefined.
+    await tick();
+
+    // ── Phase 3: instantiate charts ────────────────────────────────────────────
+
+    // Weekly hours bar chart (Soll vs Ist)
+    if (weeklyChartEl) {
+      weeklyChart?.destroy();
+      weeklyChart = new Chart(weeklyChartEl, {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Ist (h)",
+              data: reports.map((r) => +(r.workedMinutes / 60).toFixed(1)),
+              backgroundColor: brandColor,
+              borderRadius: 4,
+            },
+            {
+              label: "Soll (h)",
+              data: reports.map((r) => +(r.shouldMinutes / 60).toFixed(1)),
+              backgroundColor: "#e5e7eb",
+              borderRadius: 4,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } },
+          },
+          scales: {
+            y: { beginAtZero: true, grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    }
+
+    // Overtime trend line chart
+    if (overtimeChartEl) {
+      const overtimeData = reports.map(
+        (r) => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1),
+      );
+      let cumulative = 0;
+      const cumulativeData = overtimeData.map((v) => {
+        cumulative += v;
+        return +cumulative.toFixed(1);
+      });
+
+      overtimeChart?.destroy();
+      overtimeChart = new Chart(overtimeChartEl, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Überstunden kumuliert (h)",
+              data: cumulativeData,
+              borderColor: brandColor,
+              backgroundColor: brandColor + "20",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: brandColor,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    }
+
+    // Sick days trend line chart
+    if (sickChartEl) {
+      sickChart?.destroy();
+      sickChart = new Chart(sickChartEl, {
+        type: "line",
+        data: {
+          labels,
+          datasets: [
+            {
+              label: "Krankheitstage",
+              data: reports.map((r) => r.sickDays),
+              borderColor: "#ef4444",
+              backgroundColor: "rgba(239, 68, 68, 0.1)",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 4,
+              pointBackgroundColor: "#ef4444",
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: { stepSize: 1, font: { size: 10 } },
+              grid: { color: "#f3f4f6" },
+            },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          },
+        },
+      });
+    }
+
+    // ── Phase 4: side fetches (leave data) ─────────────────────────────────────
+
+    // Load own next leave (for all users)
+    try {
+      const myEmployeeId = $authStore.user?.employeeId;
+      const myLeaves = await api.get<
+        { startDate: string; endDate: string; days: number; leaveType: { name: string } }[]
+      >(
+        `/leave/requests?status=APPROVED&upcoming=true${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+      );
+      const next = (myLeaves ?? []).find((l) => new Date(l.startDate) > new Date());
+      myNextLeave = next
+        ? {
+            startDate: next.startDate.split("T")[0],
+            endDate: next.endDate.split("T")[0],
+            days: Number(next.days),
+            type: next.leaveType?.name ?? "Urlaub",
+          }
+        : null;
+    } catch {
+      /* ignore */
+    }
+
+    // Load upcoming leaves + pending approval count
+    if (isManager) {
+      try {
+        const [leaves, pending] = await Promise.all([
+          api.get<
+            {
+              startDate: string;
+              endDate: string;
+              days: number;
+              employee: { firstName: string; lastName: string };
+              leaveType: { name: string };
+            }[]
+          >("/leave/requests?status=APPROVED&upcoming=true"),
+          api.get<{ id: string }[]>("/leave/requests?status=PENDING"),
+        ]);
+        upcomingLeaves = (leaves ?? [])
+          .map((l) => ({
+            employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
+            startDate: l.startDate?.split("T")[0] ?? "",
+            endDate: l.endDate?.split("T")[0] ?? "",
+            days: Number(l.days ?? 0),
+            type: l.leaveType?.name ?? "Urlaub",
+          }))
+          .slice(0, 8);
+        pendingApprovalCount = (pending ?? []).length;
+      } catch (err) {
+        console.error("Failed to load upcoming leaves:", err);
+        upcomingLeaves = [];
+      }
     }
   }
 
