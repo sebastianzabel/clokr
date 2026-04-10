@@ -21,7 +21,6 @@
   ]);
 
   let passedCount = $derived(checks.filter((c) => c.ok).length);
-  let allPassed = $derived(passedCount === checks.length);
   let strength = $derived(
     checks.length === 0 ? 0 : Math.round((passedCount / checks.length) * 100),
   );

@@ -93,7 +93,6 @@
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
-  let recentEntries: { id: string; endTime: string | null; startTime: string }[] = $state([]);
   let currentTime = $state(new Date());
   let clockStart: Date | null = $state(null);
 
@@ -146,7 +145,6 @@
     type: string;
   }
   let upcomingLeaves: UpcomingLeave[] = $state([]);
-  let pendingApprovalCount = $state(0);
 
   interface MonthlyReportRow {
     workedHours: number;
@@ -203,7 +201,6 @@
 
       if (entriesResult.status === "fulfilled") {
         const entries = entriesResult.value;
-        recentEntries = entries;
         const openEntry = entries.find((e) => !e.endTime);
         if (openEntry) {
           clockedIn = true;
@@ -547,21 +544,18 @@
       /* ignore */
     }
 
-    // Load upcoming leaves + pending approval count
+    // Load upcoming leaves
     if (isManager) {
       try {
-        const [leaves, pending] = await Promise.all([
-          api.get<
-            {
-              startDate: string;
-              endDate: string;
-              days: number;
-              employee: { firstName: string; lastName: string };
-              leaveType: { name: string };
-            }[]
-          >("/leave/requests?status=APPROVED&upcoming=true"),
-          api.get<{ id: string }[]>("/leave/requests?status=PENDING"),
-        ]);
+        const leaves = await api.get<
+          {
+            startDate: string;
+            endDate: string;
+            days: number;
+            employee: { firstName: string; lastName: string };
+            leaveType: { name: string };
+          }[]
+        >("/leave/requests?status=APPROVED&upcoming=true");
         upcomingLeaves = (leaves ?? [])
           .map((l) => ({
             employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
@@ -571,7 +565,6 @@
             type: l.leaveType?.name ?? "Urlaub",
           }))
           .slice(0, 8);
-        pendingApprovalCount = (pending ?? []).length;
       } catch (err) {
         console.error("Failed to load upcoming leaves:", err);
         upcomingLeaves = [];

@@ -5,7 +5,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from "date-fns";
+  import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
 
   interface Break {
@@ -583,9 +583,8 @@
         endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
       }));
     try {
-      let result: { entry: TimeEntry; warnings: ArbZGWarning[] };
       if (editEntry) {
-        result = await api.put(`/time-entries/${editEntry.id}`, {
+        await api.put(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -594,7 +593,7 @@
           note: formNote || null,
         });
       } else {
-        result = await api.post("/time-entries", {
+        await api.post("/time-entries", {
           ...(isViewingOther ? { employeeId: selectedEmployeeId } : {}),
           date: formDate,
           startTime: startISO,
@@ -702,20 +701,6 @@
   let mBalance = $derived(
     isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
   );
-  let selectedSlots = $derived(
-    entries
-      .filter((e) => (e.date ?? e.startTime).split("T")[0] === selectedDate)
-      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()),
-  );
-  let selectedExpected = $derived(
-    (() => {
-      if (!schedule) return 0;
-      const d = parseISO(selectedDate);
-      return getDayExpected(schedule, d) * 60;
-    })(),
-  );
-  let selectedWorked = $derived(sumWorked(selectedSlots));
-  let selectedBalance = $derived(selectedWorked - selectedExpected);
   // Check if there are entries for today
   let hasTodayEntries = $derived(
     entries.some((e) => {
@@ -763,11 +748,6 @@
     } as TimeEntry;
     return checkArbZGFrontend([...otherSlots, formEntry]);
   });
-  // Formatierter Label für den ausgewählten Tag
-  let selectedLabel = $derived(
-    format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }),
-  );
-
   // ArbZG-Verstoß-Map: dateStr → warnings[]
   let arbzgDayMap = $derived.by(() => {
     if (!arbzgEnabled) return new Map<string, ArbZGWarning[]>();

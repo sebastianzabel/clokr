@@ -1333,10 +1333,6 @@
         {@const holidays = entries.filter((e) => e.isHoliday)}
         {@const absences = entries.filter((e) => !e.isHoliday)}
         {@const isHoliday = holidays.length > 0}
-        {@const hasEntries =
-          absences.filter(
-            (e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED")),
-          ).length > 0}
         <div
           class="cal-cell"
           class:cal-cell--current={day.isCurrentMonth}

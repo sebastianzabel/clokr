@@ -175,12 +175,6 @@
     ].filter((i) => i.show),
   );
 
-  let pathname = $derived($page.url.pathname);
-
-  function isActive(href: string): boolean {
-    if (href === "/dashboard") return pathname === "/dashboard";
-    return pathname === href || pathname.startsWith(href + "/");
-  }
 </script>
 
 {#snippet navSvgIcon(name: string, size?: number)}
