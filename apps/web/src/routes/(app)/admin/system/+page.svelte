@@ -696,7 +696,7 @@
           value={$theme}
           onchange={(e) => theme.set(e.currentTarget.value as typeof $theme)}
         >
-          {#each themes as t}
+          {#each themes as t (t.id)}
             <option value={t.id}>{t.label}</option>
           {/each}
         </select>
@@ -721,7 +721,7 @@
             bind:value={gFederalState}
             class="form-input federal-state-select"
           >
-            {#each STATES as s}
+            {#each STATES as s (s.prisma)}
               <option value={s.prisma}>{s.label}</option>
             {/each}
           </select>
@@ -730,7 +730,7 @@
         <div class="form-group">
           <label class="form-label" for="g-timezone">Zeitzone</label>
           <select id="g-timezone" bind:value={gTimezone} class="form-input">
-            {#each TIMEZONE_OPTIONS as tz}
+            {#each TIMEZONE_OPTIONS as tz (tz)}
               <option value={tz}>{tz}</option>
             {/each}
           </select>
@@ -1330,7 +1330,7 @@
           </button>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:0.375rem">
-          {#each API_SCOPES as s}
+          {#each API_SCOPES as s (s.scope)}
             <button
               class="btn btn-sm"
               class:btn-primary={newApiKeyScopes.includes(s.scope)}
@@ -1348,7 +1348,7 @@
               <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th></th></tr>
             </thead>
             <tbody>
-              {#each apiKeys as key}
+              {#each apiKeys as key (key.id)}
                 <tr class:inactive={!!key.revokedAt}>
                   <td>{key.name}</td>
                   <td><code>{key.keyPrefix}…</code></td>
