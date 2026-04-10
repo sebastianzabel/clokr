@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
 import { z } from "zod";
 import { Role } from "@clokr/db";
+import { JwtPayload } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
@@ -297,7 +298,7 @@ export async function authRoutes(app: FastifyInstance) {
 
       const newAccessToken = app.jwt.sign(payload);
       // Add jti to ensure uniqueness even when payload and timestamp are identical
-      const newRefreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as any, {
+      const newRefreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string }, {
         expiresIn: "7d",
       });
 
@@ -316,7 +317,7 @@ export async function authRoutes(app: FastifyInstance) {
   // POST /api/v1/auth/logout
   app.post("/logout", {
     schema: { tags: ["Auth"] },
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { refreshToken } = refreshSchema.parse(req.body);
       await app.prisma.refreshToken.updateMany({
         where: { token: hashToken(refreshToken) },
@@ -330,7 +331,7 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/forgot-password", {
     config: { rateLimit: { max: 3, timeWindow: "15 minutes" } },
     schema: { tags: ["Auth"] },
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { email } = forgotPasswordSchema.parse(req.body);
 
       const user = await app.prisma.user.findUnique({
@@ -547,7 +548,7 @@ async function issueTokens(
   };
 
   const accessToken = app.jwt.sign(payload);
-  const refreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as any, {
+  const refreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string }, {
     expiresIn: `${refreshDays}d`,
   });
 

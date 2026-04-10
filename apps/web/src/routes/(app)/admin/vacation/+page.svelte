@@ -22,6 +22,28 @@
     clockOutReminderHours: number;
     missingEntriesDays: number;
     autoDeleteOpenHours: number;
+    // Optional extended fields returned by /settings/work
+    arbzgEnabled?: boolean;
+    autoBreakEnabled?: boolean;
+    defaultBreakStart?: string;
+    christmasEveRule?: string;
+    holidayRulesValidFromYear?: number;
+    newYearsEveRule?: string;
+    vacationLeadTimeDays?: number;
+    vacationMaxAdvanceMonths?: number;
+    halfDayAllowed?: boolean;
+    sickSelfReport?: boolean;
+    sickNoteRequiredAfterDays?: number;
+    autoCalcPartTimeVacation?: boolean;
+    fullTimeWorkDaysPerWeek?: number;
+    maxNegativeBalanceMinutes?: number | null;
+    enforceMinVacation?: boolean;
+    carryOverRequiresReason?: boolean;
+    vacationReminderStartMonth?: number;
+    reminderPendingLeaveEnabled?: boolean;
+    reminderPendingLeaveHours?: number;
+    reminderUpcomingAbsenceEnabled?: boolean;
+    reminderUpcomingAbsenceDays?: number;
   }
 
   interface WorkSchedule {
@@ -188,28 +210,28 @@
       gAutoInvalidateHours = cfg.autoDeleteOpenHours ?? 14;
 
       // Leave/overtime config
-      christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
-      holidayRulesValidFromYear = (cfg as any).holidayRulesValidFromYear ?? 2026;
-      newYearsEveRule = (cfg as any).newYearsEveRule ?? "NORMAL";
-      vacationLeadTimeDays = (cfg as any).vacationLeadTimeDays ?? 0;
-      vacationMaxAdvanceMonths = (cfg as any).vacationMaxAdvanceMonths ?? 0;
-      halfDayAllowed = (cfg as any).halfDayAllowed ?? true;
-      sickSelfReport = (cfg as any).sickSelfReport ?? true;
-      sickNoteRequiredAfterDays = (cfg as any).sickNoteRequiredAfterDays ?? 3;
-      autoCalcPartTimeVacation = (cfg as any).autoCalcPartTimeVacation ?? true;
-      fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
-      const maxNegMinutes = (cfg as any).maxNegativeBalanceMinutes;
+      christmasEveRule = cfg.christmasEveRule ?? "NORMAL";
+      holidayRulesValidFromYear = cfg.holidayRulesValidFromYear ?? 2026;
+      newYearsEveRule = cfg.newYearsEveRule ?? "NORMAL";
+      vacationLeadTimeDays = cfg.vacationLeadTimeDays ?? 0;
+      vacationMaxAdvanceMonths = cfg.vacationMaxAdvanceMonths ?? 0;
+      halfDayAllowed = cfg.halfDayAllowed ?? true;
+      sickSelfReport = cfg.sickSelfReport ?? true;
+      sickNoteRequiredAfterDays = cfg.sickNoteRequiredAfterDays ?? 3;
+      autoCalcPartTimeVacation = cfg.autoCalcPartTimeVacation ?? true;
+      fullTimeWorkDaysPerWeek = cfg.fullTimeWorkDaysPerWeek ?? 5;
+      const maxNegMinutes = cfg.maxNegativeBalanceMinutes;
       if (maxNegMinutes != null) {
         maxNegEnabled = true;
         maxNegHours = maxNegMinutes / 60;
       }
-      enforceMinVacation = (cfg as any).enforceMinVacation ?? true;
-      carryOverRequiresReason = (cfg as any).carryOverRequiresReason ?? true;
-      vacationReminderStartMonth = (cfg as any).vacationReminderStartMonth ?? 10;
-      reminderPendingEnabled = (cfg as any).reminderPendingLeaveEnabled ?? true;
-      reminderPendingHours = (cfg as any).reminderPendingLeaveHours ?? 48;
-      reminderUpcomingEnabled = (cfg as any).reminderUpcomingAbsenceEnabled ?? true;
-      reminderUpcomingDays = (cfg as any).reminderUpcomingAbsenceDays ?? 3;
+      enforceMinVacation = cfg.enforceMinVacation ?? true;
+      carryOverRequiresReason = cfg.carryOverRequiresReason ?? true;
+      vacationReminderStartMonth = cfg.vacationReminderStartMonth ?? 10;
+      reminderPendingEnabled = cfg.reminderPendingLeaveEnabled ?? true;
+      reminderPendingHours = cfg.reminderPendingLeaveHours ?? 48;
+      reminderUpcomingEnabled = cfg.reminderUpcomingAbsenceEnabled ?? true;
+      reminderUpcomingDays = cfg.reminderUpcomingAbsenceDays ?? 3;
 
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
@@ -347,7 +369,7 @@
         });
       }
 
-      employees = employees.map((e: any) =>
+      employees = employees.map((e) =>
         e.id === empModal!.id ? { ...e, workSchedule: updated } : e,
       );
       closeEmpModal();
@@ -544,7 +566,7 @@
               aria-label="Tag des Verfalls"
             /><span class="text-muted">.</span>
             <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select" aria-label="Monat des Verfalls">
-              {#each MONTHS as m, i}
+              {#each MONTHS as m, i (i)}
                 <option value={i + 1}>{m}</option>
               {/each}
             </select>
@@ -969,7 +991,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each employees as emp}
+            {#each employees as emp (emp.id)}
               {@const s = emp.workSchedule}
               <tr>
                 <td class="text-muted font-mono">{emp.employeeNumber}</td>

@@ -1,6 +1,5 @@
 import fp from "fastify-plugin";
 import nodemailer, { Transporter } from "nodemailer";
-import { config } from "../config";
 import { decryptSafe } from "../utils/crypto";
 
 interface SmtpConfig {

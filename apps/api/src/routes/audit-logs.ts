@@ -6,7 +6,7 @@ export async function auditLogRoutes(app: FastifyInstance) {
   app.get(
     "/",
     { preHandler: requireRole("ADMIN") },
-    async (req, reply) => {
+    async (req, _reply) => {
       const { page = "1", limit = "50", action, entity, userId } = req.query as {
         page?: string;
         limit?: string;

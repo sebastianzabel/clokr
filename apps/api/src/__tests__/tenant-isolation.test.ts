@@ -208,7 +208,6 @@ describe("Tenant Isolation", () => {
       // attempt: tenantA admin tries to POST with tenantB employee's context.
       // The route binds to req.user.employeeId so the new leave lands in tenantA.
       // We assert tenantB employee has no new leave from tenantA actions.
-      const before = tenantBLeaveRequestId;
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/leave/requests",

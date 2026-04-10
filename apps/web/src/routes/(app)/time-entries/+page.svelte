@@ -5,7 +5,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import { format, startOfMonth, endOfMonth, parseISO, addMonths, subMonths } from "date-fns";
+  import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
 
   interface Break {
@@ -583,9 +583,8 @@
         endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
       }));
     try {
-      let result: { entry: TimeEntry; warnings: ArbZGWarning[] };
       if (editEntry) {
-        result = await api.put(`/time-entries/${editEntry.id}`, {
+        await api.put(`/time-entries/${editEntry.id}`, {
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -594,7 +593,7 @@
           note: formNote || null,
         });
       } else {
-        result = await api.post("/time-entries", {
+        await api.post("/time-entries", {
           ...(isViewingOther ? { employeeId: selectedEmployeeId } : {}),
           date: formDate,
           startTime: startISO,
@@ -607,7 +606,7 @@
       closeModal();
       await loadAll();
     } catch (e: unknown) {
-      if ((e as any)?.status === 403) {
+      if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
         saveError = "Monat ist gesperrt";
       } else {
         saveError = e instanceof Error ? e.message : "Fehler beim Speichern";
@@ -623,7 +622,7 @@
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
-      if ((e as any)?.status === 403) {
+      if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
         error = "Monat ist gesperrt";
       } else {
         error = e instanceof Error ? e.message : "Fehler beim Löschen";
@@ -702,20 +701,6 @@
   let mBalance = $derived(
     isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
   );
-  let selectedSlots = $derived(
-    entries
-      .filter((e) => (e.date ?? e.startTime).split("T")[0] === selectedDate)
-      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()),
-  );
-  let selectedExpected = $derived(
-    (() => {
-      if (!schedule) return 0;
-      const d = parseISO(selectedDate);
-      return getDayExpected(schedule, d) * 60;
-    })(),
-  );
-  let selectedWorked = $derived(sumWorked(selectedSlots));
-  let selectedBalance = $derived(selectedWorked - selectedExpected);
   // Check if there are entries for today
   let hasTodayEntries = $derived(
     entries.some((e) => {
@@ -763,11 +748,6 @@
     } as TimeEntry;
     return checkArbZGFrontend([...otherSlots, formEntry]);
   });
-  // Formatierter Label für den ausgewählten Tag
-  let selectedLabel = $derived(
-    format(parseISO(selectedDate), "EEEE, d. MMMM yyyy", { locale: de }),
-  );
-
   // ArbZG-Verstoß-Map: dateStr → warnings[]
   let arbzgDayMap = $derived.by(() => {
     if (!arbzgEnabled) return new Map<string, ArbZGWarning[]>();
@@ -932,7 +912,7 @@
           <button onclick={() => pickerYear++}>›</button>
         </div>
         <div class="month-picker-grid">
-          {#each MONTH_NAMES_SHORT as name, i}
+          {#each MONTH_NAMES_SHORT as name, i (i)}
             <button
               class="month-picker-btn"
               class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
@@ -961,7 +941,7 @@
   <div class="cal-section card">
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d}
+      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
         <div class="cal-dow">{d}</div>
       {/each}
     </div>
@@ -969,7 +949,7 @@
     <!-- Tage -->
     {#if loading}
       <div class="cal-grid">
-        {#each Array(35) as _}<div class="cal-day skeleton"></div>{/each}
+        {#each Array(35) as _, i (i)}<div class="cal-day skeleton"></div>{/each}
       </div>
     {:else}
       <div class="cal-grid">
@@ -1071,7 +1051,7 @@
                 <span class="list-arbzg-hint"
                   >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
                     class="arbzg-tooltip"
-                    >{#each slotArbzg as w, i}{w.message}{#if i < slotArbzg.length - 1}<br
+                    >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
                         />{/if}{/each}</span
                   ></span
                 >
@@ -1215,7 +1195,7 @@
               >
             </div>
           {/if}
-          {#each formBreaks as brk, i}
+          {#each formBreaks as brk, i (i)}
             <div class="break-row">
               <input type="time" bind:value={brk.start} class="form-input" aria-label={`Pause ${i + 1} Beginn`} />
               <span class="break-sep">&ndash;</span>

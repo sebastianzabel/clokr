@@ -13,7 +13,7 @@
 
 <nav class="breadcrumb" aria-label="Breadcrumb">
   <ol class="breadcrumb-list">
-    {#each crumbs as crumb, i}
+    {#each crumbs as crumb, i (crumb.label)}
       <li class="breadcrumb-item">
         {#if i > 0}
           <svg

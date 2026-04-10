@@ -93,7 +93,6 @@
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
-  let recentEntries: { id: string; endTime: string | null; startTime: string }[] = $state([]);
   let currentTime = $state(new Date());
   let clockStart: Date | null = $state(null);
 
@@ -146,7 +145,6 @@
     type: string;
   }
   let upcomingLeaves: UpcomingLeave[] = $state([]);
-  let pendingApprovalCount = $state(0);
 
   interface MonthlyReportRow {
     workedHours: number;
@@ -203,7 +201,6 @@
 
       if (entriesResult.status === "fulfilled") {
         const entries = entriesResult.value;
-        recentEntries = entries;
         const openEntry = entries.find((e) => !e.endTime);
         if (openEntry) {
           clockedIn = true;
@@ -547,21 +544,18 @@
       /* ignore */
     }
 
-    // Load upcoming leaves + pending approval count
+    // Load upcoming leaves
     if (isManager) {
       try {
-        const [leaves, pending] = await Promise.all([
-          api.get<
-            {
-              startDate: string;
-              endDate: string;
-              days: number;
-              employee: { firstName: string; lastName: string };
-              leaveType: { name: string };
-            }[]
-          >("/leave/requests?status=APPROVED&upcoming=true"),
-          api.get<{ id: string }[]>("/leave/requests?status=PENDING"),
-        ]);
+        const leaves = await api.get<
+          {
+            startDate: string;
+            endDate: string;
+            days: number;
+            employee: { firstName: string; lastName: string };
+            leaveType: { name: string };
+          }[]
+        >("/leave/requests?status=APPROVED&upcoming=true");
         upcomingLeaves = (leaves ?? [])
           .map((l) => ({
             employeeName: `${l.employee?.firstName ?? ""} ${l.employee?.lastName ?? ""}`.trim(),
@@ -571,7 +565,6 @@
             type: l.leaveType?.name ?? "Urlaub",
           }))
           .slice(0, 8);
-        pendingApprovalCount = (pending ?? []).length;
       } catch (err) {
         console.error("Failed to load upcoming leaves:", err);
         upcomingLeaves = [];
@@ -912,7 +905,7 @@
           <table class="team-table">
             <thead>
               <tr>
-                {#each myWeekDays as day}
+                {#each myWeekDays as day (day.date)}
                   {@const d = new Date(day.date + "T12:00:00")}
                   {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
                   {@const isToday = day.date === new Date().toISOString().split("T")[0]}
@@ -925,7 +918,7 @@
             </thead>
             <tbody>
               <tr>
-                {#each myWeekDays as day}
+                {#each myWeekDays as day (day.date)}
                   {@const isToday = day.date === new Date().toISOString().split("T")[0]}
                   <td class:is-today={isToday}>
                     <a
@@ -967,7 +960,7 @@
                 <span class="oi-dot oi-dot--warn"></span>
                 <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
               </div>
-              {#each openItems.missingDays as missDate}
+              {#each openItems.missingDays as missDate (missDate)}
                 {@const d = new Date(missDate + "T12:00:00")}
                 {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
                 <a href="/time-entries?view=list&date={missDate}" class="oi-item">
@@ -1054,7 +1047,7 @@
     <div class="upcoming-section card card-body card-animate">
       <h3 class="chart-title">Anstehende Urlaube</h3>
       <div class="upcoming-list">
-        {#each upcomingLeaves as leave}
+        {#each upcomingLeaves as leave (`${leave.employeeName}-${leave.startDate}`)}
           <div class="upcoming-item">
             <span class="upcoming-name">{leave.employeeName}</span>
             <span class="upcoming-dates">
@@ -1101,7 +1094,7 @@
           <thead>
             <tr>
               <th class="team-grid__name">Mitarbeiter</th>
-              {#each teamWeek.weekDays as day}
+              {#each teamWeek.weekDays as day (day)}
                 <th class="team-grid__day" class:team-grid__day--today={isToday(day)}>
                   <span class="day-label">{dayLabel(day)}</span>
                   <span class="day-num">{dayNum(day)}</span>
@@ -1115,7 +1108,7 @@
                 <td class="team-grid__name">
                   <span class="member-name">{member.name}</span>
                 </td>
-                {#each member.days as day}
+                {#each member.days as day (day.date)}
                   <td class="team-grid__cell" class:team-grid__day--today={isToday(day.date)}>
                     {#if day.status === "present"}
                       <span

@@ -198,7 +198,7 @@
       <div class="form-group">
         <label class="form-label" for="report-month">Monat</label>
         <select id="report-month" bind:value={reportMonth} class="form-input">
-          {#each months as name, i}
+          {#each months as name, i (i)}
             <option value={i + 1}>{name}</option>
           {/each}
         </select>
@@ -206,7 +206,7 @@
       <div class="form-group">
         <label class="form-label" for="report-year">Jahr</label>
         <select id="report-year" bind:value={reportYear} class="form-input">
-          {#each years as y}
+          {#each years as y (y)}
             <option value={y}>{y}</option>
           {/each}
         </select>
@@ -241,7 +241,7 @@
       <div class="form-group">
         <label class="form-label" for="datev-month">Monat</label>
         <select id="datev-month" bind:value={datevMonth} class="form-input">
-          {#each months as name, i}
+          {#each months as name, i (i)}
             <option value={i + 1}>{name}</option>
           {/each}
         </select>
@@ -249,7 +249,7 @@
       <div class="form-group">
         <label class="form-label" for="datev-year">Jahr</label>
         <select id="datev-year" bind:value={datevYear} class="form-input">
-          {#each years as y}
+          {#each years as y (y)}
             <option value={y}>{y}</option>
           {/each}
         </select>
@@ -289,7 +289,7 @@
       <div class="form-group">
         <label class="form-label" for="leave-year">Jahr</label>
         <select id="leave-year" bind:value={leaveYear} class="form-input">
-          {#each years as y}
+          {#each years as y (y)}
             <option value={y}>{y}</option>
           {/each}
         </select>
@@ -346,7 +346,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each monthlyReport.rows as row}
+            {#each monthlyReport.rows as row (row.employeeId)}
               <tr>
                 <td class="font-medium">{row.employeeName}</td>
                 <td class="font-mono">{formatHours(row.workedHours)}</td>

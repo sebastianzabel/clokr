@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { TimeEntrySource } from "@clokr/db";
+import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
 import {
   getTenantTimezone,
@@ -133,7 +133,7 @@ async function checkOverlap(
 
 /** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
 async function hasApprovedLeaveOnDate(
-  prisma: any,
+  prisma: Prisma.TransactionClient,
   employeeId: string,
   dateStr: string,
 ): Promise<{ type: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null> {
@@ -146,7 +146,7 @@ async function hasApprovedLeaveOnDate(
     },
     include: { leaveType: { select: { name: true } } },
   });
-  if (leave) return { type: leave.leaveType.name, status: leave.status };
+  if (leave) return { type: leave.leaveType.name, status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" };
 
   const absence = await prisma.absence.findFirst({
     where: {
@@ -868,7 +868,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               data: { breakMinutes: autoBreakMin },
             });
             // Update entry object for response
-            (entry as any).breakMinutes = autoBreakMin;
+            entry.breakMinutes = autoBreakMin;
           }
         }
       }
@@ -1093,7 +1093,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Build update data: always revalidate, optionally correct times
-      const updateData: Record<string, unknown> = {
+      const updateData: Prisma.TimeEntryUpdateInput = {
         isInvalid: false,
         invalidReason: null,
       };
@@ -1129,7 +1129,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const updated = await app.prisma.timeEntry.update({
         where: { id },
-        data: updateData as any,
+        data: updateData,
         include: { breaks: { orderBy: { startTime: "asc" } } },
       });
 

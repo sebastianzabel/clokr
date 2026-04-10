@@ -105,7 +105,7 @@ describe("Time Entries API", () => {
       expect(body.warnings).toBeDefined();
       expect(body.warnings.length).toBeGreaterThan(0);
       // 11h - 45min break = 10.25h > 10h → MAX_DAILY_EXCEEDED error
-      const maxDaily = body.warnings.find((w: any) => w.code === "MAX_DAILY_EXCEEDED");
+      const maxDaily = body.warnings.find((w: { code: string }) => w.code === "MAX_DAILY_EXCEEDED");
       expect(maxDaily).toBeDefined();
     });
 
@@ -141,7 +141,7 @@ describe("Time Entries API", () => {
         },
       });
 
-      if (res.statusCode !== 201) console.log("EMPLOYEE CREATE FAIL:", res.body);
+      if (res.statusCode !== 201) console.error("EMPLOYEE CREATE FAIL:", res.body);
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
       expect(body.entry.employeeId).toBe(data.employee.id);

@@ -383,7 +383,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredEmployees as emp}
+          {#each filteredEmployees as emp (emp.id)}
             <tr class:row-inactive={!emp.user.isActive}>
               <td class="col-number">{emp.employeeNumber}</td>
               <td class="col-name">

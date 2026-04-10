@@ -60,7 +60,7 @@ describe("Notifications API", () => {
       });
 
       const body = JSON.parse(notifRes.body);
-      const leaveNotif = body.notifications.find((n: any) => n.type === "LEAVE_REQUEST");
+      const leaveNotif = body.notifications.find((n: { type: string; title: string }) => n.type === "LEAVE_REQUEST");
       expect(leaveNotif).toBeDefined();
       expect(leaveNotif.title).toContain("Urlaubsantrag");
     });

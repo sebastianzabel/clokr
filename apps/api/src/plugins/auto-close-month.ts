@@ -1,7 +1,6 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import {
-  getTenantTimezone,
   monthRangeUtc,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,

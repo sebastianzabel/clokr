@@ -175,12 +175,6 @@
     ].filter((i) => i.show),
   );
 
-  let pathname = $derived($page.url.pathname);
-
-  function isActive(href: string): boolean {
-    if (href === "/dashboard") return pathname === "/dashboard";
-    return pathname === href || pathname.startsWith(href + "/");
-  }
 </script>
 
 {#snippet navSvgIcon(name: string, size?: number)}
@@ -312,7 +306,7 @@
       </div>
 
       <nav class="sidebar-nav" aria-label="Hauptnavigation">
-        {#each navItems as item}
+        {#each navItems as item (item.href)}
           {@const active =
             item.href === "/dashboard"
               ? $page.url.pathname === "/dashboard"
@@ -449,7 +443,7 @@
 
     <!-- Mobile Bottom Nav -->
     <nav class="mobile-nav" aria-label="Mobile Navigation">
-      {#each navItems as item}
+      {#each navItems as item (item.href)}
         {@const active =
           item.href === "/dashboard"
             ? $page.url.pathname === "/dashboard"

@@ -21,6 +21,30 @@
     carryOverDeadlineMonth: number;
   }
 
+  interface SecurityConfig {
+    twoFaEnabled: boolean;
+    passwordMinLength: number;
+    passwordRequireUpper: boolean;
+    passwordRequireLower: boolean;
+    passwordRequireDigit: boolean;
+    passwordRequireSpecial: boolean;
+    // Optional extended fields
+    emailNotificationsEnabled?: boolean;
+    emailOnLeaveRequest?: boolean;
+    emailOnLeaveDecision?: boolean;
+    emailOnOvertimeWarning?: boolean;
+    emailOnMissingEntries?: boolean;
+    emailOnClockOutReminder?: boolean;
+    emailOnMonthClose?: boolean;
+    sessionTimeoutMinutes?: number;
+    refreshTokenDays?: number;
+    rememberMeEnabled?: boolean;
+    rememberMeDays?: number;
+    maxSessionsPerUser?: number;
+    loginMaxAttempts?: number;
+    loginLockoutMinutes?: number;
+  }
+
   const STATES: { prisma: string; label: string }[] = [
     { prisma: "NIEDERSACHSEN", label: "Niedersachsen" },
     { prisma: "BADEN_WUERTTEMBERG", label: "Baden-Württemberg" },
@@ -123,31 +147,6 @@
   let pwSaved = $state(false);
   let pwError = $state("");
 
-  // Max negative hours
-  let maxNegEnabled = $state(false);
-  let maxNegHours = $state(20);
-  let maxNegSaving = $state(false);
-  let maxNegSaved = $state(false);
-  let maxNegError = $state("");
-
-  // Heiligabend / Silvester
-  let christmasEveRule = $state("NORMAL");
-  let newYearsEveRule = $state("NORMAL");
-
-  // Abwesenheits-Konfiguration
-  let vacationLeadTimeDays = $state(0);
-  let vacationMaxAdvanceMonths = $state(0);
-  let halfDayAllowed = $state(true);
-  let sickSelfReport = $state(true);
-  let sickNoteRequiredAfterDays = $state(3);
-  let leaveConfigSaving = $state(false);
-  let leaveConfigSaved = $state(false);
-  let leaveConfigError = $state("");
-
-  // Teilzeit-Urlaub
-  let autoCalcPartTimeVacation = $state(true);
-  let fullTimeWorkDaysPerWeek = $state(5);
-
   // E-Mail-Benachrichtigungen
   let emailEnabled = $state(false);
   let emailOnLeaveRequest = $state(true);
@@ -245,17 +244,6 @@
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
 
-      // Load holiday/leave/part-time config from same response
-      christmasEveRule = (cfg as any).christmasEveRule ?? "NORMAL";
-      newYearsEveRule = (cfg as any).newYearsEveRule ?? "NORMAL";
-      vacationLeadTimeDays = (cfg as any).vacationLeadTimeDays ?? 0;
-      vacationMaxAdvanceMonths = (cfg as any).vacationMaxAdvanceMonths ?? 0;
-      halfDayAllowed = (cfg as any).halfDayAllowed ?? true;
-      sickSelfReport = (cfg as any).sickSelfReport ?? true;
-      sickNoteRequiredAfterDays = (cfg as any).sickNoteRequiredAfterDays ?? 3;
-      autoCalcPartTimeVacation = (cfg as any).autoCalcPartTimeVacation ?? true;
-      fullTimeWorkDaysPerWeek = (cfg as any).fullTimeWorkDaysPerWeek ?? 5;
-
       try {
         const smtp = await api.get<{
           smtpHost: string | null;
@@ -278,39 +266,27 @@
       }
 
       try {
-        const sec = await api.get<{
-          twoFaEnabled: boolean;
-          passwordMinLength: number;
-          passwordRequireUpper: boolean;
-          passwordRequireLower: boolean;
-          passwordRequireDigit: boolean;
-          passwordRequireSpecial: boolean;
-          maxNegativeBalanceMinutes: number | null;
-        }>("/settings/security");
+        const sec = await api.get<SecurityConfig>("/settings/security");
         twoFaEnabled = sec.twoFaEnabled;
         pwMinLength = sec.passwordMinLength;
         pwRequireUpper = sec.passwordRequireUpper;
         pwRequireLower = sec.passwordRequireLower;
         pwRequireDigit = sec.passwordRequireDigit;
         pwRequireSpecial = sec.passwordRequireSpecial;
-        if (sec.maxNegativeBalanceMinutes != null) {
-          maxNegEnabled = true;
-          maxNegHours = sec.maxNegativeBalanceMinutes / 60;
-        }
-        emailEnabled = (sec as any).emailNotificationsEnabled ?? false;
-        emailOnLeaveRequest = (sec as any).emailOnLeaveRequest ?? true;
-        emailOnLeaveDecision = (sec as any).emailOnLeaveDecision ?? true;
-        emailOnOvertimeWarning = (sec as any).emailOnOvertimeWarning ?? false;
-        emailOnMissingEntries = (sec as any).emailOnMissingEntries ?? false;
-        emailOnClockOutReminder = (sec as any).emailOnClockOutReminder ?? false;
-        emailOnMonthClose = (sec as any).emailOnMonthClose ?? true;
-        sessionTimeoutMinutes = (sec as any).sessionTimeoutMinutes ?? 60;
-        refreshTokenDays = (sec as any).refreshTokenDays ?? 7;
-        rememberMeEnabled = (sec as any).rememberMeEnabled ?? true;
-        rememberMeDays = (sec as any).rememberMeDays ?? 30;
-        maxSessionsPerUser = (sec as any).maxSessionsPerUser ?? 0;
-        loginMaxAttempts = (sec as any).loginMaxAttempts ?? 5;
-        loginLockoutMinutes = (sec as any).loginLockoutMinutes ?? 15;
+        emailEnabled = sec.emailNotificationsEnabled ?? false;
+        emailOnLeaveRequest = sec.emailOnLeaveRequest ?? true;
+        emailOnLeaveDecision = sec.emailOnLeaveDecision ?? true;
+        emailOnOvertimeWarning = sec.emailOnOvertimeWarning ?? false;
+        emailOnMissingEntries = sec.emailOnMissingEntries ?? false;
+        emailOnClockOutReminder = sec.emailOnClockOutReminder ?? false;
+        emailOnMonthClose = sec.emailOnMonthClose ?? true;
+        sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
+        refreshTokenDays = sec.refreshTokenDays ?? 7;
+        rememberMeEnabled = sec.rememberMeEnabled ?? true;
+        rememberMeDays = sec.rememberMeDays ?? 30;
+        maxSessionsPerUser = sec.maxSessionsPerUser ?? 0;
+        loginMaxAttempts = sec.loginMaxAttempts ?? 5;
+        loginLockoutMinutes = sec.loginLockoutMinutes ?? 15;
       } catch {
         /* ignorieren */
       }
@@ -480,23 +456,6 @@
     }
   }
 
-  async function saveMaxNegative() {
-    maxNegSaving = true;
-    maxNegSaved = false;
-    maxNegError = "";
-    try {
-      await api.put("/settings/security", {
-        maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
-      });
-      maxNegSaved = true;
-      setTimeout(() => (maxNegSaved = false), 3000);
-    } catch (e: unknown) {
-      maxNegError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      maxNegSaving = false;
-    }
-  }
-
   async function saveEmailConfig() {
     emailSaving = true;
     emailSaved = false;
@@ -520,30 +479,6 @@
     }
   }
 
-  async function saveLeaveConfig() {
-    leaveConfigSaving = true;
-    leaveConfigSaved = false;
-    leaveConfigError = "";
-    try {
-      await api.put("/settings/work", {
-        christmasEveRule,
-        newYearsEveRule,
-        vacationLeadTimeDays,
-        vacationMaxAdvanceMonths,
-        halfDayAllowed,
-        sickSelfReport,
-        sickNoteRequiredAfterDays,
-        autoCalcPartTimeVacation,
-        fullTimeWorkDaysPerWeek,
-      });
-      leaveConfigSaved = true;
-      setTimeout(() => (leaveConfigSaved = false), 3000);
-    } catch (e: unknown) {
-      leaveConfigError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      leaveConfigSaving = false;
-    }
-  }
 
   async function createApiKey() {
     if (!newApiKeyName.trim() || newApiKeyScopes.length === 0) return;
@@ -696,7 +631,7 @@
           value={$theme}
           onchange={(e) => theme.set(e.currentTarget.value as typeof $theme)}
         >
-          {#each themes as t}
+          {#each themes as t (t.id)}
             <option value={t.id}>{t.label}</option>
           {/each}
         </select>
@@ -721,7 +656,7 @@
             bind:value={gFederalState}
             class="form-input federal-state-select"
           >
-            {#each STATES as s}
+            {#each STATES as s (s.prisma)}
               <option value={s.prisma}>{s.label}</option>
             {/each}
           </select>
@@ -730,7 +665,7 @@
         <div class="form-group">
           <label class="form-label" for="g-timezone">Zeitzone</label>
           <select id="g-timezone" bind:value={gTimezone} class="form-input">
-            {#each TIMEZONE_OPTIONS as tz}
+            {#each TIMEZONE_OPTIONS as tz (tz)}
               <option value={tz}>{tz}</option>
             {/each}
           </select>
@@ -1330,7 +1265,7 @@
           </button>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:0.375rem">
-          {#each API_SCOPES as s}
+          {#each API_SCOPES as s (s.scope)}
             <button
               class="btn btn-sm"
               class:btn-primary={newApiKeyScopes.includes(s.scope)}
@@ -1348,7 +1283,7 @@
               <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th></th></tr>
             </thead>
             <tbody>
-              {#each apiKeys as key}
+              {#each apiKeys as key (key.id)}
                 <tr class:inactive={!!key.revokedAt}>
                   <td>{key.name}</td>
                   <td><code>{key.keyPrefix}…</code></td>

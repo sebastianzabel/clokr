@@ -1,5 +1,5 @@
 import { FastifyInstance } from "fastify";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth } from "../middleware/auth";
 import sharp from "sharp";
 
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB

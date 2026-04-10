@@ -220,9 +220,9 @@
     </div>
 
     <div class="cmd-results">
-      {#each grouped as group, gi}
+      {#each grouped as group, gi (group.name)}
         <div class="cmd-group-label">{group.name}</div>
-        {#each group.items as action, ii}
+        {#each group.items as action, ii (action.id)}
           {@const flatIdx = getFlatIndex(gi, ii)}
           <button
             class="cmd-item"

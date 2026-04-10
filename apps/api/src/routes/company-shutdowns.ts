@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 const shutdownBodySchema = z.object({
@@ -12,11 +13,11 @@ const shutdownBodySchema = z.object({
 
 export async function companyShutdownRoutes(app: FastifyInstance) {
   // ── GET /company-shutdowns ──────────────────────────────────────────────────
-  app.get("/", { preHandler: requireAuth }, async (req, reply) => {
+  app.get("/", { preHandler: requireAuth }, async (req, _reply) => {
     const tenantId = req.user.tenantId;
     const { year } = req.query as { year?: string };
 
-    const where: any = { tenantId };
+    const where: Prisma.CompanyShutdownWhereInput = { tenantId };
     if (year) {
       const y = parseInt(year);
       where.OR = [

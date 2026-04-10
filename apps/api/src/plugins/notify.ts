@@ -1,4 +1,5 @@
 import fp from "fastify-plugin";
+import type { TenantConfig } from "@clokr/db";
 
 interface NotifyParams {
   userId: string;
@@ -10,7 +11,7 @@ interface NotifyParams {
 }
 
 /** Map notification types to TenantConfig email toggle field names. */
-const EMAIL_TYPE_MAP: Record<string, string> = {
+const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   LEAVE_REQUEST: "emailOnLeaveRequest",
   LEAVE_APPROVED: "emailOnLeaveDecision",
   LEAVE_REJECTED: "emailOnLeaveDecision",
@@ -58,7 +59,7 @@ export const notifyPlugin = fp(async (app) => {
 
     // Check per-type toggle
     const toggleField = EMAIL_TYPE_MAP[type];
-    if (toggleField && !(config as any)[toggleField]) return;
+    if (toggleField && !config[toggleField]) return;
 
     // Check user opt-in
     const user = await app.prisma.user.findUnique({ where: { id: userId } });

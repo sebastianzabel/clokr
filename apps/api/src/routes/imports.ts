@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { Prisma } from "@clokr/db";
 import { requireRole } from "../middleware/auth";
 
 const employeeRowSchema = z.object({
@@ -61,7 +62,7 @@ export async function importRoutes(app: FastifyInstance) {
   app.post("/employees", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);
 
@@ -101,12 +102,12 @@ export async function importRoutes(app: FastifyInstance) {
             ? await bcrypt.hash(data.password!, 12)
             : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
-          await app.prisma.$transaction(async (tx: any) => {
+          await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             const user = await tx.user.create({
               data: {
                 email: data.email,
                 passwordHash,
-                role: data.role as any,
+                role: data.role as Prisma.UserCreateInput["role"],
                 isActive: hasPassword,
               },
             });
@@ -138,11 +139,11 @@ export async function importRoutes(app: FastifyInstance) {
           });
 
           results.push({ row: i + 1, status: "ok", email: data.email });
-        } catch (e: any) {
+        } catch (e: unknown) {
           results.push({
             row: i + 1,
             status: "error",
-            error: e.message?.slice(0, 200) ?? "Unknown error",
+            error: e instanceof Error ? e.message.slice(0, 200) : "Unknown error",
           });
         }
       }
@@ -165,7 +166,7 @@ export async function importRoutes(app: FastifyInstance) {
   app.post("/time-entries", {
     schema: { tags: ["Import"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { csv } = z.object({ csv: z.string() }).parse(req.body);
       const rows = parseCsv(csv);
 
@@ -220,11 +221,11 @@ export async function importRoutes(app: FastifyInstance) {
           });
 
           results.push({ row: i + 1, status: "ok" });
-        } catch (e: any) {
+        } catch (e: unknown) {
           results.push({
             row: i + 1,
             status: "error",
-            error: e.message?.slice(0, 200) ?? "Unknown error",
+            error: e instanceof Error ? e.message.slice(0, 200) : "Unknown error",
           });
         }
       }

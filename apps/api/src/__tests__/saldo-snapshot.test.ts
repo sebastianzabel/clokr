@@ -239,7 +239,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
 
       expect(res.statusCode).toBe(200);
       const entries = JSON.parse(res.body);
-      const found = entries.find((e: any) => e.id === entry.id);
+      const found = entries.find((e: { id: string }) => e.id === entry.id);
       expect(found).toBeUndefined();
     });
 
@@ -256,7 +256,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       });
 
       // Create two entries for March 3 (Mon)
-      const entry1 = await createEntry(data.employee.id, "2025-03-03", 8, 16, 0); // 8h
+      await createEntry(data.employee.id, "2025-03-03", 8, 16, 0); // 8h
       const entry2 = await createEntry(data.employee.id, "2025-03-04", 8, 18, 0); // 10h
 
       // Soft-delete entry2
@@ -344,7 +344,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
         },
       });
 
-      const active = await createEntry(data.employee.id, "2025-05-05", 8, 16, 0); // 8h
+      await createEntry(data.employee.id, "2025-05-05", 8, 16, 0); // 8h
       const deleted = await createEntry(data.employee.id, "2025-05-06", 8, 18, 0); // 10h
       await app.prisma.timeEntry.update({
         where: { id: deleted.id },
@@ -358,7 +358,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       });
       expect(res.statusCode).toBe(200);
       const report = JSON.parse(res.body);
-      const row = report.rows.find((r: any) => r.employeeId === data.employee.id);
+      const row = report.rows.find((r: { employeeId: string; workedHours: number }) => r.employeeId === data.employee.id);
 
       // Only 8h from active entry should count
       expect(row.workedHours).toBeCloseTo(8, 1);

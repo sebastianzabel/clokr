@@ -11,7 +11,11 @@ function log(level: string, msg: string, data?: Record<string, unknown>) {
     msg,
     ...data,
   };
-  console.log(JSON.stringify(entry));
+  if (level === "error") {
+    console.error(JSON.stringify(entry));
+  } else {
+    console.warn(JSON.stringify(entry));
+  }
 }
 
 export const handle: Handle = async ({ event, resolve }) => {

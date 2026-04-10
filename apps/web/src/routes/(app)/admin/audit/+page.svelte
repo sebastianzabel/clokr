@@ -109,13 +109,13 @@
 <div class="filter-bar" style="margin-bottom:1.25rem">
   <select class="form-input filter-select" bind:value={filterAction} onchange={applyFilter} aria-label="Nach Aktion filtern">
     <option value="">Alle Aktionen</option>
-    {#each ACTIONS as a}
+    {#each ACTIONS as a (a)}
       <option value={a}>{a}</option>
     {/each}
   </select>
   <select class="form-input filter-select" bind:value={filterEntity} onchange={applyFilter} aria-label="Nach Entität filtern">
     <option value="">Alle Entitäten</option>
-    {#each ENTITIES as e}
+    {#each ENTITIES as e (e)}
       <option value={e}>{e}</option>
     {/each}
   </select>
@@ -148,7 +148,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each logs as log}
+        {#each logs as log (log.id)}
           <tr class:row-expanded={expandedId === log.id}>
             <td class="font-mono" style="font-size:0.8125rem;white-space:nowrap">{fmtDate(log.createdAt)}</td>
             <td style="font-size:0.875rem">

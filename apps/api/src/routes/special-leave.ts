@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 /** Statutory special leave defaults per § 616 BGB / common collective agreements. */
@@ -18,7 +19,7 @@ const STATUTORY_DEFAULTS = [
 ];
 
 /** Ensure statutory default rules exist for a tenant (lazy seeding). */
-async function ensureStatutoryRules(prisma: any, tenantId: string) {
+async function ensureStatutoryRules(prisma: Prisma.TransactionClient, tenantId: string) {
   const existing = await prisma.specialLeaveRule.findMany({
     where: { tenantId, isStatutory: true },
   });
@@ -77,7 +78,7 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
   app.post("/rules", {
     schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const body = createRuleSchema.parse(req.body);
       const tenantId = req.user.tenantId;
 

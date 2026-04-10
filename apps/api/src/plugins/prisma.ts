@@ -15,7 +15,7 @@ export const prismaPlugin = fp(async (app) => {
     min: parseInt(process.env.POOL_MIN || "2"),
     max: parseInt(process.env.POOL_MAX || "20"),
   });
-  const adapter = new PrismaPg(pool as any);
+  const adapter = new PrismaPg(pool);
 
   const prisma = new PrismaClient({
     adapter,

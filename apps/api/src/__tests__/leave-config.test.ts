@@ -130,7 +130,7 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
       expect(res.statusCode).toBe(200);
       const rules = JSON.parse(res.body);
       expect(rules.length).toBeGreaterThanOrEqual(11);
-      expect(rules.some((r: any) => r.name === "Eigene Hochzeit" && r.isStatutory)).toBe(true);
+      expect(rules.some((r: { name: string; isStatutory: boolean }) => r.name === "Eigene Hochzeit" && r.isStatutory)).toBe(true);
     });
 
     it("creates a custom rule", async () => {
@@ -153,7 +153,7 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
         url: "/api/v1/special-leave/rules",
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
-      const statutory = JSON.parse(listRes.body).find((r: any) => r.isStatutory);
+      const statutory = JSON.parse(listRes.body).find((r: { id: string; isStatutory: boolean }) => r.isStatutory);
 
       const res = await app.inject({
         method: "DELETE",

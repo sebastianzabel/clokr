@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, seedTestData, cleanupTestData, closeTestApp } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
-import { createHash, randomBytes } from "crypto";
 
 let app: FastifyInstance;
 let data: Awaited<ReturnType<typeof seedTestData>>;
@@ -47,7 +46,7 @@ describe("Terminal API Key Management", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.keys.length).toBeGreaterThanOrEqual(1);
-    expect(body.keys.find((k: any) => k.id === terminalKeyId)).toBeDefined();
+    expect(body.keys.find((k: { id: string }) => k.id === terminalKeyId)).toBeDefined();
   });
 
   it("GET /allowed-cards — returns registered NFC card IDs", async () => {

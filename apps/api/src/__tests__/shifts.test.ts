@@ -21,8 +21,6 @@ describe("Shift Planning API", () => {
   });
 
   describe("Templates", () => {
-    let templateId: string;
-
     it("creates a shift template", async () => {
       const res = await app.inject({
         method: "POST",
@@ -40,7 +38,6 @@ describe("Shift Planning API", () => {
       const body = JSON.parse(res.body);
       expect(body.name).toBe("Frühschicht");
       expect(body.startTime).toBe("06:00");
-      templateId = body.id;
     });
 
     it("lists templates", async () => {
@@ -53,7 +50,7 @@ describe("Shift Planning API", () => {
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
       expect(Array.isArray(body)).toBe(true);
-      expect(body.some((t: any) => t.name === "Frühschicht")).toBe(true);
+      expect(body.some((t: { name: string }) => t.name === "Frühschicht")).toBe(true);
     });
 
     it("deletes a template", async () => {

@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto, { createHash } from "crypto";
+import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
@@ -67,7 +68,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
-      return employees.map((e: any) => ({
+      return employees.map((e) => ({
         ...e,
         workSchedule: e.workSchedules[0] ?? null,
         workSchedules: undefined,
@@ -133,7 +134,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         ? await bcrypt.hash(body.password!, 12)
         : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
-      const { employee, invitationToken } = await app.prisma.$transaction(async (tx: any) => {
+      const { employee, invitationToken } = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const user = await tx.user.create({
           data: {
             email: body.email,
@@ -475,7 +476,7 @@ export async function employeeRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      await app.prisma.$transaction(async (tx: any) => {
+      await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // AuditLog anonymisieren (userId → null)
         await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
 
@@ -549,12 +550,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       }
 
       // Retention check — default 10 years (§147 AO), configurable per tenant
-      const tenantConfig = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-      });
-      const retentionYears =
-        (tenantConfig as any)?.retentionYears ?? DEFAULT_RETENTION_YEARS;
-      const retentionStart: Date = (employee as any).exitDate ?? employee.createdAt;
+      // TODO(types): retentionYears is not yet in TenantConfig schema; using hardcoded default
+      const retentionYears = DEFAULT_RETENTION_YEARS;
+      const retentionStart: Date = employee.exitDate ?? employee.createdAt;
       const retentionExpires = new Date(
         retentionStart.getFullYear() + retentionYears,
         11,
@@ -587,7 +585,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       const userId = employee.userId;
 
       // Hard delete in correct order — Restrict-protected relations first
-      await app.prisma.$transaction(async (tx: any) => {
+      await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         // Break records (nested under TimeEntry) — delete first
         await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
         // Restrict-protected models

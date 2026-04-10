@@ -210,7 +210,7 @@ describe("Leave / Absence API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entitlements = JSON.parse(beforeRes.body);
-      const vacEnt = entitlements.find((e: any) => e.leaveType?.name === "Urlaub");
+      const vacEnt = entitlements.find((e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub");
       const usedBefore = Number(vacEnt?.usedDays ?? 0);
 
       // Create and approve 2-day vacation
@@ -240,7 +240,7 @@ describe("Leave / Absence API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entAfter = JSON.parse(afterRes.body);
-      const vacEntAfter = entAfter.find((e: any) => e.leaveType?.name === "Urlaub");
+      const vacEntAfter = entAfter.find((e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub");
       const usedAfter = Number(vacEntAfter?.usedDays ?? 0);
 
       expect(usedAfter).toBe(usedBefore + Number(days));

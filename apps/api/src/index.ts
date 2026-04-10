@@ -6,8 +6,8 @@ async function main() {
 
   try {
     await app.listen({ port: config.API_PORT, host: config.API_HOST });
-    console.log(`🚀 API läuft auf http://${config.API_HOST}:${config.API_PORT}`);
-    console.log(`📖 Swagger UI: http://${config.API_HOST}:${config.API_PORT}/docs`);
+    app.log.info(`API läuft auf http://${config.API_HOST}:${config.API_PORT}`);
+    app.log.info(`Swagger UI: http://${config.API_HOST}:${config.API_PORT}/docs`);
   } catch (err) {
     app.log.error(err);
     process.exit(1);

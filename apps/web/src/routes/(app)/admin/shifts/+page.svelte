@@ -150,7 +150,7 @@
       try {
         const from = weekDays[0];
         const to = weekDays[6];
-        timeEntries = await api.get<any[]>(`/time-entries?from=${from}&to=${to}`);
+        timeEntries = await api.get<typeof timeEntries>(`/time-entries?from=${from}&to=${to}`);
       } catch (err) {
         console.error("Failed to load time entries for shift view:", err);
       }
@@ -471,7 +471,7 @@
 <!-- ── Grid ──────────────────────────────────────────────────────────────── -->
 {#if loading}
   <div class="skeleton-list">
-    {#each [1, 2, 3] as _}
+    {#each [1, 2, 3] as _, i (i)}
       <div class="skeleton-card"></div>
     {/each}
   </div>
@@ -490,7 +490,7 @@
       <thead>
         <tr>
           <th class="grid-header grid-header--employee">Mitarbeiter</th>
-          {#each weekDays as day, i}
+          {#each weekDays as day, i (day)}
             <th class="grid-header">
               <span class="grid-header__day">{DAY_NAMES[i]}</span>
               <span class="grid-header__date">{formatDateShort(day)}</span>
@@ -505,7 +505,7 @@
               <span class="grid-employee__name">{emp.lastName}, {emp.firstName}</span>
               <span class="grid-employee__nr">{emp.employeeNumber}</span>
             </td>
-            {#each weekDays as day}
+            {#each weekDays as day (day)}
               {@const cellShifts = getShiftsForCell(emp.id, day)}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <td

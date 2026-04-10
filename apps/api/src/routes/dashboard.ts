@@ -235,7 +235,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const empSchedule = allSchedules.find((s) => s.employeeId === emp.id);
           const dayDate = new Date(dayStr + "T12:00:00Z");
           const dow = getDayOfWeekInTz(dayDate, tz);
-          const expectedHours = empSchedule ? getDayHoursFromSchedule(empSchedule as any, dow) : 0;
+          const expectedHours = empSchedule ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow) : 0;
           const isWorkday = expectedHours > 0;
 
           let status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" =
@@ -312,8 +312,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
 
       const days = weekDays.map((dateStr: string) => {
-        const dayEntries = entries.filter((e: any) => dateStrInTz(e.date, tz) === dateStr);
-        const workedMin = dayEntries.reduce((sum: number, e: any) => {
+        const dayEntries = entries.filter((e) => dateStrInTz(e.date, tz) === dateStr);
+        const workedMin = dayEntries.reduce((sum: number, e) => {
           if (!e.endTime) return sum;
           return (
             sum +
@@ -326,7 +326,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const expectedMin = schedule ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
         const isWorkday = expectedMin > 0;
         const hasEntry = dayEntries.length > 0;
-        const isClockedIn = dayEntries.some((e: any) => !e.endTime);
+        const isClockedIn = dayEntries.some((e) => !e.endTime);
         const isPast = new Date(dateStr) < todayInTz(tz);
 
         let status = "none";
@@ -371,7 +371,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         },
         select: { date: true },
       });
-      const entryDates = new Set(recentEntries.map((e: any) => dateStrInTz(e.date, tz)));
+      const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
       const missingDays: string[] = [];
       const cursor = new Date(sevenDaysAgo);

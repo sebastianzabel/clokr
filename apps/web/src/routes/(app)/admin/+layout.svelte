@@ -44,7 +44,7 @@
     <h1 class="admin-title">Administration</h1>
     <div class="admin-tabs-wrap">
       <nav class="admin-tabs" aria-label="Admin-Navigation">
-        {#each tabs as tab}
+        {#each tabs as tab (tab.href)}
           {@const active = pathname === tab.href || pathname.startsWith(tab.href + "/")}
           <a
             href={tab.href}

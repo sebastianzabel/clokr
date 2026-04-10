@@ -49,13 +49,28 @@ interface PhorestWorkTimeEntry {
   endTime: string; // ISO datetime
 }
 
+interface PhorestApiResponse {
+  totalElements?: unknown;
+  _embedded?: { staff?: PhorestStaffRaw[]; staffWorkTimeTables?: PhorestWorkTimeEntry[] };
+  staff?: PhorestStaffRaw[];
+  staffWorkTimeTables?: PhorestWorkTimeEntry[];
+  [key: string]: unknown;
+}
+
+interface PhorestStaffRaw {
+  staffId: string;
+  firstName: string;
+  lastName: string;
+  email?: string;
+}
+
 async function phorestFetch(
   baseUrl: string,
   path: string,
   username: string,
   password: string,
   query?: Record<string, string>,
-): Promise<any> {
+): Promise<PhorestApiResponse> {
   const url = new URL(path, baseUrl);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -77,7 +92,7 @@ async function phorestFetch(
     throw new Error(`Phorest API error ${res.status}: ${text.slice(0, 200)}`);
   }
 
-  return res.json();
+  return res.json() as Promise<PhorestApiResponse>;
 }
 
 export async function integrationRoutes(app: FastifyInstance) {
@@ -171,8 +186,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           success: true,
           message: `Verbindung erfolgreich. ${staff.totalElements ?? "?"} Mitarbeiter gefunden.`,
         };
-      } catch (err: any) {
-        return { success: false, error: err.message };
+      } catch (err: unknown) {
+        return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
       }
     },
   });
@@ -205,7 +220,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         phorestData._embedded?.staff ??
         phorestData.staff ??
         []
-      ).map((s: any) => ({
+      ).map((s) => ({
         staffId: s.staffId,
         firstName: s.firstName,
         lastName: s.lastName,
@@ -298,11 +313,11 @@ export async function integrationRoutes(app: FastifyInstance) {
           syncPwd,
           { start_date: startDate, end_date: endDate },
         );
-      } catch (err: any) {
+      } catch (err: unknown) {
         app.log.error({ err }, "Fehler beim Laden der Phorest WorkTimeTables");
         return reply
           .code(502)
-          .send({ error: `Phorest WorkTimeTables nicht abrufbar: ${err.message}` });
+          .send({ error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}` });
       }
       // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
       const entries =
@@ -362,8 +377,8 @@ export async function integrationRoutes(app: FastifyInstance) {
             },
           });
           created++;
-        } catch (err: any) {
-          errors.push(`${date} ${startH}-${endH}: ${err.message?.slice(0, 100)}`);
+        } catch (err: unknown) {
+          errors.push(`${date} ${startH}-${endH}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
         }
       }
 

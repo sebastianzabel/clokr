@@ -16,6 +16,12 @@ declare module "@fastify/jwt" {
   }
 }
 
+declare module "fastify" {
+  interface FastifyRequest {
+    apiKeyScopes?: string[];
+  }
+}
+
 /**
  * Authenticate via JWT or API Key (clk_ prefix).
  * API keys are validated against the database and scopes are attached to the request.
@@ -49,7 +55,7 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply) {
       tenantId: apiKey.tenantId,
     };
     // Attach scopes for downstream checks
-    (req as any).apiKeyScopes = apiKey.scopes;
+    req.apiKeyScopes = apiKey.scopes;
     return;
   }
 

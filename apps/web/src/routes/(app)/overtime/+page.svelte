@@ -213,7 +213,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredTransactions as tx}
+          {#each filteredTransactions as tx (tx.id)}
             <tr>
               <td>{formatDate(tx.createdAt)}</td>
               <td>{txTypeLabel(tx.type)}</td>

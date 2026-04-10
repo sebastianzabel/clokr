@@ -1,6 +1,12 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 
+declare module "fastify" {
+  interface FastifyInstance {
+    runRetention?: () => Promise<void>;
+  }
+}
+
 /**
  * Data retention scheduler: annually soft-deletes time entries, leave requests,
  * and absences that have exceeded the configured retention period.
@@ -122,7 +128,7 @@ export const dataRetentionPlugin = fp(async (app) => {
   app.log.info("Data-Retention: Jährliche Archivierung geplant (2. Januar, 03:00)");
 
   // Expose for manual trigger
-  (app as any).runRetention = runRetention;
+  app.decorate("runRetention", runRetention);
 
   app.addHook("onClose", () => {
     tasks.forEach((t) => void t.stop());

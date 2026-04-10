@@ -1,15 +1,12 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { LeaveRequestStatus, Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
-import { getTenantTimezone, dateStrInTz, monthRangeUtc } from "../utils/timezone";
+import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import {
-  splitDaysAcrossYears,
-  calculateStatutoryMinimum,
-  countWorkDaysPerWeek,
-} from "../utils/vacation-calc";
+import { splitDaysAcrossYears } from "../utils/vacation-calc";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
@@ -390,10 +387,10 @@ export async function leaveRoutes(app: FastifyInstance) {
       };
 
       // Für Manager: PENDING-Filter schließt CANCELLATION_REQUESTED immer ein
-      const statusFilter = status
+      const statusFilter: Prisma.LeaveRequestWhereInput["status"] = status
         ? isManager && status === "PENDING"
-          ? { in: ["PENDING", "CANCELLATION_REQUESTED"] as const }
-          : (status as any)
+          ? { in: ["PENDING", "CANCELLATION_REQUESTED"] }
+          : (status as LeaveRequestStatus)
         : undefined;
 
       const rows = await app.prisma.leaveRequest.findMany({
@@ -1213,7 +1210,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: { id: row.id },
             data: { usedDays: actualUsed },
           });
-          row.usedDays = actualUsed as any;
+          (row as unknown as { usedDays: number }).usedDays = actualUsed;
         }
       }
 
@@ -1340,7 +1337,7 @@ async function recalculateCarryOver(
  * Gibt den effektiven Resturlaub zurück — 0 wenn der Verfall bereits eingetreten ist.
  */
 function getEffectiveCarryOver(
-  entitlement: { carriedOverDays: any; carryOverDeadline: Date | null },
+  entitlement: { carriedOverDays: Prisma.Decimal | number; carryOverDeadline: Date | null },
   referenceDate: Date,
 ): number {
   const carryOver = Number(entitlement.carriedOverDays);

@@ -162,7 +162,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   app.get("/close-month/status", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { year, month } = z
         .object({
           year: z.coerce.number().int().min(2020).max(2099),
@@ -351,7 +351,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
   app.get("/close-month/year-status", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { year } = z
         .object({
           year: z.coerce.number().int().min(2020).max(2099),
@@ -394,7 +394,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const months: {
         month: number;
         name: string;
-        status: "closed" | "partial" | "ready" | "open" | "blocked" | "future";
+        status: "closed" | "partial" | "ready" | "open" | "blocked" | "future" | "no_data";
         closedCount: number;
         totalCount: number;
         missing?: {
@@ -418,7 +418,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           months.push({
             month: m,
             name: MONTH_NAMES_DE[m - 1],
-            status: "no_data" as any,
+            status: "no_data",
             closedCount: 0,
             totalCount: 0,
           });
@@ -878,8 +878,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
         select: { tenantId: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
-
-      const tz = await getTenantTimezone(app.prisma, employee.tenantId);
 
       // Year range
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);

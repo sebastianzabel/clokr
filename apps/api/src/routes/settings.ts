@@ -629,7 +629,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.get("/work/:employeeId/history", {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
-    handler: async (req, reply) => {
+    handler: async (req, _reply) => {
       const { employeeId } = req.params as { employeeId: string };
       const schedules = await app.prisma.workSchedule.findMany({
         where: { employeeId },

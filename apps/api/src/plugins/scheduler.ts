@@ -2,6 +2,26 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { decryptSafe } from "../utils/crypto";
 
+interface PhorestApiResponse {
+  _embedded?: { staff?: PhorestStaffItem[]; staffWorkTimeTables?: PhorestWorkTimeItem[] };
+  staff?: PhorestStaffItem[];
+  staffWorkTimeTables?: PhorestWorkTimeItem[];
+}
+
+interface PhorestStaffItem {
+  staffId: string;
+  firstName: string;
+  lastName: string;
+  email?: string;
+}
+
+interface PhorestWorkTimeItem {
+  staffId: string;
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
 /**
  * Background scheduler for recurring tasks.
  * Currently: Phorest shift sync (per-tenant cron).
@@ -44,7 +64,7 @@ export const schedulerPlugin = fp(async (app) => {
         { headers },
       );
       if (!staffRes.ok) throw new Error(`Staff API ${staffRes.status}`);
-      const staffData = (await staffRes.json()) as Record<string, any>;
+      const staffData = (await staffRes.json()) as PhorestApiResponse;
       const phorestStaff = staffData._embedded?.staff ?? staffData.staff ?? [];
 
       // 2. Map to Clokr employees
@@ -70,7 +90,7 @@ export const schedulerPlugin = fp(async (app) => {
         { headers },
       );
       if (!wttRes.ok) throw new Error(`WorkTimeTables API ${wttRes.status}`);
-      const wttData = (await wttRes.json()) as Record<string, any>;
+      const wttData = (await wttRes.json()) as PhorestApiResponse;
       const entries =
         wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
 

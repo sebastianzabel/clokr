@@ -960,7 +960,7 @@
             if (formType === "SPECIAL") loadSpecialLeaveRules();
           }}
         >
-          {#each TYPE_OPTIONS as t}
+          {#each TYPE_OPTIONS as t (t.code)}
             <option value={t.code}>{t.label}</option>
           {/each}
         </select>
@@ -971,7 +971,7 @@
           <label class="form-label" for="f-special-rule">Anlass</label>
           <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
             <option value="">— Anlass wählen —</option>
-            {#each specialLeaveRules as rule}
+            {#each specialLeaveRules as rule (rule.id)}
               <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
             {/each}
           </select>
@@ -1153,7 +1153,7 @@
               <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
             {:else}
               <div class="overlap-list">
-                {#each overlapEntries.filter((o) => o.status === "APPROVED") as o}
+                {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
                   <div class="overlap-row">
                     <span class="overlap-name">{o.employeeName}</span>
                     <span class="overlap-type">abwesend</span>
@@ -1265,7 +1265,7 @@
               <button onclick={() => pickerYear++}>›</button>
             </div>
             <div class="month-picker-grid">
-              {#each MONTH_NAMES as name, i}
+              {#each MONTH_NAMES as name, i (i)}
                 <button
                   class="month-picker-btn"
                   class:active={i + 1 === calMonth && pickerYear === calYear}
@@ -1321,22 +1321,18 @@
 
     <!-- Wochentag-Header -->
     <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd}
+      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
         <div class="cal-dow">{wd}</div>
       {/each}
     </div>
 
     <!-- Tage -->
     <div class="cal-grid {calLoading ? 'cal-loading' : ''}">
-      {#each calDays as day}
+      {#each calDays as day (day.dateStr)}
         {@const entries = calMap.get(day.dateStr) ?? []}
         {@const holidays = entries.filter((e) => e.isHoliday)}
         {@const absences = entries.filter((e) => !e.isHoliday)}
         {@const isHoliday = holidays.length > 0}
-        {@const hasEntries =
-          absences.filter(
-            (e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED")),
-          ).length > 0}
         <div
           class="cal-cell"
           class:cal-cell--current={day.isCurrentMonth}
@@ -1357,7 +1353,7 @@
             </div>
           {/if}
           <div class="cal-chips">
-            {#each absences.filter((e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED"))) as e}
+            {#each absences.filter((e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED"))) as e (e.id)}
               <div
                 class="cal-chip"
                 class:cal-chip--pending={e.status === "PENDING" ||
@@ -1506,7 +1502,7 @@
         aria-label="Nach Art filtern"
       >
         <option value="">Alle Arten</option>
-        {#each TYPE_OPTIONS as t}
+        {#each TYPE_OPTIONS as t (t.code)}
           <option value={t.code}>{t.label}</option>
         {/each}
       </select>
@@ -1528,7 +1524,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredMyRequests as req}
+          {#each filteredMyRequests as req (req.id)}
             {@const isOwn = req.employeeId === $authStore.user?.employeeId}
             <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
               {#if isManager}
@@ -1595,7 +1591,7 @@
 {#if view === "approvals"}
   {#if !loading && pendingRequests.length > 0}
     <div class="pending-list">
-      {#each pendingRequests as req}
+      {#each pendingRequests as req (req.id)}
         <div
           class="pending-card card"
           id="request-{req.id}"
@@ -1683,7 +1679,7 @@
             <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
           {:else}
             <div class="overlap-list">
-              {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o}
+              {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
                 <div class="overlap-row">
                   <span class="overlap-name">{o.employeeName}</span>
                   <span class="overlap-type">abwesend</span>
