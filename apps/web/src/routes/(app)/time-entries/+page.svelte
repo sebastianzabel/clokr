@@ -891,74 +891,74 @@
   </div>
 {/if}
 
+<!-- ── Monat-Navigation (beide Ansichten) ────────────────────────────────── -->
+<div class="cal-nav month-nav-standalone">
+  <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+    >
+  </button>
+  <div class="cal-nav-center">
+    <button
+      class="cal-month-title"
+      onclick={() => {
+        pickerYear = calMonth.getFullYear();
+        showMonthPicker = !showMonthPicker;
+      }}
+      title="Monat/Jahr wählen"
+    >
+      {format(calMonth, "MMMM yyyy", { locale: de })}
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
+      >
+    </button>
+    {#if showMonthPicker}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
+      <div class="month-picker">
+        <div class="month-picker-year">
+          <button onclick={() => pickerYear--}>‹</button>
+          <span>{pickerYear}</span>
+          <button onclick={() => pickerYear++}>›</button>
+        </div>
+        <div class="month-picker-grid">
+          {#each MONTH_NAMES_SHORT as name, i}
+            <button
+              class="month-picker-btn"
+              class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
+              onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
+            >
+          {/each}
+        </div>
+        <button class="month-picker-today" onclick={gotoToday}>Heute</button>
+      </div>
+    {/if}
+  </div>
+  <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+    >
+  </button>
+</div>
+
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
 {#if teView === "calendar"}
   <div class="cal-section card">
-    <!-- Monat-Navigation -->
-    <div class="cal-nav">
-      <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-        >
-      </button>
-      <div class="cal-nav-center">
-        <button
-          class="cal-month-title"
-          onclick={() => {
-            pickerYear = calMonth.getFullYear();
-            showMonthPicker = !showMonthPicker;
-          }}
-          title="Monat/Jahr wählen"
-        >
-          {format(calMonth, "MMMM yyyy", { locale: de })}
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-          >
-        </button>
-        {#if showMonthPicker}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-          <div class="month-picker">
-            <div class="month-picker-year">
-              <button onclick={() => pickerYear--}>‹</button>
-              <span>{pickerYear}</span>
-              <button onclick={() => pickerYear++}>›</button>
-            </div>
-            <div class="month-picker-grid">
-              {#each MONTH_NAMES_SHORT as name, i}
-                <button
-                  class="month-picker-btn"
-                  class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
-                  onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
-                >
-              {/each}
-            </div>
-            <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-          </div>
-        {/if}
-      </div>
-      <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
-    </div>
-
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d}
@@ -1329,6 +1329,12 @@
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--gray-200, #e5e7eb);
     background: var(--gray-50, #f9fafb);
+  }
+
+  .month-nav-standalone {
+    border: 1px solid var(--gray-200, #e5e7eb);
+    border-radius: var(--radius-lg, 0.75rem);
+    margin-bottom: 1rem;
   }
 
   .nav-btn {
