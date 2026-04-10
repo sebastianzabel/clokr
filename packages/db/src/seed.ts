@@ -13,11 +13,11 @@ const adapter = new PrismaPg(pool as any);
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  // Skip seed if demo users already exist
-  const existingAdmin = await prisma.user.findFirst({
-    where: { email: ADMIN_EMAIL },
+  // Skip seed if demo tenant already exists (robust against user anonymization which changes emails)
+  const existingTenant = await prisma.tenant.findFirst({
+    where: { slug: "demo-clokr" },
   });
-  if (existingAdmin) {
+  if (existingTenant) {
     console.log("ℹ️  Demo-Daten existieren bereits – Seed übersprungen.");
     return;
   }
