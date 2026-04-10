@@ -296,31 +296,39 @@
   let pickerYear = $state(new Date().getFullYear());
 
   function prevMonth() {
+    const prevYear = calYear;
     if (calMonth === 1) {
       calMonth = 12;
       calYear--;
     } else calMonth--;
     loadCalendar();
+    if (calYear !== prevYear) loadData();
   }
   function nextMonth() {
+    const prevYear = calYear;
     if (calMonth === 12) {
       calMonth = 1;
       calYear++;
     } else calMonth++;
     loadCalendar();
+    if (calYear !== prevYear) loadData();
   }
   function gotoMonthYear(m: number, y: number) {
+    const prevYear = calYear;
     calMonth = m;
     calYear = y;
     showMonthPicker = false;
     loadCalendar();
+    if (calYear !== prevYear) loadData();
   }
   function gotoToday() {
     const now = new Date();
+    const prevYear = calYear;
     calMonth = now.getMonth() + 1;
     calYear = now.getFullYear();
     showMonthPicker = false;
     loadCalendar();
+    if (calYear !== prevYear) loadData();
   }
 
   const MONTH_NAMES = [
@@ -812,6 +820,12 @@
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
+      // Month overlap filter — include request if its interval overlaps the selected month
+      const monthStart = new Date(calYear, calMonth - 1, 1);
+      const monthEnd = new Date(calYear, calMonth, 0, 23, 59, 59);
+      const reqStart = new Date(req.startDate);
+      const reqEnd = new Date(req.endDate);
+      if (reqEnd < monthStart || reqStart > monthEnd) return false;
       return true;
     }),
   );
@@ -1429,6 +1443,36 @@
 
 <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
+  <!-- Monat-Navigation für Listenansicht -->
+  <div class="cal-nav list-month-nav">
+    <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat" aria-label="Vorheriger Monat">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+      >
+    </button>
+    <div class="cal-nav-center">
+      <span class="cal-nav-title">{MONTH_NAMES[calMonth - 1]} {calYear}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <button class="btn btn-sm btn-ghost" onclick={gotoToday}>Heute</button>
+      <button class="nav-btn" onclick={nextMonth} title="Nächster Monat" aria-label="Nächster Monat">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+        >
+      </button>
+    </div>
+  </div>
+
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
   <div class="section-header">
     <h2>{isManager ? "Alle Anträge" : "Meine Anträge"}</h2>
@@ -1466,7 +1510,7 @@
           <option value={t.code}>{t.label}</option>
         {/each}
       </select>
-      <span class="filter-count">{filteredMyRequests.length} von {myRequests.length}</span>
+      <span class="filter-count">{filteredMyRequests.length} im Monat</span>
     </div>
 
     <div class="table-wrapper">
@@ -2361,6 +2405,13 @@
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--gray-200, #e5e7eb);
     background: var(--gray-50, #f9fafb);
+  }
+
+  .list-month-nav {
+    border: 1px solid var(--gray-200, #e5e7eb);
+    border-radius: var(--radius-lg, 0.75rem);
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--gray-200, #e5e7eb);
   }
   .cal-nav-center {
     justify-self: center;

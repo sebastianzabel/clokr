@@ -57,20 +57,34 @@
   let eRole: Role = $state("EMPLOYEE");
   let eNfcCardId = $state("");
 
-  // Delete confirm
-  let showDeleteConfirm = $state(false);
-  let deletingEmployee: Employee | null = $state(null);
-  let deleting = $state(false);
+  // Anonymize confirm (step 1)
+  let showAnonymizeConfirm = $state(false);
+  let anonymizingEmployee: Employee | null = $state(null);
+  let anonymizing = $state(false);
+
+  // Hard-delete confirm (step 2 — only for already-anonymized employees)
+  let showHardDeleteConfirm = $state(false);
+  let hardDeletingEmployee: Employee | null = $state(null);
+  let hardDeleting = $state(false);
+  let hardDeleteError = $state("");
 
   let isAdmin = $derived($authStore.user?.role === "ADMIN");
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function isAnonymized(emp: Employee): boolean {
+    return emp.firstName === "Gelöscht";
+  }
 
   // Filters
   let filterSearch = $state("");
   let filterRole = $state<Role | "">("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
+  let showAnonymized = $state(false);
 
   let filteredEmployees = $derived(
     employees.filter((emp) => {
+      // Hide anonymized employees by default
+      if (!showAnonymized && isAnonymized(emp)) return false;
       if (filterSearch) {
         const q = filterSearch.toLowerCase();
         const match =
@@ -233,23 +247,47 @@
     }
   }
 
-  function confirmDelete(emp: Employee) {
-    deletingEmployee = emp;
-    showDeleteConfirm = true;
+  function confirmAnonymize(emp: Employee) {
+    anonymizingEmployee = emp;
+    showAnonymizeConfirm = true;
   }
 
-  async function doDelete() {
-    if (!deletingEmployee) return;
-    deleting = true;
+  async function doAnonymize() {
+    if (!anonymizingEmployee) return;
+    anonymizing = true;
     try {
-      await api.delete(`/employees/${deletingEmployee.id}`);
-      employees = employees.filter((e) => e.id !== deletingEmployee!.id);
-      showDeleteConfirm = false;
-      deletingEmployee = null;
+      await api.delete(`/employees/${anonymizingEmployee.id}`);
+      showAnonymizeConfirm = false;
+      anonymizingEmployee = null;
+      // Refresh to show anonymized state
+      await loadEmployees();
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler beim Löschen");
+      alert(e instanceof Error ? e.message : "Fehler beim Anonymisieren");
     } finally {
-      deleting = false;
+      anonymizing = false;
+    }
+  }
+
+  function confirmHardDelete(emp: Employee) {
+    hardDeletingEmployee = emp;
+    hardDeleteError = "";
+    showHardDeleteConfirm = true;
+  }
+
+  async function doHardDelete() {
+    if (!hardDeletingEmployee) return;
+    hardDeleting = true;
+    hardDeleteError = "";
+    try {
+      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`);
+      employees = employees.filter((e) => e.id !== hardDeletingEmployee!.id);
+      showHardDeleteConfirm = false;
+      hardDeletingEmployee = null;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Fehler beim endgültigen Löschen";
+      hardDeleteError = msg;
+    } finally {
+      hardDeleting = false;
     }
   }
 
@@ -323,6 +361,10 @@
         <option value="expired">Einladung abgelaufen</option>
         <option value="inactive">Inaktiv</option>
       </select>
+      <label class="filter-checkbox">
+        <input type="checkbox" bind:checked={showAnonymized} />
+        Anonymisierte anzeigen
+      </label>
       <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
     </div>
 
@@ -390,9 +432,22 @@
                         >Reaktivieren</button
                       >
                     {/if}
-                    <button class="btn btn-sm btn-danger-ghost" onclick={() => confirmDelete(emp)}
-                      >Löschen</button
-                    >
+                    {#if isAnonymized(emp)}
+                      <button
+                        class="btn btn-sm btn-danger-ghost"
+                        onclick={() => confirmHardDelete(emp)}
+                        title="Endgültig löschen (nur nach Ablauf der Aufbewahrungsfrist)"
+                      >
+                        Endgültig löschen
+                      </button>
+                    {:else}
+                      <button
+                        class="btn btn-sm btn-danger-ghost"
+                        onclick={() => confirmAnonymize(emp)}
+                      >
+                        Anonymisieren
+                      </button>
+                    {/if}
                   </div>
                 </td>
               {/if}
@@ -632,39 +687,85 @@
   </div>
 {/if}
 
-<!-- ── Löschen Bestätigung ───────────────────────────────────────────────── -->
-{#if showDeleteConfirm && deletingEmployee}
+<!-- ── Anonymisieren Bestätigung (Schritt 1) ─────────────────────────────── -->
+{#if showAnonymizeConfirm && anonymizingEmployee}
   <div class="modal-backdrop" role="presentation">
     <div
       class="modal modal--sm"
       role="dialog"
       aria-modal="true"
-      aria-label="Mitarbeiter löschen"
+      aria-label="Mitarbeiter anonymisieren"
       tabindex="-1"
     >
       <div class="modal-header">
-        <h2 class="modal-title">Mitarbeiter löschen</h2>
+        <h2 class="modal-title">Mitarbeiter anonymisieren</h2>
       </div>
       <div class="modal-body">
         <p>
-          Möchten Sie <strong>{deletingEmployee.firstName} {deletingEmployee.lastName}</strong> wirklich
-          unwiderruflich löschen?
+          Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong>
+          wirklich anonymisieren?
         </p>
-        <p class="hint danger-hint">
-          Alle Daten (Zeiteinträge, Urlaubsanträge, Überstunden) werden dauerhaft entfernt. Diese
-          Aktion kann nicht rückgängig gemacht werden.
+        <p class="hint">
+          Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht. Zeiteinträge,
+          Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist
+          (10 Jahre nach § 147 AO) erhalten. Erst danach kann der Datensatz endgültig gelöscht
+          werden.
         </p>
       </div>
       <div class="modal-footer">
         <button
           class="btn btn-ghost"
           onclick={() => {
-            showDeleteConfirm = false;
-            deletingEmployee = null;
+            showAnonymizeConfirm = false;
+            anonymizingEmployee = null;
           }}>Abbrechen</button
         >
-        <button class="btn btn-danger" onclick={doDelete} disabled={deleting}>
-          {deleting ? "Löschen…" : "Unwiderruflich löschen"}
+        <button class="btn btn-danger" onclick={doAnonymize} disabled={anonymizing}>
+          {anonymizing ? "Anonymisieren…" : "Anonymisieren"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ── Endgültig löschen Bestätigung (Schritt 2) ────────────────────────── -->
+{#if showHardDeleteConfirm && hardDeletingEmployee}
+  <div class="modal-backdrop" role="presentation">
+    <div
+      class="modal modal--sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Mitarbeiter endgültig löschen"
+      tabindex="-1"
+    >
+      <div class="modal-header">
+        <h2 class="modal-title">Endgültig löschen</h2>
+      </div>
+      <div class="modal-body">
+        {#if hardDeleteError}
+          <div class="alert alert-error mb-3">{hardDeleteError}</div>
+        {/if}
+        <p>
+          Den anonymisierten Datensatz von <strong
+            >{hardDeletingEmployee.employeeNumber}</strong
+          > endgültig und unwiderruflich löschen?
+        </p>
+        <p class="hint danger-hint">
+          Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17). Sie ist nur
+          nach Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre) möglich.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button
+          class="btn btn-ghost"
+          onclick={() => {
+            showHardDeleteConfirm = false;
+            hardDeletingEmployee = null;
+            hardDeleteError = "";
+          }}>Abbrechen</button
+        >
+        <button class="btn btn-danger" onclick={doHardDelete} disabled={hardDeleting}>
+          {hardDeleting ? "Löschen…" : "Endgültig löschen"}
         </button>
       </div>
     </div>
@@ -930,5 +1031,18 @@
 
   .mb-3 {
     margin-bottom: 0.75rem;
+  }
+
+  .filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .filter-checkbox input[type="checkbox"] {
+    cursor: pointer;
   }
 </style>

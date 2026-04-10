@@ -5,6 +5,9 @@ import crypto, { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 
+// ── Retention constant ─────────────────────────────────────────────────────
+const DEFAULT_RETENTION_YEARS = 10;
+
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -519,6 +522,85 @@ export async function employeeRoutes(app: FastifyInstance) {
         await tx.invitation.deleteMany({ where: { employeeId: id } });
         await tx.otpToken.deleteMany({ where: { userId } });
         await tx.refreshToken.deleteMany({ where: { userId } });
+      });
+
+      return reply.code(204).send();
+    },
+  });
+
+  // DELETE /api/v1/employees/:id/hard-delete — Endgültige Löschung nach Ablauf der Aufbewahrungsfrist
+  // Darf nur auf bereits anonymisierte Mitarbeiter angewendet werden (firstName === "Gelöscht").
+  // Gesetzliche Aufbewahrungsfrist: §147 AO / §257 HGB — 10 Jahre nach Austritt/Anlage.
+  app.delete("/:id/hard-delete", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id, tenantId: req.user.tenantId },
+        include: { user: true },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Guard: must be already anonymized
+      if (employee.firstName !== "Gelöscht") {
+        return reply.code(409).send({ error: "Mitarbeiter muss zuerst anonymisiert werden" });
+      }
+
+      // Retention check — default 10 years (§147 AO), configurable per tenant
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+      });
+      const retentionYears =
+        (tenantConfig as any)?.retentionYears ?? DEFAULT_RETENTION_YEARS;
+      const retentionStart: Date = (employee as any).exitDate ?? employee.createdAt;
+      const retentionExpires = new Date(
+        retentionStart.getFullYear() + retentionYears,
+        11,
+        31,
+        23,
+        59,
+        59,
+      );
+      if (new Date() < retentionExpires) {
+        return reply.code(409).send({
+          error: "Aufbewahrungsfrist noch nicht abgelaufen",
+          retentionExpiresAt: retentionExpires.toISOString(),
+        });
+      }
+
+      // Audit log BEFORE deletion (entity will be gone after)
+      await app.audit({
+        userId: req.user.sub,
+        action: "HARD_DELETE",
+        entity: "Employee",
+        entityId: id,
+        oldValue: {
+          employeeNumber: employee.employeeNumber,
+          userEmail: employee.user.email,
+          retentionStart: retentionStart.toISOString(),
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      const userId = employee.userId;
+
+      // Hard delete in correct order — Restrict-protected relations first
+      await app.prisma.$transaction(async (tx: any) => {
+        // Break records (nested under TimeEntry) — delete first
+        await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
+        // Restrict-protected models
+        await tx.timeEntry.deleteMany({ where: { employeeId: id } });
+        await tx.leaveRequest.deleteMany({ where: { employeeId: id } });
+        await tx.absence.deleteMany({ where: { employeeId: id } });
+        // Cascade-owned models (safe to delete explicitly)
+        await tx.leaveEntitlement.deleteMany({ where: { employeeId: id } });
+        await tx.workSchedule.deleteMany({ where: { employeeId: id } });
+        await tx.overtimeAccount.deleteMany({ where: { employeeId: id } });
+        // Finally: employee and user records
+        await tx.employee.delete({ where: { id } });
+        await tx.user.delete({ where: { id: userId } });
       });
 
       return reply.code(204).send();
