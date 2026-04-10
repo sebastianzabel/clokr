@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-03-31 after v1.0 milestone)
 Phase: —
 Plan: —
 Status: v1.0 milestone complete — ready for next milestone planning
-Last activity: 2026-04-10 - Completed quick task 260410-ey6: fix employee deletion 2-step flow + time-entries/leave month navigation
+Last activity: 2026-04-10 - Completed quick task 260410-idv: Fix reports.ts to exclude anonymized/inactive employees from monthly report and DATEV export queries
 
 Progress: [██████████] 100%
 
@@ -50,6 +50,7 @@ None.
 | 260410-094 | fix clock-in conflict check: ignore invalid open entries from past days | 2026-04-09 | 0c7533f | [260410-094-fix-clock-in-conflict-check-ignore-inval](./quick/260410-094-fix-clock-in-conflict-check-ignore-inval/) |
 | 260410-dmc | fix dashboard charts not rendering on initial load | 2026-04-09 | 7849cb2 | [260410-dmc-fix-dashboard-charts-not-rendering-on-in](./quick/260410-dmc-fix-dashboard-charts-not-rendering-on-in/) |
 | 260410-ey6 | fix employee deletion 2-step flow + time-entries/leave month navigation | 2026-04-10 | c82eadb | [260410-ey6-fix-employee-deletion-2-step-flow-time-e](./quick/260410-ey6-fix-employee-deletion-2-step-flow-time-e/) |
+| 260410-idv | Fix reports.ts to exclude anonymized/inactive employees from monthly report and DATEV export queries | 2026-04-10 | f69855a | [260410-idv-fix-reports-ts-to-exclude-anonymized-ina](./quick/260410-idv-fix-reports-ts-to-exclude-anonymized-ina/) |
 
 ### Blockers/Concerns
 
