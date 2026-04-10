@@ -1326,8 +1326,9 @@
   }
   .section-group-header::after {
     content: "▸";
-    font-size: 0.875rem;
-    color: var(--color-text-muted);
+    font-size: 1rem;
+    color: var(--color-text);
+    margin-left: auto;
     transition: transform 0.2s;
   }
   .section-group[open] > .section-group-header::after {
