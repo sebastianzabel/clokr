@@ -117,7 +117,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.csv`;
+      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
