@@ -585,7 +585,7 @@
         <span class="btn-spinner"></span>
         Vorbereiten…
       {:else}
-        ↓ CSV herunterladen
+        ↓ TXT herunterladen
       {/if}
     </button>
 
