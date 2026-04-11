@@ -395,11 +395,15 @@
     }
 
     const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = objectUrl;
     a.download = filename;
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(a.href);
+    document.body.removeChild(a);
+    // Revoke after a tick to ensure the download has started
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
   }
 
   async function downloadMonthlyPdf(employeeId: string, employeeName: string) {
