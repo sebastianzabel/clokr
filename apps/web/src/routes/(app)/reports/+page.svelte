@@ -29,23 +29,6 @@
 
   // ── Types ──────────────────────────────────────────────────────────────────
 
-  interface MonthlyRow {
-    employeeId: string;
-    employeeName: string;
-    workedHours: number;
-    shouldHours: number;
-    sickDays: number;
-    sickDaysWithAttest: number;
-    sickDaysWithoutAttest: number;
-    vacationDays: number;
-  }
-
-  interface MonthlyReport {
-    month: number;
-    year: number;
-    rows: MonthlyRow[];
-  }
-
   type TodayEmployee = {
     id: string;
     name: string;
@@ -82,20 +65,14 @@
     pendingDays: number;
   };
 
-  // ── Existing state ─────────────────────────────────────────────────────────
+  // ── State ──────────────────────────────────────────────────────────────────
 
   const currentDate = new Date();
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
-  let reportMonth = $state(currentMonth);
-  let reportYear = $state(currentYear);
   let datevMonth = $state(currentMonth);
   let datevYear = $state(currentYear);
-
-  let monthlyReport: MonthlyReport | null = $state(null);
-  let reportLoading = $state(false);
-  let reportError = $state("");
 
   let datevLoading = $state(false);
   let datevError = $state("");
@@ -111,21 +88,6 @@
   let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
   let companyPdfLoading = $state(false);
   let companyPdfError = $state("");
-
-  let pdfDownloading = $state<string | null>(null);
-
-  // Pagination for monthly report rows
-  let reportPage = $state(1);
-  let reportPageSize = $state(10);
-  let reportRows: MonthlyRow[] = $derived(monthlyReport !== null ? (monthlyReport as MonthlyReport).rows : []);
-  let pagedReportRows = $derived(
-    reportRows.slice((reportPage - 1) * reportPageSize, reportPage * reportPageSize),
-  );
-
-  $effect(() => {
-    const _len = reportRows.length;
-    reportPage = 1;
-  });
 
   const months = [
     "Januar",
@@ -155,6 +117,20 @@
   let todayLoading = $state(false);
   let todayError = $state("");
 
+  let todayPage = $state(1);
+  let todayPageSize = $state(10);
+  let pagedTodayRows = $derived(
+    (todayAttendance?.employees ?? []).slice(
+      (todayPage - 1) * todayPageSize,
+      todayPage * todayPageSize,
+    ),
+  );
+
+  $effect(() => {
+    const _len = todayAttendance?.employees?.length ?? 0;
+    todayPage = 1;
+  });
+
   // ── Überstunden-Übersicht state (RPT-01 + SALDO-03) ───────────────────────
 
   let overtimeOverview: OvertimeOverview | null = $state(null);
@@ -176,6 +152,17 @@
     return copy;
   });
 
+  let overtimePage = $state(1);
+  let overtimePageSize = $state(10);
+  let pagedOvertimeRows = $derived(
+    sortedOvertime.slice((overtimePage - 1) * overtimePageSize, overtimePage * overtimePageSize),
+  );
+
+  $effect(() => {
+    const _len = sortedOvertime.length;
+    overtimePage = 1;
+  });
+
   // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
 
   let leaveOverviewYear = $state(currentYear);
@@ -194,7 +181,21 @@
     });
   });
 
-  // Map<employeeId, Chart> — key is employeeId so re-sort doesn't break identity
+  let leaveOverviewPage = $state(1);
+  let leaveOverviewPageSize = $state(10);
+  let pagedLeaveOverviewRows = $derived(
+    leaveOverviewRows.slice(
+      (leaveOverviewPage - 1) * leaveOverviewPageSize,
+      leaveOverviewPage * leaveOverviewPageSize,
+    ),
+  );
+
+  $effect(() => {
+    const _len = leaveOverviewRows.length;
+    leaveOverviewPage = 1;
+  });
+
+  // Map<employeeId, Chart> — key is employeeId so re-sort/pagination doesn't break identity
   const sparklineCharts = new Map<string, Chart>();
   // Canvas refs captured via use:registerCanvas action in {#each}
   const sparklineCanvases = new Map<string, HTMLCanvasElement>();
@@ -229,9 +230,9 @@
   // ── Sparkline lifecycle ────────────────────────────────────────────────────
 
   $effect(() => {
-    const rows = sortedOvertime;
+    const rows = pagedOvertimeRows;
     void tick().then(() => {
-      // Destroy charts for employees that disappeared
+      // Destroy charts for employees not on the current page
       for (const [empId, chart] of sparklineCharts.entries()) {
         if (!rows.some((r) => r.id === empId)) {
           chart.destroy();
@@ -335,28 +336,6 @@
     }
   }
 
-  function formatDays(n: number): string {
-    return n.toLocaleString("de-DE", {
-      minimumFractionDigits: n % 1 === 0 ? 0 : 1,
-      maximumFractionDigits: 1,
-    });
-  }
-
-  async function loadMonthlyReport() {
-    reportLoading = true;
-    reportError = "";
-    monthlyReport = null;
-    try {
-      monthlyReport = await api.get<MonthlyReport>(
-        `/reports/monthly?month=${reportMonth}&year=${reportYear}`,
-      );
-    } catch (e: unknown) {
-      reportError = e instanceof Error ? e.message : "Fehler beim Laden des Berichts";
-    } finally {
-      reportLoading = false;
-    }
-  }
-
   async function downloadDatev() {
     datevLoading = true;
     datevError = "";
@@ -414,23 +393,6 @@
     setTimeout(() => URL.revokeObjectURL(objectUrl), 100);
   }
 
-  async function downloadMonthlyPdf(employeeId: string, employeeName: string) {
-    pdfDownloading = employeeId;
-    reportError = "";
-    try {
-      const m = monthlyReport?.month ?? reportMonth;
-      const y = monthlyReport?.year ?? reportYear;
-      await downloadPdf(
-        `/reports/monthly/pdf?employeeId=${employeeId}&month=${m}&year=${y}`,
-        `Monatsbericht_${employeeName.replace(/\s+/g, "_")}_${y}_${String(m).padStart(2, "0")}.pdf`,
-      );
-    } catch (e: unknown) {
-      reportError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
-    } finally {
-      pdfDownloading = null;
-    }
-  }
-
   async function downloadVacationPdf() {
     leaveLoading = true;
     leaveError = "";
@@ -463,21 +425,15 @@
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  function formatHours(h: number): string {
-    const hours = Math.floor(h);
-    const minutes = Math.round((h - hours) * 60);
-    return `${hours}:${String(minutes).padStart(2, "0")} h`;
+  function formatDays(n: number): string {
+    return n.toLocaleString("de-DE", {
+      minimumFractionDigits: n % 1 === 0 ? 0 : 1,
+      maximumFractionDigits: 1,
+    });
   }
 
   function formatBalance(n: number): string {
     return n.toLocaleString("de-DE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-
-  function diffColor(worked: number, should: number): string {
-    const diff = worked - should;
-    if (diff > 1) return "text-green";
-    if (diff < -1) return "text-red";
-    return "";
   }
 
   function statusLabel(row: TodayEmployee): string {
@@ -527,53 +483,10 @@
 
 <div class="page-header">
   <h1>Berichte &amp; Auswertungen</h1>
-  <p>Monatsberichte, Urlaubslisten und DATEV-Exporte erstellen</p>
+  <p>Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen</p>
 </div>
 
 <div class="reports-grid">
-  <!-- Monthly Report Card -->
-  <div class="card card-body report-card">
-    <div class="report-card-icon-section report-card-icon-section--purple">
-      <span class="report-icon-lg">📊</span>
-    </div>
-    <div class="report-card-header">
-      <div>
-        <h2 class="report-card-title">Monatsbericht</h2>
-        <p class="report-card-desc text-muted">Übersicht aller Mitarbeiter für einen Monat</p>
-      </div>
-    </div>
-
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="report-month">Monat</label>
-        <select id="report-month" bind:value={reportMonth} class="form-input">
-          {#each months as name, i (i)}
-            <option value={i + 1}>{name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="report-year">Jahr</label>
-        <select id="report-year" bind:value={reportYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-
-    <button class="btn btn-primary" onclick={loadMonthlyReport} disabled={reportLoading}>
-      {reportLoading ? "Laden…" : "Bericht anzeigen"}
-    </button>
-
-    {#if reportError}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{reportError}</span>
-      </div>
-    {/if}
-  </div>
-
   <!-- DATEV Export Card -->
   <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--green">
@@ -778,7 +691,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each todayAttendance.employees as row (row.id)}
+            {#each pagedTodayRows as row (row.id)}
               <tr>
                 <td>{row.name}</td>
                 <td>{row.employeeNumber}</td>
@@ -788,6 +701,11 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        total={todayAttendance.employees.length}
+        bind:page={todayPage}
+        bind:pageSize={todayPageSize}
+      />
     {/if}
   </section>
 {/if}
@@ -822,7 +740,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each sortedOvertime as row (row.id)}
+            {#each pagedOvertimeRows as row (row.id)}
               <tr>
                 <td>{row.name}</td>
                 <td>{row.employeeNumber}</td>
@@ -844,6 +762,11 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        total={sortedOvertime.length}
+        bind:page={overtimePage}
+        bind:pageSize={overtimePageSize}
+      />
     {/if}
   </section>
 {/if}
@@ -885,7 +808,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each leaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+            {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
               <tr>
                 <td>{row.employee.firstName} {row.employee.lastName}</td>
                 <td>{row.employee.employeeNumber}</td>
@@ -900,76 +823,13 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        total={leaveOverviewRows.length}
+        bind:page={leaveOverviewPage}
+        bind:pageSize={leaveOverviewPageSize}
+      />
     {/if}
   </section>
-{/if}
-
-<!-- Monthly Report Results -->
-{#if monthlyReport}
-  <div class="report-results">
-    <div class="section-header">
-      <h2>
-        Monatsbericht: {months[monthlyReport.month - 1]}
-        {monthlyReport.year}
-      </h2>
-    </div>
-
-    {#if monthlyReport.rows.length === 0}
-      <div class="empty-state card card-body">
-        <span class="empty-icon">📊</span>
-        <h3>Keine Daten vorhanden</h3>
-        <p class="text-muted">Für diesen Zeitraum sind keine Daten verfügbar.</p>
-      </div>
-    {:else}
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Ist-Stunden</th>
-              <th>Soll-Stunden</th>
-              <th>Differenz</th>
-              <th title="Kranktage mit Attest">Krank m. Attest</th>
-              <th title="Kranktage ohne Attest">Krank o. Attest</th>
-              <th>Urlaubstage</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedReportRows as row (row.employeeId)}
-              <tr>
-                <td class="font-medium">{row.employeeName}</td>
-                <td class="font-mono">{formatHours(row.workedHours)}</td>
-                <td class="font-mono text-muted">{formatHours(row.shouldHours)}</td>
-                <td class="font-mono font-medium {diffColor(row.workedHours, row.shouldHours)}">
-                  {row.workedHours - row.shouldHours >= 0 ? "+" : ""}
-                  {formatHours(Math.abs(row.workedHours - row.shouldHours))}
-                </td>
-                <td class={row.sickDaysWithAttest > 0 ? "text-green" : "text-muted"}
-                  >{row.sickDaysWithAttest}</td
-                >
-                <td class={row.sickDaysWithoutAttest > 0 ? "text-yellow" : "text-muted"}
-                  >{row.sickDaysWithoutAttest}</td
-                >
-                <td>{row.vacationDays}</td>
-                <td>
-                  <button
-                    class="btn btn-ghost btn-sm"
-                    onclick={() => downloadMonthlyPdf(row.employeeId, row.employeeName)}
-                    disabled={pdfDownloading === row.employeeId}
-                    title="PDF herunterladen"
-                  >
-                    {pdfDownloading === row.employeeId ? "..." : "PDF"}
-                  </button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={monthlyReport?.rows.length ?? 0} bind:page={reportPage} bind:pageSize={reportPageSize} />
-      </div>
-    {/if}
-  </div>
 {/if}
 
 <style>
@@ -1065,40 +925,6 @@
     to {
       transform: rotate(360deg);
     }
-  }
-
-  .report-results {
-    margin-top: 0;
-  }
-
-  .section-header {
-    margin-bottom: 0.875rem;
-  }
-
-  .section-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 3rem 2rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.625rem;
-  }
-
-  .empty-icon {
-    font-size: 2.5rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .empty-state h3 {
-    font-size: 1.0625rem;
   }
 
   /* ── Manager sections ─────────────────────────────────────────────────── */
