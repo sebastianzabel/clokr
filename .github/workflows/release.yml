@@ -33,7 +33,7 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           VERSION=${GITHUB_REF_NAME#v}
-          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+          MAJOR_MINOR=$(echo "$VERSION" | grep -oP '^\d+\.\d+')
           SHA_SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
           echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
@@ -41,7 +41,7 @@ jobs:
           echo "sha=${SHA_SHORT}" >> "$GITHUB_OUTPUT"
 
       - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
+        uses: imjasonh/setup-crane@v0.5
 
       - name: Promote API image
         run: |
@@ -73,7 +73,7 @@ jobs:
         run: |
           OWNER_LC=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           VERSION=${GITHUB_REF_NAME#v}
-          MAJOR_MINOR=$(echo "$VERSION" | cut -d. -f1-2)
+          MAJOR_MINOR=$(echo "$VERSION" | grep -oP '^\d+\.\d+')
           echo "owner=${OWNER_LC}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "major_minor=${MAJOR_MINOR}" >> "$GITHUB_OUTPUT"
