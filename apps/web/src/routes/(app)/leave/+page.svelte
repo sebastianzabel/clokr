@@ -2679,15 +2679,9 @@
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
-  :global(.cal-cell.cal-weekend:not(.cal-other)) {
-    background: #f4f0fa;
-  }
+  /* Weekend + holiday cell styles → global in app.css */
   .cal-today {
     box-shadow: inset 0 0 0 2px var(--color-brand);
-  }
-  .cal-holiday {
-    background: #ede7f6 !important;
-    border-left: 3px solid #80377b;
   }
 
   .cal-cell--current {
