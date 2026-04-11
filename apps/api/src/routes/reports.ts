@@ -383,6 +383,28 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
+      // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
+      const pending = await app.prisma.leaveRequest.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId },
+          status: "PENDING",
+          deletedAt: null,
+          // Filter by year: only requests whose startDate falls within year y
+          startDate: {
+            gte: new Date(Date.UTC(y, 0, 1)),
+            lt: new Date(Date.UTC(y + 1, 0, 1)),
+          },
+        },
+        select: { employeeId: true, leaveTypeId: true, days: true },
+      });
+
+      // Build a lookup map keyed by "employeeId:leaveTypeId" → summed pending days
+      const pendingMap = new Map<string, number>();
+      for (const row of pending) {
+        const key = `${row.employeeId}:${row.leaveTypeId}`;
+        pendingMap.set(key, (pendingMap.get(key) ?? 0) + Number(row.days));
+      }
+
       return entitlements.map((e) => ({
         employee: e.employee,
         leaveType: e.leaveType,
@@ -391,6 +413,7 @@ export async function reportRoutes(app: FastifyInstance) {
         carriedOverDays: Number(e.carriedOverDays),
         usedDays: Number(e.usedDays),
         remainingDays: Number(e.totalDays) + Number(e.carriedOverDays) - Number(e.usedDays),
+        pendingDays: pendingMap.get(`${e.employeeId}:${e.leaveTypeId}`) ?? 0,
       }));
     },
   });
