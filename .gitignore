@@ -29,8 +29,18 @@ apps/e2e/playwright-report/
 audit-*.png
 *.webm
 
-# Claude Code
+# Claude Code / AI tooling (internal)
 .claude/
+.playwright-mcp/
+AGENTS.md
+CLAUDE.md
+
+# Internal project planning
+.planning/
+
+# Internal development notes
+TODO.md
+FEATURES.md
 
 # IDE
 .vscode/
