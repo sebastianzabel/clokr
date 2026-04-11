@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import PDFDocument from "pdfkit";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
 import {
@@ -7,7 +8,297 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
-import { generateMonthlyReportPdf, generateVacationOverviewPdf } from "../utils/pdf";
+import {
+  generateMonthlyReportPdf,
+  generateVacationOverviewPdf,
+  streamCompanyMonthlyReportPdf,
+  streamLeaveListPdf,
+} from "../utils/pdf";
+
+// ── Month name lookup ─────────────────────────────────────────────────────────
+const MONTH_NAMES = [
+  "Januar",
+  "Februar",
+  "März",
+  "April",
+  "Mai",
+  "Juni",
+  "Juli",
+  "August",
+  "September",
+  "Oktober",
+  "November",
+  "Dezember",
+];
+
+// ── Schedule helper types ─────────────────────────────────────────────────────
+
+type WorkSchedule = {
+  validFrom: Date;
+  type: string;
+  monthlyHours?: number | null;
+  [key: string]: unknown;
+};
+
+type LeaveRequestWithType = {
+  startDate: Date;
+  endDate: Date;
+  status: string;
+  deletedAt: Date | null;
+  attestPresent: boolean;
+  attestValidFrom: Date | null;
+  attestValidTo: Date | null;
+  leaveType: { name: string };
+};
+
+type AbsenceRecord = {
+  startDate: Date;
+  endDate: Date;
+  type: string;
+};
+
+type TimeEntryRecord = {
+  date: Date;
+  startTime: Date;
+  endTime: Date | null;
+  breakMinutes: number | bigint | null;
+  [key: string]: unknown;
+};
+
+// Employee shape returned by findMany with all necessary includes
+type EmployeeWithIncludes = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  employeeNumber: string;
+  hireDate: Date;
+  exitDate: Date | null;
+  workSchedules: WorkSchedule[];
+  timeEntries: TimeEntryRecord[];
+  absences: AbsenceRecord[];
+  leaveRequests: LeaveRequestWithType[];
+  user: { role: "ADMIN" | "MANAGER" | "EMPLOYEE" };
+};
+
+// ── computeEmployeeSummary ────────────────────────────────────────────────────
+// Pure helper — single source of truth for monthly summary calculation.
+// Called by GET /monthly (JSON), GET /monthly/pdf (single-emp), GET /monthly/pdf/all (company).
+function computeEmployeeSummary(
+  emp: EmployeeWithIncludes,
+  start: Date,
+  end: Date,
+  tz: string,
+): {
+  workedHours: number;
+  targetHours: number;
+  overtimeHours: number;
+  sickDays: number;
+  sickDaysWithAttest: number;
+  sickDaysWithoutAttest: number;
+  vacationDays: number;
+  overtimeCompDays: number;
+  specialLeaveDays: number;
+  educationDays: number;
+  unpaidDays: number;
+  maternityDays: number;
+  parentalDays: number;
+  totalAbsenceDays: number;
+  entries: Array<{ date: string; start: string; end: string; breakMin: number; netHours: number; note?: string }>;
+} {
+  // ── Helper: pick schedule valid on a given date ───────────────────────────
+  function getScheduleForDate(schedules: WorkSchedule[], date: Date): WorkSchedule | null {
+    return (
+      schedules
+        .filter((s) => s.validFrom <= date)
+        .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+    );
+  }
+
+  // ── Soll-Minuten (day-by-day, TZ-aware) ──────────────────────────────────
+  function calcShouldMinutes(schedules: WorkSchedule[], hireDate?: Date): number {
+    if (schedules.length === 0) return 0;
+    const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+    const latestSchedule = getScheduleForDate(schedules, end);
+    if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
+      const mh = Number(latestSchedule.monthlyHours ?? 0);
+      return mh > 0 ? mh * 60 : 0;
+    }
+    let totalMin = 0;
+    const cur = new Date(effectiveStart);
+    while (cur <= end) {
+      const schedule = getScheduleForDate(schedules, cur);
+      if (schedule) {
+        const dow = getDayOfWeekInTz(cur, tz);
+        totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return totalMin;
+  }
+
+  // ── Abwesenheitsminuten (Schnittmenge mit Monat, TZ-aware) ───────────────
+  function calcAbsenceMinutes(schedules: WorkSchedule[], absStart: Date, absEnd: Date): number {
+    if (schedules.length === 0) return 0;
+    const rangeStart = absStart < start ? start : absStart;
+    const rangeEnd = absEnd > end ? end : absEnd;
+    let min = 0;
+    const cur = new Date(rangeStart);
+    while (cur <= rangeEnd) {
+      const schedule = getScheduleForDate(schedules, cur);
+      if (schedule) {
+        const dow = getDayOfWeekInTz(cur, tz);
+        min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return min;
+  }
+
+  // ── Days in range clamped to [start, end] ────────────────────────────────
+  function daysInRange(from: Date, to: Date): number {
+    const s = from < start ? start : from;
+    const e2 = to > end ? end : to;
+    return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+  }
+
+  function daysForTypeName(typeName: string): number {
+    return emp.leaveRequests
+      .filter((lr) => lr.leaveType.name === typeName)
+      .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
+  }
+
+  // ── Worked hours ─────────────────────────────────────────────────────────
+  const workedMin = emp.timeEntries.reduce((sum, e) => {
+    const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
+    return sum + slotMin - Number(e.breakMinutes ?? 0);
+  }, 0);
+
+  // ── Target hours ─────────────────────────────────────────────────────────
+  const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
+  const latestSchedule = getScheduleForDate(emp.workSchedules, end);
+  const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
+  // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
+  const absenceMin = isMonthlyHours
+    ? 0
+    : emp.leaveRequests.reduce(
+        (sum, lr) => sum + calcAbsenceMinutes(emp.workSchedules, lr.startDate, lr.endDate),
+        0,
+      );
+  const shouldMin = Math.max(0, rawShouldMin - absenceMin);
+
+  // ── Sick days ────────────────────────────────────────────────────────────
+  const sickDaysAbsence = emp.absences
+    .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
+    .reduce((sum, a) => {
+      const s = a.startDate < start ? start : a.startDate;
+      const e2 = a.endDate > end ? end : a.endDate;
+      return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+    }, 0);
+
+  const sickLeaveRequests = emp.leaveRequests.filter(
+    (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
+  );
+
+  let sickDaysWithAttest = 0;
+  let sickDaysWithoutAttest = sickDaysAbsence;
+
+  for (const lr of sickLeaveRequests) {
+    const totalDays = daysInRange(lr.startDate, lr.endDate);
+    if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
+      const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
+      const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
+      const attestDays = daysInRange(attestFrom, attestTo);
+      sickDaysWithAttest += attestDays;
+      sickDaysWithoutAttest += Math.max(0, totalDays - attestDays);
+    } else if (lr.attestPresent) {
+      sickDaysWithAttest += totalDays;
+    } else {
+      sickDaysWithoutAttest += totalDays;
+    }
+  }
+
+  // ── Absence breakdown ────────────────────────────────────────────────────
+  const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
+  const nonSickLeave = emp.leaveRequests.filter((lr) => !SICK_NAMES.includes(lr.leaveType.name));
+  const totalAbsenceDays = nonSickLeave.reduce(
+    (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
+    0,
+  );
+  const vacationDays = daysForTypeName("Urlaub");
+  const overtimeCompDays = daysForTypeName("Überstundenausgleich");
+  const specialLeaveDays = daysForTypeName("Sonderurlaub");
+  const educationDays = daysForTypeName("Bildungsurlaub");
+  const unpaidDays = daysForTypeName("Unbezahlter Urlaub");
+  const maternityDays = daysForTypeName("Mutterschutz");
+  const parentalDays = daysForTypeName("Elternzeit");
+
+  // ── Time entries (formatted) ─────────────────────────────────────────────
+  const entries = emp.timeEntries.map((e) => ({
+    date: formatInTimeZone(e.date, tz, "dd.MM.yyyy"),
+    start: formatInTimeZone(e.startTime, tz, "HH:mm"),
+    end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
+    breakMin: Number(e.breakMinutes ?? 0),
+    netHours:
+      Math.round(
+        (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 -
+          Number(e.breakMinutes ?? 0)) /
+          60) *
+          100,
+      ) / 100,
+    note: (e as Record<string, unknown>).note as string | undefined,
+  }));
+
+  const workedHours = Math.round((workedMin / 60) * 100) / 100;
+  const targetHours = Math.round((shouldMin / 60) * 100) / 100;
+
+  return {
+    workedHours,
+    targetHours,
+    overtimeHours: Math.round((workedHours - targetHours) * 100) / 100,
+    sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
+    sickDaysWithAttest,
+    sickDaysWithoutAttest,
+    vacationDays,
+    overtimeCompDays,
+    specialLeaveDays,
+    educationDays,
+    unpaidDays,
+    maternityDays,
+    parentalDays,
+    totalAbsenceDays,
+    entries,
+  };
+}
+
+// ── Common employee include shape ─────────────────────────────────────────────
+function buildEmployeeInclude(start: Date, end: Date) {
+  return {
+    user: { select: { role: true } },
+    workSchedules: { orderBy: { validFrom: "asc" } },
+    timeEntries: {
+      where: {
+        deletedAt: null,
+        date: { gte: start, lte: end },
+        type: "WORK",
+        endTime: { not: null },
+        isInvalid: false,
+      },
+      orderBy: { date: "asc" },
+    },
+    absences: {
+      where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
+    },
+    leaveRequests: {
+      where: {
+        deletedAt: null,
+        status: "APPROVED",
+        startDate: { lte: end },
+        endDate: { gte: start },
+      },
+      include: { leaveType: true },
+    },
+  } as const;
+}
 
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
@@ -26,204 +317,38 @@ export async function reportRoutes(app: FastifyInstance) {
       const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
-      const employees = await app.prisma.employee.findMany({
+      const employees = (await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
           ...(employeeId ? { id: employeeId } : {}),
           exitDate: null,
           user: { isActive: true },
         },
-        include: {
-          workSchedules: { orderBy: { validFrom: "asc" } },
-          timeEntries: {
-            where: {
-              deletedAt: null,
-              date: { gte: start, lte: end },
-              type: "WORK",
-              endTime: { not: null },
-              isInvalid: false,
-            },
-          },
-          absences: {
-            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
-          },
-          leaveRequests: {
-            where: {
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { lte: end },
-              endDate: { gte: start },
-            },
-            include: { leaveType: true },
-          },
-        },
+        include: buildEmployeeInclude(start, end),
         orderBy: { lastName: "asc" },
-      });
-
-      // Pick the schedule valid on a given date from a list of versioned schedules
-      function getScheduleForDate(schedules: (typeof employees)[0]["workSchedules"], date: Date) {
-        return (
-          schedules
-            .filter((s) => s.validFrom <= date)
-            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
-        );
-      }
-
-      // Soll-Stunden: day-by-day using the schedule valid on each day (TZ-aware)
-      function calcShouldMinutes(
-        schedules: (typeof employees)[0]["workSchedules"],
-        hireDate?: Date,
-      ): number {
-        if (schedules.length === 0) return 0;
-        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-        // For MONTHLY_HOURS, use the latest schedule
-        const latestSchedule = getScheduleForDate(schedules, end);
-        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
-          const mh = Number(latestSchedule.monthlyHours ?? 0);
-          return mh > 0 ? mh * 60 : 0;
-        }
-        // Day-by-day iteration for FIXED_WEEKLY with versioned schedules
-        let totalMin = 0;
-        const cur = new Date(effectiveStart);
-        while (cur <= end) {
-          const schedule = getScheduleForDate(schedules, cur);
-          if (schedule) {
-            const dow = getDayOfWeekInTz(cur, tz);
-            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-          }
-          cur.setDate(cur.getDate() + 1);
-        }
-        return totalMin;
-      }
-
-      // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat, TZ-aware)
-      function absenceMinutes(
-        schedules: (typeof employees)[0]["workSchedules"],
-        absStart: Date,
-        absEnd: Date,
-      ): number {
-        if (schedules.length === 0) return 0;
-        // Schnittmenge mit Monatsgrenzen
-        const rangeStart = absStart < start ? start : absStart;
-        const rangeEnd = absEnd > end ? end : absEnd;
-        let min = 0;
-        const cur = new Date(rangeStart);
-        while (cur <= rangeEnd) {
-          const schedule = getScheduleForDate(schedules, cur);
-          if (schedule) {
-            const dow = getDayOfWeekInTz(cur, tz);
-            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-          }
-          cur.setDate(cur.getDate() + 1);
-        }
-        return min;
-      }
+      })) as unknown as EmployeeWithIncludes[];
 
       const rows = employees.map((emp) => {
-        // Geleistete Minuten (Netto)
-        const workedMin = emp.timeEntries.reduce((sum, e) => {
-          const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
-          return sum + slotMin - Number(e.breakMinutes ?? 0);
-        }, 0);
-
-        // Soll-Minuten: Gesamtmonat minus genehmigte Abwesenheitstage
-        const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
-        const latestSchedule = getScheduleForDate(emp.workSchedules, end);
-        const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
-        // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
-        const absenceMin = isMonthlyHours
-          ? 0
-          : emp.leaveRequests.reduce(
-              (sum, lr) => sum + absenceMinutes(emp.workSchedules, lr.startDate, lr.endDate),
-              0,
-            );
-        const shouldMin = Math.max(0, rawShouldMin - absenceMin);
-
-        // Kranktage aus Absence-Modell (direkt erfasste)
-        const sickDaysAbsence = emp.absences
-          .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
-          .reduce((sum, a) => {
-            const s = a.startDate < start ? start : a.startDate;
-            const e2 = a.endDate > end ? end : a.endDate;
-            return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-          }, 0);
-
-        // Kranktage aus LeaveRequest, aufgeteilt nach Attest-Zeitraum
-        const sickLeaveRequests = emp.leaveRequests.filter(
-          (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
-        );
-
-        function daysInRange(from: Date, to: Date): number {
-          const s = from < start ? start : from;
-          const e2 = to > end ? end : to;
-          return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-        }
-
-        let sickDaysWithAttest = 0;
-        let sickDaysWithoutAttest = sickDaysAbsence;
-
-        for (const lr of sickLeaveRequests) {
-          const totalDays = daysInRange(lr.startDate, lr.endDate);
-          if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
-            // Schnittmenge: Antragszeitraum ∩ Attest-Zeitraum ∩ Monat
-            const attestFrom =
-              lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
-            const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
-            const attestDays = daysInRange(attestFrom, attestTo);
-            sickDaysWithAttest += attestDays;
-            sickDaysWithoutAttest += Math.max(0, totalDays - attestDays);
-          } else if (lr.attestPresent) {
-            // Attest vorhanden, aber kein Datum → ganzer Zeitraum attestiert
-            sickDaysWithAttest += totalDays;
-          } else {
-            sickDaysWithoutAttest += totalDays;
-          }
-        }
-
-        // Abwesenheiten aufgeschlüsselt nach Typ
-        const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
-        const nonSickLeave = emp.leaveRequests.filter(
-          (lr) => !SICK_NAMES.includes(lr.leaveType.name),
-        );
-
-        function daysForTypeName(typeName: string) {
-          return emp.leaveRequests
-            .filter((lr) => lr.leaveType.name === typeName)
-            .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
-        }
-
-        const vacationDays = daysForTypeName("Urlaub");
-        const overtimeCompDays = daysForTypeName("Überstundenausgleich");
-        const specialLeaveDays = daysForTypeName("Sonderurlaub");
-        const educationDays = daysForTypeName("Bildungsurlaub");
-        const unpaidDays = daysForTypeName("Unbezahlter Urlaub");
-        const maternityDays = daysForTypeName("Mutterschutz");
-        const parentalDays = daysForTypeName("Elternzeit");
-
-        const totalAbsenceDays = nonSickLeave.reduce(
-          (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
-          0,
-        );
-
+        const summary = computeEmployeeSummary(emp, start, end, tz);
         return {
           employeeId: emp.id,
           employeeName: `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,
-          workedHours: Math.round((workedMin / 60) * 100) / 100,
-          shouldHours: Math.round((shouldMin / 60) * 100) / 100,
+          workedHours: summary.workedHours,
+          shouldHours: summary.targetHours,
           // Krankheit
-          sickDays: sickDaysWithAttest + sickDaysWithoutAttest,
-          sickDaysWithAttest,
-          sickDaysWithoutAttest,
+          sickDays: summary.sickDays,
+          sickDaysWithAttest: summary.sickDaysWithAttest,
+          sickDaysWithoutAttest: summary.sickDaysWithoutAttest,
           // Abwesenheiten nach Grund
-          vacationDays,
-          overtimeCompDays,
-          specialLeaveDays,
-          educationDays,
-          unpaidDays,
-          maternityDays,
-          parentalDays,
-          totalAbsenceDays,
+          vacationDays: summary.vacationDays,
+          overtimeCompDays: summary.overtimeCompDays,
+          specialLeaveDays: summary.specialLeaveDays,
+          educationDays: summary.educationDays,
+          unpaidDays: summary.unpaidDays,
+          maternityDays: summary.maternityDays,
+          parentalDays: summary.parentalDays,
+          totalAbsenceDays: summary.totalAbsenceDays,
         };
       });
 
@@ -435,210 +560,34 @@ export async function reportRoutes(app: FastifyInstance) {
         select: { name: true },
       });
 
-      const emp = await app.prisma.employee.findFirst({
+      const emp = (await app.prisma.employee.findFirst({
         where: {
           id: employeeId,
           tenantId: req.user.tenantId,
         },
-        include: {
-          workSchedules: { orderBy: { validFrom: "asc" } },
-          timeEntries: {
-            where: {
-              deletedAt: null,
-              date: { gte: start, lte: end },
-              type: "WORK",
-              endTime: { not: null },
-              isInvalid: false,
-            },
-            orderBy: { date: "asc" },
-          },
-          absences: {
-            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
-          },
-          leaveRequests: {
-            where: {
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { lte: end },
-              endDate: { gte: start },
-            },
-            include: { leaveType: true },
-          },
-        },
-      });
+        include: buildEmployeeInclude(start, end),
+      })) as unknown as EmployeeWithIncludes | null;
 
       if (!emp) {
         reply.code(404);
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
-      type ScheduleList = NonNullable<typeof emp>["workSchedules"];
-
-      // Pick the schedule valid on a given date
-      function getScheduleForDatePdf(schedules: ScheduleList, date: Date) {
-        return (
-          schedules
-            .filter((s) => s.validFrom <= date)
-            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
-        );
-      }
-
-      // Soll-Minuten (day-by-day with versioned schedules)
-      function calcShouldMinutesPdf(schedules: ScheduleList, hireDate?: Date): number {
-        if (schedules.length === 0) return 0;
-        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-        const latestSchedule = getScheduleForDatePdf(schedules, end);
-        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
-          const mh = Number(latestSchedule.monthlyHours ?? 0);
-          return mh > 0 ? mh * 60 : 0;
-        }
-        let totalMin = 0;
-        const cur = new Date(effectiveStart);
-        while (cur <= end) {
-          const schedule = getScheduleForDatePdf(schedules, cur);
-          if (schedule) {
-            const dow = getDayOfWeekInTz(cur, tz);
-            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-          }
-          cur.setDate(cur.getDate() + 1);
-        }
-        return totalMin;
-      }
-
-      function absenceMinutesPdf(schedules: ScheduleList, absStart: Date, absEnd: Date): number {
-        if (schedules.length === 0) return 0;
-        const rangeStart = absStart < start ? start : absStart;
-        const rangeEnd = absEnd > end ? end : absEnd;
-        let min = 0;
-        const cur = new Date(rangeStart);
-        while (cur <= rangeEnd) {
-          const schedule = getScheduleForDatePdf(schedules, cur);
-          if (schedule) {
-            const dow = getDayOfWeekInTz(cur, tz);
-            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-          }
-          cur.setDate(cur.getDate() + 1);
-        }
-        return min;
-      }
-
-      const workedMin = emp.timeEntries.reduce((sum, e) => {
-        const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
-        return sum + slotMin - Number(e.breakMinutes ?? 0);
-      }, 0);
-
-      const rawShouldMin = calcShouldMinutesPdf(emp.workSchedules, emp.hireDate);
-      const latestSchedulePdf = getScheduleForDatePdf(emp.workSchedules, end);
-      const isMonthlyHoursPdf = String(latestSchedulePdf?.type ?? "") === "MONTHLY_HOURS";
-      // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
-      const absenceMin = isMonthlyHoursPdf
-        ? 0
-        : emp.leaveRequests.reduce(
-            (sum, lr) => sum + absenceMinutesPdf(emp.workSchedules, lr.startDate, lr.endDate),
-            0,
-          );
-      const shouldMin = Math.max(0, rawShouldMin - absenceMin);
-
-      const workedHours = Math.round((workedMin / 60) * 100) / 100;
-      const targetHours = Math.round((shouldMin / 60) * 100) / 100;
-
-      // Sick days
-      const sickDaysAbsence = emp.absences
-        .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
-        .reduce((sum, a) => {
-          const s = a.startDate < start ? start : a.startDate;
-          const e2 = a.endDate > end ? end : a.endDate;
-          return sum + Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-        }, 0);
-
-      const sickLeaveRequests = emp.leaveRequests.filter(
-        (lr) => lr.leaveType.name === "Krankmeldung" || lr.leaveType.name === "Kinderkrank",
-      );
-
-      function daysInRange(from: Date, to: Date): number {
-        const s = from < start ? start : from;
-        const e2 = to > end ? end : to;
-        return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
-      }
-
-      let sickDaysWithAttest = 0;
-      let sickDaysTotal = sickDaysAbsence;
-
-      for (const lr of sickLeaveRequests) {
-        const totalDays = daysInRange(lr.startDate, lr.endDate);
-        if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
-          const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
-          const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
-          sickDaysWithAttest += daysInRange(attestFrom, attestTo);
-          sickDaysTotal += totalDays;
-        } else if (lr.attestPresent) {
-          sickDaysWithAttest += totalDays;
-          sickDaysTotal += totalDays;
-        } else {
-          sickDaysTotal += totalDays;
-        }
-      }
-
-      const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
-      function daysForTypeName(typeName: string) {
-        return emp!.leaveRequests
-          .filter((lr) => lr.leaveType.name === typeName)
-          .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
-      }
-
-      const vacationDays = daysForTypeName("Urlaub");
-      const nonSickLeave = emp.leaveRequests.filter(
-        (lr) => !SICK_NAMES.includes(lr.leaveType.name),
-      );
-      const totalAbsenceDays = nonSickLeave.reduce(
-        (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
-        0,
-      );
-
-      const monthNames = [
-        "Januar",
-        "Februar",
-        "März",
-        "April",
-        "Mai",
-        "Juni",
-        "Juli",
-        "August",
-        "September",
-        "Oktober",
-        "November",
-        "Dezember",
-      ];
-
-      // Time entries for table
-      const entries = emp.timeEntries.map((e) => ({
-        date: formatInTimeZone(e.date, tz, "dd.MM.yyyy"),
-        start: formatInTimeZone(e.startTime, tz, "HH:mm"),
-        end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
-        breakMin: Number(e.breakMinutes ?? 0),
-        netHours:
-          Math.round(
-            (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 -
-              Number(e.breakMinutes ?? 0)) /
-              60) *
-              100,
-          ) / 100,
-        note: (e as Record<string, unknown>).note as string | undefined,
-      }));
+      const summary = computeEmployeeSummary(emp, start, end, tz);
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
         employeeName: `${emp.firstName} ${emp.lastName}`,
         employeeNumber: emp.employeeNumber,
-        month: `${monthNames[m - 1]} ${y}`,
-        workedHours,
-        targetHours,
-        overtimeHours: workedHours - targetHours,
-        sickDays: sickDaysTotal,
-        sickDaysWithAttest,
-        vacationDays,
-        otherAbsenceDays: totalAbsenceDays - vacationDays,
-        entries,
+        month: `${MONTH_NAMES[m - 1]} ${y}`,
+        workedHours: summary.workedHours,
+        targetHours: summary.targetHours,
+        overtimeHours: summary.overtimeHours,
+        sickDays: summary.sickDays,
+        sickDaysWithAttest: summary.sickDaysWithAttest,
+        vacationDays: summary.vacationDays,
+        otherAbsenceDays: summary.totalAbsenceDays - summary.vacationDays,
+        entries: summary.entries,
       });
 
       await app.audit({
@@ -654,6 +603,164 @@ export async function reportRoutes(app: FastifyInstance) {
         `attachment; filename="monatsbericht-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.pdf"`,
       );
       return reply.send(pdfBuffer);
+    },
+  });
+
+  // GET /api/v1/reports/monthly/pdf/all?year=&month=&role=  — PDF-01/PDF-03/PDF-05
+  app.get("/monthly/pdf/all", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { year, month, role } = req.query as {
+        year: string;
+        month: string;
+        role?: string;
+      };
+      const y = parseInt(year);
+      const m = parseInt(month);
+
+      // ALLOWLIST validation — never pass untrusted string to Prisma enum
+      const roleFilter: "EMPLOYEE" | "MANAGER" | undefined =
+        role === "MANAGER" ? "MANAGER" : role === "EMPLOYEE" ? "EMPLOYEE" : undefined;
+
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, m, tz);
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      const employees = (await app.prisma.employee.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          exitDate: null,
+          user: { isActive: true, ...(roleFilter ? { role: roleFilter } : {}) },
+        },
+        include: buildEmployeeInclude(start, end),
+        orderBy: { lastName: "asc" },
+      })) as unknown as EmployeeWithIncludes[];
+
+      if (employees.length === 0) {
+        reply.code(404);
+        return { error: "Keine Mitarbeiter gefunden" };
+      }
+
+      const rows = employees.map((emp) => {
+        const summary = computeEmployeeSummary(emp, start, end, tz);
+        return {
+          employeeName: `${emp.firstName} ${emp.lastName}`,
+          employeeNumber: emp.employeeNumber,
+          role: emp.user.role,
+          ...summary,
+        };
+      });
+
+      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      reply.header("Content-Type", "application/pdf");
+      reply.header(
+        "Content-Disposition",
+        `attachment; filename="monatsbericht-alle-${y}-${String(m).padStart(2, "0")}.pdf"`,
+      );
+
+      streamCompanyMonthlyReportPdf(doc, {
+        tenantName: tenant?.name ?? "",
+        month: `${MONTH_NAMES[m - 1]} ${y}`,
+        year: y,
+        monthNumber: m,
+        roleFilter: roleFilter ?? "all",
+        rows,
+      });
+      doc.end(); // CRITICAL: end() BEFORE reply.send() per RESEARCH.md Pitfall 1
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "COMPANY_MONTHLY_PDF", year, month, role: roleFilter ?? "all" },
+      });
+
+      return reply.send(doc);
+    },
+  });
+
+  // GET /api/v1/reports/leave-list/pdf?year=  — PDF-02/PDF-05
+  app.get("/leave-list/pdf", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { year } = req.query as { year: string };
+      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
+      const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      const employees = await app.prisma.employee.findMany({
+        where: {
+          tenantId: req.user.tenantId,
+          exitDate: null,
+          user: { isActive: true },
+        },
+        include: {
+          leaveRequests: {
+            where: {
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: yearEnd },
+              endDate: { gte: yearStart },
+            },
+            include: { leaveType: true },
+            orderBy: { startDate: "asc" },
+          },
+        },
+        orderBy: { lastName: "asc" },
+      });
+
+      // Build leave list data (include all employees, even those with no leave — show empty periods)
+      const leaveListData = {
+        tenantName: tenant?.name ?? "",
+        year: y,
+        employees: employees.map((emp) => {
+          const periods = emp.leaveRequests.map((lr) => {
+            // Clamp to year boundaries
+            const s = lr.startDate < yearStart ? yearStart : lr.startDate;
+            const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
+            const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+            return {
+              startDate: formatInTimeZone(lr.startDate, "Europe/Berlin", "dd.MM.yyyy"),
+              endDate: formatInTimeZone(lr.endDate, "Europe/Berlin", "dd.MM.yyyy"),
+              leaveTypeName: lr.leaveType.name,
+              days,
+            };
+          });
+          return {
+            employeeName: `${emp.firstName} ${emp.lastName}`,
+            employeeNumber: emp.employeeNumber,
+            periods,
+            totalDays: periods.reduce((sum, p) => sum + p.days, 0),
+          };
+        }),
+      };
+
+      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `attachment; filename="urlaubsliste-${y}.pdf"`);
+
+      streamLeaveListPdf(doc, leaveListData);
+      doc.end(); // CRITICAL: before reply.send
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "LEAVE_LIST_PDF", year },
+      });
+
+      return reply.send(doc);
     },
   });
 
