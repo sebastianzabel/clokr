@@ -945,8 +945,20 @@
                         <span class="cell-badge cell-badge--partial"
                           >{day.workedHours.toFixed(1)}</span
                         >
+                      {:else if day.status === "absent"}
+                        <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
+                          {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
+                            🤒
+                          {:else if day.reason === "Mutterschutz"}
+                            🤰
+                          {:else if day.reason === "Elternzeit"}
+                            👶
+                          {:else}
+                            🌴
+                          {/if}
+                        </span>
                       {:else if day.status === "holiday"}
-                        <span class="cell-badge cell-badge--holiday" title={day.holidayName ?? "Feiertag"}>🎉</span>
+                        <span class="cell-badge cell-badge--holiday" title={day.holidayName ?? "Feiertag"}>☀️</span>
                       {:else if day.status === "missing" && isPast && !isWeekend}
                         <span class="cell-badge cell-badge--missing">⚠️</span>
                       {:else}
@@ -1156,18 +1168,16 @@
                       <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
                         {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
                           🤒
-                        {:else if day.reason === "Urlaub"}
-                          🌴
                         {:else if day.reason === "Mutterschutz"}
                           🤰
                         {:else if day.reason === "Elternzeit"}
                           👶
                         {:else}
-                          ✗
+                          🌴
                         {/if}
                       </span>
                     {:else if day.status === "holiday"}
-                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>🎉</span>
+                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>☀️</span>
                     {:else if day.status === "missing"}
                       <span
                         class="cell-badge cell-badge--missing"
