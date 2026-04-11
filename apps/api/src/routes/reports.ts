@@ -1,5 +1,4 @@
 import { FastifyInstance } from "fastify";
-import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
 import {
@@ -9,74 +8,6 @@ import {
   getDayHoursFromSchedule,
 } from "../utils/timezone";
 import { generateMonthlyReportPdf, generateVacationOverviewPdf } from "../utils/pdf";
-
-// ── Module-scope schedule helpers (shared by /monthly and /monthly/pdf) ──────
-
-type WorkScheduleItem = {
-  validFrom: Date;
-  type: string;
-  monthlyHours: unknown;
-  [key: string]: unknown;
-};
-
-function getScheduleForDate(schedules: WorkScheduleItem[], date: Date) {
-  return (
-    schedules
-      .filter((s) => s.validFrom <= date)
-      .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
-  );
-}
-
-function calcShouldMinutes(
-  schedules: WorkScheduleItem[],
-  hireDate: Date | undefined,
-  start: Date,
-  end: Date,
-  tz: string,
-): number {
-  if (schedules.length === 0) return 0;
-  const effectiveStart = hireDate && hireDate > start ? hireDate : start;
-  const latestSchedule = getScheduleForDate(schedules, end);
-  if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
-    const mh = Number(latestSchedule.monthlyHours ?? 0);
-    return mh > 0 ? mh * 60 : 0;
-  }
-  let totalMin = 0;
-  const cur = new Date(effectiveStart);
-  while (cur <= end) {
-    const schedule = getScheduleForDate(schedules, cur);
-    if (schedule) {
-      const dow = getDayOfWeekInTz(cur, tz);
-      totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return totalMin;
-}
-
-function absenceMinutes(
-  schedules: WorkScheduleItem[],
-  absStart: Date,
-  absEnd: Date,
-  start: Date,
-  end: Date,
-  tz: string,
-): number {
-  if (schedules.length === 0) return 0;
-  const rangeStart = absStart < start ? start : absStart;
-  const rangeEnd = absEnd > end ? end : absEnd;
-  let min = 0;
-  const cur = new Date(rangeStart);
-  while (cur <= rangeEnd) {
-    const schedule = getScheduleForDate(schedules, cur);
-    if (schedule) {
-      const dow = getDayOfWeekInTz(cur, tz);
-      min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return min;
-}
 
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
@@ -129,6 +60,65 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       });
 
+      // Pick the schedule valid on a given date from a list of versioned schedules
+      function getScheduleForDate(schedules: (typeof employees)[0]["workSchedules"], date: Date) {
+        return (
+          schedules
+            .filter((s) => s.validFrom <= date)
+            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+        );
+      }
+
+      // Soll-Stunden: day-by-day using the schedule valid on each day (TZ-aware)
+      function calcShouldMinutes(
+        schedules: (typeof employees)[0]["workSchedules"],
+        hireDate?: Date,
+      ): number {
+        if (schedules.length === 0) return 0;
+        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+        // For MONTHLY_HOURS, use the latest schedule
+        const latestSchedule = getScheduleForDate(schedules, end);
+        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
+          const mh = Number(latestSchedule.monthlyHours ?? 0);
+          return mh > 0 ? mh * 60 : 0;
+        }
+        // Day-by-day iteration for FIXED_WEEKLY with versioned schedules
+        let totalMin = 0;
+        const cur = new Date(effectiveStart);
+        while (cur <= end) {
+          const schedule = getScheduleForDate(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return totalMin;
+      }
+
+      // Tagesweise Soll-Minuten für einen Zeitraum (Schnittmenge mit Monat, TZ-aware)
+      function absenceMinutes(
+        schedules: (typeof employees)[0]["workSchedules"],
+        absStart: Date,
+        absEnd: Date,
+      ): number {
+        if (schedules.length === 0) return 0;
+        // Schnittmenge mit Monatsgrenzen
+        const rangeStart = absStart < start ? start : absStart;
+        const rangeEnd = absEnd > end ? end : absEnd;
+        let min = 0;
+        const cur = new Date(rangeStart);
+        while (cur <= rangeEnd) {
+          const schedule = getScheduleForDate(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return min;
+      }
+
       const rows = employees.map((emp) => {
         // Geleistete Minuten (Netto)
         const workedMin = emp.timeEntries.reduce((sum, e) => {
@@ -137,14 +127,14 @@ export async function reportRoutes(app: FastifyInstance) {
         }, 0);
 
         // Soll-Minuten: Gesamtmonat minus genehmigte Abwesenheitstage
-        const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate ?? undefined, start, end, tz);
+        const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate);
         const latestSchedule = getScheduleForDate(emp.workSchedules, end);
         const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
         // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
         const absenceMin = isMonthlyHours
           ? 0
           : emp.leaveRequests.reduce(
-              (sum, lr) => sum + absenceMinutes(emp.workSchedules, lr.startDate, lr.endDate, start, end, tz),
+              (sum, lr) => sum + absenceMinutes(emp.workSchedules, lr.startDate, lr.endDate),
               0,
             );
         const shouldMin = Math.max(0, rawShouldMin - absenceMin);
@@ -282,23 +272,6 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
-      const config = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-        select: {
-          datevNormalstundenNr: true,
-          datevUrlaubNr: true,
-          datevKrankNr: true,
-          datevSonderurlaubNr: true,
-        },
-      });
-
-      const lna = {
-        normal: config?.datevNormalstundenNr ?? 100,
-        urlaub: config?.datevUrlaubNr ?? 300,
-        krank: config?.datevKrankNr ?? 200,
-        sonderurlaub: config?.datevSonderurlaubNr ?? 302,
-      };
-
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
         include: {
@@ -327,30 +300,24 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       // ── DATEV LODAS ASCII-Import Format ────────────────────────────
-      // Produces a CP1252-encoded .txt file with three INI sections:
-      //   [Allgemein]       – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
-      //   [Satzbeschreibung] – describes the 11-field semicolon format of Bewegungsdaten rows
-      //   [Bewegungsdaten]  – actual employee rows via datevLine() helper
-      //
-      // 11 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
-      // Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;
+      // 11 Felder, Semikolon-getrennt, Dezimal-Komma
+      // Personalnummer;Kalendertag;Ausfallschlüssel;Lohnartennummer;
       // Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;
-      // Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger
+      // Abweichende Lohnveränderung;Kostenstellennummer;Kostenträger
       //
       // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
-      // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
-      //   CONFIGURABLE:
-      //     datevNormalstundenNr (default 100) = Normalstunden
-      //     datevKrankNr         (default 200) = Krankheit (AU)
-      //     datevUrlaubNr        (default 300) = Urlaub
-      //     datevSonderurlaubNr  (default 302) = Sonderurlaub
-      //   HARDCODED:
-      //     201 = Krankheit Kind         | 301 = Überstundenausgleich
-      //     303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
-      //     310 = Mutterschutz           | 320 = Elternzeit
+      // Lohnarten (konfigurierbar im Mandant):
+      //   100 = Normalstunden          | 200 = Krankheit (AU)
+      //   201 = Krankheit Kind         | 300 = Urlaub
+      //   301 = Überstundenausgleich   | 302 = Sonderurlaub
+      //   303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
+      //   310 = Mutterschutz           | 320 = Elternzeit
 
-      const CRLF = "\r\n";
       const lines: string[] = [];
+      // DATEV header row
+      lines.push(
+        "Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger",
+      );
 
       /** Dezimal mit Komma formatieren */
       function dec(n: number, digits = 2): string {
@@ -422,12 +389,12 @@ export async function reportRoutes(app: FastifyInstance) {
         const parentalDays = daysForName(emp, "Elternzeit");
 
         // DATEV-Zeilen (Format: 11 Felder, Semikolon-getrennt)
-        lines.push(datevLine(pn, tag, "", lna.normal, workedHours, 0));
-        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", lna.krank, 0, sickDays));
+        lines.push(datevLine(pn, tag, "", 100, workedHours, 0));
+        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", 200, 0, sickDays));
         if (sickChildDays > 0) lines.push(datevLine(pn, tag, "K", 201, 0, sickChildDays));
-        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", lna.urlaub, 0, vacationDays));
+        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", 300, 0, vacationDays));
         if (overtimeCompDays > 0) lines.push(datevLine(pn, tag, "U", 301, 0, overtimeCompDays));
-        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", lna.sonderurlaub, 0, specialDays));
+        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", 302, 0, specialDays));
         if (educationDays > 0) lines.push(datevLine(pn, tag, "S", 303, 0, educationDays));
         if (unpaidDays > 0) lines.push(datevLine(pn, tag, "", 304, 0, unpaidDays));
         if (maternityDays > 0) lines.push(datevLine(pn, tag, "", 310, 0, maternityDays));
@@ -441,26 +408,9 @@ export async function reportRoutes(app: FastifyInstance) {
         newValue: { type: "DATEV", year, month },
       });
 
-      const iniHeader = [
-        "[Allgemein]",
-        "Ziel=LODAS",
-        "Version_SST=1.0",
-        "BeraterNr=0",
-        "MandantenNr=0",
-        "Datumsangaben=DDMMJJJJ",
-        "",
-        "[Satzbeschreibung]",
-        "20;u_lod_bwd_buchung_kst;pnr#bwd;u_lod_lna_nr#bwd;ausfallkennzeichen#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
-        "",
-        "[Bewegungsdaten]",
-      ].join(CRLF);
-
-      const body = iniHeader + CRLF + lines.join(CRLF) + CRLF;
-      const buf: Buffer = iconv.encode(body, "win1252");
-
-      reply.header("Content-Type", "application/octet-stream");
-      reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.txt"`);
-      return reply.send(buf);
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.csv"`);
+      return lines.join("\n");
     },
   });
 
@@ -522,19 +472,69 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
+      type ScheduleList = NonNullable<typeof emp>["workSchedules"];
+
+      // Pick the schedule valid on a given date
+      function getScheduleForDatePdf(schedules: ScheduleList, date: Date) {
+        return (
+          schedules
+            .filter((s) => s.validFrom <= date)
+            .sort((a, b) => b.validFrom.getTime() - a.validFrom.getTime())[0] ?? null
+        );
+      }
+
+      // Soll-Minuten (day-by-day with versioned schedules)
+      function calcShouldMinutesPdf(schedules: ScheduleList, hireDate?: Date): number {
+        if (schedules.length === 0) return 0;
+        const effectiveStart = hireDate && hireDate > start ? hireDate : start;
+        const latestSchedule = getScheduleForDatePdf(schedules, end);
+        if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
+          const mh = Number(latestSchedule.monthlyHours ?? 0);
+          return mh > 0 ? mh * 60 : 0;
+        }
+        let totalMin = 0;
+        const cur = new Date(effectiveStart);
+        while (cur <= end) {
+          const schedule = getScheduleForDatePdf(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            totalMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return totalMin;
+      }
+
+      function absenceMinutesPdf(schedules: ScheduleList, absStart: Date, absEnd: Date): number {
+        if (schedules.length === 0) return 0;
+        const rangeStart = absStart < start ? start : absStart;
+        const rangeEnd = absEnd > end ? end : absEnd;
+        let min = 0;
+        const cur = new Date(rangeStart);
+        while (cur <= rangeEnd) {
+          const schedule = getScheduleForDatePdf(schedules, cur);
+          if (schedule) {
+            const dow = getDayOfWeekInTz(cur, tz);
+            min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+          cur.setDate(cur.getDate() + 1);
+        }
+        return min;
+      }
+
       const workedMin = emp.timeEntries.reduce((sum, e) => {
         const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
         return sum + slotMin - Number(e.breakMinutes ?? 0);
       }, 0);
 
-      const rawShouldMin = calcShouldMinutes(emp.workSchedules, emp.hireDate ?? undefined, start, end, tz);
-      const latestSchedule = getScheduleForDate(emp.workSchedules, end);
-      const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
+      const rawShouldMin = calcShouldMinutesPdf(emp.workSchedules, emp.hireDate);
+      const latestSchedulePdf = getScheduleForDatePdf(emp.workSchedules, end);
+      const isMonthlyHoursPdf = String(latestSchedulePdf?.type ?? "") === "MONTHLY_HOURS";
       // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
-      const absenceMin = isMonthlyHours
+      const absenceMin = isMonthlyHoursPdf
         ? 0
         : emp.leaveRequests.reduce(
-            (sum, lr) => sum + absenceMinutes(emp.workSchedules, lr.startDate, lr.endDate, start, end, tz),
+            (sum, lr) => sum + absenceMinutesPdf(emp.workSchedules, lr.startDate, lr.endDate),
             0,
           );
       const shouldMin = Math.max(0, rawShouldMin - absenceMin);

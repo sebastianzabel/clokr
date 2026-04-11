@@ -136,11 +136,6 @@ model TenantConfig {
   loginLockoutMinutes    Int     @default(15)    // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears     Int     @default(10)
-  // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
-  datevNormalstundenNr Int @default(100)
-  datevUrlaubNr        Int @default(300)
-  datevKrankNr         Int @default(200)
-  datevSonderurlaubNr  Int @default(302)
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
