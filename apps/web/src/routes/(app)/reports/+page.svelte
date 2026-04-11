@@ -370,7 +370,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.csv`;
+      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
@@ -553,7 +553,7 @@
     <div class="report-card-header">
       <div>
         <h2 class="report-card-title">DATEV Export</h2>
-        <p class="report-card-desc text-muted">CSV-Datei für DATEV-Lohnabrechnung herunterladen</p>
+        <p class="report-card-desc text-muted">TXT-Datei für DATEV-Lohnabrechnung herunterladen</p>
       </div>
     </div>
 
