@@ -696,19 +696,24 @@ model CompanyShutdownException {
 // ─────────────────────────────────────────────
 
 model Notification {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type       String   // LEAVE_REQUEST, LEAVE_APPROVED, LEAVE_REJECTED, OVERTIME_WARNING, MISSING_ENTRY
-  title      String
-  message    String
-  link       String?  // e.g. "/leave" or "/admin/vacation"
-  read       Boolean  @default(false)
-  createdAt  DateTime @default(now()) @db.Timestamptz
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        String    // LEAVE_REQUEST, LEAVE_APPROVED, LEAVE_REJECTED, OVERTIME_WARNING, MISSING_ENTRY, CLOCK_OUT_REMINDER, MONTH_CLOSED, ACCOUNT_LOCKED
+  title       String
+  message     String
+  link        String?   // e.g. "/leave" or "/admin/vacation"
+  read        Boolean   @default(false)
+  dismissedAt DateTime? @db.Timestamptz // null = visible; set = soft-dismissed (Revisionssicherheit: row kept)
+  relatedType String?   // e.g. "LeaveRequest", "TimeEntry" — loose reference, no FK
+  relatedId   String?   // id of the related entity (used by dismissByRelated helper)
+  createdAt   DateTime  @default(now()) @db.Timestamptz
 
   @@index([userId, read])
   @@index([userId, createdAt])
   @@index([createdAt])
+  @@index([userId, dismissedAt])
+  @@index([relatedType, relatedId])
 }
 
 // ─────────────────────────────────────────────
