@@ -1566,8 +1566,21 @@
   :global(.cal-cell.cal-selected:not(.cal-other) .cal-holiday-label) {
     color: white !important;
   }
+  /* today+selected: Ring statt volle Füllung (wie leave-Kalender) */
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other)) {
+    background-color: var(--color-brand-tint) !important;
+    box-shadow: inset 0 0 0 2px var(--color-brand) !important;
+  }
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-day-num),
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .day-worked),
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .day-bal),
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .day-missing),
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-abs-type),
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-holiday-label) {
+    color: var(--color-text) !important;
+  }
   :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-day-num) {
-    background: rgba(255, 255, 255, 0.25);
+    background: var(--color-brand);
     color: white;
   }
 
