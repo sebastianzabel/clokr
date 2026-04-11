@@ -116,6 +116,19 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const { start: weekStart, end: weekEnd, days: weekDays } = weekRangeUtc(refDate, tz);
 
+      // Holiday detection for the week
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const stateCode = tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null;
+      // Week can span two years (e.g. Dec 30 – Jan 5), fetch both if needed
+      const startYear = new Date(weekStart).getFullYear();
+      const endYear = new Date(weekEnd).getFullYear();
+      const weekHolidays = getHolidays(startYear, stateCode);
+      if (endYear !== startYear) weekHolidays.push(...getHolidays(endYear, stateCode));
+      const holidayMap = new Map(weekHolidays.map((h) => [h.date, h.name]));
+
       // Alle aktiven, nicht-anonymisierten Mitarbeiter
       const employees = await app.prisma.employee.findMany({
         where: { tenantId, exitDate: null, user: { isActive: true } },
@@ -264,8 +277,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
             isWorkday,
             isFuture,
             hasShift: shift !== null,
-            isHoliday: false,
-            holidayName: null,
+            isHoliday: holidayMap.has(dayStr),
+            holidayName: holidayMap.get(dayStr) ?? null,
           });
 
           return {
@@ -543,6 +556,20 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
       const schedule = await getEffectiveSchedule(app, employeeId);
 
+      // Holiday detection for the week
+      const myWeekTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const myWeekStateCode = myWeekTenant?.federalState
+        ? (STATE_MAP[myWeekTenant.federalState] ?? null)
+        : null;
+      const startYear = new Date(start).getFullYear();
+      const endYear = new Date(end).getFullYear();
+      const myWeekHolidays = getHolidays(startYear, myWeekStateCode);
+      if (endYear !== startYear) myWeekHolidays.push(...getHolidays(endYear, myWeekStateCode));
+      const myWeekHolidayMap = new Map(myWeekHolidays.map((h) => [h.date, h.name]));
+
       const entries = await app.prisma.timeEntry.findMany({
         where: { employeeId, deletedAt: null, type: "WORK", date: { gte: start, lte: end } },
       });
@@ -564,10 +591,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const hasEntry = dayEntries.length > 0;
         const isClockedIn = dayEntries.some((e) => !e.endTime);
         const isPast = new Date(dateStr) < todayInTz(tz);
+        const holidayName = myWeekHolidayMap.get(dateStr) ?? null;
 
         let status = "none";
         if (isClockedIn) status = "clocked_in";
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
+        else if (holidayName) status = "holiday";
         else if (isPast && isWorkday) status = "missing";
         else if (isWorkday) status = "scheduled";
 
@@ -577,6 +606,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           expectedHours: round(expectedMin / 60),
           status,
           isWorkday,
+          holidayName,
         };
       });
 

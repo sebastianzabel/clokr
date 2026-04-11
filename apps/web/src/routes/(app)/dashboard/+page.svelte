@@ -65,7 +65,7 @@
 
   interface TeamDay {
     date: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none";
+    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
     workedHours: number;
     reason: string | null;
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
@@ -124,6 +124,7 @@
     expectedHours: number;
     status: string;
     isWorkday: boolean;
+    holidayName: string | null;
   }
   let myWeekDays: MyWeekDay[] = $state([]);
 
@@ -944,6 +945,8 @@
                         <span class="cell-badge cell-badge--partial"
                           >{day.workedHours.toFixed(1)}</span
                         >
+                      {:else if day.status === "holiday"}
+                        <span class="cell-badge cell-badge--holiday" title={day.holidayName ?? "Feiertag"}>🎉</span>
                       {:else if day.status === "missing" && isPast && !isWeekend}
                         <span class="cell-badge cell-badge--missing">⚠️</span>
                       {:else}
@@ -1163,6 +1166,8 @@
                           ✗
                         {/if}
                       </span>
+                    {:else if day.status === "holiday"}
+                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>🎉</span>
                     {:else if day.status === "missing"}
                       <span
                         class="cell-badge cell-badge--missing"
@@ -1213,6 +1218,8 @@
         >
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
         <span class="legend-item"><span class="cell-badge cell-badge--missing">⚠️</span> Fehlt</span
+        >
+        <span class="legend-item"><span class="cell-badge cell-badge--holiday">🎉</span> Feiertag</span
         >
         <span class="legend-item"
           ><span class="cell-badge cell-badge--scheduled">9–17</span> Geplant</span
@@ -1472,6 +1479,10 @@
     color: var(--color-red);
   }
   .cell-badge--clocked {
+    background: var(--color-blue-bg);
+    color: var(--color-blue);
+  }
+  .cell-badge--holiday {
     background: var(--color-blue-bg);
     color: var(--color-blue);
   }
