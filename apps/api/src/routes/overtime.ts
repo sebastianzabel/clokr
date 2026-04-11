@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { updateOvertimeAccount, getEffectiveSchedule } from "./time-entries";
+import { getEffectiveSchedule } from "./time-entries";
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -31,9 +31,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
-
-      // Recalculate balance on every read to ensure fresh data
-      await updateOvertimeAccount(app, employeeId).catch((err) => app.log.error({ err }, "Failed to update overtime account"));
 
       const account = await app.prisma.overtimeAccount.findUnique({
         where: { employeeId },
