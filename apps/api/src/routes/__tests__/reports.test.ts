@@ -400,4 +400,209 @@ describe("Reports API", () => {
       expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
     });
   });
+
+  // ── GET /api/v1/reports/leave-overview — pendingDays (RPT-02) ────────────
+  describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
+    let pendingData: Awaited<ReturnType<typeof seedTestData>>;
+    let tenantBData: Awaited<ReturnType<typeof seedTestData>>;
+    const currentYear = new Date().getFullYear();
+
+    beforeAll(async () => {
+      pendingData = await seedTestData(app, "pd");
+      tenantBData = await seedTestData(app, "pd-b");
+
+      // Case 2: PENDING request with 3 days in current year for "Urlaub"
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 5, 10)),
+          endDate: new Date(Date.UTC(currentYear, 5, 12)),
+          days: 3,
+          status: "PENDING",
+        },
+      });
+
+      // Case 3: PENDING request in a DIFFERENT year (next year) — must NOT be counted
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear + 1, 0, 5)),
+          endDate: new Date(Date.UTC(currentYear + 1, 0, 7)),
+          days: 3,
+          status: "PENDING",
+        },
+      });
+
+      // Case 4: APPROVED request — must NOT be counted in pendingDays
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 7, 1)),
+          endDate: new Date(Date.UTC(currentYear, 7, 2)),
+          days: 2,
+          status: "APPROVED",
+        },
+      });
+
+      // Case 4: CANCELLED request — must NOT be counted in pendingDays
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 8, 1)),
+          endDate: new Date(Date.UTC(currentYear, 8, 1)),
+          days: 1,
+          status: "CANCELLED",
+        },
+      });
+
+      // Case 5: Soft-deleted PENDING request — must NOT be counted
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: pendingData.employee.id,
+          leaveTypeId: pendingData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 9, 1)),
+          endDate: new Date(Date.UTC(currentYear, 9, 3)),
+          days: 3,
+          status: "PENDING",
+          deletedAt: new Date(),
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, pendingData.tenant.id);
+      await cleanupTestData(app, tenantBData.tenant.id);
+    });
+
+    it("Case 1: employee with no PENDING requests returns pendingDays: 0 for the admin employee", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      // adminEmployee has no leaveEntitlement seeded → no row for admin, but the main employee row should exist
+      // The main employee has pendingDays: 3 (from Case 2)
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow).toBeDefined();
+      // pendingDays field MUST exist on every row
+      expect(typeof empRow.pendingDays).toBe("number");
+    });
+
+    it("Case 2: employee with one PENDING LeaveRequest (days: 3) has pendingDays: 3", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow).toBeDefined();
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 3: PENDING request in a different year is NOT counted in pendingDays", async () => {
+      // Request in currentYear+1 should not appear in year=currentYear query
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // pendingDays should still be 3 (only the current-year PENDING request)
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 4: APPROVED and CANCELLED requests are NOT counted in pendingDays", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // Still 3, not 3 + 2 + 1 = 6
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 5: soft-deleted PENDING requests are NOT counted in pendingDays", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      // Still 3, not 3 + 3 (soft-deleted) = 6
+      expect(empRow.pendingDays).toBe(3);
+    });
+
+    it("Case 6: tenant isolation — tenant A admin does NOT see pendingDays from tenant B employees", async () => {
+      // Create a PENDING request for tenant B employee
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: tenantBData.employee.id,
+          leaveTypeId: tenantBData.vacationType.id,
+          startDate: new Date(Date.UTC(currentYear, 5, 10)),
+          endDate: new Date(Date.UTC(currentYear, 5, 14)),
+          days: 5,
+          status: "PENDING",
+        },
+      });
+
+      // Tenant A admin calls endpoint — should only see tenant A entitlements
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/leave-overview?year=${currentYear}`,
+        headers: { authorization: `Bearer ${pendingData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+
+      // Verify tenant B employee does NOT appear in tenant A response
+      const tenantBRow = body.find(
+        (r: { employee: { employeeNumber: string } }) =>
+          r.employee.employeeNumber === tenantBData.employee.employeeNumber,
+      );
+      expect(tenantBRow).toBeUndefined();
+
+      // Verify tenant A pendingDays is still correct (3, not 3+5=8)
+      const empRow = body.find(
+        (r: { employee: { employeeNumber: string }; leaveType: { name: string } }) =>
+          r.employee.employeeNumber === pendingData.employee.employeeNumber &&
+          r.leaveType.name === "Urlaub",
+      );
+      expect(empRow.pendingDays).toBe(3);
+    });
+  });
 });
