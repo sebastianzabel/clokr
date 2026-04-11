@@ -85,6 +85,8 @@ function drawColoredHeader(doc: PDFKit.PDFDocument, title: string, subtitle: str
 }
 
 function drawSmallFooter(doc: PDFKit.PDFDocument): void {
+  // Save current y position — restore after drawing footer to avoid disrupting content flow
+  const savedY = doc.y;
   doc
     .fontSize(7)
     .font("Helvetica")
@@ -93,9 +95,11 @@ function drawSmallFooter(doc: PDFKit.PDFDocument): void {
       `Erstellt am ${new Date().toLocaleDateString("de-DE")} \u2014 Clokr`,
       50,
       doc.page.height - 40,
-      { align: "center", width: doc.page.width - 100 },
+      { align: "center", width: doc.page.width - 100, lineBreak: false },
     );
   doc.fillColor("#111827");
+  // Restore y so footer drawing doesn't advance the content cursor
+  doc.y = savedY;
 }
 
 // ── generateMonthlyReportPdf (PDF-04: improved layout, same signature) ────────
@@ -229,13 +233,21 @@ export function streamCompanyMonthlyReportPdf(
         ? "Nur Manager"
         : "Alle Mitarbeiter";
 
+  // Re-entrancy guard — prevents pageAdded from recursing when drawSmallFooter calls doc.text()
+  let drawingFooter = false;
+
   // Register footer for every new page added after the first page
   doc.on("pageAdded", () => {
+    if (drawingFooter) return;
+    drawingFooter = true;
     drawSmallFooter(doc);
+    drawingFooter = false;
   });
 
   // Draw footer on the first page immediately (pageAdded fires only for pages added later)
+  drawingFooter = true;
   drawSmallFooter(doc);
+  drawingFooter = false;
 
   // ── Summary / cover page ──────────────────────────────
   drawColoredHeader(
@@ -383,13 +395,21 @@ export function streamCompanyMonthlyReportPdf(
 // ── streamLeaveListPdf (PDF-02/PDF-05) ────────────────────────────────────────
 // Synchronous void — caller owns lifecycle. Does NOT call doc.end().
 export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData): void {
+  // Re-entrancy guard — prevents pageAdded from recursing when drawSmallFooter calls doc.text()
+  let drawingFooter = false;
+
   // Register footer for every new page added after the first page
   doc.on("pageAdded", () => {
+    if (drawingFooter) return;
+    drawingFooter = true;
     drawSmallFooter(doc);
+    drawingFooter = false;
   });
 
   // Draw footer on the first page immediately
+  drawingFooter = true;
   drawSmallFooter(doc);
+  drawingFooter = false;
 
   // ── Header ───────────────────────────────────────────
   drawColoredHeader(doc, data.tenantName, `Urlaubsliste \u2014 ${data.year}`);
