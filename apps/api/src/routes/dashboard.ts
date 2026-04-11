@@ -442,6 +442,75 @@ export async function dashboardRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /api/v1/dashboard/overtime-overview — Überstunden-Übersicht (RPT-01 + SALDO-03)
+  app.get("/overtime-overview", {
+    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+
+      // Query 1: all OvertimeAccount rows joined with employee (tenant-scoped, active only)
+      const accounts = await app.prisma.overtimeAccount.findMany({
+        where: { employee: { tenantId, exitDate: null, user: { isActive: true } } },
+        include: {
+          employee: {
+            select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+          },
+        },
+        orderBy: { employee: { lastName: "asc" } },
+      });
+
+      const employeeIds = accounts.map((a) => a.employeeId);
+
+      // Query 2: last 6 months of MONTHLY SaldoSnapshots for these employees
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 6);
+      sixMonthsAgo.setUTCDate(1);
+      sixMonthsAgo.setUTCHours(0, 0, 0, 0);
+
+      const snapshots = await app.prisma.saldoSnapshot.findMany({
+        where: {
+          employeeId: { in: employeeIds },
+          periodType: "MONTHLY",
+          periodStart: { gte: sixMonthsAgo },
+        },
+        orderBy: { periodStart: "asc" },
+        select: {
+          employeeId: true,
+          periodStart: true,
+          balanceMinutes: true,
+          carryOver: true,
+        },
+      });
+
+      // Group snapshots by employeeId
+      const snapshotsByEmp = new Map<string, typeof snapshots>();
+      for (const snap of snapshots) {
+        const list = snapshotsByEmp.get(snap.employeeId) ?? [];
+        list.push(snap);
+        snapshotsByEmp.set(snap.employeeId, list);
+      }
+
+      return {
+        employees: accounts.map((a) => {
+          const balanceHours = Number(a.balanceHours);
+          return {
+            id: a.employeeId,
+            name: `${a.employee.firstName} ${a.employee.lastName}`,
+            employeeNumber: a.employee.employeeNumber,
+            balanceHours,
+            status: classifyOvertimeBalance(balanceHours),
+            snapshots: (snapshotsByEmp.get(a.employeeId) ?? []).map((s) => ({
+              periodStart: s.periodStart.toISOString().slice(0, 10),
+              balanceMinutes: s.balanceMinutes,
+              carryOver: s.carryOver,
+            })),
+          };
+        }),
+      };
+    },
+  });
+
   // GET /api/v1/dashboard/my-week — persönliche Wochenübersicht (für alle MA)
   app.get("/my-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
@@ -558,4 +627,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
 function round(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// Keep in sync with overtime.ts status logic
+function classifyOvertimeBalance(balanceHours: number): "NORMAL" | "ELEVATED" | "CRITICAL" {
+  const abs = Math.abs(balanceHours);
+  if (abs <= 20) return "NORMAL";
+  if (abs <= 40) return "ELEVATED";
+  return "CRITICAL";
 }
