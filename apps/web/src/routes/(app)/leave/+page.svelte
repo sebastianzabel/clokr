@@ -139,8 +139,9 @@
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
-  // Team absences toggle (managers/admins)
-  let showTeamAbsences = $state(true);
+  // Calendar filter — "" = Alle, "mine" = Meine, or employeeId for specific person (manager)
+  let calFilter = $state("");
+  let calEmployees: Employee[] = $state([]);
 
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
@@ -186,9 +187,17 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
+  interface Employee {
+    id: string;
+    firstName: string;
+    lastName: string;
+    employeeNumber: string;
+  }
+
   interface CalEntry {
     id: string;
     isOwn: boolean;
+    employeeId: string;
     firstName: string;
     lastName: string;
     typeCode: TypeCode | null;
@@ -359,6 +368,8 @@
       SICK_CHILD: "#ff9800",
       UNPAID: "#795548",
       HOLIDAY: "#f59e0b",
+      MATERNITY: "#e91e63",
+      PARENTAL: "#3f51b5",
     };
     const base = colors[code] ?? "#607d8b";
     return status === "APPROVED" ? base : base + "88";
@@ -369,6 +380,15 @@
     await loadData();
     loadCalendar();
     loadVacationSummary();
+
+    if (isManager) {
+      api
+        .get<Employee[]>("/employees")
+        .then((list) => {
+          calEmployees = list;
+        })
+        .catch(() => {});
+    }
 
     // Deep-link: view param from dashboard
     const viewParam = $page.url.searchParams.get("view");
@@ -936,6 +956,27 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
+<!-- ── Mitarbeiter-Selector ───────────────────────────────────────────────── -->
+<div class="employee-selector">
+  <label class="form-label" for="cal-emp-select">Mitarbeiter</label>
+  <select
+    id="cal-emp-select"
+    class="form-input"
+    value={calFilter}
+    onchange={(e) => (calFilter = e.currentTarget.value)}
+  >
+    <option value="">Alle Mitarbeiter</option>
+    <option value="mine">Meine Einträge</option>
+    {#if isManager}
+      {#each calEmployees as emp (emp.id)}
+        {#if emp.id !== $authStore.user?.employeeId}
+          <option value={emp.id}>{emp.lastName}, {emp.firstName}</option>
+        {/if}
+      {/each}
+    {/if}
+  </select>
+</div>
+
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -1342,34 +1383,6 @@
             stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
           >
         </button>
-        <button
-          class="team-toggle"
-          class:team-toggle--active={showTeamAbsences}
-          onclick={() => {
-            showTeamAbsences = !showTeamAbsences;
-          }}
-          title={showTeamAbsences
-            ? "Team-Abwesenheiten ausblenden"
-            : "Team-Abwesenheiten einblenden"}
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
-              cx="9"
-              cy="7"
-              r="4"
-            /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg
-          >
-          Team
-        </button>
       </div>
     </div>
 
@@ -1407,7 +1420,12 @@
             </div>
           {/if}
           <div class="cal-chips">
-            {#each absences.filter((e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED"))) as e (e.id)}
+            {#each absences.filter((e) => {
+              const visible = isManager || e.status === "APPROVED";
+              if (calFilter === "mine") return e.isOwn;
+              if (calFilter !== "") return e.employeeId === calFilter;
+              return e.isOwn || visible;
+            }) as e (e.id)}
               <div
                 class="cal-chip"
                 class:cal-chip--pending={e.status === "PENDING" ||
@@ -2379,38 +2397,42 @@
   .vac-summary {
     display: flex;
     align-items: center;
-    gap: 1.25rem;
-    padding: 0.5rem 1rem;
+    gap: 1.5rem;
+    padding: 0.875rem 1.25rem;
     background: var(--glass-bg, rgba(255, 255, 255, 0.6));
     border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     margin-bottom: 0.75rem;
     flex-wrap: wrap;
-    font-size: 0.8125rem;
+    font-size: 0.875rem;
+    box-shadow: var(--glass-shadow);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
   }
   .vac-summary-item {
     display: flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.5rem;
   }
   .vac-summary-item:last-child {
     margin-left: 0;
   }
   .vac-summary-divider {
     width: 1px;
-    height: 1rem;
+    height: 1.25rem;
     background: var(--color-border);
     flex-shrink: 0;
   }
   .vac-summary-label {
     color: var(--color-text-muted);
     font-size: 0.8125rem;
+    font-weight: 500;
   }
   .vac-summary-value {
-    font-weight: 600;
+    font-weight: 700;
     font-family: var(--font-mono);
-    color: var(--color-text);
-    font-size: 0.8125rem;
+    color: var(--color-text-heading);
+    font-size: 0.9375rem;
   }
   .vac-summary-carry {
     color: var(--color-blue);
@@ -2845,32 +2867,22 @@
       grid-template-columns: 1fr;
     }
   }
-  .team-toggle {
-    display: inline-flex;
+  .employee-selector {
+    display: flex;
     align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.625rem;
-    min-height: 44px; /* WCAG 2.5.5 touch target */
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--color-text-muted);
-    font-size: 0.75rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition:
-      background-color 0.15s,
-      color 0.15s,
-      border-color 0.15s;
-    margin-left: auto;
-  }
-  .team-toggle:hover {
-    background: var(--color-bg-subtle);
-    color: var(--color-text);
-  }
-  .team-toggle--active {
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
     background: var(--color-brand-tint);
-    color: var(--color-brand);
-    border-color: var(--color-brand);
+    border: 1px solid var(--color-brand-tint-hover);
+    border-radius: 8px;
+  }
+  .employee-selector .form-label {
+    margin: 0;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .employee-selector .form-input {
+    max-width: 320px;
   }
 </style>
