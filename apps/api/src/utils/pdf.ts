@@ -372,6 +372,85 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
   }
 }
 
+// ── streamVacationOverviewPdf ─────────────────────────────────────────────────
+// Streaming counterpart to generateVacationOverviewPdf.
+// Appends landscape pages to an existing doc. Does NOT call doc.end().
+export function streamVacationOverviewPdf(
+  doc: PDFKit.PDFDocument,
+  data: {
+    tenantName: string;
+    year: number;
+    employees: Array<{
+      name: string;
+      employeeNumber: string;
+      totalDays: number;
+      usedDays: number;
+      remainingDays: number;
+      carriedOver: number;
+    }>;
+  },
+): void {
+  doc.addPage({ size: "A4", layout: "landscape" });
+
+  doc
+    .fontSize(18)
+    .font("Helvetica-Bold")
+    .text(`Clokr \u2014 Urlaubsübersicht`, { align: "center" });
+  doc
+    .fontSize(10)
+    .font("Helvetica")
+    .text(`${data.tenantName} \u2014 ${data.year}`, { align: "center" });
+  doc.moveDown(1.5);
+
+  const headers = ["Mitarbeiter", "Nr.", "Anspruch", "Übertrag", "Genommen", "Restlich"];
+  const colWidths = [200, 80, 80, 80, 80, 80];
+
+  doc.fontSize(9).font("Helvetica-Bold");
+  let x = 50;
+  const tableTop = doc.y;
+  headers.forEach((h, i) => {
+    doc.text(h, x, tableTop, { width: colWidths[i] });
+    x += colWidths[i];
+  });
+  doc
+    .moveTo(50, tableTop + 14)
+    .lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tableTop + 14)
+    .stroke("#e5e7eb");
+
+  doc.fontSize(9).font("Helvetica");
+  let rowY = tableTop + 20;
+
+  for (const emp of data.employees) {
+    if (rowY > doc.page.height - 60) {
+      doc.addPage({ size: "A4", layout: "landscape" });
+      rowY = 50;
+    }
+    x = 50;
+    doc.text(emp.name, x, rowY, { width: colWidths[0] });
+    x += colWidths[0];
+    doc.text(emp.employeeNumber, x, rowY, { width: colWidths[1] });
+    x += colWidths[1];
+    doc.text(`${emp.totalDays}`, x, rowY, { width: colWidths[2] });
+    x += colWidths[2];
+    doc.text(`${emp.carriedOver}`, x, rowY, { width: colWidths[3] });
+    x += colWidths[3];
+    doc.text(`${emp.usedDays}`, x, rowY, { width: colWidths[4] });
+    x += colWidths[4];
+    doc.text(`${emp.remainingDays}`, x, rowY, { width: colWidths[5] });
+    rowY += 16;
+  }
+
+  doc
+    .fontSize(7)
+    .font("Helvetica")
+    .text(
+      `Erstellt am ${new Date().toLocaleDateString("de-DE")} \u2014 Clokr`,
+      50,
+      doc.page.height - 40,
+      { align: "center", width: doc.page.width - 100 },
+    );
+}
+
 export function generateVacationOverviewPdf(data: {
   tenantName: string;
   year: number;

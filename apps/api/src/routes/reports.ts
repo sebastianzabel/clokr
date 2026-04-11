@@ -13,6 +13,7 @@ import {
   generateVacationOverviewPdf,
   streamCompanyMonthlyReportPdf,
   streamLeaveListPdf,
+  streamVacationOverviewPdf,
 } from "../utils/pdf";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
@@ -758,6 +759,141 @@ export async function reportRoutes(app: FastifyInstance) {
         action: "EXPORT",
         entity: "Report",
         newValue: { type: "LEAVE_LIST_PDF", year },
+      });
+
+      return reply.send(doc);
+    },
+  });
+
+  // GET /api/v1/reports/vacation/pdf?year=  — combined: leave list + overview
+  app.get("/vacation/pdf", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { year } = req.query as { year: string };
+      const y = parseInt(year ?? new Date().getFullYear().toString());
+      const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
+      const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: req.user.tenantId },
+        select: { name: true },
+      });
+
+      // Fetch both datasets in parallel
+      const [employees, entitlements] = await Promise.all([
+        app.prisma.employee.findMany({
+          where: {
+            tenantId: req.user.tenantId,
+            exitDate: null,
+            user: { isActive: true },
+          },
+          include: {
+            leaveRequests: {
+              where: {
+                deletedAt: null,
+                status: "APPROVED",
+                startDate: { lte: yearEnd },
+                endDate: { gte: yearStart },
+              },
+              include: { leaveType: true },
+              orderBy: { startDate: "asc" },
+            },
+          },
+          orderBy: { lastName: "asc" },
+        }),
+        app.prisma.leaveEntitlement.findMany({
+          where: {
+            year: y,
+            employee: { tenantId: req.user.tenantId },
+          },
+          include: {
+            employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
+            leaveType: true,
+          },
+        }),
+      ]);
+
+      // Build leave list data
+      const leaveListData = {
+        tenantName: tenant?.name ?? "",
+        year: y,
+        employees: employees.map((emp) => {
+          const periods = emp.leaveRequests.map((lr) => {
+            const s = lr.startDate < yearStart ? yearStart : lr.startDate;
+            const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
+            const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
+            return {
+              startDate: formatInTimeZone(lr.startDate, "Europe/Berlin", "dd.MM.yyyy"),
+              endDate: formatInTimeZone(lr.endDate, "Europe/Berlin", "dd.MM.yyyy"),
+              leaveTypeName: lr.leaveType.name,
+              days,
+            };
+          });
+          return {
+            employeeName: `${emp.firstName} ${emp.lastName}`,
+            employeeNumber: emp.employeeNumber,
+            periods,
+            totalDays: periods.reduce((sum, p) => sum + p.days, 0),
+          };
+        }),
+      };
+
+      // Build overview data
+      const empMap = new Map<
+        string,
+        {
+          name: string;
+          employeeNumber: string;
+          totalDays: number;
+          usedDays: number;
+          remainingDays: number;
+          carriedOver: number;
+        }
+      >();
+      for (const e of entitlements) {
+        if (e.leaveType.name !== "Urlaub") continue;
+        const key = e.employee.employeeNumber;
+        const existing = empMap.get(key);
+        const total = Number(e.totalDays);
+        const carried = Number(e.carriedOverDays);
+        const used = Number(e.usedDays);
+        const remaining = total + carried - used;
+        if (existing) {
+          existing.totalDays += total;
+          existing.carriedOver += carried;
+          existing.usedDays += used;
+          existing.remainingDays += remaining;
+        } else {
+          empMap.set(key, {
+            name: `${e.employee.firstName} ${e.employee.lastName}`,
+            employeeNumber: e.employee.employeeNumber,
+            totalDays: total,
+            carriedOver: carried,
+            usedDays: used,
+            remainingDays: remaining,
+          });
+        }
+      }
+      const overviewData = {
+        tenantName: tenant?.name ?? "",
+        year: y,
+        employees: [...empMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
+      };
+
+      const doc = new PDFDocument({ size: "A4", margin: 50 });
+      reply.header("Content-Type", "application/pdf");
+      reply.header("Content-Disposition", `attachment; filename="urlaubsbericht-${y}.pdf"`);
+
+      streamLeaveListPdf(doc, leaveListData);
+      streamVacationOverviewPdf(doc, overviewData);
+      doc.end();
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "VACATION_PDF", year },
       });
 
       return reply.send(doc);
