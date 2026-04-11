@@ -5,7 +5,7 @@ milestone_name: milestone
 status: planning
 stopped_at: Completed 260411-086-03-PLAN.md
 last_updated: "2026-04-10T22:45:33.576Z"
-last_activity: "2026-04-11 - Completed quick task 260411-drh: Allow early employee deletion before 10-year retention period with admin acknowledgement"
+last_activity: "2026-04-11 - Completed quick task 260411-g4n: Build shared calendar base component to unify CSS class names between Zeiterfassung and Abwesenheiten calendars"
 progress:
   percent: 100
 ---
@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-31 after v1.0 milestone)
 Phase: —
 Plan: —
 Status: v1.0 milestone complete — ready for next milestone planning
-Last activity: 2026-04-11 - Completed quick task 260411-dz9: Employee exit date (Austrittsdatum), pro-rata vacation entitlement, warning when leave exceeds entitlement
+Last activity: 2026-04-11 - Completed quick task 260411-g4n: Unified calendar CSS class names (Zeiterfassung + Abwesenheiten)
 
 Progress: [██████████] 100%
 
@@ -56,6 +56,7 @@ None.
 | 260411-drh | Allow early employee deletion before 10-year retention period with admin acknowledgement checkbox                                                                                                 | 2026-04-11 | 11287e0 | [260411-drh-allow-early-employee-deletion-before-10-](./quick/260411-drh-allow-early-employee-deletion-before-10-/)       |
 | 260411-dz9 | Employee exit date (Austrittsdatum): configurable per employee, pro-rata vacation entitlement calculation, warning when taken/approved leave exceeds entitlement                                  | 2026-04-11 | 91e50b2 | [260411-dz9-employee-exit-date-austrittsdatum-config](./quick/260411-dz9-employee-exit-date-austrittsdatum-config/)       |
 | 260411-fth | Use CSS vars for leave-type colors + align employee-selector style (typeColor, legend dots, time-entries employee-selector)                                                                       | 2026-04-11 | 5883486 | [260411-fth-fix-leave-type-colors-and-employee-selector](./quick/260411-fth-fix-leave-type-colors-and-employee-selector/) |
+| 260411-g4n | Unify calendar CSS class names between Zeiterfassung and Abwesenheiten calendars (shared canonical class set, consolidated app.css rules)                                                         | 2026-04-11 | 834fdd8 | [260411-g4n-build-shared-calendar-base-component-to-](./quick/260411-g4n-build-shared-calendar-base-component-to-/)       |
 
 ### Blockers/Concerns
 
