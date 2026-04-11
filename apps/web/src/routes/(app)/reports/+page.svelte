@@ -50,14 +50,14 @@
     id: string;
     name: string;
     employeeNumber: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none";
+    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
     reason: string | null;
   };
 
   type TodayAttendance = {
     date: string;
     employees: TodayEmployee[];
-    summary: { present: number; absent: number; clockedIn: number; missing: number };
+    summary: { present: number; absent: number; clockedIn: number; missing: number; holiday: number };
   };
 
   type OvertimeEmployee = {
@@ -469,6 +469,8 @@
         return "Fehlend";
       case "scheduled":
         return "Geplant";
+      case "holiday":
+        return row.reason ?? "Feiertag";
       default:
         return "—";
     }
@@ -670,6 +672,12 @@
           <span class="label">Fehlend</span>
           <span class="value">{todayAttendance.summary.missing}</span>
         </div>
+        {#if todayAttendance.summary.holiday > 0}
+          <div class="summary-chip">
+            <span class="label">Feiertag</span>
+            <span class="value">{todayAttendance.summary.holiday}</span>
+          </div>
+        {/if}
       </div>
 
       <div class="table-wrap">
@@ -1123,6 +1131,11 @@
   .status-absent {
     background: var(--color-yellow-bg, var(--color-bg-subtle));
     color: var(--color-yellow, var(--color-text-muted));
+  }
+
+  .status-holiday {
+    background: var(--color-blue-bg, var(--color-bg-subtle));
+    color: var(--color-blue, var(--color-text-muted));
   }
 
   .status-missing {
