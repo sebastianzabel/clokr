@@ -1748,9 +1748,9 @@ textarea.form-input {
 .cal-today {
   box-shadow: inset 0 0 0 2px var(--color-brand);
 }
-/* today+selected: ring statt volle Brand-Füllung */
+/* today+selected: ring statt volle Brand-Füllung, bg-subtle wie weekend */
 .cal-cell.cal-selected.cal-today:not(.cal-other) {
-  background-color: var(--color-brand-tint) !important;
+  background-color: var(--color-bg-subtle) !important;
   box-shadow: inset 0 0 0 2px var(--color-brand) !important;
 }
 .cal-day-num {
