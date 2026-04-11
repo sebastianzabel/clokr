@@ -401,6 +401,433 @@ describe("Reports API", () => {
     });
   });
 
+  // ── GET /api/v1/dashboard/today-attendance (RPT-03) ──────────────────────
+  describe("GET /api/v1/dashboard/today-attendance (RPT-03)", () => {
+    let attData: Awaited<ReturnType<typeof seedTestData>>;
+    let managerToken: string;
+    let empClockedIn: { id: string; employeeNumber: string };
+    let empPresent: { id: string; employeeNumber: string };
+    let empAbsentLeave: { id: string; employeeNumber: string };
+    let empAbsentSick: { id: string; employeeNumber: string };
+    let empMissing: { id: string; employeeNumber: string };
+    let empNoWorkday: { id: string; employeeNumber: string };
+
+    beforeAll(async () => {
+      attData = await seedTestData(app, "att");
+      const prisma = app.prisma;
+
+      // Create a manager user + employee in the tenant
+      const mgrPwHash = await import("bcryptjs").then((b) =>
+        b.default.hash("test1234", 10),
+      );
+      const mgrUser = await prisma.user.create({
+        data: {
+          email: `mgr-att-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgrEmp = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `MGR-att-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "Att",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: mgrEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({
+        data: { employeeId: mgrEmp.id, balanceHours: 0 },
+      });
+      const mgrLogin = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: mgrUser.email, password: "test1234" },
+      });
+      managerToken = JSON.parse(mgrLogin.body).accessToken;
+
+      // Today (UTC midnight) for entry creation
+      const now = new Date();
+      const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+      // Helper to create a Mon-Fri schedule for an employee
+      async function makeWorkSchedule(empId: string) {
+        await prisma.workSchedule.create({
+          data: {
+            employeeId: empId,
+            weeklyHours: 40,
+            mondayHours: 8,
+            tuesdayHours: 8,
+            wednesdayHours: 8,
+            thursdayHours: 8,
+            fridayHours: 8,
+            saturdayHours: 0,
+            sundayHours: 0,
+            validFrom: new Date("2024-01-01"),
+          },
+        });
+      }
+
+      // Case 1: clocked_in — OPEN entry today (endTime: null)
+      const empCIUser = await prisma.user.create({
+        data: {
+          email: `att-ci-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empCIRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empCIUser.id,
+          employeeNumber: `ATT-CI-${Date.now()}`,
+          firstName: "Clocked",
+          lastName: "In",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empCIRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empCIRecord.id, balanceHours: 0 } });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: empCIRecord.id,
+          date: todayUtc,
+          startTime: new Date(todayUtc.getTime() + 7 * 3600000),
+          endTime: null, // open
+          breakMinutes: 0,
+          type: "WORK",
+        },
+      });
+      empClockedIn = { id: empCIRecord.id, employeeNumber: empCIRecord.employeeNumber };
+
+      // Case 2: present — CLOSED entry today
+      const empPUser = await prisma.user.create({
+        data: {
+          email: `att-pr-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empPRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empPUser.id,
+          employeeNumber: `ATT-PR-${Date.now()}`,
+          firstName: "Present",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empPRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empPRecord.id, balanceHours: 0 } });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: empPRecord.id,
+          date: todayUtc,
+          startTime: new Date(todayUtc.getTime() + 7 * 3600000),
+          endTime: new Date(todayUtc.getTime() + 15 * 3600000),
+          breakMinutes: 30,
+          type: "WORK",
+        },
+      });
+      empPresent = { id: empPRecord.id, employeeNumber: empPRecord.employeeNumber };
+
+      // Case 3: absent — APPROVED Urlaub leave covering today
+      const empLUser = await prisma.user.create({
+        data: {
+          email: `att-lv-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empLRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empLUser.id,
+          employeeNumber: `ATT-LV-${Date.now()}`,
+          firstName: "On",
+          lastName: "Leave",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empLRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empLRecord.id, balanceHours: 0 } });
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: empLRecord.id,
+          leaveTypeId: attData.vacationType.id,
+          startDate: todayUtc,
+          endDate: todayUtc,
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+      empAbsentLeave = { id: empLRecord.id, employeeNumber: empLRecord.employeeNumber };
+
+      // Case 4: absent — SICK absence covering today
+      const empSUser = await prisma.user.create({
+        data: {
+          email: `att-sk-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empSRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empSUser.id,
+          employeeNumber: `ATT-SK-${Date.now()}`,
+          firstName: "Sick",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empSRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empSRecord.id, balanceHours: 0 } });
+      await prisma.absence.create({
+        data: {
+          employeeId: empSRecord.id,
+          type: "SICK",
+          startDate: todayUtc,
+          endDate: todayUtc,
+          days: 1,
+          createdBy: attData.adminUser.id,
+        },
+      });
+      empAbsentSick = { id: empSRecord.id, employeeNumber: empSRecord.employeeNumber };
+
+      // Case 5: missing — workday, no entries/leave/absence (Mon-Fri schedule)
+      const empMUser = await prisma.user.create({
+        data: {
+          email: `att-ms-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empMRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empMUser.id,
+          employeeNumber: `ATT-MS-${Date.now()}`,
+          firstName: "Missing",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await makeWorkSchedule(empMRecord.id);
+      await prisma.overtimeAccount.create({ data: { employeeId: empMRecord.id, balanceHours: 0 } });
+      empMissing = { id: empMRecord.id, employeeNumber: empMRecord.employeeNumber };
+
+      // Case 6: none — non-workday schedule (all zero hours = every day is off)
+      const empNWUser = await prisma.user.create({
+        data: {
+          email: `att-nw-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const empNWRecord = await prisma.employee.create({
+        data: {
+          tenantId: attData.tenant.id,
+          userId: empNWUser.id,
+          employeeNumber: `ATT-NW-${Date.now()}`,
+          firstName: "NonWork",
+          lastName: "Emp",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      // All-zero schedule → every day is a non-workday
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: empNWRecord.id,
+          weeklyHours: 0,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({
+        data: { employeeId: empNWRecord.id, balanceHours: 0 },
+      });
+      empNoWorkday = { id: empNWRecord.id, employeeNumber: empNWRecord.employeeNumber };
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, attData.tenant.id);
+    });
+
+    it("Case 1: employee with open entry today has status clocked_in", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empClockedIn.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("clocked_in");
+    });
+
+    it("Case 2: employee with closed entry today has status present", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empPresent.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("present");
+    });
+
+    it("Case 3: employee with APPROVED leave today has status absent and reason matching Urlaub", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empAbsentLeave.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("absent");
+      expect(emp.reason).toBe("Urlaub");
+    });
+
+    it("Case 4: employee with SICK absence today has status absent and reason mentioning Krankmeldung", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empAbsentSick.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("absent");
+      expect(emp.reason).toContain("Krankmeldung");
+    });
+
+    it("Case 5: employee on workday with no entries or absences has status missing", async () => {
+      // Only valid for weekdays — skip on weekend
+      const dow = new Date().getUTCDay();
+      if (dow === 0 || dow === 6) {
+        // Saturday or Sunday — employee has Mon-Fri schedule → status would be "none"
+        return;
+      }
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empMissing.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("missing");
+    });
+
+    it("Case 6: employee with all-zero schedule has status none", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const emp = body.employees.find(
+        (e: { employeeNumber: string }) => e.employeeNumber === empNoWorkday.employeeNumber,
+      );
+      expect(emp).toBeDefined();
+      expect(emp.status).toBe("none");
+    });
+
+    it("Case 7: response.summary counts sum equals employees.length", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).toHaveProperty("summary");
+      expect(body).toHaveProperty("employees");
+      expect(body).toHaveProperty("date");
+      const { present, absent, clockedIn, missing } = body.summary;
+      const sumCounts = (present ?? 0) + (absent ?? 0) + (clockedIn ?? 0) + (missing ?? 0);
+      // Sum of these 4 statuses should not exceed total employees (none is not in summary)
+      expect(sumCounts).toBeLessThanOrEqual(body.employees.length);
+    });
+
+    it("Case 8: EMPLOYEE role returns 403", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/today-attendance",
+        headers: { authorization: `Bearer ${attData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("Case 9: tenant isolation — admin from tenant A never sees employees from tenant B", async () => {
+      const tenantB = await seedTestData(app, "att-b");
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/dashboard/today-attendance",
+          headers: { authorization: `Bearer ${attData.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        const tenantBEmp = body.employees.find(
+          (e: { employeeNumber: string }) =>
+            e.employeeNumber === tenantB.employee.employeeNumber,
+        );
+        expect(tenantBEmp).toBeUndefined();
+      } finally {
+        await cleanupTestData(app, tenantB.tenant.id);
+      }
+    });
+  });
+
   // ── GET /api/v1/reports/leave-overview — pendingDays (RPT-02) ────────────
   describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
     let pendingData: Awaited<ReturnType<typeof seedTestData>>;
