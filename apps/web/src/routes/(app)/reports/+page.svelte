@@ -47,13 +47,14 @@
   let companyPdfLoading = $state(false);
   let companyPdfError = $state("");
 
-
   let pdfDownloading = $state<string | null>(null);
 
   // Pagination for monthly report rows
   let reportPage = $state(1);
   let reportPageSize = $state(10);
-  let reportRows: MonthlyRow[] = $derived(monthlyReport !== null ? (monthlyReport as MonthlyReport).rows : []);
+  let reportRows: MonthlyRow[] = $derived(
+    monthlyReport !== null ? (monthlyReport as MonthlyReport).rows : [],
+  );
   let pagedReportRows = $derived(
     reportRows.slice((reportPage - 1) * reportPageSize, reportPage * reportPageSize),
   );
@@ -196,7 +197,6 @@
     }
   }
 
-
   function formatHours(h: number): string {
     const hours = Math.floor(h);
     const minutes = Math.round((h - hours) * 60);
@@ -272,7 +272,7 @@
     <div class="report-card-header">
       <div>
         <h2 class="report-card-title">DATEV Export</h2>
-        <p class="report-card-desc text-muted">CSV-Datei für DATEV-Lohnabrechnung herunterladen</p>
+        <p class="report-card-desc text-muted">TXT-Datei für DATEV-Lohnabrechnung herunterladen</p>
       </div>
     </div>
 
@@ -300,7 +300,7 @@
         <span class="btn-spinner"></span>
         Vorbereiten…
       {:else}
-        ↓ CSV herunterladen
+        ↓ TXT herunterladen
       {/if}
     </button>
 
@@ -416,7 +416,6 @@
       </div>
     {/if}
   </div>
-
 </div>
 
 <!-- Monthly Report Results -->
@@ -481,7 +480,11 @@
             {/each}
           </tbody>
         </table>
-        <Pagination total={monthlyReport?.rows.length ?? 0} bind:page={reportPage} bind:pageSize={reportPageSize} />
+        <Pagination
+          total={monthlyReport?.rows.length ?? 0}
+          bind:page={reportPage}
+          bind:pageSize={reportPageSize}
+        />
       </div>
     {/if}
   </div>
@@ -507,7 +510,7 @@
 
   .report-card:hover {
     transform: translateY(-3px);
-    box-shadow: var(--shadow-md, 0 8px 20px rgba(0,0,0,0.12));
+    box-shadow: var(--shadow-md, 0 8px 20px rgba(0, 0, 0, 0.12));
   }
 
   .report-card-icon-section {
