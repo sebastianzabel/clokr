@@ -871,8 +871,8 @@
   </div>
 {/if}
 
-<!-- ── Monat-Navigation (beide Ansichten) ────────────────────────────────── -->
-<div class="cal-nav month-nav-standalone">
+<!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste) ───── -->
+{#snippet navContent()}
   <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
     <svg
       width="18"
@@ -934,11 +934,14 @@
       stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
     >
   </button>
-</div>
+{/snippet}
 
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
 {#if teView === "calendar"}
   <div class="cal-section card card-animate">
+    <div class="cal-nav">
+      {@render navContent()}
+    </div>
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -949,23 +952,24 @@
     <!-- Tage -->
     {#if loading}
       <div class="cal-grid">
-        {#each Array(35) as _, i (i)}<div class="cal-day skeleton"></div>{/each}
+        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
       <div class="cal-grid">
         {#each calendarDays as day (day.dateStr)}
           <div
             data-date={day.dateStr}
-            class="cal-day cal-day--{day.status}{day.absenceType && !day.isWeekend
-              ? ' cal-day--abs cal-day--abs-' + day.absenceType.toLowerCase()
+            class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+              ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
               : ''}"
-            class:other-month={!day.isCurrentMonth}
-            class:is-today={day.isToday}
-            class:is-weekend={day.isWeekend}
-            class:is-holiday={day.isHoliday && day.isCurrentMonth}
-            class:is-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-            class:cal-day--disabled={day.isBeforeHire && day.isCurrentMonth}
-            class:cal-day--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
+            class:cal-other={!day.isCurrentMonth}
+            class:cal-current={day.isCurrentMonth}
+            class:cal-today={day.isToday}
+            class:cal-weekend={day.isWeekend}
+            class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+            class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+            class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+            class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
             title={day.isBeforeHire
               ? "Vor Eintrittsdatum"
               : day.isHoliday
@@ -983,11 +987,11 @@
                 openAdd(day.dateStr);
             }}
           >
-            <span class="day-num">{day.dayNum}</span>
+            <span class="cal-day-num">{day.dayNum}</span>
             {#if day.isHoliday && day.isCurrentMonth}
-              <span class="day-holiday-name">{day.holidayName}</span>
+              <span class="cal-holiday-label">{day.holidayName}</span>
             {:else if day.absenceType}
-              <span class="day-abs-type"
+              <span class="cal-abs-type"
                 >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
               >
             {/if}
@@ -1023,6 +1027,9 @@
 
 <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
 {#if teView === "list"}
+  <div class="cal-nav month-nav-standalone">
+    {@render navContent()}
+  </div>
   <div class="table-wrapper">
     <table class="data-table">
       <thead>
@@ -1294,7 +1301,7 @@
 
   /* ── Warning button ────────────────────────────────────────────── */
   .btn-warning {
-    background: #f59e0b;
+    background: var(--color-yellow);
     color: #fff;
     border: none;
     border-radius: 6px;
@@ -1304,16 +1311,10 @@
     cursor: pointer;
   }
   .btn-warning:hover {
-    background: #d97706;
+    background: var(--color-yellow-border);
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .cal-section {
-    padding: 0;
-    overflow: hidden;
-    margin-bottom: 1rem;
-  }
-
   .cal-nav {
     display: flex;
     align-items: center;
@@ -1509,22 +1510,7 @@
     grid-template-columns: repeat(7, 1fr);
   }
 
-  .cal-header-row {
-    border-bottom: 1.5px solid var(--gray-200, #e5e7eb);
-    background: var(--gray-50, #f9fafb);
-  }
-
-  .cal-dow {
-    padding: 0.5rem;
-    text-align: center;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-muted);
-  }
-
-  .cal-day {
+  .cal-cell {
     min-height: 72px;
     padding: 0.3rem 0.4rem;
     border-right: 1px solid var(--gray-100, #f3f4f6);
@@ -1538,25 +1524,19 @@
       box-shadow 0.12s;
     position: relative;
   }
-  .cal-day:nth-child(7n) {
+  .cal-cell:nth-child(7n) {
     border-right: none;
   }
 
-  :global(.cal-day.other-month) {
-    opacity: 0.3 !important;
-    cursor: default;
-    background: var(--gray-50, #f9fafb) !important;
-  }
-
   /* Tage vor dem Eintrittsdatum */
-  :global(.cal-day.cal-day--disabled) {
+  :global(.cal-cell.cal-cell--disabled) {
     opacity: 0.4;
     pointer-events: none;
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
 
-  :global(.cal-day.cal-day--arbzg-warn) {
+  :global(.cal-cell.cal-cell--arbzg-warn) {
     border-left: 3px solid #f59e0b;
     background: rgba(245, 158, 11, 0.08);
   }
@@ -1565,73 +1545,34 @@
     color: var(--color-text-muted);
     opacity: 0.5;
   }
-  .cal-day:not(.other-month):hover {
+  .cal-cell:not(.cal-other):hover {
     background: color-mix(in srgb, var(--color-brand) 8%, transparent);
     box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-brand) 25%, transparent);
   }
 
-  .cal-day.is-today {
-    box-shadow: inset 0 0 0 2px var(--color-brand);
-  }
-
-  /* :global nötig – Svelte doppelt den Scope-Hash bei Compound-Selektoren */
-  :global(.cal-day.is-selected:not(.other-month)) {
-    background-color: var(--color-brand) !important;
-    box-shadow:
-      0 0 0 2px var(--color-brand),
-      0 4px 12px rgba(0, 0, 0, 0.15) !important;
-    z-index: 1;
-  }
-  :global(.cal-day.is-selected:not(.other-month) .day-num),
-  :global(.cal-day.is-selected:not(.other-month) .day-worked),
-  :global(.cal-day.is-selected:not(.other-month) .day-bal),
-  :global(.cal-day.is-selected:not(.other-month) .day-missing),
-  :global(.cal-day.is-selected:not(.other-month) .day-abs-type),
-  :global(.cal-day.is-selected:not(.other-month) .day-holiday-name) {
-    color: white !important;
-  }
-  :global(.cal-day.is-selected.is-today:not(.other-month) .day-num) {
-    background: rgba(255, 255, 255, 0.25);
-    color: white;
-  }
-
-  /* Wochenende + Feiertage */
-  /* Weekend + holiday cell styles → global in app.css */
-  .day-holiday-name {
-    display: block;
-    font-size: 0.6rem;
-    color: var(--color-brand);
-    font-weight: 600;
-    line-height: 1.2;
-    margin-top: 0.1rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   /* Status-Farben */
-  .cal-day--ok {
-    background: #f0fdf4;
+  .cal-cell--ok {
+    background: var(--color-green-bg);
   }
-  .cal-day--partial {
-    background: #fffbeb;
+  .cal-cell--partial {
+    background: var(--color-yellow-bg);
   }
-  .cal-day--missing {
-    background: #fef2f2;
+  .cal-cell--missing {
+    background: var(--color-red-bg);
   }
-  .cal-day--today-ok {
-    background: #f0fdf4;
+  .cal-cell--today-ok {
+    background: var(--color-green-bg);
   }
-  .cal-day--today-partial {
-    background: #fffbeb;
+  .cal-cell--today-partial {
+    background: var(--color-yellow-bg);
   }
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
-  /* Absence cell backgrounds → global in app.css (.cal-day--abs-*) */
+  /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
 
   /* Nachbarmonat-Tage mit Abwesenheit etwas heller darstellen */
 
-  .day-abs-type {
+  .cal-abs-type {
     display: block;
     font-size: 0.6rem;
     font-weight: 700;
@@ -1644,24 +1585,6 @@
     white-space: nowrap;
   }
 
-  .day-num {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    line-height: 1;
-    flex-shrink: 0;
-  }
-  .is-today .day-num {
-    background: var(--color-brand);
-    color: white;
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.65rem;
-  }
   .day-worked {
     font-size: 0.75rem;
     font-weight: 700;
@@ -1674,15 +1597,15 @@
     font-weight: 600;
   }
   .day-bal.pos {
-    color: #16a34a;
+    color: var(--color-green);
   }
   .day-bal.neg {
-    color: #dc2626;
+    color: var(--color-red);
   }
   .day-missing {
     font-size: 0.7rem;
     font-family: var(--font-mono);
-    color: #dc2626;
+    color: var(--color-red);
     opacity: 0.75;
   }
 
@@ -1887,16 +1810,6 @@
     padding: 0.15rem 0.5rem;
     border-radius: 4px;
   }
-  .btn-outline {
-    border: 1px solid #3b82f6;
-    color: #3b82f6;
-    background: white;
-    cursor: pointer;
-  }
-  .btn-outline:hover {
-    background: #eff6ff;
-  }
-
   .btn-icon {
     background: none;
     border: none;
@@ -2167,7 +2080,7 @@
   /* ── Mobile calendar improvements ──────────────────────────────── */
   @media (max-width: 640px) {
     /* Reduce cell height on mobile but keep them tappable */
-    .cal-day {
+    .cal-cell {
       min-height: 72px;
       padding: 0.375rem 0.375rem;
     }
@@ -2184,13 +2097,13 @@
     }
 
     /* Smaller day numbers on mobile */
-    .day-num {
+    .cal-day-num {
       font-size: 0.75rem;
     }
 
     /* Holiday/absence labels smaller on mobile */
-    .day-holiday-name,
-    .day-abs-type {
+    .cal-holiday-label,
+    .cal-abs-type {
       font-size: 0.5rem;
     }
 

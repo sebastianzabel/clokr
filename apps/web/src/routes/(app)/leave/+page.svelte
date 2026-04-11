@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { run, preventDefault, self } from "svelte/legacy";
+  import { preventDefault, self } from "svelte/legacy";
 
   import { onMount, onDestroy } from "svelte";
   import { page } from "$app/stores";
@@ -896,14 +896,14 @@
     myReqPage = 1;
   });
 
-  run(() => {
+  $effect(() => {
     if (showForm) {
       formStart;
       formEnd;
       scheduleOverlapLoad();
     }
   });
-  run(() => {
+  $effect(() => {
     if (showForm) {
       formStart;
       formEnd;
@@ -912,7 +912,7 @@
     }
   });
   // Kontostände laden wenn Typ wechselt oder Formular öffnet
-  run(() => {
+  $effect(() => {
     if (showForm) loadBalanceForType(formType);
   });
 </script>
@@ -1317,7 +1317,7 @@
     </div>
   {/if}
 
-  <div class="cal-section card">
+  <div class="cal-section card card-animate">
     <!-- Navigation -->
     <div class="cal-nav">
       <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat">
@@ -1394,7 +1394,12 @@
     </div>
 
     <!-- Tage -->
-    <div class="cal-grid {calLoading ? 'cal-loading' : ''}">
+    {#if calLoading}
+      <div class="cal-grid">
+        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+      </div>
+    {:else}
+    <div class="cal-grid">
       {#each calDays as day (day.dateStr)}
         {@const entries = calMap.get(day.dateStr) ?? []}
         {@const holidays = entries.filter((e) => e.isHoliday)}
@@ -1402,7 +1407,7 @@
         {@const isHoliday = holidays.length > 0}
         <div
           class="cal-cell"
-          class:cal-cell--current={day.isCurrentMonth}
+          class:cal-current={day.isCurrentMonth}
           class:cal-other={!day.isCurrentMonth}
           class:cal-today={day.isToday}
           class:cal-weekend={day.isWeekend && day.isCurrentMonth}
@@ -1412,11 +1417,20 @@
           tabindex={day.isCurrentMonth ? 0 : undefined}
           onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
           onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+          onkeydown={(e) => {
+            if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+              e.preventDefault();
+              formStart = day.dateStr;
+              formEnd = day.dateStr;
+              editingRequest = null;
+              showForm = true;
+            }
+          }}
         >
           <span class="cal-day-num">{day.dayNum}</span>
           {#if isHoliday && day.isCurrentMonth}
             <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-              🎌 {holidays[0].firstName}
+              {holidays[0].firstName}
             </div>
           {/if}
           <div class="cal-chips">
@@ -1448,6 +1462,7 @@
         </div>
       {/each}
     </div>
+    {/if}
 
     <!-- Legende -->
     <div class="cal-legend">
@@ -2462,12 +2477,12 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: var(--brand-light, #eff6ff);
-    border: 1px solid var(--brand-border, #bfdbfe);
+    background: var(--color-brand-tint);
+    border: 1px solid var(--color-brand-tint-hover);
     border-radius: 8px;
     padding: 0.5rem 0.875rem;
     font-size: 0.9375rem;
-    color: var(--brand, #2563eb);
+    color: var(--color-brand);
   }
   .days-info-icon {
     font-size: 1rem;
@@ -2483,12 +2498,6 @@
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .cal-section {
-    padding: 0;
-    overflow: hidden;
-    margin-bottom: 1rem;
-  }
-
   .cal-nav {
     display: grid;
     grid-template-columns: auto 1fr auto;
@@ -2639,19 +2648,6 @@
     grid-template-columns: repeat(7, 1fr);
     user-select: none;
   }
-  .cal-header-row {
-    border-bottom: 1.5px solid var(--gray-200, #e5e7eb);
-    background: var(--gray-50, #f9fafb);
-  }
-  .cal-dow {
-    padding: 0.5rem;
-    text-align: center;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: var(--color-text-muted);
-  }
 
   .cal-loading {
     opacity: 0.5;
@@ -2659,7 +2655,6 @@
   }
 
   .cal-cell {
-    background: #fff;
     min-height: 72px;
     padding: 0.3rem 0.4rem 0.4rem;
     border-right: 1px solid var(--gray-100, #f3f4f6);
@@ -2674,20 +2669,10 @@
     border-right: none;
   }
 
-  :global(.cal-cell.cal-other) {
-    opacity: 0.3 !important;
-    cursor: default;
-    background: var(--gray-50, #f9fafb) !important;
-  }
-  /* Weekend + holiday cell styles → global in app.css */
-  .cal-today {
-    box-shadow: inset 0 0 0 2px var(--color-brand);
-  }
-
-  .cal-cell--current {
+  .cal-cell.cal-current {
     cursor: pointer;
   }
-  .cal-cell--current:hover {
+  .cal-cell.cal-current:hover {
     background: var(--color-bg-subtle, #f3f0ff);
   }
   .cal-cell--drag-selected {
@@ -2697,33 +2682,7 @@
   }
 
   .cal-day-num {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    line-height: 1;
-    flex-shrink: 0;
     z-index: 1;
-  }
-  .cal-today .cal-day-num {
-    background: var(--color-brand);
-    color: white;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.7rem;
-  }
-
-  .cal-holiday-label {
-    font-size: 0.6875rem;
-    color: #6b21a8;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 1px 2px;
   }
 
   .cal-chips {
@@ -2791,8 +2750,8 @@
   .legend-holiday-dot {
     width: 10px;
     height: 10px;
-    background: #ede7f6;
-    border: 1.5px solid #80377b;
+    background: var(--color-brand-tint);
+    border: 1.5px solid var(--color-brand);
     border-radius: 2px;
     flex-shrink: 0;
     display: inline-block;
