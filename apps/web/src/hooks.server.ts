@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Handle, HandleServerError } from "@sveltejs/kit";
 
 const API_BACKEND = process.env.API_URL || "http://localhost:4000";
@@ -62,16 +63,27 @@ export const handle: Handle = async ({ event, resolve }) => {
     }
   }
 
-  // SSR page requests
-  const response = await resolve(event);
+  // SSR page requests — generate a per-request nonce for inline scripts
+  const nonce = randomBytes(16).toString("base64");
+  event.locals.nonce = nonce;
+
+  const response = await resolve(event, {
+    // Inject nonce into all <script> tags SvelteKit generates for hydration
+    transformPageChunk: ({ html }) => html.replace(/<script\b/g, `<script nonce="${nonce}"`),
+  });
+
+  // HSTS — only meaningful in production behind TLS
+  if (process.env.NODE_ENV === "production") {
+    response.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  }
 
   // Content Security Policy
   const cspMode = process.env.CSP_MODE || "enforce"; // "off", "report-only", "enforce"
   if (cspMode !== "off") {
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
+      `script-src 'self' 'nonce-${nonce}'`,
+      "style-src 'self' 'unsafe-inline'", // Svelte scoped styles require unsafe-inline
       "font-src 'self'",
       "img-src 'self' data: blob:",
       "connect-src 'self'",
