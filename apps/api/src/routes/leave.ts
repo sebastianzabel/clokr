@@ -7,6 +7,7 @@ import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
+import { updateOvertimeAccount } from "./time-entries";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
@@ -608,6 +609,12 @@ export async function leaveRoutes(app: FastifyInstance) {
               "Failed to recalculate snapshots after leave cancellation",
             ),
           );
+          await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
+            app.log.error(
+              { err, employeeId: existing.employeeId },
+              "Failed to update overtime account after leave cancellation",
+            ),
+          );
         }
 
         // Auto-dismiss manager LEAVE_REQUEST notifications for this request
@@ -729,6 +736,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           app.log.error(
             { err, employeeId: existing.employeeId },
             "Failed to recalculate snapshots after leave approval",
+          ),
+        );
+        await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
+          app.log.error(
+            { err, employeeId: existing.employeeId },
+            "Failed to update overtime account after leave approval",
           ),
         );
       }
