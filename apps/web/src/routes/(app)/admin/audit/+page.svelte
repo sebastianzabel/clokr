@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface AuditLog {
     id: string;
@@ -31,9 +32,7 @@
   let filterAction = $state("");
   let filterEntity = $state("");
   let page = $state(1);
-  const LIMIT = 50;
-
-  let totalPages = $derived(Math.ceil(total / LIMIT));
+  let pageSize = $state(10);
 
   const ACTIONS = ["LOGIN", "CREATE", "UPDATE", "DELETE", "EXPORT"];
   const ENTITIES = ["TimeEntry", "LeaveRequest", "Employee", "User", "OvertimeAccount", "Settings"];
@@ -46,7 +45,7 @@
     try {
       const params = new URLSearchParams({
         page: String(page),
-        limit: String(LIMIT),
+        limit: String(pageSize),
         ...(filterAction ? { action: filterAction } : {}),
         ...(filterEntity ? { entity: filterEntity } : {}),
       });
@@ -62,11 +61,6 @@
 
   async function applyFilter() {
     page = 1;
-    await loadLogs();
-  }
-
-  async function goPage(p: number) {
-    page = p;
     await loadLogs();
   }
 
@@ -196,18 +190,12 @@
     </table>
   </div>
 
-  <!-- Pagination -->
-  {#if totalPages > 1}
-    <div class="pagination">
-      <button class="btn btn-sm btn-ghost" disabled={page <= 1} onclick={() => goPage(page - 1)}>
-        ← Zurück
-      </button>
-      <span class="page-info">Seite {page} von {totalPages}</span>
-      <button class="btn btn-sm btn-ghost" disabled={page >= totalPages} onclick={() => goPage(page + 1)}>
-        Weiter →
-      </button>
-    </div>
-  {/if}
+  <Pagination
+    total={total}
+    bind:page
+    bind:pageSize
+    onChange={() => loadLogs()}
+  />
 {/if}
 
 <style>
@@ -258,16 +246,5 @@
     overflow-y: auto;
   }
 
-  .pagination {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 1rem;
-    margin-top: 1.25rem;
-  }
 
-  .page-info {
-    font-size: 0.875rem;
-    color: var(--color-text-muted);
-  }
 </style>

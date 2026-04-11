@@ -355,4 +355,144 @@ describe("Employees API", () => {
       expect(cfg.smtpPassword!.length).toBeGreaterThan(50);
     }
   });
+
+  describe("DELETE /:id/hard-delete — forceDelete bypass", () => {
+    // Each test creates its own anonymized employee within the retention window.
+    async function createAnonymizedEmployee(suffix: string) {
+      const uid = `hd-${suffix}-${Date.now().toString(36)}`;
+      const passwordHash = await bcrypt.hash("test-pw-123", 10);
+      const user = await app.prisma.user.create({
+        data: {
+          email: `deleted-${uid}@anonymized.local`,
+          passwordHash: "ANONYMIZED",
+          role: "EMPLOYEE",
+          isActive: false,
+        },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          firstName: "Gelöscht",
+          lastName: `GELÖSCHT-${uid}`,
+          employeeNumber: `GELÖSCHT-${uid}`,
+          hireDate: new Date("2024-01-01"), // hired 2024 → retention expires 2034-12-31
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: emp.id, balanceHours: 0 },
+      });
+      void passwordHash; // unused but needed for bcrypt import satisfaction
+      return { emp, user };
+    }
+
+    it("Test 1 — without forceDelete, returns 409 with retentionExpiresAt inside retention window", async () => {
+      const { emp } = await createAnonymizedEmployee("t1");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      expect(body.retentionExpiresAt).toBeDefined();
+      expect(new Date(body.retentionExpiresAt).getTime()).toBeGreaterThan(Date.now());
+
+      // Cleanup — employee still exists, clean via prisma
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.delete({ where: { id: emp.id } });
+      await app.prisma.user.delete({ where: { id: emp.userId } });
+    });
+
+    it("Test 2 — with forceDelete: true, returns 204 and employee row is deleted", async () => {
+      const { emp } = await createAnonymizedEmployee("t2");
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "content-type": "application/json",
+        },
+        payload: { forceDelete: true },
+      });
+
+      expect(res.statusCode).toBe(204);
+
+      // Employee row must be gone
+      const found = await app.prisma.employee.findUnique({ where: { id: emp.id } });
+      expect(found).toBeNull();
+    });
+
+    it("Test 3 — audit entry contains forceDelete: true and retentionExpiresAt after force-delete", async () => {
+      const { emp } = await createAnonymizedEmployee("t3");
+
+      await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "content-type": "application/json",
+        },
+        payload: { forceDelete: true },
+      });
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "Employee", entityId: emp.id, action: "HARD_DELETE" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      expect(log).not.toBeNull();
+      const newVal = log!.newValue as Record<string, unknown>;
+      expect(newVal.forceDelete).toBe(true);
+      expect(typeof newVal.retentionExpiresAt).toBe("string");
+      // retentionExpiresAt should be in the future (proof of override)
+      expect(new Date(newVal.retentionExpiresAt as string).getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("Test 4 — anonymize-first guard still blocks forceDelete on non-anonymized employee", async () => {
+      // Create a non-anonymized employee
+      const uid = `hd-t4-${Date.now().toString(36)}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `nonanon-${uid}@test.local`,
+          passwordHash: "test",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          firstName: "Real",
+          lastName: "Person",
+          employeeNumber: `RP-${uid}`,
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: {
+          authorization: `Bearer ${data.adminToken}`,
+          "content-type": "application/json",
+        },
+        payload: { forceDelete: true },
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe("Mitarbeiter muss zuerst anonymisiert werden");
+
+      // Cleanup
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.delete({ where: { id: emp.id } });
+      await app.prisma.user.delete({ where: { id: user.id } });
+    });
+  });
 });

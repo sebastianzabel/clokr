@@ -4,6 +4,8 @@
   import { onMount } from "svelte";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
+  import { toasts } from "$stores/toast";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -56,6 +58,7 @@
   let eEmployeeNumber = $state("");
   let eRole: Role = $state("EMPLOYEE");
   let eNfcCardId = $state("");
+  let eExitDate = $state("");
 
   // Anonymize confirm (step 1)
   let showAnonymizeConfirm = $state(false);
@@ -67,6 +70,8 @@
   let hardDeletingEmployee: Employee | null = $state(null);
   let hardDeleting = $state(false);
   let hardDeleteError = $state("");
+  let hardDeleteRetentionExpiresAt = $state<string | null>(null);
+  let hardDeleteForce = $state(false);
 
   let isAdmin = $derived($authStore.user?.role === "ADMIN");
 
@@ -80,6 +85,10 @@
   let filterRole = $state<Role | "">("");
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
   let showAnonymized = $state(false);
+
+  // Pagination
+  let empPage = $state(1);
+  let empPageSize = $state(10);
 
   let filteredEmployees = $derived(
     employees.filter((emp) => {
@@ -109,6 +118,15 @@
       return true;
     }),
   );
+
+  let pagedEmployees = $derived(
+    filteredEmployees.slice((empPage - 1) * empPageSize, empPage * empPageSize),
+  );
+
+  $effect(() => {
+    filteredEmployees.length;
+    empPage = 1;
+  });
 
   onMount(loadEmployees);
 
@@ -180,6 +198,7 @@
     eEmployeeNumber = emp.employeeNumber;
     eRole = emp.user.role;
     eNfcCardId = emp.nfcCardId ?? "";
+    eExitDate = emp.exitDate ? emp.exitDate.split("T")[0] : "";
     editError = "";
     showEditModal = true;
   }
@@ -189,13 +208,17 @@
     editSaving = true;
     editError = "";
     try {
-      await api.patch(`/employees/${editingEmployee.id}`, {
-        firstName: eFirstName,
-        lastName: eLastName,
-        employeeNumber: eEmployeeNumber,
-        role: eRole,
-        nfcCardId: eNfcCardId || null,
-      });
+      const res = await api.patch<Employee & { proRataWarning?: { message: string } }>(
+        `/employees/${editingEmployee.id}`,
+        {
+          firstName: eFirstName,
+          lastName: eLastName,
+          employeeNumber: eEmployeeNumber,
+          role: eRole,
+          nfcCardId: eNfcCardId || null,
+          exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
+        },
+      );
       employees = employees.map((e) =>
         e.id === editingEmployee!.id
           ? {
@@ -204,11 +227,15 @@
               lastName: eLastName,
               employeeNumber: eEmployeeNumber,
               nfcCardId: eNfcCardId || null,
+              exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
               user: { ...e.user, role: eRole },
             }
           : e,
       );
       showEditModal = false;
+      if (res.proRataWarning) {
+        toasts.warning(res.proRataWarning.message, 8000);
+      }
     } catch (e: unknown) {
       editError = e instanceof Error ? e.message : "Fehler beim Speichern";
     } finally {
@@ -271,6 +298,8 @@
   function confirmHardDelete(emp: Employee) {
     hardDeletingEmployee = emp;
     hardDeleteError = "";
+    hardDeleteRetentionExpiresAt = null;
+    hardDeleteForce = false;
     showHardDeleteConfirm = true;
   }
 
@@ -279,13 +308,22 @@
     hardDeleting = true;
     hardDeleteError = "";
     try {
-      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`);
+      const body = hardDeleteForce ? { forceDelete: true } : undefined;
+      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`, body);
       employees = employees.filter((e) => e.id !== hardDeletingEmployee!.id);
       showHardDeleteConfirm = false;
       hardDeletingEmployee = null;
+      hardDeleteRetentionExpiresAt = null;
+      hardDeleteForce = false;
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Fehler beim endgültigen Löschen";
-      hardDeleteError = msg;
+      if (e instanceof Error) {
+        hardDeleteError = e.message;
+        // Extract retentionExpiresAt from API error response data if present
+        const apiData = (e as { data?: { retentionExpiresAt?: string } }).data;
+        hardDeleteRetentionExpiresAt = apiData?.retentionExpiresAt ?? null;
+      } else {
+        hardDeleteError = "Fehler beim endgültigen Löschen";
+      }
     } finally {
       hardDeleting = false;
     }
@@ -383,7 +421,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredEmployees as emp (emp.id)}
+          {#each pagedEmployees as emp (emp.id)}
             <tr class:row-inactive={!emp.user.isActive}>
               <td class="col-number">{emp.employeeNumber}</td>
               <td class="col-name">
@@ -455,6 +493,11 @@
           {/each}
         </tbody>
       </table>
+      <Pagination
+        total={filteredEmployees.length}
+        bind:page={empPage}
+        bind:pageSize={empPageSize}
+      />
     </div>
   {/if}
 </div>
@@ -665,6 +708,13 @@
             </select>
           </div>
           <div class="form-group form-group--full">
+            <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
+            <input id="e-exitdate" type="date" bind:value={eExitDate} class="form-input" />
+            <p class="hint">
+              Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (§ 5 Abs. 2 BUrlG).
+            </p>
+          </div>
+          <div class="form-group form-group--full">
             <label class="form-label" for="e-nfc">NFC-Karten-ID</label>
             <input
               id="e-nfc"
@@ -702,14 +752,14 @@
       </div>
       <div class="modal-body">
         <p>
-          Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong>
+          Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong
+          >
           wirklich anonymisieren?
         </p>
         <p class="hint">
           Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht. Zeiteinträge,
-          Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist
-          (10 Jahre nach § 147 AO) erhalten. Erst danach kann der Datensatz endgültig gelöscht
-          werden.
+          Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10
+          Jahre nach § 147 AO) erhalten. Erst danach kann der Datensatz endgültig gelöscht werden.
         </p>
       </div>
       <div class="modal-footer">
@@ -742,17 +792,34 @@
         <h2 class="modal-title">Endgültig löschen</h2>
       </div>
       <div class="modal-body">
-        {#if hardDeleteError}
+        {#if hardDeleteError && !hardDeleteRetentionExpiresAt}
           <div class="alert alert-error mb-3">{hardDeleteError}</div>
         {/if}
+        {#if hardDeleteRetentionExpiresAt}
+          <div class="alert alert-warning mb-3">
+            <strong>Aufbewahrungsfrist noch nicht abgelaufen.</strong> Die gesetzliche
+            Aufbewahrungsfrist (§ 147 AO, 10 Jahre) läuft ab am:
+            <strong
+              >{new Date(hardDeleteRetentionExpiresAt).toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              })}</strong
+            >.
+          </div>
+          <label class="force-delete-checkbox">
+            <input type="checkbox" bind:checked={hardDeleteForce} />
+            Ich bestätige, dass ich diese Aufbewahrungsfrist kenne und den Datensatz trotzdem unwiderruflich
+            löschen möchte (z. B. Testdaten). Diese Aktion wird im Audit-Log protokolliert.
+          </label>
+        {/if}
         <p>
-          Den anonymisierten Datensatz von <strong
-            >{hardDeletingEmployee.employeeNumber}</strong
-          > endgültig und unwiderruflich löschen?
+          Den anonymisierten Datensatz von <strong>{hardDeletingEmployee.employeeNumber}</strong> endgültig
+          und unwiderruflich löschen?
         </p>
         <p class="hint danger-hint">
-          Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17). Sie ist nur
-          nach Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre) möglich.
+          Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17). Sie ist nur nach
+          Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre) möglich.
         </p>
       </div>
       <div class="modal-footer">
@@ -762,9 +829,15 @@
             showHardDeleteConfirm = false;
             hardDeletingEmployee = null;
             hardDeleteError = "";
+            hardDeleteRetentionExpiresAt = null;
+            hardDeleteForce = false;
           }}>Abbrechen</button
         >
-        <button class="btn btn-danger" onclick={doHardDelete} disabled={hardDeleting}>
+        <button
+          class="btn btn-danger"
+          onclick={doHardDelete}
+          disabled={hardDeleting || (hardDeleteRetentionExpiresAt !== null && !hardDeleteForce)}
+        >
           {hardDeleting ? "Löschen…" : "Endgültig löschen"}
         </button>
       </div>
@@ -1043,6 +1116,22 @@
     white-space: nowrap;
   }
   .filter-checkbox input[type="checkbox"] {
+    cursor: pointer;
+  }
+
+  .force-delete-checkbox {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-text);
+    cursor: pointer;
+    margin-top: 0.5rem;
+    line-height: 1.4;
+  }
+  .force-delete-checkbox input[type="checkbox"] {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
     cursor: pointer;
   }
 </style>

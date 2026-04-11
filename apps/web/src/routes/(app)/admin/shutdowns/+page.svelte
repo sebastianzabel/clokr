@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   interface Employee {
@@ -32,6 +33,11 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let shutdowns: CompanyShutdown[] = $state([]);
   let allEmployees: Employee[] = $state([]);
+
+  // Pagination
+  let sdPage = $state(1);
+  let sdPageSize = $state(10);
+  let pagedShutdowns = $derived(shutdowns.slice((sdPage - 1) * sdPageSize, sdPage * sdPageSize));
   let loading = $state(true);
   let error = $state("");
 
@@ -245,13 +251,15 @@
     {/each}
   </div>
 {:else if shutdowns.length === 0}
-  <div class="empty-state">
-    <p class="empty-state__text">Keine Betriebsurlaube für {filterYear} angelegt.</p>
+  <div class="empty-state card card-body">
+    <span class="empty-icon">🏢</span>
+    <h3>Keine Betriebsurlaube</h3>
+    <p class="empty-state__text text-muted">Keine Betriebsurlaube für {filterYear} angelegt.</p>
     <button class="btn btn-primary" onclick={openCreate}>Ersten anlegen</button>
   </div>
 {:else}
   <div class="shutdown-list">
-    {#each shutdowns as s (s.id)}
+    {#each pagedShutdowns as s (s.id)}
       <div class="shutdown-card">
         <div class="shutdown-card__main">
           <div class="shutdown-card__info">
@@ -306,6 +314,7 @@
       </div>
     {/each}
   </div>
+  <Pagination total={shutdowns.length} bind:page={sdPage} bind:pageSize={sdPageSize} />
 {/if}
 
 <!-- ── Modal: Betriebsurlaub anlegen / bearbeiten ──────────────────────────── -->
@@ -640,6 +649,12 @@
     text-align: center;
     padding: 3rem 1rem;
     color: var(--color-text-muted);
+  }
+
+  .empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 0.25rem;
+    display: block;
   }
 
   .empty-state__text {

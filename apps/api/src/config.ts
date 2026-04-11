@@ -1,7 +1,3 @@
-import { config as dotenvConfig } from "dotenv";
-import { resolve } from "path";
-dotenvConfig({ path: resolve(__dirname, "../.env") });
-
 import { z } from "zod";
 
 const envSchema = z

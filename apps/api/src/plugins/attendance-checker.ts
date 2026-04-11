@@ -71,6 +71,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
             title: "Offene Stempelung",
             message: `Du bist seit ${startStr} eingestempelt. Bitte Arbeitszeit korrigieren.`,
             link: `/time-entries?highlight=${entry.id}`,
+            relatedType: "TimeEntry",
+            relatedId: entry.id,
           });
 
           app.log.info(

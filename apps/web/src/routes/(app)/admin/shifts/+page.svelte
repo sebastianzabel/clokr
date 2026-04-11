@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "$api/client";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   interface Employee {
@@ -42,6 +43,11 @@
   let employees: Employee[] = $state([]);
   let shifts: Shift[] = $state([]);
   let templates: ShiftTemplate[] = $state([]);
+
+  // Pagination for template management list
+  let tplPage = $state(1);
+  let tplPageSize = $state(10);
+  let pagedTemplates = $derived(templates.slice((tplPage - 1) * tplPageSize, tplPage * tplPageSize));
   let loading = $state(true);
   let error = $state("");
   let timeEntries: Array<{
@@ -396,7 +402,7 @@
     <h3 class="template-panel__title">Schichtvorlagen</h3>
     {#if templates.length > 0}
       <div class="template-list">
-        {#each templates as tpl (tpl.id)}
+        {#each pagedTemplates as tpl (tpl.id)}
           <div class="template-item">
             <span class="template-item__color" style="background: {tpl.color}"></span>
             <span class="template-item__name">{tpl.name}</span>
@@ -410,6 +416,7 @@
           </div>
         {/each}
       </div>
+      <Pagination total={templates.length} bind:page={tplPage} bind:pageSize={tplPageSize} />
     {:else}
       <p class="text-muted">Noch keine Vorlagen vorhanden.</p>
     {/if}

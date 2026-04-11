@@ -836,7 +836,7 @@
 
 <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
 {#if schedule}
-  <div class="month-summary">
+  <div class="month-summary card-animate">
     <div class="msummary-item">
       <span class="msummary-label"
         >{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span
@@ -938,7 +938,7 @@
 
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
 {#if teView === "calendar"}
-  <div class="cal-section card">
+  <div class="cal-section card card-animate">
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -1114,8 +1114,10 @@
     </table>
   </div>
   {#if allEntries.length === 0}
-    <div class="card card-body" style="text-align:center;padding:2rem;">
-      <p class="text-muted">Keine Zeiteintraege in diesem Monat.</p>
+    <div class="empty-state card card-body">
+      <span class="empty-icon">📋</span>
+      <h3>Keine Einträge</h3>
+      <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
     </div>
   {/if}
 {/if}

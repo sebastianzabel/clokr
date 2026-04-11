@@ -101,6 +101,45 @@ export function splitDaysAcrossYears(
   return { year1Days, year2Days, year1, year2 };
 }
 
+/**
+ * Calculate pro-rata vacation entitlement for an employee leaving mid-year.
+ * Formula (BUrlG § 5 Abs. 2): baseDays × (volleBeschäftigungsmonate / 12), rounded UP to nearest 0.5.
+ *
+ * "Volle Beschäftigungsmonate": a month counts as full ONLY if the exitDate is on or after
+ * the LAST DAY of that month. E.g., Jun 30 → 6 full months; Jun 29 → 5.
+ *
+ * @param baseDays - Full-year vacation entitlement (may already be part-time adjusted)
+ * @param year - The calendar year to calculate for
+ * @param exitDate - The employee's last working day
+ * @returns Pro-rata entitlement rounded UP to nearest 0.5; or baseDays if exitDate is in future year
+ */
+export function calculateProRataVacation(baseDays: number, year: number, exitDate: Date): number {
+  if (!Number.isFinite(baseDays) || baseDays <= 0) return 0;
+
+  const exitYear = exitDate.getFullYear();
+
+  // Employee leaves after this year → full entitlement for this year
+  if (exitYear > year) return baseDays;
+
+  // Employee already left before this year → no entitlement
+  if (exitYear < year) return 0;
+
+  // Count volle Beschäftigungsmonate: month is full only if exitDate >= last day of that month
+  let monthsWorked = 0;
+  for (let month = 0; month < 12; month++) {
+    // Last day of the month (day 0 of next month)
+    const lastDayOfMonth = new Date(year, month + 1, 0);
+    if (exitDate >= lastDayOfMonth) {
+      monthsWorked++;
+    }
+  }
+  monthsWorked = Math.min(monthsWorked, 12);
+
+  const raw = (baseDays * monthsWorked) / 12;
+  // Round UP to nearest 0.5
+  return Math.ceil(raw * 2) / 2;
+}
+
 /** Count work days (Mon-Fri, excluding holidays) in a date range. */
 function countWorkDaysInRange(
   start: Date,
