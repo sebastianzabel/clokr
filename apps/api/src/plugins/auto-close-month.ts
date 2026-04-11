@@ -8,6 +8,7 @@ import {
   dateStrInTz,
 } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 /**
  * Auto-Monatsabschluss: runs daily at 06:00 during the first 10 days of each month.
@@ -48,6 +49,18 @@ export const autoCloseMonthPlugin = fp(async (app) => {
       }
 
       const { start: monthStart, end: monthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
+
+      // Pre-compute holiday date strings for this month: computed Feiertage + manual DB entries
+      const acmStateCode = STATE_MAP[tenant.federalState] ?? "NI";
+      const acmHolidayDateStrings = new Set<string>(
+        getHolidays(prevYear, acmStateCode).map((h) => h.date),
+      );
+      const acmDbHolidays = await app.prisma.publicHoliday.findMany({
+        where: { tenantId: tenant.id, date: { gte: monthStart, lte: monthEnd } },
+      });
+      for (const h of acmDbHolidays) {
+        acmHolidayDateStrings.add(dateStrInTz(h.date, tz));
+      }
 
       // Get all active employees
       const employees = await app.prisma.employee.findMany({
@@ -109,7 +122,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           },
           select: { date: true },
         });
-        const entryDates = new Set(entries.map((e) => e.date.toISOString().split("T")[0]));
+        const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
         // Check approved leave and absences
         const approvedLeave = await app.prisma.leaveRequest.findMany({
@@ -130,14 +143,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           },
         });
 
-        // Build set of leave/absence dates
+        // Build set of leave/absence dates (TZ-aware)
         const coveredDates = new Set<string>();
         for (const lr of approvedLeave) {
           const s = lr.startDate < monthStart ? monthStart : lr.startDate;
           const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
           const cur = new Date(s);
           while (cur <= e) {
-            coveredDates.add(cur.toISOString().split("T")[0]);
+            coveredDates.add(dateStrInTz(cur, tz));
             cur.setDate(cur.getDate() + 1);
           }
         }
@@ -146,28 +159,22 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
           const cur = new Date(s);
           while (cur <= e) {
-            coveredDates.add(cur.toISOString().split("T")[0]);
+            coveredDates.add(dateStrInTz(cur, tz));
             cur.setDate(cur.getDate() + 1);
           }
         }
 
-        // Check holidays
-        const holidays = await app.prisma.publicHoliday.findMany({
-          where: {
-            tenantId: tenant.id,
-            date: { gte: monthStart, lte: monthEnd },
-          },
-        });
-        for (const h of holidays) {
-          coveredDates.add(h.date.toISOString().split("T")[0]);
+        // Add holidays (computed Feiertage + manual DB entries) to coveredDates
+        for (const dateStr of acmHolidayDateStrings) {
+          coveredDates.add(dateStr);
         }
 
-        // Iterate workdays and find missing ones
+        // Iterate workdays and find missing ones (TZ-aware date strings)
         const missingDates: string[] = [];
         const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
         const cur = new Date(effectiveStart);
         while (cur <= monthEnd) {
-          const dateStr = cur.toISOString().split("T")[0];
+          const dateStr = dateStrInTz(cur, tz);
           const dow = getDayOfWeekInTz(cur, tz);
           const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
 
@@ -216,14 +223,28 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
           const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
-          const holidays = await app.prisma.publicHoliday.findMany({
+          // Holiday minutes: merge computed Feiertage + manual DB entries, dedup by date string
+          const effectiveStartStr = dateStrInTz(effectiveStart, tz);
+          const monthEndStr = dateStrInTz(monthEnd, tz);
+          const acmComputedForSnap = getHolidays(prevYear, acmStateCode).filter(
+            (h) => h.date >= effectiveStartStr && h.date <= monthEndStr,
+          );
+          const computedSnapDateSet = new Set(acmComputedForSnap.map((h) => h.date));
+          const acmDbForSnap = await app.prisma.publicHoliday.findMany({
             where: {
               tenant: { employees: { some: { id: emp.id } } },
               date: { gte: effectiveStart, lte: monthEnd },
             },
           });
-          const holidayMinutes = holidays.reduce((sum, h) => {
-            const dow = getDayOfWeekInTz(h.date, tz);
+          // Build unified list of holiday dates as Date objects (no duplicates)
+          const allSnapHolidays: Date[] = [
+            ...acmComputedForSnap.map((h) => new Date(h.date + "T00:00:00Z")),
+            ...acmDbForSnap
+              .filter((h) => !computedSnapDateSet.has(dateStrInTz(h.date, tz)))
+              .map((h) => h.date),
+          ];
+          const holidayMinutes = allSnapHolidays.reduce((sum, hDate) => {
+            const dow = getDayOfWeekInTz(hDate, tz);
             return sum + getDayHoursFromSchedule(schedule, dow) * 60;
           }, 0);
 
