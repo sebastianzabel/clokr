@@ -1737,6 +1737,9 @@ textarea.form-input {
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
 }
+.cal-cell {
+  background: var(--color-surface);
+}
 .cal-cell.cal-other {
   opacity: 0.3 !important;
   cursor: default;

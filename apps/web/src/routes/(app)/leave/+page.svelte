@@ -1317,7 +1317,7 @@
     </div>
   {/if}
 
-  <div class="cal-section card">
+  <div class="cal-section card card-animate">
     <!-- Navigation -->
     <div class="cal-nav">
       <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat">
@@ -1394,7 +1394,12 @@
     </div>
 
     <!-- Tage -->
-    <div class="cal-grid {calLoading ? 'cal-loading' : ''}">
+    {#if calLoading}
+      <div class="cal-grid">
+        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+      </div>
+    {:else}
+    <div class="cal-grid">
       {#each calDays as day (day.dateStr)}
         {@const entries = calMap.get(day.dateStr) ?? []}
         {@const holidays = entries.filter((e) => e.isHoliday)}
@@ -1448,6 +1453,7 @@
         </div>
       {/each}
     </div>
+    {/if}
 
     <!-- Legende -->
     <div class="cal-legend">
