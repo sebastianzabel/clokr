@@ -12,6 +12,7 @@ import {
 } from "../utils/timezone";
 import { resolvePresenceState } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -263,6 +264,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
             isWorkday,
             isFuture,
             hasShift: shift !== null,
+            isHoliday: false,
+            holidayName: null,
           });
 
           return {
@@ -296,6 +299,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
       const todayStr = dateStrInTz(today, tz);
+
+      // Fetch tenant federal state for holiday detection
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const stateCode = tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null;
+      const holidays = getHolidays(today.getFullYear(), stateCode);
+      const todayHoliday = holidays.find((h) => h.date === todayStr) ?? null;
+      const isHoliday = todayHoliday !== null;
+      const holidayName = todayHoliday?.name ?? null;
 
       // Bulk fetch 1 — active employees for this tenant
       const employees = await app.prisma.employee.findMany({
@@ -383,6 +397,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let absent = 0;
       let clockedIn = 0;
       let missing = 0;
+      let holiday = 0;
 
       const employeeRows = employees.map((emp) => {
         const empSchedule = allSchedules.find((s) => s.employeeId === emp.id) ?? null;
@@ -417,6 +432,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           isWorkday,
           isFuture: false, // today is never future
           hasShift: false,
+          isHoliday,
+          holidayName,
         });
 
         // Accumulate summary counters
@@ -424,6 +441,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         else if (status === "absent") absent++;
         else if (status === "clocked_in") clockedIn++;
         else if (status === "missing") missing++;
+        else if (status === "holiday") holiday++;
 
         return {
           id: emp.id,
@@ -437,7 +455,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return {
         date: todayStr,
         employees: employeeRows,
-        summary: { present, absent, clockedIn, missing },
+        summary: { present, absent, clockedIn, missing, holiday },
       };
     },
   });
