@@ -198,7 +198,14 @@ function computeEmployeeSummary(
   const shouldMin = Math.max(0, rawShouldMin - absenceMin);
 
   // ── Sick days ────────────────────────────────────────────────────────────
-  const sickDaysAbsence = emp.absences
+  // Single source of truth: sick days are counted exclusively from LeaveRequest
+  // records of type "Krankmeldung" / "Kinderkrank" (with attest metadata).
+  // The Absence model (SICK / SICK_CHILD) is used for document tracking
+  // (AU-Bescheinigung path) and must NOT contribute to these counters —
+  // adding both would double-count days for the same sick event.
+  // sickDaysAbsence is retained here as a reference for future use (e.g.,
+  // cross-checking), but is intentionally excluded from sickDaysWithoutAttest.
+  const _sickDaysAbsence = emp.absences
     .filter((a) => a.type === "SICK" || a.type === "SICK_CHILD")
     .reduce((sum, a) => {
       const s = a.startDate < start ? start : a.startDate;
@@ -211,7 +218,7 @@ function computeEmployeeSummary(
   );
 
   let sickDaysWithAttest = 0;
-  let sickDaysWithoutAttest = sickDaysAbsence;
+  let sickDaysWithoutAttest = 0; // seeded from LeaveRequests only (not Absence) to avoid double-count
 
   for (const lr of sickLeaveRequests) {
     const totalDays = daysInRange(lr.startDate, lr.endDate);
