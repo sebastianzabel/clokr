@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 
@@ -14,6 +15,194 @@ describe("Reports API", () => {
   afterAll(async () => {
     await cleanupTestData(app, data.tenant.id);
     await closeTestApp();
+  });
+
+  // ── GET /api/v1/reports/datev (DATEV LODAS Export) ────────────────────────
+  describe("GET /api/v1/reports/datev", () => {
+    let datevData: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      datevData = await seedTestData(app, "dv");
+
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: datevData.employee.id,
+          date: new Date("2026-04-07"),
+          startTime: new Date("2026-04-07T07:00:00.000Z"),
+          endTime: new Date("2026-04-07T15:00:00.000Z"),
+          breakMinutes: 0,
+        },
+      });
+
+      await app.prisma.absence.create({
+        data: {
+          employeeId: datevData.employee.id,
+          type: "SICK",
+          startDate: new Date("2026-04-14"),
+          endDate: new Date("2026-04-14"),
+          days: 1,
+          createdBy: datevData.adminUser.id,
+        },
+      });
+
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: datevData.vacationType.id,
+          startDate: new Date("2026-04-21"),
+          endDate: new Date("2026-04-21"),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+
+      const overtimeLeaveType = await app.prisma.leaveType.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          name: "Überstundenausgleich",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF8C00",
+        },
+      });
+
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: datevData.employee.id,
+          leaveTypeId: overtimeLeaveType.id,
+          startDate: new Date("2026-04-28"),
+          endDate: new Date("2026-04-28"),
+          days: 1,
+          status: "APPROVED",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, datevData.tenant.id);
+    });
+
+    it("DATEV-01a: response body contains [Allgemein], [Satzbeschreibung], [Bewegungsdaten] in order", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body.indexOf("[Allgemein]")).toBeGreaterThanOrEqual(0);
+      expect(body.indexOf("[Satzbeschreibung]")).toBeGreaterThan(body.indexOf("[Allgemein]"));
+      expect(body.indexOf("[Bewegungsdaten]")).toBeGreaterThan(body.indexOf("[Satzbeschreibung]"));
+    });
+
+    it("DATEV-01b: [Allgemein] section contains required fields", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Ziel=LODAS");
+      expect(body).toContain("Version_SST=1.0");
+      expect(body).toContain("BeraterNr=0");
+      expect(body).toContain("MandantenNr=0");
+      expect(body).toContain("Datumsangaben=DDMMJJJJ");
+    });
+
+    it("DATEV-01c: [Satzbeschreibung] contains a row starting with '20;'", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      const lines = body.split(/\r\n/);
+      const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
+      expect(satzIdx).toBeGreaterThanOrEqual(0);
+      expect(lines.slice(satzIdx + 1).some((l: string) => l.startsWith("20;"))).toBe(true);
+    });
+
+    it("DATEV-02a: response body uses CRLF line endings", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = res.rawPayload;
+      for (let i = 0; i < body.length; i++) {
+        if (body[i] === 0x0a) {
+          expect(body[i - 1]).toBe(0x0d);
+        }
+      }
+    });
+
+    it("DATEV-02c: Content-Type is application/octet-stream", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.headers["content-type"]).toBe("application/octet-stream");
+    });
+
+    it("DATEV-02d: filename ends with .txt", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      expect(res.headers["content-disposition"] as string).toContain('filename="datev-2026-4.txt"');
+    });
+
+    it("DATEV-03a: custom Lohnartennummern from TenantConfig appear in data rows", async () => {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: datevData.tenant.id },
+        data: {
+          datevNormalstundenNr: 777,
+          datevUrlaubNr: 888,
+          datevKrankNr: 999,
+          datevSonderurlaubNr: 555,
+        },
+      });
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain(";777;");
+      expect(body).toContain(";888;");
+      expect(body).toContain(";999;");
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: datevData.tenant.id },
+        data: {
+          datevNormalstundenNr: 100,
+          datevUrlaubNr: 300,
+          datevKrankNr: 200,
+          datevSonderurlaubNr: 302,
+        },
+      });
+    });
+
+    it("DATEV-03b: default Lohnartennummer 100 used with default config", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain(";100;");
+    });
+
+    it("DATEV-03c: hardcoded Lohnartennummer 301 (Überstundenausgleich) not overridden by config", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain(";301;");
+    });
   });
 
   describe("GET /api/v1/reports/monthly", () => {

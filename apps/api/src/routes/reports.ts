@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import PDFDocument from "pdfkit";
+import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
 import {
@@ -104,7 +105,14 @@ function computeEmployeeSummary(
   maternityDays: number;
   parentalDays: number;
   totalAbsenceDays: number;
-  entries: Array<{ date: string; start: string; end: string; breakMin: number; netHours: number; note?: string }>;
+  entries: Array<{
+    date: string;
+    start: string;
+    end: string;
+    breakMin: number;
+    netHours: number;
+    note?: string;
+  }>;
 } {
   // ── Helper: pick schedule valid on a given date ───────────────────────────
   function getScheduleForDate(schedules: WorkSchedule[], date: Date): WorkSchedule | null {
@@ -241,8 +249,7 @@ function computeEmployeeSummary(
     breakMin: Number(e.breakMinutes ?? 0),
     netHours:
       Math.round(
-        (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 -
-          Number(e.breakMinutes ?? 0)) /
+        (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) /
           60) *
           100,
       ) / 100,
@@ -426,18 +433,23 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       // ── DATEV LODAS ASCII-Import Format ────────────────────────────
-      // 11 Felder, Semikolon-getrennt, Dezimal-Komma
-      // Personalnummer;Kalendertag;Ausfallschlüssel;Lohnartennummer;
-      // Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;
-      // Abweichende Lohnveränderung;Kostenstellennummer;Kostenträger
+      // Produces a CP1252-encoded .txt file with three INI sections:
+      //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
+      //   [Satzbeschreibung] – describes the 11-field semicolon format of Bewegungsdaten rows
+      //   [Bewegungsdaten]   – actual employee rows via datevLine() helper
       //
+      // 11 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
       // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
-      // Lohnarten (konfigurierbar im Mandant):
-      //   100 = Normalstunden          | 200 = Krankheit (AU)
-      //   201 = Krankheit Kind         | 300 = Urlaub
-      //   301 = Überstundenausgleich   | 302 = Sonderurlaub
-      //   303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
-      //   310 = Mutterschutz           | 320 = Elternzeit
+      // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
+      //   CONFIGURABLE:
+      //     datevNormalstundenNr (default 100) = Normalstunden
+      //     datevKrankNr         (default 200) = Krankheit (AU)
+      //     datevUrlaubNr        (default 300) = Urlaub
+      //     datevSonderurlaubNr  (default 302) = Sonderurlaub
+      //   HARDCODED:
+      //     201 = Krankheit Kind         | 301 = Überstundenausgleich
+      //     303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
+      //     310 = Mutterschutz           | 320 = Elternzeit
 
       // Read configurable Lohnartennummern from TenantConfig
       const datevConfig = await app.prisma.tenantConfig.findUnique({
@@ -456,11 +468,8 @@ export async function reportRoutes(app: FastifyInstance) {
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
 
+      const CRLF = "\r\n";
       const lines: string[] = [];
-      // DATEV header row
-      lines.push(
-        "Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger",
-      );
 
       /** Dezimal mit Komma formatieren */
       function dec(n: number, digits = 2): string {
@@ -551,9 +560,26 @@ export async function reportRoutes(app: FastifyInstance) {
         newValue: { type: "DATEV", year, month },
       });
 
-      reply.header("Content-Type", "text/plain; charset=utf-8");
+      const iniHeader = [
+        "[Allgemein]",
+        "Ziel=LODAS",
+        "Version_SST=1.0",
+        "BeraterNr=0",
+        "MandantenNr=0",
+        "Datumsangaben=DDMMJJJJ",
+        "",
+        "[Satzbeschreibung]",
+        "20;u_lod_bwd_buchung_kst;pnr#bwd;u_lod_lna_nr#bwd;ausfallkennzeichen#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
+        "",
+        "[Bewegungsdaten]",
+      ].join(CRLF);
+
+      const bodyText = iniHeader + CRLF + lines.join(CRLF) + CRLF;
+      const buf: Buffer = iconv.encode(bodyText, "win1252");
+
+      reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.txt"`);
-      return lines.join("\n");
+      return reply.send(buf);
     },
   });
 
