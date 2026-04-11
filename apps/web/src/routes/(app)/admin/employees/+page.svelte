@@ -4,7 +4,7 @@
   import { onMount } from "svelte";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
-  import Pagination from "$components/ui/Pagination.svelte";
+  import { toasts } from "$stores/toast";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -57,6 +57,7 @@
   let eEmployeeNumber = $state("");
   let eRole: Role = $state("EMPLOYEE");
   let eNfcCardId = $state("");
+  let eExitDate = $state("");
 
   // Anonymize confirm (step 1)
   let showAnonymizeConfirm = $state(false);
@@ -68,8 +69,6 @@
   let hardDeletingEmployee: Employee | null = $state(null);
   let hardDeleting = $state(false);
   let hardDeleteError = $state("");
-  // Retention-override acknowledgement — must be ticked to enable early (force) deletion
-  let forceDeleteAck = $state(false);
 
   let isAdmin = $derived($authStore.user?.role === "ADMIN");
 
@@ -112,15 +111,6 @@
       return true;
     }),
   );
-
-  let page = $state(1);
-  let pageSize = $state(10);
-  let pagedEmployees = $derived(filteredEmployees.slice((page - 1) * pageSize, page * pageSize));
-
-  $effect(() => {
-    const _len = filteredEmployees.length;
-    page = 1;
-  });
 
   onMount(loadEmployees);
 
@@ -192,6 +182,7 @@
     eEmployeeNumber = emp.employeeNumber;
     eRole = emp.user.role;
     eNfcCardId = emp.nfcCardId ?? "";
+    eExitDate = emp.exitDate ? emp.exitDate.split("T")[0] : "";
     editError = "";
     showEditModal = true;
   }
@@ -201,13 +192,17 @@
     editSaving = true;
     editError = "";
     try {
-      await api.patch(`/employees/${editingEmployee.id}`, {
-        firstName: eFirstName,
-        lastName: eLastName,
-        employeeNumber: eEmployeeNumber,
-        role: eRole,
-        nfcCardId: eNfcCardId || null,
-      });
+      const res = await api.patch<Employee & { proRataWarning?: { message: string } }>(
+        `/employees/${editingEmployee.id}`,
+        {
+          firstName: eFirstName,
+          lastName: eLastName,
+          employeeNumber: eEmployeeNumber,
+          role: eRole,
+          nfcCardId: eNfcCardId || null,
+          exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
+        },
+      );
       employees = employees.map((e) =>
         e.id === editingEmployee!.id
           ? {
@@ -216,11 +211,15 @@
               lastName: eLastName,
               employeeNumber: eEmployeeNumber,
               nfcCardId: eNfcCardId || null,
+              exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
               user: { ...e.user, role: eRole },
             }
           : e,
       );
       showEditModal = false;
+      if (res.proRataWarning) {
+        toasts.warning(res.proRataWarning.message, 8000);
+      }
     } catch (e: unknown) {
       editError = e instanceof Error ? e.message : "Fehler beim Speichern";
     } finally {
@@ -283,7 +282,6 @@
   function confirmHardDelete(emp: Employee) {
     hardDeletingEmployee = emp;
     hardDeleteError = "";
-    forceDeleteAck = false;
     showHardDeleteConfirm = true;
   }
 
@@ -292,14 +290,10 @@
     hardDeleting = true;
     hardDeleteError = "";
     try {
-      // Send forceDelete flag so admin-acknowledged early deletions bypass retention check
-      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`, {
-        forceDelete: forceDeleteAck,
-      });
+      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`);
       employees = employees.filter((e) => e.id !== hardDeletingEmployee!.id);
       showHardDeleteConfirm = false;
       hardDeletingEmployee = null;
-      forceDeleteAck = false;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Fehler beim endgültigen Löschen";
       hardDeleteError = msg;
@@ -400,7 +394,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each pagedEmployees as emp (emp.id)}
+          {#each filteredEmployees as emp (emp.id)}
             <tr class:row-inactive={!emp.user.isActive}>
               <td class="col-number">{emp.employeeNumber}</td>
               <td class="col-name">
@@ -472,7 +466,6 @@
           {/each}
         </tbody>
       </table>
-      <Pagination total={filteredEmployees.length} bind:page bind:pageSize />
     </div>
   {/if}
 </div>
@@ -683,6 +676,13 @@
             </select>
           </div>
           <div class="form-group form-group--full">
+            <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
+            <input id="e-exitdate" type="date" bind:value={eExitDate} class="form-input" />
+            <p class="hint">
+              Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (§ 5 Abs. 2 BUrlG).
+            </p>
+          </div>
+          <div class="form-group form-group--full">
             <label class="form-label" for="e-nfc">NFC-Karten-ID</label>
             <input
               id="e-nfc"
@@ -720,14 +720,14 @@
       </div>
       <div class="modal-body">
         <p>
-          Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong>
+          Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong
+          >
           wirklich anonymisieren?
         </p>
         <p class="hint">
           Persönliche Daten (Name, E-Mail, Notizen) werden gemäß DSGVO gelöscht. Zeiteinträge,
-          Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist
-          (10 Jahre nach § 147 AO) erhalten. Erst danach kann der Datensatz endgültig gelöscht
-          werden.
+          Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist (10
+          Jahre nach § 147 AO) erhalten. Erst danach kann der Datensatz endgültig gelöscht werden.
         </p>
       </div>
       <div class="modal-footer">
@@ -764,21 +764,13 @@
           <div class="alert alert-error mb-3">{hardDeleteError}</div>
         {/if}
         <p>
-          Den anonymisierten Datensatz von <strong
-            >{hardDeletingEmployee.employeeNumber}</strong
-          > endgültig und unwiderruflich löschen?
+          Den anonymisierten Datensatz von <strong>{hardDeletingEmployee.employeeNumber}</strong> endgültig
+          und unwiderruflich löschen?
         </p>
         <p class="hint danger-hint">
-          Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17). Sie ist nur
-          nach Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre) möglich.
+          Diese Aktion entfernt alle verbleibenden Daten dauerhaft (DSGVO Art. 17). Sie ist nur nach
+          Ablauf der gesetzlichen Aufbewahrungsfrist (§ 147 AO, 10 Jahre) möglich.
         </p>
-        <label class="force-delete-ack">
-          <input type="checkbox" bind:checked={forceDeleteAck} />
-          <span>
-            Ich bestätige, dass die gesetzliche Aufbewahrungsfrist (10 Jahre)
-            noch nicht abgelaufen ist und ich die vorzeitige Löschung verantworte.
-          </span>
-        </label>
       </div>
       <div class="modal-footer">
         <button
@@ -787,10 +779,9 @@
             showHardDeleteConfirm = false;
             hardDeletingEmployee = null;
             hardDeleteError = "";
-            forceDeleteAck = false;
           }}>Abbrechen</button
         >
-        <button class="btn btn-danger" onclick={doHardDelete} disabled={!forceDeleteAck || hardDeleting}>
+        <button class="btn btn-danger" onclick={doHardDelete} disabled={hardDeleting}>
           {hardDeleting ? "Löschen…" : "Endgültig löschen"}
         </button>
       </div>
@@ -1070,25 +1061,5 @@
   }
   .filter-checkbox input[type="checkbox"] {
     cursor: pointer;
-  }
-
-  /* Retention-override acknowledgement checkbox in hard-delete modal */
-  .force-delete-ack {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.5rem;
-    margin-top: 1rem;
-    font-size: 0.8125rem;
-    color: var(--color-text);
-    cursor: pointer;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: 0.75rem;
-    background: var(--color-bg-subtle);
-  }
-  .force-delete-ack input[type="checkbox"] {
-    cursor: pointer;
-    flex-shrink: 0;
-    margin-top: 0.125rem;
   }
 </style>

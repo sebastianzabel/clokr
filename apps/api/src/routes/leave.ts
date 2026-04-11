@@ -6,7 +6,7 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { splitDaysAcrossYears } from "../utils/vacation-calc";
+import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
@@ -360,8 +360,6 @@ export async function leaveRoutes(app: FastifyInstance) {
           message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
           link: `/leave?request=${request.id}`,
           tenantId,
-          relatedType: "LeaveRequest",
-          relatedId: request.id,
         });
       }
 
@@ -610,13 +608,6 @@ export async function leaveRoutes(app: FastifyInstance) {
           );
         }
 
-        // Auto-dismiss manager LEAVE_REQUEST notifications for this request
-        try {
-          await app.dismissByRelated("LeaveRequest", existing.id);
-        } catch (err) {
-          app.log.warn({ err, leaveRequestId: existing.id }, "Failed to auto-dismiss LEAVE_REQUEST notifications on cancellation review");
-        }
-
         const refreshed = await app.prisma.leaveRequest.findUnique({
           where: { id },
           include: { employee: { select: { firstName: true, lastName: true } }, leaveType: true },
@@ -730,6 +721,55 @@ export async function leaveRoutes(app: FastifyInstance) {
         );
       }
 
+      // ── Pro-rata Urlaubswarnung bei Genehmigung (nur VACATION, nur bei exitDate) ──
+      let proRataWarning: { used: number; entitlement: number; message: string } | undefined =
+        undefined;
+      if (body.status === "APPROVED") {
+        const typeCodeForWarning = TYPE_CODES.find(
+          (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
+        );
+        if (typeCodeForWarning === "VACATION") {
+          try {
+            const empWithExit = await app.prisma.employee.findUnique({
+              where: { id: existing.employeeId },
+              select: { exitDate: true, tenantId: true },
+            });
+            if (empWithExit?.exitDate) {
+              const exitYear = empWithExit.exitDate.getFullYear();
+              const vacLeaveType = await app.prisma.leaveType.findFirst({
+                where: { tenantId: empWithExit.tenantId, name: "Urlaub" },
+              });
+              if (vacLeaveType) {
+                const entitlement = await app.prisma.leaveEntitlement.findFirst({
+                  where: {
+                    employeeId: existing.employeeId,
+                    leaveTypeId: vacLeaveType.id,
+                    year: exitYear,
+                  },
+                });
+                if (entitlement) {
+                  const proRata = calculateProRataVacation(
+                    Number(entitlement.totalDays),
+                    exitYear,
+                    empWithExit.exitDate,
+                  );
+                  const used = Number(entitlement.usedDays);
+                  if (used > proRata) {
+                    proRataWarning = {
+                      used,
+                      entitlement: proRata,
+                      message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
+                    };
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            app.log.warn({ err }, "Pro-rata warning calculation failed silently in leave review");
+          }
+        }
+      }
+
       // ── Benachrichtigung: Mitarbeiter über Entscheidung informieren ──
       const requestEmployee = await app.prisma.employee.findUnique({
         where: { id: existing.employeeId },
@@ -745,19 +785,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
-      // Auto-dismiss manager LEAVE_REQUEST notifications for this request
-      try {
-        await app.dismissByRelated("LeaveRequest", existing.id);
-      } catch (err) {
-        app.log.warn({ err, leaveRequestId: existing.id }, "Failed to auto-dismiss LEAVE_REQUEST notifications on review");
-      }
-
       return {
         ...updated,
         typeCode:
           TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === updated.leaveType.name) ?? "VACATION",
         startDate: updated.startDate.toISOString().split("T")[0],
         endDate: updated.endDate.toISOString().split("T")[0],
+        ...(proRataWarning ? { proRataWarning } : {}),
       };
     },
   });

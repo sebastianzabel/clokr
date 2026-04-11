@@ -5,7 +5,6 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
-  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -139,9 +138,8 @@
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
-  // Calendar filter — "" = Alle, "mine" = Meine, or employeeId for specific person (manager)
-  let calFilter = $state("");
-  let calEmployees: Employee[] = $state([]);
+  // Team absences toggle (managers/admins)
+  let showTeamAbsences = $state(true);
 
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
@@ -187,17 +185,9 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
   interface CalEntry {
     id: string;
     isOwn: boolean;
-    employeeId: string;
     firstName: string;
     lastName: string;
     typeCode: TypeCode | null;
@@ -356,27 +346,21 @@
     "Dezember",
   ];
 
-  // Typ → Hintergrundfarbe — resolved via CSS custom properties so all themes apply automatically.
-  // Pending chips are visually distinguished by the .cal-chip--pending CSS class (opacity + dashed outline).
+  // Typ → Hintergrundfarbe (approved=satt, pending=heller)
   function typeColor(code: TypeCode | null, status: Status, isOwn: boolean): string {
-    if (!isOwn || !code) {
-      return status === "APPROVED"
-        ? "var(--leave-type-absent)"
-        : "var(--leave-type-absent-muted)";
-    }
-    const varMap: Record<TypeCode, string> = {
-      VACATION: "var(--leave-type-vacation)",
-      OVERTIME_COMP: "var(--leave-type-overtime)",
-      SPECIAL: "var(--leave-type-special)",
-      EDUCATION: "var(--leave-type-education)",
-      SICK: "var(--leave-type-sick)",
-      SICK_CHILD: "var(--leave-type-sick-child)",
-      UNPAID: "var(--leave-type-unpaid)",
-      HOLIDAY: "var(--leave-type-holiday)",
-      MATERNITY: "var(--leave-type-maternity)",
-      PARENTAL: "var(--leave-type-parental)",
+    if (!isOwn || !code) return status === "APPROVED" ? "#9e9e9e" : "#bdbdbd";
+    const colors: Record<TypeCode, string> = {
+      VACATION: "#4caf50",
+      OVERTIME_COMP: "#9c27b0",
+      SPECIAL: "#2196f3",
+      EDUCATION: "#00bcd4",
+      SICK: "#f44336",
+      SICK_CHILD: "#ff9800",
+      UNPAID: "#795548",
+      HOLIDAY: "#f59e0b",
     };
-    return varMap[code] ?? "var(--leave-type-default)";
+    const base = colors[code] ?? "#607d8b";
+    return status === "APPROVED" ? base : base + "88";
   }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
@@ -384,12 +368,6 @@
     await loadData();
     loadCalendar();
     loadVacationSummary();
-
-    if (isManager) {
-      api.get<Employee[]>("/employees").then((list) => {
-        calEmployees = list;
-      }).catch(() => {});
-    }
 
     // Deep-link: view param from dashboard
     const viewParam = $page.url.searchParams.get("view");
@@ -449,17 +427,20 @@
     if (!userId) return;
     try {
       const year = new Date().getFullYear();
-      const entitlements = await api.get<
-        Array<{
-          typeCode: string;
-          leaveType: { name: string };
-          totalDays: number;
-          usedDays: number;
-          carriedOverDays: number;
-          effectiveCarryOverDays: number;
-          carryOverDeadline: string | null;
-        }>
-      >(`/leave/entitlements/${userId}?year=${year}`);
+      const [entitlements, empData] = await Promise.all([
+        api.get<
+          Array<{
+            typeCode: string;
+            leaveType: { name: string };
+            totalDays: number;
+            usedDays: number;
+            carriedOverDays: number;
+            effectiveCarryOverDays: number;
+            carryOverDeadline: string | null;
+          }>
+        >(`/leave/entitlements/${userId}?year=${year}`),
+        api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
+      ]);
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
       vacationBalance = vac
         ? {
@@ -469,6 +450,7 @@
             carryOverDeadline: vac.carryOverDeadline,
           }
         : null;
+      viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
     }
@@ -808,6 +790,33 @@
   );
   let showVacSummary = $state(true);
 
+  // ── Austrittsdatum für pro-rata Warnung ──────────────────────────────────
+  let viewedExitDate = $state<string | null>(null);
+
+  // Pro-rata Warnung: erscheint wenn Mitarbeiter exitDate hat und used > pro-rata Anspruch
+  // Inline-Berechnung (Keep in sync with apps/api/src/utils/vacation-calc.ts::calculateProRataVacation)
+  let proRataWarning = $derived.by(() => {
+    if (!viewedExitDate) return null;
+    const exit = new Date(viewedExitDate);
+    const exitYear = exit.getFullYear();
+    const currentYear = new Date().getFullYear();
+    if (exitYear !== currentYear) return null;
+    const base = vacSummaryTotal;
+    if (base <= 0) return null;
+    // Count volle Beschäftigungsmonate: month is full only if exit >= last day of that month
+    let monthsWorked = 0;
+    for (let month = 0; month < 12; month++) {
+      const lastDayOfMonth = new Date(exitYear, month + 1, 0);
+      if (exit >= lastDayOfMonth) monthsWorked++;
+    }
+    monthsWorked = Math.min(monthsWorked, 12);
+    const proRata = Math.ceil(((base * monthsWorked) / 12) * 2) / 2;
+    if (vacSummaryUsed > proRata) {
+      return { used: vacSummaryUsed, entitlement: proRata };
+    }
+    return null;
+  });
+
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
 
@@ -851,17 +860,6 @@
       return true;
     }),
   );
-
-  let currentPage = $state(1);
-  let currentPageSize = $state(10);
-  let pagedMyRequests = $derived(
-    filteredMyRequests.slice((currentPage - 1) * currentPageSize, currentPage * currentPageSize),
-  );
-
-  $effect(() => {
-    const _len = filteredMyRequests.length;
-    currentPage = 1;
-  });
 
   run(() => {
     if (showForm) {
@@ -922,27 +920,6 @@
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
-
-<!-- ── Mitarbeiter-Selector ───────────────────────────────────────────────── -->
-<div class="employee-selector card-animate">
-  <label class="form-label" for="cal-emp-select">Mitarbeiter</label>
-  <select
-    id="cal-emp-select"
-    class="form-input"
-    value={calFilter}
-    onchange={(e) => (calFilter = e.currentTarget.value)}
-  >
-    <option value="">Alle Mitarbeiter</option>
-    <option value="mine">Meine Einträge</option>
-    {#if isManager}
-      {#each calEmployees as emp (emp.id)}
-        {#if emp.id !== $authStore.user?.employeeId}
-          <option value={emp.id}>{emp.lastName}, {emp.firstName}</option>
-        {/if}
-      {/each}
-    {/if}
-  </select>
-</div>
 
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
@@ -1236,9 +1213,17 @@
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
+  <!-- Pro-rata Warnung bei Austrittsdatum -->
+  {#if proRataWarning}
+    <div class="alert alert-warning card-animate" role="status">
+      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
+      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
+      nötig ist.
+    </div>
+  {/if}
   <!-- Urlaubsübersicht -->
   {#if showVacSummary}
-    <div class="vac-summary card-animate">
+    <div class="vac-summary">
       <div class="vac-summary-item">
         <span class="vac-summary-label">Jahresanspruch</span>
         <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
@@ -1276,7 +1261,7 @@
     </div>
   {/if}
 
-  <div class="cal-section card card-animate">
+  <div class="cal-section card">
     <!-- Navigation -->
     <div class="cal-nav">
       <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat">
@@ -1342,6 +1327,34 @@
             stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
           >
         </button>
+        <button
+          class="team-toggle"
+          class:team-toggle--active={showTeamAbsences}
+          onclick={() => {
+            showTeamAbsences = !showTeamAbsences;
+          }}
+          title={showTeamAbsences
+            ? "Team-Abwesenheiten ausblenden"
+            : "Team-Abwesenheiten einblenden"}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            ><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle
+              cx="9"
+              cy="7"
+              r="4"
+            /><path d="M22 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg
+          >
+          Team
+        </button>
       </div>
     </div>
 
@@ -1379,12 +1392,7 @@
             </div>
           {/if}
           <div class="cal-chips">
-            {#each absences.filter((e) => {
-                const visible = isManager || e.status === "APPROVED";
-                if (calFilter === "mine") return e.isOwn;
-                if (calFilter !== "") return e.employeeId === calFilter;
-                return e.isOwn || visible;
-              }) as e (e.id)}
+            {#each absences.filter((e) => e.isOwn || (showTeamAbsences && (isManager || e.status === "APPROVED"))) as e (e.id)}
               <div
                 class="cal-chip"
                 class:cal-chip--pending={e.status === "PENDING" ||
@@ -1411,25 +1419,25 @@
     <!-- Legende -->
     <div class="cal-legend">
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-vacation)"></span>Urlaub</span
+        ><span class="legend-dot" style="background:#4caf50"></span>Urlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-overtime)"></span>ÜSt-Ausgleich</span
+        ><span class="legend-dot" style="background:#9c27b0"></span>ÜSt-Ausgleich</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick)"></span>Krank</span
+        ><span class="legend-dot" style="background:#f44336"></span>Krank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick-child)"></span>Kinderkrank</span
+        ><span class="legend-dot" style="background:#ff9800"></span>Kinderkrank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-special)"></span>Sonderurlaub</span
+        ><span class="legend-dot" style="background:#2196f3"></span>Sonderurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-education)"></span>Bildungsurlaub</span
+        ><span class="legend-dot" style="background:#00bcd4"></span>Bildungsurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-absent)"></span>Abwesend</span
+        ><span class="legend-dot" style="background:#9e9e9e"></span>Abwesend</span
       >
       <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
       <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
@@ -1472,7 +1480,12 @@
 {#if view === "list"}
   <!-- Monat-Navigation für Listenansicht -->
   <div class="cal-nav list-month-nav">
-    <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat" aria-label="Vorheriger Monat">
+    <button
+      class="nav-btn"
+      onclick={prevMonth}
+      title="Vorheriger Monat"
+      aria-label="Vorheriger Monat"
+    >
       <svg
         width="18"
         height="18"
@@ -1487,7 +1500,12 @@
     </div>
     <div style="display:flex;align-items:center;gap:0.5rem;">
       <button class="btn btn-sm btn-ghost" onclick={gotoToday}>Heute</button>
-      <button class="nav-btn" onclick={nextMonth} title="Nächster Monat" aria-label="Nächster Monat">
+      <button
+        class="nav-btn"
+        onclick={nextMonth}
+        title="Nächster Monat"
+        aria-label="Nächster Monat"
+      >
         <svg
           width="18"
           height="18"
@@ -1555,7 +1573,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each pagedMyRequests as req (req.id)}
+          {#each filteredMyRequests as req (req.id)}
             {@const isOwn = req.employeeId === $authStore.user?.employeeId}
             <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
               {#if isManager}
@@ -1614,7 +1632,6 @@
           {/each}
         </tbody>
       </table>
-      <Pagination total={filteredMyRequests.length} bind:page={currentPage} bind:pageSize={currentPageSize} />
     </div>
   {/if}
 {/if}<!-- Ende Liste -->
@@ -2342,42 +2359,38 @@
   .vac-summary {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
-    padding: 0.875rem 1.25rem;
+    gap: 1.25rem;
+    padding: 0.5rem 1rem;
     background: var(--glass-bg, rgba(255, 255, 255, 0.6));
     border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-sm);
     margin-bottom: 0.75rem;
     flex-wrap: wrap;
-    font-size: 0.875rem;
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    font-size: 0.8125rem;
   }
   .vac-summary-item {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.375rem;
   }
   .vac-summary-item:last-child {
     margin-left: 0;
   }
   .vac-summary-divider {
     width: 1px;
-    height: 1.25rem;
+    height: 1rem;
     background: var(--color-border);
     flex-shrink: 0;
   }
   .vac-summary-label {
     color: var(--color-text-muted);
     font-size: 0.8125rem;
-    font-weight: 500;
   }
   .vac-summary-value {
-    font-weight: 700;
+    font-weight: 600;
     font-family: var(--font-mono);
-    color: var(--color-text-heading);
-    font-size: 0.9375rem;
+    color: var(--color-text);
+    font-size: 0.8125rem;
   }
   .vac-summary-carry {
     color: var(--color-blue);
@@ -2600,11 +2613,11 @@
   }
 
   .cal-cell {
-    background: var(--color-surface);
+    background: #fff;
     min-height: 72px;
     padding: 0.3rem 0.4rem 0.4rem;
-    border-right: 1px solid var(--color-border-subtle);
-    border-bottom: 1px solid var(--color-border-subtle);
+    border-right: 1px solid var(--gray-100, #f3f4f6);
+    border-bottom: 1px solid var(--gray-100, #f3f4f6);
     display: flex;
     flex-direction: column;
     gap: 2px;
@@ -2621,25 +2634,25 @@
     background: var(--gray-50, #f9fafb) !important;
   }
   :global(.cal-cell.cal-weekend:not(.cal-other)) {
-    background: var(--color-bg-subtle);
+    background: #f4f0fa;
   }
   .cal-today {
     box-shadow: inset 0 0 0 2px var(--color-brand);
   }
   .cal-holiday {
-    background: var(--color-brand-tint) !important;
-    border-left: 3px solid var(--color-brand);
+    background: #ede7f6 !important;
+    border-left: 3px solid #80377b;
   }
 
   .cal-cell--current {
     cursor: pointer;
   }
   .cal-cell--current:hover {
-    background: var(--color-bg-subtle);
+    background: var(--color-bg-subtle, #f3f0ff);
   }
   .cal-cell--drag-selected {
-    background: var(--color-brand-tint) !important;
-    outline: 2px solid var(--color-brand);
+    background: var(--color-brand-tint, rgba(109, 40, 217, 0.1)) !important;
+    outline: 2px solid var(--color-brand, #6d28d9);
     outline-offset: -2px;
   }
 
@@ -2665,7 +2678,7 @@
 
   .cal-holiday-label {
     font-size: 0.6875rem;
-    color: var(--color-brand);
+    color: #6b21a8;
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -2718,7 +2731,7 @@
     display: flex;
     gap: 1rem;
     padding: 0.6rem 1rem;
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--gray-100, #f3f4f6);
     flex-wrap: wrap;
   }
   .legend-item {
@@ -2738,8 +2751,8 @@
   .legend-holiday-dot {
     width: 10px;
     height: 10px;
-    background: var(--color-brand-tint);
-    border: 1.5px solid var(--color-brand);
+    background: #ede7f6;
+    border: 1.5px solid #80377b;
     border-radius: 2px;
     flex-shrink: 0;
     display: inline-block;
@@ -2812,22 +2825,32 @@
       grid-template-columns: 1fr;
     }
   }
-  .employee-selector {
-    display: flex;
+  .team-toggle {
+    display: inline-flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem 1rem;
-    background: var(--color-brand-tint);
-    border: 1px solid var(--color-brand-tint-hover);
-    border-radius: 8px;
-  }
-  .employee-selector .form-label {
-    margin: 0;
-    white-space: nowrap;
+    gap: 0.375rem;
+    padding: 0.375rem 0.625rem;
+    min-height: 44px; /* WCAG 2.5.5 touch target */
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
     font-weight: 500;
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    margin-left: auto;
   }
-  .employee-selector .form-input {
-    max-width: 320px;
+  .team-toggle:hover {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+  }
+  .team-toggle--active {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+    border-color: var(--color-brand);
   }
 </style>
