@@ -1634,19 +1634,19 @@
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
   :global(.cal-day.cal-day--abs-vacation:not(.is-selected)) {
-    background: #dbeafe !important;
+    background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--color-surface)) !important;
     opacity: 1;
   }
   :global(.cal-day.cal-day--abs-sick:not(.is-selected)) {
-    background: #fee2e2 !important;
+    background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--color-surface)) !important;
     opacity: 1;
   }
   :global(.cal-day.cal-day--abs-special:not(.is-selected)) {
-    background: #ede9fe !important;
+    background: color-mix(in srgb, var(--leave-type-special) 15%, var(--color-surface)) !important;
     opacity: 1;
   }
   :global(.cal-day.cal-day--abs-overtime_comp:not(.is-selected)) {
-    background: #dcfce7 !important;
+    background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--color-surface)) !important;
     opacity: 1;
   }
   /* Nachbarmonat-Tage mit Abwesenheit etwas heller darstellen */
@@ -1747,20 +1747,20 @@
     border: 1px solid var(--gray-200);
   }
   .leg-abs-vacation::before {
-    background: #dbeafe;
-    border: 1px solid #3b82f640;
+    background: var(--leave-type-vacation);
+    border: none;
   }
   .leg-abs-sick::before {
-    background: #fee2e2;
-    border: 1px solid #ef444440;
+    background: var(--leave-type-sick);
+    border: none;
   }
   .leg-abs-special::before {
-    background: #ede9fe;
-    border: 1px solid #8b5cf640;
+    background: var(--leave-type-special);
+    border: none;
   }
   .leg-abs-overtime_comp::before {
-    background: #dcfce7;
-    border: 1px solid #22c55e40;
+    background: var(--leave-type-overtime);
+    border: none;
   }
 
   /* ── Tagesdetail ──────────────────────────────────────────────────── */
