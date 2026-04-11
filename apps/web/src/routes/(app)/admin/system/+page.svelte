@@ -767,7 +767,7 @@
         <label class="switch">
           <input
             type="checkbox"
-            aria-label=""Angemeldet bleiben" erlauben"
+            aria-label="&quot;Angemeldet bleiben&quot; erlauben"
             bind:checked={rememberMeEnabled}
           />
           <span class="switch-slider"></span>
