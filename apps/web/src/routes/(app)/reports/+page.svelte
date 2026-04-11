@@ -100,9 +100,17 @@
   let datevLoading = $state(false);
   let datevError = $state("");
 
+  // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
   let leaveYear = $state(currentYear);
   let leaveLoading = $state(false);
   let leaveError = $state("");
+
+  // Company monthly PDF (Firmenweiter Monatsbericht) — PDF-01 / PDF-03
+  let companyPdfMonth = $state(currentMonth);
+  let companyPdfYear = $state(currentYear);
+  let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
+  let companyPdfLoading = $state(false);
+  let companyPdfError = $state("");
 
   let pdfDownloading = $state<string | null>(null);
 
@@ -423,18 +431,33 @@
     }
   }
 
-  async function downloadLeaveOverviewPdf() {
+  async function downloadVacationPdf() {
     leaveLoading = true;
     leaveError = "";
     try {
       await downloadPdf(
-        `/reports/leave-overview/pdf?year=${leaveYear}`,
-        `Urlaubsuebersicht_${leaveYear}.pdf`,
+        `/reports/vacation/pdf?year=${leaveYear}`,
+        `Urlaubsbericht_${leaveYear}.pdf`,
       );
     } catch (e: unknown) {
       leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
     } finally {
       leaveLoading = false;
+    }
+  }
+
+  async function downloadCompanyMonthlyPdf() {
+    companyPdfLoading = true;
+    companyPdfError = "";
+    try {
+      await downloadPdf(
+        `/reports/monthly/pdf/all?month=${companyPdfMonth}&year=${companyPdfYear}&role=${companyPdfRole}`,
+        `Monatsbericht_Alle_${companyPdfYear}_${String(companyPdfMonth).padStart(2, "0")}.pdf`,
+      );
+    } catch (e: unknown) {
+      companyPdfError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+    } finally {
+      companyPdfLoading = false;
     }
   }
 
@@ -504,7 +527,7 @@
 
 <div class="page-header">
   <h1>Berichte &amp; Auswertungen</h1>
-  <p>Monatsberichte und DATEV-Exporte erstellen</p>
+  <p>Monatsberichte, Urlaubslisten und DATEV-Exporte erstellen</p>
 </div>
 
 <div class="reports-grid">
@@ -599,15 +622,17 @@
     {/if}
   </div>
 
-  <!-- Leave Overview PDF Card -->
+  <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
   <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--blue">
       <span class="report-icon-lg">🏖</span>
     </div>
     <div class="report-card-header">
       <div>
-        <h2 class="report-card-title">Urlaubsübersicht PDF</h2>
-        <p class="report-card-desc text-muted">Jahresübersicht aller Urlaubsansprüche als PDF</p>
+        <h2 class="report-card-title">Urlaubsbericht PDF</h2>
+        <p class="report-card-desc text-muted">
+          Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
+        </p>
       </div>
     </div>
 
@@ -622,7 +647,7 @@
       </div>
     </div>
 
-    <button class="btn btn-primary" onclick={downloadLeaveOverviewPdf} disabled={leaveLoading}>
+    <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
       {#if leaveLoading}
         <span class="btn-spinner"></span>
         Vorbereiten…
@@ -635,6 +660,69 @@
       <div class="alert alert-error" role="alert">
         <span>⚠</span>
         <span>{leaveError}</span>
+      </div>
+    {/if}
+  </div>
+
+  <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
+  <div class="card card-body report-card">
+    <div class="report-card-icon-section report-card-icon-section--purple">
+      <span class="report-icon-lg">📑</span>
+    </div>
+    <div class="report-card-header">
+      <div>
+        <h2 class="report-card-title">Firmenweiter Monatsbericht</h2>
+        <p class="report-card-desc text-muted">
+          Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
+        </p>
+      </div>
+    </div>
+
+    <div class="report-controls">
+      <div class="form-group">
+        <label class="form-label" for="company-pdf-month">Monat</label>
+        <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
+          {#each months as name, i (i)}
+            <option value={i + 1}>{name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="company-pdf-year">Jahr</label>
+        <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
+          {#each years as y (y)}
+            <option value={y}>{y}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label" for="company-pdf-role">Rolle</label>
+      <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
+        <option value="all">Alle Mitarbeiter</option>
+        <option value="EMPLOYEE">Nur Mitarbeiter</option>
+        <option value="MANAGER">Nur Manager</option>
+      </select>
+    </div>
+
+    <button
+      class="btn btn-primary"
+      onclick={downloadCompanyMonthlyPdf}
+      disabled={companyPdfLoading}
+    >
+      {#if companyPdfLoading}
+        <span class="btn-spinner"></span>
+        Vorbereiten…
+      {:else}
+        PDF herunterladen
+      {/if}
+    </button>
+
+    {#if companyPdfError}
+      <div class="alert alert-error" role="alert">
+        <span>⚠</span>
+        <span>{companyPdfError}</span>
       </div>
     {/if}
   </div>
