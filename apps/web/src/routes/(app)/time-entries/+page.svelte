@@ -949,23 +949,24 @@
     <!-- Tage -->
     {#if loading}
       <div class="cal-grid">
-        {#each Array(35) as _, i (i)}<div class="cal-day skeleton"></div>{/each}
+        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
       <div class="cal-grid">
         {#each calendarDays as day (day.dateStr)}
           <div
             data-date={day.dateStr}
-            class="cal-day cal-day--{day.status}{day.absenceType && !day.isWeekend
-              ? ' cal-day--abs cal-day--abs-' + day.absenceType.toLowerCase()
+            class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+              ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
               : ''}"
-            class:other-month={!day.isCurrentMonth}
-            class:is-today={day.isToday}
-            class:is-weekend={day.isWeekend}
-            class:is-holiday={day.isHoliday && day.isCurrentMonth}
-            class:is-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-            class:cal-day--disabled={day.isBeforeHire && day.isCurrentMonth}
-            class:cal-day--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
+            class:cal-other={!day.isCurrentMonth}
+            class:cal-current={day.isCurrentMonth}
+            class:cal-today={day.isToday}
+            class:cal-weekend={day.isWeekend}
+            class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+            class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+            class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+            class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
             title={day.isBeforeHire
               ? "Vor Eintrittsdatum"
               : day.isHoliday
@@ -983,11 +984,11 @@
                 openAdd(day.dateStr);
             }}
           >
-            <span class="day-num">{day.dayNum}</span>
+            <span class="cal-day-num">{day.dayNum}</span>
             {#if day.isHoliday && day.isCurrentMonth}
-              <span class="day-holiday-name">{day.holidayName}</span>
+              <span class="cal-holiday-label">{day.holidayName}</span>
             {:else if day.absenceType}
-              <span class="day-abs-type"
+              <span class="cal-abs-type"
                 >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
               >
             {/if}
@@ -1524,7 +1525,7 @@
     color: var(--color-text-muted);
   }
 
-  .cal-day {
+  .cal-cell {
     min-height: 72px;
     padding: 0.3rem 0.4rem;
     border-right: 1px solid var(--gray-100, #f3f4f6);
@@ -1538,25 +1539,25 @@
       box-shadow 0.12s;
     position: relative;
   }
-  .cal-day:nth-child(7n) {
+  .cal-cell:nth-child(7n) {
     border-right: none;
   }
 
-  :global(.cal-day.other-month) {
+  :global(.cal-cell.cal-other) {
     opacity: 0.3 !important;
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
 
   /* Tage vor dem Eintrittsdatum */
-  :global(.cal-day.cal-day--disabled) {
+  :global(.cal-cell.cal-cell--disabled) {
     opacity: 0.4;
     pointer-events: none;
     cursor: default;
     background: var(--gray-50, #f9fafb) !important;
   }
 
-  :global(.cal-day.cal-day--arbzg-warn) {
+  :global(.cal-cell.cal-cell--arbzg-warn) {
     border-left: 3px solid #f59e0b;
     background: rgba(245, 158, 11, 0.08);
   }
@@ -1565,39 +1566,39 @@
     color: var(--color-text-muted);
     opacity: 0.5;
   }
-  .cal-day:not(.other-month):hover {
+  .cal-cell:not(.cal-other):hover {
     background: color-mix(in srgb, var(--color-brand) 8%, transparent);
     box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-brand) 25%, transparent);
   }
 
-  .cal-day.is-today {
+  .cal-cell.cal-today {
     box-shadow: inset 0 0 0 2px var(--color-brand);
   }
 
   /* :global nötig – Svelte doppelt den Scope-Hash bei Compound-Selektoren */
-  :global(.cal-day.is-selected:not(.other-month)) {
+  :global(.cal-cell.cal-selected:not(.cal-other)) {
     background-color: var(--color-brand) !important;
     box-shadow:
       0 0 0 2px var(--color-brand),
       0 4px 12px rgba(0, 0, 0, 0.15) !important;
     z-index: 1;
   }
-  :global(.cal-day.is-selected:not(.other-month) .day-num),
-  :global(.cal-day.is-selected:not(.other-month) .day-worked),
-  :global(.cal-day.is-selected:not(.other-month) .day-bal),
-  :global(.cal-day.is-selected:not(.other-month) .day-missing),
-  :global(.cal-day.is-selected:not(.other-month) .day-abs-type),
-  :global(.cal-day.is-selected:not(.other-month) .day-holiday-name) {
+  :global(.cal-cell.cal-selected:not(.cal-other) .cal-day-num),
+  :global(.cal-cell.cal-selected:not(.cal-other) .day-worked),
+  :global(.cal-cell.cal-selected:not(.cal-other) .day-bal),
+  :global(.cal-cell.cal-selected:not(.cal-other) .day-missing),
+  :global(.cal-cell.cal-selected:not(.cal-other) .cal-abs-type),
+  :global(.cal-cell.cal-selected:not(.cal-other) .cal-holiday-label) {
     color: white !important;
   }
-  :global(.cal-day.is-selected.is-today:not(.other-month) .day-num) {
+  :global(.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-day-num) {
     background: rgba(255, 255, 255, 0.25);
     color: white;
   }
 
   /* Wochenende + Feiertage */
   /* Weekend + holiday cell styles → global in app.css */
-  .day-holiday-name {
+  .cal-holiday-label {
     display: block;
     font-size: 0.6rem;
     color: var(--color-brand);
@@ -1610,28 +1611,28 @@
   }
 
   /* Status-Farben */
-  .cal-day--ok {
+  .cal-cell--ok {
     background: #f0fdf4;
   }
-  .cal-day--partial {
+  .cal-cell--partial {
     background: #fffbeb;
   }
-  .cal-day--missing {
+  .cal-cell--missing {
     background: #fef2f2;
   }
-  .cal-day--today-ok {
+  .cal-cell--today-ok {
     background: #f0fdf4;
   }
-  .cal-day--today-partial {
+  .cal-cell--today-partial {
     background: #fffbeb;
   }
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
-  /* Absence cell backgrounds → global in app.css (.cal-day--abs-*) */
+  /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
 
   /* Nachbarmonat-Tage mit Abwesenheit etwas heller darstellen */
 
-  .day-abs-type {
+  .cal-abs-type {
     display: block;
     font-size: 0.6rem;
     font-weight: 700;
@@ -1644,14 +1645,14 @@
     white-space: nowrap;
   }
 
-  .day-num {
+  .cal-day-num {
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--color-text-muted);
     line-height: 1;
     flex-shrink: 0;
   }
-  .is-today .day-num {
+  .cal-today .cal-day-num {
     background: var(--color-brand);
     color: white;
     width: 18px;
@@ -2167,7 +2168,7 @@
   /* ── Mobile calendar improvements ──────────────────────────────── */
   @media (max-width: 640px) {
     /* Reduce cell height on mobile but keep them tappable */
-    .cal-day {
+    .cal-cell {
       min-height: 72px;
       padding: 0.375rem 0.375rem;
     }
@@ -2184,13 +2185,13 @@
     }
 
     /* Smaller day numbers on mobile */
-    .day-num {
+    .cal-day-num {
       font-size: 0.75rem;
     }
 
     /* Holiday/absence labels smaller on mobile */
-    .day-holiday-name,
-    .day-abs-type {
+    .cal-holiday-label,
+    .cal-abs-type {
       font-size: 0.5rem;
     }
 
