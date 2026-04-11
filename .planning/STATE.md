@@ -24,7 +24,7 @@ See: .planning/PROJECT.md (updated 2026-03-31 after v1.0 milestone)
 Phase: —
 Plan: —
 Status: v1.0 milestone complete — ready for next milestone planning
-Last activity: 2026-04-10 - Completed quick task 260411-2ob: leave page ignores theme — replaced hardcoded hex colors with CSS vars in leave/+page.svelte and app.css
+Last activity: 2026-04-11 - Completed quick task 260411-ctn: Add notification dismissal: X button per notification + auto-dismiss when related action completed
 
 Progress: [██████████] 100%
 
@@ -51,6 +51,7 @@ None.
 | 260411-22u | UI/UX consistency fixes: tabs, typos, empty states, berichte, badge, row height, accordion, vdev, profil subtitle, warning fatigue | 2026-04-11 | 5f66f25 | [260411-22u-ui-ux-consistency-fixes-tabs-typos-empty](./quick/260411-22u-ui-ux-consistency-fixes-tabs-typos-empty/) |
 | 260411-2ob | leave page ignores theme (data-theme attribute or CSS custom properties not applied). Likely missing data-theme wrapper or hardcoded color values in leave/+page.svelte or components used there. | 2026-04-10 | 53bb9ea | [260411-2ob-leave-page-ignores-theme-data-theme-attr](./quick/260411-2ob-leave-page-ignores-theme-data-theme-attr/) |
 | 260411-clm | Add pro theme: indigo accent, sharper corners, solid surfaces, denser layout (Datadog/Linear inspired) | 2026-04-11 | cd9e762 | [260411-clm-add-a-new-pro-theme-inspired-by-datadog-](./quick/260411-clm-add-a-new-pro-theme-inspired-by-datadog-/) |
+| 260411-ctn | Add notification dismissal: X button per notification + auto-dismiss when related action completed | 2026-04-11 | ad67aa0 | [260411-ctn-add-notification-dismissal-x-button-per-](./quick/260411-ctn-add-notification-dismissal-x-button-per-/) |
 
 ### Blockers/Concerns
 
