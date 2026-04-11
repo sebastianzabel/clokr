@@ -764,6 +764,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const y = parseInt(year ?? new Date().getFullYear().toString());
       const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
       const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -802,8 +803,8 @@ export async function reportRoutes(app: FastifyInstance) {
             const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
             const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
             return {
-              startDate: formatInTimeZone(lr.startDate, "Europe/Berlin", "dd.MM.yyyy"),
-              endDate: formatInTimeZone(lr.endDate, "Europe/Berlin", "dd.MM.yyyy"),
+              startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
+              endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
               leaveTypeName: lr.leaveType.name,
               days,
             };
@@ -844,6 +845,7 @@ export async function reportRoutes(app: FastifyInstance) {
       const y = parseInt(year ?? new Date().getFullYear().toString());
       const yearStart = new Date(`${y}-01-01T00:00:00.000Z`);
       const yearEnd = new Date(`${y}-12-31T23:59:59.999Z`);
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
       const tenant = await app.prisma.tenant.findUnique({
         where: { id: req.user.tenantId },
@@ -894,8 +896,8 @@ export async function reportRoutes(app: FastifyInstance) {
             const e2 = lr.endDate > yearEnd ? yearEnd : lr.endDate;
             const days = Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
             return {
-              startDate: formatInTimeZone(lr.startDate, "Europe/Berlin", "dd.MM.yyyy"),
-              endDate: formatInTimeZone(lr.endDate, "Europe/Berlin", "dd.MM.yyyy"),
+              startDate: formatInTimeZone(lr.startDate, tz, "dd.MM.yyyy"),
+              endDate: formatInTimeZone(lr.endDate, tz, "dd.MM.yyyy"),
               leaveTypeName: lr.leaveType.name,
               days,
             };
