@@ -35,6 +35,7 @@
   let datevLoading = $state(false);
   let datevError = $state("");
 
+  // Urlaubsbericht PDF (kombiniert: Urlaubsliste + Urlaubsübersicht)
   let leaveYear = $state(currentYear);
   let leaveLoading = $state(false);
   let leaveError = $state("");
@@ -46,10 +47,6 @@
   let companyPdfLoading = $state(false);
   let companyPdfError = $state("");
 
-  // Urlaubsliste PDF (individual leave periods) — PDF-02
-  let leaveListYear = $state(currentYear);
-  let leaveListLoading = $state(false);
-  let leaveListError = $state("");
 
   let pdfDownloading = $state<string | null>(null);
 
@@ -169,13 +166,13 @@
     }
   }
 
-  async function downloadLeaveOverviewPdf() {
+  async function downloadVacationPdf() {
     leaveLoading = true;
     leaveError = "";
     try {
       await downloadPdf(
-        `/reports/leave-overview/pdf?year=${leaveYear}`,
-        `Urlaubsuebersicht_${leaveYear}.pdf`,
+        `/reports/vacation/pdf?year=${leaveYear}`,
+        `Urlaubsbericht_${leaveYear}.pdf`,
       );
     } catch (e: unknown) {
       leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
@@ -199,20 +196,6 @@
     }
   }
 
-  async function downloadLeaveListPdf() {
-    leaveListLoading = true;
-    leaveListError = "";
-    try {
-      await downloadPdf(
-        `/reports/leave-list/pdf?year=${leaveListYear}`,
-        `Urlaubsliste_${leaveListYear}.pdf`,
-      );
-    } catch (e: unknown) {
-      leaveListError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
-    } finally {
-      leaveListLoading = false;
-    }
-  }
 
   function formatHours(h: number): string {
     const hours = Math.floor(h);
@@ -329,15 +312,17 @@
     {/if}
   </div>
 
-  <!-- Leave Overview PDF Card -->
+  <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
   <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--blue">
       <span class="report-icon-lg">🏖</span>
     </div>
     <div class="report-card-header">
       <div>
-        <h2 class="report-card-title">Urlaubsübersicht PDF</h2>
-        <p class="report-card-desc text-muted">Jahresübersicht aller Urlaubsansprüche als PDF</p>
+        <h2 class="report-card-title">Urlaubsbericht PDF</h2>
+        <p class="report-card-desc text-muted">
+          Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
+        </p>
       </div>
     </div>
 
@@ -352,7 +337,7 @@
       </div>
     </div>
 
-    <button class="btn btn-primary" onclick={downloadLeaveOverviewPdf} disabled={leaveLoading}>
+    <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
       {#if leaveLoading}
         <span class="btn-spinner"></span>
         Vorbereiten…
@@ -432,51 +417,6 @@
     {/if}
   </div>
 
-  <!-- Leave List PDF Card (PDF-02) — individual periods, not entitlement summary -->
-  <div class="card card-body report-card">
-    <div class="report-card-icon-section report-card-icon-section--blue">
-      <span class="report-icon-lg">🗓</span>
-    </div>
-    <div class="report-card-header">
-      <div>
-        <h2 class="report-card-title">Urlaubsliste PDF</h2>
-        <p class="report-card-desc text-muted">
-          Einzelne Urlaubszeiträume aller Mitarbeiter als PDF
-        </p>
-      </div>
-    </div>
-
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="leave-list-year">Jahr</label>
-        <select id="leave-list-year" bind:value={leaveListYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-
-    <button
-      class="btn btn-primary"
-      onclick={downloadLeaveListPdf}
-      disabled={leaveListLoading}
-    >
-      {#if leaveListLoading}
-        <span class="btn-spinner"></span>
-        Vorbereiten…
-      {:else}
-        PDF herunterladen
-      {/if}
-    </button>
-
-    {#if leaveListError}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{leaveListError}</span>
-      </div>
-    {/if}
-  </div>
 </div>
 
 <!-- Monthly Report Results -->
