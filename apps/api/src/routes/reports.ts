@@ -178,7 +178,9 @@ function computeEmployeeSummary(
 
   // ── Worked hours ─────────────────────────────────────────────────────────
   const workedMin = emp.timeEntries.reduce((sum, e) => {
-    const slotMin = (e.endTime!.getTime() - e.startTime.getTime()) / 60000;
+    const slotMin = e.endTime
+      ? (e.endTime.getTime() - e.startTime.getTime()) / 60000
+      : 0;
     return sum + slotMin - Number(e.breakMinutes ?? 0);
   }, 0);
 
@@ -247,12 +249,14 @@ function computeEmployeeSummary(
     start: formatInTimeZone(e.startTime, tz, "HH:mm"),
     end: e.endTime ? formatInTimeZone(e.endTime, tz, "HH:mm") : "",
     breakMin: Number(e.breakMinutes ?? 0),
-    netHours:
-      Math.round(
-        (((e.endTime!.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) /
-          60) *
-          100,
-      ) / 100,
+    netHours: e.endTime
+      ? Math.round(
+          (((e.endTime.getTime() - e.startTime.getTime()) / 60000 -
+            Number(e.breakMinutes ?? 0)) /
+            60) *
+            100,
+        ) / 100
+      : 0,
     note: (e as Record<string, unknown>).note as string | undefined,
   }));
 
