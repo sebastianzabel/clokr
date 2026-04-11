@@ -911,6 +911,27 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
+<!-- ── Mitarbeiter-Selector ───────────────────────────────────────────────── -->
+<div class="employee-selector">
+  <label class="form-label" for="cal-emp-select">Mitarbeiter</label>
+  <select
+    id="cal-emp-select"
+    class="form-input"
+    value={calFilter}
+    onchange={(e) => (calFilter = e.currentTarget.value)}
+  >
+    <option value="">Alle Mitarbeiter</option>
+    <option value="mine">Meine Einträge</option>
+    {#if isManager}
+      {#each calEmployees as emp (emp.id)}
+        {#if emp.id !== $authStore.user?.employeeId}
+          <option value={emp.id}>{emp.lastName}, {emp.firstName}</option>
+        {/if}
+      {/each}
+    {/if}
+  </select>
+</div>
+
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -1309,22 +1330,6 @@
             stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
           >
         </button>
-        <select
-          class="form-input cal-emp-select"
-          value={calFilter}
-          onchange={(e) => (calFilter = e.currentTarget.value)}
-          aria-label="Kalenderansicht filtern"
-        >
-          <option value="">Alle Mitarbeiter</option>
-          <option value="mine">Meine Einträge</option>
-          {#if isManager}
-            {#each calEmployees as emp (emp.id)}
-              {#if emp.id !== $authStore.user?.employeeId}
-                <option value={emp.id}>{emp.lastName}, {emp.firstName}</option>
-              {/if}
-            {/each}
-          {/if}
-        </select>
       </div>
     </div>
 
@@ -2794,12 +2799,22 @@
       grid-template-columns: 1fr;
     }
   }
-  .cal-emp-select {
-    font-size: 0.8125rem;
-    padding: 0.25rem 0.5rem;
-    min-height: unset;
-    height: 32px;
-    width: auto;
-    margin-left: auto;
+  .employee-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-brand-tint);
+    border: 1px solid var(--color-brand-tint-hover);
+    border-radius: 8px;
+  }
+  .employee-selector .form-label {
+    margin: 0;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  .employee-selector .form-input {
+    max-width: 320px;
   }
 </style>
