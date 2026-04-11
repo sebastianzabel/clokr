@@ -5,6 +5,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -847,6 +848,11 @@
   // Filters for list view
   let filterLeaveStatus = $state<Status | "">("");
   let filterLeaveType = $state<TypeCode | "">("");
+
+  // Pagination for Meine Anträge list
+  let myReqPage = $state(1);
+  let myReqPageSize = $state(10);
+
   let filteredMyRequests = $derived(
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
@@ -860,6 +866,15 @@
       return true;
     }),
   );
+
+  let pagedMyRequests = $derived(
+    filteredMyRequests.slice((myReqPage - 1) * myReqPageSize, myReqPage * myReqPageSize),
+  );
+
+  $effect(() => {
+    filteredMyRequests.length;
+    myReqPage = 1;
+  });
 
   run(() => {
     if (showForm) {
@@ -1573,7 +1588,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredMyRequests as req (req.id)}
+          {#each pagedMyRequests as req (req.id)}
             {@const isOwn = req.employeeId === $authStore.user?.employeeId}
             <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
               {#if isManager}
@@ -1632,6 +1647,11 @@
           {/each}
         </tbody>
       </table>
+      <Pagination
+        total={filteredMyRequests.length}
+        bind:page={myReqPage}
+        bind:pageSize={myReqPageSize}
+      />
     </div>
   {/if}
 {/if}<!-- Ende Liste -->

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import { theme, themes } from "$stores/theme";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface TenantConfig {
     federalState: string;
@@ -170,6 +171,11 @@
   }
 
   let terminalKeys: TerminalKey[] = $state([]);
+  let tkPage = $state(1);
+  let tkPageSize = $state(10);
+  let pagedTerminalKeys = $derived(
+    terminalKeys.slice((tkPage - 1) * tkPageSize, tkPage * tkPageSize),
+  );
   let terminalLoading = $state(false);
   let newKeyName = $state("");
   let newKeyRaw = $state(""); // shown once after creation
@@ -187,6 +193,9 @@
     createdAt: string;
   }
   let apiKeys: ApiKeyEntry[] = $state([]);
+  let akPage = $state(1);
+  let akPageSize = $state(10);
+  let pagedApiKeys = $derived(apiKeys.slice((akPage - 1) * akPageSize, akPage * akPageSize));
   let newApiKeyName = $state("");
   let newApiKeyScopes = $state<string[]>(["read:employees", "read:time-entries"]);
   let newApiKeyRaw = $state("");
@@ -479,7 +488,6 @@
     }
   }
 
-
   async function createApiKey() {
     if (!newApiKeyName.trim() || newApiKeyScopes.length === 0) return;
     apiKeyLoading = true;
@@ -757,7 +765,11 @@
           <span class="toggle-row-label">"Angemeldet bleiben" erlauben</span>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label='"Angemeldet bleiben" erlauben' bind:checked={rememberMeEnabled} />
+          <input
+            type="checkbox"
+            aria-label=""Angemeldet bleiben" erlauben"
+            bind:checked={rememberMeEnabled}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -858,7 +870,11 @@
           <span class="toggle-row-label">Großbuchstabe erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="Großbuchstabe erforderlich" bind:checked={pwRequireUpper} />
+          <input
+            type="checkbox"
+            aria-label="Großbuchstabe erforderlich"
+            bind:checked={pwRequireUpper}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -867,7 +883,11 @@
           <span class="toggle-row-label">Kleinbuchstabe erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="Kleinbuchstabe erforderlich" bind:checked={pwRequireLower} />
+          <input
+            type="checkbox"
+            aria-label="Kleinbuchstabe erforderlich"
+            bind:checked={pwRequireLower}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -885,7 +905,11 @@
           <span class="toggle-row-label">Sonderzeichen erforderlich</span>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="Sonderzeichen erforderlich" bind:checked={pwRequireSpecial} />
+          <input
+            type="checkbox"
+            aria-label="Sonderzeichen erforderlich"
+            bind:checked={pwRequireSpecial}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -917,7 +941,11 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="E-Mail-Benachrichtigungen aktivieren" bind:checked={emailEnabled} />
+          <input
+            type="checkbox"
+            aria-label="E-Mail-Benachrichtigungen aktivieren"
+            bind:checked={emailEnabled}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -926,47 +954,61 @@
         <div class="toggle-row">
           <span class="toggle-row-label">Neuer Urlaubsantrag</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Neuer Urlaubsantrag" bind:checked={emailOnLeaveRequest} /><span class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Neuer Urlaubsantrag"
+              bind:checked={emailOnLeaveRequest}
+            /><span class="switch-slider"></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt" bind:checked={emailOnLeaveDecision} /><span
-              class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
+              bind:checked={emailOnLeaveDecision}
+            /><span class="switch-slider"></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Überstunden-Warnung</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Überstunden-Warnung" bind:checked={emailOnOvertimeWarning} /><span
-              class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Überstunden-Warnung"
+              bind:checked={emailOnOvertimeWarning}
+            /><span class="switch-slider"></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Fehlende Zeiteinträge</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Fehlende Zeiteinträge" bind:checked={emailOnMissingEntries} /><span
-              class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Fehlende Zeiteinträge"
+              bind:checked={emailOnMissingEntries}
+            /><span class="switch-slider"></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Vergessene Stempelung</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Vergessene Stempelung" bind:checked={emailOnClockOutReminder} /><span
-              class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Vergessene Stempelung"
+              bind:checked={emailOnClockOutReminder}
+            /><span class="switch-slider"></span></label
           >
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Monatsabschluss</span>
           <label class="switch"
-            ><input type="checkbox" aria-label="Benachrichtigung: Monatsabschluss" bind:checked={emailOnMonthClose} /><span class="switch-slider"
-            ></span></label
+            ><input
+              type="checkbox"
+              aria-label="Benachrichtigung: Monatsabschluss"
+              bind:checked={emailOnMonthClose}
+            /><span class="switch-slider"></span></label
           >
         </div>
       {/if}
@@ -1177,7 +1219,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each terminalKeys as key (key.id)}
+              {#each pagedTerminalKeys as key (key.id)}
                 <tr class:row-revoked={key.revokedAt}>
                   <td>{key.name}</td>
                   <td><code style="font-size: 0.8125rem;">{key.keyPrefix}</code></td>
@@ -1203,6 +1245,7 @@
               {/each}
             </tbody>
           </table>
+          <Pagination total={terminalKeys.length} bind:page={tkPage} bind:pageSize={tkPageSize} />
         </div>
       {:else}
         <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
@@ -1283,7 +1326,7 @@
               <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th></th></tr>
             </thead>
             <tbody>
-              {#each apiKeys as key (key.id)}
+              {#each pagedApiKeys as key (key.id)}
                 <tr class:inactive={!!key.revokedAt}>
                   <td>{key.name}</td>
                   <td><code>{key.keyPrefix}…</code></td>
@@ -1308,6 +1351,7 @@
               {/each}
             </tbody>
           </table>
+          <Pagination total={apiKeys.length} bind:page={akPage} bind:pageSize={akPageSize} />
         </div>
       {:else}
         <p class="text-muted">Keine API Keys vorhanden.</p>

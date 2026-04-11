@@ -5,6 +5,7 @@
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -83,6 +84,10 @@
   let filterStatus = $state<"active" | "pending" | "expired" | "inactive" | "">("");
   let showAnonymized = $state(false);
 
+  // Pagination
+  let empPage = $state(1);
+  let empPageSize = $state(10);
+
   let filteredEmployees = $derived(
     employees.filter((emp) => {
       // Hide anonymized employees by default
@@ -111,6 +116,15 @@
       return true;
     }),
   );
+
+  let pagedEmployees = $derived(
+    filteredEmployees.slice((empPage - 1) * empPageSize, empPage * empPageSize),
+  );
+
+  $effect(() => {
+    filteredEmployees.length;
+    empPage = 1;
+  });
 
   onMount(loadEmployees);
 
@@ -394,7 +408,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredEmployees as emp (emp.id)}
+          {#each pagedEmployees as emp (emp.id)}
             <tr class:row-inactive={!emp.user.isActive}>
               <td class="col-number">{emp.employeeNumber}</td>
               <td class="col-name">
@@ -466,6 +480,11 @@
           {/each}
         </tbody>
       </table>
+      <Pagination
+        total={filteredEmployees.length}
+        bind:page={empPage}
+        bind:pageSize={empPageSize}
+      />
     </div>
   {/if}
 </div>
