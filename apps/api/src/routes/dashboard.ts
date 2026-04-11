@@ -10,6 +10,8 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
+import { resolvePresenceState } from "../utils/presence";
+import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -134,14 +136,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
           startTime: true,
           endTime: true,
           breakMinutes: true,
+          isInvalid: true,
         },
       });
 
-      // Genehmigte Abwesenheiten
+      // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen)
       const leaveRequests = await app.prisma.leaveRequest.findMany({
         where: {
           employee: { tenantId },
-          status: "APPROVED",
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
         },
@@ -149,6 +152,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           employeeId: true,
           startDate: true,
           endDate: true,
+          status: true,
           leaveType: { select: { name: true } },
         },
       });
@@ -188,18 +192,12 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const dayEntries = timeEntries.filter(
             (e) => e.employeeId === emp.id && dateStrInTz(e.date, tz) === dayStr,
           );
+          // workedMinutes: only valid (non-invalid) entries count
           let workedMinutes = 0;
-          let isPresent = false;
-          let isClockedIn = false;
-
           for (const e of dayEntries) {
-            if (e.endTime) {
+            if (!e.isInvalid && e.endTime) {
               workedMinutes +=
                 (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
-              isPresent = true;
-            } else {
-              isClockedIn = true;
-              isPresent = true;
             }
           }
 
@@ -238,38 +236,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const expectedHours = empSchedule ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow) : 0;
           const isWorkday = expectedHours > 0;
 
-          let status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" =
-            "none";
-          let reason: string | null = null;
-
           const todayStr = dateStrInTz(new Date(), tz);
           const isFuture = dayStr > todayStr;
 
-          if (isClockedIn) {
-            status = "clocked_in";
-          } else if (isPresent) {
-            // Tatsächliche Anwesenheit hat Vorrang (auch bei genehmigtem Urlaub)
-            status = "present";
-          } else if (leave) {
-            status = "absent";
-            reason = leave.leaveType.name;
-          } else if (absence) {
-            status = "absent";
-            reason =
-              absence.type === "SICK"
-                ? "Krankmeldung"
-                : absence.type === "SICK_CHILD"
-                  ? "Kinderkrank"
-                  : absence.type === "MATERNITY"
-                    ? "Mutterschutz"
-                    : absence.type === "PARENTAL"
-                      ? "Elternzeit"
-                      : absence.type.toString();
-          } else if (isFuture && (shift || isWorkday)) {
-            status = "scheduled";
-          } else if (!isFuture && (shift || isWorkday)) {
-            status = "missing";
-          }
+          // Build typed inputs for the presence resolver
+          const presenceEntries: PresenceEntry[] = dayEntries.map((e) => ({
+            endTime: e.endTime,
+            isInvalid: e.isInvalid,
+          }));
+
+          const presenceLeave: PresenceLeave | null = leave
+            ? {
+                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+                leaveTypeName: leave.leaveType.name,
+              }
+            : null;
+
+          const presenceAbsence: PresenceAbsence | null = absence
+            ? { type: absence.type }
+            : null;
+
+          const { status, reason } = resolvePresenceState({
+            entries: presenceEntries,
+            leave: presenceLeave,
+            absence: presenceAbsence,
+            isWorkday,
+            isFuture,
+            hasShift: shift !== null,
+          });
 
           return {
             date: dayStr,
