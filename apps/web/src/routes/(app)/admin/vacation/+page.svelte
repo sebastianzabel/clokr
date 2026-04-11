@@ -3,6 +3,7 @@
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface TenantConfig {
     defaultWeeklyHours: number;
@@ -155,6 +156,13 @@
 
   // Mitarbeiter-Liste
   let employees: EmployeeRow[] = $state([]);
+
+  // Pagination for employee list
+  let vacPage = $state(1);
+  let vacPageSize = $state(10);
+  let pagedVacationEmployees = $derived(
+    employees.slice((vacPage - 1) * vacPageSize, vacPage * vacPageSize),
+  );
 
   // Mitarbeiter-Modal
   let empModal: EmployeeRow | null = $state(null);
@@ -991,7 +999,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each employees as emp (emp.id)}
+            {#each pagedVacationEmployees as emp (emp.id)}
               {@const s = emp.workSchedule}
               <tr>
                 <td class="text-muted font-mono">{emp.employeeNumber}</td>
@@ -1042,6 +1050,7 @@
             {/each}
           </tbody>
         </table>
+        <Pagination total={employees.length} bind:page={vacPage} bind:pageSize={vacPageSize} />
       </div>
     </div>
   {/if}
@@ -1326,8 +1335,9 @@
   }
   .section-group-header::after {
     content: "▸";
-    font-size: 0.875rem;
-    color: var(--color-text-muted);
+    font-size: 1rem;
+    color: var(--color-text);
+    margin-left: auto;
     transition: transform 0.2s;
   }
   .section-group[open] > .section-group-header::after {

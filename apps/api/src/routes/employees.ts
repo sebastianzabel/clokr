@@ -5,6 +5,7 @@ import crypto, { createHash } from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
+import { calculateProRataVacation } from "../utils/vacation-calc";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -37,6 +38,7 @@ const updateEmployeeSchema = z.object({
   hireDate: z.string().datetime().optional(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
   nfcCardId: z.string().nullable().optional(),
+  exitDate: z.string().datetime().nullable().optional(),
 });
 
 function deriveInvitationStatus(
@@ -134,58 +136,60 @@ export async function employeeRoutes(app: FastifyInstance) {
         ? await bcrypt.hash(body.password!, 12)
         : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
-      const { employee, invitationToken } = await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        const user = await tx.user.create({
-          data: {
-            email: body.email,
-            passwordHash,
-            role: body.role,
-            isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
-          },
-        });
-
-        const emp = await tx.employee.create({
-          data: {
-            tenantId: req.user.tenantId,
-            userId: user.id,
-            firstName: body.firstName,
-            lastName: body.lastName,
-            employeeNumber: body.employeeNumber,
-            hireDate: new Date(body.hireDate),
-            nfcCardId: body.nfcCardId,
-          },
-        });
-
-        await tx.workSchedule.create({
-          data: {
-            employeeId: emp.id,
-            type: body.scheduleType,
-            weeklyHours: body.weeklyHours,
-            monthlyHours: body.monthlyHours ?? null,
-            validFrom: new Date(body.hireDate),
-          },
-        });
-
-        await tx.overtimeAccount.create({
-          data: { employeeId: emp.id, balanceHours: 0 },
-        });
-
-        // Einladung nur erstellen wenn kein Passwort gesetzt
-        let token: string | null = null;
-        if (!directPassword) {
-          token = crypto.randomBytes(32).toString("hex");
-          await tx.invitation.create({
+      const { employee, invitationToken } = await app.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          const user = await tx.user.create({
             data: {
-              token: hashToken(token),
-              employeeId: emp.id,
               email: body.email,
-              expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              passwordHash,
+              role: body.role,
+              isActive: directPassword, // sofort aktiv wenn Passwort gesetzt
             },
           });
-        }
 
-        return { employee: emp, invitationToken: token };
-      });
+          const emp = await tx.employee.create({
+            data: {
+              tenantId: req.user.tenantId,
+              userId: user.id,
+              firstName: body.firstName,
+              lastName: body.lastName,
+              employeeNumber: body.employeeNumber,
+              hireDate: new Date(body.hireDate),
+              nfcCardId: body.nfcCardId,
+            },
+          });
+
+          await tx.workSchedule.create({
+            data: {
+              employeeId: emp.id,
+              type: body.scheduleType,
+              weeklyHours: body.weeklyHours,
+              monthlyHours: body.monthlyHours ?? null,
+              validFrom: new Date(body.hireDate),
+            },
+          });
+
+          await tx.overtimeAccount.create({
+            data: { employeeId: emp.id, balanceHours: 0 },
+          });
+
+          // Einladung nur erstellen wenn kein Passwort gesetzt
+          let token: string | null = null;
+          if (!directPassword) {
+            token = crypto.randomBytes(32).toString("hex");
+            await tx.invitation.create({
+              data: {
+                token: hashToken(token),
+                employeeId: emp.id,
+                email: body.email,
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+              },
+            });
+          }
+
+          return { employee: emp, invitationToken: token };
+        },
+      );
 
       await app.audit({
         userId: req.user.sub,
@@ -227,7 +231,9 @@ export async function employeeRoutes(app: FastifyInstance) {
         ...fullEmployee,
         workSchedule: fullEmployee.workSchedules[0] ?? null,
         workSchedules: undefined,
-        invitationStatus: directPassword ? "ACCEPTED" : deriveInvitationStatus(fullEmployee.user.isActive, fullEmployee.invitations),
+        invitationStatus: directPassword
+          ? "ACCEPTED"
+          : deriveInvitationStatus(fullEmployee.user.isActive, fullEmployee.invitations),
         invitations: undefined,
         ...(emailError ? { emailError } : {}),
       });
@@ -242,7 +248,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       const { id } = idParamSchema.parse(req.params);
       const body = updateEmployeeSchema.parse(req.body);
 
-      const employee = await app.prisma.employee.findUnique({ where: { id, tenantId: req.user.tenantId } });
+      const employee = await app.prisma.employee.findUnique({
+        where: { id, tenantId: req.user.tenantId },
+      });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
       const updates: Record<string, unknown> = {};
@@ -251,6 +259,9 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (body.employeeNumber !== undefined) updates.employeeNumber = body.employeeNumber;
       if (body.hireDate !== undefined) updates.hireDate = new Date(body.hireDate);
       if (body.nfcCardId !== undefined) updates.nfcCardId = body.nfcCardId;
+      if (body.exitDate !== undefined) {
+        updates.exitDate = body.exitDate === null ? null : new Date(body.exitDate);
+      }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
 
@@ -258,17 +269,59 @@ export async function employeeRoutes(app: FastifyInstance) {
         await app.prisma.user.update({ where: { id: employee.userId }, data: { role: body.role } });
       }
 
+      // ── Pro-rata Urlaubswarnung ──────────────────────────────────────────────
+      // Compute warning when exitDate is set (or was just set) within the current year.
+      let proRataWarning: { used: number; entitlement: number; message: string } | undefined =
+        undefined;
+      const effectiveExitDate =
+        (updates.exitDate as Date | null | undefined) ?? employee.exitDate ?? null;
+      if (effectiveExitDate !== null) {
+        const exitYear = effectiveExitDate.getFullYear();
+        try {
+          // Find the VACATION leave type for this tenant
+          const vacLeaveType = await app.prisma.leaveType.findFirst({
+            where: { tenantId: req.user.tenantId, name: "Urlaub" },
+          });
+          if (vacLeaveType) {
+            const entitlement = await app.prisma.leaveEntitlement.findFirst({
+              where: { employeeId: id, leaveTypeId: vacLeaveType.id, year: exitYear },
+            });
+            if (entitlement) {
+              const proRata = calculateProRataVacation(
+                Number(entitlement.totalDays),
+                exitYear,
+                effectiveExitDate,
+              );
+              const used = Number(entitlement.usedDays);
+              if (used > proRata) {
+                proRataWarning = {
+                  used,
+                  entitlement: proRata,
+                  message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
+                };
+              }
+            }
+          }
+        } catch (err) {
+          app.log.warn({ err }, "Pro-rata warning calculation failed silently");
+        }
+      }
+
       await app.audit({
         userId: req.user.sub,
         action: "UPDATE",
         entity: "Employee",
         entityId: id,
-        oldValue: employee,
-        newValue: { ...updated, role: body.role },
+        oldValue: { ...employee, exitDate: employee.exitDate?.toISOString() ?? null },
+        newValue: {
+          ...updated,
+          role: body.role,
+          exitDate: updated.exitDate?.toISOString() ?? null,
+        },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      return updated;
+      return reply.send({ ...updated, ...(proRataWarning ? { proRataWarning } : {}) });
     },
   });
 
@@ -532,11 +585,16 @@ export async function employeeRoutes(app: FastifyInstance) {
   // DELETE /api/v1/employees/:id/hard-delete — Endgültige Löschung nach Ablauf der Aufbewahrungsfrist
   // Darf nur auf bereits anonymisierte Mitarbeiter angewendet werden (firstName === "Gelöscht").
   // Gesetzliche Aufbewahrungsfrist: §147 AO / §257 HGB — 10 Jahre nach Austritt/Anlage.
+  // Optional body: { forceDelete?: boolean } — bypasses retention check when true (admin override).
+  // Every force-delete is flagged in the audit log for auditor traceability.
+  const forceDeleteBodySchema = z.object({ forceDelete: z.boolean().optional() }).optional();
+
   app.delete("/:id/hard-delete", {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
       const { id } = idParamSchema.parse(req.params);
+      const { forceDelete } = forceDeleteBodySchema.parse(req.body ?? {}) ?? {};
 
       const employee = await app.prisma.employee.findUnique({
         where: { id, tenantId: req.user.tenantId },
@@ -544,7 +602,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      // Guard: must be already anonymized
+      // Guard: must be already anonymized — forceDelete does NOT bypass this rule
       if (employee.firstName !== "Gelöscht") {
         return reply.code(409).send({ error: "Mitarbeiter muss zuerst anonymisiert werden" });
       }
@@ -561,14 +619,15 @@ export async function employeeRoutes(app: FastifyInstance) {
         59,
         59,
       );
-      if (new Date() < retentionExpires) {
+      if (new Date() < retentionExpires && !forceDelete) {
         return reply.code(409).send({
           error: "Aufbewahrungsfrist noch nicht abgelaufen",
           retentionExpiresAt: retentionExpires.toISOString(),
         });
       }
 
-      // Audit log BEFORE deletion (entity will be gone after)
+      // Audit log BEFORE deletion (entity will be gone after).
+      // Include forceDelete flag and retentionExpiresAt so auditors can identify overrides.
       await app.audit({
         userId: req.user.sub,
         action: "HARD_DELETE",
@@ -578,6 +637,10 @@ export async function employeeRoutes(app: FastifyInstance) {
           employeeNumber: employee.employeeNumber,
           userEmail: employee.user.email,
           retentionStart: retentionStart.toISOString(),
+        },
+        newValue: {
+          forceDelete: forceDelete === true,
+          retentionExpiresAt: retentionExpires.toISOString(),
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

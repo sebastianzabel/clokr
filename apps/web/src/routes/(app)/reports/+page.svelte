@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$api/client";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface MonthlyRow {
     employeeId: string;
@@ -39,6 +40,19 @@
   let leaveError = $state("");
 
   let pdfDownloading = $state<string | null>(null);
+
+  // Pagination for monthly report rows
+  let reportPage = $state(1);
+  let reportPageSize = $state(10);
+  let reportRows: MonthlyRow[] = $derived(monthlyReport !== null ? (monthlyReport as MonthlyReport).rows : []);
+  let pagedReportRows = $derived(
+    reportRows.slice((reportPage - 1) * reportPageSize, reportPage * reportPageSize),
+  );
+
+  $effect(() => {
+    const _len = reportRows.length;
+    reportPage = 1;
+  });
 
   const months = [
     "Januar",
@@ -183,7 +197,7 @@
 
 <div class="reports-grid">
   <!-- Monthly Report Card -->
-  <div class="card card-body report-card report-card--purple">
+  <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--purple">
       <span class="report-icon-lg">📊</span>
     </div>
@@ -226,7 +240,7 @@
   </div>
 
   <!-- DATEV Export Card -->
-  <div class="card card-body report-card report-card--green">
+  <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--green">
       <span class="report-icon-lg">📁</span>
     </div>
@@ -256,9 +270,9 @@
       </div>
     </div>
 
-    <button class="btn btn-secondary" onclick={downloadDatev} disabled={datevLoading}>
+    <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
       {#if datevLoading}
-        <span class="btn-spinner-dark"></span>
+        <span class="btn-spinner"></span>
         Vorbereiten…
       {:else}
         ↓ CSV herunterladen
@@ -274,7 +288,7 @@
   </div>
 
   <!-- Leave Overview PDF Card -->
-  <div class="card card-body report-card report-card--blue">
+  <div class="card card-body report-card">
     <div class="report-card-icon-section report-card-icon-section--blue">
       <span class="report-icon-lg">🏖</span>
     </div>
@@ -296,9 +310,9 @@
       </div>
     </div>
 
-    <button class="btn btn-secondary" onclick={downloadLeaveOverviewPdf} disabled={leaveLoading}>
+    <button class="btn btn-primary" onclick={downloadLeaveOverviewPdf} disabled={leaveLoading}>
       {#if leaveLoading}
-        <span class="btn-spinner-dark"></span>
+        <span class="btn-spinner"></span>
         Vorbereiten…
       {:else}
         PDF herunterladen
@@ -346,7 +360,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each monthlyReport.rows as row (row.employeeId)}
+            {#each pagedReportRows as row (row.employeeId)}
               <tr>
                 <td class="font-medium">{row.employeeName}</td>
                 <td class="font-mono">{formatHours(row.workedHours)}</td>
@@ -376,6 +390,7 @@
             {/each}
           </tbody>
         </table>
+        <Pagination total={monthlyReport?.rows.length ?? 0} bind:page={reportPage} bind:pageSize={reportPageSize} />
       </div>
     {/if}
   </div>
@@ -393,7 +408,6 @@
     display: flex;
     flex-direction: column;
     gap: 1.125rem;
-    border-top: 3px solid transparent;
     overflow: hidden;
     transition:
       transform 0.2s var(--ease-out, ease),
@@ -403,18 +417,6 @@
   .report-card:hover {
     transform: translateY(-3px);
     box-shadow: var(--shadow-md, 0 8px 20px rgba(0,0,0,0.12));
-  }
-
-  .report-card--purple {
-    border-top-color: var(--color-brand, #7c3aed);
-  }
-
-  .report-card--green {
-    border-top-color: var(--color-green, #16a34a);
-  }
-
-  .report-card--blue {
-    border-top-color: var(--color-blue, #2563eb);
   }
 
   .report-card-icon-section {
@@ -473,12 +475,12 @@
     flex: 1;
   }
 
-  .btn-spinner-dark {
+  .btn-spinner {
     display: inline-block;
     width: 1rem;
     height: 1rem;
-    border: 2px solid rgba(128, 55, 123, 0.3);
-    border-top-color: var(--color-brand);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }

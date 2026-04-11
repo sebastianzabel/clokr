@@ -8,6 +8,8 @@ interface NotifyParams {
   message: string;
   link?: string;
   tenantId?: string; // Required for email dispatch
+  relatedType?: string; // e.g. "LeaveRequest", "TimeEntry" — used for auto-dismiss
+  relatedId?: string; // id of the related entity
 }
 
 /** Map notification types to TenantConfig email toggle field names. */
@@ -25,16 +27,26 @@ const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
 declare module "fastify" {
   interface FastifyInstance {
     notify: (params: NotifyParams) => Promise<void>;
+    dismissByRelated: (relatedType: string, relatedId: string) => Promise<number>;
   }
 }
 
 export const notifyPlugin = fp(async (app) => {
   const appUrl = (process.env.APP_URL ?? "http://localhost:5173").replace(/\/$/, "");
 
-  async function notify({ userId, type, title, message, link, tenantId }: NotifyParams) {
+  async function notify({
+    userId,
+    type,
+    title,
+    message,
+    link,
+    tenantId,
+    relatedType,
+    relatedId,
+  }: NotifyParams) {
     // 1. Always create in-app notification
     await app.prisma.notification.create({
-      data: { userId, type, title, message, link },
+      data: { userId, type, title, message, link, relatedType, relatedId },
     });
 
     // 2. Attempt email dispatch (fire-and-forget)
@@ -45,6 +57,14 @@ export const notifyPlugin = fp(async (app) => {
     }
   }
 
+  async function dismissByRelated(relatedType: string, relatedId: string): Promise<number> {
+    const { count } = await app.prisma.notification.updateMany({
+      where: { relatedType, relatedId, dismissedAt: null },
+      data: { dismissedAt: new Date() },
+    });
+    return count;
+  }
+
   async function sendEmailNotification({
     userId,
     type,
@@ -52,7 +72,9 @@ export const notifyPlugin = fp(async (app) => {
     message,
     link,
     tenantId,
-  }: Required<Pick<NotifyParams, "userId" | "type" | "title" | "message" | "tenantId">> & { link?: string }) {
+  }: Required<Pick<NotifyParams, "userId" | "type" | "title" | "message" | "tenantId">> & {
+    link?: string;
+  }) {
     // Check tenant master switch
     const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
     if (!config?.emailNotificationsEnabled) return;
@@ -102,4 +124,5 @@ export const notifyPlugin = fp(async (app) => {
   }
 
   app.decorate("notify", notify);
+  app.decorate("dismissByRelated", dismissByRelated);
 });

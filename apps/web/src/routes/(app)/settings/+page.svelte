@@ -104,7 +104,10 @@
 <svelte:head><title>Profil – Clokr</title></svelte:head>
 
 <div class="settings-page">
-  <h1 class="page-title">Mein Profil</h1>
+  <div class="page-header">
+    <h1 class="page-title">Mein Profil</h1>
+    <p class="page-subtitle">Profilbild und Passwort verwalten</p>
+  </div>
 
   <div class="settings-grid">
     <!-- Avatar -->

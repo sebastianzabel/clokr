@@ -4,6 +4,7 @@
   import { authStore } from "$stores/auth";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface OvertimeTransaction {
     id: string;
@@ -100,6 +101,18 @@
   let filteredTransactions = $derived(
     account?.transactions.filter((tx) => !filterTxType || tx.type === filterTxType) ?? [],
   );
+
+  // Pagination
+  let txPage = $state(1);
+  let txPageSize = $state(10);
+  let pagedTransactions = $derived(
+    filteredTransactions.slice((txPage - 1) * txPageSize, txPage * txPageSize),
+  );
+
+  $effect(() => {
+    const _len = filteredTransactions.length;
+    txPage = 1;
+  });
 </script>
 
 <svelte:head>
@@ -213,7 +226,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredTransactions as tx (tx.id)}
+          {#each pagedTransactions as tx (tx.id)}
             <tr>
               <td>{formatDate(tx.createdAt)}</td>
               <td>{txTypeLabel(tx.type)}</td>
@@ -225,6 +238,7 @@
           {/each}
         </tbody>
       </table>
+      <Pagination total={filteredTransactions.length} bind:page={txPage} bind:pageSize={txPageSize} />
     </div>
   {/if}
 {/if}

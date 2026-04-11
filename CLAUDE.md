@@ -183,6 +183,17 @@ These rules MUST be followed when implementing or modifying vacation/leave carry
   - No daily targets, no daily +/- display in calendar
   - Holiday/absence deductions do NOT apply (flexible schedule)
 
+## UI Consistency Rules
+
+These rules MUST be followed when building or modifying any page in `apps/web`:
+
+- **Entrance animations**: Every primary content block (summary bars, calendars, cards, tables, stat widgets) MUST have `class="... card-animate"`. The `card-enter` keyframe and staggered `nth-child` delays are defined globally in `app.css`. Do NOT add custom fade-in animations — use `card-animate`.
+- **Theme-aware colors**: NEVER hardcode hex colors in component `<style>` blocks. Always use CSS custom properties: `var(--color-surface)`, `var(--color-bg-subtle)`, `var(--color-brand)`, `var(--color-brand-tint)`, `var(--color-border)`, `var(--color-text)`, `var(--color-text-muted)`, etc. Domain-specific colors (leave types) use `var(--leave-type-*)`.
+- **Glass surfaces**: Top-level page cards use `background: var(--glass-bg)`, `border: 1px solid var(--glass-border)`, `box-shadow: var(--glass-shadow)`, and `backdrop-filter: blur(var(--glass-blur))`. Do NOT use plain white backgrounds on cards.
+- **Employee selector placement**: When a page has an employee/person filter dropdown, it goes ABOVE the view-tabs as a `<div class="employee-selector">` block — not inside the calendar nav or toolbar. See `time-entries/+page.svelte` as the reference.
+- **Summary bars**: Use `.month-summary` / `.vac-summary` pattern with `var(--font-mono)` for numeric values, `font-size: 0.9375rem`, `font-weight: 700`, `color: var(--color-text-heading)`. Match padding/gap/radius from `time-entries/+page.svelte`.
+- **Full style guide**: See `.planning/UI_STYLE_GUIDE.md` for tokens, component classes, spacing, and patterns.
+
 ## Svelte 5 Gotchas
 
 - `{@const}` can only be used inside `{#if}`, `{#each}`, `{#snippet}` — NOT inside `<div>`

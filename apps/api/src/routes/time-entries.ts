@@ -652,6 +652,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newValue: entryWithBreaks,
       });
 
+      // Auto-dismiss CLOCK_OUT_REMINDER notifications for this entry
+      try {
+        await app.dismissByRelated("TimeEntry", id);
+      } catch (err) {
+        app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out");
+      }
+
       return { success: true, entry: entryWithBreaks, warnings };
     },
   });
@@ -1048,6 +1055,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      // Auto-dismiss CLOCK_OUT_REMINDER when open entry is closed via PATCH
+      if (existing.endTime === null && updated.endTime !== null) {
+        try {
+          await app.dismissByRelated("TimeEntry", id);
+        } catch (err) {
+          app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update");
+        }
+      }
 
       return { entry: updated, warnings };
     },

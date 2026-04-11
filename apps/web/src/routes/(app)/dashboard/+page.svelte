@@ -21,6 +21,7 @@
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
+  import Pagination from "$components/ui/Pagination.svelte";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -98,6 +99,11 @@
 
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
+  let teamPage = $state(1);
+  let teamPageSize = $state(10);
+  let pagedTeam = $derived(
+    teamWeek ? teamWeek.team.slice((teamPage - 1) * teamPageSize, teamPage * teamPageSize) : [],
+  );
   let weekOffset = $state(0);
   let todayShift: {
     startTime: string;
@@ -919,7 +925,11 @@
             <tbody>
               <tr>
                 {#each myWeekDays as day (day.date)}
-                  {@const isToday = day.date === new Date().toISOString().split("T")[0]}
+                  {@const todayStr = new Date().toISOString().split("T")[0]}
+                  {@const isPast = day.date < todayStr}
+                  {@const isToday = day.date === todayStr}
+                  {@const dayOfWeek = new Date(day.date + "T12:00:00").getDay()}
+                  {@const isWeekend = dayOfWeek === 0 || dayOfWeek === 6}
                   <td class:is-today={isToday}>
                     <a
                       href="/time-entries?view=list&date={day.date}"
@@ -934,7 +944,7 @@
                         <span class="cell-badge cell-badge--partial"
                           >{day.workedHours.toFixed(1)}</span
                         >
-                      {:else if day.status === "missing"}
+                      {:else if day.status === "missing" && isPast && !isWeekend}
                         <span class="cell-badge cell-badge--missing">⚠️</span>
                       {:else}
                         <span class="cell-badge cell-badge--none">–</span>
@@ -1013,7 +1023,11 @@
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
           {:else}
-            <canvas bind:this={weeklyChartEl} role="img" aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"></canvas>
+            <canvas
+              bind:this={weeklyChartEl}
+              role="img"
+              aria-label="Balkendiagramm: gearbeitete Stunden der letzten 6 Monate"
+            ></canvas>
           {/if}
         </div>
       </div>
@@ -1024,7 +1038,11 @@
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
           {:else}
-            <canvas bind:this={overtimeChartEl} role="img" aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"></canvas>
+            <canvas
+              bind:this={overtimeChartEl}
+              role="img"
+              aria-label="Liniendiagramm: Überstunden-Verlauf der letzten 6 Monate"
+            ></canvas>
           {/if}
         </div>
       </div>
@@ -1035,7 +1053,11 @@
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
           {:else}
-            <canvas bind:this={sickChartEl} role="img" aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"></canvas>
+            <canvas
+              bind:this={sickChartEl}
+              role="img"
+              aria-label="Balkendiagramm: Krankheitstage der letzten 6 Monate"
+            ></canvas>
           {/if}
         </div>
       </div>
@@ -1103,7 +1125,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each teamWeek.team as member (member.id)}
+            {#each pagedTeam as member (member.id)}
               <tr>
                 <td class="team-grid__name">
                   <span class="member-name">{member.name}</span>
@@ -1173,6 +1195,11 @@
             {/each}
           </tbody>
         </table>
+        <Pagination
+          total={teamWeek.team.length}
+          bind:page={teamPage}
+          bind:pageSize={teamPageSize}
+        />
       </div>
 
       <div class="legend">
@@ -1739,8 +1766,12 @@
   }
 
   @keyframes skeleton-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   .upcoming-section {

@@ -121,18 +121,20 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 </div>
 
 <!-- Mode Toggle -->
-<div class="mode-toggle" style="margin-bottom:1.5rem">
+<div class="view-tabs" style="margin-bottom:1.5rem">
   <button
-    class="btn btn-sm {mode === 'employees' ? 'btn-primary' : 'btn-ghost'}"
-    onclick={() => switchMode("employees")}
+    class="view-tab"
+    class:view-tab--active={mode === 'employees'}
+    onclick={() => switchMode('employees')}
   >
     Mitarbeiter
   </button>
   <button
-    class="btn btn-sm {mode === 'time-entries' ? 'btn-primary' : 'btn-ghost'}"
-    onclick={() => switchMode("time-entries")}
+    class="view-tab"
+    class:view-tab--active={mode === 'time-entries'}
+    onclick={() => switchMode('time-entries')}
   >
-    Zeiteintr&auml;ge
+    Zeiteinträge
   </button>
 </div>
 
@@ -284,11 +286,6 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 {/if}
 
 <style>
-  .mode-toggle {
-    display: flex;
-    gap: 0.5rem;
-  }
-
   .csv-textarea {
     font-family: var(--font-mono, monospace);
     font-size: 0.8125rem;

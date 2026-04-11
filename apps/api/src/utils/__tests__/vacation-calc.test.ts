@@ -4,6 +4,7 @@ import {
   calculatePartTimeVacation,
   calculateStatutoryMinimum,
   splitDaysAcrossYears,
+  calculateProRataVacation,
 } from "../vacation-calc";
 
 const fullSchedule = {
@@ -101,6 +102,60 @@ describe("calculateStatutoryMinimum", () => {
   });
   it("returns 16 for 4-day week", () => {
     expect(calculateStatutoryMinimum(4)).toBe(16);
+  });
+});
+
+describe("calculateProRataVacation", () => {
+  const YEAR = 2026;
+
+  it("returns baseDays unchanged when exitDate is in a future year", () => {
+    // Employee leaves in 2027 → full 2026 entitlement
+    expect(calculateProRataVacation(30, YEAR, new Date(2027, 0, 15))).toBe(30);
+  });
+
+  it("returns 0 when exitDate is before the year starts", () => {
+    // Employee already left in 2025
+    expect(calculateProRataVacation(30, YEAR, new Date(2025, 11, 31))).toBe(0);
+  });
+
+  it("returns baseDays when exitDate is Dec 31 of the year (12/12)", () => {
+    // Last day of year → 12 volle Monate → full entitlement
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 11, 31))).toBe(30);
+  });
+
+  it("returns 15 when exitDate is Jun 30 and base is 30 (6/12)", () => {
+    // Jun 30 is the last day of June → 6 volle Monate → 30 × 6/12 = 15
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 30))).toBe(15);
+  });
+
+  it("returns 12.5 when exitDate is Jun 15 and base is 30 (5/12, rounded up)", () => {
+    // Jun 15 is NOT the last day of June → 5 volle Monate (Jan-May)
+    // 30 × 5/12 = 12.5 → already a half-day, no rounding needed
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 15))).toBe(12.5);
+  });
+
+  it("rounds UP to nearest 0.5 (base 20, exitDate Mar 20 = 2 volle Monate → 3.5)", () => {
+    // Mar 20 is NOT the last day of March → 2 volle Monate (Jan-Feb)
+    // 20 × 2/12 = 3.333 → ceil to 3.5
+    expect(calculateProRataVacation(20, YEAR, new Date(YEAR, 2, 20))).toBe(3.5);
+  });
+
+  it("returns 0 when baseDays is 0", () => {
+    expect(calculateProRataVacation(0, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+  });
+
+  it("returns 0 for negative baseDays (defensive)", () => {
+    expect(calculateProRataVacation(-5, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+  });
+
+  it("returns 0 for NaN baseDays (defensive)", () => {
+    expect(calculateProRataVacation(NaN, YEAR, new Date(YEAR, 5, 30))).toBe(0);
+  });
+
+  it("correctly counts volle Monate: Mar 31 counts March (3/12 for Jan-Mar)", () => {
+    // Mar 31 is the last day of March → 3 volle Monate
+    // 30 × 3/12 = 7.5 → exactly 7.5
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 2, 31))).toBe(7.5);
   });
 });
 

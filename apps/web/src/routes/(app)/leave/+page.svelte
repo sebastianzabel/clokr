@@ -5,6 +5,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -427,17 +428,20 @@
     if (!userId) return;
     try {
       const year = new Date().getFullYear();
-      const entitlements = await api.get<
-        Array<{
-          typeCode: string;
-          leaveType: { name: string };
-          totalDays: number;
-          usedDays: number;
-          carriedOverDays: number;
-          effectiveCarryOverDays: number;
-          carryOverDeadline: string | null;
-        }>
-      >(`/leave/entitlements/${userId}?year=${year}`);
+      const [entitlements, empData] = await Promise.all([
+        api.get<
+          Array<{
+            typeCode: string;
+            leaveType: { name: string };
+            totalDays: number;
+            usedDays: number;
+            carriedOverDays: number;
+            effectiveCarryOverDays: number;
+            carryOverDeadline: string | null;
+          }>
+        >(`/leave/entitlements/${userId}?year=${year}`),
+        api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
+      ]);
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
       vacationBalance = vac
         ? {
@@ -447,6 +451,7 @@
             carryOverDeadline: vac.carryOverDeadline,
           }
         : null;
+      viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
     }
@@ -786,6 +791,33 @@
   );
   let showVacSummary = $state(true);
 
+  // ── Austrittsdatum für pro-rata Warnung ──────────────────────────────────
+  let viewedExitDate = $state<string | null>(null);
+
+  // Pro-rata Warnung: erscheint wenn Mitarbeiter exitDate hat und used > pro-rata Anspruch
+  // Inline-Berechnung (Keep in sync with apps/api/src/utils/vacation-calc.ts::calculateProRataVacation)
+  let proRataWarning = $derived.by(() => {
+    if (!viewedExitDate) return null;
+    const exit = new Date(viewedExitDate);
+    const exitYear = exit.getFullYear();
+    const currentYear = new Date().getFullYear();
+    if (exitYear !== currentYear) return null;
+    const base = vacSummaryTotal;
+    if (base <= 0) return null;
+    // Count volle Beschäftigungsmonate: month is full only if exit >= last day of that month
+    let monthsWorked = 0;
+    for (let month = 0; month < 12; month++) {
+      const lastDayOfMonth = new Date(exitYear, month + 1, 0);
+      if (exit >= lastDayOfMonth) monthsWorked++;
+    }
+    monthsWorked = Math.min(monthsWorked, 12);
+    const proRata = Math.ceil(((base * monthsWorked) / 12) * 2) / 2;
+    if (vacSummaryUsed > proRata) {
+      return { used: vacSummaryUsed, entitlement: proRata };
+    }
+    return null;
+  });
+
   // ── iCal-Download ────────────────────────────────────────────────────────
   let icalDownloading = $state(false);
 
@@ -816,6 +848,11 @@
   // Filters for list view
   let filterLeaveStatus = $state<Status | "">("");
   let filterLeaveType = $state<TypeCode | "">("");
+
+  // Pagination for Meine Anträge list
+  let myReqPage = $state(1);
+  let myReqPageSize = $state(10);
+
   let filteredMyRequests = $derived(
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
@@ -829,6 +866,15 @@
       return true;
     }),
   );
+
+  let pagedMyRequests = $derived(
+    filteredMyRequests.slice((myReqPage - 1) * myReqPageSize, myReqPage * myReqPageSize),
+  );
+
+  $effect(() => {
+    filteredMyRequests.length;
+    myReqPage = 1;
+  });
 
   run(() => {
     if (showForm) {
@@ -1182,6 +1228,14 @@
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
+  <!-- Pro-rata Warnung bei Austrittsdatum -->
+  {#if proRataWarning}
+    <div class="alert alert-warning card-animate" role="status">
+      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
+      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
+      nötig ist.
+    </div>
+  {/if}
   <!-- Urlaubsübersicht -->
   {#if showVacSummary}
     <div class="vac-summary">
@@ -1441,7 +1495,12 @@
 {#if view === "list"}
   <!-- Monat-Navigation für Listenansicht -->
   <div class="cal-nav list-month-nav">
-    <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat" aria-label="Vorheriger Monat">
+    <button
+      class="nav-btn"
+      onclick={prevMonth}
+      title="Vorheriger Monat"
+      aria-label="Vorheriger Monat"
+    >
       <svg
         width="18"
         height="18"
@@ -1456,7 +1515,12 @@
     </div>
     <div style="display:flex;align-items:center;gap:0.5rem;">
       <button class="btn btn-sm btn-ghost" onclick={gotoToday}>Heute</button>
-      <button class="nav-btn" onclick={nextMonth} title="Nächster Monat" aria-label="Nächster Monat">
+      <button
+        class="nav-btn"
+        onclick={nextMonth}
+        title="Nächster Monat"
+        aria-label="Nächster Monat"
+      >
         <svg
           width="18"
           height="18"
@@ -1524,7 +1588,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each filteredMyRequests as req (req.id)}
+          {#each pagedMyRequests as req (req.id)}
             {@const isOwn = req.employeeId === $authStore.user?.employeeId}
             <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
               {#if isManager}
@@ -1583,6 +1647,11 @@
           {/each}
         </tbody>
       </table>
+      <Pagination
+        total={filteredMyRequests.length}
+        bind:page={myReqPage}
+        bind:pageSize={myReqPageSize}
+      />
     </div>
   {/if}
 {/if}<!-- Ende Liste -->

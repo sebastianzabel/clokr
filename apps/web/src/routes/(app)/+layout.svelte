@@ -82,6 +82,21 @@
     if (n.link) goto(n.link);
   }
 
+  async function dismissNotification(id: string, wasUnread: boolean) {
+    // Optimistic: remove locally first, roll back on error
+    const snapshot = notifications;
+    const snapshotCount = unreadCount;
+    notifications = notifications.filter((n) => n.id !== id);
+    if (wasUnread) unreadCount = Math.max(0, unreadCount - 1);
+    try {
+      await api.delete(`/notifications/${id}`);
+    } catch (err) {
+      console.error("Failed to dismiss notification:", err);
+      notifications = snapshot;
+      unreadCount = snapshotCount;
+    }
+  }
+
   function formatTimeAgo(dateStr: string): string {
     const diff = Date.now() - new Date(dateStr).getTime();
     const mins = Math.floor(diff / 60000);
@@ -274,17 +289,43 @@
                   <p class="notification-empty">Keine Benachrichtigungen</p>
                 {:else}
                   {#each notifications as n (n.id)}
-                    <button
-                      class="notification-item"
-                      class:notification-item--unread={!n.read}
-                      onclick={() => handleNotificationClick(n)}
+                    <div
+                      class="notification-item-wrapper"
+                      class:notification-item-wrapper--unread={!n.read}
                     >
-                      <div class="notification-item-title">{n.title}</div>
-                      <div class="notification-item-message">{n.message}</div>
-                      <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
-                      {#if n.link}
+                      <button
+                        type="button"
+                        class="notification-item"
+                        onclick={() => handleNotificationClick(n)}
+                      >
+                        <div class="notification-item-title">{n.title}</div>
+                        <div class="notification-item-message">{n.message}</div>
+                        <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
+                        {#if n.link}
+                          <svg
+                            class="notification-arrow"
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg
+                          >
+                        {/if}
+                      </button>
+                      <button
+                        type="button"
+                        class="notification-dismiss"
+                        aria-label="Benachrichtigung schließen"
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          dismissNotification(n.id, !n.read);
+                        }}
+                      >
                         <svg
-                          class="notification-arrow"
                           xmlns="http://www.w3.org/2000/svg"
                           width="14"
                           height="14"
@@ -293,10 +334,13 @@
                           stroke="currentColor"
                           stroke-width="2"
                           stroke-linecap="round"
-                          stroke-linejoin="round"><polyline points="9 18 15 12 9 6" /></svg
+                          stroke-linejoin="round"
                         >
-                      {/if}
-                    </button>
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    </div>
                   {/each}
                 {/if}
               </div>
@@ -419,15 +463,44 @@
                 <p class="notification-empty">Keine Benachrichtigungen</p>
               {:else}
                 {#each notifications as n (n.id)}
-                  <button
-                    class="notification-item"
-                    class:notification-item--unread={!n.read}
-                    onclick={() => handleNotificationClick(n)}
+                  <div
+                    class="notification-item-wrapper"
+                    class:notification-item-wrapper--unread={!n.read}
                   >
-                    <div class="notification-item-title">{n.title}</div>
-                    <div class="notification-item-message">{n.message}</div>
-                    <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
-                  </button>
+                    <button
+                      type="button"
+                      class="notification-item"
+                      onclick={() => handleNotificationClick(n)}
+                    >
+                      <div class="notification-item-title">{n.title}</div>
+                      <div class="notification-item-message">{n.message}</div>
+                      <div class="notification-item-time">{formatTimeAgo(n.createdAt)}</div>
+                    </button>
+                    <button
+                      type="button"
+                      class="notification-dismiss"
+                      aria-label="Benachrichtigung schließen"
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        dismissNotification(n.id, !n.read);
+                      }}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
                 {/each}
               {/if}
             </div>
@@ -629,16 +702,35 @@
     color: var(--color-text-muted);
   }
 
+  .notification-item-wrapper {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    border-bottom: 1px solid var(--color-border-subtle);
+    transition: background-color 0.12s;
+  }
+
+  .notification-item-wrapper:hover {
+    background-color: var(--color-bg-subtle);
+  }
+
+  .notification-item-wrapper--unread {
+    background-color: var(--color-brand-tint, rgba(59, 130, 246, 0.05));
+  }
+
+  .notification-item-wrapper--unread:hover {
+    background-color: var(--color-brand-tint, rgba(59, 130, 246, 0.1));
+  }
+
   .notification-item {
+    flex: 1;
     display: block;
-    width: 100%;
     text-align: left;
     background: none;
     border: none;
-    border-bottom: 1px solid var(--color-border-subtle);
-    padding: 0.75rem 2rem 0.75rem 1rem;
+    border-bottom: none;
+    padding: 0.75rem 2.5rem 0.75rem 1rem;
     cursor: pointer;
-    transition: background-color 0.12s;
     position: relative;
   }
 
@@ -652,20 +744,34 @@
     transition: opacity 0.15s;
   }
 
-  .notification-item:hover .notification-arrow {
+  .notification-item-wrapper:hover .notification-arrow {
     opacity: 0.6;
   }
 
-  .notification-item:hover {
-    background-color: var(--color-bg-subtle);
+  .notification-dismiss {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition:
+      opacity 0.15s,
+      color 0.12s;
   }
 
-  .notification-item--unread {
-    background-color: var(--color-brand-tint, rgba(59, 130, 246, 0.05));
+  .notification-item-wrapper:hover .notification-dismiss,
+  .notification-dismiss:focus-visible {
+    opacity: 0.8;
   }
 
-  .notification-item--unread:hover {
-    background-color: var(--color-brand-tint, rgba(59, 130, 246, 0.1));
+  .notification-dismiss:hover {
+    color: var(--color-text);
+    opacity: 1;
   }
 
   .notification-item-title {
