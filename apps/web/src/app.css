@@ -1683,39 +1683,37 @@ textarea.form-input {
 }
 
 /* ─── Calendar shared: holiday + weekend cells ───────────────────────────────────── */
-.cal-day.is-holiday:not(.other-month):not(.is-selected),
-.cal-holiday {
+.cal-cell.cal-holiday:not(.cal-other):not(.cal-selected) {
   background: var(--color-brand-tint) !important;
   border-left: 3px solid var(--color-brand);
 }
 
-.cal-day.is-weekend:not(.is-selected),
-.cal-cell.cal-weekend:not(.cal-other) {
+.cal-cell.cal-weekend:not(.cal-other):not(.cal-selected) {
   background: var(--color-bg-subtle) !important;
 }
 
-/* ─── Leave-type absence cell backgrounds (used by cal-day--abs-* in Zeiterfassung) ── */
-.cal-day.cal-day--abs-vacation:not(.is-selected) {
+/* ─── Leave-type absence cell backgrounds (used by .cal-abs-* in Zeiterfassung) ── */
+.cal-cell.cal-abs-vacation:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--color-surface)) !important;
   opacity: 1;
 }
-.cal-day.cal-day--abs-sick:not(.is-selected) {
+.cal-cell.cal-abs-sick:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--color-surface)) !important;
   opacity: 1;
 }
-.cal-day.cal-day--abs-special:not(.is-selected) {
+.cal-cell.cal-abs-special:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-special) 15%, var(--color-surface)) !important;
   opacity: 1;
 }
-.cal-day.cal-day--abs-overtime_comp:not(.is-selected) {
+.cal-cell.cal-abs-overtime_comp:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--color-surface)) !important;
   opacity: 1;
 }
-.cal-day.cal-day--abs-education:not(.is-selected) {
+.cal-cell.cal-abs-education:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-education) 15%, var(--color-surface)) !important;
   opacity: 1;
 }
-.cal-day.cal-day--abs-unpaid:not(.is-selected) {
+.cal-cell.cal-abs-unpaid:not(.cal-selected) {
   background: color-mix(in srgb, var(--leave-type-unpaid) 15%, var(--color-surface)) !important;
   opacity: 1;
 }

@@ -1402,7 +1402,7 @@
         {@const isHoliday = holidays.length > 0}
         <div
           class="cal-cell"
-          class:cal-cell--current={day.isCurrentMonth}
+          class:cal-current={day.isCurrentMonth}
           class:cal-other={!day.isCurrentMonth}
           class:cal-today={day.isToday}
           class:cal-weekend={day.isWeekend && day.isCurrentMonth}
@@ -2684,10 +2684,10 @@
     box-shadow: inset 0 0 0 2px var(--color-brand);
   }
 
-  .cal-cell--current {
+  .cal-cell.cal-current {
     cursor: pointer;
   }
-  .cal-cell--current:hover {
+  .cal-cell.cal-current:hover {
     background: var(--color-bg-subtle, #f3f0ff);
   }
   .cal-cell--drag-selected {
