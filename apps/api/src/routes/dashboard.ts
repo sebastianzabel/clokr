@@ -287,6 +287,161 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return { weekStart: weekDays[0], weekEnd: weekDays[6], weekDays, team };
     },
   });
+  // GET /api/v1/dashboard/today-attendance — Tages-Anwesenheitsübersicht (RPT-03)
+  app.get("/today-attendance", {
+    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+      const tz = await getTenantTimezone(app.prisma, tenantId);
+      const today = todayInTz(tz);
+      const todayStr = dateStrInTz(today, tz);
+
+      // Bulk fetch 1 — active employees for this tenant
+      const employees = await app.prisma.employee.findMany({
+        where: { tenantId, exitDate: null, user: { isActive: true } },
+        select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+        orderBy: { lastName: "asc" },
+      });
+
+      const employeeIds = employees.map((e) => e.id);
+
+      // Bulk fetch 2 — WORK time entries for today (deletedAt: null, tenant-scoped via employee)
+      const timeEntries = await app.prisma.timeEntry.findMany({
+        where: {
+          employee: { tenantId },
+          deletedAt: null,
+          date: today,
+          type: "WORK",
+        },
+        select: { employeeId: true, endTime: true, isInvalid: true },
+      });
+
+      // Bulk fetch 3 — leave requests covering today (APPROVED + CANCELLATION_REQUESTED)
+      const leaveRequests = await app.prisma.leaveRequest.findMany({
+        where: {
+          employee: { tenantId },
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          startDate: { lte: today },
+          endDate: { gte: today },
+          deletedAt: null,
+        },
+        select: {
+          employeeId: true,
+          status: true,
+          leaveType: { select: { name: true } },
+        },
+      });
+
+      // Bulk fetch 4 — absences covering today (deletedAt: null, tenant-scoped)
+      const absences = await app.prisma.absence.findMany({
+        where: {
+          employee: { tenantId },
+          startDate: { lte: today },
+          endDate: { gte: today },
+          deletedAt: null,
+        },
+        select: { employeeId: true, type: true },
+      });
+
+      // Bulk fetch 5 — latest work schedule per employee (validFrom <= today, ordered desc)
+      const allSchedules = await app.prisma.workSchedule.findMany({
+        where: {
+          employeeId: { in: employeeIds },
+          validFrom: { lte: today },
+        },
+        orderBy: { validFrom: "desc" },
+      });
+
+      // Build lookup maps (employeeId → first match)
+      const entriesByEmp = new Map<string, (typeof timeEntries)>();
+      for (const e of timeEntries) {
+        const list = entriesByEmp.get(e.employeeId) ?? [];
+        list.push(e);
+        entriesByEmp.set(e.employeeId, list);
+      }
+
+      const leaveByEmp = new Map<string, (typeof leaveRequests)[0]>();
+      for (const lr of leaveRequests) {
+        if (!leaveByEmp.has(lr.employeeId)) {
+          leaveByEmp.set(lr.employeeId, lr);
+        }
+      }
+
+      const absenceByEmp = new Map<string, (typeof absences)[0]>();
+      for (const a of absences) {
+        if (!absenceByEmp.has(a.employeeId)) {
+          absenceByEmp.set(a.employeeId, a);
+        }
+      }
+
+      // DOW for today (needed once — all employees share the same day)
+      const dow = getDayOfWeekInTz(today, tz);
+
+      // Summary counters
+      let present = 0;
+      let absent = 0;
+      let clockedIn = 0;
+      let missing = 0;
+
+      const employeeRows = employees.map((emp) => {
+        const empSchedule = allSchedules.find((s) => s.employeeId === emp.id) ?? null;
+        const expectedHours = empSchedule
+          ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
+          : 0;
+        const isWorkday = expectedHours > 0;
+
+        const rawEntries = entriesByEmp.get(emp.id) ?? [];
+        const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
+          endTime: e.endTime,
+          isInvalid: e.isInvalid,
+        }));
+
+        const rawLeave = leaveByEmp.get(emp.id) ?? null;
+        const presenceLeave: PresenceLeave | null = rawLeave
+          ? {
+              status: rawLeave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+              leaveTypeName: rawLeave.leaveType.name,
+            }
+          : null;
+
+        const rawAbsence = absenceByEmp.get(emp.id) ?? null;
+        const presenceAbsence: PresenceAbsence | null = rawAbsence
+          ? { type: rawAbsence.type }
+          : null;
+
+        const { status, reason } = resolvePresenceState({
+          entries: presenceEntries,
+          leave: presenceLeave,
+          absence: presenceAbsence,
+          isWorkday,
+          isFuture: false, // today is never future
+          hasShift: false,
+        });
+
+        // Accumulate summary counters
+        if (status === "present") present++;
+        else if (status === "absent") absent++;
+        else if (status === "clocked_in") clockedIn++;
+        else if (status === "missing") missing++;
+
+        return {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          employeeNumber: emp.employeeNumber,
+          status,
+          reason,
+        };
+      });
+
+      return {
+        date: todayStr,
+        employees: employeeRows,
+        summary: { present, absent, clockedIn, missing },
+      };
+    },
+  });
+
   // GET /api/v1/dashboard/my-week — persönliche Wochenübersicht (für alle MA)
   app.get("/my-week", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
