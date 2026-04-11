@@ -1199,9 +1199,19 @@
           {/if}
           {#each formBreaks as brk, i (i)}
             <div class="break-row">
-              <input type="time" bind:value={brk.start} class="form-input" aria-label={`Pause ${i + 1} Beginn`} />
+              <input
+                type="time"
+                bind:value={brk.start}
+                class="form-input"
+                aria-label={`Pause ${i + 1} Beginn`}
+              />
               <span class="break-sep">&ndash;</span>
-              <input type="time" bind:value={brk.end} class="form-input" aria-label={`Pause ${i + 1} Ende`} />
+              <input
+                type="time"
+                bind:value={brk.end}
+                class="form-input"
+                aria-label={`Pause ${i + 1} Ende`}
+              />
               <button
                 class="btn-icon"
                 type="button"
@@ -1264,8 +1274,8 @@
     gap: 0.75rem;
     margin-bottom: 1rem;
     padding: 0.75rem 1rem;
-    background: var(--blue-50, #eff6ff);
-    border: 1px solid var(--blue-200, #bfdbfe);
+    background: var(--color-brand-tint);
+    border: 1px solid var(--color-brand-tint-hover);
     border-radius: 8px;
   }
   .employee-selector .form-label {
@@ -1278,7 +1288,7 @@
   }
   .viewing-other-hint {
     font-size: 0.85rem;
-    color: var(--blue-700, #1d4ed8);
+    color: var(--color-brand);
     font-weight: 500;
   }
 

@@ -358,21 +358,21 @@
 
   // Typ → Hintergrundfarbe (approved=satt, pending=heller)
   function typeColor(code: TypeCode | null, status: Status, isOwn: boolean): string {
-    if (!isOwn || !code) return status === "APPROVED" ? "#9e9e9e" : "#bdbdbd";
+    if (!isOwn || !code)
+      return status === "APPROVED" ? "var(--leave-type-absent)" : "var(--leave-type-absent-muted)";
     const colors: Record<TypeCode, string> = {
-      VACATION: "#4caf50",
-      OVERTIME_COMP: "#9c27b0",
-      SPECIAL: "#2196f3",
-      EDUCATION: "#00bcd4",
-      SICK: "#f44336",
-      SICK_CHILD: "#ff9800",
-      UNPAID: "#795548",
-      HOLIDAY: "#f59e0b",
-      MATERNITY: "#e91e63",
-      PARENTAL: "#3f51b5",
+      VACATION: "var(--leave-type-vacation)",
+      OVERTIME_COMP: "var(--leave-type-overtime)",
+      SPECIAL: "var(--leave-type-special)",
+      EDUCATION: "var(--leave-type-education)",
+      SICK: "var(--leave-type-sick)",
+      SICK_CHILD: "var(--leave-type-sick-child)",
+      UNPAID: "var(--leave-type-unpaid)",
+      HOLIDAY: "var(--leave-type-holiday)",
+      MATERNITY: "var(--leave-type-maternity)",
+      PARENTAL: "var(--leave-type-parental)",
     };
-    const base = colors[code] ?? "#607d8b";
-    return status === "APPROVED" ? base : base + "88";
+    return colors[code] ?? "var(--leave-type-default)";
   }
 
   // ── Laden ─────────────────────────────────────────────────────────────────
@@ -1452,25 +1452,29 @@
     <!-- Legende -->
     <div class="cal-legend">
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#4caf50"></span>Urlaub</span
+        ><span class="legend-dot" style="background:var(--leave-type-vacation)"></span>Urlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#9c27b0"></span>ÜSt-Ausgleich</span
+        ><span class="legend-dot" style="background:var(--leave-type-overtime)"
+        ></span>ÜSt-Ausgleich</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#f44336"></span>Krank</span
+        ><span class="legend-dot" style="background:var(--leave-type-sick)"></span>Krank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#ff9800"></span>Kinderkrank</span
+        ><span class="legend-dot" style="background:var(--leave-type-sick-child)"
+        ></span>Kinderkrank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#2196f3"></span>Sonderurlaub</span
+        ><span class="legend-dot" style="background:var(--leave-type-special)"
+        ></span>Sonderurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#00bcd4"></span>Bildungsurlaub</span
+        ><span class="legend-dot" style="background:var(--leave-type-education)"
+        ></span>Bildungsurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:#9e9e9e"></span>Abwesend</span
+        ><span class="legend-dot" style="background:var(--leave-type-absent)"></span>Abwesend</span
       >
       <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
       <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
