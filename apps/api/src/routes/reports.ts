@@ -317,7 +317,7 @@ export async function reportRoutes(app: FastifyInstance) {
   app.get("/monthly", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { employeeId, year, month } = req.query as {
         employeeId?: string;
         year: string;
@@ -325,8 +325,12 @@ export async function reportRoutes(app: FastifyInstance) {
       };
 
       const y = parseInt(year);
+      const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
+      }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, parseInt(month), tz);
+      const { start, end } = monthRangeUtc(y, m, tz);
 
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const employees = (await app.prisma.employee.findMany({
@@ -429,8 +433,12 @@ export async function reportRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
       const y = parseInt(year);
+      const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
+      }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-      const { start, end } = monthRangeUtc(y, parseInt(month), tz);
+      const { start, end } = monthRangeUtc(y, m, tz);
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
@@ -535,8 +543,6 @@ export async function reportRoutes(app: FastifyInstance) {
         return `${pn};${tag};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
       }
 
-      const m = parseInt(month);
-
       for (const emp of employees) {
         const pn = emp.employeeNumber;
         // Kalendertag = letzter Tag des Monats (DATEV-Konvention für Monatswerte)
@@ -623,6 +629,9 @@ export async function reportRoutes(app: FastifyInstance) {
 
       const y = parseInt(year);
       const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
+      }
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
@@ -689,6 +698,9 @@ export async function reportRoutes(app: FastifyInstance) {
       };
       const y = parseInt(year);
       const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Jahr- oder Monatsangabe" });
+      }
 
       // ALLOWLIST validation — never pass untrusted string to Prisma enum
       const roleFilter: "EMPLOYEE" | "MANAGER" | undefined =
