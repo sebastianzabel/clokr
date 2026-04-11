@@ -1682,6 +1682,18 @@ textarea.form-input {
   border-color: var(--glass-border);
 }
 
+/* ─── Calendar shared: holiday + weekend cells ───────────────────────────────────── */
+.cal-day.is-holiday:not(.other-month):not(.is-selected),
+.cal-holiday {
+  background: var(--color-brand-tint) !important;
+  border-left: 3px solid var(--color-brand);
+}
+
+.cal-day.is-weekend:not(.is-selected),
+.cal-cell.cal-weekend:not(.cal-other) {
+  background: var(--color-bg-subtle) !important;
+}
+
 /* ─── Leave-type absence cell backgrounds (used by cal-day--abs-* in Zeiterfassung) ── */
 .cal-day.cal-day--abs-vacation:not(.is-selected) {
   background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--color-surface)) !important;

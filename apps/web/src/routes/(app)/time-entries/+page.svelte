@@ -1596,13 +1596,7 @@
   }
 
   /* Wochenende + Feiertage */
-  :global(.cal-day.is-weekend:not(.is-selected)) {
-    background-color: var(--color-bg-subtle) !important;
-  }
-  :global(.cal-day.is-holiday:not(.other-month):not(.is-selected)) {
-    background-color: var(--color-brand-tint) !important;
-    border-left: 3px solid var(--color-brand);
-  }
+  /* Weekend + holiday cell styles → global in app.css */
   .day-holiday-name {
     display: block;
     font-size: 0.6rem;
