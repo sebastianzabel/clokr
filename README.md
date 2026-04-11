@@ -73,7 +73,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### Pin a version
 
-Set `CLOKR_VERSION=4.0.8` in `.env` to pin to a specific release.
+Set `CLOKR_VERSION=1.0.0` in `.env` to pin to a specific release.
 
 ---
 
