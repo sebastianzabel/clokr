@@ -7,6 +7,7 @@ export type PresenceStatus =
   | "absent"
   | "clocked_in"
   | "missing"
+  | "holiday"
   | "scheduled"
   | "none";
 
@@ -46,9 +47,10 @@ const ABSENCE_LABELS: Record<string, string> = {
  * 3. CANCELLATION_REQUESTED leave → absent + "Urlaubsstornierung beantragt"
  * 4. APPROVED leave → absent + leaveTypeName
  * 5. Absence → absent + German label
- * 6. Future workday/shift → scheduled
- * 7. Past workday/shift → missing
- * 8. Default → none
+ * 6. Public holiday (isHoliday) → holiday + holidayName
+ * 7. Future workday/shift → scheduled
+ * 8. Past workday/shift → missing
+ * 9. Default → none
  *
  * isInvalid:true entries are ignored entirely (D-08).
  */
@@ -59,8 +61,10 @@ export function resolvePresenceState(params: {
   isWorkday: boolean;
   isFuture: boolean;
   hasShift: boolean;
+  isHoliday: boolean;
+  holidayName: string | null;
 }): PresenceResult {
-  const { entries, leave, absence, isWorkday, isFuture, hasShift } = params;
+  const { entries, leave, absence, isWorkday, isFuture, hasShift, isHoliday, holidayName } = params;
 
   // Filter out invalid entries (D-08: isInvalid:true does not count as present/clocked_in)
   const validEntries = entries.filter((e) => !e.isInvalid);
@@ -91,6 +95,10 @@ export function resolvePresenceState(params: {
       status: "absent",
       reason: ABSENCE_LABELS[absence.type] ?? absence.type,
     };
+  }
+
+  if (isHoliday) {
+    return { status: "holiday", reason: holidayName };
   }
 
   if (isFuture && (hasShift || isWorkday)) {

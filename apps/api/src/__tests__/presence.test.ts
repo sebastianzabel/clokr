@@ -8,6 +8,7 @@ const workday = true;
 const noWorkday = false;
 const hasShift = true;
 const noShift = false;
+const noHoliday = { isHoliday: false, holidayName: null };
 
 const validOpen = { endTime: null, isInvalid: false };
 const validClosed = { endTime: new Date("2026-04-10T16:00:00Z"), isInvalid: false };
@@ -29,6 +30,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "clocked_in", reason: null });
   });
@@ -41,6 +43,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "present", reason: null });
   });
@@ -53,6 +56,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "missing", reason: null });
   });
@@ -65,6 +69,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "missing", reason: null });
   });
@@ -78,6 +83,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "absent", reason: "Urlaubsstornierung beantragt" });
   });
@@ -90,6 +96,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "absent", reason: "Urlaubsstornierung beantragt" });
   });
@@ -102,6 +109,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "absent", reason: "Urlaub" });
   });
@@ -114,6 +122,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "present", reason: null });
   });
@@ -126,8 +135,51 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "absent", reason: "Krankmeldung" });
+  });
+
+  it("holiday → holiday with holiday name (after absence, before scheduled/missing)", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: null,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      isHoliday: true,
+      holidayName: "Tag der Arbeit",
+    });
+    expect(result).toEqual({ status: "holiday", reason: "Tag der Arbeit" });
+  });
+
+  it("holiday with null name → holiday with null reason", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: null,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      isHoliday: true,
+      holidayName: null,
+    });
+    expect(result).toEqual({ status: "holiday", reason: null });
+  });
+
+  it("clocked_in beats holiday (presence priority)", () => {
+    const result = resolvePresenceState({
+      entries: [validOpen],
+      leave: null,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      isHoliday: true,
+      holidayName: "Neujahr",
+    });
+    expect(result).toEqual({ status: "clocked_in", reason: null });
   });
 
   it("future workday with no entries → scheduled", () => {
@@ -138,6 +190,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: future,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "scheduled", reason: null });
   });
@@ -150,6 +203,7 @@ describe("resolvePresenceState", () => {
       isWorkday: noWorkday,
       isFuture: future,
       hasShift: hasShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "scheduled", reason: null });
   });
@@ -162,6 +216,7 @@ describe("resolvePresenceState", () => {
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "missing", reason: null });
   });
@@ -174,6 +229,7 @@ describe("resolvePresenceState", () => {
       isWorkday: noWorkday,
       isFuture: past,
       hasShift: noShift,
+      ...noHoliday,
     });
     expect(result).toEqual({ status: "none", reason: null });
   });
