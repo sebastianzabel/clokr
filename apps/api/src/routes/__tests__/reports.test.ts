@@ -1032,4 +1032,317 @@ describe("Reports API", () => {
       expect(empRow.pendingDays).toBe(3);
     });
   });
+
+  // ── GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03) ──────────
+  describe("GET /api/v1/dashboard/overtime-overview (RPT-01 + SALDO-03)", () => {
+    let otData: Awaited<ReturnType<typeof seedTestData>>;
+    let ot2Data: Awaited<ReturnType<typeof seedTestData>>;
+    let managerToken: string;
+    let empNormalId: string;
+    let empElevatedId: string;
+    let tenantBEmpId: string;
+
+    beforeAll(async () => {
+      otData = await seedTestData(app, "ot");
+      ot2Data = await seedTestData(app, "ot-b");
+      const prisma = app.prisma;
+
+      // Create a manager user + employee for tenant A
+      const mgrPwHash = await import("bcryptjs").then((b) =>
+        b.default.hash("test1234", 10),
+      );
+      const mgrUser = await prisma.user.create({
+        data: {
+          email: `mgr-ot-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgrEmp = await prisma.employee.create({
+        data: {
+          tenantId: otData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `MGR-OT-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "OT",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: mgrEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: mgrEmp.id, balanceHours: 0 } });
+      const mgrLogin = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: mgrUser.email, password: "test1234" },
+      });
+      managerToken = JSON.parse(mgrLogin.body).accessToken;
+
+      // Set distinct balanceHours for different status thresholds:
+      // admin employee: 5h → NORMAL (|5| <= 20)
+      // regular employee: 25h → ELEVATED (|25| in (20,40])
+      await prisma.overtimeAccount.update({
+        where: { employeeId: otData.adminEmployee.id },
+        data: { balanceHours: 5 },
+      });
+      await prisma.overtimeAccount.update({
+        where: { employeeId: otData.employee.id },
+        data: { balanceHours: 25 },
+      });
+      empNormalId = otData.adminEmployee.id;
+      empElevatedId = otData.employee.id;
+
+      // Create a CRITICAL balance employee (-50h) — new employee in tenant A
+      const critUser = await prisma.user.create({
+        data: {
+          email: `crit-ot-${Date.now()}@test.de`,
+          passwordHash: mgrPwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const critEmp = await prisma.employee.create({
+        data: {
+          tenantId: otData.tenant.id,
+          userId: critUser.id,
+          employeeNumber: `CRIT-OT-${Date.now()}`,
+          firstName: "Critical",
+          lastName: "Worker",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: critEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: critEmp.id, balanceHours: -50 } });
+
+      // Tenant B employee ID for cross-tenant test
+      tenantBEmpId = ot2Data.employee.id;
+
+      // Create 3 MONTHLY SaldoSnapshots within the last 6 months for empNormal
+      const now = new Date();
+      for (let i = 1; i <= 3; i++) {
+        const month = new Date(now);
+        month.setUTCMonth(month.getUTCMonth() - i);
+        month.setUTCDate(1);
+        month.setUTCHours(0, 0, 0, 0);
+        const periodEnd = new Date(month);
+        periodEnd.setUTCMonth(periodEnd.getUTCMonth() + 1);
+        periodEnd.setUTCDate(0); // last day of month
+
+        await prisma.saldoSnapshot.create({
+          data: {
+            employeeId: empNormalId,
+            periodType: "MONTHLY",
+            periodStart: month,
+            periodEnd,
+            workedMinutes: 9600,
+            expectedMinutes: 9600,
+            balanceMinutes: i * 60, // 60, 120, 180 minutes
+            carryOver: i * 60,
+            closedAt: new Date(),
+          },
+        });
+      }
+
+      // Create one OLD snapshot (8 months ago) — must be excluded
+      const oldMonth = new Date(now);
+      oldMonth.setUTCMonth(oldMonth.getUTCMonth() - 8);
+      oldMonth.setUTCDate(1);
+      oldMonth.setUTCHours(0, 0, 0, 0);
+      const oldPeriodEnd = new Date(oldMonth);
+      oldPeriodEnd.setUTCMonth(oldPeriodEnd.getUTCMonth() + 1);
+      oldPeriodEnd.setUTCDate(0);
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: empNormalId,
+          periodType: "MONTHLY",
+          periodStart: oldMonth,
+          periodEnd: oldPeriodEnd,
+          workedMinutes: 9600,
+          expectedMinutes: 9600,
+          balanceMinutes: 999,
+          carryOver: 999,
+          closedAt: new Date(),
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, otData.tenant.id);
+      await cleanupTestData(app, ot2Data.tenant.id);
+    });
+
+    it("Case 1: returns rows for all active employees in tenant (no tenant B leakage)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body).toHaveProperty("employees");
+      expect(Array.isArray(body.employees)).toBe(true);
+      expect(body.employees.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it("Case 2: each row has id, name, employeeNumber, balanceHours, status, snapshots", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      for (const emp of body.employees) {
+        expect(emp).toHaveProperty("id");
+        expect(emp).toHaveProperty("name");
+        expect(emp).toHaveProperty("employeeNumber");
+        expect(typeof emp.balanceHours).toBe("number");
+        expect(emp).toHaveProperty("status");
+        expect(Array.isArray(emp.snapshots)).toBe(true);
+      }
+    });
+
+    it("Case 3: balanceHours matches stored OvertimeAccount (no recomputation)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      expect(normalEmp).toBeDefined();
+      expect(normalEmp.balanceHours).toBe(5);
+      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
+      expect(elevatedEmp).toBeDefined();
+      expect(elevatedEmp.balanceHours).toBe(25);
+    });
+
+    it("Case 4: status is NORMAL for |balance| <= 20, ELEVATED for (20,40], CRITICAL for > 40", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      expect(normalEmp.status).toBe("NORMAL");
+      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
+      expect(elevatedEmp.status).toBe("ELEVATED");
+      // Critical emp should have CRITICAL status (-50h)
+      const critEmp = body.employees.find((e: { balanceHours: number }) => e.balanceHours === -50);
+      expect(critEmp).toBeDefined();
+      expect(critEmp.status).toBe("CRITICAL");
+    });
+
+    it("Case 5: employee with 3 MONTHLY snapshots in last 6 months returns snapshots.length === 3", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      expect(normalEmp).toBeDefined();
+      expect(normalEmp.snapshots.length).toBe(3);
+    });
+
+    it("Case 6: each snapshot has periodStart (ISO string), balanceMinutes, carryOver", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      for (const snap of normalEmp.snapshots) {
+        expect(typeof snap.periodStart).toBe("string");
+        expect(/^\d{4}-\d{2}-\d{2}$/.test(snap.periodStart)).toBe(true);
+        expect(typeof snap.balanceMinutes).toBe("number");
+        expect(typeof snap.carryOver).toBe("number");
+      }
+    });
+
+    it("Case 7: snapshots older than 6 months are excluded", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
+      // Should only have 3 snapshots (not 4 — the 8-month-old one is excluded)
+      expect(normalEmp.snapshots.length).toBe(3);
+      // Verify balanceMinutes 999 (the old snapshot) is not present
+      const hasOldSnapshot = normalEmp.snapshots.some(
+        (s: { balanceMinutes: number }) => s.balanceMinutes === 999,
+      );
+      expect(hasOldSnapshot).toBe(false);
+    });
+
+    it("Case 8: employee with zero snapshots returns snapshots: []", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      // empElevated has no snapshots seeded → should have empty array
+      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
+      expect(elevatedEmp).toBeDefined();
+      expect(elevatedEmp.snapshots).toEqual([]);
+    });
+
+    it("Case 9: tenant isolation — tenant A response does NOT include tenant B employees", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const tenantBEmp = body.employees.find((e: { id: string }) => e.id === tenantBEmpId);
+      expect(tenantBEmp).toBeUndefined();
+    });
+
+    it("Case 10: EMPLOYEE role returns 403", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/overtime-overview",
+        headers: { authorization: `Bearer ${otData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+  });
 });
