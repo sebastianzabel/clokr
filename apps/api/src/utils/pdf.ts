@@ -221,7 +221,8 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
 
 // ── streamCompanyMonthlyReportPdf (PDF-01/PDF-03/PDF-05) ─────────────────────
 // Synchronous void — caller owns PDFDocument lifecycle (create → call → end → send).
-// Does NOT use bufferPages (incompatible with streaming per RESEARCH.md Pitfall 2).
+// Does NOT use bufferPages (incompatible with streaming).
+// Footer is written BEFORE each page break (explicit control, no pageAdded event).
 export function streamCompanyMonthlyReportPdf(
   doc: PDFKit.PDFDocument,
   data: CompanyMonthlyReportData,
@@ -233,183 +234,82 @@ export function streamCompanyMonthlyReportPdf(
         ? "Nur Manager"
         : "Alle Mitarbeiter";
 
-  // Re-entrancy guard — prevents pageAdded from recursing when drawSmallFooter calls doc.text()
-  let drawingFooter = false;
-
-  // Register footer for every new page added after the first page
-  doc.on("pageAdded", () => {
-    if (drawingFooter) return;
-    drawingFooter = true;
+  // Helper: write footer on current page, then add a fresh page, return startY for content
+  function nextPage(): number {
     drawSmallFooter(doc);
-    drawingFooter = false;
-  });
+    doc.addPage();
+    return doc.page.margins.top;
+  }
 
-  // Draw footer on the first page immediately (pageAdded fires only for pages added later)
-  drawingFooter = true;
-  drawSmallFooter(doc);
-  drawingFooter = false;
-
-  // ── Summary / cover page ──────────────────────────────
+  // ── Cover page ────────────────────────────────────────
   drawColoredHeader(
     doc,
     data.tenantName,
     `Monatsbericht \u2014 ${data.month} \u2014 ${roleLabel}`,
   );
 
-  // Summary table
+  // Summary table header
   doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Übersicht");
   doc.moveDown(0.5);
 
   const summaryHeaders = ["Mitarbeiter", "Nr.", "Soll (h)", "Ist (h)", "Saldo (h)", "Urlaub", "Krank"];
   const summaryWidths = [150, 60, 60, 60, 60, 50, 50];
+  const tableMargin = 50;
+  const ROW_H = 16;
+  const FOOTER_MARGIN = 60; // reserved space for footer at bottom
 
-  doc.fontSize(8).font("Helvetica-Bold");
-  let tx = 50;
+  let tx = tableMargin;
   const tableTop = doc.y;
+  doc.fontSize(8).font("Helvetica-Bold");
   summaryHeaders.forEach((h, i) => {
     doc.text(h, tx, tableTop, { width: summaryWidths[i] });
     tx += summaryWidths[i];
   });
-  doc.moveTo(50, tableTop + 14).lineTo(doc.page.width - 50, tableTop + 14).stroke("#e5e7eb");
+  doc.moveTo(tableMargin, tableTop + 14).lineTo(doc.page.width - tableMargin, tableTop + 14).stroke("#e5e7eb");
 
   doc.fontSize(8).font("Helvetica").fillColor("#111827");
   let rowY = tableTop + 18;
 
   for (const row of data.rows) {
-    if (rowY > doc.page.height - 60) {
-      doc.addPage();
-      rowY = 50;
-    }
-    let rx = 50;
-    const saldo = row.workedHours - row.targetHours;
-    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
-    rx += summaryWidths[0];
-    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
-    rx += summaryWidths[1];
-    doc.text(row.targetHours.toFixed(1), rx, rowY, { width: summaryWidths[2] });
-    rx += summaryWidths[2];
-    doc.text(row.workedHours.toFixed(1), rx, rowY, { width: summaryWidths[3] });
-    rx += summaryWidths[3];
-    doc.text(`${saldo >= 0 ? "+" : ""}${saldo.toFixed(1)}`, rx, rowY, {
-      width: summaryWidths[4],
-    });
-    rx += summaryWidths[4];
-    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] });
-    rx += summaryWidths[5];
-    doc.text(
-      String(row.sickDaysWithAttest + row.sickDaysWithoutAttest),
-      rx,
-      rowY,
-      { width: summaryWidths[6] },
-    );
-    rowY += 14;
-  }
-
-  // ── Per-employee detail pages ─────────────────────────
-  for (const row of data.rows) {
-    doc.addPage();
-
-    // Section header (no colored band on detail pages — just employee name)
-    doc
-      .fontSize(12)
-      .font("Helvetica-Bold")
-      .fillColor("#111827")
-      .text(`${row.employeeName} (${row.employeeNumber})`);
-    doc.fontSize(9).font("Helvetica").fillColor("#6b7280").text(`Rolle: ${row.role}`);
-    doc.fillColor("#111827");
-    doc.moveDown(0.5);
-
-    // Zusammenfassung box
-    const boxY = doc.y;
-    doc.rect(50, boxY, doc.page.width - 100, 70).stroke("#e5e7eb");
-
-    doc.fontSize(9).font("Helvetica");
-    const saldo = row.workedHours - row.targetHours;
-    const bc1 = 60;
-    const bc2 = 200;
-    const bc3 = 340;
-    let by = boxY + 10;
-
-    doc.text(`Soll: ${row.targetHours.toFixed(1)} h`, bc1, by);
-    doc.text(`Ist: ${row.workedHours.toFixed(1)} h`, bc2, by);
-    doc.text(`Saldo: ${saldo >= 0 ? "+" : ""}${saldo.toFixed(1)} h`, bc3, by);
-    by += 18;
-    doc.text(`Kranktage: ${row.sickDaysWithAttest + row.sickDaysWithoutAttest}`, bc1, by);
-    doc.text(`davon m. Attest: ${row.sickDaysWithAttest}`, bc2, by);
-    doc.text(`Urlaubstage: ${row.vacationDays}`, bc3, by);
-
-    doc.y = boxY + 80;
-    doc.moveDown(0.5);
-
-    // Time entries table
-    if (row.entries.length > 0) {
-      doc.fontSize(9).font("Helvetica-Bold").fillColor("#111827").text("Zeiteinträge");
-      doc.moveDown(0.4);
-
-      const etTop = doc.y;
-      const colWidths = [70, 55, 55, 50, 55, doc.page.width - 100 - 285];
-      const headers = ["Datum", "Start", "Ende", "Pause", "Netto", "Notiz"];
-
+    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
+      rowY = nextPage();
+      // Repeat column headers on continuation pages
+      let hx = tableMargin;
       doc.fontSize(8).font("Helvetica-Bold");
-      let ex = 50;
-      headers.forEach((h, i) => {
-        doc.text(h, ex, etTop, { width: colWidths[i] });
-        ex += colWidths[i];
+      summaryHeaders.forEach((h, i) => {
+        doc.text(h, hx, rowY, { width: summaryWidths[i] });
+        hx += summaryWidths[i];
       });
-      doc.moveTo(50, etTop + 14).lineTo(doc.page.width - 50, etTop + 14).stroke("#e5e7eb");
-
+      doc.moveTo(tableMargin, rowY + 14).lineTo(doc.page.width - tableMargin, rowY + 14).stroke("#e5e7eb");
       doc.fontSize(8).font("Helvetica").fillColor("#111827");
-      let ey = etTop + 18;
-
-      for (const entry of row.entries) {
-        if (ey > doc.page.height - 80) {
-          doc.addPage();
-          ey = 50;
-        }
-        ex = 50;
-        doc.text(entry.date, ex, ey, { width: colWidths[0] });
-        ex += colWidths[0];
-        doc.text(entry.start, ex, ey, { width: colWidths[1] });
-        ex += colWidths[1];
-        doc.text(entry.end || "\u2014", ex, ey, { width: colWidths[2] });
-        ex += colWidths[2];
-        doc.text(`${entry.breakMin} min`, ex, ey, { width: colWidths[3] });
-        ex += colWidths[3];
-        doc.text(`${entry.netHours.toFixed(1)} h`, ex, ey, { width: colWidths[4] });
-        ex += colWidths[4];
-        doc.text(entry.note || "", ex, ey, { width: colWidths[5] });
-        ey += 14;
-      }
-    } else {
-      doc
-        .fontSize(9)
-        .font("Helvetica")
-        .fillColor("#6b7280")
-        .text("Keine Zeiteinträge in diesem Monat.");
-      doc.fillColor("#111827");
+      rowY += 18;
     }
+
+    let rx = tableMargin;
+    const saldo = row.workedHours - row.targetHours;
+    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] }); rx += summaryWidths[0];
+    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] }); rx += summaryWidths[1];
+    doc.text(row.targetHours.toFixed(1), rx, rowY, { width: summaryWidths[2] }); rx += summaryWidths[2];
+    doc.text(row.workedHours.toFixed(1), rx, rowY, { width: summaryWidths[3] }); rx += summaryWidths[3];
+    doc.text(`${saldo >= 0 ? "+" : ""}${saldo.toFixed(1)}`, rx, rowY, { width: summaryWidths[4] }); rx += summaryWidths[4];
+    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] }); rx += summaryWidths[5];
+    doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, { width: summaryWidths[6] });
+    rowY += ROW_H;
   }
 
+  // Footer on last page
+  drawSmallFooter(doc);
 }
 
 // ── streamLeaveListPdf (PDF-02/PDF-05) ────────────────────────────────────────
 // Synchronous void — caller owns lifecycle. Does NOT call doc.end().
+// Footer written explicitly before page breaks (no pageAdded event).
 export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData): void {
-  // Re-entrancy guard — prevents pageAdded from recursing when drawSmallFooter calls doc.text()
-  let drawingFooter = false;
-
-  // Register footer for every new page added after the first page
-  doc.on("pageAdded", () => {
-    if (drawingFooter) return;
-    drawingFooter = true;
+  function nextPage(): number {
     drawSmallFooter(doc);
-    drawingFooter = false;
-  });
-
-  // Draw footer on the first page immediately
-  drawingFooter = true;
-  drawSmallFooter(doc);
-  drawingFooter = false;
+    doc.addPage();
+    return doc.page.margins.top;
+  }
 
   // ── Header ───────────────────────────────────────────
   drawColoredHeader(doc, data.tenantName, `Urlaubsliste \u2014 ${data.year}`);
@@ -417,6 +317,7 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
   if (data.employees.length === 0) {
     doc.fontSize(9).font("Helvetica").fillColor("#6b7280").text("Keine Urlaubsdaten vorhanden.");
     doc.fillColor("#111827");
+    drawSmallFooter(doc);
     return;
   }
 
@@ -424,9 +325,9 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
   const colHeaders = ["Von", "Bis", "Typ", "Tage"];
 
   for (const emp of data.employees) {
-    // Employee heading
+    // Employee heading — ensure enough space for name + at least one row
     if (doc.y > doc.page.height - 120) {
-      doc.addPage();
+      doc.y = nextPage();
     }
 
     doc
@@ -454,17 +355,13 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
       let ry = tTop + 18;
 
       for (const period of emp.periods) {
-        if (ry > doc.page.height - 80) {
-          doc.addPage();
-          ry = 50;
+        if (ry + 14 > doc.page.height - 60) {
+          ry = nextPage();
         }
         let rx = 50;
-        doc.text(period.startDate, rx, ry, { width: colWidths[0] });
-        rx += colWidths[0];
-        doc.text(period.endDate, rx, ry, { width: colWidths[1] });
-        rx += colWidths[1];
-        doc.text(period.leaveTypeName, rx, ry, { width: colWidths[2] });
-        rx += colWidths[2];
+        doc.text(period.startDate, rx, ry, { width: colWidths[0] }); rx += colWidths[0];
+        doc.text(period.endDate, rx, ry, { width: colWidths[1] }); rx += colWidths[1];
+        doc.text(period.leaveTypeName, rx, ry, { width: colWidths[2] }); rx += colWidths[2];
         doc.text(String(period.days), rx, ry, { width: colWidths[3] });
         ry += 14;
       }

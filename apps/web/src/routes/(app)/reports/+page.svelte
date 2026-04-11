@@ -517,7 +517,7 @@
                 <td class="font-mono">{formatHours(row.workedHours)}</td>
                 <td class="font-mono text-muted">{formatHours(row.shouldHours)}</td>
                 <td class="font-mono font-medium {diffColor(row.workedHours, row.shouldHours)}">
-                  {row.workedHours - row.shouldHours >= 0 ? "+" : ""}
+                  {row.workedHours - row.shouldHours >= 0 ? "+" : "-"}
                   {formatHours(Math.abs(row.workedHours - row.shouldHours))}
                 </td>
                 <td class={row.sickDaysWithAttest > 0 ? "text-green" : "text-muted"}
