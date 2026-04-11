@@ -163,6 +163,21 @@
   --glass-border: rgba(128, 55, 123, 0.08);
   --glass-blur: 20px;
   --glass-shadow: 0 8px 32px rgba(128, 55, 123, 0.08), 0 2px 8px rgba(128, 55, 123, 0.04);
+
+  /* Leave type chip / legend colors */
+  --leave-type-vacation: #4caf50;
+  --leave-type-overtime: #9c27b0;
+  --leave-type-special: #2196f3;
+  --leave-type-education: #00bcd4;
+  --leave-type-sick: #f44336;
+  --leave-type-sick-child: #ff9800;
+  --leave-type-unpaid: #795548;
+  --leave-type-holiday: #f59e0b;
+  --leave-type-maternity: #e91e63;
+  --leave-type-parental: #ff5722;
+  --leave-type-default: #607d8b;
+  --leave-type-absent: #9e9e9e;
+  --leave-type-absent-muted: #bdbdbd;
 }
 
 /* ─── Theme: Nacht (dark) ─────────────────────────────────────────────── */
@@ -244,6 +259,21 @@
   --glass-border: rgba(255, 255, 255, 0.06);
   --glass-blur: 24px;
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 1px rgba(168, 92, 163, 0.15);
+
+  /* Leave type chip / legend colors — muted for dark background */
+  --leave-type-vacation: #5dbf61;
+  --leave-type-overtime: #c77dcd;
+  --leave-type-special: #5eaaff;
+  --leave-type-education: #4dd0e1;
+  --leave-type-sick: #f87171;
+  --leave-type-sick-child: #ffb74d;
+  --leave-type-unpaid: #a1887f;
+  --leave-type-holiday: #fbbf24;
+  --leave-type-maternity: #f06292;
+  --leave-type-parental: #ff8a65;
+  --leave-type-default: #90a4ae;
+  --leave-type-absent: #b0bec5;
+  --leave-type-absent-muted: #cfd8dc;
 }
 
 /* ─── Theme: Wald (nature green) ──────────────────────────────────────── */
