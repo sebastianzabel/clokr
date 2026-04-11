@@ -1633,22 +1633,8 @@
   }
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
-  :global(.cal-day.cal-day--abs-vacation:not(.is-selected)) {
-    background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--color-surface)) !important;
-    opacity: 1;
-  }
-  :global(.cal-day.cal-day--abs-sick:not(.is-selected)) {
-    background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--color-surface)) !important;
-    opacity: 1;
-  }
-  :global(.cal-day.cal-day--abs-special:not(.is-selected)) {
-    background: color-mix(in srgb, var(--leave-type-special) 15%, var(--color-surface)) !important;
-    opacity: 1;
-  }
-  :global(.cal-day.cal-day--abs-overtime_comp:not(.is-selected)) {
-    background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--color-surface)) !important;
-    opacity: 1;
-  }
+  /* Absence cell backgrounds → global in app.css (.cal-day--abs-*) */
+
   /* Nachbarmonat-Tage mit Abwesenheit etwas heller darstellen */
 
   .day-abs-type {
