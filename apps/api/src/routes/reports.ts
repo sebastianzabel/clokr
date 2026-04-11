@@ -1,4 +1,5 @@
 import { FastifyInstance } from "fastify";
+import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
 import {
@@ -281,6 +282,23 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, parseInt(month), tz);
 
+      const config = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: {
+          datevNormalstundenNr: true,
+          datevUrlaubNr: true,
+          datevKrankNr: true,
+          datevSonderurlaubNr: true,
+        },
+      });
+
+      const lna = {
+        normal: config?.datevNormalstundenNr ?? 100,
+        urlaub: config?.datevUrlaubNr ?? 300,
+        krank: config?.datevKrankNr ?? 200,
+        sonderurlaub: config?.datevSonderurlaubNr ?? 302,
+      };
+
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
         include: {
@@ -309,24 +327,30 @@ export async function reportRoutes(app: FastifyInstance) {
       });
 
       // ── DATEV LODAS ASCII-Import Format ────────────────────────────
-      // 11 Felder, Semikolon-getrennt, Dezimal-Komma
-      // Personalnummer;Kalendertag;Ausfallschlüssel;Lohnartennummer;
+      // Produces a CP1252-encoded .txt file with three INI sections:
+      //   [Allgemein]       – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
+      //   [Satzbeschreibung] – describes the 11-field semicolon format of Bewegungsdaten rows
+      //   [Bewegungsdaten]  – actual employee rows via datevLine() helper
+      //
+      // 11 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
+      // Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;
       // Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;
-      // Abweichende Lohnveränderung;Kostenstellennummer;Kostenträger
+      // Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger
       //
       // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
-      // Lohnarten (konfigurierbar im Mandant):
-      //   100 = Normalstunden          | 200 = Krankheit (AU)
-      //   201 = Krankheit Kind         | 300 = Urlaub
-      //   301 = Überstundenausgleich   | 302 = Sonderurlaub
-      //   303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
-      //   310 = Mutterschutz           | 320 = Elternzeit
+      // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
+      //   CONFIGURABLE:
+      //     datevNormalstundenNr (default 100) = Normalstunden
+      //     datevKrankNr         (default 200) = Krankheit (AU)
+      //     datevUrlaubNr        (default 300) = Urlaub
+      //     datevSonderurlaubNr  (default 302) = Sonderurlaub
+      //   HARDCODED:
+      //     201 = Krankheit Kind         | 301 = Überstundenausgleich
+      //     303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
+      //     310 = Mutterschutz           | 320 = Elternzeit
 
+      const CRLF = "\r\n";
       const lines: string[] = [];
-      // DATEV header row
-      lines.push(
-        "Personalnummer;Kalendertag;Ausfallschluessel;Lohnartennummer;Stundenanzahl;Tagesanzahl;Wert;Abweichender Faktor;Abweichende Lohnveraenderung;Kostenstellennummer;Kostentraeger",
-      );
 
       /** Dezimal mit Komma formatieren */
       function dec(n: number, digits = 2): string {
@@ -398,12 +422,12 @@ export async function reportRoutes(app: FastifyInstance) {
         const parentalDays = daysForName(emp, "Elternzeit");
 
         // DATEV-Zeilen (Format: 11 Felder, Semikolon-getrennt)
-        lines.push(datevLine(pn, tag, "", 100, workedHours, 0));
-        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", 200, 0, sickDays));
+        lines.push(datevLine(pn, tag, "", lna.normal, workedHours, 0));
+        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", lna.krank, 0, sickDays));
         if (sickChildDays > 0) lines.push(datevLine(pn, tag, "K", 201, 0, sickChildDays));
-        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", 300, 0, vacationDays));
+        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", lna.urlaub, 0, vacationDays));
         if (overtimeCompDays > 0) lines.push(datevLine(pn, tag, "U", 301, 0, overtimeCompDays));
-        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", 302, 0, specialDays));
+        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", lna.sonderurlaub, 0, specialDays));
         if (educationDays > 0) lines.push(datevLine(pn, tag, "S", 303, 0, educationDays));
         if (unpaidDays > 0) lines.push(datevLine(pn, tag, "", 304, 0, unpaidDays));
         if (maternityDays > 0) lines.push(datevLine(pn, tag, "", 310, 0, maternityDays));
@@ -417,9 +441,26 @@ export async function reportRoutes(app: FastifyInstance) {
         newValue: { type: "DATEV", year, month },
       });
 
-      reply.header("Content-Type", "text/csv; charset=utf-8");
-      reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.csv"`);
-      return lines.join("\n");
+      const iniHeader = [
+        "[Allgemein]",
+        "Ziel=LODAS",
+        "Version_SST=1.0",
+        "BeraterNr=0",
+        "MandantenNr=0",
+        "Datumsangaben=DDMMJJJJ",
+        "",
+        "[Satzbeschreibung]",
+        "20;u_lod_bwd_buchung_kst;pnr#bwd;u_lod_lna_nr#bwd;ausfallkennzeichen#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
+        "",
+        "[Bewegungsdaten]",
+      ].join(CRLF);
+
+      const body = iniHeader + CRLF + lines.join(CRLF) + CRLF;
+      const buf: Buffer = iconv.encode(body, "win1252");
+
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.txt"`);
+      return reply.send(buf);
     },
   });
 
