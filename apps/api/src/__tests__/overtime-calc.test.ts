@@ -164,15 +164,7 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     it("GET overtime returns updated balance after adding a work entry", async () => {
-      // Get balance before
-      const before = await app.inject({
-        method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      const balanceBefore = Number(JSON.parse(before.body).balanceHours);
-
-      // Add a 10h entry for a recent weekday (within the current month so it affects saldo)
+      // Add a 10h entry for a recent weekday via API route (triggers updateOvertimeAccount)
       const recentDate = pastDate(3);
       await app.prisma.timeEntry.deleteMany({
         where: {
@@ -181,19 +173,31 @@ describe("Overtime Saldo Calculation", () => {
           deletedAt: null,
         },
       });
-      await app.prisma.timeEntry.create({
-        data: {
+
+      // Measure baseline AFTER cleanup so stored balance excludes the target date
+      const before = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const balanceBefore = Number(JSON.parse(before.body).balanceHours);
+
+      // POST via API route — fires updateOvertimeAccount as write-path side effect (SALDO-01)
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
           employeeId: data.employee.id,
-          date: new Date(recentDate + "T00:00:00Z"),
-          startTime: new Date(`${recentDate}T07:00:00.000Z`),
-          endTime: new Date(`${recentDate}T17:00:00.000Z`),
+          date: recentDate,
+          startTime: new Date(`${recentDate}T07:00:00.000Z`).toISOString(),
+          endTime: new Date(`${recentDate}T17:00:00.000Z`).toISOString(),
           breakMinutes: 0,
-          source: "MANUAL",
-          type: "WORK",
         },
       });
+      expect([201, 409]).toContain(createRes.statusCode);
 
-      // GET after — balance should have changed
+      // GET after — balance should reflect the new entry (stored O(1) read, no recalc in GET)
       const after = await app.inject({
         method: "GET",
         url: `/api/v1/overtime/${data.employee.id}`,
