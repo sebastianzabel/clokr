@@ -28,7 +28,6 @@
     "bcryptjs": "^3.0.3",
     "date-fns-tz": "^3.2.0",
     "fastify": "^5.8.4",
-    "iconv-lite": "^0.7.2",
     "minio": "^8.0.7",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.5",

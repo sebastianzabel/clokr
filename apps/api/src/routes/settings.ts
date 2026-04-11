@@ -59,11 +59,6 @@ const tenantConfigSchema = z.object({
   reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
   reminderPendingLeaveEnabled: z.boolean().optional(),
   reminderUpcomingAbsenceEnabled: z.boolean().optional(),
-  // DATEV Lohnartennummern (Phase 4 — DATEV-03)
-  datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
-  datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
-  datevKrankNr: z.number().int().min(1).max(9999).optional(),
-  datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -148,10 +143,6 @@ export async function settingsRoutes(app: FastifyInstance) {
         reminderUpcomingAbsenceDays: 3,
         reminderPendingLeaveEnabled: true,
         reminderUpcomingAbsenceEnabled: true,
-        datevNormalstundenNr: 100,
-        datevUrlaubNr: 300,
-        datevKrankNr: 200,
-        datevSonderurlaubNr: 302,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
