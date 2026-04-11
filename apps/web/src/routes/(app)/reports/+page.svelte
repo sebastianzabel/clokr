@@ -71,6 +71,17 @@
 
   type OvertimeOverview = { employees: OvertimeEmployee[] };
 
+  type LeaveOverviewRow = {
+    employee: { firstName: string; lastName: string; employeeNumber: string };
+    leaveType: { id: string; name: string };
+    year: number;
+    totalDays: number;
+    carriedOverDays: number;
+    usedDays: number;
+    remainingDays: number;
+    pendingDays: number;
+  };
+
   // ── Existing state ─────────────────────────────────────────────────────────
 
   const currentDate = new Date();
@@ -157,10 +168,37 @@
     return copy;
   });
 
+  // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
+
+  let leaveOverviewYear = $state(currentYear);
+  let leaveOverview: LeaveOverviewRow[] | null = $state(null);
+  let leaveOverviewLoading = $state(false);
+  let leaveOverviewError = $state("");
+
+  let leaveOverviewRows = $derived.by(() => {
+    const rows = leaveOverview ?? [];
+    return rows.slice().sort((a, b) => {
+      const ln = a.employee.lastName.localeCompare(b.employee.lastName, "de");
+      if (ln !== 0) return ln;
+      const fn = a.employee.firstName.localeCompare(b.employee.firstName, "de");
+      if (fn !== 0) return fn;
+      return a.leaveType.name.localeCompare(b.leaveType.name, "de");
+    });
+  });
+
   // Map<employeeId, Chart> — key is employeeId so re-sort doesn't break identity
   const sparklineCharts = new Map<string, Chart>();
-  // Canvas refs captured via function binding in {#each}
+  // Canvas refs captured via use:registerCanvas action in {#each}
   const sparklineCanvases = new Map<string, HTMLCanvasElement>();
+
+  function registerCanvas(el: HTMLCanvasElement, empId: string) {
+    sparklineCanvases.set(empId, el);
+    return {
+      destroy() {
+        sparklineCanvases.delete(empId);
+      },
+    };
+  }
 
   // ── onMount ────────────────────────────────────────────────────────────────
 
@@ -170,6 +208,7 @@
     if (isManager) {
       await loadTodayAttendance();
       await loadOvertimeOverview();
+      await loadLeaveOverview();
     }
   });
 
@@ -269,6 +308,30 @@
     } finally {
       overtimeLoading = false;
     }
+  }
+
+  async function loadLeaveOverview() {
+    if (!isManager) return;
+    leaveOverviewLoading = true;
+    leaveOverviewError = "";
+    try {
+      leaveOverview = await api.get<LeaveOverviewRow[]>(
+        `/reports/leave-overview?year=${leaveOverviewYear}`,
+      );
+    } catch (e: unknown) {
+      leaveOverviewError =
+        e instanceof Error ? e.message : "Fehler beim Laden der Urlaubsübersicht";
+      leaveOverview = null;
+    } finally {
+      leaveOverviewLoading = false;
+    }
+  }
+
+  function formatDays(n: number): string {
+    return n.toLocaleString("de-DE", {
+      minimumFractionDigits: n % 1 === 0 ? 0 : 1,
+      maximumFractionDigits: 1,
+    });
   }
 
   async function loadMonthlyReport() {
@@ -670,15 +733,68 @@
                     <canvas
                       width="100"
                       height="28"
-                      bind:this={(el: HTMLCanvasElement | null) => {
-                        if (el) sparklineCanvases.set(row.id, el);
-                        else sparklineCanvases.delete(row.id);
-                      }}
+                      use:registerCanvas={row.id}
                     ></canvas>
                   {:else}
                     <span class="no-trend">(kein Verlauf)</span>
                   {/if}
                 </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
+{/if}
+
+<!-- Urlaubsübersicht (RPT-02) — ADMIN / MANAGER only -->
+{#if isManager}
+  <section class="section card-animate">
+    <header class="section-head">
+      <h2>Urlaubsübersicht</h2>
+      <label class="year-selector">
+        <span>Jahr</span>
+        <select bind:value={leaveOverviewYear} onchange={loadLeaveOverview}>
+          {#each years as y (y)}
+            <option value={y}>{y}</option>
+          {/each}
+        </select>
+      </label>
+    </header>
+
+    {#if leaveOverviewLoading}
+      <p class="section-placeholder">Lade Urlaubsübersicht…</p>
+    {:else if leaveOverviewError}
+      <p class="section-error">{leaveOverviewError}</p>
+    {:else if leaveOverviewRows.length === 0}
+      <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="leave-overview-table">
+          <thead>
+            <tr>
+              <th>Mitarbeiter</th>
+              <th>Nr.</th>
+              <th>Urlaubsart</th>
+              <th class="numeric">Gesamt</th>
+              <th class="numeric">Übertrag</th>
+              <th class="numeric">Genommen</th>
+              <th class="numeric">Geplant</th>
+              <th class="numeric">Rest</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each leaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+              <tr>
+                <td>{row.employee.firstName} {row.employee.lastName}</td>
+                <td>{row.employee.employeeNumber}</td>
+                <td>{row.leaveType.name}</td>
+                <td class="numeric">{formatDays(row.totalDays)}</td>
+                <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                <td class="numeric">{formatDays(row.usedDays)}</td>
+                <td class="numeric">{formatDays(row.pendingDays)}</td>
+                <td class="numeric strong">{formatDays(row.remainingDays)}</td>
               </tr>
             {/each}
           </tbody>
@@ -1102,5 +1218,61 @@
     .reports-grid {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* Urlaubsübersicht */
+
+  .year-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+  }
+
+  .year-selector select {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+  }
+
+  .year-selector select:focus {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 1px;
+  }
+
+  .leave-overview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+  }
+
+  .leave-overview-table th,
+  .leave-overview-table td {
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .leave-overview-table th {
+    color: var(--color-text-muted);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .leave-overview-table .numeric {
+    text-align: right;
+    font-family: var(--font-mono);
+  }
+
+  .leave-overview-table .numeric.strong {
+    font-weight: 700;
+    color: var(--color-text-heading);
   }
 </style>
