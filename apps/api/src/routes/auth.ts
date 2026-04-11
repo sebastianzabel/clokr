@@ -5,6 +5,7 @@ import { z } from "zod";
 import { Role } from "@clokr/db";
 import { JwtPayload } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
+import { config } from "../config";
 
 /** SHA-256 hash for tokens stored in DB (refresh tokens, reset tokens). */
 function hashToken(token: string): string {
@@ -36,10 +37,8 @@ const resetPasswordSchema = z.object({
 
 export async function authRoutes(app: FastifyInstance) {
   // POST /api/v1/auth/login
-  const isTest = process.env.NODE_ENV === "test";
-
   app.post("/login", {
-    config: { rateLimit: { max: isTest ? 1000 : 50, timeWindow: "1 minute" } },
+    config: { rateLimit: { max: config.NODE_ENV === "test" ? 1000 : 50, timeWindow: "1 minute" } },
     schema: {
       tags: ["Auth"],
       body: {

@@ -130,7 +130,12 @@ export async function buildApp() {
     },
   );
 
-  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(helmet, {
+    contentSecurityPolicy: false, // API is JSON-only; no HTML served (Swagger UI excluded)
+    hsts: config.NODE_ENV === "production"
+      ? { maxAge: 31536000, includeSubDomains: true, preload: false }
+      : false,
+  });
   await app.register(cors, {
     origin: config.CORS_ORIGIN,
     credentials: true,
