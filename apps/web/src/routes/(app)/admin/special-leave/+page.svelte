@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import Breadcrumb from "$lib/components/ui/Breadcrumb.svelte";
   import { toasts } from "$stores/toast";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface SpecialLeaveRule {
     id: string;
@@ -16,6 +17,11 @@
 
   let rules: SpecialLeaveRule[] = $state([]);
   let loading = $state(true);
+
+  // Pagination
+  let slPage = $state(1);
+  let slPageSize = $state(10);
+  let pagedRules = $derived(rules.slice((slPage - 1) * slPageSize, slPage * slPageSize));
 
   // Create modal
   let showCreate = $state(false);
@@ -148,7 +154,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each rules as rule (rule.id)}
+        {#each pagedRules as rule (rule.id)}
           <tr class:inactive={!rule.isActive}>
             <td>
               <strong>{rule.name}</strong>
@@ -188,6 +194,7 @@
         {/each}
       </tbody>
     </table>
+    <Pagination total={rules.length} bind:page={slPage} bind:pageSize={slPageSize} />
   </div>
 {/if}
 

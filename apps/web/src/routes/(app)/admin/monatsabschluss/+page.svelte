@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$api/client";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   interface MissingEmployee {
     employeeName: string;
@@ -82,6 +83,16 @@
     if (statusFilter === "actionable")
       return monthStatuses.filter((ms) => ["open", "partial", "ready"].includes(ms.status));
     return monthStatuses;
+  });
+
+  // Pagination for month status list
+  let maPage = $state(1);
+  let maPageSize = $state(10);
+  let pagedMonths = $derived(filteredMonths.slice((maPage - 1) * maPageSize, maPage * maPageSize));
+
+  $effect(() => {
+    const _len = filteredMonths.length;
+    maPage = 1;
   });
 
   // Summary counts
@@ -392,7 +403,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each filteredMonths as ms (ms.month)}
+            {#each pagedMonths as ms (ms.month)}
               <tr
                 class="month-row"
                 class:row-closed={ms.status === "closed"}
@@ -495,6 +506,7 @@
             {/each}
           </tbody>
         </table>
+        <Pagination total={filteredMonths.length} bind:page={maPage} bind:pageSize={maPageSize} />
       </div>
     {/if}
   {:else}

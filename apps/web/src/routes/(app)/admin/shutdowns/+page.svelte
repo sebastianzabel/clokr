@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import Pagination from "$components/ui/Pagination.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   interface Employee {
@@ -32,6 +33,11 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let shutdowns: CompanyShutdown[] = $state([]);
   let allEmployees: Employee[] = $state([]);
+
+  // Pagination
+  let sdPage = $state(1);
+  let sdPageSize = $state(10);
+  let pagedShutdowns = $derived(shutdowns.slice((sdPage - 1) * sdPageSize, sdPage * sdPageSize));
   let loading = $state(true);
   let error = $state("");
 
@@ -253,7 +259,7 @@
   </div>
 {:else}
   <div class="shutdown-list">
-    {#each shutdowns as s (s.id)}
+    {#each pagedShutdowns as s (s.id)}
       <div class="shutdown-card">
         <div class="shutdown-card__main">
           <div class="shutdown-card__info">
@@ -308,6 +314,7 @@
       </div>
     {/each}
   </div>
+  <Pagination total={shutdowns.length} bind:page={sdPage} bind:pageSize={sdPageSize} />
 {/if}
 
 <!-- ── Modal: Betriebsurlaub anlegen / bearbeiten ──────────────────────────── -->
