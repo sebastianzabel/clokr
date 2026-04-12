@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Prisma } from "@clokr/db";
 import { requireRole } from "../middleware/auth";
+import { updateOvertimeAccount } from "./time-entries";
 
 const employeeRowSchema = z.object({
   email: z.string().email(),
@@ -178,6 +179,7 @@ export async function importRoutes(app: FastifyInstance) {
       const empMap = new Map(employees.map((e) => [e.employeeNumber, e.id]));
 
       const results: { row: number; status: "ok" | "error"; error?: string }[] = [];
+      const affectedEmployeeIds = new Set<string>();
 
       for (let i = 0; i < rows.length; i++) {
         try {
@@ -220,6 +222,7 @@ export async function importRoutes(app: FastifyInstance) {
             },
           });
 
+          affectedEmployeeIds.add(employeeId);
           results.push({ row: i + 1, status: "ok" });
         } catch (e: unknown) {
           results.push({
@@ -228,6 +231,13 @@ export async function importRoutes(app: FastifyInstance) {
             error: e instanceof Error ? e.message.slice(0, 200) : "Unknown error",
           });
         }
+      }
+
+      // Update stored overtime balance for all employees whose entries were imported
+      for (const empId of affectedEmployeeIds) {
+        await updateOvertimeAccount(app, empId).catch((err) =>
+          app.log.error({ err, employeeId: empId }, "Failed to update overtime after import"),
+        );
       }
 
       const okCount = results.filter((r) => r.status === "ok").length;

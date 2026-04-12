@@ -20,6 +20,11 @@
     defaultVacationDays: number;
     carryOverDeadlineDay: number;
     carryOverDeadlineMonth: number;
+    // DATEV Lohnartennummern (Phase 4 — DATEV-03)
+    datevNormalstundenNr?: number;
+    datevUrlaubNr?: number;
+    datevKrankNr?: number;
+    datevSonderurlaubNr?: number;
   }
 
   interface SecurityConfig {
@@ -76,6 +81,14 @@
   let stateError = $state("");
 
   // SMTP
+  let datevNormalstundenNr = $state(100);
+  let datevUrlaubNr = $state(300);
+  let datevKrankNr = $state(200);
+  let datevSonderurlaubNr = $state(302);
+  let datevSaving = $state(false);
+  let datevSaved = $state(false);
+  let datevError = $state("");
+
   let smtpHost = $state("");
   let smtpPort = $state(587);
   let smtpUser = $state("");
@@ -252,6 +265,10 @@
         carryOverDeadlineDay: cfg.carryOverDeadlineDay,
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
+      datevNormalstundenNr = cfg.datevNormalstundenNr ?? 100;
+      datevUrlaubNr        = cfg.datevUrlaubNr        ?? 300;
+      datevKrankNr         = cfg.datevKrankNr         ?? 200;
+      datevSonderurlaubNr  = cfg.datevSonderurlaubNr  ?? 302;
 
       try {
         const smtp = await api.get<{
@@ -365,6 +382,26 @@
       stateError = e instanceof Error ? e.message : "Fehler";
     } finally {
       stateSaving = false;
+    }
+  }
+
+  async function saveDatev() {
+    datevSaving = true;
+    datevError = "";
+    datevSaved = false;
+    try {
+      await api.put("/settings/work", {
+        datevNormalstundenNr,
+        datevUrlaubNr,
+        datevKrankNr,
+        datevSonderurlaubNr,
+      });
+      datevSaved = true;
+      setTimeout(() => (datevSaved = false), 3000);
+    } catch (e: unknown) {
+      datevError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      datevSaving = false;
     }
   }
 
@@ -1356,6 +1393,82 @@
       {:else}
         <p class="text-muted">Keine API Keys vorhanden.</p>
       {/if}
+    </div>
+  </div>
+
+  <!-- ── DATEV Export ─────────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2>DATEV Export</h2>
+    <p class="text-muted">Lohnartennummern für den DATEV LODAS ASCII-Export konfigurieren</p>
+  </div>
+
+  <div class="card card-body settings-card card-animate">
+    {#if datevError}
+      <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <span>⚠</span><span>{datevError}</span>
+      </div>
+    {/if}
+    {#if datevSaved}
+      <div class="alert alert-success" style="margin-bottom:1rem;">
+        DATEV-Konfiguration gespeichert.
+      </div>
+    {/if}
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="datev-normal">Normalstunden</label>
+        <input
+          id="datev-normal"
+          type="number"
+          min="1"
+          max="9999"
+          step="1"
+          bind:value={datevNormalstundenNr}
+          class="form-input"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="datev-urlaub">Urlaub</label>
+        <input
+          id="datev-urlaub"
+          type="number"
+          min="1"
+          max="9999"
+          step="1"
+          bind:value={datevUrlaubNr}
+          class="form-input"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="datev-krank">Krank / AU</label>
+        <input
+          id="datev-krank"
+          type="number"
+          min="1"
+          max="9999"
+          step="1"
+          bind:value={datevKrankNr}
+          class="form-input"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="datev-sonder">Sonderurlaub</label>
+        <input
+          id="datev-sonder"
+          type="number"
+          min="1"
+          max="9999"
+          step="1"
+          bind:value={datevSonderurlaubNr}
+          class="form-input"
+        />
+      </div>
+    </div>
+
+    <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
+      <button class="btn btn-primary" onclick={saveDatev} disabled={datevSaving}>
+        {datevSaving ? "Speichert…" : "Speichern"}
+      </button>
     </div>
   </div>
 

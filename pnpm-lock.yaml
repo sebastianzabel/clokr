@@ -122,6 +122,9 @@ importers:
       fastify:
         specifier: ^5.8.4
         version: 5.8.4
+      iconv-lite:
+        specifier: ^0.7.2
+        version: 0.7.2
       minio:
         specifier: ^8.0.7
         version: 8.0.7
@@ -162,6 +165,9 @@ importers:
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       fastify-plugin:
         specifier: ^5.1.0
         version: 5.1.0

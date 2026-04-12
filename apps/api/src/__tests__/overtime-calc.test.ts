@@ -30,7 +30,7 @@ describe("Overtime Saldo Calculation", () => {
     await closeTestApp();
   });
 
-  it("overtime recalculates on GET", async () => {
+  it("overtime balance updates after creating a time entry via API", async () => {
     // Get initial overtime balance
     const beforeRes = await app.inject({
       method: "GET",
@@ -38,67 +38,72 @@ describe("Overtime Saldo Calculation", () => {
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(beforeRes.statusCode).toBe(200);
-    const before = JSON.parse(beforeRes.body);
-    const balanceBefore = Number(before.balanceHours);
+    const balanceBefore = Number(JSON.parse(beforeRes.body).balanceHours);
 
-    // Create a time entry for yesterday (8h work day = matches schedule, so delta ~0)
-    const yesterday = pastDate(1);
+    // Create a 10h time entry for 2 days ago via the API route (fires updateOvertimeAccount)
+    const targetDate = pastDate(2);
+    // Clean up any existing entry for that day first
     await app.prisma.timeEntry.deleteMany({
-      where: { employeeId: data.employee.id, date: new Date(yesterday + "T00:00:00Z") },
+      where: { employeeId: data.employee.id, date: new Date(targetDate + "T00:00:00Z"), deletedAt: null },
     });
-    await app.prisma.timeEntry.create({
-      data: {
+
+    const createRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
         employeeId: data.employee.id,
-        date: new Date(yesterday + "T00:00:00Z"),
-        startTime: new Date(`${yesterday}T07:00:00.000Z`),
-        endTime: new Date(`${yesterday}T17:00:00.000Z`),
+        date: targetDate,
+        startTime: new Date(`${targetDate}T07:00:00.000Z`).toISOString(),
+        endTime: new Date(`${targetDate}T17:00:00.000Z`).toISOString(),
         breakMinutes: 0,
-        source: "MANUAL",
-        type: "WORK",
       },
     });
+    // 201 = created, 409 = entry already exists for that day (both mean API processed request)
+    expect([201, 409]).toContain(createRes.statusCode);
 
-    // GET overtime again — balance should have changed (10h worked vs 8h expected)
+    // GET overtime — stored balance was updated by the POST route's updateOvertimeAccount call
     const afterRes = await app.inject({
       method: "GET",
       url: `/api/v1/overtime/${data.employee.id}`,
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(afterRes.statusCode).toBe(200);
-    const after = JSON.parse(afterRes.body);
-    const balanceAfter = Number(after.balanceHours);
+    const balanceAfter = Number(JSON.parse(afterRes.body).balanceHours);
 
-    // 10h worked on a day with 8h schedule = +2h delta compared to before
-    // The exact value depends on what day yesterday is (weekday vs weekend),
-    // but the key assertion is that the balance changed after adding an entry.
+    // 10h worked on a day with 8h schedule = +2h delta (if weekday)
+    // Key assertion: balance changed after adding an entry via the write path
     expect(balanceAfter).not.toBe(balanceBefore);
   });
 
-  it("overtime saldo includes today only when entries exist", async () => {
-    // Clean up any existing entries for today and yesterday
+  it("overtime balance includes today only when entry created via API", async () => {
     const today = pastDate(0);
     const yesterday = pastDate(1);
+
+    // Clean up entries for today and yesterday
     await app.prisma.timeEntry.deleteMany({
       where: {
         employeeId: data.employee.id,
         date: { in: [new Date(today + "T00:00:00Z"), new Date(yesterday + "T00:00:00Z")] },
+        deletedAt: null,
       },
     });
 
-    // Create entry for yesterday only
-    await app.prisma.timeEntry.create({
-      data: {
+    // Create entry for yesterday via API route (fires updateOvertimeAccount)
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
         employeeId: data.employee.id,
-        date: new Date(yesterday + "T00:00:00Z"),
-        startTime: new Date(`${yesterday}T08:00:00.000Z`),
-        endTime: new Date(`${yesterday}T16:00:00.000Z`),
+        date: yesterday,
+        startTime: new Date(`${yesterday}T08:00:00.000Z`).toISOString(),
+        endTime: new Date(`${yesterday}T16:00:00.000Z`).toISOString(),
         breakMinutes: 0,
-        source: "MANUAL",
-        type: "WORK",
       },
     });
 
-    // GET overtime — should NOT include today (no entries)
+    // GET overtime — stored balance reflects yesterday's entry
     const res1 = await app.inject({
       method: "GET",
       url: `/api/v1/overtime/${data.employee.id}`,
@@ -107,20 +112,21 @@ describe("Overtime Saldo Calculation", () => {
     expect(res1.statusCode).toBe(200);
     const balance1 = Number(JSON.parse(res1.body).balanceHours);
 
-    // Now create an entry for today
-    await app.prisma.timeEntry.create({
-      data: {
+    // Create entry for today via API route (fires updateOvertimeAccount again)
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/time-entries",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
         employeeId: data.employee.id,
-        date: new Date(today + "T00:00:00Z"),
-        startTime: new Date(`${today}T08:00:00.000Z`),
-        endTime: new Date(`${today}T18:00:00.000Z`),
+        date: today,
+        startTime: new Date(`${today}T08:00:00.000Z`).toISOString(),
+        endTime: new Date(`${today}T18:00:00.000Z`).toISOString(),
         breakMinutes: 0,
-        source: "MANUAL",
-        type: "WORK",
       },
     });
 
-    // GET overtime again — should now include today (10h entry)
+    // GET overtime — stored balance now includes today's 10h entry
     const res2 = await app.inject({
       method: "GET",
       url: `/api/v1/overtime/${data.employee.id}`,
@@ -129,8 +135,7 @@ describe("Overtime Saldo Calculation", () => {
     expect(res2.statusCode).toBe(200);
     const balance2 = Number(JSON.parse(res2.body).balanceHours);
 
-    // Balance should increase by ~10h worked today minus expected hours for today
-    // The key assertion: balance increased after adding today's entry
+    // Balance increased after adding today's 10h entry (10h vs 8h schedule = +2h if weekday)
     expect(balance2).toBeGreaterThan(balance1);
   });
 
@@ -159,15 +164,7 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     it("GET overtime returns updated balance after adding a work entry", async () => {
-      // Get balance before
-      const before = await app.inject({
-        method: "GET",
-        url: `/api/v1/overtime/${data.employee.id}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
-      });
-      const balanceBefore = Number(JSON.parse(before.body).balanceHours);
-
-      // Add a 10h entry for a recent weekday (within the current month so it affects saldo)
+      // Add a 10h entry for a recent weekday via API route (triggers updateOvertimeAccount)
       const recentDate = pastDate(3);
       await app.prisma.timeEntry.deleteMany({
         where: {
@@ -176,19 +173,31 @@ describe("Overtime Saldo Calculation", () => {
           deletedAt: null,
         },
       });
-      await app.prisma.timeEntry.create({
-        data: {
+
+      // Measure baseline AFTER cleanup so stored balance excludes the target date
+      const before = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const balanceBefore = Number(JSON.parse(before.body).balanceHours);
+
+      // POST via API route — fires updateOvertimeAccount as write-path side effect (SALDO-01)
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
           employeeId: data.employee.id,
-          date: new Date(recentDate + "T00:00:00Z"),
-          startTime: new Date(`${recentDate}T07:00:00.000Z`),
-          endTime: new Date(`${recentDate}T17:00:00.000Z`),
+          date: recentDate,
+          startTime: new Date(`${recentDate}T07:00:00.000Z`).toISOString(),
+          endTime: new Date(`${recentDate}T17:00:00.000Z`).toISOString(),
           breakMinutes: 0,
-          source: "MANUAL",
-          type: "WORK",
         },
       });
+      expect([201, 409]).toContain(createRes.statusCode);
 
-      // GET after — balance should have changed
+      // GET after — balance should reflect the new entry (stored O(1) read, no recalc in GET)
       const after = await app.inject({
         method: "GET",
         url: `/api/v1/overtime/${data.employee.id}`,

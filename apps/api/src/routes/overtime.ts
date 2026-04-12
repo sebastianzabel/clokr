@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { updateOvertimeAccount, getEffectiveSchedule } from "./time-entries";
+import { getEffectiveSchedule } from "./time-entries";
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -10,6 +10,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -31,9 +32,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
-
-      // Recalculate balance on every read to ensure fresh data
-      await updateOvertimeAccount(app, employeeId).catch((err) => app.log.error({ err }, "Failed to update overtime account"));
 
       const account = await app.prisma.overtimeAccount.findUnique({
         where: { employeeId },
@@ -174,6 +172,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
 
+      // Fetch tenant federalState once for holiday computation
+      const statusTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const statusStateCode = statusTenant ? (STATE_MAP[statusTenant.federalState] ?? "NI") : "NI";
+      // Pre-compute all holiday date strings for this month (computed + manual DB)
+      const statusComputedHolidays = new Set<string>(
+        getHolidays(year, statusStateCode).map((h) => h.date),
+      );
+      const statusDbHolidays = await app.prisma.publicHoliday.findMany({
+        where: { tenantId, date: { gte: monthStart, lte: monthEnd } },
+      });
+      for (const h of statusDbHolidays) {
+        statusComputedHolidays.add(dateStrInTz(h.date, tz));
+      }
+      const holidayDateStrings = statusComputedHolidays;
+
       // Get all active employees for this tenant
       const employees = await app.prisma.employee.findMany({
         where: {
@@ -256,7 +272,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
           select: { date: true },
         });
-        const entryDates = new Set(entries.map((e) => e.date.toISOString().split("T")[0]));
+        const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
         // Check approved leave and absences
         const approvedLeave = await app.prisma.leaveRequest.findMany({
@@ -277,14 +293,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
 
-        // Build set of leave/absence dates
+        // Build set of leave/absence dates (TZ-aware)
         const coveredDates = new Set<string>();
         for (const lr of approvedLeave) {
           const s = lr.startDate < monthStart ? monthStart : lr.startDate;
           const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
           const cur = new Date(s);
           while (cur <= e) {
-            coveredDates.add(cur.toISOString().split("T")[0]);
+            coveredDates.add(dateStrInTz(cur, tz));
             cur.setDate(cur.getDate() + 1);
           }
         }
@@ -293,28 +309,22 @@ export async function overtimeRoutes(app: FastifyInstance) {
           const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
           const cur = new Date(s);
           while (cur <= e) {
-            coveredDates.add(cur.toISOString().split("T")[0]);
+            coveredDates.add(dateStrInTz(cur, tz));
             cur.setDate(cur.getDate() + 1);
           }
         }
 
-        // Check holidays
-        const holidays = await app.prisma.publicHoliday.findMany({
-          where: {
-            tenantId,
-            date: { gte: monthStart, lte: monthEnd },
-          },
-        });
-        for (const h of holidays) {
-          coveredDates.add(h.date.toISOString().split("T")[0]);
+        // Add holidays (computed + manual) to coveredDates
+        for (const dateStr of holidayDateStrings) {
+          coveredDates.add(dateStr);
         }
 
-        // Iterate workdays and find missing ones
+        // Iterate workdays and find missing ones (TZ-aware date strings)
         const missingDates: string[] = [];
         const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
         const cur = new Date(effectiveStart);
         while (cur <= monthEnd) {
-          const dateStr = cur.toISOString().split("T")[0];
+          const dateStr = dateStrInTz(cur, tz);
           const dow = getDayOfWeekInTz(cur, tz);
           const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
 
@@ -376,6 +386,15 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();
+
+      // Fetch tenant federalState once for holiday computation
+      const yearStatusTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const yearStatusStateCode = yearStatusTenant
+        ? (STATE_MAP[yearStatusTenant.federalState] ?? "NI")
+        : "NI";
 
       // Get all active employees for this tenant
       const employees = await app.prisma.employee.findMany({
@@ -508,7 +527,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             },
             select: { date: true },
           });
-          const entryDates = new Set(entries.map((e) => e.date.toISOString().split("T")[0]));
+          const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
           // Check approved leave and absences
           const approvedLeave = await app.prisma.leaveRequest.findMany({
@@ -529,14 +548,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
             },
           });
 
-          // Build set of leave/absence dates
+          // Build set of leave/absence dates (TZ-aware)
           const coveredDates = new Set<string>();
           for (const lr of approvedLeave) {
             const s = lr.startDate < monthStart ? monthStart : lr.startDate;
             const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
             const cur = new Date(s);
             while (cur <= e) {
-              coveredDates.add(cur.toISOString().split("T")[0]);
+              coveredDates.add(dateStrInTz(cur, tz));
               cur.setDate(cur.getDate() + 1);
             }
           }
@@ -545,28 +564,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
             const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
             const cur = new Date(s);
             while (cur <= e) {
-              coveredDates.add(cur.toISOString().split("T")[0]);
+              coveredDates.add(dateStrInTz(cur, tz));
               cur.setDate(cur.getDate() + 1);
             }
           }
 
-          // Check holidays
-          const holidays = await app.prisma.publicHoliday.findMany({
+          // Check holidays: merge computed German Feiertage with DB-stored manual holidays
+          const computedHolidaysYS = getHolidays(year, yearStatusStateCode);
+          for (const h of computedHolidaysYS) {
+            coveredDates.add(h.date);
+          }
+          const dbHolidaysYS = await app.prisma.publicHoliday.findMany({
             where: {
               tenantId,
               date: { gte: monthStart, lte: monthEnd },
             },
           });
-          for (const h of holidays) {
-            coveredDates.add(h.date.toISOString().split("T")[0]);
+          for (const h of dbHolidaysYS) {
+            coveredDates.add(dateStrInTz(h.date, tz));
           }
 
-          // Iterate workdays and find missing ones
+          // Iterate workdays and find missing ones (TZ-aware date strings)
           const empMissingDates: string[] = [];
           const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
           const cur = new Date(effectiveStart);
           while (cur <= monthEnd) {
-            const dateStr = cur.toISOString().split("T")[0];
+            const dateStr = dateStrInTz(cur, tz);
             const dow = getDayOfWeekInTz(cur, tz);
             const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
 
@@ -650,7 +673,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { tenantId: true, hireDate: true },
+        select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
@@ -756,14 +779,26 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
       const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
-      // Subtract holidays
-      const holidays = await app.prisma.publicHoliday.findMany({
+      // Subtract holidays: merge computed German Feiertage with DB-stored manual holidays
+      const closeMonthStateCode = employee.tenant
+        ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
+        : "NI";
+      const closeMonthComputedHolidays = getHolidays(year, closeMonthStateCode).filter(
+        (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
+      );
+      const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
         where: {
           tenant: { employees: { some: { id: employeeId } } },
           date: { gte: effectiveStart, lte: monthEnd },
         },
       });
-      const holidayMinutes = holidays.reduce((sum, h) => {
+      // Deduplicate by date string
+      const holidayDateSet = new Set<string>(closeMonthComputedHolidays.map((h) => h.date));
+      const allCloseMonthHolidays: { date: Date; name?: string }[] = [
+        ...closeMonthComputedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
+        ...closeMonthDbHolidays.filter((h) => !holidayDateSet.has(dateStrInTz(h.date, tz))),
+      ];
+      const holidayMinutes = allCloseMonthHolidays.reduce((sum, h) => {
         const dow = getDayOfWeekInTz(h.date, tz);
         return sum + getDayHoursFromSchedule(schedule, dow) * 60;
       }, 0);

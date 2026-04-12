@@ -65,7 +65,7 @@
 
   interface TeamDay {
     date: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none";
+    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
     workedHours: number;
     reason: string | null;
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
@@ -124,6 +124,7 @@
     expectedHours: number;
     status: string;
     isWorkday: boolean;
+    holidayName: string | null;
   }
   let myWeekDays: MyWeekDay[] = $state([]);
 
@@ -168,6 +169,11 @@
     sickDays: number;
     vacationDays: number;
     otherAbsenceDays: number;
+  }
+
+  interface OvertimeTrendResponse {
+    snapshots: { month: string; teamCarryOverMinutes: number }[];
+    currentTeamBalanceMinutes: number;
   }
 
   let timer: ReturnType<typeof setInterval>;
@@ -346,18 +352,21 @@
     let reports: MonthlyReport[] = [];
     let labels: string[] = [];
     let brandColor = "";
+    const now = new Date();
+    const months: { label: string; month: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = subMonths(now, i);
+      months.push({
+        label: format(d, "MMM yy", { locale: de }),
+        month: format(d, "yyyy-MM"),
+      });
+    }
+    let overtimeTrend: OvertimeTrendResponse = {
+      snapshots: [],
+      currentTeamBalanceMinutes: 0,
+    };
 
     try {
-      const now = new Date();
-      const months: { label: string; month: string }[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = subMonths(now, i);
-        months.push({
-          label: format(d, "MMM yy", { locale: de }),
-          month: format(d, "yyyy-MM"),
-        });
-      }
-
       for (const m of months) {
         try {
           const [y, mo] = m.month.split("-");
@@ -394,6 +403,13 @@
             otherAbsenceDays: 0,
           });
         }
+      }
+
+      // Load team overtime trend from the dedicated endpoint
+      try {
+        overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
+      } catch (err) {
+        console.error("Failed to load overtime trend:", err);
       }
 
       labels = months.map((m) => m.label);
@@ -450,16 +466,33 @@
       });
     }
 
-    // Overtime trend line chart
+    // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
     if (overtimeChartEl) {
-      const overtimeData = reports.map(
-        (r) => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1),
-      );
-      let cumulative = 0;
-      const cumulativeData = overtimeData.map((v) => {
-        cumulative += v;
-        return +cumulative.toFixed(1);
-      });
+      // Build a lookup of snapshot month → teamCarryOverMinutes
+      const snapshotByMonth = new Map<string, number>();
+      for (const s of overtimeTrend.snapshots) {
+        // API returns "YYYY-MM-DD" (day is always 01); key by "YYYY-MM"
+        snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
+      }
+
+      // Align to the same 6-month window as `labels` (months[].month = "YYYY-MM")
+      // For each month:
+      //   - If it's the LAST month (current open month) → use currentTeamBalanceMinutes / 60
+      //   - Else if a snapshot exists for that month → use teamCarryOverMinutes / 60
+      //   - Else → fill-forward from the previous resolved value (or 0 for the leading edge)
+      let lastKnown = 0;
+      const absoluteHours: number[] = [];
+      for (let i = 0; i < months.length; i++) {
+        const isCurrent = i === months.length - 1;
+        if (isCurrent) {
+          lastKnown = overtimeTrend.currentTeamBalanceMinutes / 60;
+        } else {
+          const snap = snapshotByMonth.get(months[i].month);
+          if (snap !== undefined) lastKnown = snap / 60;
+          // else: fill-forward — lastKnown stays unchanged
+        }
+        absoluteHours.push(+lastKnown.toFixed(1));
+      }
 
       overtimeChart?.destroy();
       overtimeChart = new Chart(overtimeChartEl, {
@@ -468,8 +501,8 @@
           labels,
           datasets: [
             {
-              label: "Überstunden kumuliert (h)",
-              data: cumulativeData,
+              label: "Team-Überstunden (h)",
+              data: absoluteHours,
               borderColor: brandColor,
               backgroundColor: brandColor + "20",
               fill: true,
@@ -614,8 +647,16 @@
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
-  function fmtH(hours: number): string {
-    return hours.toFixed(1).replace(".", ",") + "h";
+  function fmtHours(hours: number): string {
+    const totalMin = Math.round(Math.abs(hours) * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${h}:${String(m).padStart(2, "0")}h`;
+  }
+
+  function fmtBalanceHours(hours: number): string {
+    if (hours === 0) return "±0:00";
+    return (hours > 0 ? "+" : "−") + fmtHours(hours);
   }
 
   function greeting(): string {
@@ -733,7 +774,7 @@
         {#if clockedIn && clockStart}
           {formatElapsed(clockStart, currentTime)}
         {:else if stats}
-          {fmtH(stats.today.workedHours)}
+          {fmtHours(stats.today.workedHours)}
         {:else}
           <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
@@ -772,14 +813,14 @@
       </div>
       <p class="stat-value font-mono stat-value-animate">
         {#if stats}
-          {fmtH(stats.week.workedHours)}
+          {fmtHours(stats.week.workedHours)}
         {:else}
           <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
-          von {fmtH(stats.week.targetHours)} Soll
+          von {fmtHours(stats.week.targetHours)} Soll
         {:else}
           <span class="skeleton-text"></span>
         {/if}
@@ -788,7 +829,7 @@
 
     <div class="stat-card card-animate">
       <div class="stat-header-row">
-        <p class="stat-label">Überstunden</p>
+        <p class="stat-label">Saldo</p>
         <span class="stat-icon stat-icon--brand">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -804,7 +845,7 @@
         </span>
       </div>
       <p class="stat-value {overtimeClass} font-mono stat-value-animate">
-        {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
+        {fmtBalanceHours(overtimeBalance)}
       </p>
       <p class="stat-sub">
         Stand heute &middot;
@@ -934,15 +975,35 @@
                     <a
                       href="/time-entries?view=list&date={day.date}"
                       class="week-cell"
-                      title="{day.workedHours}h / {day.expectedHours}h Soll"
+                      title="{fmtHours(day.workedHours)} / {fmtHours(day.expectedHours)} Soll"
                     >
                       {#if day.status === "clocked_in"}
                         <span class="cell-badge cell-badge--clocked">●</span>
                       {:else if day.status === "complete"}
-                        <span class="cell-badge cell-badge--ok">{day.workedHours.toFixed(1)}</span>
+                        <span class="cell-badge cell-badge--ok">{fmtHours(day.workedHours)}</span>
                       {:else if day.status === "partial"}
                         <span class="cell-badge cell-badge--partial"
-                          >{day.workedHours.toFixed(1)}</span
+                          >{fmtHours(day.workedHours)}</span
+                        >
+                      {:else if day.status === "absent"}
+                        <span
+                          class="cell-badge cell-badge--absent"
+                          title={day.reason ?? "Abwesend"}
+                        >
+                          {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
+                            🤒
+                          {:else if day.reason === "Mutterschutz"}
+                            🤰
+                          {:else if day.reason === "Elternzeit"}
+                            👶
+                          {:else}
+                            🌴
+                          {/if}
+                        </span>
+                      {:else if day.status === "holiday"}
+                        <span
+                          class="cell-badge cell-badge--holiday"
+                          title={day.holidayName ?? "Feiertag"}>☀️</span
                         >
                       {:else if day.status === "missing" && isPast && !isWeekend}
                         <span class="cell-badge cell-badge--missing">⚠️</span>
@@ -960,48 +1021,52 @@
     {/if}
 
     <!-- Open Items Widget -->
-    {#if openItems && openItems.total > 0}
+    {#if openItems}
       <div class="open-items card card-body card-animate">
         <h3 class="widget-title">Offene Vorgänge</h3>
         <div class="open-items-list">
-          {#if openItems.missingDays.length > 0}
-            <div class="oi-group">
-              <div class="oi-group-header">
-                <span class="oi-dot oi-dot--warn"></span>
-                <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+          {#if openItems.total === 0}
+            <p class="oi-empty">Keine offenen Vorgänge</p>
+          {:else}
+            {#if openItems.missingDays.length > 0}
+              <div class="oi-group">
+                <div class="oi-group-header">
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+                </div>
+                {#each openItems.missingDays as missDate (missDate)}
+                  {@const d = new Date(missDate + "T12:00:00")}
+                  {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                  <a href="/time-entries?view=list&date={missDate}" class="oi-item">
+                    <span
+                      >{dayName}. {d.toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                      })}</span
+                    >
+                    <span class="oi-link">Nachtragen →</span>
+                  </a>
+                {/each}
               </div>
-              {#each openItems.missingDays as missDate (missDate)}
-                {@const d = new Date(missDate + "T12:00:00")}
-                {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-                <a href="/time-entries?view=list&date={missDate}" class="oi-item">
-                  <span
-                    >{dayName}. {d.toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                    })}</span
-                  >
-                  <span class="oi-link">Nachtragen →</span>
-                </a>
-              {/each}
-            </div>
-          {/if}
-          {#if openItems.pendingRequests > 0}
-            <a href="/leave?view=requests" class="oi-row">
-              <span class="oi-dot oi-dot--pending"></span>
-              <span
-                >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                  ? "r Antrag"
-                  : " Anträge"}</span
-              >
-              <span class="oi-link">→</span>
-            </a>
-          {/if}
-          {#if openItems.invalidEntries > 0}
-            <a href="/time-entries" class="oi-row">
-              <span class="oi-dot oi-dot--fix"></span>
-              <span>{openItems.invalidEntries} zu korrigieren</span>
-              <span class="oi-link">→</span>
-            </a>
+            {/if}
+            {#if openItems.pendingRequests > 0}
+              <a href="/leave?view=requests" class="oi-row">
+                <span class="oi-dot oi-dot--pending"></span>
+                <span
+                  >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                    ? "r Antrag"
+                    : " Anträge"}</span
+                >
+                <span class="oi-link">→</span>
+              </a>
+            {/if}
+            {#if openItems.invalidEntries > 0}
+              <a href="/time-entries" class="oi-row">
+                <span class="oi-dot oi-dot--fix"></span>
+                <span>{openItems.invalidEntries} zu korrigieren</span>
+                <span class="oi-link">→</span>
+              </a>
+            {/if}
           {/if}
         </div>
       </div>
@@ -1135,9 +1200,9 @@
                     {#if day.status === "present"}
                       <span
                         class="cell-badge cell-badge--present"
-                        title="{day.workedHours.toFixed(1)}h gearbeitet"
+                        title="{fmtHours(day.workedHours)} gearbeitet"
                       >
-                        {day.workedHours.toFixed(1)}
+                        {fmtHours(day.workedHours)}
                       </span>
                       {#if day.shift}
                         <span
@@ -1153,16 +1218,18 @@
                       <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
                         {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
                           🤒
-                        {:else if day.reason === "Urlaub"}
-                          🌴
                         {:else if day.reason === "Mutterschutz"}
                           🤰
                         {:else if day.reason === "Elternzeit"}
                           👶
                         {:else}
-                          ✗
+                          🌴
                         {/if}
                       </span>
+                    {:else if day.status === "holiday"}
+                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}
+                        >☀️</span
+                      >
                     {:else if day.status === "missing"}
                       <span
                         class="cell-badge cell-badge--missing"
@@ -1183,7 +1250,7 @@
                         {#if day.shift}
                           <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
                         {:else}
-                          <span class="shift-time">{day.expectedHours}h</span>
+                          <span class="shift-time">{fmtHours(day.expectedHours)}</span>
                         {/if}
                       </span>
                     {:else}
@@ -1213,6 +1280,9 @@
         >
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
         <span class="legend-item"><span class="cell-badge cell-badge--missing">⚠️</span> Fehlt</span
+        >
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--holiday">🎉</span> Feiertag</span
         >
         <span class="legend-item"
           ><span class="cell-badge cell-badge--scheduled">9–17</span> Geplant</span
@@ -1475,6 +1545,10 @@
     background: var(--color-blue-bg);
     color: var(--color-blue);
   }
+  .cell-badge--holiday {
+    background: var(--color-blue-bg);
+    color: var(--color-blue);
+  }
   .cell-badge--none {
     color: var(--gray-400);
   }
@@ -1553,6 +1627,12 @@
     color: var(--color-brand);
     font-size: 0.75rem;
     font-weight: 500;
+  }
+  .oi-empty {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    margin: 0;
+    padding: 0.25rem 0;
   }
   .team-divider {
     display: flex;
