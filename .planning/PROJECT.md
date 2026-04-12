@@ -1,22 +1,14 @@
-# Clokr — Reporting & DATEV
+# Clokr
 
 ## What This Is
 
-Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 (Production Readiness) is shipped — the app has test coverage, legal compliance validation, DSGVO-compliant font hosting, and mobile-responsive UI. v1.1 adds company-wide reporting, manager dashboards, multi-employee PDF exports, and DATEV-compliant payroll export.
+Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections (attendance today, overtime with sparklines, leave entitlement). The app is now feature-complete and reporting-capable for live customer use.
 
-## Current Milestone: v1.1 Reporting & DATEV
+## Current State: v1.1 Shipped
 
-**Goal:** Vollständiges Reporting für Inhaber und Manager — Übersichten, Exporte, und DATEV-konformer Lohnexport.
-
-**Target features:**
-- Überstunden-Übersicht (alle MA, Saldo, Trends)
-- Urlaub-Dashboard (Resturlaub, geplant, genommen — alle MA)
-- Anwesenheitsübersicht (Tagesansicht: da / Urlaub / krank)
-- Firmenweiter Monatsbericht PDF (alle MA, Ist/Soll, Saldo)
-- Abteilungsbericht PDF (gefiltert nach Rolle/Abteilung)
-- Urlaubsliste Jahresübersicht PDF (wer hat wann)
-- Verbesserung bestehender Einzel-MA-PDFs
-- DATEV Export: Spec verifizieren + nötige Fixes
+**Shipped:** 2026-04-12
+**Stack:** Fastify + SvelteKit 5 (runes) + Prisma + PostgreSQL 18
+**Codebase:** ~52,000 LOC (TypeScript + Svelte), growing with reporting layer
 
 ## Core Value
 
@@ -56,28 +48,35 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 - ✓ German error messages for locked-month, form validation, API failures — v1.0
 - ✓ Password policy admin UI — v1.0
 - ✓ Hard CI-failing assertions in UI/UX audit specs — v1.0
+- ✓ DATEV LODAS ASCII export (CP1252/CRLF, INI sections, configurable Lohnartennummern) — v1.1
+- ✓ OvertimeAccount.balanceHours O(1) stored read; all write paths wired — v1.1
+- ✓ resolvePresenceState() utility with CANCELLATION_REQUESTED + isInvalid support — v1.1
+- ✓ Company-wide Monatsbericht PDF streaming + Urlaubsliste PDF — v1.1
+- ✓ Manager dashboard: Heutige Anwesenheit, Überstunden-Übersicht (sparklines), Urlaubsübersicht — v1.1
 
 ### Active
 
 - [ ] Mobile overflow at 390px — human verification pending (run mobile-flow.spec.ts with Docker)
-- [ ] Saldo snapshot architecture (Issue #6) — performance optimization for next milestone
 - [ ] CI/CD pipeline with test/lint/build gates — infrastructure for next milestone
+- [ ] Monatsabschluss SaldoSnapshot architecture (Issue #6) — snapshot-based saldo replaces hire-date recalc
 
 ### Out of Scope
 
-- New features (feature-complete for v1) — focus was quality, not scope
 - Internationalization (i18n) — German-only for v1 launch
-- DATEV integration — separate integration project requiring API access
 - GPS/location tracking — DSGVO complications, not target segment
+- DATEV BeraterNr/MandantenNr (SSH LODAS Native) — defer until confirmed customer need
+- Abteilungsfilter in dashboard views — requires Abteilung as first-class entity
+- BI/Analytics pivot reports — separate data layer needed
+- Lohnabrechnung/Payslip generation — belongs in Lohnbuchhaltungs-Software
 
 ## Context
 
-- v1.0 shipped 2026-03-31: 3 phases, 15 plans, 28 tasks completed
-- Codebase: ~44,334 LOC (TypeScript + Svelte), Fastify API + SvelteKit web + Prisma/PostgreSQL
-- Test coverage baseline: lines=40.22%, functions=41.05%, branches=28.48% (thresholds enforced 4pp below)
-- Known tech debt: saldo recalculation from hire date on every GET (perf concern, Issue #6)
-- Known gap: tenant isolation gap on GET /employees/:id route — pre-existing, documented in test comments
-- E2E tests run on desktop-chrome, mobile-chrome, tablet; storageState auth shared across all projects
+- v1.0 shipped 2026-03-31: 3 phases, 15 plans, 28 tasks
+- v1.1 shipped 2026-04-12: 4 phases, 12 plans, 16 requirements; 44 files changed, +8,405/-793 lines
+- Test coverage: lines≥40%, functions≥41%, branches≥28% (thresholds enforced 4pp below baseline)
+- Known gap: tenant isolation gap on GET /employees/:id — pre-existing, documented in test comments
+- E2E tests: desktop-chrome, mobile-chrome, tablet; storageState auth shared
+- Saldo reads are now O(1) via stored OvertimeAccount.balanceHours; snapshot-based architecture (Issue #6) is next major performance milestone
 
 ## Constraints
 
@@ -89,20 +88,25 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 
 ## Key Decisions
 
-| Decision                                    | Rationale                                                         | Outcome    |
-| ------------------------------------------- | ----------------------------------------------------------------- | ---------- |
-| No new features this milestone              | App is feature-complete — quality debt must be paid before launch | ✓ Good     |
-| Tests + Audit + UI in parallel tracks       | All three are equally important for production readiness          | ✓ Good     |
-| Existing stack unchanged                    | No reason to migrate — focus on hardening what exists             | ✓ Good     |
-| Coverage thresholds 4pp below baseline      | Not aspirational — set to block regression, not require heroics   | ✓ Good     |
-| vitest globalSetup (not setupFiles) for DB  | Must run before module imports for DATABASE_URL override to work  | ✓ Good     |
-| Type-aware ESLint scoped to **/*.ts only    | Svelte parser handles .svelte files separately                    | ✓ Good     |
-| SICK leave for cancellation test            | Avoids VACATION entitlement conflicts in test data                | ✓ Good     |
-| Duck-type ApiError in E2E tests             | ApiError not exported from client.ts — (e as any)?.status works  | ⚠ Revisit  |
-| page.route() mock for locked-month test     | Avoids real locked month dependency in test DB                    | ✓ Good     |
-| Self-host all 3 font families as WOFF2      | DSGVO Art. 44 requires no external CDN requests                   | ✓ Good     |
-| iPhone 14 device preset (not raw viewport)  | Matches real device characteristics (isMobile, hasTouch)          | ✓ Good     |
-| Hard CI-fail assertions in audit specs      | Silent collectors were undetected — must block CI on critical findings | ✓ Good  |
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| No new features in v1.0 | App is feature-complete — quality debt must be paid before launch | ✓ Good |
+| Tests + Audit + UI in parallel tracks | All three equally important for production readiness | ✓ Good |
+| Existing stack unchanged | No reason to migrate — focus on hardening | ✓ Good |
+| Coverage thresholds 4pp below baseline | Block regression, not require heroics | ✓ Good |
+| vitest globalSetup (not setupFiles) for DB | Must run before module imports for DATABASE_URL override | ✓ Good |
+| Type-aware ESLint scoped to **/*.ts only | Svelte parser handles .svelte files separately | ✓ Good |
+| Duck-type ApiError in E2E tests | ApiError not exported from client.ts — (e as any)?.status works | ⚠ Revisit |
+| Self-host all 3 font families as WOFF2 | DSGVO Art. 44 requires no external CDN requests | ✓ Good |
+| iPhone 14 device preset (not raw viewport) | Matches real device characteristics (isMobile, hasTouch) | ✓ Good |
+| Hard CI-fail assertions in audit specs | Silent collectors were undetected — must block CI | ✓ Good |
+| DATEV LODAS ASCII (not SSH Native) | Matches DATEV LODAS import wizard; no BeraterNr needed for v1.1 | ✓ Good |
+| iconv-lite for CP1252 encoding | Only reliable CP1252 library in Node ESM context | ✓ Good |
+| OvertimeAccount.balanceHours as O(1) stored read | Eliminates write amplification on every overtime GET | ✓ Good |
+| resolvePresenceState() as pure utility | Enables unit testing without DB; reusable across endpoints | ✓ Good |
+| PDFKit streaming via doc.end() + reply.send() | No Buffer.concat memory spike for 50+ MA reports | ✓ Good |
+| Chart.js Map<employeeId, Chart> lifecycle | Prevents canvas reuse errors on client-side sort re-renders | ✓ Good |
+| use:registerCanvas action (not bind:this fn) | rolldown/Vite 8 rejects function-form bind:this in {#each} | ✓ Good |
 
 ## Evolution
 
@@ -125,4 +129,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-11 — Phase 05 complete (SALDO-01, SALDO-02, RPT-04): OvertimeAccount.balanceHours is now an O(1) stored read; updateOvertimeAccount wired to all write paths (leave approval, bulk import); resolvePresenceState() utility created with dashboard CANCELLATION_REQUESTED fix_
+_Last updated: 2026-04-12 after v1.1 milestone — DATEV LODAS export, O(1) saldo reads, company PDF streaming, and manager reporting dashboards shipped_
