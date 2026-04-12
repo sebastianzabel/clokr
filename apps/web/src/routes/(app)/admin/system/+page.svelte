@@ -668,18 +668,22 @@
     <!-- Erscheinungsbild -->
     <div class="sys-section">
       <h3 class="sys-title">Erscheinungsbild</h3>
-      <div class="form-group" style="max-width:320px;">
-        <label class="form-label" for="theme-select">Theme</label>
-        <select
-          id="theme-select"
-          class="form-input"
-          value={$theme}
-          onchange={(e) => theme.set(e.currentTarget.value as typeof $theme)}
-        >
+      <div class="form-group">
+        <span class="form-label">Theme</span>
+        <div class="theme-picker" role="radiogroup" aria-label="Theme auswählen">
           {#each themes as t (t.id)}
-            <option value={t.id}>{t.label}</option>
+            <button
+              class="theme-dot"
+              type="button"
+              aria-checked={$theme === t.id ? 'true' : 'false'}
+              aria-label={t.label}
+              title="Theme: {t.label}"
+              onclick={() => theme.set(t.id)}
+            >
+              <span class="theme-dot-inner" style="background-color: {t.color}"></span>
+            </button>
           {/each}
-        </select>
+        </div>
       </div>
     </div>
 
