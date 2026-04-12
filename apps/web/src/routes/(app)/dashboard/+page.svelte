@@ -1494,7 +1494,7 @@
     text-align: center;
   }
   .my-week .team-table td.is-today {
-    background: var(--color-brand-tint);
+    box-shadow: inset 0 0 0 2px var(--color-brand);
     border-radius: var(--radius-sm);
   }
   .week-cell {
@@ -1530,8 +1530,8 @@
     color: var(--color-blue);
   }
   .cell-badge--holiday {
-    background: var(--color-blue-bg);
-    color: var(--color-blue);
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
   }
   .cell-badge--none {
     color: var(--gray-400);
@@ -2039,9 +2039,9 @@
   }
 
   .cell-badge--absent {
-    background: var(--color-yellow-bg);
-    color: var(--color-yellow);
-    border: 1px solid var(--color-yellow-border);
+    background: var(--color-purple-bg);
+    color: var(--color-purple);
+    border: 1px solid var(--color-purple-border, var(--color-purple-bg));
     font-size: 0.875rem;
   }
 
