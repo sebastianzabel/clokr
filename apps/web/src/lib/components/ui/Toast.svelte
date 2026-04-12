@@ -129,7 +129,7 @@
     gap: 0.625rem;
     padding: 0.875rem 1rem 0.875rem calc(1rem + 6px);
     border-radius: var(--radius-sm);
-    background: var(--glass-bg-strong);
+    background: var(--glass-bg-overlay, var(--color-surface));
     backdrop-filter: blur(var(--glass-blur));
     -webkit-backdrop-filter: blur(var(--glass-blur));
     border: 1px solid var(--toast-border);
