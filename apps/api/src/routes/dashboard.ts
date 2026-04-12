@@ -247,7 +247,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
           const empSchedule = allSchedules.find((s) => s.employeeId === emp.id);
           const dayDate = new Date(dayStr + "T12:00:00Z");
           const dow = getDayOfWeekInTz(dayDate, tz);
-          const expectedHours = empSchedule ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow) : 0;
+          const expectedHours = empSchedule
+            ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
+            : 0;
           const isWorkday = expectedHours > 0;
 
           const todayStr = dateStrInTz(new Date(), tz);
@@ -266,9 +268,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
               }
             : null;
 
-          const presenceAbsence: PresenceAbsence | null = absence
-            ? { type: absence.type }
-            : null;
+          const presenceAbsence: PresenceAbsence | null = absence ? { type: absence.type } : null;
 
           const { status, reason } = resolvePresenceState({
             entries: presenceEntries,
@@ -381,7 +381,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
 
       // Build lookup maps (employeeId → first match)
-      const entriesByEmp = new Map<string, (typeof timeEntries)>();
+      const entriesByEmp = new Map<string, typeof timeEntries>();
       for (const e of timeEntries) {
         const list = entriesByEmp.get(e.employeeId) ?? [];
         list.push(e);
@@ -669,6 +669,64 @@ export async function dashboardRoutes(app: FastifyInstance) {
         invalidEntries: invalidEntries.length,
         total: missingDays.length + pendingRequests.length + invalidEntries.length,
       };
+    },
+  });
+
+  // GET /api/v1/dashboard/overtime-trend — Team overtime saldo trend (last 6 months)
+  app.get("/overtime-trend", {
+    schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const tenantId = req.user.tenantId;
+
+      // 6-month window (inclusive of current month)
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setUTCMonth(sixMonthsAgo.getUTCMonth() - 5);
+      sixMonthsAgo.setUTCDate(1);
+      sixMonthsAgo.setUTCHours(0, 0, 0, 0);
+
+      // First fetch active employee IDs for this tenant.
+      // Prisma groupBy does not support relation filters in `where`, so we resolve
+      // tenant scoping via a separate employee query.
+      const employees = await app.prisma.employee.findMany({
+        where: { tenantId, user: { isActive: true } },
+        select: { id: true },
+      });
+      const employeeIds = employees.map((e) => e.id);
+
+      // Query 1: SUM(carryOver) grouped by periodStart, MONTHLY only, within 6-month window.
+      const grouped =
+        employeeIds.length === 0
+          ? []
+          : await app.prisma.saldoSnapshot.groupBy({
+              by: ["periodStart"],
+              where: {
+                employeeId: { in: employeeIds },
+                periodType: "MONTHLY",
+                periodStart: { gte: sixMonthsAgo },
+              },
+              _sum: { carryOver: true },
+              orderBy: { periodStart: "asc" },
+            });
+
+      const snapshots = grouped.map((g) => ({
+        month: g.periodStart.toISOString().slice(0, 10), // "YYYY-MM-DD" (always day 01)
+        teamCarryOverMinutes: g._sum.carryOver ?? 0,
+      }));
+
+      // Query 2: SUM(balanceHours * 60) across all active employees' OvertimeAccounts.
+      const accounts =
+        employeeIds.length === 0
+          ? []
+          : await app.prisma.overtimeAccount.findMany({
+              where: { employeeId: { in: employeeIds } },
+              select: { balanceHours: true },
+            });
+      const currentTeamBalanceMinutes = Math.round(
+        accounts.reduce((sum, a) => sum + Number(a.balanceHours) * 60, 0),
+      );
+
+      return { snapshots, currentTeamBalanceMinutes };
     },
   });
 }
