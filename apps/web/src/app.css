@@ -218,6 +218,207 @@ body::before {
   background: var(--body-gradient);
 }
 
+/* ─── Theme: Hell (light — Slate-Gray) ───────────────────────────────── */
+[data-theme="hell"] {
+  /* Brand — Slate neutral */
+  --color-brand: #475569;
+  --color-brand-dark: #334155;
+  --color-brand-light: #94A3B8;
+  --color-brand-tint: #F1F5F9;
+  --color-brand-tint-hover: #E2E8F0;
+
+  /* Surfaces */
+  --color-surface: #FFFFFF;
+  --color-surface-raised: #FFFFFF;
+
+  /* Background */
+  --color-bg: #F8FAFC;
+  --color-bg-subtle: #F1F5F9;
+  --color-bg-muted: #E2E8F0;
+
+  /* Text */
+  --color-text: #334155;
+  --color-text-muted: #64748B;
+  --color-text-heading: #0F172A;
+
+  /* Border */
+  --color-border: #CBD5E1;
+  --color-border-subtle: #E2E8F0;
+
+  /* Gray scale — cool slate */
+  --gray-50: #F8FAFC;
+  --gray-100: #F1F5F9;
+  --gray-200: #E2E8F0;
+  --gray-300: #CBD5E1;
+  --gray-400: #94A3B8;
+  --gray-500: #64748B;
+  --gray-600: #475569;
+  --gray-700: #334155;
+  --gray-800: #1E293B;
+  --gray-900: #0F172A;
+
+  /* Status colors — same as lila */
+  --color-green: #16a34a;
+  --color-green-bg: #f0fdf4;
+  --color-green-border: #bbf7d0;
+  --color-yellow: #ca8a04;
+  --color-yellow-bg: #fefce8;
+  --color-yellow-border: #fef08a;
+  --color-red: #dc2626;
+  --color-red-bg: #fef2f2;
+  --color-red-border: #fecaca;
+  --color-blue: #2563eb;
+  --color-blue-bg: #eff6ff;
+  --color-blue-border: #bfdbfe;
+  --color-purple: #475569;
+  --color-purple-bg: #F1F5F9;
+  --color-purple-border: #CBD5E1;
+  --color-orange: #c2410c;
+  --color-orange-bg: #fff7ed;
+  --color-orange-border: #fed7aa;
+  --color-danger: #ef4444;
+
+  /* Shadows — cool slate tint */
+  --shadow-xs: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px 0 rgba(15, 23, 42, 0.03);
+  --shadow-sm: 0 2px 8px -1px rgba(15, 23, 42, 0.06), 0 1px 3px -1px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 8px 20px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 16px 40px -8px rgba(15, 23, 42, 0.10), 0 8px 16px -4px rgba(15, 23, 42, 0.06);
+
+  /* Sidebar — dark */
+  --sidebar-bg: #1E293B;
+  --sidebar-border: rgba(255, 255, 255, 0.05);
+  --sidebar-brand-gradient: linear-gradient(180deg, #1E293B 0%, #273548 50%, #1E293B 100%);
+  --nav-active-bg: rgba(71, 85, 105, 0.20);
+  --nav-active-color: #CBD5E1;
+  --nav-active-border: #94A3B8;
+
+  /* Glass surfaces */
+  --glass-bg: rgba(255, 255, 255, 0.78);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.55);
+  --glass-bg-overlay: rgba(248, 250, 252, 0.92);
+  --glass-saturate: 140%;
+  --glass-highlight: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(71, 85, 105, 0.08);
+  --glass-border-light: rgba(255, 255, 255, 0.45);
+  --glass-shadow: 0 8px 32px rgba(15, 23, 42, 0.06), 0 2px 8px rgba(15, 23, 42, 0.04);
+  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  --glass-blur: 16px;
+
+  /* Body gradient */
+  --body-gradient: radial-gradient(ellipse at 90% 5%, rgba(148, 163, 184, 0.08) 0%, transparent 55%);
+}
+
+/* ─── Theme: Dunkel (dark — Charcoal) ────────────────────────────────── */
+[data-theme="dunkel"],
+[data-theme="dunkel"] * {
+  color-scheme: dark;
+}
+
+[data-theme="dunkel"] {
+  /* Brand — Slate for dark */
+  --color-brand: #64748B;
+  --color-brand-dark: #475569;
+  --color-brand-light: #94A3B8;
+  --color-brand-tint: rgba(100, 116, 139, 0.12);
+  --color-brand-tint-hover: rgba(100, 116, 139, 0.20);
+
+  /* Surfaces */
+  --color-surface: #1E293B;
+  --color-surface-raised: #273548;
+
+  /* Background */
+  --color-bg: #1E293B;
+  --color-bg-subtle: #273548;
+  --color-bg-muted: #334155;
+
+  /* Text */
+  --color-text: #CBD5E1;
+  --color-text-muted: #94A3B8;
+  --color-text-heading: #F1F5F9;
+
+  /* Border */
+  --color-border: rgba(255, 255, 255, 0.07);
+  --color-border-subtle: rgba(255, 255, 255, 0.05);
+
+  /* Gray scale — inverted for dark */
+  --gray-50: #0F172A;
+  --gray-100: #1E293B;
+  --gray-200: #273548;
+  --gray-300: #334155;
+  --gray-400: #475569;
+  --gray-500: #64748B;
+  --gray-600: #94A3B8;
+  --gray-700: #CBD5E1;
+  --gray-800: #E2E8F0;
+  --gray-900: #F1F5F9;
+
+  /* Status colors — lightened for dark bg */
+  --color-green: #4ade80;
+  --color-green-bg: rgba(74, 222, 128, 0.10);
+  --color-green-border: rgba(74, 222, 128, 0.20);
+  --color-yellow: #fbbf24;
+  --color-yellow-bg: rgba(251, 191, 36, 0.10);
+  --color-yellow-border: rgba(251, 191, 36, 0.20);
+  --color-red: #F87171;
+  --color-red-bg: rgba(248, 113, 113, 0.10);
+  --color-red-border: rgba(248, 113, 113, 0.20);
+  --color-blue: #60a5fa;
+  --color-blue-bg: rgba(96, 165, 250, 0.10);
+  --color-blue-border: rgba(96, 165, 250, 0.20);
+  --color-purple: #94A3B8;
+  --color-purple-bg: rgba(148, 163, 184, 0.10);
+  --color-purple-border: rgba(148, 163, 184, 0.20);
+  --color-orange: #fb923c;
+  --color-orange-bg: rgba(251, 146, 60, 0.10);
+  --color-orange-border: rgba(251, 146, 60, 0.20);
+  --color-danger: #F87171;
+
+  /* Shadows — deep dark */
+  --shadow-xs: 0 1px 3px 0 rgba(0, 0, 0, 0.20), 0 1px 2px 0 rgba(0, 0, 0, 0.15);
+  --shadow-sm: 0 2px 8px -1px rgba(0, 0, 0, 0.30), 0 1px 3px -1px rgba(0, 0, 0, 0.20);
+  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, 0.35), 0 4px 8px -2px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.45), 0 8px 16px -4px rgba(0, 0, 0, 0.30);
+
+  /* Sidebar — deepest dark */
+  --sidebar-bg: #0F172A;
+  --sidebar-border: rgba(255, 255, 255, 0.05);
+  --sidebar-brand-gradient: linear-gradient(180deg, #0F172A 0%, #1E293B 50%, #0F172A 100%);
+  --nav-active-bg: rgba(100, 116, 139, 0.18);
+  --nav-active-color: #CBD5E1;
+  --nav-active-border: #64748B;
+
+  /* Glass surfaces — dark glass */
+  --glass-bg: rgba(30, 41, 59, 0.78);
+  --glass-bg-subtle: rgba(30, 41, 59, 0.55);
+  --glass-bg-overlay: rgba(30, 41, 59, 0.92);
+  --glass-saturate: 120%;
+  --glass-highlight: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.07);
+  --glass-border-light: rgba(255, 255, 255, 0.10);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.40), 0 2px 8px rgba(0, 0, 0, 0.25);
+  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-blur: 16px;
+
+  /* Body gradient */
+  --body-gradient: radial-gradient(ellipse at 75% 15%, rgba(100, 116, 139, 0.08) 0%, transparent 50%);
+}
+
+/* ─── Dark theme overrides for dunkel ────────────────────────────────── */
+[data-theme="dunkel"] select.form-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+[data-theme="dunkel"] .form-input {
+  background-color: var(--color-surface-raised);
+  border-color: var(--gray-300);
+  color: var(--color-text);
+}
+
+[data-theme="dunkel"] .form-input:focus {
+  border-color: var(--color-brand-light);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
+}
+
 /* ─── Base Reset ─────────────────────────────────────────────────────── */
 *,
 *::before,
