@@ -171,6 +171,14 @@
     otherAbsenceDays: number;
   }
 
+  interface SaldoSnapshotApi {
+    periodType: "MONTHLY" | "YEARLY";
+    periodStart: string; // YYYY-MM-DD
+    periodEnd: string; // YYYY-MM-DD
+    balanceMinutes: number;
+    carryOver: number; // cumulative saldo at periodEnd, in minutes
+  }
+
   let timer: ReturnType<typeof setInterval>;
   let pollInterval: ReturnType<typeof setInterval>;
 
@@ -347,6 +355,7 @@
     let reports: MonthlyReport[] = [];
     let labels: string[] = [];
     let brandColor = "";
+    let monthlySaldoHours: (number | null)[] = [];
 
     try {
       const now = new Date();
@@ -394,6 +403,30 @@
             vacationDays: 0,
             otherAbsenceDays: 0,
           });
+        }
+      }
+
+      // Load current user's saldo snapshots for the overtime trend (see quick 260412-326)
+      monthlySaldoHours = new Array(months.length).fill(null);
+      const currentEmployeeId = $authStore.user?.employeeId ?? null;
+      if (currentEmployeeId) {
+        try {
+          const snapshots = await api.get<SaldoSnapshotApi[]>(
+            `/overtime/snapshots/${currentEmployeeId}`,
+          );
+          // Build a map keyed by "YYYY-MM" for fast lookup
+          const snapByMonth = new Map<string, SaldoSnapshotApi>();
+          for (const s of snapshots) {
+            if (s.periodType !== "MONTHLY") continue; // ignore YEARLY rollups
+            const key = s.periodStart.slice(0, 7); // "YYYY-MM"
+            snapByMonth.set(key, s);
+          }
+          monthlySaldoHours = months.map((m) => {
+            const snap = snapByMonth.get(m.month);
+            return snap ? +(snap.carryOver / 60).toFixed(1) : null;
+          });
+        } catch (err) {
+          console.error("Failed to load saldo snapshots for overtime chart:", err);
         }
       }
 
@@ -451,16 +484,41 @@
       });
     }
 
-    // Overtime trend line chart
+    // Overtime trend line chart — driven by SaldoSnapshots (see quick 260412-326)
     if (overtimeChartEl) {
-      const overtimeData = reports.map(
-        (r) => +((r.workedMinutes - r.shouldMinutes) / 60).toFixed(1),
-      );
-      let cumulative = 0;
-      const cumulativeData = overtimeData.map((v) => {
-        cumulative += v;
-        return +cumulative.toFixed(1);
-      });
+      // For each of the last 6 months, use the snapshot's cumulative carryOver (in hours).
+      // For months without a snapshot (typically the current, still-open month),
+      // fall back to the authoritative stats.overtime.balanceHours so the last
+      // visible point matches the summary bar exactly.
+      const currentBalanceHours = stats?.overtime?.balanceHours ?? 0;
+
+      // Fill forward: if a middle month has no snapshot, reuse the previous known value
+      // so the line doesn't drop to 0. If NO snapshots exist at all, every point falls
+      // back to currentBalanceHours (flat line at the real saldo).
+      const filled: number[] = [];
+      let lastKnown: number | null = null;
+      for (let i = 0; i < monthlySaldoHours.length; i++) {
+        const v = monthlySaldoHours[i];
+        if (v !== null) {
+          lastKnown = v;
+          filled.push(v);
+        } else {
+          // No snapshot for this month — decide fallback:
+          // - If this is the LAST bucket (current open month), use currentBalanceHours.
+          // - Otherwise, reuse the last known snapshot value (carry forward).
+          if (i === monthlySaldoHours.length - 1) {
+            filled.push(+currentBalanceHours.toFixed(1));
+          } else {
+            filled.push(lastKnown ?? +currentBalanceHours.toFixed(1));
+          }
+        }
+      }
+
+      // Guarantee the right-edge point matches the summary bar regardless of whether
+      // the current month had a snapshot (defensive: if auto-close ran today, the
+      // snapshot's carryOver should already equal the account balance, so this is a
+      // no-op in the common case).
+      filled[filled.length - 1] = +currentBalanceHours.toFixed(1);
 
       overtimeChart?.destroy();
       overtimeChart = new Chart(overtimeChartEl, {
@@ -470,7 +528,7 @@
           datasets: [
             {
               label: "Überstunden kumuliert (h)",
-              data: cumulativeData,
+              data: filled,
               borderColor: brandColor,
               backgroundColor: brandColor + "20",
               fill: true,
