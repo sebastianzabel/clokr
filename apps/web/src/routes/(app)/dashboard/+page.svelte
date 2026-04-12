@@ -171,12 +171,9 @@
     otherAbsenceDays: number;
   }
 
-  interface SaldoSnapshotApi {
-    periodType: "MONTHLY" | "YEARLY";
-    periodStart: string; // YYYY-MM-DD
-    periodEnd: string; // YYYY-MM-DD
-    balanceMinutes: number;
-    carryOver: number; // cumulative saldo at periodEnd, in minutes
+  interface OvertimeTrendResponse {
+    snapshots: { month: string; teamCarryOverMinutes: number }[];
+    currentTeamBalanceMinutes: number;
   }
 
   let timer: ReturnType<typeof setInterval>;
@@ -355,19 +352,21 @@
     let reports: MonthlyReport[] = [];
     let labels: string[] = [];
     let brandColor = "";
-    let monthlySaldoHours: (number | null)[] = [];
+    const now = new Date();
+    const months: { label: string; month: string }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = subMonths(now, i);
+      months.push({
+        label: format(d, "MMM yy", { locale: de }),
+        month: format(d, "yyyy-MM"),
+      });
+    }
+    let overtimeTrend: OvertimeTrendResponse = {
+      snapshots: [],
+      currentTeamBalanceMinutes: 0,
+    };
 
     try {
-      const now = new Date();
-      const months: { label: string; month: string }[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = subMonths(now, i);
-        months.push({
-          label: format(d, "MMM yy", { locale: de }),
-          month: format(d, "yyyy-MM"),
-        });
-      }
-
       for (const m of months) {
         try {
           const [y, mo] = m.month.split("-");
@@ -406,28 +405,11 @@
         }
       }
 
-      // Load current user's saldo snapshots for the overtime trend (see quick 260412-326)
-      monthlySaldoHours = new Array(months.length).fill(null);
-      const currentEmployeeId = $authStore.user?.employeeId ?? null;
-      if (currentEmployeeId) {
-        try {
-          const snapshots = await api.get<SaldoSnapshotApi[]>(
-            `/overtime/snapshots/${currentEmployeeId}`,
-          );
-          // Build a map keyed by "YYYY-MM" for fast lookup
-          const snapByMonth = new Map<string, SaldoSnapshotApi>();
-          for (const s of snapshots) {
-            if (s.periodType !== "MONTHLY") continue; // ignore YEARLY rollups
-            const key = s.periodStart.slice(0, 7); // "YYYY-MM"
-            snapByMonth.set(key, s);
-          }
-          monthlySaldoHours = months.map((m) => {
-            const snap = snapByMonth.get(m.month);
-            return snap ? +(snap.carryOver / 60).toFixed(1) : null;
-          });
-        } catch (err) {
-          console.error("Failed to load saldo snapshots for overtime chart:", err);
-        }
+      // Load team overtime trend from the dedicated endpoint
+      try {
+        overtimeTrend = await api.get<OvertimeTrendResponse>("/dashboard/overtime-trend");
+      } catch (err) {
+        console.error("Failed to load overtime trend:", err);
       }
 
       labels = months.map((m) => m.label);
@@ -484,41 +466,33 @@
       });
     }
 
-    // Overtime trend line chart — driven by SaldoSnapshots (see quick 260412-326)
+    // Overtime trend line chart — absolute team saldo from SaldoSnapshots + live OvertimeAccount
     if (overtimeChartEl) {
-      // For each of the last 6 months, use the snapshot's cumulative carryOver (in hours).
-      // For months without a snapshot (typically the current, still-open month),
-      // fall back to the authoritative stats.overtime.balanceHours so the last
-      // visible point matches the summary bar exactly.
-      const currentBalanceHours = stats?.overtime?.balanceHours ?? 0;
-
-      // Fill forward: if a middle month has no snapshot, reuse the previous known value
-      // so the line doesn't drop to 0. If NO snapshots exist at all, every point falls
-      // back to currentBalanceHours (flat line at the real saldo).
-      const filled: number[] = [];
-      let lastKnown: number | null = null;
-      for (let i = 0; i < monthlySaldoHours.length; i++) {
-        const v = monthlySaldoHours[i];
-        if (v !== null) {
-          lastKnown = v;
-          filled.push(v);
-        } else {
-          // No snapshot for this month — decide fallback:
-          // - If this is the LAST bucket (current open month), use currentBalanceHours.
-          // - Otherwise, reuse the last known snapshot value (carry forward).
-          if (i === monthlySaldoHours.length - 1) {
-            filled.push(+currentBalanceHours.toFixed(1));
-          } else {
-            filled.push(lastKnown ?? +currentBalanceHours.toFixed(1));
-          }
-        }
+      // Build a lookup of snapshot month → teamCarryOverMinutes
+      const snapshotByMonth = new Map<string, number>();
+      for (const s of overtimeTrend.snapshots) {
+        // API returns "YYYY-MM-DD" (day is always 01); key by "YYYY-MM"
+        snapshotByMonth.set(s.month.slice(0, 7), s.teamCarryOverMinutes);
       }
 
-      // Guarantee the right-edge point matches the summary bar regardless of whether
-      // the current month had a snapshot (defensive: if auto-close ran today, the
-      // snapshot's carryOver should already equal the account balance, so this is a
-      // no-op in the common case).
-      filled[filled.length - 1] = +currentBalanceHours.toFixed(1);
+      // Align to the same 6-month window as `labels` (months[].month = "YYYY-MM")
+      // For each month:
+      //   - If it's the LAST month (current open month) → use currentTeamBalanceMinutes / 60
+      //   - Else if a snapshot exists for that month → use teamCarryOverMinutes / 60
+      //   - Else → fill-forward from the previous resolved value (or 0 for the leading edge)
+      let lastKnown = 0;
+      const absoluteHours: number[] = [];
+      for (let i = 0; i < months.length; i++) {
+        const isCurrent = i === months.length - 1;
+        if (isCurrent) {
+          lastKnown = overtimeTrend.currentTeamBalanceMinutes / 60;
+        } else {
+          const snap = snapshotByMonth.get(months[i].month);
+          if (snap !== undefined) lastKnown = snap / 60;
+          // else: fill-forward — lastKnown stays unchanged
+        }
+        absoluteHours.push(+lastKnown.toFixed(1));
+      }
 
       overtimeChart?.destroy();
       overtimeChart = new Chart(overtimeChartEl, {
@@ -527,8 +501,8 @@
           labels,
           datasets: [
             {
-              label: "Überstunden kumuliert (h)",
-              data: filled,
+              label: "Team-Überstunden (h)",
+              data: absoluteHours,
               borderColor: brandColor,
               backgroundColor: brandColor + "20",
               fill: true,
@@ -1004,7 +978,10 @@
                           >{day.workedHours.toFixed(1)}</span
                         >
                       {:else if day.status === "absent"}
-                        <span class="cell-badge cell-badge--absent" title={day.reason ?? "Abwesend"}>
+                        <span
+                          class="cell-badge cell-badge--absent"
+                          title={day.reason ?? "Abwesend"}
+                        >
                           {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
                             🤒
                           {:else if day.reason === "Mutterschutz"}
@@ -1016,7 +993,10 @@
                           {/if}
                         </span>
                       {:else if day.status === "holiday"}
-                        <span class="cell-badge cell-badge--holiday" title={day.holidayName ?? "Feiertag"}>☀️</span>
+                        <span
+                          class="cell-badge cell-badge--holiday"
+                          title={day.holidayName ?? "Feiertag"}>☀️</span
+                        >
                       {:else if day.status === "missing" && isPast && !isWeekend}
                         <span class="cell-badge cell-badge--missing">⚠️</span>
                       {:else}
@@ -1235,7 +1215,9 @@
                         {/if}
                       </span>
                     {:else if day.status === "holiday"}
-                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}>☀️</span>
+                      <span class="cell-badge cell-badge--holiday" title={day.reason ?? "Feiertag"}
+                        >☀️</span
+                      >
                     {:else if day.status === "missing"}
                       <span
                         class="cell-badge cell-badge--missing"
@@ -1287,7 +1269,8 @@
         <span class="legend-item"><span class="cell-badge cell-badge--absent">🤒</span> Krank</span>
         <span class="legend-item"><span class="cell-badge cell-badge--missing">⚠️</span> Fehlt</span
         >
-        <span class="legend-item"><span class="cell-badge cell-badge--holiday">🎉</span> Feiertag</span
+        <span class="legend-item"
+          ><span class="cell-badge cell-badge--holiday">🎉</span> Feiertag</span
         >
         <span class="legend-item"
           ><span class="cell-badge cell-badge--scheduled">9–17</span> Geplant</span
