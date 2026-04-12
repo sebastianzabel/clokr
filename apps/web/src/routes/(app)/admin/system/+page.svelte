@@ -1620,6 +1620,42 @@
 {/if}
 
 <style>
+  .theme-picker {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-top: 0.5rem;
+  }
+  .theme-dot {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 3px;
+    background: none;
+    cursor: pointer;
+    transition: border-color 150ms ease, transform 150ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .theme-dot[aria-checked="true"] {
+    border-color: var(--color-brand);
+  }
+  .theme-dot:hover {
+    transform: scale(1.1);
+  }
+  .theme-dot:focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  .theme-dot-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    display: block;
+  }
+
   .sys-card {
     padding: 0;
     margin-bottom: 2rem;
