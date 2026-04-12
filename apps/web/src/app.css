@@ -670,6 +670,12 @@ button {
   cursor: not-allowed;
 }
 
+/* Pill shape for primary CTAs (D-15) */
+.btn-primary,
+.btn-secondary {
+  border-radius: 9999px;
+}
+
 .btn-primary {
   background-color: var(--color-brand);
   color: #fff;
@@ -760,10 +766,11 @@ button {
 .card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow), var(--glass-shadow-inset);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  overflow: clip;
   transition:
     background-color 0.25s ease,
     border-color 0.25s ease,
@@ -788,13 +795,13 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.3rem 0.75rem;
+  padding: 4px 8px;
   border-radius: 999px;
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.4;
   white-space: nowrap;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   transition: all 0.15s ease;
 }
 
@@ -960,8 +967,8 @@ select.form-input {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-md);
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   padding: 1.5rem 1.75rem;
   transition:
     background-color 0.25s ease,
@@ -1811,6 +1818,51 @@ textarea.form-input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ─── Theme Dot Picker (D-19) ──────────────────────────────────────── */
+.theme-picker {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.theme-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 0;
+  cursor: pointer;
+  min-height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+  background: none;
+}
+
+.theme-dot-inner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.theme-dot[aria-checked="true"] {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  transform: scale(1.1);
+}
+
+.theme-dot:hover {
+  transform: scale(1.08);
+}
+
+.theme-dot:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
 }
 
 /* ─── Reduced Motion ─────────────────────────────────────────────────── */
