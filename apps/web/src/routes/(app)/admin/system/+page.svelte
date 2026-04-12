@@ -664,7 +664,7 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {:else}
   <!-- ── Systemeinstellungen ─────────────────────────────────────────────── -->
-  <div class="card sys-card">
+  <div class="card sys-card card-animate">
     <!-- Erscheinungsbild -->
     <div class="sys-section">
       <h3 class="sys-title">Erscheinungsbild</h3>
@@ -1296,11 +1296,11 @@
 
   <!-- ── API Keys ──────────────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>API Keys</h2>
+    <h2 class="section-header">API Keys</h2>
     <p class="text-muted">Schlüssel für externe Integrationen (Lohnsoftware, Automations)</p>
   </div>
 
-  <div class="card card-body settings-card">
+  <div class="card card-body settings-card card-animate">
     <div class="sys-section">
       {#if showNewApiKey}
         <div class="alert alert-success" style="margin-bottom:1rem;">
@@ -1402,7 +1402,7 @@
 
   <!-- ── DATEV Export ─────────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>DATEV Export</h2>
+    <h2 class="section-header">DATEV Export</h2>
     <p class="text-muted">Lohnartennummern für den DATEV LODAS ASCII-Export konfigurieren</p>
   </div>
 
@@ -1478,11 +1478,11 @@
 
   <!-- ── Phorest-Integration ─────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>Phorest-Integration</h2>
+    <h2 class="section-header">Phorest-Integration</h2>
     <p class="text-muted">Schichten aus Phorest Salon-Software importieren</p>
   </div>
 
-  <div class="card card-body settings-card">
+  <div class="card card-body settings-card card-animate">
     {#if phError}
       <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
         <span>⚠</span><span>{phError}</span>
