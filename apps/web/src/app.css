@@ -551,6 +551,7 @@ button {
   color: #fff;
   border-color: var(--color-brand);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 9999px;
 }
 .btn-primary:hover:not(:disabled) {
   background-color: var(--color-brand-dark);
@@ -564,6 +565,7 @@ button {
   background-color: var(--color-brand-tint);
   color: var(--color-brand);
   border-color: var(--color-border);
+  border-radius: 9999px;
 }
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--color-brand-tint-hover);
@@ -632,14 +634,54 @@ button {
   justify-content: center;
 }
 
+/* ─── Theme Picker ───────────────────────────────────────────────────── */
+.theme-picker {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.theme-dot {
+  width: 2.75rem;   /* 44px — WCAG 2.5.5 touch target */
+  height: 2.75rem;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  padding: 3px;
+  background: none;
+  cursor: pointer;
+  transition: border-color 150ms ease, transform 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+}
+.theme-dot[aria-checked="true"] {
+  border-color: var(--color-brand);
+}
+.theme-dot:hover {
+  transform: scale(1.1);
+}
+.theme-dot:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+.theme-dot-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: block;
+}
+
 /* ─── Card ───────────────────────────────────────────────────────────── */
 .card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow), var(--glass-shadow-inset);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  overflow: clip;
   transition:
     background-color 0.25s ease,
     border-color 0.25s ease,
@@ -694,13 +736,13 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
-  padding: 0.3rem 0.75rem;
+  padding: 4px 8px;
   border-radius: 999px;
   font-size: 0.8125rem;
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.4;
   white-space: nowrap;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   transition: all 0.15s ease;
 }
 
