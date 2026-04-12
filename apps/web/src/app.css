@@ -175,11 +175,19 @@
   --nav-active-border: var(--color-brand);
 
   /* Glass surfaces */
-  --glass-bg: rgba(255, 255, 255, 0.97);
-  --glass-bg-strong: rgba(255, 255, 255, 0.99);
-  --glass-border: rgba(128, 55, 123, 0.08);
-  --glass-blur: 20px;
-  --glass-shadow: 0 8px 32px rgba(128, 55, 123, 0.08), 0 2px 8px rgba(128, 55, 123, 0.04);
+  --glass-bg: rgba(255, 255, 255, 0.76);
+  --glass-bg-subtle: rgba(255, 255, 255, 0.55);
+  --glass-bg-overlay: rgba(250, 249, 247, 0.90);
+  --glass-saturate: 160%;
+  --glass-highlight: rgba(255, 255, 255, 0.60);
+  --glass-border: rgba(128, 55, 123, 0.10);
+  --glass-border-light: rgba(255, 255, 255, 0.50);
+  --glass-shadow: 0 8px 32px rgba(128, 55, 123, 0.10), 0 2px 8px rgba(128, 55, 123, 0.05);
+  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.60);
+  --glass-blur: 16px;
+
+  /* Theme switch transition */
+  transition: color 200ms ease, background-color 200ms ease;
 
   /* Leave type chip / legend colors */
   --leave-type-vacation: #4caf50;
@@ -195,6 +203,16 @@
   --leave-type-default: #607d8b;
   --leave-type-absent: #9e9e9e;
   --leave-type-absent-muted: #bdbdbd;
+}
+
+/* ─── Body Gradient Backdrop (Glassmorphism visibility layer) ────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(ellipse at 80% 10%, rgba(168, 92, 163, 0.10) 0%, transparent 60%);
 }
 
 /* ─── Theme: Nacht (dark) ─────────────────────────────────────────────── */
