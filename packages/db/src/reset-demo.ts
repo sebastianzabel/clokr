@@ -395,26 +395,30 @@ async function main() {
     },
   });
 
-  // Admin time entries: Mo–Fr, 7:45h/day → -15min/day × ~20 Tage = -5h Saldo/Monat
-  // Slight start-time variation per weekday to look realistic
-  const adminPatterns: DowMap = {
-    1: { startH: 9, startM: 15, endH: 17, endM:  0, breakMin:  0 }, // 7:45h
-    2: { startH: 9, startM:  0, endH: 17, endM: 15, breakMin: 30 }, // 7:45h
-    3: { startH: 9, startM: 30, endH: 17, endM: 15, breakMin:  0 }, // 7:45h
-    4: { startH: 9, startM:  0, endH: 16, endM: 45, breakMin:  0 }, // 7:45h
-    5: { startH: 9, startM:  0, endH: 16, endM: 45, breakMin:  0 }, // 7:45h
-  };
-
+  // Admin time entries: Mo–Fr, always 7:45h net, random start times per day
+  // Deterministic variation based on day-of-year so it looks natural but is reproducible
   const adminDays = getWorkdays(HIRE_DATE_STR, LAST_ENTRY_STR);
   await prisma.timeEntry.createMany({
     data: adminDays.map((day) => {
-      const p = adminPatterns[day.getUTCDay()];
+      // Simple hash of the date for deterministic "randomness"
+      const seed = day.getUTCDate() * 31 + day.getUTCMonth() * 7;
+      // Start between 07:45 and 09:45 in 15-min steps (9 options)
+      const startOffsetMins = (seed % 9) * 15; // 0,15,30,...,120 min after 07:45
+      const startTotalMins = 7 * 60 + 45 + startOffsetMins;
+      const startH = Math.floor(startTotalMins / 60);
+      const startM = startTotalMins % 60;
+      // Break: 0 or 30 min (odd seed days get a break)
+      const breakMin = seed % 3 === 0 ? 30 : 0;
+      // End = start + 7h45m + break
+      const endTotalMins = startTotalMins + 7 * 60 + 45 + breakMin;
+      const endH = Math.floor(endTotalMins / 60);
+      const endM = endTotalMins % 60;
       return {
         employeeId: adminEmp.id,
         date: day,
-        startTime: berlinToUTC(day, p.startH, p.startM),
-        endTime: berlinToUTC(day, p.endH, p.endM),
-        breakMinutes: p.breakMin,
+        startTime: berlinToUTC(day, startH, startM),
+        endTime: berlinToUTC(day, endH, endM),
+        breakMinutes: breakMin,
         type: "WORK" as const,
         source: "MANUAL" as const,
         createdBy: adminUser.id,
@@ -422,7 +426,7 @@ async function main() {
     }),
   });
 
-  console.log(`  hireDate → 2026-01-01 | ${adminDays.length} Einträge (7:45h/Tag → -5h/Monat)\n`);
+  console.log(`  hireDate → 2026-01-01 | ${adminDays.length} Einträge (7:45h/Tag variabel → -5h/Monat)\n`);
 
   // ── Create new employees ─────────────────────────────────────────────────
 
