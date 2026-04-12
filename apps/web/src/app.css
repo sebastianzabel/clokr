@@ -1719,6 +1719,19 @@ textarea.form-input {
   white-space: nowrap;
 }
 
+/* ── Widget Action Links (Phase 9) ──────────────────────────────── */
+.widget-action {
+  font-size: 0.8125rem;
+  font-weight: 400;
+  color: var(--color-brand);
+  text-decoration: none;
+  transition: opacity 150ms ease-out;
+  white-space: nowrap;
+}
+.widget-action:hover {
+  opacity: 0.75;
+}
+
 /* ─── Reduced Motion ─────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *,
