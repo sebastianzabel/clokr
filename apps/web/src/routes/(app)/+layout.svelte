@@ -180,14 +180,23 @@
 
   let isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
-  let navItems = $derived(
+  // Employee nav group (always shown to all authenticated users)
+  let employeeNavItems = $derived(
     [
-      { href: "/dashboard", icon: "home", label: "Dashboard", show: true },
-      { href: "/time-entries", icon: "clock", label: "Zeiterfassung", show: true },
-      { href: "/leave", icon: "calendar-off", label: "Abwesenheiten", show: true },
-      { href: "/reports", icon: "bar-chart-3", label: "Berichte", show: true },
-      { href: "/admin", icon: "settings", label: "Admin", show: isManager },
-    ].filter((i) => i.show),
+      { href: "/dashboard", icon: "home", label: "Dashboard" },
+      { href: "/time-entries", icon: "clock", label: "Zeiterfassung" },
+      { href: "/leave", icon: "calendar-off", label: "Abwesenheiten" },
+    ],
+  );
+
+  // Manager nav group (shown only when isManager)
+  let managerNavItems = $derived(
+    isManager
+      ? [
+          { href: "/reports", icon: "bar-chart-3", label: "Berichte" },
+          { href: "/admin", icon: "settings", label: "Admin" },
+        ]
+      : [],
   );
 
 </script>
@@ -350,21 +359,45 @@
       </div>
 
       <nav class="sidebar-nav" aria-label="Hauptnavigation">
-        {#each navItems as item (item.href)}
-          {@const active =
-            item.href === "/dashboard"
-              ? $page.url.pathname === "/dashboard"
-              : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
-          <a
-            href={item.href}
-            class="nav-item"
-            class:nav-item--active={active}
-            aria-current={active ? "page" : undefined}
-          >
-            <span class="nav-icon">{@render navSvgIcon(item.icon)}</span>
-            <span class="nav-label">{item.label}</span>
-          </a>
-        {/each}
+        <!-- Employee group -->
+        <div class="nav-group">
+          <span class="nav-group-label">MITARBEITER</span>
+          {#each employeeNavItems as item (item.href)}
+            {@const active =
+              item.href === "/dashboard"
+                ? $page.url.pathname === "/dashboard"
+                : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
+            <a
+              href={item.href}
+              class="nav-item"
+              class:nav-item--active={active}
+              aria-current={active ? "page" : undefined}
+            >
+              <span class="nav-icon">{@render navSvgIcon(item.icon)}</span>
+              <span class="nav-label">{item.label}</span>
+            </a>
+          {/each}
+        </div>
+
+        <!-- Manager group (only shown when isManager) -->
+        {#if isManager}
+          <div class="nav-group">
+            <span class="nav-group-label">MANAGER</span>
+            {#each managerNavItems as item (item.href)}
+              {@const active =
+                $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
+              <a
+                href={item.href}
+                class="nav-item"
+                class:nav-item--active={active}
+                aria-current={active ? "page" : undefined}
+              >
+                <span class="nav-icon">{@render navSvgIcon(item.icon)}</span>
+                <span class="nav-label">{item.label}</span>
+              </a>
+            {/each}
+          </div>
+        {/if}
       </nav>
 
       <div class="sidebar-footer">
@@ -516,7 +549,7 @@
 
     <!-- Mobile Bottom Nav -->
     <nav class="mobile-nav" aria-label="Mobile Navigation">
-      {#each navItems as item (item.href)}
+      {#each [...employeeNavItems, ...managerNavItems] as item (item.href)}
         {@const active =
           item.href === "/dashboard"
             ? $page.url.pathname === "/dashboard"
@@ -803,7 +836,33 @@
     padding: 0.5rem 0.5rem;
     display: flex;
     flex-direction: column;
+    gap: 0; /* gap now handled per nav-group */
+  }
+
+  /* ── Nav Group Labels (Phase 9) ────────────────────────────────── */
+  .nav-group {
+    display: flex;
+    flex-direction: column;
     gap: 0.125rem;
+  }
+
+  .nav-group + .nav-group {
+    margin-top: 0.5rem; /* spacing between employee and manager group */
+  }
+
+  .nav-group-label {
+    display: block;
+    padding: 0.75rem 1rem 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.35);
+    user-select: none;
+  }
+
+  .nav-group:first-child .nav-group-label {
+    padding-top: 0.5rem;
   }
 
   .nav-item {
