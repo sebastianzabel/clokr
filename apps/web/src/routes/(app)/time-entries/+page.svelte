@@ -791,7 +791,7 @@
 </div>
 
 {#if isManager && employees.length > 0}
-  <div class="employee-selector">
+  <div class="employee-selector card-animate">
     <label class="form-label" for="emp-select">Mitarbeiter</label>
     <select
       id="emp-select"
@@ -1320,8 +1320,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--gray-200, #e5e7eb);
-    background: var(--gray-50, #f9fafb);
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-subtle);
   }
 
   .month-nav-standalone {
