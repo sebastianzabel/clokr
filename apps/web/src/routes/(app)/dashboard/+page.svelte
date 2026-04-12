@@ -647,8 +647,16 @@
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
-  function fmtH(hours: number): string {
-    return hours.toFixed(1).replace(".", ",") + "h";
+  function fmtHours(hours: number): string {
+    const totalMin = Math.round(Math.abs(hours) * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${h}:${String(m).padStart(2, "0")}h`;
+  }
+
+  function fmtBalanceHours(hours: number): string {
+    if (hours === 0) return "±0:00";
+    return (hours > 0 ? "+" : "−") + fmtHours(hours);
   }
 
   function greeting(): string {
@@ -766,7 +774,7 @@
         {#if clockedIn && clockStart}
           {formatElapsed(clockStart, currentTime)}
         {:else if stats}
-          {fmtH(stats.today.workedHours)}
+          {fmtHours(stats.today.workedHours)}
         {:else}
           <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
@@ -805,14 +813,14 @@
       </div>
       <p class="stat-value font-mono stat-value-animate">
         {#if stats}
-          {fmtH(stats.week.workedHours)}
+          {fmtHours(stats.week.workedHours)}
         {:else}
           <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
-          von {fmtH(stats.week.targetHours)} Soll
+          von {fmtHours(stats.week.targetHours)} Soll
         {:else}
           <span class="skeleton-text"></span>
         {/if}
@@ -821,7 +829,7 @@
 
     <div class="stat-card card-animate">
       <div class="stat-header-row">
-        <p class="stat-label">Überstunden</p>
+        <p class="stat-label">Saldo</p>
         <span class="stat-icon stat-icon--brand">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -837,7 +845,7 @@
         </span>
       </div>
       <p class="stat-value {overtimeClass} font-mono stat-value-animate">
-        {overtimeBalance >= 0 ? "+" : ""}{overtimeBalance.toFixed(1)}h
+        {fmtBalanceHours(overtimeBalance)}
       </p>
       <p class="stat-sub">
         Stand heute &middot;
@@ -967,15 +975,15 @@
                     <a
                       href="/time-entries?view=list&date={day.date}"
                       class="week-cell"
-                      title="{day.workedHours}h / {day.expectedHours}h Soll"
+                      title="{fmtHours(day.workedHours)} / {fmtHours(day.expectedHours)} Soll"
                     >
                       {#if day.status === "clocked_in"}
                         <span class="cell-badge cell-badge--clocked">●</span>
                       {:else if day.status === "complete"}
-                        <span class="cell-badge cell-badge--ok">{day.workedHours.toFixed(1)}</span>
+                        <span class="cell-badge cell-badge--ok">{fmtHours(day.workedHours)}</span>
                       {:else if day.status === "partial"}
                         <span class="cell-badge cell-badge--partial"
-                          >{day.workedHours.toFixed(1)}</span
+                          >{fmtHours(day.workedHours)}</span
                         >
                       {:else if day.status === "absent"}
                         <span
@@ -1013,48 +1021,52 @@
     {/if}
 
     <!-- Open Items Widget -->
-    {#if openItems && openItems.total > 0}
+    {#if openItems}
       <div class="open-items card card-body card-animate">
         <h3 class="widget-title">Offene Vorgänge</h3>
         <div class="open-items-list">
-          {#if openItems.missingDays.length > 0}
-            <div class="oi-group">
-              <div class="oi-group-header">
-                <span class="oi-dot oi-dot--warn"></span>
-                <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+          {#if openItems.total === 0}
+            <p class="oi-empty">Keine offenen Vorgänge</p>
+          {:else}
+            {#if openItems.missingDays.length > 0}
+              <div class="oi-group">
+                <div class="oi-group-header">
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+                </div>
+                {#each openItems.missingDays as missDate (missDate)}
+                  {@const d = new Date(missDate + "T12:00:00")}
+                  {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                  <a href="/time-entries?view=list&date={missDate}" class="oi-item">
+                    <span
+                      >{dayName}. {d.toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                      })}</span
+                    >
+                    <span class="oi-link">Nachtragen →</span>
+                  </a>
+                {/each}
               </div>
-              {#each openItems.missingDays as missDate (missDate)}
-                {@const d = new Date(missDate + "T12:00:00")}
-                {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-                <a href="/time-entries?view=list&date={missDate}" class="oi-item">
-                  <span
-                    >{dayName}. {d.toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                    })}</span
-                  >
-                  <span class="oi-link">Nachtragen →</span>
-                </a>
-              {/each}
-            </div>
-          {/if}
-          {#if openItems.pendingRequests > 0}
-            <a href="/leave?view=requests" class="oi-row">
-              <span class="oi-dot oi-dot--pending"></span>
-              <span
-                >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                  ? "r Antrag"
-                  : " Anträge"}</span
-              >
-              <span class="oi-link">→</span>
-            </a>
-          {/if}
-          {#if openItems.invalidEntries > 0}
-            <a href="/time-entries" class="oi-row">
-              <span class="oi-dot oi-dot--fix"></span>
-              <span>{openItems.invalidEntries} zu korrigieren</span>
-              <span class="oi-link">→</span>
-            </a>
+            {/if}
+            {#if openItems.pendingRequests > 0}
+              <a href="/leave?view=requests" class="oi-row">
+                <span class="oi-dot oi-dot--pending"></span>
+                <span
+                  >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                    ? "r Antrag"
+                    : " Anträge"}</span
+                >
+                <span class="oi-link">→</span>
+              </a>
+            {/if}
+            {#if openItems.invalidEntries > 0}
+              <a href="/time-entries" class="oi-row">
+                <span class="oi-dot oi-dot--fix"></span>
+                <span>{openItems.invalidEntries} zu korrigieren</span>
+                <span class="oi-link">→</span>
+              </a>
+            {/if}
           {/if}
         </div>
       </div>
@@ -1188,9 +1200,9 @@
                     {#if day.status === "present"}
                       <span
                         class="cell-badge cell-badge--present"
-                        title="{day.workedHours.toFixed(1)}h gearbeitet"
+                        title="{fmtHours(day.workedHours)} gearbeitet"
                       >
-                        {day.workedHours.toFixed(1)}
+                        {fmtHours(day.workedHours)}
                       </span>
                       {#if day.shift}
                         <span
@@ -1238,7 +1250,7 @@
                         {#if day.shift}
                           <span class="shift-time">{day.shift.startTime}–{day.shift.endTime}</span>
                         {:else}
-                          <span class="shift-time">{day.expectedHours}h</span>
+                          <span class="shift-time">{fmtHours(day.expectedHours)}</span>
                         {/if}
                       </span>
                     {:else}
@@ -1615,6 +1627,12 @@
     color: var(--color-brand);
     font-size: 0.75rem;
     font-weight: 500;
+  }
+  .oi-empty {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    margin: 0;
+    padding: 0.25rem 0;
   }
   .team-divider {
     display: flex;

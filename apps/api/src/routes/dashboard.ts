@@ -69,10 +69,33 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }
       }
 
-      // ── Soll-Stunden diese Woche (bis heute) ─────────────────────────
+      // ── Soll-Stunden diese Woche (bis heute, Feiertage abgezogen) ────
       const schedule = await getEffectiveSchedule(app, employeeId);
       const clampedEnd = new Date(Math.min(today.getTime(), weekEnd.getTime()));
-      const weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
+      let weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
+
+      // Subtract holidays: fetch tenant federal state and deduct schedule hours for each
+      // holiday that falls within [weekStart, clampedEnd]
+      const personalTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const personalStateCode = personalTenant?.federalState
+        ? (STATE_MAP[personalTenant.federalState] ?? null)
+        : null;
+      const personalStartYear = new Date(weekStart).getFullYear();
+      const personalEndYear = new Date(clampedEnd).getFullYear();
+      const personalHolidays = getHolidays(personalStartYear, personalStateCode);
+      if (personalEndYear !== personalStartYear)
+        personalHolidays.push(...getHolidays(personalEndYear, personalStateCode));
+      for (const h of personalHolidays) {
+        const hDate = new Date(h.date + "T12:00:00Z");
+        if (hDate >= weekStart && hDate <= clampedEnd) {
+          const dow = getDayOfWeekInTz(hDate, tz);
+          weekSollMinutes -= getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+        }
+      }
+      if (weekSollMinutes < 0) weekSollMinutes = 0;
 
       // ── Überstunden ───────────────────────────────────────────────────
       const overtimeAccount = await app.prisma.overtimeAccount.findUnique({
@@ -586,12 +609,14 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }, 0);
 
         const dow = getDayOfWeekInTz(new Date(dateStr + "T12:00:00Z"), tz);
-        const expectedMin = schedule ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
+        const holidayName = myWeekHolidayMap.get(dateStr) ?? null;
+        // Feiertage reduzieren das Soll auf 0
+        const expectedMin =
+          schedule && !holidayName ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
         const isWorkday = expectedMin > 0;
         const hasEntry = dayEntries.length > 0;
         const isClockedIn = dayEntries.some((e) => !e.endTime);
         const isPast = new Date(dateStr) < todayInTz(tz);
-        const holidayName = myWeekHolidayMap.get(dateStr) ?? null;
 
         let status = "none";
         if (isClockedIn) status = "clocked_in";
@@ -639,10 +664,29 @@ export async function dashboardRoutes(app: FastifyInstance) {
       });
       const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
+      // Fetch holidays for the 7-day window (window can span two years near Jan 1)
+      const openItemsTenant = await app.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { federalState: true },
+      });
+      const openItemsStateCode = openItemsTenant?.federalState
+        ? (STATE_MAP[openItemsTenant.federalState] ?? null)
+        : null;
+      const startYear = sevenDaysAgo.getFullYear();
+      const endYear = today.getFullYear();
+      const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
+      if (endYear !== startYear)
+        openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
+      const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
+
       const missingDays: string[] = [];
       const cursor = new Date(sevenDaysAgo);
       while (cursor < today) {
         const dateStr = dateStrInTz(cursor, tz);
+        if (openItemsHolidaySet.has(dateStr)) {
+          cursor.setDate(cursor.getDate() + 1);
+          continue;
+        }
         const dow = getDayOfWeekInTz(cursor, tz);
         const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
         if (expectedH > 0 && !entryDates.has(dateStr)) {
