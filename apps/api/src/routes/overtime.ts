@@ -570,7 +570,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           }
 
           // Check holidays: merge computed German Feiertage with DB-stored manual holidays
-          const computedHolidaysYS = getHolidays(m, yearStatusStateCode);
+          const computedHolidaysYS = getHolidays(year, yearStatusStateCode);
           for (const h of computedHolidaysYS) {
             coveredDates.add(h.date);
           }
