@@ -549,10 +549,10 @@
   .sidebar {
     width: 240px;
     min-width: 240px;
-    background-color: var(--glass-bg-strong, var(--sidebar-bg));
-    backdrop-filter: blur(var(--glass-blur, 16px));
-    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-    border-right: 1px solid var(--color-border);
+    background-color: var(--sidebar-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-right: 1px solid var(--sidebar-border);
     display: flex;
     flex-direction: column;
     position: fixed;
@@ -568,7 +568,7 @@
     display: flex;
     justify-content: center;
     padding: 1.5rem 1.25rem 1rem;
-    border-bottom: 1px solid var(--color-border-subtle);
+    border-bottom: 1px solid var(--sidebar-border);
     flex-shrink: 0;
   }
 
@@ -589,7 +589,7 @@
   .brand-name {
     font-size: 1.15rem;
     font-weight: 800;
-    color: var(--color-brand);
+    color: rgba(255, 255, 255, 0.90);
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -610,7 +610,7 @@
     min-width: 44px;
     min-height: 44px;
     border-radius: var(--radius-sm);
-    color: var(--color-text-muted);
+    color: rgba(255, 255, 255, 0.60);
     transition:
       background-color 0.12s,
       color 0.12s;
@@ -620,8 +620,8 @@
   }
 
   .notification-bell:hover {
-    background-color: var(--color-bg-subtle);
-    color: var(--color-text);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.90);
   }
 
   .notification-badge {
@@ -800,7 +800,7 @@
   /* ── Nav ───────────────────────────────────────────────────────────── */
   .sidebar-nav {
     flex: 1;
-    padding: 0.75rem 0.625rem;
+    padding: 0.5rem 0.5rem;
     display: flex;
     flex-direction: column;
     gap: 0.125rem;
@@ -809,12 +809,12 @@
   .nav-item {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    padding: 0.625rem 0.75rem;
+    gap: 8px;
+    padding: 8px 16px;
     border-radius: var(--radius-sm);
-    font-size: 0.9rem;
-    font-weight: 500;
-    color: var(--color-text-muted);
+    font-size: 0.8125rem;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.75);
     text-decoration: none;
     border-left: 3px solid transparent;
     transition:
@@ -824,23 +824,33 @@
   }
 
   .nav-item:hover:not(.nav-item--disabled):not(.nav-item--active) {
-    background-color: var(--color-bg-subtle);
-    color: var(--color-text);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.90);
   }
 
   .nav-item--active {
-    background-color: var(--color-brand-tint);
-    color: var(--color-brand);
-    border-left-color: var(--color-brand);
+    background-color: var(--nav-active-bg);
+    color: var(--nav-active-color);
+    border-left-color: var(--nav-active-border);
   }
 
   .nav-icon {
     flex-shrink: 0;
-    width: 1.25rem;
+    width: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: inherit;
+    opacity: 0.6;
+    transition: opacity 150ms ease-out;
+  }
+
+  .nav-item--active .nav-icon {
+    opacity: 1.0;
+  }
+
+  .nav-item:hover .nav-icon {
+    opacity: 0.85;
   }
 
   .nav-label {
@@ -850,7 +860,7 @@
   /* ── Sidebar Footer ────────────────────────────────────────────────── */
   .sidebar-footer {
     padding: 0.875rem 1rem;
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--sidebar-border);
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -859,7 +869,7 @@
 
   .sidebar-version {
     font-size: 0.75rem; /* increased from 0.6875rem (11px) — opacity+tiny size fails contrast */
-    color: var(--color-text-muted);
+    color: rgba(255, 255, 255, 0.35);
     text-align: center;
     margin: 0;
   }
@@ -870,14 +880,14 @@
     gap: 0.625rem;
     min-width: 0;
     text-decoration: none;
-    color: inherit;
+    color: rgba(255, 255, 255, 0.80);
     padding: 0.375rem 0.5rem;
     border-radius: var(--radius-sm);
     transition: background 0.15s;
     cursor: pointer;
   }
   .sidebar-user:hover {
-    background: var(--color-bg-subtle);
+    background: rgba(255, 255, 255, 0.06);
   }
 
   .sidebar-user-avatar-img {
@@ -909,7 +919,7 @@
   .sidebar-user-email {
     font-size: 0.8125rem;
     font-weight: 500;
-    color: var(--color-text);
+    color: rgba(255, 255, 255, 0.85);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -917,7 +927,7 @@
 
   .sidebar-user-role {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: rgba(255, 255, 255, 0.50);
   }
 
   .sidebar-footer-actions {
@@ -929,9 +939,9 @@
     justify-content: center;
     font-size: 0.8125rem;
     gap: 0.4rem;
-    border: 1px solid var(--color-border);
-    background-color: var(--color-bg-subtle);
-    color: var(--color-text-muted);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background-color: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.60);
   }
 
   .logout-btn:hover {
@@ -959,10 +969,10 @@
     bottom: 0;
     left: 0;
     right: 0;
-    background: var(--glass-bg-strong, var(--sidebar-bg));
-    backdrop-filter: blur(var(--glass-blur, 16px));
-    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-    border-top: 1px solid var(--color-border);
+    background: var(--sidebar-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-top: 1px solid var(--sidebar-border);
     z-index: 100;
     padding: 0.25rem 0;
     overflow-x: auto;
@@ -982,14 +992,14 @@
     gap: 0.15rem;
     padding: 0.375rem 0.125rem;
     text-decoration: none;
-    color: var(--color-text-muted);
+    color: rgba(255, 255, 255, 0.60);
     font-size: 0.6875rem;
     font-weight: 500;
     transition: color 0.12s;
   }
 
   .mobile-nav-item--active {
-    color: var(--color-brand);
+    color: var(--nav-active-color);
     font-weight: 600;
     position: relative;
   }
@@ -1003,7 +1013,7 @@
     width: 1.5rem;
     height: 3px;
     border-radius: 0 0 3px 3px;
-    background-color: var(--color-brand);
+    background-color: var(--nav-active-border);
   }
 
   .mobile-nav-icon {
@@ -1029,10 +1039,10 @@
     left: 0;
     right: 0;
     height: 3.25rem;
-    background: var(--glass-bg-strong, var(--sidebar-bg));
-    backdrop-filter: blur(var(--glass-blur, 16px));
-    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-    border-bottom: 1px solid var(--color-border);
+    background: var(--sidebar-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    border-bottom: 1px solid var(--sidebar-border);
     z-index: 100;
     padding: 0 1rem;
     align-items: center;
@@ -1054,7 +1064,7 @@
   .mobile-header-name {
     font-size: 0.9375rem;
     font-weight: 700;
-    color: var(--color-brand);
+    color: rgba(255, 255, 255, 0.90);
   }
 
   .notification-dropdown--mobile {

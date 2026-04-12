@@ -2,12 +2,11 @@
 
 ## What This Is
 
-Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections (attendance today, overtime with sparklines, leave entitlement). v1.2 focuses on a full UI/UX redesign — glassmorphism design system, 3 modern themes (pflaume/hell/dunkel), modernized sidebar, and a consistent visual language across all pages.
+Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections (attendance today, overtime with sparklines, leave entitlement). The app is now feature-complete and reporting-capable for live customer use.
 
-## Current State: v1.2 In Progress
+## Current State: v1.1 Shipped
 
-**v1.1 Shipped:** 2026-04-12
-**v1.2 Started:** 2026-04-12
+**Shipped:** 2026-04-12
 **Stack:** Fastify + SvelteKit 5 (runes) + Prisma + PostgreSQL 18
 **Codebase:** ~52,000 LOC (TypeScript + Svelte), growing with reporting layer
 
