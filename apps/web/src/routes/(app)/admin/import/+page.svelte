@@ -113,7 +113,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 
 <div class="page-header-row" style="margin-bottom:1.5rem">
   <div>
-    <h2 style="font-size:1.125rem;font-weight:600;">CSV Import</h2>
+    <h2 class="section-header">CSV Import</h2>
     <p class="text-muted" style="font-size:0.875rem;margin-top:0.125rem;">
       Mitarbeiter oder Zeiteintr&auml;ge per CSV importieren
     </p>
@@ -145,7 +145,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 {/if}
 
 <!-- CSV Input -->
-<div class="card card-body" style="margin-bottom:1.25rem">
+<div class="card card-body card-animate" style="margin-bottom:1.25rem">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
     <label for="csv-input" style="font-weight:600;font-size:0.875rem;">CSV-Daten</label>
     <div style="display:flex;gap:0.5rem;align-items:center">

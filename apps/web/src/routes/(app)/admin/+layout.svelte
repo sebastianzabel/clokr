@@ -157,4 +157,15 @@
       margin-bottom: 1.25rem;
     }
   }
+
+  /* ── Section Headers (Phase 9) — used by admin sub-pages ─────── */
+  /* Apply to <h2> inside .card sections: <h2 class="section-header">Title</h2> */
+  :global(.section-header) {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text-heading);
+    margin: 0 0 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
 </style>

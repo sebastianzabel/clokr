@@ -88,7 +88,7 @@
 
 <div class="page-header-row" style="margin-bottom:1.5rem">
   <div>
-    <h2 style="font-size:1.125rem;font-weight:600;">Audit Log</h2>
+    <h2 class="section-header">Audit Log</h2>
     <p class="text-muted" style="font-size:0.875rem;margin-top:0.125rem;">
       Alle sicherheitsrelevanten Aktionen im System
     </p>
