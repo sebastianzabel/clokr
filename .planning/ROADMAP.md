@@ -5,7 +5,7 @@
 - ✅ **v1.0 Production Readiness** — Phases 1-3 (shipped 2026-03-31)
 - ✅ **v1.1 Reporting & DATEV** — Phases 4-7 (shipped 2026-04-12)
 - ✅ **v1.2 UI Polish** — Phases 8-10 (shipped 2026-04-13)
-- 🔄 **v1.3 Monthly Hours Overhaul** — Phases 11-12 (in progress)
+- 🔄 **v1.3 Monthly Hours Overhaul** — Phases 11-15 (in progress)
 
 ## Phases
 
@@ -42,15 +42,13 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 </details>
 
 <details>
-<summary>🔄 v1.3 Monthly Hours Overhaul (Phases 11-12) — IN PROGRESS</summary>
+<summary>🔄 v1.3 Monthly Hours Overhaul (Phases 11-15) — IN PROGRESS</summary>
 
 - [x] Phase 11: Schema Bug Fixes — MONTHLY_HOURS (2/2 plans) — completed 2026-04-13
-- [ ] Phase 12: Monatsabschluss Lock Enforcement (0/3 plans)
-
-Plans:
-- [ ] 12-01-PLAN.md — API: POST lock guard + unlock endpoint + grace period
-- [ ] 12-02-PLAN.md — UI: lock indicators, Entsperren button, hidden controls
-- [ ] 12-03-PLAN.md — Tests: lock enforcement integration test suite
+- [x] Phase 12: Monatsabschluss Lock Enforcement (3/3 plans) — completed 2026-04-13
+- [ ] Phase 13: Overtime Handling Mode — CARRY_FORWARD / TRACK_ONLY (0/0 plans)
+- [ ] Phase 14: Weekday Configuration & Per-Day Soll (0/0 plans)
+- [ ] Phase 15: Tenant Holiday Deduction Configuration (0/0 plans)
 
 </details>
 
@@ -69,16 +67,32 @@ Plans:
 | 9. Widget/Menu/Page Redesign | v1.2 | 3/3 | Complete | 2026-04-13 |
 | 10. Calendar Redesign         | v1.2 | 2/2 | Complete | 2026-04-13 |
 | 11. Schema Bug Fixes          | v1.3 | 2/2 | Complete | 2026-04-13 |
-| 12. Lock Enforcement          | v1.3 | 0/3 | Planned  | —          |
+| 12. Lock Enforcement          | v1.3 | 3/3 | Complete | 2026-04-13 |
+| 13. Overtime Handling Mode    | v1.3 | 0/? | Not Started | — |
+| 14. Weekday Config & Per-Day Soll | v1.3 | 0/? | Not Started | — |
+| 15. Tenant Holiday Deduction  | v1.3 | 0/? | Not Started | — |
 
 ### Phase 12: Monatsabschluss Lock Enforcement
 
 **Goal:** Enforce `isLocked` on time-entry mutations (POST create previously unguarded), add `POST /overtime/unlock-month` endpoint with atomic snapshot deletion and full audit log, grace period for auto-close, and proactive UI lock feedback (indicators, hidden controls, Entsperren button).
 **Requirements**: BUG-02
 **Depends on:** Phase 11
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
-Plans:
-- [ ] 12-01-PLAN.md — API: POST lock guard (D-04, D-05) + unlock endpoint (D-01, D-02, D-03) + grace period + earlyClose (D-11, D-12)
-- [ ] 12-02-PLAN.md — UI: monthIsLocked derived (D-06) + lock icons (D-07) + hidden controls (D-08) + Abgeschlossen badge (D-09) + Entsperren button (D-10)
-- [ ] 12-03-PLAN.md — Tests: integration test suite for all Phase 12 API behaviors
+### Phase 13: Overtime Handling Mode — CARRY_FORWARD / TRACK_ONLY
+
+**Goal:** Allow admins to configure per-employee overtime handling mode for MONTHLY_HOURS schedules. CARRY_FORWARD accumulates excess hours in the overtime account; TRACK_ONLY records excess hours without growing the saldo.
+**Requirements**: SCHED-01, SCHED-02, SCHED-03
+**Depends on:** Phase 12
+
+### Phase 14: Weekday Configuration & Per-Day Soll
+
+**Goal:** Allow admins to configure which weekdays a MONTHLY_HOURS employee regularly works, and display a per-day Soll in the calendar (budget ÷ working days in month).
+**Requirements**: SCHED-04, SCHED-05
+**Depends on:** Phase 13
+
+### Phase 15: Tenant Holiday Deduction Configuration
+
+**Goal:** Allow tenant admins to configure whether public holidays on a MONTHLY_HOURS employee's configured workdays reduce the monthly Soll.
+**Requirements**: TENANT-01
+**Depends on:** Phase 14
