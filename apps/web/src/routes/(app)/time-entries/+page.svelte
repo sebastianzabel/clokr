@@ -24,6 +24,7 @@
     note: string | null;
     isInvalid?: boolean;
     invalidReason?: string | null;
+    isLocked?: boolean;
   }
 
   interface WorkSchedule {
@@ -637,9 +638,28 @@
     }
   }
 
+  // D-10: Unlock the current month for the selected employee
+  async function unlockMonth() {
+    const empId = selectedEmployeeId || $authStore.user?.employeeId || "";
+    if (!empId) return;
+    try {
+      await api.post("/overtime/unlock-month", {
+        employeeId: empId,
+        year: calMonth.getFullYear(),
+        month: calMonth.getMonth() + 1,
+      });
+      await loadAll();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Entsperren";
+    }
+  }
+
   const isManager = $derived(
     $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
   );
+
+  // D-06: Derive lock state from entry data already loaded — no extra API request
+  let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
 
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
