@@ -158,6 +158,7 @@ export async function recalculateSnapshots(
     const approvedLeave = await app.prisma.leaveRequest.findMany({
       where: {
         employeeId,
+        deletedAt: null, // required by soft-delete convention
         status: "APPROVED",
         startDate: { lte: monthEnd },
         endDate: { gte: monthStart },
