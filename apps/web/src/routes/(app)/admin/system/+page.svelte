@@ -386,11 +386,15 @@
   }
 
   async function saveDatev() {
+    if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
     datevSaving = true;
     datevError = "";
     datevSaved = false;
     try {
       await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
         datevNormalstundenNr,
         datevUrlaubNr,
         datevKrankNr,
