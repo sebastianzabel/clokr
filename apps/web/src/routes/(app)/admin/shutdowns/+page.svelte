@@ -245,11 +245,7 @@
 
 <!-- ── Inhalt ─────────────────────────────────────────────────────────────── -->
 {#if loading}
-  <div class="skeleton-list">
-    {#each [1, 2, 3] as _, i (i)}
-      <div class="skeleton-card"></div>
-    {/each}
-  </div>
+  <div class="card card-body" style="height:220px;"></div>
 {:else if shutdowns.length === 0}
   <div class="empty-state card card-body">
     <span class="empty-icon">🏢</span>
@@ -258,7 +254,7 @@
     <button class="btn btn-primary" onclick={openCreate}>Ersten anlegen</button>
   </div>
 {:else}
-  <div class="shutdown-list">
+  <div class="shutdown-list card-animate">
     {#each pagedShutdowns as s (s.id)}
       <div class="shutdown-card">
         <div class="shutdown-card__main">
@@ -618,30 +614,6 @@
   .exception-chip__reason {
     color: var(--color-text-muted);
     margin-left: 0.25rem;
-  }
-
-  /* ── Skeleton ── */
-  .skeleton-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .skeleton-card {
-    height: 80px;
-    border-radius: var(--radius-md);
-    background: var(--color-border);
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
   }
 
   /* ── Empty state ── */

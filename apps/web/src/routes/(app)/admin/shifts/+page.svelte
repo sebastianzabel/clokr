@@ -47,7 +47,9 @@
   // Pagination for template management list
   let tplPage = $state(1);
   let tplPageSize = $state(10);
-  let pagedTemplates = $derived(templates.slice((tplPage - 1) * tplPageSize, tplPage * tplPageSize));
+  let pagedTemplates = $derived(
+    templates.slice((tplPage - 1) * tplPageSize, tplPage * tplPageSize),
+  );
   let loading = $state(true);
   let error = $state("");
   let timeEntries: Array<{
@@ -477,11 +479,7 @@
 
 <!-- ── Grid ──────────────────────────────────────────────────────────────── -->
 {#if loading}
-  <div class="skeleton-list">
-    {#each [1, 2, 3] as _, i (i)}
-      <div class="skeleton-card"></div>
-    {/each}
-  </div>
+  <div class="card card-body" style="height:220px;"></div>
 {:else if employees.length === 0}
   <div class="empty-state">
     <p class="empty-state__text">Keine Mitarbeiter vorhanden.</p>
@@ -489,10 +487,13 @@
 {:else}
   {#if templates.length === 0}
     <div class="template-hint">
-      <p class="template-hint__text">Erstellen Sie zuerst eine Schichtvorlage über den "Vorlagen"-Button, um Schichten zuweisen zu können.</p>
+      <p class="template-hint__text">
+        Erstellen Sie zuerst eine Schichtvorlage über den "Vorlagen"-Button, um Schichten zuweisen
+        zu können.
+      </p>
     </div>
   {/if}
-  <div class="grid-wrapper">
+  <div class="grid-wrapper card-animate">
     <table class="shift-grid">
       <thead>
         <tr>
@@ -995,30 +996,6 @@
     color: var(--color-text-muted);
     font-size: 0.875rem;
     margin: 0;
-  }
-
-  /* ── Skeleton ── */
-  .skeleton-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
-
-  .skeleton-card {
-    height: 80px;
-    border-radius: var(--radius-md);
-    background: var(--color-border);
-    animation: pulse 1.4s ease-in-out infinite;
-  }
-
-  @keyframes pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.5;
-    }
   }
 
   /* ── Empty state ── */
