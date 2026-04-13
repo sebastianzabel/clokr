@@ -13,6 +13,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -1233,10 +1234,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
-  // Tenant-Timezone laden + hireDate
+  // Tenant-Timezone laden + hireDate + federalState for holiday computation
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true, hireDate: true },
+    select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
   });
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
@@ -1309,14 +1310,35 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const expectedMinutes =
     effectiveEnd < rangeStart ? 0 : calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
 
-  // Öffentliche Feiertage abziehen
-  const holidays = await app.prisma.publicHoliday.findMany({
+  // Öffentliche Feiertage abziehen: computed Feiertage + manual DB-Einträge zusammenführen
+  const updateStateCode = employee?.tenant
+    ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
+    : "NI";
+  const rangeYear = rangeStart.getUTCFullYear();
+  const effectiveEndYear = effectiveEnd.getUTCFullYear();
+  // Collect computed holidays for all years in range (usually just one)
+  const computedHolidaysByDate = new Map<string, { date: Date }>();
+  for (let yr = rangeYear; yr <= effectiveEndYear; yr++) {
+    for (const h of getHolidays(yr, updateStateCode)) {
+      if (h.date >= dateStrInTz(rangeStart, tz) && h.date <= dateStrInTz(effectiveEnd, tz)) {
+        computedHolidaysByDate.set(h.date, { date: new Date(h.date + "T00:00:00Z") });
+      }
+    }
+  }
+  const dbHolidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
       date: { gte: rangeStart, lte: effectiveEnd },
     },
   });
-  const holidayMinutes = holidays.reduce((sum, h) => {
+  // Merge: DB holidays not already covered by computed holidays
+  const allHolidays: { date: Date }[] = [...computedHolidaysByDate.values()];
+  for (const h of dbHolidays) {
+    if (!computedHolidaysByDate.has(dateStrInTz(h.date, tz))) {
+      allHolidays.push({ date: h.date });
+    }
+  }
+  const holidayMinutes = allHolidays.reduce((sum, h) => {
     const dow = getDayOfWeekInTz(h.date, tz);
     return sum + getDayHoursFromSchedule(schedule, dow) * 60;
   }, 0);
