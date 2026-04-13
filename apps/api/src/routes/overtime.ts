@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule } from "./time-entries";
+import { getEffectiveSchedule, updateOvertimeAccount } from "./time-entries";
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -884,6 +884,75 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
 
       return reply.code(201).send(snapshot);
+    },
+  });
+
+  const unlockMonthSchema = z.object({
+    employeeId: z.string().uuid(),
+    year: z.number().int().min(2020).max(2099),
+    month: z.number().int().min(1).max(12),
+  });
+
+  // POST /api/v1/overtime/unlock-month  – Monat entsperren (Snapshot löschen, Einträge entsperren)
+  app.post("/unlock-month", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { employeeId, year, month } = unlockMonthSchema.parse(req.body);
+
+      // Tenant isolation: verify the employee belongs to the caller's tenant
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+      const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+      // Verify the month is actually closed
+      const snap = await app.prisma.saldoSnapshot.findUnique({
+        where: {
+          employeeId_periodType_periodStart: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: monthStart,
+          },
+        },
+      });
+      if (!snap) {
+        return reply.code(404).send({ error: "Monat ist nicht abgeschlossen" });
+      }
+
+      // D-02/D-03: Atomic transaction — hard-delete snapshot + unlock all non-deleted entries
+      await app.prisma.$transaction(async (tx) => {
+        await tx.saldoSnapshot.delete({ where: { id: snap.id } });
+        await tx.timeEntry.updateMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            date: { gte: monthStart, lte: monthEnd },
+          },
+          data: { isLocked: false, lockedAt: null },
+        });
+      });
+
+      // Recalculate live overtime balance now that the snapshot is gone
+      await updateOvertimeAccount(app, employeeId);
+
+      // D-02: Audit log — entity SaldoSnapshot, action UNLOCK, oldValue = snapshot data
+      await app.audit({
+        userId: req.user.sub,
+        action: "UNLOCK",
+        entity: "SaldoSnapshot",
+        entityId: snap.id,
+        oldValue: snap,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(200).send({ message: "Monat entsperrt" });
     },
   });
 
