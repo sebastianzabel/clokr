@@ -2695,7 +2695,7 @@
     align-items: baseline;
     gap: 0.2rem;
     padding: 1px 6px;
-    border-radius: 3px;
+    border-radius: 6px;
     color: #fff;
     font-size: 0.75rem;
     line-height: 1.3;
@@ -2705,7 +2705,7 @@
   .cal-chip--pending {
     outline: 1.5px dashed rgba(255, 255, 255, 0.7);
     outline-offset: -2px;
-    opacity: 0.85;
+    opacity: 0.9;
   }
   .cal-chip-name {
     font-weight: 600;
@@ -2726,8 +2726,7 @@
   .cal-legend {
     display: flex;
     gap: 1rem;
-    padding: 0.6rem 1rem;
-    border-top: 1px solid var(--gray-100, #f3f4f6);
+    padding: 0.875rem 1.25rem;
     flex-wrap: wrap;
   }
   .legend-item {
