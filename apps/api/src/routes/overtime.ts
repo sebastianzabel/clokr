@@ -1018,7 +1018,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         where: { id: employeeId },
         select: { tenantId: true },
       });
-      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       // Year range
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);
