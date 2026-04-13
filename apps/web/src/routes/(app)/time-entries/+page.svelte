@@ -837,14 +837,16 @@
 <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
 {#if schedule}
   <div class="month-summary card-animate">
-    <div class="msummary-item">
-      <span class="msummary-label"
-        >{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span
-      >
-      <span class="msummary-value"
-        >{fmtMin(hasMonthlyTarget ? monthlyTarget : isMonthlyHours ? 0 : totalExpected)}h</span
-      >
-    </div>
+    {#if !isMonthlyHours || hasMonthlyTarget}
+      <div class="msummary-item">
+        <span class="msummary-label"
+          >{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span
+        >
+        <span class="msummary-value"
+          >{fmtMin(hasMonthlyTarget ? monthlyTarget : totalExpected)}h</span
+        >
+      </div>
+    {/if}
     <div class="msummary-item">
       <span class="msummary-label">Ist</span>
       <span class="msummary-value">{fmtMin(totalWorked)}h</span>
