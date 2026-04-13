@@ -1437,5 +1437,6 @@ export async function getEffectiveSchedule(
     sundayHours: tenantConfig?.defaultSundayHours ?? 0,
     overtimeThreshold: tenantConfig?.overtimeThreshold ?? 60,
     allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
+    overtimeMode: "CARRY_FORWARD" as const,
   };
 }
