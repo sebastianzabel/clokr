@@ -337,4 +337,57 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(Number(body.mondayHours)).toBe(0);
     });
   });
+
+  describe("TENANT-01: Holiday deduction toggle", () => {
+    it("GET /settings/work returns monthlyHoursHolidayDeduction=false by default", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+    });
+
+    it("PUT /settings/work persists monthlyHoursHolidayDeduction=true", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { monthlyHoursHolidayDeduction: true },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it("GET /settings/work returns persisted monthlyHoursHolidayDeduction=true", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.monthlyHoursHolidayDeduction).toBe(true);
+    });
+
+    it("PUT /settings/work reverts monthlyHoursHolidayDeduction to false", async () => {
+      const putRes = await app.inject({
+        method: "PUT",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { monthlyHoursHolidayDeduction: false },
+      });
+      expect(putRes.statusCode).toBe(200);
+
+      const getRes = await app.inject({
+        method: "GET",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(getRes.statusCode).toBe(200);
+      const body = JSON.parse(getRes.body);
+      expect(body.monthlyHoursHolidayDeduction).toBe(false);
+    });
+  });
 });
