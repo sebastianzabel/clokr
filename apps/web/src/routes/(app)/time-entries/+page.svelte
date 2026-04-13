@@ -1394,10 +1394,10 @@
   }
 
   .bal.pos {
-    color: #16a34a;
+    color: var(--color-green);
   }
   .bal.neg {
-    color: #dc2626;
+    color: var(--color-red);
   }
 
   /* ── Summary Bar ─────────────────────────────────────── */
@@ -1677,10 +1677,10 @@
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: #16a34a;
+    color: var(--color-green);
   }
   .dstat.bal.neg strong {
-    color: #dc2626;
+    color: var(--color-red);
   }
 
   .day-empty {
@@ -1752,7 +1752,7 @@
     gap: 0.375rem;
   }
   .row-del td {
-    background: #fef2f2;
+    background: var(--color-red-bg);
   }
 
   .row-invalid {
@@ -1760,13 +1760,13 @@
   }
   .row-invalid td {
     text-decoration: line-through;
-    background: #fef2f2;
+    background: var(--color-red-bg);
   }
   .row-invalid td:last-child {
     text-decoration: none;
   }
   .row-invalid .invalid-reason {
-    color: #dc2626;
+    color: var(--color-red);
     font-size: 0.8rem;
     font-weight: 500;
     text-decoration: none;
@@ -1795,8 +1795,8 @@
     color: var(--color-text-muted);
   }
   .btn-icon-danger:hover {
-    background: #fef2f2;
-    color: #dc2626;
+    background: var(--color-red-bg);
+    color: var(--color-red);
   }
 
   /* Ensure delete confirmation button has white text on red background */
@@ -1805,7 +1805,7 @@
   }
   .btn-danger-sm {
     color: white;
-    background: #ef4444;
+    background: var(--color-danger);
     border-radius: 4px;
     font-size: 0.8125rem;
     padding: 0.125rem 0.375rem;
@@ -2024,14 +2024,14 @@
   }
 
   .arbzg-warning {
-    background: #fffbeb;
-    border: 1.5px solid #fbbf24;
-    color: #92400e;
+    background: var(--color-yellow-bg);
+    border: 1.5px solid var(--color-yellow-border);
+    color: var(--color-yellow);
   }
   .arbzg-error {
-    background: #fef2f2;
-    border: 1.5px solid #f87171;
-    color: #991b1b;
+    background: var(--color-red-bg);
+    border: 1.5px solid var(--color-red-border);
+    color: var(--color-red);
   }
 
   .arbzg-icon {
