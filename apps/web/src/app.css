@@ -1654,7 +1654,7 @@ textarea.form-input {
 }
 /* WR-03: no !important — higher specificity handles conflict with status classes */
 .cal-cell.cal-other:not(.cal-selected) {
-  opacity: 0.3;
+  opacity: 0.35;
   cursor: default;
   background: var(--gray-50, #f9fafb);
 }
