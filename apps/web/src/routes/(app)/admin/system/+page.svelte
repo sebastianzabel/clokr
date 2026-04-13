@@ -266,9 +266,9 @@
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
       datevNormalstundenNr = cfg.datevNormalstundenNr ?? 100;
-      datevUrlaubNr        = cfg.datevUrlaubNr        ?? 300;
-      datevKrankNr         = cfg.datevKrankNr         ?? 200;
-      datevSonderurlaubNr  = cfg.datevSonderurlaubNr  ?? 302;
+      datevUrlaubNr = cfg.datevUrlaubNr ?? 300;
+      datevKrankNr = cfg.datevKrankNr ?? 200;
+      datevSonderurlaubNr = cfg.datevSonderurlaubNr ?? 302;
 
       try {
         const smtp = await api.get<{
@@ -608,6 +608,7 @@
       });
       phConfigured = true;
       phSaved = true;
+      setTimeout(() => (phSaved = false), 3000);
     } catch (e: unknown) {
       phError = e instanceof Error ? e.message : "Fehler";
     } finally {
@@ -675,7 +676,7 @@
             <button
               class="theme-dot"
               type="button"
-              aria-checked={$theme === t.id ? 'true' : 'false'}
+              aria-checked={$theme === t.id ? "true" : "false"}
               aria-label={t.label}
               title="Theme: {t.label}"
               onclick={() => theme.set(t.id)}
@@ -1634,7 +1635,9 @@
     padding: 3px;
     background: none;
     cursor: pointer;
-    transition: border-color 150ms ease, transform 150ms ease;
+    transition:
+      border-color 150ms ease,
+      transform 150ms ease;
     display: flex;
     align-items: center;
     justify-content: center;
