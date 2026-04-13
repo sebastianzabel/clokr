@@ -2,13 +2,23 @@
 
 ## What This Is
 
-Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections (attendance today, overtime with sparklines, leave entitlement). The app is now feature-complete and reporting-capable for live customer use.
+Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections. v1.2 shipped a complete UI redesign: glassmorphism design system (3 themes: lila/hell/dunkel), Clockodo-inspired sidebar, redesigned dashboard and calendars with gap-based island grid and spanning leave bars. The app is now feature-complete, reporting-capable, and visually polished for live customer use.
 
-## Current State: v1.1 Shipped
+## Current Milestone: v1.3 Monthly Hours Overhaul
 
-**Shipped:** 2026-04-12
+**Goal:** Fix broken MONTHLY_HOURS behavior and extend for SVP hourly workers — 0h bug, per-employee overtime carry-forward config, globally configurable holiday deductions, and optional fixed weekdays.
+
+**Target features:**
+- Bug: `monthlyHours = 0/null` → no daily Soll, no +/- display in calendar
+- Overtime handling: per-employee configurable (`CARRY_FORWARD` vs `TRACK_ONLY`)
+- Feiertage/Absences: globally configurable whether they reduce monthly Soll for MONTHLY_HOURS workers (via TenantConfig)
+- Fixed weekdays (optional): MONTHLY_HOURS employees can configure working days → daily Soll = monthly budget ÷ working days in month
+
+## v1.2 Shipped
+
+**Shipped:** 2026-04-13
 **Stack:** Fastify + SvelteKit 5 (runes) + Prisma + PostgreSQL 18
-**Codebase:** ~52,000 LOC (TypeScript + Svelte), growing with reporting layer
+**Codebase:** ~65,000 LOC (TypeScript + Svelte; +13K lines from UI redesign)
 
 ## Core Value
 
@@ -53,11 +63,30 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 - ✓ resolvePresenceState() utility with CANCELLATION_REQUESTED + isInvalid support — v1.1
 - ✓ Company-wide Monatsbericht PDF streaming + Urlaubsliste PDF — v1.1
 - ✓ Manager dashboard: Heutige Anwesenheit, Überstunden-Übersicht (sparklines), Urlaubsübersicht — v1.1
+- ✓ Glass token system (10 tokens: --glass-bg, --glass-blur, --glass-highlight, etc.) + @supports fallback — v1.2
+- ✓ 3 themes: lila (default), hell, dunkel — old nacht/wald/schiefer removed — v1.2
+- ✓ Sidebar: dark Clockodo-style nav, icon opacity 0.6→1.0 on active, compact spacing — v1.2
+- ✓ Card/button/badge overhaul: 18px radius, pill buttons, theme dot-picker — v1.2
+- ✓ Dashboard glass stat-cards, widget headers standardized, today-column inset ring — v1.2
+- ✓ Zeiterfassung calendar: gap-based island grid (3px, 6px cells), status stripes, token legend — v1.2
+- ✓ Leave calendar: gap-based cells, continuous spanning bars for multi-day leave, inset drag ring — v1.2
+- ✓ card-animate entrance animation consistent across all admin sub-pages — v1.2
 
 ### Active
 
-- [ ] Mobile overflow at 390px — human verification pending (run mobile-flow.spec.ts with Docker)
-- [ ] CI/CD pipeline with test/lint/build gates — infrastructure for next milestone
+**v1.3 — Monthly Hours Overhaul:**
+- [ ] Fix: MONTHLY_HOURS with monthlyHours = 0/null shows no daily Soll and no +/- in calendar
+- [ ] Feature: Per-employee overtime handling config for MONTHLY_HOURS (CARRY_FORWARD vs TRACK_ONLY)
+- [ ] Feature: TenantConfig toggle — whether Feiertage/absences reduce monthly Soll for MONTHLY_HOURS workers
+- [ ] Feature: Optional fixed weekdays for MONTHLY_HOURS (enables daily Soll = budget ÷ working days in month)
+
+**Deferred (v1.4+):**
+- [ ] Leave-Antrag-Modal visual polish (UI-12) — deferred from v1.2
+- [ ] Reports page redesign (UI-13) — deferred from v1.2
+- [ ] Admin pages full redesign (UI-14) — deferred from v1.2
+- [ ] Mobile 390px overflow check + 44px touch targets audit (UI-15) — deferred from v1.2
+- [ ] Remaining pages glass-card frame: Schichten, NFC-Terminal overview (UI-17) — deferred from v1.2
+- [ ] CI/CD pipeline with test/lint/build gates
 - [ ] Monatsabschluss SaldoSnapshot architecture (Issue #6) — snapshot-based saldo replaces hire-date recalc
 
 ### Out of Scope
@@ -73,10 +102,12 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 
 - v1.0 shipped 2026-03-31: 3 phases, 15 plans, 28 tasks
 - v1.1 shipped 2026-04-12: 4 phases, 12 plans, 16 requirements; 44 files changed, +8,405/-793 lines
+- v1.2 shipped 2026-04-13: 3 phases, 9 plans; 81 files changed, +12,939/-1,392 lines (2 days)
 - Test coverage: lines≥40%, functions≥41%, branches≥28% (thresholds enforced 4pp below baseline)
 - Known gap: tenant isolation gap on GET /employees/:id — pre-existing, documented in test comments
 - E2E tests: desktop-chrome, mobile-chrome, tablet; storageState auth shared
 - Saldo reads are now O(1) via stored OvertimeAccount.balanceHours; snapshot-based architecture (Issue #6) is next major performance milestone
+- UI: 3 active themes (lila/hell/dunkel), glassmorphism tokens, Clockodo-style sidebar; Phase 11 (mobile/admin/reports polish) deferred to v1.3
 
 ## Constraints
 
@@ -107,6 +138,11 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 | PDFKit streaming via doc.end() + reply.send() | No Buffer.concat memory spike for 50+ MA reports | ✓ Good |
 | Chart.js Map<employeeId, Chart> lifecycle | Prevents canvas reuse errors on client-side sort re-renders | ✓ Good |
 | use:registerCanvas action (not bind:this fn) | rolldown/Vite 8 rejects function-form bind:this in {#each} | ✓ Good |
+| Glass tokens at 0.72–0.80 alpha (not 0.97) | Real glassmorphism requires visible blur behind semi-transparent surface | ✓ Good |
+| Theme renamed: pflaume → lila | Matches AWH corporate design palette; "pflaume" was too informal | ✓ Good |
+| Gap-based calendar grid (not shared borders) | 3px gap + border-radius on cells gives island look; padding:3px prevents radius clipping at overflow:hidden boundary | ✓ Good |
+| Spanning leave bars via CSS classes (bar-start/middle/end) | Segment-per-cell approach lets week-row wrap naturally without JS layout math | ✓ Good |
+| card-animate applied to content, not skeleton | Skeleton is ephemeral — animation belongs on content that persists | ✓ Good |
 
 ## Evolution
 
@@ -129,4 +165,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-12 after v1.1 milestone — DATEV LODAS export, O(1) saldo reads, company PDF streaming, and manager reporting dashboards shipped_
+_Last updated: 2026-04-13 — v1.3 milestone started (Monthly Hours Overhaul: 0h bug, overtime carry-forward, fixed weekdays)_

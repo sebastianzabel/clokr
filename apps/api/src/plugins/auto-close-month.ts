@@ -256,12 +256,18 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               endDate: { gte: monthStart },
             },
           });
-          const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-            const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-            const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-            if (leaveStart > leaveEnd) return sum;
-            return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
-          }, 0);
+          const isPureTracking =
+            String(schedule.type) === "MONTHLY_HOURS" &&
+            (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
+          let leaveMinutes = 0;
+          if (!isPureTracking) {
+            leaveMinutes = approvedLeave.reduce((sum, lr) => {
+              const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+              const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+              if (leaveStart > leaveEnd) return sum;
+              return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+            }, 0);
+          }
 
           const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
           const balanceMinutes = Math.round(workedMinutes - netExpected);
