@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
@@ -466,7 +466,9 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           hireDate: new Date("2024-01-01"),
         },
       });
-      await app.prisma.overtimeAccount.create({ data: { employeeId: otherEmp.id, balanceHours: 0 } });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: otherEmp.id, balanceHours: 0 },
+      });
 
       try {
         const res = await app.inject({
@@ -527,6 +529,48 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         expect(body.gracePeriodEnds).toBeUndefined();
       } finally {
         // Clean up the snapshot so other tests are not affected by the sequential check
+        if (snapshotId) {
+          await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshotId } });
+        }
+      }
+    });
+
+    it("D-12: includes earlyClose=true and gracePeriodEnds when called before day 15 of the following month", async () => {
+      // Mock the system date to 2024-02-05 — 10 days before the grace period for January 2024 expires
+      // (grace period ends Feb 15 2024). The close-month handler uses `new Date()` for two checks:
+      //   1. Future-month guard: monthEnd(Jan) < Feb 5 → passes (not a future month)
+      //   2. earlyClose: now(Feb 5) < followingMonthDay15(Feb 15) → isEarlyClose = true
+      // Only fake Date — do NOT intercept setTimeout/setInterval (would break Fastify internals)
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2024-02-05T12:00:00.000Z"));
+
+      let snapshotId: string | null = null;
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/overtime/close-month",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            employeeId: data.employee.id,
+            year: 2024,
+            month: 1,
+          },
+        });
+
+        // Must succeed — January 2024 is in the past even relative to the mocked date (Feb 5 2024)
+        expect(res.statusCode).toBe(201);
+        const body = JSON.parse(res.body);
+        snapshotId = body.id;
+
+        // D-12: earlyClose must be true — we are before Feb 15 2024
+        expect(body.earlyClose).toBe(true);
+
+        // gracePeriodEnds must be the ISO date for Feb 15 2024 00:00:00 UTC
+        // Date.UTC(2024, 1, 15) = Feb 15 2024 (month arg is 0-based, year=2024, month=1=February)
+        expect(body.gracePeriodEnds).toBe("2024-02-15T00:00:00.000Z");
+      } finally {
+        vi.useRealTimers();
         if (snapshotId) {
           await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshotId } });
         }
