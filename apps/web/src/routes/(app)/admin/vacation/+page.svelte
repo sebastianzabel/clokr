@@ -61,6 +61,7 @@
     overtimeThreshold: number;
     allowOvertimePayout: boolean;
     validFrom: string;
+    overtimeMode?: "CARRY_FORWARD" | "TRACK_ONLY";
   }
 
   interface EmployeeRow {
@@ -177,6 +178,7 @@
     eSun = $state(0);
   let eThreshold = $state(60);
   let ePayout = $state(false);
+  let eOvertimeMode: "CARRY_FORWARD" | "TRACK_ONLY" = $state("CARRY_FORWARD");
   let eValidFrom = $state(new Date().toISOString().split("T")[0]);
   let eSaving = $state(false);
   let eError = $state("");
@@ -322,6 +324,7 @@
     eSun = s ? Number(s.sundayHours) : gSun;
     eThreshold = s ? Number(s.overtimeThreshold) : gThreshold;
     ePayout = s ? s.allowOvertimePayout : gPayout;
+    eOvertimeMode = s?.overtimeMode ?? "CARRY_FORWARD";
     eValidFrom = s ? s.validFrom.split("T")[0] : new Date().toISOString().split("T")[0];
     eError = "";
 
@@ -365,6 +368,7 @@
         sundayHours: eType === "FIXED_WEEKLY" ? eSun : 0,
         overtimeThreshold: eThreshold,
         allowOvertimePayout: ePayout,
+        overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
         validFrom: eValidFrom,
       });
 
@@ -1114,6 +1118,17 @@
             </div>
             <p class="form-hint text-muted">
               Keine festen Wochentage – Soll wird monatlich berechnet.
+            </p>
+          </div>
+
+          <div class="form-group" style="margin-bottom:1.25rem;">
+            <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
+            <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input" style="max-width:280px;">
+              <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
+              <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
+            </select>
+            <p class="form-hint text-muted">
+              Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden dokumentiert, Saldo bleibt bei 0.
             </p>
           </div>
         {:else}
