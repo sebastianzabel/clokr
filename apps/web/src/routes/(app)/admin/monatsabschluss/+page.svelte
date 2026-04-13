@@ -60,6 +60,9 @@
   let closingProgress = $state(0);
   let closingTotal = $state(0);
 
+  // Unlocking state (tracks employeeId being unlocked)
+  let unlocking = $state<string | null>(null);
+
   const years = $derived(
     Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
   );
@@ -308,6 +311,29 @@
     return "\u2014";
   }
 
+  async function unlockEmployee(employeeId: string, month: number) {
+    unlocking = employeeId;
+    error = "";
+    success = "";
+    try {
+      await api.post("/overtime/unlock-month", {
+        employeeId,
+        year: selectedYear,
+        month,
+      });
+      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
+      success = `${monthName} ${selectedYear} für Mitarbeiter entsperrt`;
+      await loadYearStatus();
+      if (expandedMonth === month) {
+        await toggleMonthDetail(month);
+      }
+    } catch {
+      error = "Entsperren fehlgeschlagen";
+    } finally {
+      unlocking = null;
+    }
+  }
+
   function shortenName(name: string): string {
     const parts = name.split(" ");
     if (parts.length >= 2) {
@@ -468,6 +494,7 @@
                               <th>Personalnummer</th>
                               <th>Status</th>
                               <th>Fehlende Tage</th>
+                              <th></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -492,6 +519,17 @@
                                     <span class="dates-count">({emp.missingDates.length})</span>
                                   {:else}
                                     <span class="text-muted">-</span>
+                                  {/if}
+                                </td>
+                                <td class="text-right">
+                                  {#if emp.status === "closed"}
+                                    <button
+                                      class="btn btn-sm btn-ghost"
+                                      disabled={unlocking === emp.employeeId}
+                                      onclick={() => unlockEmployee(emp.employeeId, expandedMonth!)}
+                                    >
+                                      {unlocking === emp.employeeId ? "..." : "Entsperren"}
+                                    </button>
                                   {/if}
                                 </td>
                               </tr>
