@@ -255,6 +255,128 @@ describe("Time Entry Validation Rules", () => {
     });
   });
 
+  describe("SaldoSnapshot lock check", () => {
+    it("returns 403 when posting to a month with an existing SaldoSnapshot", async () => {
+      const lockedDate = "2024-03-15"; // March 2024 — in the past, no conflict
+      const monthStart = new Date("2024-03-01T00:00:00Z");
+      const monthEnd = new Date("2024-03-31T23:59:59Z");
+
+      const snapshot = await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          periodEnd: monthEnd,
+          workedMinutes: 1600,
+          expectedMinutes: 1600,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+        },
+      });
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            employeeId: data.employee.id,
+            date: lockedDate,
+            startTime: `${lockedDate}T08:00:00.000Z`,
+            endTime: `${lockedDate}T16:00:00.000Z`,
+            breakMinutes: 30,
+          },
+        });
+
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Monat ist abgeschlossen und kann nicht bearbeitet werden");
+      } finally {
+        await app.prisma.saldoSnapshot.delete({ where: { id: snapshot.id } });
+      }
+    });
+
+    it("allows POST to a month with no SaldoSnapshot", async () => {
+      // March 2024 has no snapshot for this employee in this scope
+      // Use a distinct past date where no snapshot exists
+      const unlockedDate = "2024-04-10";
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: unlockedDate,
+          startTime: `${unlockedDate}T08:00:00.000Z`,
+          endTime: `${unlockedDate}T16:00:00.000Z`,
+          breakMinutes: 30,
+        },
+      });
+
+      // Should not be 403 (lock error). May be 201 or other business error.
+      expect(res.statusCode).not.toBe(403);
+
+      // Clean up if entry was created
+      if (res.statusCode === 201) {
+        const body = JSON.parse(res.body);
+        if (body.id) {
+          await app.prisma.timeEntry.delete({ where: { id: body.id } });
+        }
+      }
+    });
+
+    it("allows POST to unlocked month even if a different month is locked", async () => {
+      const lockedMonthStart = new Date("2024-01-01T00:00:00Z");
+      const lockedMonthEnd = new Date("2024-01-31T23:59:59Z");
+
+      const snapshot = await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: lockedMonthStart,
+          periodEnd: lockedMonthEnd,
+          workedMinutes: 1600,
+          expectedMinutes: 1600,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+        },
+      });
+
+      try {
+        // Try posting to February 2024 (different month, not locked)
+        const unlockedDate = "2024-02-15";
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            employeeId: data.employee.id,
+            date: unlockedDate,
+            startTime: `${unlockedDate}T08:00:00.000Z`,
+            endTime: `${unlockedDate}T16:00:00.000Z`,
+            breakMinutes: 30,
+          },
+        });
+
+        // Should not be 403 — only January is locked, not February
+        expect(res.statusCode).not.toBe(403);
+
+        // Clean up if entry was created
+        if (res.statusCode === 201) {
+          const body = JSON.parse(res.body);
+          if (body.id) {
+            await app.prisma.timeEntry.delete({ where: { id: body.id } });
+          }
+        }
+      } finally {
+        await app.prisma.saldoSnapshot.delete({ where: { id: snapshot.id } });
+      }
+    });
+  });
+
   describe("Clock-in conflict check ignores invalid open entries", () => {
     it("allows POST /clock-in when only open entry is auto-invalidated (isInvalid: true)", async () => {
       // Simulate autoInvalidateOpenEntries: entry from yesterday with endTime null but isInvalid true
