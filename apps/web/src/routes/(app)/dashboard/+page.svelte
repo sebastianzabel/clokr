@@ -273,7 +273,7 @@
   }
 
   async function pollDashboard() {
-    await loadTeamWeek();
+    if (isManager) await loadTeamWeek(); // only managers need team-week data
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
