@@ -46,9 +46,9 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 
 - [x] Phase 11: Schema Bug Fixes — MONTHLY_HOURS (2/2 plans) — completed 2026-04-13
 - [x] Phase 12: Monatsabschluss Lock Enforcement (3/3 plans) — completed 2026-04-13
-- [ ] Phase 13: Overtime Handling Mode — CARRY_FORWARD / TRACK_ONLY (0/0 plans)
-- [ ] Phase 14: Weekday Configuration & Per-Day Soll (0/2 plans)
-- [ ] Phase 15: Tenant Holiday Deduction Configuration (0/0 plans)
+- [x] Phase 13: Overtime Handling Mode — CARRY_FORWARD / TRACK_ONLY (3/3 plans) — completed 2026-04-13
+- [x] Phase 14: Weekday Configuration & Per-Day Soll (2/2 plans) — completed 2026-04-13
+- [ ] Phase 15: Tenant Holiday Deduction Configuration (0/3 plans)
 
 </details>
 
@@ -69,8 +69,8 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 11. Schema Bug Fixes          | v1.3 | 2/2 | Complete | 2026-04-13 |
 | 12. Lock Enforcement          | v1.3 | 3/3 | Complete | 2026-04-13 |
 | 13. Overtime Handling Mode    | v1.3 | 3/3 | Complete   | 2026-04-13 |
-| 14. Weekday Config & Per-Day Soll | v1.3 | 0/2 | Planned | — |
-| 15. Tenant Holiday Deduction  | v1.3 | 0/? | Not Started | — |
+| 14. Weekday Config & Per-Day Soll | v1.3 | 2/2 | Complete   | 2026-04-13 |
+| 15. Tenant Holiday Deduction  | v1.3 | 0/3 | Not Started | — |
 
 ### Phase 12: Monatsabschluss Lock Enforcement
 
@@ -90,14 +90,29 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 **Goal:** Allow admins to configure which weekdays a MONTHLY_HOURS employee regularly works, and display a per-day Soll in the calendar (budget / working days in month).
 **Requirements**: SCHED-04, SCHED-05
 **Depends on:** Phase 13
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 14-01-PLAN.md — API tests + saveEmployee bug fix + weekday toggle chip picker
-- [ ] 14-02-PLAN.md — Calendar per-day Soll computation and display
+- [x] 14-01-PLAN.md — API tests + saveEmployee bug fix + weekday toggle chip picker
+- [x] 14-02-PLAN.md — Calendar per-day Soll computation and display
 
 ### Phase 15: Tenant Holiday Deduction Configuration
 
 **Goal:** Allow tenant admins to configure whether public holidays on a MONTHLY_HOURS employee's configured workdays reduce the monthly Soll.
 **Requirements**: TENANT-01
 **Depends on:** Phase 14
+**Plans:** 3 plans
+
+Plans:
+- [ ] 15-01-PLAN.md — Schema field + Settings API + toggle persistence test
+- [ ] 15-02-PLAN.md — Backend holiday deduction logic at all 4 computation sites
+- [ ] 15-03-PLAN.md — Frontend admin toggle + calendar Soll display
+
+## Backlog
+
+### SCHED-V14-01: Per-day hour allocation for MONTHLY_HOURS
+
+**Description:** Allow admins to specify exact hours per weekday (e.g. Mo 4h, Fr 6h) instead of equal-split from monthly budget. Currently weekday chips are boolean only (work/don't work), with implicit equal distribution across working days. This enhancement would enable flexible schedules like split-week arrangements or graduated hours.
+
+**Status:** Backlog — candidate for Phase 16+
+**Related:** Phase 14 (Weekday Configuration)

@@ -253,8 +253,31 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               .filter((h) => !computedSnapDateSet.has(dateStrInTz(h.date, tz)))
               .map((h) => h.date),
           ];
+          // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+          const isMonthlyHoursDeduction =
+            String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+            Number(schedule.monthlyHours ?? 0) > 0 &&
+            tenant.config?.monthlyHoursHolidayDeduction === true;
+
+          let workingDaysInRange = 0;
+          if (isMonthlyHoursDeduction) {
+            const wdCur = new Date(effectiveStart);
+            while (wdCur <= monthEnd) {
+              const wdDow = getDayOfWeekInTz(wdCur, tz);
+              if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+              wdCur.setDate(wdCur.getDate() + 1);
+            }
+          }
+          const dailySollMin =
+            isMonthlyHoursDeduction && workingDaysInRange > 0
+              ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+              : 0;
+
           const holidayMinutes = allSnapHolidays.reduce((sum, hDate) => {
             const dow = getDayOfWeekInTz(hDate, tz);
+            if (isMonthlyHoursDeduction) {
+              return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+            }
             return sum + getDayHoursFromSchedule(schedule, dow) * 60;
           }, 0);
 
