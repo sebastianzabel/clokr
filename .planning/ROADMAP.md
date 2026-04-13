@@ -68,7 +68,7 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 10. Calendar Redesign         | v1.2 | 2/2 | Complete | 2026-04-13 |
 | 11. Schema Bug Fixes          | v1.3 | 2/2 | Complete | 2026-04-13 |
 | 12. Lock Enforcement          | v1.3 | 3/3 | Complete | 2026-04-13 |
-| 13. Overtime Handling Mode    | v1.3 | 0/? | Not Started | — |
+| 13. Overtime Handling Mode    | v1.3 | 3/3 | Complete   | 2026-04-13 |
 | 14. Weekday Config & Per-Day Soll | v1.3 | 0/? | Not Started | — |
 | 15. Tenant Holiday Deduction  | v1.3 | 0/? | Not Started | — |
 
