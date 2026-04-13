@@ -1197,7 +1197,13 @@
 
 <!-- ── Modal ──────────────────────────────────────────────────────────────── -->
 {#if modalOpen}
-  <div class="modal-backdrop" onclick={self(closeModal)} role="presentation">
+  <div
+    class="modal-backdrop"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeModal();
+    }}
+    role="presentation"
+  >
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>
