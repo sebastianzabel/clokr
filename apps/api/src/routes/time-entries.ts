@@ -797,6 +797,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
+      // D-04: Check if the target month is locked via SaldoSnapshot (authoritative — works even when
+      // no entries exist yet for the month; querying entries directly would miss this case).
+      const { start: lockedMonthStart } = monthRangeUtc(
+        new Date(body.date).getFullYear(),
+        new Date(body.date).getMonth() + 1,
+        tz,
+      );
+      const lockedSnapshot = await app.prisma.saldoSnapshot.findUnique({
+        where: {
+          employeeId_periodType_periodStart: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: lockedMonthStart,
+          },
+        },
+        select: { id: true },
+      });
+      if (lockedSnapshot) {
+        // D-05: Return same German error pattern as PUT/DELETE/PATCH lock guards
+        return reply
+          .code(403)
+          .send({ error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" });
+      }
+
       // Überlappungsprüfung
       const overlap = await checkOverlap(app, employeeId, newStart, newEnd);
       if (overlap) return reply.code(409).send({ error: overlap });
