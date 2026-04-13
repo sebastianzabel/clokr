@@ -46,6 +46,120 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(body.type).toBe("MONTHLY_HOURS");
       expect(Number(body.monthlyHours)).toBe(15);
     });
+
+    it("can save MONTHLY_HOURS schedule with monthlyHours = null", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "MONTHLY_HOURS",
+          weeklyHours: 10,
+          monthlyHours: null,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom: "2025-09-01",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.type).toBe("MONTHLY_HOURS");
+      expect(body.monthlyHours).toBeNull();
+    });
+
+    it("pure tracking employee accumulates worked hours in overtime balance", async () => {
+      // Set schedule to pure tracking (monthlyHours = null)
+      const schedRes = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "MONTHLY_HOURS",
+          weeklyHours: 10,
+          monthlyHours: null,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom: "2024-01-01",
+        },
+      });
+      expect(schedRes.statusCode).toBe(200);
+
+      // Create a time entry 2 days ago (4h of work)
+      const now = new Date();
+      const twoDaysAgo = new Date(now);
+      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+      const dateStr = twoDaysAgo.toISOString().slice(0, 10);
+
+      const startTime = `${dateStr}T08:00:00.000Z`;
+      const endTime = `${dateStr}T12:00:00.000Z`;
+
+      // Create entry directly via prisma to bypass business logic for test isolation
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(dateStr),
+          startTime: new Date(startTime),
+          endTime: new Date(endTime),
+          breakMinutes: 0,
+          source: "MANUAL",
+        },
+      });
+
+      // Trigger overtime recalculation via POST time entry or direct call
+      // Use the API to GET overtime which triggers update via updateOvertimeAccount
+      // Actually we need to call updateOvertimeAccount — do it via the API endpoint
+      const { updateOvertimeAccount } = await import("../time-entries");
+      await updateOvertimeAccount(app, data.employee.id);
+
+      const overtimeRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(overtimeRes.statusCode).toBe(200);
+      const overtimeBody = JSON.parse(overtimeRes.body);
+      // Pure tracking: balanceHours should reflect worked hours (4h), not 0
+      // Note: Prisma Decimal is serialized as string in JSON, so we cast to Number
+      expect(Number(overtimeBody.balanceHours)).toBeGreaterThan(0);
+
+      // Cleanup: delete test entry and restore schedule
+      await app.prisma.timeEntry.delete({ where: { id: entry.id } });
+      await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "FIXED_WEEKLY",
+          weeklyHours: 40,
+          monthlyHours: null,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom: "2024-01-01",
+        },
+      });
+    });
   });
 
   describe("calcExpectedMinutesTz", () => {

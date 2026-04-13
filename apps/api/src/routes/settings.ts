@@ -73,30 +73,25 @@ const vacationEntitlementSchema = z.object({
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
 });
 
-const employeeScheduleSchema = z
-  .object({
-    type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
-    weeklyHours: z.number().min(0).max(60).default(40),
-    monthlyHours: z.number().min(0).max(999).nullable().optional(),
-    mondayHours: z.number().min(0).max(24).default(8),
-    tuesdayHours: z.number().min(0).max(24).default(8),
-    wednesdayHours: z.number().min(0).max(24).default(8),
-    thursdayHours: z.number().min(0).max(24).default(8),
-    fridayHours: z.number().min(0).max(24).default(8),
-    saturdayHours: z.number().min(0).max(24).default(0),
-    sundayHours: z.number().min(0).max(24).default(0),
-    overtimeThreshold: z.number().min(0).max(500).default(60),
-    allowOvertimePayout: z.boolean().default(false),
-    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
-    validFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-  })
-  .refine((data) => data.type !== "MONTHLY_HOURS" || data.monthlyHours != null, {
-    message: "monthlyHours muss bei MONTHLY_HOURS angegeben werden",
-    path: ["monthlyHours"],
-  });
+const employeeScheduleSchema = z.object({
+  type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  weeklyHours: z.number().min(0).max(60).default(40),
+  monthlyHours: z.number().min(0).max(999).nullable().optional(),
+  mondayHours: z.number().min(0).max(24).default(8),
+  tuesdayHours: z.number().min(0).max(24).default(8),
+  wednesdayHours: z.number().min(0).max(24).default(8),
+  thursdayHours: z.number().min(0).max(24).default(8),
+  fridayHours: z.number().min(0).max(24).default(8),
+  saturdayHours: z.number().min(0).max(24).default(0),
+  sundayHours: z.number().min(0).max(24).default(0),
+  overtimeThreshold: z.number().min(0).max(500).default(60),
+  allowOvertimePayout: z.boolean().default(false),
+  maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+  validFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben

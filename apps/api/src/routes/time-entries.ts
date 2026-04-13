@@ -1223,19 +1223,6 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
-  // MONTHLY_HOURS with 0 hours = pure tracking, no overtime calculation
-  if (
-    schedule.type === "MONTHLY_HOURS" &&
-    (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0)
-  ) {
-    await app.prisma.overtimeAccount.upsert({
-      where: { employeeId },
-      create: { employeeId, balanceHours: 0 },
-      update: { balanceHours: 0 },
-    });
-    return;
-  }
-
   // Tenant-Timezone laden + hireDate
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
