@@ -94,7 +94,7 @@ jobs:
           echo "warnings=${SVELTE_WARNINGS:-0}" >> $GITHUB_OUTPUT
 
       - name: Post PR Summary
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const passed = '${{ steps.tests.outputs.passed }}';
