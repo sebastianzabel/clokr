@@ -1374,8 +1374,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
 
   let workingDaysInRange = 0;
   if (isMonthlyHoursDeduction) {
-    const wdCur = new Date(rangeStart);
-    while (wdCur <= effectiveEnd) {
+    // Use full calendar month bounds as denominator for dailySoll so that
+    // holiday deductions are proportional to the full-month budget, not the
+    // partial open-period range. This matches the month-close computation.
+    const { start: wdMonthStart, end: wdMonthEnd } = monthRangeUtc(
+      rangeStart.getUTCFullYear(),
+      rangeStart.getUTCMonth() + 1,
+      tz,
+    );
+    const wdCur = new Date(wdMonthStart);
+    while (wdCur <= wdMonthEnd) {
       const wdDow = getDayOfWeekInTz(wdCur, tz);
       if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
       wdCur.setDate(wdCur.getDate() + 1);
