@@ -646,7 +646,7 @@
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
     const warnings: ArbZGWarning[] = [];
-    const done = slots.filter((s) => s.endTime);
+    const done = slots.filter((s) => s.endTime && !s.isInvalid);
     if (done.length === 0) return [];
 
     const sorted = [...done].sort(
@@ -839,9 +839,7 @@
   <div class="month-summary card-animate">
     {#if !isMonthlyHours || hasMonthlyTarget}
       <div class="msummary-item">
-        <span class="msummary-label"
-          >{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span
-        >
+        <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
         <span class="msummary-value"
           >{fmtMin(hasMonthlyTarget ? monthlyTarget : totalExpected)}h</span
         >
