@@ -99,7 +99,7 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
   let schedule: WorkSchedule | null = $state(null);
-  let holidays: Map<string, string> = new Map(); // dateStr → name
+  let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
   let loading = $state(false);
   let error = $state("");
@@ -117,7 +117,7 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
-  let absences: Absence[] = [];
+  let absences: Absence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let teView = $state<"calendar" | "list">("calendar");
