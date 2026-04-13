@@ -2647,6 +2647,8 @@
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     user-select: none;
+    gap: 3px;
+    padding: 3px;
   }
 
   .cal-loading {
@@ -2655,18 +2657,14 @@
   }
 
   .cal-cell {
-    min-height: 72px;
+    min-height: 36px;
     padding: 0.3rem 0.4rem 0.4rem;
-    border-right: 1px solid var(--gray-100, #f3f4f6);
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     gap: 2px;
     overflow: hidden;
     position: relative;
-  }
-  .cal-cell:nth-child(7n) {
-    border-right: none;
   }
 
   .cal-cell.cal-current {
@@ -2677,8 +2675,7 @@
   }
   .cal-cell--drag-selected {
     background: var(--color-brand-tint, rgba(109, 40, 217, 0.1)) !important;
-    outline: 2px solid var(--color-brand, #6d28d9);
-    outline-offset: -2px;
+    box-shadow: inset 0 0 0 2px var(--color-brand);
   }
 
   .cal-day-num {
