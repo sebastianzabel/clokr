@@ -137,8 +137,11 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       // Note: Prisma Decimal is serialized as string in JSON, so we cast to Number
       expect(Number(overtimeBody.balanceHours)).toBeGreaterThan(0);
 
-      // Cleanup: delete test entry and restore schedule
-      await app.prisma.timeEntry.delete({ where: { id: entry.id } });
+      // Cleanup: soft-delete test entry (hard deletes violate audit-proof convention)
+      await app.prisma.timeEntry.update({
+        where: { id: entry.id },
+        data: { deletedAt: new Date() },
+      });
       await app.inject({
         method: "PUT",
         url: `/api/v1/settings/work/${data.employee.id}`,
