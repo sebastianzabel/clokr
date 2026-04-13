@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 Production Readiness** — Phases 1-3 (shipped 2026-03-31)
 - ✅ **v1.1 Reporting & DATEV** — Phases 4-7 (shipped 2026-04-12)
-- 📋 **v1.2** — TBD (run `/gsd-new-milestone` to plan)
+- 🔄 **v1.2 UI Polish** — Phases 8-10 (in progress)
 
 ## Phases
 
@@ -31,6 +31,19 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 
 </details>
 
+<details>
+<summary>🔄 v1.2 UI Polish (Phases 8-10) — IN PROGRESS</summary>
+
+- [x] Phase 8: Design System Foundation (4/4 plans) — completed 2026-04-13
+- [x] Phase 9: Widget, Menu & Page Redesign — Clockodeo (3/3 plans) — completed 2026-04-13
+- [ ] Phase 10: Calendar Redesign — Zeiterfassung & Abwesenheiten (2 plans)
+
+Plans:
+- [ ] 10-01-PLAN.md — Zeiterfassung calendar: gap grid, status stripes, legend redesign, hex token cleanup
+- [ ] 10-02-PLAN.md — Abwesenheiten calendar: gap grid, chip upgrades, drag-selected fix, legend cleanup
+
+</details>
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status   | Completed  |
@@ -42,3 +55,6 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 5. Saldo Performance   | v1.1 | 3/3 | Complete | 2026-04-11 |
 | 6. PDF Exports         | v1.1 | 2/2 | Complete | 2026-04-11 |
 | 7. Reporting Dashboards| v1.1 | 3/3 | Complete | 2026-04-12 |
+| 8. Design System Foundation | v1.2 | 4/4 | Complete | 2026-04-13 |
+| 9. Widget/Menu/Page Redesign | v1.2 | 3/3 | Complete | 2026-04-13 |
+| 10. Calendar Redesign      | v1.2 | 0/2 | Planned  | —          |
