@@ -885,7 +885,7 @@
   </button>
   <div class="cal-nav-center">
     <button
-      class="cal-month-title"
+      class="cal-nav-title"
       onclick={() => {
         pickerYear = calMonth.getFullYear();
         showMonthPicker = !showMonthPicker;
@@ -1315,140 +1315,10 @@
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .cal-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--color-border-subtle);
-    background: var(--color-bg-subtle);
-  }
-
   .month-nav-standalone {
     border: 1px solid var(--gray-200, #e5e7eb);
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
-  }
-
-  .nav-btn {
-    background: var(--color-surface);
-    border: 1.5px solid var(--gray-200, #e5e7eb);
-    border-radius: 8px;
-    padding: 0.6875rem;
-    min-height: 44px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    color: var(--color-text);
-    transition: all 0.15s ease;
-    box-shadow: var(--shadow-xs);
-  }
-  .nav-btn:hover {
-    background: var(--color-brand-tint);
-    border-color: var(--color-brand-light);
-    color: var(--color-brand);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
-  }
-
-  .cal-nav-center {
-    position: relative;
-  }
-  .cal-month-title {
-    font-size: 1.125rem;
-    font-weight: 700;
-    text-transform: capitalize;
-    color: var(--color-text-heading);
-    letter-spacing: -0.01em;
-    background: none;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.6875rem 0.5rem;
-    min-height: 44px;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s;
-  }
-  .cal-month-title:hover {
-    background: var(--color-bg-subtle);
-  }
-  .month-picker-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 19;
-  }
-  .month-picker {
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 20;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    padding: 0.75rem;
-    min-width: 240px;
-    margin-top: 0.25rem;
-  }
-  .month-picker-year {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-    font-weight: 700;
-  }
-  .month-picker-year button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 1.25rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-muted);
-  }
-  .month-picker-year button:hover {
-    background: var(--color-bg-subtle);
-  }
-  .month-picker-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.25rem;
-  }
-  .month-picker-btn {
-    padding: 0.375rem;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-text);
-  }
-  .month-picker-btn:hover {
-    background: var(--color-brand-tint);
-    color: var(--color-brand);
-  }
-  .month-picker-btn.active {
-    background: var(--color-brand);
-    color: white;
-  }
-  .month-picker-today {
-    width: 100%;
-    margin-top: 0.5rem;
-    padding: 0.375rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-brand);
-  }
-  .month-picker-today:hover {
-    background: var(--color-brand-tint);
   }
 
   .bal.pos {
