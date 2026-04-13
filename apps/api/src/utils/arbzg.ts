@@ -154,14 +154,16 @@ export async function checkArbZG(
   }
 
   // ── 2. Wochensicht: § 3 ArbZG – max. 48h / Woche ─────────────────────────
+  // Derive week boundaries in tenant timezone to avoid UTC vs. local mismatch.
+  // changedDate is UTC; dateStrInTz gives the calendar date in tenant TZ.
   const dayOfWeek = getDayOfWeekInTz(changedDate, tz); // 0=So, 1=Mo, ...
   const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-  const monday = new Date(changedDate);
-  monday.setDate(monday.getDate() - daysFromMonday);
-  monday.setHours(0, 0, 0, 0);
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
+  // Compute the date string for Monday in the tenant timezone
+  const changedDateStr = dateStrInTz(changedDate, tz);
+  const changedMs = new Date(changedDateStr + "T00:00:00Z").getTime();
+  const mondayMs = changedMs - daysFromMonday * 86400000;
+  const monday = new Date(mondayMs);
+  const sunday = new Date(mondayMs + 6 * 86400000 + 86399999);
 
   const weekSlots = await prisma.timeEntry.findMany({
     where: {
