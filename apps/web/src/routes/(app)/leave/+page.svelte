@@ -1399,78 +1399,78 @@
         {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
-    <div class="cal-grid">
-      {#each calDays as day (day.dateStr)}
-        {@const entries = calMap.get(day.dateStr) ?? []}
-        {@const holidays = entries.filter((e) => e.isHoliday)}
-        {@const absences = entries.filter((e) => !e.isHoliday)}
-        {@const isHoliday = holidays.length > 0}
-        <div
-          class="cal-cell"
-          class:cal-current={day.isCurrentMonth}
-          class:cal-other={!day.isCurrentMonth}
-          class:cal-today={day.isToday}
-          class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-          class:cal-holiday={isHoliday && day.isCurrentMonth}
-          class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
-          role={day.isCurrentMonth ? "button" : undefined}
-          tabindex={day.isCurrentMonth ? 0 : undefined}
-          onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
-          onmouseenter={() => handleDayMouseEnter(day.dateStr)}
-          onkeydown={(e) => {
-            if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
-              e.preventDefault();
-              formStart = day.dateStr;
-              formEnd = day.dateStr;
-              editingRequest = null;
-              showForm = true;
-            }
-          }}
-        >
-          <span class="cal-day-num">{day.dayNum}</span>
-          {#if isHoliday && day.isCurrentMonth}
-            <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-              {holidays[0].firstName}
-            </div>
-          {/if}
-          <div class="cal-chips">
-            {#each absences.filter((e) => {
-              const visible = isManager || e.status === "APPROVED";
-              if (calFilter === "mine") return e.isOwn;
-              if (calFilter !== "") return e.employeeId === calFilter;
-              return e.isOwn || visible;
-            }) as e (e.id)}
-              {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-              {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-              {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-              {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-              <div
-                class="cal-chip"
-                class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                class:cal-chip--pending={e.status === "PENDING" ||
-                  e.status === "CANCELLATION_REQUESTED"}
-                class:cal-chip--own={e.isOwn}
-                style="background:{typeColor(e.typeCode, e.status, e.isOwn || isManager)}"
-                title="{e.firstName} {e.lastName}{(e.isOwn || isManager) && e.typeName
-                  ? ' · ' + e.typeName
-                  : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-              >
-                {#if _showLabel}
-                  <span class="cal-chip-name">{e.firstName}</span>
-                  {#if (e.isOwn || isManager) && e.typeName}
-                    <span class="cal-chip-type">{e.typeName}</span>
-                  {:else}
-                    <span class="cal-chip-type">abwesend</span>
-                  {/if}
-                {/if}
+      <div class="cal-grid">
+        {#each calDays as day (day.dateStr)}
+          {@const entries = calMap.get(day.dateStr) ?? []}
+          {@const holidays = entries.filter((e) => e.isHoliday)}
+          {@const absences = entries.filter((e) => !e.isHoliday)}
+          {@const isHoliday = holidays.length > 0}
+          <div
+            class="cal-cell"
+            class:cal-current={day.isCurrentMonth}
+            class:cal-other={!day.isCurrentMonth}
+            class:cal-today={day.isToday}
+            class:cal-weekend={day.isWeekend && day.isCurrentMonth}
+            class:cal-holiday={isHoliday && day.isCurrentMonth}
+            class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+            role={day.isCurrentMonth ? "button" : undefined}
+            tabindex={day.isCurrentMonth ? 0 : undefined}
+            onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+            onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+            onkeydown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+                e.preventDefault();
+                formStart = day.dateStr;
+                formEnd = day.dateStr;
+                editingRequest = null;
+                showForm = true;
+              }
+            }}
+          >
+            <span class="cal-day-num">{day.dayNum}</span>
+            {#if isHoliday && day.isCurrentMonth}
+              <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
+                {holidays[0].firstName}
               </div>
-            {/each}
+            {/if}
+            <div class="cal-chips">
+              {#each absences.filter((e) => {
+                const visible = isManager || e.status === "APPROVED";
+                if (calFilter === "mine") return e.isOwn;
+                if (calFilter !== "") return e.employeeId === calFilter;
+                return e.isOwn || visible;
+              }) as e (e.id)}
+                {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+                {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                <div
+                  class="cal-chip"
+                  class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                  class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                  class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                  class:cal-chip--pending={e.status === "PENDING" ||
+                    e.status === "CANCELLATION_REQUESTED"}
+                  class:cal-chip--own={e.isOwn}
+                  style="background:{typeColor(e.typeCode, e.status, e.isOwn || isManager)}"
+                  title="{e.firstName} {e.lastName}{(e.isOwn || isManager) && e.typeName
+                    ? ' · ' + e.typeName
+                    : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                >
+                  {#if _showLabel}
+                    <span class="cal-chip-name">{e.firstName}</span>
+                    {#if (e.isOwn || isManager) && e.typeName}
+                      <span class="cal-chip-type">{e.typeName}</span>
+                    {:else}
+                      <span class="cal-chip-type">abwesend</span>
+                    {/if}
+                  {/if}
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
     {/if}
 
     <!-- Legende -->
@@ -2672,7 +2672,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    overflow: hidden;
+    overflow: visible;
     position: relative;
   }
 
@@ -2697,7 +2697,7 @@
     gap: 2px;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
     margin: 0 -0.4rem;
   }
   .cal-chip {
@@ -2715,12 +2715,16 @@
   }
   .cal-chip--bar-start {
     border-radius: 4px 0 0 4px;
+    margin-right: -3px;
   }
   .cal-chip--bar-end {
     border-radius: 0 4px 4px 0;
+    margin-left: -3px;
   }
   .cal-chip--bar-middle {
     border-radius: 0;
+    margin-left: -3px;
+    margin-right: -3px;
   }
   .cal-chip--pending {
     outline: 1.5px dashed rgba(255, 255, 255, 0.7);
