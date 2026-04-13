@@ -83,14 +83,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
       const readyToClose: (typeof employees)[0][] = [];
 
       for (const emp of employees) {
-        // Check if already closed
-        const existingSnapshot = await app.prisma.saldoSnapshot.findFirst({
+        // Check if already closed — use unique index on (employeeId, periodType, periodStart)
+        // so months with 29/30/31 days are correctly detected (periodEnd-based check misses them)
+        const existingSnapshot = await app.prisma.saldoSnapshot.findUnique({
           where: {
-            employeeId: emp.id,
-            periodType: "MONTHLY",
-            periodStart: { gte: new Date(`${prevYear}-${String(prevMonth).padStart(2, "0")}-01`) },
-            periodEnd: {
-              lte: new Date(`${prevYear}-${String(prevMonth).padStart(2, "0")}-28T23:59:59Z`),
+            employeeId_periodType_periodStart: {
+              employeeId: emp.id,
+              periodType: "MONTHLY",
+              periodStart: monthStart,
             },
           },
         });
