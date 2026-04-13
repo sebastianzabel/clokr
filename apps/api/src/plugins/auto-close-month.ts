@@ -24,11 +24,21 @@ export const autoCloseMonthPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
 
   async function tryAutoCloseMonth() {
+    // D-11: Grace period — auto-close only runs if we are past the configurable threshold.
+    // TenantConfig.closeAfterDay is not yet in the schema; hardcoded default is 15.
+    // (Future: add closeAfterDay: Int @default(15) to TenantConfig and read it per-tenant below)
+    const DEFAULT_CLOSE_AFTER_DAY = 15;
+
     const now = new Date();
     const dayOfMonth = now.getDate();
 
-    // Only run during first 10 days of each month (give time for corrections)
-    if (dayOfMonth > 10) return;
+    // Check global threshold first — if we're not past it, skip all tenants
+    if (dayOfMonth < DEFAULT_CLOSE_AFTER_DAY) {
+      app.log.info(
+        `Auto-Monatsabschluss: Warte bis Tag ${DEFAULT_CLOSE_AFTER_DAY} des Monats (aktuell: ${dayOfMonth})`,
+      );
+      return;
+    }
 
     app.log.info("Auto-Monatsabschluss: Prüfe Vormonat");
 

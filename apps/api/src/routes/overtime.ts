@@ -883,7 +883,21 @@ export async function overtimeRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      return reply.code(201).send(snapshot);
+      // D-12: Informational hint if the request is made before the grace period ends.
+      // gracePeriodEnds = the 15th of the month FOLLOWING the target month.
+      // Note: Date.UTC(year, month, 15) — month here is 1-based, so passing it directly
+      // (without -1) gives the first day of the FOLLOWING month in 0-based JS month index.
+      // Example: year=2025, month=1 (January) → Date.UTC(2025, 1, 15) → Feb 15 2025 ✓
+      const followingMonthDay15 = new Date(Date.UTC(year, month, 15));
+      const isEarlyClose = now < followingMonthDay15;
+
+      const responsePayload: Record<string, unknown> = { ...snapshot };
+      if (isEarlyClose) {
+        responsePayload.earlyClose = true;
+        responsePayload.gracePeriodEnds = followingMonthDay15.toISOString();
+      }
+
+      return reply.code(201).send(responsePayload);
     },
   });
 
