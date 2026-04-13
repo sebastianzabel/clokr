@@ -661,6 +661,11 @@
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
 
+  // D-07: Set of date strings (yyyy-MM-dd) that have a locked entry — for calendar cell icons
+  let lockedDateSet = $derived(
+    new Set(entries.filter((e) => e.isLocked === true).map((e) => e.date.slice(0, 10))),
+  );
+
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
     const warnings: ArbZGWarning[] = [];
@@ -886,6 +891,30 @@
         >
       </div>
     {/if}
+    {#if monthIsLocked}
+      <div class="msummary-divider"></div>
+      <div class="msummary-item msummary-lock">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          style="color: var(--color-text-muted); flex-shrink: 0;"
+          aria-hidden="true"
+        >
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span class="msummary-lock-label">Abgeschlossen</span>
+        {#if isManager}
+          <button class="btn btn-sm btn-ghost msummary-unlock-btn" onclick={unlockMonth}>
+            Entsperren
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -1016,6 +1045,23 @@
             {#if day.isBeforeHire}
               <span class="day-before-hire">—</span>
             {:else if day.isCurrentMonth && day.hasEntries}
+              {#if lockedDateSet.has(day.dateStr)}
+                <span class="cal-lock-icon" aria-label="Gesperrt">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    style="color: var(--color-text-muted);"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                </span>
+              {/if}
               <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
               {#if !isMonthlyHours && day.expectedMin > 0}
                 {@const b = day.workedMin - day.expectedMin}
@@ -1099,7 +1145,9 @@
               {/if}
             </td>
             <td class="action-cell">
-              {#if slot.isInvalid && isManager}
+              {#if slot.isLocked}
+                <!-- locked entries are read-only; no actions shown (D-08) -->
+              {:else if slot.isInvalid && isManager}
                 <span class="row-actions row-actions--visible">
                   <button
                     class="btn btn-sm btn-warning"
@@ -1383,6 +1431,30 @@
     font-family: var(--font-mono);
     color: var(--color-text-heading);
     font-size: 0.9375rem;
+  }
+
+  /* D-09/D-10: Lock badge in month summary */
+  .msummary-lock {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--color-text-muted);
+  }
+
+  .msummary-lock-label {
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+  }
+
+  .msummary-unlock-btn {
+    margin-left: 0.25rem;
+  }
+
+  /* D-07: Lock icon overlay in calendar cells */
+  .cal-lock-icon {
+    display: block;
+    line-height: 1;
+    margin-bottom: 1px;
   }
 
   /* ── View Tabs ───────────────────────────────────────── */
