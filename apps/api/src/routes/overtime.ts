@@ -891,8 +891,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
   app.get("/snapshots/:employeeId", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
+
+      // Authorization: employees may only read their own snapshots; managers/admins may read any
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      if (!isManager && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Tenant isolation: verify the requested employee belongs to the caller's tenant
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       const snapshots = await app.prisma.saldoSnapshot.findMany({
         where: { employeeId },
         orderBy: { periodStart: "desc" },
