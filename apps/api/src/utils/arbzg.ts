@@ -23,12 +23,20 @@ export async function checkArbZG(
 ): Promise<ArbZGWarning[]> {
   const warnings: ArbZGWarning[] = [];
 
-  // Look up tenant timezone for this employee
+  // Look up tenant timezone and current schedule type for this employee
   const employee = await prisma.employee.findUniqueOrThrow({
     where: { id: employeeId },
-    select: { tenantId: true },
+    select: {
+      tenantId: true,
+      workSchedules: {
+        orderBy: { validFrom: "desc" },
+        take: 1,
+        select: { type: true },
+      },
+    },
   });
   const tz = await getTenantTimezone(prisma, employee.tenantId);
+  const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_WEEKLY";
 
   const dateStr = dateStrInTz(changedDate, tz);
 
@@ -184,7 +192,8 @@ export async function checkArbZG(
   //   936h total / 144 Werktage (24 × 6) = 6.5h/Werktag < 8h → no warning.
   // Denominator is always 144 Werktage (Mon–Sat × 24 weeks), regardless of how many
   // days the employee actually worked.
-  {
+  // MONTHLY_HOURS employees (Minijobber, pure tracking) have no daily target — skip this check.
+  if (scheduleType !== "MONTHLY_HOURS") {
     const windowStart = new Date(changedDate);
     windowStart.setDate(windowStart.getDate() - 167); // 168 days = 24 weeks × 7
     windowStart.setHours(0, 0, 0, 0);
