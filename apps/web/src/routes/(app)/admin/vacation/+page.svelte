@@ -401,7 +401,7 @@
   <!-- ── Globale Vorgaben ───────────────────────────────────────────────────── -->
 
   <!-- Card 1: Arbeitszeit + Überstunden -->
-  <details class="section-group" open>
+  <details class="section-group card-animate" open>
     <summary class="section-group-header">Arbeitszeit & Überstunden</summary>
     <div class="settings-section">
       <h3 class="section-title">Wöchentliche Arbeitszeit</h3>
@@ -535,7 +535,7 @@
   </details>
 
   <!-- Card 2: Urlaubsanspruch -->
-  <details class="section-group" open>
+  <details class="section-group card-animate" open>
     <summary class="section-group-header">Urlaubsanspruch</summary>
     <div class="settings-section">
       <h3 class="section-title">Urlaubsanspruch</h3>
@@ -573,7 +573,12 @@
               class="form-input co-day-input"
               aria-label="Tag des Verfalls"
             /><span class="text-muted">.</span>
-            <select id="g-co-month" bind:value={gCarryOverMonth} class="form-input co-month-select" aria-label="Monat des Verfalls">
+            <select
+              id="g-co-month"
+              bind:value={gCarryOverMonth}
+              class="form-input co-month-select"
+              aria-label="Monat des Verfalls"
+            >
               {#each MONTHS as m, i (i)}
                 <option value={i + 1}>{m}</option>
               {/each}
@@ -586,7 +591,7 @@
   </details>
 
   <!-- Card 3: Compliance + Pausen -->
-  <details class="section-group">
+  <details class="section-group card-animate">
     <summary class="section-group-header">Compliance & Pausen</summary>
     <div class="settings-section">
       <h3 class="section-title">Compliance</h3>
@@ -599,7 +604,11 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="ArbZG-Verstöße anzeigen" bind:checked={gArbzgEnabled} />
+          <input
+            type="checkbox"
+            aria-label="ArbZG-Verstöße anzeigen"
+            bind:checked={gArbzgEnabled}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -622,7 +631,11 @@
           </p>
         </div>
         <label class="switch">
-          <input type="checkbox" aria-label="Automatische Pausen aktivieren" bind:checked={gAutoBreak} />
+          <input
+            type="checkbox"
+            aria-label="Automatische Pausen aktivieren"
+            bind:checked={gAutoBreak}
+          />
           <span class="switch-slider"></span>
         </label>
       </div>
@@ -644,7 +657,7 @@
   </details>
 
   <!-- Card 4: Benachrichtigungen -->
-  <details class="section-group">
+  <details class="section-group card-animate">
     <summary class="section-group-header">Benachrichtigungen</summary>
     <div class="settings-section">
       <h3 class="section-title">Benachrichtigungen</h3>
@@ -722,7 +735,7 @@
   </details>
 
   <!-- Card 5: Abwesenheiten & Sonderregelungen -->
-  <details class="section-group">
+  <details class="section-group card-animate">
     <summary class="section-group-header">Abwesenheiten & Sonderregelungen</summary>
     <div class="settings-section">
       <h3 class="section-title">Heiligabend & Silvester</h3>
