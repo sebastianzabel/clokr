@@ -64,6 +64,8 @@ const tenantConfigSchema = z.object({
   datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
   datevKrankNr: z.number().int().min(1).max(9999).optional(),
   datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
+  // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+  monthlyHoursHolidayDeduction: z.boolean().optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -148,6 +150,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         datevUrlaubNr: 300,
         datevKrankNr: 200,
         datevSonderurlaubNr: 302,
+        monthlyHoursHolidayDeduction: false,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
