@@ -139,9 +139,9 @@
 </p>
 
 {#if loading}
-  <p class="text-muted">Laden…</p>
+  <div class="card card-body" style="height:200px;"></div>
 {:else}
-  <div class="table-wrap">
+  <div class="table-wrap card-animate">
     <table class="table">
       <thead>
         <tr>

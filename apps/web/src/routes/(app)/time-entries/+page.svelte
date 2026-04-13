@@ -754,7 +754,7 @@
     const map = new Map<string, ArbZGWarning[]>();
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
-      const d = e.date.split("T")[0];
+      const d = (e.date ?? e.startTime).split("T")[0];
       if (!byDate.has(d)) byDate.set(d, []);
       byDate.get(d)!.push(e);
     }
@@ -791,7 +791,7 @@
 </div>
 
 {#if isManager && employees.length > 0}
-  <div class="employee-selector">
+  <div class="employee-selector card-animate">
     <label class="form-label" for="emp-select">Mitarbeiter</label>
     <select
       id="emp-select"
@@ -885,7 +885,7 @@
   </button>
   <div class="cal-nav-center">
     <button
-      class="cal-month-title"
+      class="cal-nav-title"
       onclick={() => {
         pickerYear = calMonth.getFullYear();
         showMonthPicker = !showMonthPicker;
@@ -1315,140 +1315,10 @@
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .cal-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--gray-200, #e5e7eb);
-    background: var(--gray-50, #f9fafb);
-  }
-
   .month-nav-standalone {
     border: 1px solid var(--gray-200, #e5e7eb);
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
-  }
-
-  .nav-btn {
-    background: var(--color-surface);
-    border: 1.5px solid var(--gray-200, #e5e7eb);
-    border-radius: 8px;
-    padding: 0.6875rem;
-    min-height: 44px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    color: var(--color-text);
-    transition: all 0.15s ease;
-    box-shadow: var(--shadow-xs);
-  }
-  .nav-btn:hover {
-    background: var(--color-brand-tint);
-    border-color: var(--color-brand-light);
-    color: var(--color-brand);
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
-  }
-
-  .cal-nav-center {
-    position: relative;
-  }
-  .cal-month-title {
-    font-size: 1.125rem;
-    font-weight: 700;
-    text-transform: capitalize;
-    color: var(--color-text-heading);
-    letter-spacing: -0.01em;
-    background: none;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.6875rem 0.5rem;
-    min-height: 44px;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s;
-  }
-  .cal-month-title:hover {
-    background: var(--color-bg-subtle);
-  }
-  .month-picker-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 19;
-  }
-  .month-picker {
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 20;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    padding: 0.75rem;
-    min-width: 240px;
-    margin-top: 0.25rem;
-  }
-  .month-picker-year {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-    font-weight: 700;
-  }
-  .month-picker-year button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 1.25rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-muted);
-  }
-  .month-picker-year button:hover {
-    background: var(--color-bg-subtle);
-  }
-  .month-picker-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.25rem;
-  }
-  .month-picker-btn {
-    padding: 0.375rem;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-text);
-  }
-  .month-picker-btn:hover {
-    background: var(--color-brand-tint);
-    color: var(--color-brand);
-  }
-  .month-picker-btn.active {
-    background: var(--color-brand);
-    color: white;
-  }
-  .month-picker-today {
-    width: 100%;
-    margin-top: 0.5rem;
-    padding: 0.375rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-brand);
-  }
-  .month-picker-today:hover {
-    background: var(--color-brand-tint);
   }
 
   .bal.pos {
@@ -1508,13 +1378,14 @@
   .cal-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    padding: 3px;
   }
 
   .cal-cell {
     min-height: 72px;
     padding: 0.3rem 0.4rem;
-    border-right: 1px solid var(--gray-100, #f3f4f6);
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -1523,9 +1394,6 @@
       background 0.12s,
       box-shadow 0.12s;
     position: relative;
-  }
-  .cal-cell:nth-child(7n) {
-    border-right: none;
   }
 
   /* Tage vor dem Eintrittsdatum */
@@ -1537,8 +1405,8 @@
   }
 
   :global(.cal-cell.cal-cell--arbzg-warn) {
-    border-left: 3px solid #f59e0b;
-    background: rgba(245, 158, 11, 0.08);
+    border-left: 3px solid var(--color-yellow);
+    background: color-mix(in srgb, var(--color-yellow) 8%, transparent);
   }
   .day-before-hire {
     font-size: 0.75rem;
@@ -1553,18 +1421,23 @@
   /* Status-Farben */
   .cal-cell--ok {
     background: var(--color-green-bg);
+    border-left: 3px solid var(--color-green);
   }
   .cal-cell--partial {
     background: var(--color-yellow-bg);
+    border-left: 3px solid var(--color-yellow);
   }
   .cal-cell--missing {
     background: var(--color-red-bg);
+    border-left: 3px solid var(--color-red);
   }
   .cal-cell--today-ok {
     background: var(--color-green-bg);
+    border-left: 3px solid var(--color-green);
   }
   .cal-cell--today-partial {
     background: var(--color-yellow-bg);
+    border-left: 3px solid var(--color-yellow);
   }
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
@@ -1612,11 +1485,9 @@
   /* Legende */
   .cal-legend {
     display: flex;
-    gap: 1.25rem;
+    gap: 1rem;
     padding: 0.875rem 1.25rem;
-    border-top: 1px solid var(--gray-200, #e5e7eb);
     flex-wrap: wrap;
-    background: var(--gray-50, #f9fafb);
   }
   .leg {
     display: inline-flex;
@@ -1634,16 +1505,16 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: #dcfce7;
-    border: 1px solid #16a34a40;
+    background: var(--color-green-bg);
+    border: 1px solid color-mix(in srgb, var(--color-green) 25%, transparent);
   }
   .leg-partial::before {
-    background: #fef9c3;
-    border: 1px solid #ca8a0440;
+    background: var(--color-yellow-bg);
+    border: 1px solid color-mix(in srgb, var(--color-yellow) 25%, transparent);
   }
   .leg-missing::before {
-    background: #fee2e2;
-    border: 1px solid #dc262640;
+    background: var(--color-red-bg);
+    border: 1px solid color-mix(in srgb, var(--color-red) 25%, transparent);
   }
   .leg-noexpect::before {
     background: var(--gray-100, #f3f4f6);

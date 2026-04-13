@@ -381,18 +381,18 @@
   {/if}
 
   {#if loading}
-    <div class="loading-indicator">Lade Jahresstatus...</div>
+    <div class="card card-body" style="height:200px;"></div>
   {:else if loaded}
     {#if monthStatuses.length === 0}
       <p class="text-muted">Keine Daten verfügbar.</p>
     {:else}
-      <div class="summary-bar">
+      <div class="summary-bar card-animate">
         <span class="summary-item summary-closed">{closedMonthCount} abgeschlossen</span>
         <span class="summary-item summary-open">{openMonthCount} offen</span>
         <span class="summary-item summary-total">{monthStatuses.length} gesamt</span>
       </div>
 
-      <div class="table-wrapper">
+      <div class="table-wrapper card-animate">
         <table class="table">
           <thead>
             <tr>
@@ -567,7 +567,9 @@
     font-size: 0.875rem;
     color: var(--color-text);
     font-family: var(--font-sans);
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
   }
   .form-select:focus {
     border-color: var(--color-brand);
@@ -591,13 +593,6 @@
     background: var(--green-50, #f0fdf4);
     color: var(--green-700, #15803d);
     border: 1px solid var(--green-200, #bbf7d0);
-  }
-
-  .loading-indicator {
-    text-align: center;
-    padding: 2rem;
-    color: var(--color-text-muted);
-    font-size: 0.9rem;
   }
 
   .auto-close-hint {
@@ -642,7 +637,7 @@
     -webkit-overflow-scrolling: touch;
     border-radius: var(--radius-md, 14px);
     border: 1px solid var(--glass-border, var(--color-border));
-    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0,0,0,0.06));
+    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
 
   .table {
@@ -878,7 +873,7 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0,0,0,0.06));
+    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
   .summary-closed {
     background: var(--color-green-bg, #f0fdf4);

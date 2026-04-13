@@ -251,24 +251,24 @@
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       _gOtherFields = {
-        defaultWeeklyHours: cfg.defaultWeeklyHours,
-        defaultMondayHours: cfg.defaultMondayHours,
-        defaultTuesdayHours: cfg.defaultTuesdayHours,
-        defaultWednesdayHours: cfg.defaultWednesdayHours,
-        defaultThursdayHours: cfg.defaultThursdayHours,
-        defaultFridayHours: cfg.defaultFridayHours,
-        defaultSaturdayHours: cfg.defaultSaturdayHours,
-        defaultSundayHours: cfg.defaultSundayHours,
-        overtimeThreshold: cfg.overtimeThreshold,
+        defaultWeeklyHours: Number(cfg.defaultWeeklyHours),
+        defaultMondayHours: Number(cfg.defaultMondayHours),
+        defaultTuesdayHours: Number(cfg.defaultTuesdayHours),
+        defaultWednesdayHours: Number(cfg.defaultWednesdayHours),
+        defaultThursdayHours: Number(cfg.defaultThursdayHours),
+        defaultFridayHours: Number(cfg.defaultFridayHours),
+        defaultSaturdayHours: Number(cfg.defaultSaturdayHours),
+        defaultSundayHours: Number(cfg.defaultSundayHours),
+        overtimeThreshold: Number(cfg.overtimeThreshold),
         allowOvertimePayout: cfg.allowOvertimePayout,
         defaultVacationDays: Number(cfg.defaultVacationDays),
         carryOverDeadlineDay: cfg.carryOverDeadlineDay,
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
       datevNormalstundenNr = cfg.datevNormalstundenNr ?? 100;
-      datevUrlaubNr        = cfg.datevUrlaubNr        ?? 300;
-      datevKrankNr         = cfg.datevKrankNr         ?? 200;
-      datevSonderurlaubNr  = cfg.datevSonderurlaubNr  ?? 302;
+      datevUrlaubNr = cfg.datevUrlaubNr ?? 300;
+      datevKrankNr = cfg.datevKrankNr ?? 200;
+      datevSonderurlaubNr = cfg.datevSonderurlaubNr ?? 302;
 
       try {
         const smtp = await api.get<{
@@ -386,11 +386,15 @@
   }
 
   async function saveDatev() {
+    if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
     datevSaving = true;
     datevError = "";
     datevSaved = false;
     try {
       await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
         datevNormalstundenNr,
         datevUrlaubNr,
         datevKrankNr,
@@ -608,6 +612,7 @@
       });
       phConfigured = true;
       phSaved = true;
+      setTimeout(() => (phSaved = false), 3000);
     } catch (e: unknown) {
       phError = e instanceof Error ? e.message : "Fehler";
     } finally {
@@ -664,22 +669,26 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {:else}
   <!-- ── Systemeinstellungen ─────────────────────────────────────────────── -->
-  <div class="card sys-card">
+  <div class="card sys-card card-animate">
     <!-- Erscheinungsbild -->
     <div class="sys-section">
       <h3 class="sys-title">Erscheinungsbild</h3>
-      <div class="form-group" style="max-width:320px;">
-        <label class="form-label" for="theme-select">Theme</label>
-        <select
-          id="theme-select"
-          class="form-input"
-          value={$theme}
-          onchange={(e) => theme.set(e.currentTarget.value as typeof $theme)}
-        >
+      <div class="form-group">
+        <span class="form-label">Theme</span>
+        <div class="theme-picker" role="radiogroup" aria-label="Theme auswählen">
           {#each themes as t (t.id)}
-            <option value={t.id}>{t.label}</option>
+            <button
+              class="theme-dot"
+              type="button"
+              aria-checked={$theme === t.id ? "true" : "false"}
+              aria-label={t.label}
+              title="Theme: {t.label}"
+              onclick={() => theme.set(t.id)}
+            >
+              <span class="theme-dot-inner" style="background-color: {t.color}"></span>
+            </button>
           {/each}
-        </select>
+        </div>
       </div>
     </div>
 
@@ -1292,11 +1301,11 @@
 
   <!-- ── API Keys ──────────────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>API Keys</h2>
+    <h2 class="section-header">API Keys</h2>
     <p class="text-muted">Schlüssel für externe Integrationen (Lohnsoftware, Automations)</p>
   </div>
 
-  <div class="card card-body settings-card">
+  <div class="card card-body settings-card card-animate">
     <div class="sys-section">
       {#if showNewApiKey}
         <div class="alert alert-success" style="margin-bottom:1rem;">
@@ -1398,7 +1407,7 @@
 
   <!-- ── DATEV Export ─────────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>DATEV Export</h2>
+    <h2 class="section-header">DATEV Export</h2>
     <p class="text-muted">Lohnartennummern für den DATEV LODAS ASCII-Export konfigurieren</p>
   </div>
 
@@ -1474,11 +1483,11 @@
 
   <!-- ── Phorest-Integration ─────────────────────────────────────────────── -->
   <div class="section-label">
-    <h2>Phorest-Integration</h2>
+    <h2 class="section-header">Phorest-Integration</h2>
     <p class="text-muted">Schichten aus Phorest Salon-Software importieren</p>
   </div>
 
-  <div class="card card-body settings-card">
+  <div class="card card-body settings-card card-animate">
     {#if phError}
       <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
         <span>⚠</span><span>{phError}</span>
@@ -1616,6 +1625,44 @@
 {/if}
 
 <style>
+  .theme-picker {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-top: 0.5rem;
+  }
+  .theme-dot {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 3px;
+    background: none;
+    cursor: pointer;
+    transition:
+      border-color 150ms ease,
+      transform 150ms ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .theme-dot[aria-checked="true"] {
+    border-color: var(--color-brand);
+  }
+  .theme-dot:hover {
+    transform: scale(1.1);
+  }
+  .theme-dot:focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
+  .theme-dot-inner {
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    display: block;
+  }
+
   .sys-card {
     padding: 0;
     margin-bottom: 2rem;

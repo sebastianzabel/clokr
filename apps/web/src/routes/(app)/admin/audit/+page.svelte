@@ -66,7 +66,7 @@
 
   function actionBadge(action: string): string {
     const map: Record<string, string> = {
-      LOGIN:  "badge-blue",
+      LOGIN: "badge-blue",
       CREATE: "badge-green",
       UPDATE: "badge-yellow",
       DELETE: "badge-red",
@@ -88,7 +88,7 @@
 
 <div class="page-header-row" style="margin-bottom:1.5rem">
   <div>
-    <h2 style="font-size:1.125rem;font-weight:600;">Audit Log</h2>
+    <h2 class="section-header">Audit Log</h2>
     <p class="text-muted" style="font-size:0.875rem;margin-top:0.125rem;">
       Alle sicherheitsrelevanten Aktionen im System
     </p>
@@ -101,13 +101,23 @@
 {/if}
 
 <div class="filter-bar" style="margin-bottom:1.25rem">
-  <select class="form-input filter-select" bind:value={filterAction} onchange={applyFilter} aria-label="Nach Aktion filtern">
+  <select
+    class="form-input filter-select"
+    bind:value={filterAction}
+    onchange={applyFilter}
+    aria-label="Nach Aktion filtern"
+  >
     <option value="">Alle Aktionen</option>
     {#each ACTIONS as a (a)}
       <option value={a}>{a}</option>
     {/each}
   </select>
-  <select class="form-input filter-select" bind:value={filterEntity} onchange={applyFilter} aria-label="Nach Entität filtern">
+  <select
+    class="form-input filter-select"
+    bind:value={filterEntity}
+    onchange={applyFilter}
+    aria-label="Nach Entität filtern"
+  >
     <option value="">Alle Entitäten</option>
     {#each ENTITIES as e (e)}
       <option value={e}>{e}</option>
@@ -128,7 +138,7 @@
     <p class="text-muted">Für die gewählten Filter wurden keine Audit-Einträge gefunden.</p>
   </div>
 {:else}
-  <div class="table-wrapper">
+  <div class="table-wrapper card-animate">
     <table class="data-table">
       <thead>
         <tr>
@@ -144,20 +154,24 @@
       <tbody>
         {#each logs as log (log.id)}
           <tr class:row-expanded={expandedId === log.id}>
-            <td class="font-mono" style="font-size:0.8125rem;white-space:nowrap">{fmtDate(log.createdAt)}</td>
+            <td class="font-mono" style="font-size:0.8125rem;white-space:nowrap"
+              >{fmtDate(log.createdAt)}</td
+            >
             <td style="font-size:0.875rem">
               {#if log.user?.email}{log.user.email}{:else}<span class="text-muted">–</span>{/if}
             </td>
             <td><span class="badge {actionBadge(log.action)}">{log.action}</span></td>
             <td style="font-size:0.875rem">{log.entity}</td>
-            <td class="font-mono text-muted" style="font-size:0.75rem">{log.entityId ? log.entityId.slice(0, 8) + "…" : "–"}</td>
+            <td class="font-mono text-muted" style="font-size:0.75rem"
+              >{log.entityId ? log.entityId.slice(0, 8) + "…" : "–"}</td
+            >
             <td class="font-mono text-muted" style="font-size:0.75rem">{log.ipAddress ?? "–"}</td>
             <td>
               {#if log.oldValue !== null || log.newValue !== null}
                 <button
                   class="btn btn-sm btn-ghost"
                   style="font-size:0.75rem;padding:0.2rem 0.5rem"
-                  onclick={() => expandedId = expandedId === log.id ? null : log.id}
+                  onclick={() => (expandedId = expandedId === log.id ? null : log.id)}
                   aria-expanded={expandedId === log.id}
                 >
                   {expandedId === log.id ? "▲" : "▼"}
@@ -190,12 +204,7 @@
     </table>
   </div>
 
-  <Pagination
-    total={total}
-    bind:page
-    bind:pageSize
-    onChange={() => loadLogs()}
-  />
+  <Pagination {total} bind:page bind:pageSize onChange={() => loadLogs()} />
 {/if}
 
 <style>
@@ -245,6 +254,4 @@
     max-height: 200px;
     overflow-y: auto;
   }
-
-
 </style>

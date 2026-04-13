@@ -270,10 +270,11 @@
     for (let d = 1; d <= lastDay; d++) {
       days.push(mkCalDay(new Date(y, m - 1, d), true, todayStr));
     }
-    // Folgetage bis 42 Zellen
-    while (days.length < 42) {
-      const d = new Date(y, m, days.length - lastDay - startDow + 1);
-      days.push(mkCalDay(d, false, todayStr));
+    // Folgetage um letzte Woche zu vervollständigen
+    const lastDowMo = (new Date(y, m - 1, lastDay).getDay() + 6) % 7;
+    const remaining = (7 - ((lastDowMo + 1) % 7)) % 7;
+    for (let i = 1; i <= remaining; i++) {
+      days.push(mkCalDay(new Date(y, m - 1, lastDay + i), false, todayStr));
     }
     return days;
   }
@@ -957,7 +958,7 @@
 {/if}
 
 <!-- ── Mitarbeiter-Selector ───────────────────────────────────────────────── -->
-<div class="employee-selector">
+<div class="employee-selector card-animate">
   <label class="form-label" for="cal-emp-select">Mitarbeiter</label>
   <select
     id="cal-emp-select"
@@ -1279,7 +1280,7 @@
   {/if}
   <!-- Urlaubsübersicht -->
   {#if showVacSummary}
-    <div class="vac-summary">
+    <div class="vac-summary card-animate">
       <div class="vac-summary-item">
         <span class="vac-summary-label">Jahresanspruch</span>
         <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
@@ -1399,69 +1400,78 @@
         {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
-    <div class="cal-grid">
-      {#each calDays as day (day.dateStr)}
-        {@const entries = calMap.get(day.dateStr) ?? []}
-        {@const holidays = entries.filter((e) => e.isHoliday)}
-        {@const absences = entries.filter((e) => !e.isHoliday)}
-        {@const isHoliday = holidays.length > 0}
-        <div
-          class="cal-cell"
-          class:cal-current={day.isCurrentMonth}
-          class:cal-other={!day.isCurrentMonth}
-          class:cal-today={day.isToday}
-          class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-          class:cal-holiday={isHoliday && day.isCurrentMonth}
-          class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
-          role={day.isCurrentMonth ? "button" : undefined}
-          tabindex={day.isCurrentMonth ? 0 : undefined}
-          onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
-          onmouseenter={() => handleDayMouseEnter(day.dateStr)}
-          onkeydown={(e) => {
-            if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
-              e.preventDefault();
-              formStart = day.dateStr;
-              formEnd = day.dateStr;
-              editingRequest = null;
-              showForm = true;
-            }
-          }}
-        >
-          <span class="cal-day-num">{day.dayNum}</span>
-          {#if isHoliday && day.isCurrentMonth}
-            <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-              {holidays[0].firstName}
-            </div>
-          {/if}
-          <div class="cal-chips">
-            {#each absences.filter((e) => {
-              const visible = isManager || e.status === "APPROVED";
-              if (calFilter === "mine") return e.isOwn;
-              if (calFilter !== "") return e.employeeId === calFilter;
-              return e.isOwn || visible;
-            }) as e (e.id)}
-              <div
-                class="cal-chip"
-                class:cal-chip--pending={e.status === "PENDING" ||
-                  e.status === "CANCELLATION_REQUESTED"}
-                class:cal-chip--own={e.isOwn}
-                style="background:{typeColor(e.typeCode, e.status, e.isOwn || isManager)}"
-                title="{e.firstName} {e.lastName}{(e.isOwn || isManager) && e.typeName
-                  ? ' · ' + e.typeName
-                  : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-              >
-                <span class="cal-chip-name">{e.firstName}</span>
-                {#if (e.isOwn || isManager) && e.typeName}
-                  <span class="cal-chip-type">{e.typeName}</span>
-                {:else}
-                  <span class="cal-chip-type">abwesend</span>
-                {/if}
+      <div class="cal-grid">
+        {#each calDays as day (day.dateStr)}
+          {@const entries = calMap.get(day.dateStr) ?? []}
+          {@const holidays = entries.filter((e) => e.isHoliday)}
+          {@const absences = entries.filter((e) => !e.isHoliday)}
+          {@const isHoliday = holidays.length > 0}
+          <div
+            class="cal-cell"
+            class:cal-current={day.isCurrentMonth}
+            class:cal-other={!day.isCurrentMonth}
+            class:cal-today={day.isToday}
+            class:cal-weekend={day.isWeekend && day.isCurrentMonth}
+            class:cal-holiday={isHoliday && day.isCurrentMonth}
+            class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+            role={day.isCurrentMonth ? "button" : undefined}
+            tabindex={day.isCurrentMonth ? 0 : undefined}
+            onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+            onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+            onkeydown={(e) => {
+              if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+                e.preventDefault();
+                formStart = day.dateStr;
+                formEnd = day.dateStr;
+                editingRequest = null;
+                showForm = true;
+              }
+            }}
+          >
+            <span class="cal-day-num">{day.dayNum}</span>
+            {#if isHoliday && day.isCurrentMonth}
+              <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
+                {holidays[0].firstName}
               </div>
-            {/each}
+            {/if}
+            <div class="cal-chips">
+              {#each absences.filter((e) => {
+                const visible = isManager || e.status === "APPROVED";
+                if (calFilter === "mine") return e.isOwn;
+                if (calFilter !== "") return e.employeeId === calFilter;
+                return e.isOwn || visible;
+              }) as e (e.id)}
+                {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+                {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                <div
+                  class="cal-chip"
+                  class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                  class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                  class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                  class:cal-chip--pending={e.status === "PENDING" ||
+                    e.status === "CANCELLATION_REQUESTED"}
+                  class:cal-chip--own={e.isOwn}
+                  style="background:{typeColor(e.typeCode, e.status, e.isOwn || isManager)}"
+                  title="{e.firstName} {e.lastName}{(e.isOwn || isManager) && e.typeName
+                    ? ' · ' + e.typeName
+                    : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                >
+                  {#if _showLabel}
+                    <span class="cal-chip-name">{e.firstName}</span>
+                    {#if (e.isOwn || isManager) && e.typeName}
+                      <span class="cal-chip-type">{e.typeName}</span>
+                    {:else}
+                      <span class="cal-chip-type">abwesend</span>
+                    {/if}
+                  {/if}
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
     {/if}
 
     <!-- Legende -->
@@ -2498,23 +2508,10 @@
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .cal-nav {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    align-items: center;
-    padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--gray-200, #e5e7eb);
-    background: var(--gray-50, #f9fafb);
-  }
-
   .list-month-nav {
     border: 1px solid var(--gray-200, #e5e7eb);
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
-    border-bottom: 1px solid var(--gray-200, #e5e7eb);
-  }
-  .cal-nav-center {
-    justify-self: center;
   }
   .cal-nav-right {
     display: flex;
@@ -2522,131 +2519,13 @@
     gap: 0.5rem;
     justify-self: end;
   }
-  .nav-btn {
-    background: var(--color-surface);
-    border: 1.5px solid var(--gray-200, #e5e7eb);
-    border-radius: 8px;
-    padding: 0.6875rem;
-    min-height: 44px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    color: var(--color-text);
-    transition: all 0.15s ease;
-    box-shadow: var(--shadow-xs);
-  }
-  .nav-btn:hover {
-    background: var(--color-brand-tint);
-    border-color: var(--color-brand-light);
-    color: var(--color-brand);
-  }
-  .cal-nav-center {
-    position: relative;
-  }
-  .cal-nav-title {
-    font-size: 1.125rem;
-    font-weight: 700;
-    text-transform: capitalize;
-    color: var(--color-text-heading);
-    letter-spacing: -0.01em;
-    background: none;
-    border: none;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.6875rem 0.5rem;
-    min-height: 44px;
-    border-radius: var(--radius-sm);
-    transition: background 0.15s;
-  }
-  .cal-nav-title:hover {
-    background: var(--color-bg-subtle);
-  }
-  .month-picker-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 19;
-  }
-  .month-picker {
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 20;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    padding: 0.75rem;
-    min-width: 240px;
-    margin-top: 0.25rem;
-  }
-  .month-picker-year {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-    font-weight: 700;
-    font-size: 0.9375rem;
-  }
-  .month-picker-year button {
-    background: none;
-    border: none;
-    cursor: pointer;
-    font-size: 1.25rem;
-    padding: 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
-    color: var(--color-text-muted);
-  }
-  .month-picker-year button:hover {
-    background: var(--color-bg-subtle);
-    color: var(--color-text);
-  }
-  .month-picker-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.25rem;
-  }
-  .month-picker-btn {
-    padding: 0.375rem;
-    border: none;
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-text);
-    transition: all 0.15s;
-  }
-  .month-picker-btn:hover {
-    background: var(--color-brand-tint);
-    color: var(--color-brand);
-  }
-  .month-picker-btn.active {
-    background: var(--color-brand);
-    color: white;
-  }
-  .month-picker-today {
-    width: 100%;
-    margin-top: 0.5rem;
-    padding: 0.375rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    background: none;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-brand);
-  }
-  .month-picker-today:hover {
-    background: var(--color-brand-tint);
-  }
 
   .cal-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
     user-select: none;
+    gap: 3px;
+    padding: 3px;
   }
 
   .cal-loading {
@@ -2655,18 +2534,14 @@
   }
 
   .cal-cell {
-    min-height: 72px;
+    min-height: 36px;
     padding: 0.3rem 0.4rem 0.4rem;
-    border-right: 1px solid var(--gray-100, #f3f4f6);
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     gap: 2px;
-    overflow: hidden;
+    overflow: visible;
     position: relative;
-  }
-  .cal-cell:nth-child(7n) {
-    border-right: none;
   }
 
   .cal-cell.cal-current {
@@ -2677,8 +2552,7 @@
   }
   .cal-cell--drag-selected {
     background: var(--color-brand-tint, rgba(109, 40, 217, 0.1)) !important;
-    outline: 2px solid var(--color-brand, #6d28d9);
-    outline-offset: -2px;
+    box-shadow: inset 0 0 0 2px var(--color-brand);
   }
 
   .cal-day-num {
@@ -2691,24 +2565,42 @@
     gap: 2px;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
+    margin: 0 -0.4rem;
   }
   .cal-chip {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.2rem;
-    padding: 1px 6px;
-    border-radius: 3px;
+    padding: 2px 0.4rem;
+    border-radius: 4px;
     color: #fff;
     font-size: 0.75rem;
-    line-height: 1.3;
+    line-height: 1.4;
     overflow: hidden;
     cursor: default;
+    min-height: 18px;
+  }
+  .cal-chip--bar-start {
+    border-radius: 4px 0 0 4px;
+    margin-right: -3px;
+    height: 22px;
+  }
+  .cal-chip--bar-end {
+    border-radius: 0 4px 4px 0;
+    margin-left: -3px;
+    height: 22px;
+  }
+  .cal-chip--bar-middle {
+    border-radius: 0;
+    margin-left: -3px;
+    margin-right: -3px;
+    height: 22px;
   }
   .cal-chip--pending {
     outline: 1.5px dashed rgba(255, 255, 255, 0.7);
     outline-offset: -2px;
-    opacity: 0.85;
+    opacity: 0.9;
   }
   .cal-chip-name {
     font-weight: 600;
@@ -2729,8 +2621,7 @@
   .cal-legend {
     display: flex;
     gap: 1rem;
-    padding: 0.6rem 1rem;
-    border-top: 1px solid var(--gray-100, #f3f4f6);
+    padding: 0.875rem 1.25rem;
     flex-wrap: wrap;
   }
   .legend-item {

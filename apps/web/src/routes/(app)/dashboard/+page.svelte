@@ -117,7 +117,6 @@
     $state(null);
 
   // My Week widget
-  let myWeekOffset = $state(0);
   interface MyWeekDay {
     date: string;
     workedHours: number;
@@ -274,7 +273,7 @@
   }
 
   async function pollDashboard() {
-    await loadTeamWeek();
+    if (isManager) await loadTeamWeek(); // only managers need team-week data
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
@@ -298,9 +297,7 @@
 
   async function loadMyWeek() {
     try {
-      const d = new Date();
-      d.setDate(d.getDate() + myWeekOffset * 7);
-      const dateParam = format(d, "yyyy-MM-dd");
+      const dateParam = format(new Date(), "yyyy-MM-dd");
       const weekData = await api.get<{ weekDays: string[]; days: MyWeekDay[] }>(
         `/dashboard/my-week?date=${dateParam}`,
       );
@@ -308,19 +305,6 @@
     } catch {
       /* ignore */
     }
-  }
-
-  function myWeekPrev() {
-    myWeekOffset--;
-    loadMyWeek();
-  }
-  function myWeekNext() {
-    myWeekOffset++;
-    loadMyWeek();
-  }
-  function myWeekCurrent() {
-    myWeekOffset = 0;
-    loadMyWeek();
   }
 
   async function loadTeamWeek() {
@@ -938,15 +922,7 @@
       <div class="my-week card card-body card-animate">
         <div class="widget-header">
           <h3 class="widget-title">Meine Woche</h3>
-          <div class="widget-nav">
-            <button class="btn btn-sm btn-ghost" onclick={myWeekPrev}>‹</button>
-            <button
-              class="btn btn-sm btn-ghost"
-              onclick={myWeekCurrent}
-              disabled={myWeekOffset === 0}>Heute</button
-            >
-            <button class="btn btn-sm btn-ghost" onclick={myWeekNext}>›</button>
-          </div>
+          <a href="/time-entries" class="widget-action">Zeiterfassung →</a>
         </div>
         <div class="table-wrap">
           <table class="team-table">
@@ -1023,7 +999,10 @@
     <!-- Open Items Widget -->
     {#if openItems}
       <div class="open-items card card-body card-animate">
-        <h3 class="widget-title">Offene Vorgänge</h3>
+        <div class="widget-header">
+          <h3 class="widget-title">Offene Vorgänge</h3>
+          <a href="/leave?view=approvals" class="widget-action">Alle anzeigen →</a>
+        </div>
         <div class="open-items-list">
           {#if openItems.total === 0}
             <p class="oi-empty">Keine offenen Vorgänge</p>
@@ -1083,7 +1062,9 @@
     <!-- Charts (Team-Aggregation) -->
     <div class="charts-grid">
       <div class="chart-card card card-body card-animate">
-        <h3 class="chart-title">Arbeitsstunden (6 Monate)</h3>
+        <div class="widget-header">
+          <h3 class="widget-title">Arbeitsstunden (6 Monate)</h3>
+        </div>
         <div class="chart-wrap">
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
@@ -1098,7 +1079,9 @@
       </div>
 
       <div class="chart-card card card-body card-animate">
-        <h3 class="chart-title">Überstunden-Trend</h3>
+        <div class="widget-header">
+          <h3 class="widget-title">Überstunden-Trend</h3>
+        </div>
         <div class="chart-wrap">
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
@@ -1113,7 +1096,9 @@
       </div>
 
       <div class="chart-card card card-body card-animate">
-        <h3 class="chart-title">Krankheitstage (6 Monate)</h3>
+        <div class="widget-header">
+          <h3 class="widget-title">Krankheitstage (6 Monate)</h3>
+        </div>
         <div class="chart-wrap">
           {#if chartsLoading}
             <div class="chart-skeleton" aria-hidden="true"></div>
@@ -1132,7 +1117,10 @@
   <!-- Anstehende Urlaube (nur Manager/Admin) -->
   {#if isManager && upcomingLeaves.length > 0}
     <div class="upcoming-section card card-body card-animate">
-      <h3 class="chart-title">Anstehende Urlaube</h3>
+      <div class="widget-header">
+        <h3 class="widget-title">Anstehende Urlaube</h3>
+        <a href="/leave" class="widget-action">Urlaube →</a>
+      </div>
       <div class="upcoming-list">
         {#each upcomingLeaves as leave (`${leave.employeeName}-${leave.startDate}`)}
           <div class="upcoming-item">
@@ -1447,11 +1435,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 0.75rem;
-  }
-  .widget-nav {
-    display: flex;
-    gap: 0.25rem;
+    margin-bottom: 1rem;
   }
   .widget-title {
     font-size: 0.875rem;
@@ -1510,7 +1494,7 @@
     text-align: center;
   }
   .my-week .team-table td.is-today {
-    background: var(--color-brand-tint);
+    box-shadow: inset 0 0 0 2px var(--color-brand);
     border-radius: var(--radius-sm);
   }
   .week-cell {
@@ -1546,8 +1530,8 @@
     color: var(--color-blue);
   }
   .cell-badge--holiday {
-    background: var(--color-blue-bg);
-    color: var(--color-blue);
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
   }
   .cell-badge--none {
     color: var(--gray-400);
@@ -2055,9 +2039,9 @@
   }
 
   .cell-badge--absent {
-    background: var(--color-yellow-bg);
-    color: var(--color-yellow);
-    border: 1px solid var(--color-yellow-border);
+    background: var(--color-purple-bg);
+    color: var(--color-purple);
+    border: 1px solid var(--color-purple-border, var(--color-purple-bg));
     font-size: 0.875rem;
   }
 

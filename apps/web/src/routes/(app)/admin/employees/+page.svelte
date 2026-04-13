@@ -77,7 +77,8 @@
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
-    return emp.firstName === "Gelöscht";
+    // Sentinel set by DELETE /employees/:id anonymization flow (CLAUDE.md / DSGVO)
+    return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
   // Filters
@@ -406,7 +407,7 @@
       <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
     </div>
 
-    <div class="card table-responsive">
+    <div class="card table-responsive card-animate">
       <table class="table">
         <thead>
           <tr>
@@ -878,13 +879,6 @@
     flex-direction: column;
     align-items: center;
     gap: 1rem;
-  }
-
-  .card {
-    background: #fff;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
   }
 
   .table-responsive {
