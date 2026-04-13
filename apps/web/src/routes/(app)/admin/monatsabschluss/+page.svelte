@@ -63,6 +63,9 @@
   // Unlocking state (tracks employeeId being unlocked)
   let unlocking = $state<string | null>(null);
 
+  // Per-employee closing state
+  let closingEmployee = $state<string | null>(null);
+
   const years = $derived(
     Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
   );
@@ -311,6 +314,29 @@
     return "\u2014";
   }
 
+  async function closeEmployee(employeeId: string, month: number) {
+    closingEmployee = employeeId;
+    error = "";
+    success = "";
+    try {
+      await api.post("/overtime/close-month", {
+        employeeId,
+        year: selectedYear,
+        month,
+      });
+      const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
+      success = `${monthName} ${selectedYear} für Mitarbeiter abgeschlossen`;
+      await loadYearStatus();
+      if (expandedMonth === month) {
+        await toggleMonthDetail(month);
+      }
+    } catch {
+      error = "Abschluss fehlgeschlagen";
+    } finally {
+      closingEmployee = null;
+    }
+  }
+
   async function unlockEmployee(employeeId: string, month: number) {
     unlocking = employeeId;
     error = "";
@@ -522,7 +548,15 @@
                                   {/if}
                                 </td>
                                 <td class="text-right">
-                                  {#if emp.status === "closed"}
+                                  {#if emp.status === "ready"}
+                                    <button
+                                      class="btn btn-sm btn-primary"
+                                      disabled={closingEmployee === emp.employeeId || closing}
+                                      onclick={() => closeEmployee(emp.employeeId, expandedMonth!)}
+                                    >
+                                      {closingEmployee === emp.employeeId ? "..." : "Abschließen"}
+                                    </button>
+                                  {:else if emp.status === "closed"}
                                     <button
                                       class="btn btn-sm btn-ghost"
                                       disabled={unlocking === emp.employeeId}
