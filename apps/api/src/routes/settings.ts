@@ -99,7 +99,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const [config, tenant] = await Promise.all([
         app.prisma.tenantConfig.findUnique({ where: { tenantId } }),
         app.prisma.tenant.findUnique({ where: { id: tenantId } }),
@@ -159,7 +159,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
       const body = tenantConfigSchema.parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       // federalState gehört zum Tenant, nicht zur TenantConfig
       const { federalState, applyToExisting, ...configBody } = body;
@@ -430,7 +430,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       return {
         smtpHost: cfg?.smtpHost ?? null,
@@ -459,7 +459,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpSecure: z.boolean(),
       });
       const body = smtpSchema.parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       const updateData: Record<string, unknown> = {
         smtpHost: body.smtpHost,
@@ -525,7 +525,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       return {
         twoFaEnabled: cfg?.twoFaEnabled ?? false,
@@ -583,7 +583,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           loginLockoutMinutes: z.number().int().min(1).max(1440).optional(),
         })
         .parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const config = await app.prisma.tenantConfig.upsert({
         where: { tenantId },
@@ -648,7 +648,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId },
@@ -674,7 +674,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const types = await app.prisma.leaveType.findMany({
         where: { tenantId },
         orderBy: { name: "asc" },
@@ -719,13 +719,4 @@ export async function settingsRoutes(app: FastifyInstance) {
       return updated;
     },
   });
-}
-
-async function getTenantId(app: FastifyInstance, userId: string): Promise<string> {
-  const employee = await app.prisma.employee.findFirst({ where: { userId } });
-  if (employee) return employee.tenantId;
-  // Fallback: ersten Tenant nehmen (für Admins ohne Employee-Profil)
-  const tenant = await app.prisma.tenant.findFirst();
-  if (!tenant) throw new Error("Kein Tenant gefunden");
-  return tenant.id;
 }
