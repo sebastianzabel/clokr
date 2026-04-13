@@ -106,6 +106,7 @@
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
+  let monthlyHoursHolidayDeduction = $state(false);
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -219,7 +220,7 @@
           ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         api
-          .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null }>("/settings/work")
+          .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null; monthlyHoursHolidayDeduction?: boolean }>("/settings/work")
           .catch(() => null),
       ]);
       entries = rawEntries;
@@ -230,6 +231,7 @@
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
+      monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
       calendarDays = buildCalendarDays(
         calMonth,
         entries,
@@ -329,7 +331,15 @@
     if (monthly && sched) {
       const monthlyBudgetMin = Number(sched.monthlyHours ?? 0) * 60;
       if (monthlyBudgetMin > 0) {
-        const workingDays = countWorkingDaysInMonth(monthStart, sched);
+        // Phase 15: when toggle enabled, exclude holidays on configured workdays from denominator
+        let qualifyingHolidayDates: string[] | undefined;
+        if (monthlyHoursHolidayDeduction) {
+          qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
+            const d = new Date(dateStr + "T12:00:00");
+            return isConfiguredWorkday(sched, d);
+          });
+        }
+        const workingDays = countWorkingDaysInMonth(monthStart, sched, qualifyingHolidayDates);
         if (workingDays > 0) dailySollMin = Math.round(monthlyBudgetMin / workingDays);
       }
     }
@@ -473,7 +483,11 @@
     return Number(sched[keys[date.getDay()] as keyof WorkSchedule] ?? 0) > 0;
   }
 
-  function countWorkingDaysInMonth(monthStart: Date, sched: WorkSchedule): number {
+  function countWorkingDaysInMonth(
+    monthStart: Date,
+    sched: WorkSchedule,
+    excludeHolidayDates?: string[],
+  ): number {
     const keys = [
       "sundayHours",
       "mondayHours",
@@ -483,11 +497,17 @@
       "fridayHours",
       "saturdayHours",
     ] as const;
+    const excludeSet = new Set(excludeHolidayDates ?? []);
     let count = 0;
     const end = endOfMonth(monthStart);
     const cur = new Date(monthStart);
     while (cur <= end) {
-      if (Number(sched[keys[cur.getDay()] as keyof WorkSchedule] ?? 0) > 0) count++;
+      if (
+        Number(sched[keys[cur.getDay()] as keyof WorkSchedule] ?? 0) > 0 &&
+        !excludeSet.has(format(cur, "yyyy-MM-dd"))
+      ) {
+        count++;
+      }
       cur.setDate(cur.getDate() + 1);
     }
     return count;
