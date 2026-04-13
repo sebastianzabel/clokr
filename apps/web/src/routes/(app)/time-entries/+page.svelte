@@ -1111,11 +1111,11 @@
                 </span>
               {/if}
               <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-              {#if !isMonthlyHours && day.expectedMin > 0}
+              {#if day.expectedMin > 0}
                 {@const b = day.workedMin - day.expectedMin}
                 <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
               {/if}
-            {:else if day.isCurrentMonth && !isMonthlyHours && day.expectedMin > 0 && !day.isFuture}
+            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture}
               <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
             {/if}
           </div>
