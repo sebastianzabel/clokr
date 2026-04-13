@@ -220,7 +220,11 @@
           ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         api
-          .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null; monthlyHoursHolidayDeduction?: boolean }>("/settings/work")
+          .get<{
+            arbzgEnabled?: boolean;
+            defaultBreakStart?: string | null;
+            monthlyHoursHolidayDeduction?: boolean;
+          }>("/settings/work")
           .catch(() => null),
       ]);
       entries = rawEntries;
@@ -352,12 +356,34 @@
     for (let i = firstDow - 1; i >= 0; i--) {
       const d = new Date(monthStart);
       d.setDate(d.getDate() - i - 1);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin));
+      days.push(
+        makeCalDay(
+          d,
+          false,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+        ),
+      );
     }
     const cur = new Date(monthStart);
     while (cur <= monthEnd) {
       days.push(
-        makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin),
+        makeCalDay(
+          new Date(cur),
+          true,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+        ),
       );
       cur.setDate(cur.getDate() + 1);
     }
@@ -365,7 +391,19 @@
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(monthEnd);
       d.setDate(d.getDate() + i);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin));
+      days.push(
+        makeCalDay(
+          d,
+          false,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+        ),
+      );
     }
     return days;
   }
@@ -401,7 +439,8 @@
     // Bei MONTHLY_HOURS mit konfigurierten Wochentagen: dailySollMin auf Arbeitstagen setzen
     let expectedMin: number;
     if (monthly) {
-      expectedMin = (dailySollMin > 0 && sched && isConfiguredWorkday(sched, date)) ? dailySollMin : 0;
+      expectedMin =
+        dailySollMin > 0 && sched && isConfiguredWorkday(sched, date) ? dailySollMin : 0;
     } else {
       expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
     }
@@ -790,7 +829,9 @@
   );
   let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
   let mBalance = $derived(
-    isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
+    // Use totalExpected for both schedule types: for MONTHLY_HOURS it sums
+    // holiday-deducted dailySollMin from calendarDays, matching the backend logic.
+    totalWorked - totalExpected,
   );
   // Check if there are entries for today
   let hasTodayEntries = $derived(
