@@ -77,7 +77,8 @@
 
   // ── Helpers ──────────────────────────────────────────────────────────────
   function isAnonymized(emp: Employee): boolean {
-    return emp.firstName === "Gelöscht";
+    // Sentinel set by DELETE /employees/:id anonymization flow (CLAUDE.md / DSGVO)
+    return emp.firstName === "Gelöscht" && emp.lastName.startsWith("GELÖSCHT-");
   }
 
   // Filters
