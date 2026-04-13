@@ -272,6 +272,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
           const balanceMinutes = Math.round(workedMinutes - netExpected);
 
+          // Note: if months are not contiguous (gap in snapshots), carryOver from the most recent
+          // prior snapshot is used. This is intentional — incomplete months before hire are not snapshotted.
           const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
             where: {
               employeeId: emp.id,
