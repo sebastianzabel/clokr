@@ -261,6 +261,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           const approvedLeave = await app.prisma.leaveRequest.findMany({
             where: {
               employeeId: emp.id,
+              deletedAt: null, // required by soft-delete convention
               status: "APPROVED",
               startDate: { lte: monthEnd },
               endDate: { gte: monthStart },
