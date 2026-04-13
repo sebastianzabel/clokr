@@ -2716,15 +2716,18 @@
   .cal-chip--bar-start {
     border-radius: 4px 0 0 4px;
     margin-right: -3px;
+    height: 22px;
   }
   .cal-chip--bar-end {
     border-radius: 0 4px 4px 0;
     margin-left: -3px;
+    height: 22px;
   }
   .cal-chip--bar-middle {
     border-radius: 0;
     margin-left: -3px;
     margin-right: -3px;
+    height: 22px;
   }
   .cal-chip--pending {
     outline: 1.5px dashed rgba(255, 255, 255, 0.7);
