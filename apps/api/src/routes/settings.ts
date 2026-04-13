@@ -86,6 +86,7 @@ const employeeScheduleSchema = z.object({
   sundayHours: z.number().min(0).max(24).default(0),
   overtimeThreshold: z.number().min(0).max(500).default(60),
   allowOvertimePayout: z.boolean().default(false),
+  overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
   maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
   validFrom: z
     .string()
@@ -295,6 +296,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         sundayHours: body.sundayHours,
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
+        overtimeMode: body.overtimeMode,
         validFrom,
       };
 
