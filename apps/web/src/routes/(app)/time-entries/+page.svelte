@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { self } from "svelte/legacy";
-
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
