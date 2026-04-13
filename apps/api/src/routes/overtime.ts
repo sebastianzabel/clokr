@@ -780,6 +780,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
       // Subtract holidays: merge computed German Feiertage with DB-stored manual holidays
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: employee.tenantId },
+      });
       const closeMonthStateCode = employee.tenant
         ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
         : "NI";
@@ -798,8 +801,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
         ...closeMonthComputedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
         ...closeMonthDbHolidays.filter((h) => !holidayDateSet.has(dateStrInTz(h.date, tz))),
       ];
+
+      // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+      const isMonthlyHoursDeduction =
+        String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+        Number(schedule.monthlyHours ?? 0) > 0 &&
+        tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+      let workingDaysInRange = 0;
+      if (isMonthlyHoursDeduction) {
+        const wdCur = new Date(effectiveStart);
+        while (wdCur <= monthEnd) {
+          const wdDow = getDayOfWeekInTz(wdCur, tz);
+          if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+          wdCur.setDate(wdCur.getDate() + 1);
+        }
+      }
+      const dailySollMin =
+        isMonthlyHoursDeduction && workingDaysInRange > 0
+          ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+          : 0;
+
       const holidayMinutes = allCloseMonthHolidays.reduce((sum, h) => {
         const dow = getDayOfWeekInTz(h.date, tz);
+        if (isMonthlyHoursDeduction) {
+          return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+        }
         return sum + getDayHoursFromSchedule(schedule, dow) * 60;
       }, 0);
 
