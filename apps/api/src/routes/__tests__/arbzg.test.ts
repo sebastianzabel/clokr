@@ -195,13 +195,6 @@ describe("ArbZG Compliance Checks", () => {
       if (avgUserId) await app.prisma.user.delete({ where: { id: avgUserId } });
     });
 
-    afterAll(async () => {
-      // Clean up entries after each test scenario (defensive cleanup)
-      if (avgEmployee?.id) {
-        await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee.id } });
-      }
-    });
-
     /**
      * Helper: create a single time entry for the rolling average employee.
      * startHour and endHour are UTC hours.
@@ -700,7 +693,11 @@ describe("ArbZG Compliance Checks", () => {
         });
 
         // Should not crash — worked hours are 7h UTC-elapsed, well under 10h limit
-        const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(`${date}T06:00:00.000Z`));
+        const warnings = await checkArbZG(
+          app.prisma,
+          data.employee.id,
+          new Date(`${date}T06:00:00.000Z`),
+        );
         // No daily max warning (7h < 10h)
         const maxDaily = warnings.find((w) => w.code === "MAX_DAILY_EXCEEDED");
         expect(maxDaily).toBeUndefined();
@@ -732,7 +729,11 @@ describe("ArbZG Compliance Checks", () => {
           },
         });
 
-        const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(`${date}T03:00:00.000Z`));
+        const warnings = await checkArbZG(
+          app.prisma,
+          data.employee.id,
+          new Date(`${date}T03:00:00.000Z`),
+        );
         // Should not crash
         const maxDaily = warnings.find((w) => w.code === "MAX_DAILY_EXCEEDED");
         // 8h worked is under the 10h daily limit
