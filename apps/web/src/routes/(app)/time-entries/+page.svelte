@@ -325,6 +325,15 @@
       }
     }
 
+    let dailySollMin = 0;
+    if (monthly && sched) {
+      const monthlyBudgetMin = Number(sched.monthlyHours ?? 0) * 60;
+      if (monthlyBudgetMin > 0) {
+        const workingDays = countWorkingDaysInMonth(monthStart, sched);
+        if (workingDays > 0) dailySollMin = Math.round(monthlyBudgetMin / workingDays);
+      }
+    }
+
     const monthEnd = endOfMonth(monthStart);
     const firstDow = (monthStart.getDay() + 6) % 7;
     const lastDow = (monthEnd.getDay() + 6) % 7;
@@ -333,12 +342,12 @@
     for (let i = firstDow - 1; i >= 0; i--) {
       const d = new Date(monthStart);
       d.setDate(d.getDate() - i - 1);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin));
     }
     const cur = new Date(monthStart);
     while (cur <= monthEnd) {
       days.push(
-        makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr, monthly),
+        makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin),
       );
       cur.setDate(cur.getDate() + 1);
     }
@@ -346,7 +355,7 @@
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(monthEnd);
       d.setDate(d.getDate() + i);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
+      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly, dailySollMin));
     }
     return days;
   }
@@ -360,6 +369,7 @@
     absenceByDate: Map<string, { type: string; half: boolean }>,
     hireDateStr: string | null = null,
     monthly: boolean = false,
+    dailySollMin: number = 0,
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -378,8 +388,13 @@
     const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
-    // Bei MONTHLY_HOURS gibt es kein tägliches Soll
-    let expectedMin = monthly ? 0 : sched ? getDayExpected(sched, date) * 60 : 0;
+    // Bei MONTHLY_HOURS mit konfigurierten Wochentagen: dailySollMin auf Arbeitstagen setzen
+    let expectedMin: number;
+    if (monthly) {
+      expectedMin = (dailySollMin > 0 && sched && isConfiguredWorkday(sched, date)) ? dailySollMin : 0;
+    } else {
+      expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
+    }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
     else if (absence && !absence.half) expectedMin = 0;
@@ -388,8 +403,8 @@
     let status: CalStatus = "noExpect";
     if (isFuture) status = "future";
     else if (absence && !absence.half && !isFuture) status = "absence";
-    else if (monthly) {
-      // Monatsstunden: kein tägliches Soll, nur zeigen ob gearbeitet wurde
+    else if (monthly && expectedMin === 0) {
+      // Monatsstunden without per-day Soll: only show whether worked
       if (isToday) status = hasEntries ? "today-ok" : "today-empty";
       else if (hasEntries) status = "noExpect";
       else status = "noExpect";
@@ -443,6 +458,39 @@
       "saturdayHours",
     ] as const;
     return Number(s[keys[date.getDay()] as keyof WorkSchedule] ?? 0);
+  }
+
+  function isConfiguredWorkday(sched: WorkSchedule, date: Date): boolean {
+    const keys = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ] as const;
+    return Number(sched[keys[date.getDay()] as keyof WorkSchedule] ?? 0) > 0;
+  }
+
+  function countWorkingDaysInMonth(monthStart: Date, sched: WorkSchedule): number {
+    const keys = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ] as const;
+    let count = 0;
+    const end = endOfMonth(monthStart);
+    const cur = new Date(monthStart);
+    while (cur <= end) {
+      if (Number(sched[keys[cur.getDay()] as keyof WorkSchedule] ?? 0) > 0) count++;
+      cur.setDate(cur.getDate() + 1);
+    }
+    return count;
   }
 
   function fmtTime(iso: string | null): string {
