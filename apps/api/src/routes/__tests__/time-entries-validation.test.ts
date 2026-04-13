@@ -258,8 +258,9 @@ describe("Time Entry Validation Rules", () => {
   describe("SaldoSnapshot lock check", () => {
     it("returns 403 when posting to a month with an existing SaldoSnapshot", async () => {
       const lockedDate = "2024-03-15"; // March 2024 — in the past, no conflict
-      const monthStart = new Date("2024-03-01T00:00:00Z");
-      const monthEnd = new Date("2024-03-31T23:59:59Z");
+      // Europe/Berlin = UTC+1 in March (before DST). March 1 00:00 Berlin = Feb 29 23:00 UTC
+      const monthStart = new Date("2024-02-29T23:00:00Z");
+      const monthEnd = new Date("2024-03-31T21:59:59Z");
 
       const snapshot = await app.prisma.saldoSnapshot.create({
         data: {
@@ -328,8 +329,9 @@ describe("Time Entry Validation Rules", () => {
     });
 
     it("allows POST to unlocked month even if a different month is locked", async () => {
-      const lockedMonthStart = new Date("2024-01-01T00:00:00Z");
-      const lockedMonthEnd = new Date("2024-01-31T23:59:59Z");
+      // Europe/Berlin = UTC+1 in January (no DST). Jan 1 00:00 Berlin = Dec 31 23:00 UTC
+      const lockedMonthStart = new Date("2023-12-31T23:00:00Z");
+      const lockedMonthEnd = new Date("2024-01-31T22:59:59Z");
 
       const snapshot = await app.prisma.saldoSnapshot.create({
         data: {
