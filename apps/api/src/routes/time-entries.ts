@@ -1389,10 +1389,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
+  // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)
+  const isTrackOnly =
+    String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+  const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
+
   const account = await app.prisma.overtimeAccount.upsert({
     where: { employeeId },
-    create: { employeeId, balanceHours: totalBalanceHours },
-    update: { balanceHours: totalBalanceHours },
+    create: { employeeId, balanceHours: effectiveBalanceHours },
+    update: { balanceHours: effectiveBalanceHours },
   });
 
   const threshold = Number(schedule.overtimeThreshold);

@@ -837,6 +837,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const prevCarryOver = prevSnapshot?.carryOver ?? 0;
       const carryOver = prevCarryOver + balanceMinutes;
 
+      // D-05/D-06: Bifurcate on overtimeMode
+      const isTrackOnly =
+        String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+      const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
+
       // Create snapshot + lock entries
       const snapshot = await app.prisma.$transaction(async (tx) => {
         const snap = await tx.saldoSnapshot.create({
@@ -848,7 +853,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             workedMinutes: Math.round(workedMinutes),
             expectedMinutes: Math.round(netExpected),
             balanceMinutes,
-            carryOver,
+            carryOver: effectiveCarryOver,
             closedAt: new Date(),
             closedBy: req.user.sub,
           },
@@ -867,11 +872,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return snap;
       });
 
-      // Update overtime account with new carry-over
+      // Update overtime account with new carry-over (effectiveCarryOver=0 for TRACK_ONLY)
       await app.prisma.overtimeAccount.upsert({
         where: { employeeId },
-        create: { employeeId, balanceHours: carryOver / 60 },
-        update: { balanceHours: carryOver / 60 },
+        create: { employeeId, balanceHours: effectiveCarryOver / 60 },
+        update: { balanceHours: effectiveCarryOver / 60 },
       });
 
       await app.audit({

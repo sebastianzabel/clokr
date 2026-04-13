@@ -295,6 +295,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           });
           const carryOver = (prevSnapshot?.carryOver ?? 0) + balanceMinutes;
 
+          // D-05/D-06: Bifurcate on overtimeMode
+          const isTrackOnly =
+            String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+          const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
+
           await app.prisma.$transaction(async (tx) => {
             await tx.saldoSnapshot.create({
               data: {
@@ -305,7 +310,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 workedMinutes: Math.round(workedMinutes),
                 expectedMinutes: Math.round(netExpected),
                 balanceMinutes,
-                carryOver,
+                carryOver: effectiveCarryOver,
                 closedAt: new Date(),
                 closedBy: null, // SYSTEM
                 note: "Automatischer Monatsabschluss",
@@ -322,10 +327,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             });
           });
 
+          // effectiveCarryOver=0 for TRACK_ONLY employees
           await app.prisma.overtimeAccount.upsert({
             where: { employeeId: emp.id },
-            create: { employeeId: emp.id, balanceHours: carryOver / 60 },
-            update: { balanceHours: carryOver / 60 },
+            create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
+            update: { balanceHours: effectiveCarryOver / 60 },
           });
 
           await app.audit({
