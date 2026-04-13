@@ -1440,8 +1440,15 @@
               if (calFilter !== "") return e.employeeId === calFilter;
               return e.isOwn || visible;
             }) as e (e.id)}
+              {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+              {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+              {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+              {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
               <div
                 class="cal-chip"
+                class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
                 class:cal-chip--pending={e.status === "PENDING" ||
                   e.status === "CANCELLATION_REQUESTED"}
                 class:cal-chip--own={e.isOwn}
@@ -1450,11 +1457,13 @@
                   ? ' · ' + e.typeName
                   : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
               >
-                <span class="cal-chip-name">{e.firstName}</span>
-                {#if (e.isOwn || isManager) && e.typeName}
-                  <span class="cal-chip-type">{e.typeName}</span>
-                {:else}
-                  <span class="cal-chip-type">abwesend</span>
+                {#if _showLabel}
+                  <span class="cal-chip-name">{e.firstName}</span>
+                  {#if (e.isOwn || isManager) && e.typeName}
+                    <span class="cal-chip-type">{e.typeName}</span>
+                  {:else}
+                    <span class="cal-chip-type">abwesend</span>
+                  {/if}
                 {/if}
               </div>
             {/each}
@@ -2689,18 +2698,29 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    margin: 0 -0.4rem;
   }
   .cal-chip {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.2rem;
-    padding: 1px 6px;
-    border-radius: 6px;
+    padding: 2px 0.4rem;
+    border-radius: 4px;
     color: #fff;
     font-size: 0.75rem;
-    line-height: 1.3;
+    line-height: 1.4;
     overflow: hidden;
     cursor: default;
+    min-height: 18px;
+  }
+  .cal-chip--bar-start {
+    border-radius: 4px 0 0 4px;
+  }
+  .cal-chip--bar-end {
+    border-radius: 0 4px 4px 0;
+  }
+  .cal-chip--bar-middle {
+    border-radius: 0;
   }
   .cal-chip--pending {
     outline: 1.5px dashed rgba(255, 255, 255, 0.7);
