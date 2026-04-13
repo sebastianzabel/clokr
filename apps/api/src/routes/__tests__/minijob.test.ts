@@ -278,4 +278,63 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(result).toBe(2400); // 5 * 8h * 60
     });
   });
+
+  describe("SCHED-04: Weekday configuration for MONTHLY_HOURS", () => {
+    it("stores non-zero mondayHours...fridayHours for MONTHLY_HOURS with configured weekdays", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "MONTHLY_HOURS",
+          weeklyHours: 0,
+          monthlyHours: 45,
+          mondayHours: 1,
+          tuesdayHours: 1,
+          wednesdayHours: 1,
+          thursdayHours: 1,
+          fridayHours: 1,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom: "2025-09-01",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(Number(body.mondayHours)).toBe(1);
+      expect(Number(body.fridayHours)).toBe(1);
+      expect(Number(body.saturdayHours)).toBe(0);
+      expect(Number(body.sundayHours)).toBe(0);
+    });
+
+    it("stores all-zero day fields for MONTHLY_HOURS without weekday config", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "MONTHLY_HOURS",
+          weeklyHours: 0,
+          monthlyHours: 45,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          validFrom: "2025-09-01",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(Number(body.mondayHours)).toBe(0);
+    });
+  });
 });

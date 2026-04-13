@@ -176,6 +176,13 @@
     eFri = $state(8),
     eSat = $state(0),
     eSun = $state(0);
+  let eMonWd = $state(true),
+    eTueWd = $state(true),
+    eWedWd = $state(true),
+    eThuWd = $state(true),
+    eFriWd = $state(true),
+    eSatWd = $state(false),
+    eSunWd = $state(false);
   let eThreshold = $state(60);
   let ePayout = $state(false);
   let eOvertimeMode: "CARRY_FORWARD" | "TRACK_ONLY" = $state("CARRY_FORWARD");
@@ -325,6 +332,25 @@
     eThreshold = s ? Number(s.overtimeThreshold) : gThreshold;
     ePayout = s ? s.allowOvertimePayout : gPayout;
     eOvertimeMode = s?.overtimeMode ?? "CARRY_FORWARD";
+    // Initialize weekday chip state for MONTHLY_HOURS
+    if (eType === "MONTHLY_HOURS" && s) {
+      eMonWd = Number(s.mondayHours) > 0;
+      eTueWd = Number(s.tuesdayHours) > 0;
+      eWedWd = Number(s.wednesdayHours) > 0;
+      eThuWd = Number(s.thursdayHours) > 0;
+      eFriWd = Number(s.fridayHours) > 0;
+      eSatWd = Number(s.saturdayHours) > 0;
+      eSunWd = Number(s.sundayHours) > 0;
+    } else {
+      // D-03: default Mon-Fri when switching to MONTHLY_HOURS or no prior schedule
+      eMonWd = true;
+      eTueWd = true;
+      eWedWd = true;
+      eThuWd = true;
+      eFriWd = true;
+      eSatWd = false;
+      eSunWd = false;
+    }
     eValidFrom = s ? s.validFrom.split("T")[0] : new Date().toISOString().split("T")[0];
     eError = "";
 
@@ -359,13 +385,13 @@
         type: eType,
         weeklyHours: eType === "FIXED_WEEKLY" ? eWeekly : 0,
         monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
-        mondayHours: eType === "FIXED_WEEKLY" ? eMon : 0,
-        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : 0,
-        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : 0,
-        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : 0,
-        fridayHours: eType === "FIXED_WEEKLY" ? eFri : 0,
-        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : 0,
-        sundayHours: eType === "FIXED_WEEKLY" ? eSun : 0,
+        mondayHours: eType === "FIXED_WEEKLY" ? eMon : (eMonWd ? 1 : 0),
+        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : (eTueWd ? 1 : 0),
+        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : (eWedWd ? 1 : 0),
+        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : (eThuWd ? 1 : 0),
+        fridayHours: eType === "FIXED_WEEKLY" ? eFri : (eFriWd ? 1 : 0),
+        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : (eSatWd ? 1 : 0),
+        sundayHours: eType === "FIXED_WEEKLY" ? eSun : (eSunWd ? 1 : 0),
         overtimeThreshold: eThreshold,
         allowOvertimePayout: ePayout,
         overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
