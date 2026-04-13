@@ -419,15 +419,17 @@
   async function saveHolidayDeduction() {
     if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
     holidayDeductionSaving = true;
+    const newValue = !monthlyHoursHolidayDeduction; // capture desired state once
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
         federalState: gFederalState,
-        monthlyHoursHolidayDeduction: !monthlyHoursHolidayDeduction,
+        timezone: gTimezone,
+        monthlyHoursHolidayDeduction: newValue,
       });
-      monthlyHoursHolidayDeduction = !monthlyHoursHolidayDeduction;
+      monthlyHoursHolidayDeduction = newValue; // commit only after success
     } catch {
-      // revert on error — checkbox stays at old value
+      // revert on error — state unchanged because we did not assign yet
     } finally {
       holidayDeductionSaving = false;
     }
