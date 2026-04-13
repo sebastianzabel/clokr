@@ -146,7 +146,11 @@ async function hasApprovedLeaveOnDate(
     },
     include: { leaveType: { select: { name: true } } },
   });
-  if (leave) return { type: leave.leaveType.name, status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" };
+  if (leave)
+    return {
+      type: leave.leaveType.name,
+      status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+    };
 
   const absence = await prisma.absence.findFirst({
     where: {
@@ -656,7 +660,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       try {
         await app.dismissByRelated("TimeEntry", id);
       } catch (err) {
-        app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out");
+        app.log.warn(
+          { err, timeEntryId: id },
+          "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out",
+        );
       }
 
       return { success: true, entry: entryWithBreaks, warnings };
@@ -1061,7 +1068,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         try {
           await app.dismissByRelated("TimeEntry", id);
         } catch (err) {
-          app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update");
+          app.log.warn(
+            { err, timeEntryId: id },
+            "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update",
+          );
         }
       }
 
@@ -1315,6 +1325,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const approvedLeave = await app.prisma.leaveRequest.findMany({
     where: {
       employeeId,
+      deletedAt: null, // required by soft-delete convention
       status: "APPROVED",
       startDate: { lte: effectiveEnd },
       endDate: { gte: rangeStart },
