@@ -1508,13 +1508,14 @@
   .cal-grid {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    padding: 3px;
   }
 
   .cal-cell {
     min-height: 72px;
     padding: 0.3rem 0.4rem;
-    border-right: 1px solid var(--gray-100, #f3f4f6);
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
+    border-radius: 6px;
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
@@ -1523,9 +1524,6 @@
       background 0.12s,
       box-shadow 0.12s;
     position: relative;
-  }
-  .cal-cell:nth-child(7n) {
-    border-right: none;
   }
 
   /* Tage vor dem Eintrittsdatum */
@@ -1537,8 +1535,8 @@
   }
 
   :global(.cal-cell.cal-cell--arbzg-warn) {
-    border-left: 3px solid #f59e0b;
-    background: rgba(245, 158, 11, 0.08);
+    border-left: 3px solid var(--color-yellow);
+    background: color-mix(in srgb, var(--color-yellow) 8%, transparent);
   }
   .day-before-hire {
     font-size: 0.75rem;
