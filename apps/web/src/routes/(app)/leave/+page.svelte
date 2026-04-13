@@ -270,10 +270,11 @@
     for (let d = 1; d <= lastDay; d++) {
       days.push(mkCalDay(new Date(y, m - 1, d), true, todayStr));
     }
-    // Folgetage bis 42 Zellen
-    while (days.length < 42) {
-      const d = new Date(y, m, days.length - lastDay - startDow + 1);
-      days.push(mkCalDay(d, false, todayStr));
+    // Folgetage um letzte Woche zu vervollständigen
+    const lastDowMo = (new Date(y, m - 1, lastDay).getDay() + 6) % 7;
+    const remaining = (7 - ((lastDowMo + 1) % 7)) % 7;
+    for (let i = 1; i <= remaining; i++) {
+      days.push(mkCalDay(new Date(y, m - 1, lastDay + i), false, todayStr));
     }
     return days;
   }
