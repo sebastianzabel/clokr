@@ -754,7 +754,7 @@
     const map = new Map<string, ArbZGWarning[]>();
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
-      const d = e.date.split("T")[0];
+      const d = (e.date ?? e.startTime).split("T")[0];
       if (!byDate.has(d)) byDate.set(d, []);
       byDate.get(d)!.push(e);
     }
