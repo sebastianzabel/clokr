@@ -1551,18 +1551,23 @@
   /* Status-Farben */
   .cal-cell--ok {
     background: var(--color-green-bg);
+    border-left: 3px solid var(--color-green);
   }
   .cal-cell--partial {
     background: var(--color-yellow-bg);
+    border-left: 3px solid var(--color-yellow);
   }
   .cal-cell--missing {
     background: var(--color-red-bg);
+    border-left: 3px solid var(--color-red);
   }
   .cal-cell--today-ok {
     background: var(--color-green-bg);
+    border-left: 3px solid var(--color-green);
   }
   .cal-cell--today-partial {
     background: var(--color-yellow-bg);
+    border-left: 3px solid var(--color-yellow);
   }
 
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
@@ -1610,11 +1615,9 @@
   /* Legende */
   .cal-legend {
     display: flex;
-    gap: 1.25rem;
+    gap: 1rem;
     padding: 0.875rem 1.25rem;
-    border-top: 1px solid var(--gray-200, #e5e7eb);
     flex-wrap: wrap;
-    background: var(--gray-50, #f9fafb);
   }
   .leg {
     display: inline-flex;
@@ -1632,16 +1635,16 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: #dcfce7;
-    border: 1px solid #16a34a40;
+    background: var(--color-green-bg);
+    border: 1px solid color-mix(in srgb, var(--color-green) 25%, transparent);
   }
   .leg-partial::before {
-    background: #fef9c3;
-    border: 1px solid #ca8a0440;
+    background: var(--color-yellow-bg);
+    border: 1px solid color-mix(in srgb, var(--color-yellow) 25%, transparent);
   }
   .leg-missing::before {
-    background: #fee2e2;
-    border: 1px solid #dc262640;
+    background: var(--color-red-bg);
+    border: 1px solid color-mix(in srgb, var(--color-red) 25%, transparent);
   }
   .leg-noexpect::before {
     background: var(--gray-100, #f3f4f6);
