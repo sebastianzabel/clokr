@@ -173,7 +173,8 @@ export async function recalculateSnapshots(
 
     const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
     const balanceMinutes = Math.round(workedMinutes - netExpected);
-    const carryOver = runningCarryOver + balanceMinutes;
+    const isTrackOnly = schedule.overtimeMode === "TRACK_ONLY";
+    const carryOver = isTrackOnly ? 0 : runningCarryOver + balanceMinutes;
 
     // Update the snapshot
     await app.prisma.saldoSnapshot.update({
