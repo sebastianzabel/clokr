@@ -13,6 +13,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -146,7 +147,11 @@ async function hasApprovedLeaveOnDate(
     },
     include: { leaveType: { select: { name: true } } },
   });
-  if (leave) return { type: leave.leaveType.name, status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" };
+  if (leave)
+    return {
+      type: leave.leaveType.name,
+      status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+    };
 
   const absence = await prisma.absence.findFirst({
     where: {
@@ -656,7 +661,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       try {
         await app.dismissByRelated("TimeEntry", id);
       } catch (err) {
-        app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out");
+        app.log.warn(
+          { err, timeEntryId: id },
+          "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out",
+        );
       }
 
       return { success: true, entry: entryWithBreaks, warnings };
@@ -787,6 +795,30 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           error:
             "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
         });
+      }
+
+      // D-04: Check if the target month is locked via SaldoSnapshot (authoritative — works even when
+      // no entries exist yet for the month; querying entries directly would miss this case).
+      const { start: lockedMonthStart } = monthRangeUtc(
+        new Date(body.date).getFullYear(),
+        new Date(body.date).getMonth() + 1,
+        tz,
+      );
+      const lockedSnapshot = await app.prisma.saldoSnapshot.findUnique({
+        where: {
+          employeeId_periodType_periodStart: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: lockedMonthStart,
+          },
+        },
+        select: { id: true },
+      });
+      if (lockedSnapshot) {
+        // D-05: Return same German error pattern as PUT/DELETE/PATCH lock guards
+        return reply
+          .code(403)
+          .send({ error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" });
       }
 
       // Überlappungsprüfung
@@ -1061,7 +1093,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         try {
           await app.dismissByRelated("TimeEntry", id);
         } catch (err) {
-          app.log.warn({ err, timeEntryId: id }, "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update");
+          app.log.warn(
+            { err, timeEntryId: id },
+            "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update",
+          );
         }
       }
 
@@ -1223,23 +1258,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
-  // MONTHLY_HOURS with 0 hours = pure tracking, no overtime calculation
-  if (
-    schedule.type === "MONTHLY_HOURS" &&
-    (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0)
-  ) {
-    await app.prisma.overtimeAccount.upsert({
-      where: { employeeId },
-      create: { employeeId, balanceHours: 0 },
-      update: { balanceHours: 0 },
-    });
-    return;
-  }
-
-  // Tenant-Timezone laden + hireDate
+  // Tenant-Timezone laden + hireDate + federalState for holiday computation
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true, hireDate: true },
+    select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
   });
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
@@ -1312,15 +1334,71 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const expectedMinutes =
     effectiveEnd < rangeStart ? 0 : calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
 
-  // Öffentliche Feiertage abziehen
-  const holidays = await app.prisma.publicHoliday.findMany({
+  // Öffentliche Feiertage abziehen: computed Feiertage + manual DB-Einträge zusammenführen
+  const tenantConfig = await app.prisma.tenantConfig.findUnique({
+    where: { tenantId: employee!.tenantId },
+  });
+  const updateStateCode = employee?.tenant
+    ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
+    : "NI";
+  const rangeYear = rangeStart.getUTCFullYear();
+  const effectiveEndYear = effectiveEnd.getUTCFullYear();
+  // Collect computed holidays for all years in range (usually just one)
+  const computedHolidaysByDate = new Map<string, { date: Date }>();
+  for (let yr = rangeYear; yr <= effectiveEndYear; yr++) {
+    for (const h of getHolidays(yr, updateStateCode)) {
+      if (h.date >= dateStrInTz(rangeStart, tz) && h.date <= dateStrInTz(effectiveEnd, tz)) {
+        computedHolidaysByDate.set(h.date, { date: new Date(h.date + "T00:00:00Z") });
+      }
+    }
+  }
+  const dbHolidays = await app.prisma.publicHoliday.findMany({
     where: {
       tenant: { employees: { some: { id: employeeId } } },
       date: { gte: rangeStart, lte: effectiveEnd },
     },
   });
-  const holidayMinutes = holidays.reduce((sum, h) => {
+  // Merge: DB holidays not already covered by computed holidays
+  const allHolidays: { date: Date }[] = [...computedHolidaysByDate.values()];
+  for (const h of dbHolidays) {
+    if (!computedHolidaysByDate.has(dateStrInTz(h.date, tz))) {
+      allHolidays.push({ date: h.date });
+    }
+  }
+
+  // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+  const isMonthlyHoursDeduction =
+    String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+    Number(schedule.monthlyHours ?? 0) > 0 &&
+    tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+  let workingDaysInRange = 0;
+  if (isMonthlyHoursDeduction) {
+    // Use full calendar month bounds as denominator for dailySoll so that
+    // holiday deductions are proportional to the full-month budget, not the
+    // partial open-period range. This matches the month-close computation.
+    const { start: wdMonthStart, end: wdMonthEnd } = monthRangeUtc(
+      rangeStart.getUTCFullYear(),
+      rangeStart.getUTCMonth() + 1,
+      tz,
+    );
+    const wdCur = new Date(wdMonthStart);
+    while (wdCur <= wdMonthEnd) {
+      const wdDow = getDayOfWeekInTz(wdCur, tz);
+      if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+      wdCur.setDate(wdCur.getDate() + 1);
+    }
+  }
+  const dailySollMin =
+    isMonthlyHoursDeduction && workingDaysInRange > 0
+      ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+      : 0;
+
+  const holidayMinutes = allHolidays.reduce((sum, h) => {
     const dow = getDayOfWeekInTz(h.date, tz);
+    if (isMonthlyHoursDeduction) {
+      return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+    }
     return sum + getDayHoursFromSchedule(schedule, dow) * 60;
   }, 0);
 
@@ -1328,6 +1406,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const approvedLeave = await app.prisma.leaveRequest.findMany({
     where: {
       employeeId,
+      deletedAt: null, // required by soft-delete convention
       status: "APPROVED",
       startDate: { lte: effectiveEnd },
       endDate: { gte: rangeStart },
@@ -1345,10 +1424,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
+  // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)
+  const isTrackOnly =
+    String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+  const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
+
   const account = await app.prisma.overtimeAccount.upsert({
     where: { employeeId },
-    create: { employeeId, balanceHours: totalBalanceHours },
-    update: { balanceHours: totalBalanceHours },
+    create: { employeeId, balanceHours: effectiveBalanceHours },
+    update: { balanceHours: effectiveBalanceHours },
   });
 
   const threshold = Number(schedule.overtimeThreshold);
@@ -1393,5 +1477,6 @@ export async function getEffectiveSchedule(
     sundayHours: tenantConfig?.defaultSundayHours ?? 0,
     overtimeThreshold: tenantConfig?.overtimeThreshold ?? 60,
     allowOvertimePayout: tenantConfig?.allowOvertimePayout ?? false,
+    overtimeMode: "CARRY_FORWARD" as const,
   };
 }

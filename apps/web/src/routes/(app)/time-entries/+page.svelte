@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { self } from "svelte/legacy";
-
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
@@ -26,6 +24,7 @@
     note: string | null;
     isInvalid?: boolean;
     invalidReason?: string | null;
+    isLocked?: boolean;
   }
 
   interface WorkSchedule {
@@ -100,13 +99,14 @@
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
   let schedule: WorkSchedule | null = $state(null);
-  let holidays: Map<string, string> = new Map(); // dateStr → name
+  let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
   let loading = $state(false);
   let error = $state("");
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
+  let monthlyHoursHolidayDeduction = $state(false);
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -118,7 +118,7 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
-  let absences: Absence[] = [];
+  let absences: Absence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let teView = $state<"calendar" | "list">("calendar");
@@ -220,7 +220,11 @@
           ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         api
-          .get<{ arbzgEnabled?: boolean; defaultBreakStart?: string | null }>("/settings/work")
+          .get<{
+            arbzgEnabled?: boolean;
+            defaultBreakStart?: string | null;
+            monthlyHoursHolidayDeduction?: boolean;
+          }>("/settings/work")
           .catch(() => null),
       ]);
       entries = rawEntries;
@@ -231,6 +235,7 @@
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
+      monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
       calendarDays = buildCalendarDays(
         calMonth,
         entries,
@@ -326,6 +331,64 @@
       }
     }
 
+    // For MONTHLY_HOURS: detect whether any per-day hours are configured.
+    // When none are set (pure flexible Minijobber), treat Mon-Fri as workdays.
+    const hasPerDayHours =
+      monthly && sched
+        ? ["mondayHours", "tuesdayHours", "wednesdayHours", "thursdayHours", "fridayHours"].some(
+            (k) => Number(sched[k as keyof WorkSchedule] ?? 0) > 0,
+          )
+        : false;
+
+    let dailySollMin = 0;
+    if (monthly && sched) {
+      const monthlyBudgetMin = Number(sched.monthlyHours ?? 0) * 60;
+      if (monthlyBudgetMin > 0) {
+        // Phase 15: holiday deduction logic for MONTHLY_HOURS.
+        //
+        // Toggle ON  (monthlyHoursHolidayDeduction=true):
+        //   dailySollMin = budget / totalWorkdays  (fixed rate)
+        //   Holiday days get expectedMin=0 → total reduces by holiday count × dailySollMin
+        //   Matches backend: shouldMin = budget - sum(dailySollMin per holiday on workday)
+        //
+        // Toggle OFF:
+        //   dailySollMin = budget / (totalWorkdays - holidayWorkdays)  (redistribution)
+        //   Holiday days still get expectedMin=0, but the higher daily rate compensates
+        //   → totalMonthExpected stays at full budget
+        //
+        // For flexible Minijobber (no per-day hours): treat Mon-Fri as workdays.
+
+        // Identify qualifying holiday dates (holidays falling on configured workdays)
+        const qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
+          const d = new Date(dateStr + "T12:00:00");
+          if (hasPerDayHours) return isConfiguredWorkday(sched, d);
+          const dow = d.getDay();
+          return dow >= 1 && dow <= 5;
+        });
+
+        // When toggle is ON: use ALL workdays as denominator (holidays will zero out their days)
+        // When toggle is OFF: exclude holidays from denominator so total redistributes to full budget
+        const excludeForDenom = monthlyHoursHolidayDeduction ? [] : qualifyingHolidayDates;
+
+        let workingDays: number;
+        if (hasPerDayHours) {
+          workingDays = countWorkingDaysInMonth(monthStart, sched, excludeForDenom);
+        } else {
+          // Flexible Minijobber: count Mon-Fri days in month
+          const excludeSet = new Set(excludeForDenom);
+          workingDays = 0;
+          const end = endOfMonth(monthStart);
+          const cur = new Date(monthStart);
+          while (cur <= end) {
+            const dow = cur.getDay();
+            if (dow >= 1 && dow <= 5 && !excludeSet.has(format(cur, "yyyy-MM-dd"))) workingDays++;
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+        if (workingDays > 0) dailySollMin = Math.round(monthlyBudgetMin / workingDays);
+      }
+    }
+
     const monthEnd = endOfMonth(monthStart);
     const firstDow = (monthStart.getDay() + 6) % 7;
     const lastDow = (monthEnd.getDay() + 6) % 7;
@@ -334,12 +397,36 @@
     for (let i = firstDow - 1; i >= 0; i--) {
       const d = new Date(monthStart);
       d.setDate(d.getDate() - i - 1);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
+      days.push(
+        makeCalDay(
+          d,
+          false,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+          hasPerDayHours,
+        ),
+      );
     }
     const cur = new Date(monthStart);
     while (cur <= monthEnd) {
       days.push(
-        makeCalDay(new Date(cur), true, byDate, sched, hols, absenceByDate, hireDateStr, monthly),
+        makeCalDay(
+          new Date(cur),
+          true,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+          hasPerDayHours,
+        ),
       );
       cur.setDate(cur.getDate() + 1);
     }
@@ -347,7 +434,20 @@
     for (let i = 1; i <= remaining; i++) {
       const d = new Date(monthEnd);
       d.setDate(d.getDate() + i);
-      days.push(makeCalDay(d, false, byDate, sched, hols, absenceByDate, hireDateStr, monthly));
+      days.push(
+        makeCalDay(
+          d,
+          false,
+          byDate,
+          sched,
+          hols,
+          absenceByDate,
+          hireDateStr,
+          monthly,
+          dailySollMin,
+          hasPerDayHours,
+        ),
+      );
     }
     return days;
   }
@@ -361,6 +461,8 @@
     absenceByDate: Map<string, { type: string; half: boolean }>,
     hireDateStr: string | null = null,
     monthly: boolean = false,
+    dailySollMin: number = 0,
+    hasPerDayHours: boolean = true,
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -379,8 +481,17 @@
     const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
-    // Bei MONTHLY_HOURS gibt es kein tägliches Soll
-    let expectedMin = monthly ? 0 : sched ? getDayExpected(sched, date) * 60 : 0;
+    // Bei MONTHLY_HOURS: dailySollMin auf konfigurierten Arbeitstagen setzen.
+    // Flexible Minijobber (keine per-day Stunden): Mo-Fr als Arbeitstage annehmen.
+    let expectedMin: number;
+    if (monthly) {
+      const isWorkday = hasPerDayHours
+        ? dailySollMin > 0 && sched && isConfiguredWorkday(sched, date)
+        : dailySollMin > 0 && dow >= 1 && dow <= 5;
+      expectedMin = isWorkday ? dailySollMin : 0;
+    } else {
+      expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
+    }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
     else if (absence && !absence.half) expectedMin = 0;
@@ -389,8 +500,8 @@
     let status: CalStatus = "noExpect";
     if (isFuture) status = "future";
     else if (absence && !absence.half && !isFuture) status = "absence";
-    else if (monthly) {
-      // Monatsstunden: kein tägliches Soll, nur zeigen ob gearbeitet wurde
+    else if (monthly && expectedMin === 0) {
+      // Monatsstunden without per-day Soll: only show whether worked
       if (isToday) status = hasEntries ? "today-ok" : "today-empty";
       else if (hasEntries) status = "noExpect";
       else status = "noExpect";
@@ -444,6 +555,49 @@
       "saturdayHours",
     ] as const;
     return Number(s[keys[date.getDay()] as keyof WorkSchedule] ?? 0);
+  }
+
+  function isConfiguredWorkday(sched: WorkSchedule, date: Date): boolean {
+    const keys = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ] as const;
+    return Number(sched[keys[date.getDay()] as keyof WorkSchedule] ?? 0) > 0;
+  }
+
+  function countWorkingDaysInMonth(
+    monthStart: Date,
+    sched: WorkSchedule,
+    excludeHolidayDates?: string[],
+  ): number {
+    const keys = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ] as const;
+    const excludeSet = new Set(excludeHolidayDates ?? []);
+    let count = 0;
+    const end = endOfMonth(monthStart);
+    const cur = new Date(monthStart);
+    while (cur <= end) {
+      if (
+        Number(sched[keys[cur.getDay()] as keyof WorkSchedule] ?? 0) > 0 &&
+        !excludeSet.has(format(cur, "yyyy-MM-dd"))
+      ) {
+        count++;
+      }
+      cur.setDate(cur.getDate() + 1);
+    }
+    return count;
   }
 
   function fmtTime(iso: string | null): string {
@@ -639,14 +793,38 @@
     }
   }
 
+  // D-10: Unlock the current month for the selected employee
+  async function unlockMonth() {
+    const empId = selectedEmployeeId || $authStore.user?.employeeId || "";
+    if (!empId) return;
+    try {
+      await api.post("/overtime/unlock-month", {
+        employeeId: empId,
+        year: calMonth.getFullYear(),
+        month: calMonth.getMonth() + 1,
+      });
+      await loadAll();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : "Fehler beim Entsperren";
+    }
+  }
+
   const isManager = $derived(
     $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
+  );
+
+  // D-06: Derive lock state from entry data already loaded — no extra API request
+  let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
+
+  // D-07: Set of date strings (yyyy-MM-dd) that have a locked entry — for calendar cell icons
+  let lockedDateSet = $derived(
+    new Set(entries.filter((e) => e.isLocked === true).map((e) => e.date.slice(0, 10))),
   );
 
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
     const warnings: ArbZGWarning[] = [];
-    const done = slots.filter((s) => s.endTime);
+    const done = slots.filter((s) => s.endTime && !s.isInvalid);
     if (done.length === 0) return [];
 
     const sorted = [...done].sort(
@@ -698,8 +876,16 @@
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
   let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
+  // Full-month expected: sum of all current-month days' expectedMin (incl. future).
+  // For MONTHLY_HOURS this reflects the holiday-deducted Soll when the toggle is ON,
+  // because buildCalendarDays computes dailySollMin after excluding qualifying holidays.
+  let totalMonthExpected = $derived(
+    calendarDays.filter((d) => d.isCurrentMonth).reduce((s, d) => s + d.expectedMin, 0),
+  );
   let mBalance = $derived(
-    isMonthlyHours ? totalWorked - monthlyTarget : totalWorked - totalExpected,
+    // Use totalExpected for both schedule types: for MONTHLY_HOURS it sums
+    // holiday-deducted dailySollMin from calendarDays, matching the backend logic.
+    totalWorked - totalExpected,
   );
   // Check if there are entries for today
   let hasTodayEntries = $derived(
@@ -837,14 +1023,14 @@
 <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
 {#if schedule}
   <div class="month-summary card-animate">
-    <div class="msummary-item">
-      <span class="msummary-label"
-        >{hasMonthlyTarget ? "Soll (Monat)" : isMonthlyHours ? "Soll" : "Soll (bisher)"}</span
-      >
-      <span class="msummary-value"
-        >{fmtMin(hasMonthlyTarget ? monthlyTarget : isMonthlyHours ? 0 : totalExpected)}h</span
-      >
-    </div>
+    {#if !isMonthlyHours || hasMonthlyTarget}
+      <div class="msummary-item">
+        <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
+        <span class="msummary-value"
+          >{fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected)}h</span
+        >
+      </div>
+    {/if}
     <div class="msummary-item">
       <span class="msummary-label">Ist</span>
       <span class="msummary-value">{fmtMin(totalWorked)}h</span>
@@ -866,6 +1052,30 @@
         <span class="msummary-value bal {balClass(Math.round(overtimeTotalHours * 60))}"
           >{fmtBalance(Math.round(overtimeTotalHours * 60))}</span
         >
+      </div>
+    {/if}
+    {#if monthIsLocked}
+      <div class="msummary-divider"></div>
+      <div class="msummary-item msummary-lock">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          style="color: var(--color-text-muted); flex-shrink: 0;"
+          aria-hidden="true"
+        >
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+        </svg>
+        <span class="msummary-lock-label">Abgeschlossen</span>
+        {#if isManager}
+          <button class="btn btn-sm btn-ghost msummary-unlock-btn" onclick={unlockMonth}>
+            Entsperren
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -998,12 +1208,29 @@
             {#if day.isBeforeHire}
               <span class="day-before-hire">—</span>
             {:else if day.isCurrentMonth && day.hasEntries}
+              {#if lockedDateSet.has(day.dateStr)}
+                <span class="cal-lock-icon" aria-label="Gesperrt">
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    style="color: var(--color-text-muted);"
+                    aria-hidden="true"
+                  >
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                </span>
+              {/if}
               <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-              {#if !isMonthlyHours && day.expectedMin > 0}
+              {#if day.expectedMin > 0}
                 {@const b = day.workedMin - day.expectedMin}
                 <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
               {/if}
-            {:else if day.isCurrentMonth && !isMonthlyHours && day.expectedMin > 0 && !day.isFuture}
+            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture}
               <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
             {/if}
           </div>
@@ -1081,7 +1308,9 @@
               {/if}
             </td>
             <td class="action-cell">
-              {#if slot.isInvalid && isManager}
+              {#if slot.isLocked}
+                <!-- locked entries are read-only; no actions shown (D-08) -->
+              {:else if slot.isInvalid && isManager}
                 <span class="row-actions row-actions--visible">
                   <button
                     class="btn btn-sm btn-warning"
@@ -1131,7 +1360,13 @@
 
 <!-- ── Modal ──────────────────────────────────────────────────────────────── -->
 {#if modalOpen}
-  <div class="modal-backdrop" onclick={self(closeModal)} role="presentation">
+  <div
+    class="modal-backdrop"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) closeModal();
+    }}
+    role="presentation"
+  >
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
         <h2>
@@ -1322,10 +1557,10 @@
   }
 
   .bal.pos {
-    color: #16a34a;
+    color: var(--color-green);
   }
   .bal.neg {
-    color: #dc2626;
+    color: var(--color-red);
   }
 
   /* ── Summary Bar ─────────────────────────────────────── */
@@ -1365,6 +1600,30 @@
     font-family: var(--font-mono);
     color: var(--color-text-heading);
     font-size: 0.9375rem;
+  }
+
+  /* D-09/D-10: Lock badge in month summary */
+  .msummary-lock {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--color-text-muted);
+  }
+
+  .msummary-lock-label {
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+  }
+
+  .msummary-unlock-btn {
+    margin-left: 0.25rem;
+  }
+
+  /* D-07: Lock icon overlay in calendar cells */
+  .cal-lock-icon {
+    display: block;
+    line-height: 1;
+    margin-bottom: 1px;
   }
 
   /* ── View Tabs ───────────────────────────────────────── */
@@ -1581,10 +1840,10 @@
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: #16a34a;
+    color: var(--color-green);
   }
   .dstat.bal.neg strong {
-    color: #dc2626;
+    color: var(--color-red);
   }
 
   .day-empty {
@@ -1656,7 +1915,7 @@
     gap: 0.375rem;
   }
   .row-del td {
-    background: #fef2f2;
+    background: var(--color-red-bg);
   }
 
   .row-invalid {
@@ -1664,13 +1923,13 @@
   }
   .row-invalid td {
     text-decoration: line-through;
-    background: #fef2f2;
+    background: var(--color-red-bg);
   }
   .row-invalid td:last-child {
     text-decoration: none;
   }
   .row-invalid .invalid-reason {
-    color: #dc2626;
+    color: var(--color-red);
     font-size: 0.8rem;
     font-weight: 500;
     text-decoration: none;
@@ -1699,8 +1958,8 @@
     color: var(--color-text-muted);
   }
   .btn-icon-danger:hover {
-    background: #fef2f2;
-    color: #dc2626;
+    background: var(--color-red-bg);
+    color: var(--color-red);
   }
 
   /* Ensure delete confirmation button has white text on red background */
@@ -1709,7 +1968,7 @@
   }
   .btn-danger-sm {
     color: white;
-    background: #ef4444;
+    background: var(--color-danger);
     border-radius: 4px;
     font-size: 0.8125rem;
     padding: 0.125rem 0.375rem;
@@ -1928,14 +2187,14 @@
   }
 
   .arbzg-warning {
-    background: #fffbeb;
-    border: 1.5px solid #fbbf24;
-    color: #92400e;
+    background: var(--color-yellow-bg);
+    border: 1.5px solid var(--color-yellow-border);
+    color: var(--color-yellow);
   }
   .arbzg-error {
-    background: #fef2f2;
-    border: 1.5px solid #f87171;
-    color: #991b1b;
+    background: var(--color-red-bg);
+    border: 1.5px solid var(--color-red-border);
+    color: var(--color-red);
   }
 
   .arbzg-icon {

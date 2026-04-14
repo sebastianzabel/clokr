@@ -151,7 +151,8 @@ export function iterateDaysInTz(
 /**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
- * Supports MONTHLY_HOURS schedules (Minijobber): returns full monthlyHours budget.
+ * Supports MONTHLY_HOURS schedules (Minijobber): prorates the monthly budget
+ * based on working days in [from, to] relative to working days in the full calendar month.
  */
 export function calcExpectedMinutesTz(
   schedule: Record<string, unknown>,
@@ -159,10 +160,53 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
 ): number {
-  // Minijobber / flexible monthly hours: return monthly budget (or 0 if not set = pure tracking)
+  // Minijobber / flexible monthly hours: prorate monthly budget by working-day fraction
   if (String(schedule.type ?? "") === "MONTHLY_HOURS") {
     const mh = Number(schedule.monthlyHours ?? 0);
-    return mh > 0 ? mh * 60 : 0;
+    if (mh <= 0) return 0; // pure tracking mode — no Soll target
+
+    const DOW_KEYS_MH = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ];
+
+    // Count working days in the range [from, to]
+    let rangeWorkdays = 0;
+    iterateDaysInTz(from, to, tz, (dow) => {
+      if (Number(schedule[DOW_KEYS_MH[dow]] ?? 0) > 0) rangeWorkdays++;
+    });
+
+    // Count working days in the full calendar month that contains `from`
+    const fromZoned = toZonedTime(from, tz);
+    const monthStart = fromZonedTime(
+      new Date(fromZoned.getFullYear(), fromZoned.getMonth(), 1, 0, 0, 0, 0),
+      tz,
+    );
+    const lastDay = new Date(fromZoned.getFullYear(), fromZoned.getMonth() + 1, 0).getDate();
+    const monthEnd = fromZonedTime(
+      new Date(fromZoned.getFullYear(), fromZoned.getMonth(), lastDay, 23, 59, 59, 999),
+      tz,
+    );
+    let monthWorkdays = 0;
+    iterateDaysInTz(monthStart, monthEnd, tz, (dow) => {
+      if (Number(schedule[DOW_KEYS_MH[dow]] ?? 0) > 0) monthWorkdays++;
+    });
+
+    // If no per-day hours configured, fall back to calendar-day proration
+    if (monthWorkdays === 0) {
+      // Fallback: prorate by calendar days (flexible Minijobber with no fixed workdays).
+      // Use Math.floor to get inclusive day count without double-counting boundary days.
+      const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
+      const monthDays = lastDay;
+      return Math.round((mh * 60 * rangeDays) / monthDays);
+    }
+
+    return Math.round((mh * 60 * rangeWorkdays) / monthWorkdays);
   }
 
   const DOW_KEYS = [

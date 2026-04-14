@@ -1,7 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule } from "./time-entries";
+import { getEffectiveSchedule, updateOvertimeAccount } from "./time-entries";
 import {
   getTenantTimezone,
   dateStrInTz,
@@ -780,6 +780,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
       // Subtract holidays: merge computed German Feiertage with DB-stored manual holidays
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: employee.tenantId },
+      });
       const closeMonthStateCode = employee.tenant
         ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
         : "NI";
@@ -798,8 +801,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
         ...closeMonthComputedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
         ...closeMonthDbHolidays.filter((h) => !holidayDateSet.has(dateStrInTz(h.date, tz))),
       ];
+
+      // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+      const isMonthlyHoursDeduction =
+        String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+        Number(schedule.monthlyHours ?? 0) > 0 &&
+        tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+      let workingDaysInRange = 0;
+      if (isMonthlyHoursDeduction) {
+        const wdCur = new Date(effectiveStart);
+        while (wdCur <= monthEnd) {
+          const wdDow = getDayOfWeekInTz(wdCur, tz);
+          if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+          wdCur.setDate(wdCur.getDate() + 1);
+        }
+      }
+      const dailySollMin =
+        isMonthlyHoursDeduction && workingDaysInRange > 0
+          ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+          : 0;
+
       const holidayMinutes = allCloseMonthHolidays.reduce((sum, h) => {
         const dow = getDayOfWeekInTz(h.date, tz);
+        if (isMonthlyHoursDeduction) {
+          return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+        }
         return sum + getDayHoursFromSchedule(schedule, dow) * 60;
       }, 0);
 
@@ -807,17 +834,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const approvedLeave = await app.prisma.leaveRequest.findMany({
         where: {
           employeeId,
+          deletedAt: null, // required by soft-delete convention
           status: "APPROVED",
           startDate: { lte: monthEnd },
           endDate: { gte: monthStart },
         },
       });
-      const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-        const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-        const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-        if (leaveStart > leaveEnd) return sum;
-        return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
-      }, 0);
+      const isPureTracking =
+        String(schedule.type) === "MONTHLY_HOURS" &&
+        (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
+      let leaveMinutes = 0;
+      if (!isPureTracking) {
+        leaveMinutes = approvedLeave.reduce((sum, lr) => {
+          const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+          const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+          if (leaveStart > leaveEnd) return sum;
+          return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+        }, 0);
+      }
 
       const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
       const balanceMinutes = Math.round(workedMinutes - netExpected);
@@ -830,6 +864,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const prevCarryOver = prevSnapshot?.carryOver ?? 0;
       const carryOver = prevCarryOver + balanceMinutes;
 
+      // D-05/D-06: Bifurcate on overtimeMode
+      const isTrackOnly =
+        String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+      const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
+
       // Create snapshot + lock entries
       const snapshot = await app.prisma.$transaction(async (tx) => {
         const snap = await tx.saldoSnapshot.create({
@@ -841,7 +880,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             workedMinutes: Math.round(workedMinutes),
             expectedMinutes: Math.round(netExpected),
             balanceMinutes,
-            carryOver,
+            carryOver: effectiveCarryOver,
             closedAt: new Date(),
             closedBy: req.user.sub,
           },
@@ -860,11 +899,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return snap;
       });
 
-      // Update overtime account with new carry-over
+      // Update overtime account with new carry-over (effectiveCarryOver=0 for TRACK_ONLY)
       await app.prisma.overtimeAccount.upsert({
         where: { employeeId },
-        create: { employeeId, balanceHours: carryOver / 60 },
-        update: { balanceHours: carryOver / 60 },
+        create: { employeeId, balanceHours: effectiveCarryOver / 60 },
+        update: { balanceHours: effectiveCarryOver / 60 },
       });
 
       await app.audit({
@@ -876,7 +915,90 @@ export async function overtimeRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
-      return reply.code(201).send(snapshot);
+      // D-12: Informational hint if the request is made before the grace period ends.
+      // gracePeriodEnds = the 15th of the month FOLLOWING the target month.
+      // Note: Date.UTC(year, month, 15) — month here is 1-based, so passing it directly
+      // (without -1) gives the first day of the FOLLOWING month in 0-based JS month index.
+      // Example: year=2025, month=1 (January) → Date.UTC(2025, 1, 15) → Feb 15 2025 ✓
+      const followingMonthDay15 = new Date(Date.UTC(year, month, 15));
+      const isEarlyClose = now < followingMonthDay15;
+
+      const responsePayload: Record<string, unknown> = { ...snapshot };
+      if (isEarlyClose) {
+        responsePayload.earlyClose = true;
+        responsePayload.gracePeriodEnds = followingMonthDay15.toISOString();
+      }
+
+      return reply.code(201).send(responsePayload);
+    },
+  });
+
+  const unlockMonthSchema = z.object({
+    employeeId: z.string().uuid(),
+    year: z.number().int().min(2020).max(2099),
+    month: z.number().int().min(1).max(12),
+  });
+
+  // POST /api/v1/overtime/unlock-month  – Monat entsperren (Snapshot löschen, Einträge entsperren)
+  app.post("/unlock-month", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { employeeId, year, month } = unlockMonthSchema.parse(req.body);
+
+      // Tenant isolation: verify the employee belongs to the caller's tenant
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+      const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+
+      // Verify the month is actually closed
+      const snap = await app.prisma.saldoSnapshot.findUnique({
+        where: {
+          employeeId_periodType_periodStart: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: monthStart,
+          },
+        },
+      });
+      if (!snap) {
+        return reply.code(404).send({ error: "Monat ist nicht abgeschlossen" });
+      }
+
+      // D-02/D-03: Atomic transaction — hard-delete snapshot + unlock all non-deleted entries
+      await app.prisma.$transaction(async (tx) => {
+        await tx.saldoSnapshot.delete({ where: { id: snap.id } });
+        await tx.timeEntry.updateMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            date: { gte: monthStart, lte: monthEnd },
+          },
+          data: { isLocked: false, lockedAt: null },
+        });
+      });
+
+      // Recalculate live overtime balance now that the snapshot is gone
+      await updateOvertimeAccount(app, employeeId);
+
+      // D-02: Audit log — entity SaldoSnapshot, action UNLOCK, oldValue = snapshot data
+      await app.audit({
+        userId: req.user.sub,
+        action: "UNLOCK",
+        entity: "SaldoSnapshot",
+        entityId: snap.id,
+        oldValue: snap,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(200).send({ message: "Monat entsperrt" });
     },
   });
 
@@ -884,8 +1006,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
   app.get("/snapshots/:employeeId", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
-    handler: async (req) => {
+    handler: async (req, reply) => {
       const { employeeId } = req.params as { employeeId: string };
+
+      // Authorization: employees may only read their own snapshots; managers/admins may read any
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      if (!isManager && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Tenant isolation: verify the requested employee belongs to the caller's tenant
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       const snapshots = await app.prisma.saldoSnapshot.findMany({
         where: { employeeId },
         orderBy: { periodStart: "desc" },
@@ -912,7 +1050,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         where: { id: employeeId },
         select: { tenantId: true },
       });
-      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       // Year range
       const yearStart = new Date(`${year}-01-01T00:00:00Z`);

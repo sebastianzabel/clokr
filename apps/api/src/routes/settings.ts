@@ -64,6 +64,8 @@ const tenantConfigSchema = z.object({
   datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
   datevKrankNr: z.number().int().min(1).max(9999).optional(),
   datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
+  // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+  monthlyHoursHolidayDeduction: z.boolean().optional(),
 });
 
 const vacationEntitlementSchema = z.object({
@@ -73,30 +75,26 @@ const vacationEntitlementSchema = z.object({
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
 });
 
-const employeeScheduleSchema = z
-  .object({
-    type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
-    weeklyHours: z.number().min(0).max(60).default(40),
-    monthlyHours: z.number().min(0).max(999).nullable().optional(),
-    mondayHours: z.number().min(0).max(24).default(8),
-    tuesdayHours: z.number().min(0).max(24).default(8),
-    wednesdayHours: z.number().min(0).max(24).default(8),
-    thursdayHours: z.number().min(0).max(24).default(8),
-    fridayHours: z.number().min(0).max(24).default(8),
-    saturdayHours: z.number().min(0).max(24).default(0),
-    sundayHours: z.number().min(0).max(24).default(0),
-    overtimeThreshold: z.number().min(0).max(500).default(60),
-    allowOvertimePayout: z.boolean().default(false),
-    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
-    validFrom: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/)
-      .optional(),
-  })
-  .refine((data) => data.type !== "MONTHLY_HOURS" || data.monthlyHours != null, {
-    message: "monthlyHours muss bei MONTHLY_HOURS angegeben werden",
-    path: ["monthlyHours"],
-  });
+const employeeScheduleSchema = z.object({
+  type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  weeklyHours: z.number().min(0).max(60).default(40),
+  monthlyHours: z.number().min(0).max(999).nullable().optional(),
+  mondayHours: z.number().min(0).max(24).default(8),
+  tuesdayHours: z.number().min(0).max(24).default(8),
+  wednesdayHours: z.number().min(0).max(24).default(8),
+  thursdayHours: z.number().min(0).max(24).default(8),
+  fridayHours: z.number().min(0).max(24).default(8),
+  saturdayHours: z.number().min(0).max(24).default(0),
+  sundayHours: z.number().min(0).max(24).default(0),
+  overtimeThreshold: z.number().min(0).max(500).default(60),
+  allowOvertimePayout: z.boolean().default(false),
+  overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
+  maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+  validFrom: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional(),
+});
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
@@ -104,7 +102,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const [config, tenant] = await Promise.all([
         app.prisma.tenantConfig.findUnique({ where: { tenantId } }),
         app.prisma.tenant.findUnique({ where: { id: tenantId } }),
@@ -152,6 +150,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         datevUrlaubNr: 300,
         datevKrankNr: 200,
         datevSonderurlaubNr: 302,
+        monthlyHoursHolidayDeduction: false,
       };
 
       return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
@@ -164,7 +163,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
       const body = tenantConfigSchema.parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       // federalState gehört zum Tenant, nicht zur TenantConfig
       const { federalState, applyToExisting, ...configBody } = body;
@@ -300,6 +299,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         sundayHours: body.sundayHours,
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
+        overtimeMode: body.overtimeMode,
         validFrom,
       };
 
@@ -435,7 +435,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       return {
         smtpHost: cfg?.smtpHost ?? null,
@@ -464,7 +464,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         smtpSecure: z.boolean(),
       });
       const body = smtpSchema.parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       const updateData: Record<string, unknown> = {
         smtpHost: body.smtpHost,
@@ -530,7 +530,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       return {
         twoFaEnabled: cfg?.twoFaEnabled ?? false,
@@ -588,7 +588,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           loginLockoutMinutes: z.number().int().min(1).max(1440).optional(),
         })
         .parse(req.body);
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const oldConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
       const config = await app.prisma.tenantConfig.upsert({
         where: { tenantId },
@@ -653,7 +653,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId },
@@ -679,7 +679,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     schema: { tags: ["Einstellungen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
-      const tenantId = await getTenantId(app, req.user.sub);
+      const tenantId = req.user.tenantId;
       const types = await app.prisma.leaveType.findMany({
         where: { tenantId },
         orderBy: { name: "asc" },
@@ -724,13 +724,4 @@ export async function settingsRoutes(app: FastifyInstance) {
       return updated;
     },
   });
-}
-
-async function getTenantId(app: FastifyInstance, userId: string): Promise<string> {
-  const employee = await app.prisma.employee.findFirst({ where: { userId } });
-  if (employee) return employee.tenantId;
-  // Fallback: ersten Tenant nehmen (für Admins ohne Employee-Profil)
-  const tenant = await app.prisma.tenant.findFirst();
-  if (!tenant) throw new Error("Kein Tenant gefunden");
-  return tenant.id;
 }

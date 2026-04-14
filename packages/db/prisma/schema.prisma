@@ -136,6 +136,8 @@ model TenantConfig {
   loginLockoutMinutes    Int     @default(15)    // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
   dataRetentionYears     Int     @default(10)
+  // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll
+  monthlyHoursHolidayDeduction Boolean @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
   datevNormalstundenNr Int @default(100)
   datevUrlaubNr        Int @default(300)
@@ -262,6 +264,7 @@ model WorkSchedule {
   sundayHours           Decimal  @db.Decimal(4, 2)  @default(0)
   overtimeThreshold     Decimal  @db.Decimal(5, 2)  @default(60)  // Alert ab X Stunden
   allowOvertimePayout   Boolean  @default(false)
+  overtimeMode          String   @default("CARRY_FORWARD")  // "CARRY_FORWARD" | "TRACK_ONLY"
   maxNegativeBalanceMinutes Int? // Pro-MA Override (null = Tenant-Default)
   validFrom             DateTime @db.Timestamptz
   createdAt             DateTime @default(now()) @db.Timestamptz

@@ -195,13 +195,6 @@ describe("ArbZG Compliance Checks", () => {
       if (avgUserId) await app.prisma.user.delete({ where: { id: avgUserId } });
     });
 
-    afterAll(async () => {
-      // Clean up entries after each test scenario (defensive cleanup)
-      if (avgEmployee?.id) {
-        await app.prisma.timeEntry.deleteMany({ where: { employeeId: avgEmployee.id } });
-      }
-    });
-
     /**
      * Helper: create a single time entry for the rolling average employee.
      * startHour and endHour are UTC hours.
@@ -700,7 +693,11 @@ describe("ArbZG Compliance Checks", () => {
         });
 
         // Should not crash — worked hours are 7h UTC-elapsed, well under 10h limit
-        const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(`${date}T06:00:00.000Z`));
+        const warnings = await checkArbZG(
+          app.prisma,
+          data.employee.id,
+          new Date(`${date}T06:00:00.000Z`),
+        );
         // No daily max warning (7h < 10h)
         const maxDaily = warnings.find((w) => w.code === "MAX_DAILY_EXCEEDED");
         expect(maxDaily).toBeUndefined();
@@ -732,7 +729,11 @@ describe("ArbZG Compliance Checks", () => {
           },
         });
 
-        const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(`${date}T03:00:00.000Z`));
+        const warnings = await checkArbZG(
+          app.prisma,
+          data.employee.id,
+          new Date(`${date}T03:00:00.000Z`),
+        );
         // Should not crash
         const maxDaily = warnings.find((w) => w.code === "MAX_DAILY_EXCEEDED");
         // 8h worked is under the 10h daily limit
@@ -845,6 +846,174 @@ describe("ArbZG Compliance Checks", () => {
         const restWarn = warnings.find((w) => w.code === "MIN_REST_VIOLATED");
         // 10h59 < 11h → should warn
         expect(restWarn).toBeDefined();
+      });
+    });
+  });
+
+  // ── MONTHLY_HOURS ArbZG suppression tests ─────────────────────────────────
+  describe("MONTHLY_HOURS ArbZG suppression", () => {
+    let monthlyEmployee: { id: string };
+    let monthlyUserId: string;
+    let monthlyScheduleId: string;
+
+    beforeAll(async () => {
+      const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      const mUser = await app.prisma.user.create({
+        data: {
+          email: `monthly-arbzg-${s}@test.de`,
+          passwordHash: "PLACEHOLDER",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      monthlyUserId = mUser.id;
+      monthlyEmployee = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: mUser.id,
+          employeeNumber: `MH-AZ-${s}`,
+          firstName: "Monthly",
+          lastName: "ArbZG",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const sched = await app.prisma.workSchedule.create({
+        data: {
+          employeeId: monthlyEmployee.id,
+          type: "MONTHLY_HOURS",
+          weeklyHours: 10,
+          monthlyHours: 40,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      monthlyScheduleId = sched.id;
+    });
+
+    afterAll(async () => {
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: monthlyEmployee?.id } });
+      await app.prisma.workSchedule.deleteMany({ where: { employeeId: monthlyEmployee?.id } });
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: monthlyEmployee?.id } });
+      if (monthlyEmployee?.id)
+        await app.prisma.employee.delete({ where: { id: monthlyEmployee.id } });
+      if (monthlyUserId) await app.prisma.user.delete({ where: { id: monthlyUserId } });
+    });
+
+    it("MONTHLY_HOURS employee: no MAX_DAILY_AVG_EXCEEDED warning even with >8h/day average", async () => {
+      // Clean slate
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: monthlyEmployee.id } });
+
+      // Create 24 weeks of 10h/day Mon-Fri — average = 1200h / 144 Werktage = 8.33h > 8h
+      const startWeek = new Date("2024-01-01T00:00:00.000Z");
+      for (let w = 0; w < 24; w++) {
+        for (let d = 0; d < 5; d++) {
+          const date = new Date(startWeek);
+          date.setDate(date.getDate() + w * 7 + d);
+          const dateStr = date.toISOString().slice(0, 10);
+          await app.prisma.timeEntry.create({
+            data: {
+              employeeId: monthlyEmployee.id,
+              date: new Date(dateStr),
+              startTime: new Date(`${dateStr}T08:00:00.000Z`),
+              endTime: new Date(`${dateStr}T18:00:00.000Z`),
+              breakMinutes: 0,
+              source: "MANUAL",
+            },
+          });
+        }
+      }
+
+      const changedDate = new Date("2024-06-14T17:00:00.000Z");
+      const warnings = await checkArbZG(app.prisma, monthlyEmployee.id, changedDate);
+      const avgWarn = warnings.filter((w) => w.code === "MAX_DAILY_AVG_EXCEEDED");
+      expect(avgWarn).toHaveLength(0);
+    });
+
+    it("MONTHLY_HOURS employee: MAX_DAILY_EXCEEDED still fires at >10h", async () => {
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: monthlyEmployee.id } });
+
+      const date = "2025-04-07";
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: monthlyEmployee.id,
+          date: new Date(date),
+          startTime: new Date(`${date}T06:00:00.000Z`),
+          endTime: new Date(`${date}T17:00:00.000Z`), // 11h net
+          breakMinutes: 0,
+          source: "MANUAL",
+        },
+      });
+
+      const warnings = await checkArbZG(app.prisma, monthlyEmployee.id, new Date(date));
+      expect(warnings.some((w) => w.code === "MAX_DAILY_EXCEEDED")).toBe(true);
+    });
+
+    it("MONTHLY_HOURS employee: BREAK_TOO_SHORT still fires for >6h with 0 break", async () => {
+      await app.prisma.timeEntry.deleteMany({ where: { employeeId: monthlyEmployee.id } });
+
+      const date = "2025-04-08";
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: monthlyEmployee.id,
+          date: new Date(date),
+          startTime: new Date(`${date}T08:00:00.000Z`),
+          endTime: new Date(`${date}T14:30:00.000Z`), // 6.5h net, 0 break
+          breakMinutes: 0,
+          source: "MANUAL",
+        },
+      });
+
+      const warnings = await checkArbZG(app.prisma, monthlyEmployee.id, new Date(date));
+      expect(warnings.some((w) => w.code === "BREAK_TOO_SHORT")).toBe(true);
+    });
+
+    it("FIXED_WEEKLY employee still gets MAX_DAILY_AVG_EXCEEDED at >8h/day average", async () => {
+      // The regular data.employee is FIXED_WEEKLY — verify the guard doesn't break FIXED_WEEKLY
+      // Use the avgEmployee from the rolling average describe block — it already has the right setup
+      // Instead, just verify the existing 24-week tests still pass indirectly via this sanity check:
+      // Create entries for data.employee (FIXED_WEEKLY) to confirm the guard doesn't suppress
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { gte: new Date("2024-01-01"), lte: new Date("2024-06-14") },
+        },
+      });
+
+      const startWeek = new Date("2024-01-01T00:00:00.000Z");
+      for (let w = 0; w < 24; w++) {
+        for (let d = 0; d < 5; d++) {
+          const date = new Date(startWeek);
+          date.setDate(date.getDate() + w * 7 + d);
+          const dateStr = date.toISOString().slice(0, 10);
+          await app.prisma.timeEntry.create({
+            data: {
+              employeeId: data.employee.id,
+              date: new Date(dateStr),
+              startTime: new Date(`${dateStr}T08:00:00.000Z`),
+              endTime: new Date(`${dateStr}T18:00:00.000Z`), // 10h
+              breakMinutes: 0,
+              source: "MANUAL",
+            },
+          });
+        }
+      }
+
+      const changedDate = new Date("2024-06-14T17:00:00.000Z");
+      const warnings = await checkArbZG(app.prisma, data.employee.id, changedDate);
+      expect(warnings.some((w) => w.code === "MAX_DAILY_AVG_EXCEEDED")).toBe(true);
+
+      // Cleanup
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { gte: new Date("2024-01-01"), lte: new Date("2024-06-14") },
+        },
       });
     });
   });

@@ -59,6 +59,8 @@
   interface DashboardStats {
     today: { workedHours: number; entries: number };
     week: { workedHours: number; targetHours: number };
+    periodType?: "week" | "month";
+    month?: { workedHours: number; targetHours: number };
     overtime: { balanceHours: number };
     vacation: { remaining: number; total: number; used: number };
   }
@@ -774,7 +776,9 @@
 
     <div class="stat-card card-animate">
       <div class="stat-header-row">
-        <p class="stat-label">Diese Woche</p>
+        <p class="stat-label">
+          {stats?.periodType === "month" ? "Dieser Monat" : "Diese Woche"}
+        </p>
         <span class="stat-icon stat-icon--brand">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -797,14 +801,22 @@
       </div>
       <p class="stat-value font-mono stat-value-animate">
         {#if stats}
-          {fmtHours(stats.week.workedHours)}
+          {fmtHours(
+            stats.periodType === "month" && stats.month
+              ? stats.month.workedHours
+              : stats.week.workedHours,
+          )}
         {:else}
           <span class="skeleton-text" style="width:3rem;height:1.25em"></span>
         {/if}
       </p>
       <p class="stat-sub">
         {#if stats}
-          von {fmtHours(stats.week.targetHours)} Soll
+          von {fmtHours(
+            stats.periodType === "month" && stats.month
+              ? stats.month.targetHours
+              : stats.week.targetHours,
+          )} Soll
         {:else}
           <span class="skeleton-text"></span>
         {/if}

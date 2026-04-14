@@ -61,6 +61,7 @@
     overtimeThreshold: number;
     allowOvertimePayout: boolean;
     validFrom: string;
+    overtimeMode?: "CARRY_FORWARD" | "TRACK_ONLY";
   }
 
   interface EmployeeRow {
@@ -175,8 +176,16 @@
     eFri = $state(8),
     eSat = $state(0),
     eSun = $state(0);
+  let eMonWd = $state(true),
+    eTueWd = $state(true),
+    eWedWd = $state(true),
+    eThuWd = $state(true),
+    eFriWd = $state(true),
+    eSatWd = $state(false),
+    eSunWd = $state(false);
   let eThreshold = $state(60);
   let ePayout = $state(false);
+  let eOvertimeMode: "CARRY_FORWARD" | "TRACK_ONLY" = $state("CARRY_FORWARD");
   let eValidFrom = $state(new Date().toISOString().split("T")[0]);
   let eSaving = $state(false);
   let eError = $state("");
@@ -322,6 +331,26 @@
     eSun = s ? Number(s.sundayHours) : gSun;
     eThreshold = s ? Number(s.overtimeThreshold) : gThreshold;
     ePayout = s ? s.allowOvertimePayout : gPayout;
+    eOvertimeMode = s?.overtimeMode ?? "CARRY_FORWARD";
+    // Initialize weekday chip state for MONTHLY_HOURS
+    if (eType === "MONTHLY_HOURS" && s) {
+      eMonWd = Number(s.mondayHours) > 0;
+      eTueWd = Number(s.tuesdayHours) > 0;
+      eWedWd = Number(s.wednesdayHours) > 0;
+      eThuWd = Number(s.thursdayHours) > 0;
+      eFriWd = Number(s.fridayHours) > 0;
+      eSatWd = Number(s.saturdayHours) > 0;
+      eSunWd = Number(s.sundayHours) > 0;
+    } else {
+      // D-03: default Mon-Fri when switching to MONTHLY_HOURS or no prior schedule
+      eMonWd = true;
+      eTueWd = true;
+      eWedWd = true;
+      eThuWd = true;
+      eFriWd = true;
+      eSatWd = false;
+      eSunWd = false;
+    }
     eValidFrom = s ? s.validFrom.split("T")[0] : new Date().toISOString().split("T")[0];
     eError = "";
 
@@ -356,15 +385,16 @@
         type: eType,
         weeklyHours: eType === "FIXED_WEEKLY" ? eWeekly : 0,
         monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
-        mondayHours: eType === "FIXED_WEEKLY" ? eMon : 0,
-        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : 0,
-        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : 0,
-        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : 0,
-        fridayHours: eType === "FIXED_WEEKLY" ? eFri : 0,
-        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : 0,
-        sundayHours: eType === "FIXED_WEEKLY" ? eSun : 0,
+        mondayHours: eType === "FIXED_WEEKLY" ? eMon : (eMonWd ? 1 : 0),
+        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : (eTueWd ? 1 : 0),
+        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : (eWedWd ? 1 : 0),
+        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : (eThuWd ? 1 : 0),
+        fridayHours: eType === "FIXED_WEEKLY" ? eFri : (eFriWd ? 1 : 0),
+        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : (eSatWd ? 1 : 0),
+        sundayHours: eType === "FIXED_WEEKLY" ? eSun : (eSunWd ? 1 : 0),
         overtimeThreshold: eThreshold,
         allowOvertimePayout: ePayout,
+        overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
         validFrom: eValidFrom,
       });
 
@@ -1116,6 +1146,33 @@
               Keine festen Wochentage – Soll wird monatlich berechnet.
             </p>
           </div>
+
+          <div class="form-group" style="margin-bottom:1.25rem;">
+            <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
+            <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input" style="max-width:280px;">
+              <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
+              <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
+            </select>
+            <p class="form-hint text-muted">
+              Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden dokumentiert, Saldo bleibt bei 0.
+            </p>
+          </div>
+
+          <div class="form-group" style="margin-bottom:1.25rem;">
+            <span class="form-label">Feste Arbeitstage</span>
+            <div class="weekday-chips">
+              <button type="button" class="wd-chip" class:wd-chip--active={eMonWd} onclick={() => (eMonWd = !eMonWd)}>Mo</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eTueWd} onclick={() => (eTueWd = !eTueWd)}>Di</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eWedWd} onclick={() => (eWedWd = !eWedWd)}>Mi</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eThuWd} onclick={() => (eThuWd = !eThuWd)}>Do</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eFriWd} onclick={() => (eFriWd = !eFriWd)}>Fr</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eSatWd} onclick={() => (eSatWd = !eSatWd)}>Sa</button>
+              <button type="button" class="wd-chip" class:wd-chip--active={eSunWd} onclick={() => (eSunWd = !eSunWd)}>So</button>
+            </div>
+            <p class="form-hint text-muted">
+              Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide; Arbeitstage im Monat).
+            </p>
+          </div>
         {:else}
           <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
             Wochenstunden werden automatisch aus den Tagen summiert.
@@ -1718,5 +1775,44 @@
   .badge-gray {
     background: #f3f4f6;
     color: #6b7280;
+  }
+
+  .weekday-chips {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+
+  .wd-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    height: 2rem;
+    padding: 0 0.625rem;
+    border-radius: 999px;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    border: 1.5px solid var(--color-border);
+    background: transparent;
+    color: var(--color-text-muted);
+  }
+
+  .wd-chip--active {
+    background: var(--color-brand);
+    border-color: var(--color-brand);
+    color: #fff;
+  }
+
+  .wd-chip:hover:not(.wd-chip--active) {
+    border-color: var(--color-brand);
+    color: var(--color-brand);
   }
 </style>

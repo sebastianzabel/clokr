@@ -24,11 +24,21 @@ export const autoCloseMonthPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
 
   async function tryAutoCloseMonth() {
+    // D-11: Grace period — auto-close only runs if we are past the configurable threshold.
+    // TenantConfig.closeAfterDay is not yet in the schema; hardcoded default is 15.
+    // (Future: add closeAfterDay: Int @default(15) to TenantConfig and read it per-tenant below)
+    const DEFAULT_CLOSE_AFTER_DAY = 15;
+
     const now = new Date();
     const dayOfMonth = now.getDate();
 
-    // Only run during first 10 days of each month (give time for corrections)
-    if (dayOfMonth > 10) return;
+    // Check global threshold first — if we're not past it, skip all tenants
+    if (dayOfMonth < DEFAULT_CLOSE_AFTER_DAY) {
+      app.log.info(
+        `Auto-Monatsabschluss: Warte bis Tag ${DEFAULT_CLOSE_AFTER_DAY} des Monats (aktuell: ${dayOfMonth})`,
+      );
+      return;
+    }
 
     app.log.info("Auto-Monatsabschluss: Prüfe Vormonat");
 
@@ -83,14 +93,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
       const readyToClose: (typeof employees)[0][] = [];
 
       for (const emp of employees) {
-        // Check if already closed
-        const existingSnapshot = await app.prisma.saldoSnapshot.findFirst({
+        // Check if already closed — use unique index on (employeeId, periodType, periodStart)
+        // so months with 29/30/31 days are correctly detected (periodEnd-based check misses them)
+        const existingSnapshot = await app.prisma.saldoSnapshot.findUnique({
           where: {
-            employeeId: emp.id,
-            periodType: "MONTHLY",
-            periodStart: { gte: new Date(`${prevYear}-${String(prevMonth).padStart(2, "0")}-01`) },
-            periodEnd: {
-              lte: new Date(`${prevYear}-${String(prevMonth).padStart(2, "0")}-28T23:59:59Z`),
+            employeeId_periodType_periodStart: {
+              employeeId: emp.id,
+              periodType: "MONTHLY",
+              periodStart: monthStart,
             },
           },
         });
@@ -243,29 +253,61 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               .filter((h) => !computedSnapDateSet.has(dateStrInTz(h.date, tz)))
               .map((h) => h.date),
           ];
+          // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+          const isMonthlyHoursDeduction =
+            String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+            Number(schedule.monthlyHours ?? 0) > 0 &&
+            tenant.config?.monthlyHoursHolidayDeduction === true;
+
+          let workingDaysInRange = 0;
+          if (isMonthlyHoursDeduction) {
+            const wdCur = new Date(effectiveStart);
+            while (wdCur <= monthEnd) {
+              const wdDow = getDayOfWeekInTz(wdCur, tz);
+              if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+              wdCur.setDate(wdCur.getDate() + 1);
+            }
+          }
+          const dailySollMin =
+            isMonthlyHoursDeduction && workingDaysInRange > 0
+              ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+              : 0;
+
           const holidayMinutes = allSnapHolidays.reduce((sum, hDate) => {
             const dow = getDayOfWeekInTz(hDate, tz);
+            if (isMonthlyHoursDeduction) {
+              return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+            }
             return sum + getDayHoursFromSchedule(schedule, dow) * 60;
           }, 0);
 
           const approvedLeave = await app.prisma.leaveRequest.findMany({
             where: {
               employeeId: emp.id,
+              deletedAt: null, // required by soft-delete convention
               status: "APPROVED",
               startDate: { lte: monthEnd },
               endDate: { gte: monthStart },
             },
           });
-          const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-            const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-            const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-            if (leaveStart > leaveEnd) return sum;
-            return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
-          }, 0);
+          const isPureTracking =
+            String(schedule.type) === "MONTHLY_HOURS" &&
+            (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
+          let leaveMinutes = 0;
+          if (!isPureTracking) {
+            leaveMinutes = approvedLeave.reduce((sum, lr) => {
+              const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+              const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+              if (leaveStart > leaveEnd) return sum;
+              return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+            }, 0);
+          }
 
           const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
           const balanceMinutes = Math.round(workedMinutes - netExpected);
 
+          // Note: if months are not contiguous (gap in snapshots), carryOver from the most recent
+          // prior snapshot is used. This is intentional — incomplete months before hire are not snapshotted.
           const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
             where: {
               employeeId: emp.id,
@@ -275,6 +317,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             orderBy: { periodStart: "desc" },
           });
           const carryOver = (prevSnapshot?.carryOver ?? 0) + balanceMinutes;
+
+          // D-05/D-06: Bifurcate on overtimeMode
+          const isTrackOnly =
+            String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
+          const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
 
           await app.prisma.$transaction(async (tx) => {
             await tx.saldoSnapshot.create({
@@ -286,7 +333,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 workedMinutes: Math.round(workedMinutes),
                 expectedMinutes: Math.round(netExpected),
                 balanceMinutes,
-                carryOver,
+                carryOver: effectiveCarryOver,
                 closedAt: new Date(),
                 closedBy: null, // SYSTEM
                 note: "Automatischer Monatsabschluss",
@@ -303,10 +350,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             });
           });
 
+          // effectiveCarryOver=0 for TRACK_ONLY employees
           await app.prisma.overtimeAccount.upsert({
             where: { employeeId: emp.id },
-            create: { employeeId: emp.id, balanceHours: carryOver / 60 },
-            update: { balanceHours: carryOver / 60 },
+            create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
+            update: { balanceHours: effectiveCarryOver / 60 },
           });
 
           await app.audit({

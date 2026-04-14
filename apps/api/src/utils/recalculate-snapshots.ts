@@ -14,6 +14,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "./timezone";
+import { getHolidays, STATE_MAP } from "./holidays";
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -44,11 +45,14 @@ export async function recalculateSnapshots(
 
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true, hireDate: true },
+    select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
   });
   if (!employee) return;
 
   const tz = await getTenantTimezone(app.prisma, employee.tenantId);
+  const tenantConfig = await app.prisma.tenantConfig.findUnique({
+    where: { tenantId: employee.tenantId },
+  });
 
   // Get the carry-over from the snapshot immediately before the first affected one
   const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
@@ -100,15 +104,53 @@ export async function recalculateSnapshots(
     const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
     const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
-    // Subtract holidays
-    const holidays = await app.prisma.publicHoliday.findMany({
+    // Subtract holidays: merge computed Feiertage + DB-stored manual holidays (bugfix: was DB-only)
+    const snapStateCode = employee.tenant
+      ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
+      : "NI";
+    const snapYear = monthStart.getUTCFullYear();
+    const computedHolidays = getHolidays(snapYear, snapStateCode).filter(
+      (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
+    );
+    const computedDateSet = new Set(computedHolidays.map((h) => h.date));
+    const dbSnapHolidays = await app.prisma.publicHoliday.findMany({
       where: {
         tenant: { employees: { some: { id: employeeId } } },
         date: { gte: effectiveStart, lte: monthEnd },
       },
     });
-    const holidayMinutes = holidays.reduce((sum, h) => {
+    const allHolidays: { date: Date }[] = [
+      ...computedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
+      ...dbSnapHolidays
+        .filter((h) => !computedDateSet.has(dateStrInTz(h.date, tz)))
+        .map((h) => ({ date: h.date })),
+    ];
+
+    // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+    const isMonthlyHoursDeduction =
+      String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+      Number(schedule.monthlyHours ?? 0) > 0 &&
+      tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+    let workingDaysInRange = 0;
+    if (isMonthlyHoursDeduction) {
+      const wdCur = new Date(effectiveStart);
+      while (wdCur <= monthEnd) {
+        const wdDow = getDayOfWeekInTz(wdCur, tz);
+        if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+        wdCur.setDate(wdCur.getDate() + 1);
+      }
+    }
+    const dailySollMin =
+      isMonthlyHoursDeduction && workingDaysInRange > 0
+        ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+        : 0;
+
+    const holidayMinutes = allHolidays.reduce((sum, h) => {
       const dow = getDayOfWeekInTz(h.date, tz);
+      if (isMonthlyHoursDeduction) {
+        return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+      }
       return sum + getDayHoursFromSchedule(schedule, dow) * 60;
     }, 0);
 
@@ -116,6 +158,7 @@ export async function recalculateSnapshots(
     const approvedLeave = await app.prisma.leaveRequest.findMany({
       where: {
         employeeId,
+        deletedAt: null, // required by soft-delete convention
         status: "APPROVED",
         startDate: { lte: monthEnd },
         endDate: { gte: monthStart },
@@ -130,7 +173,8 @@ export async function recalculateSnapshots(
 
     const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
     const balanceMinutes = Math.round(workedMinutes - netExpected);
-    const carryOver = runningCarryOver + balanceMinutes;
+    const isTrackOnly = schedule.overtimeMode === "TRACK_ONLY";
+    const carryOver = isTrackOnly ? 0 : runningCarryOver + balanceMinutes;
 
     // Update the snapshot
     await app.prisma.saldoSnapshot.update({

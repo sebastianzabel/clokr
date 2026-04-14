@@ -25,6 +25,8 @@
     datevUrlaubNr?: number;
     datevKrankNr?: number;
     datevSonderurlaubNr?: number;
+    // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll (Phase 15)
+    monthlyHoursHolidayDeduction?: boolean;
   }
 
   interface SecurityConfig {
@@ -87,6 +89,10 @@
   let datevSonderurlaubNr = $state(302);
   let datevSaving = $state(false);
   let datevSaved = $state(false);
+
+  // Phase 15: MONTHLY_HOURS holiday deduction toggle
+  let monthlyHoursHolidayDeduction = $state(false);
+  let holidayDeductionSaving = $state(false);
   let datevError = $state("");
 
   let smtpHost = $state("");
@@ -269,6 +275,7 @@
       datevUrlaubNr = cfg.datevUrlaubNr ?? 300;
       datevKrankNr = cfg.datevKrankNr ?? 200;
       datevSonderurlaubNr = cfg.datevSonderurlaubNr ?? 302;
+      monthlyHoursHolidayDeduction = cfg.monthlyHoursHolidayDeduction ?? false;
 
       try {
         const smtp = await api.get<{
@@ -406,6 +413,25 @@
       datevError = e instanceof Error ? e.message : "Fehler";
     } finally {
       datevSaving = false;
+    }
+  }
+
+  async function saveHolidayDeduction() {
+    if (!_gOtherFields) return; // guard: need full work-settings context to avoid partial overwrite
+    holidayDeductionSaving = true;
+    const newValue = !monthlyHoursHolidayDeduction; // capture desired state once
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        monthlyHoursHolidayDeduction: newValue,
+      });
+      monthlyHoursHolidayDeduction = newValue; // commit only after success
+    } catch {
+      // revert on error — state unchanged because we did not assign yet
+    } finally {
+      holidayDeductionSaving = false;
     }
   }
 
@@ -733,6 +759,32 @@
         {#if stateSaved}
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
+      </div>
+    </div>
+
+    <hr class="sys-divider" />
+
+    <!-- Arbeitszeit -->
+    <div class="sys-section">
+      <h3 class="sys-title">Arbeitszeit</h3>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Feiertage kürzen Monatsstunden-Soll</span>
+          <p class="form-hint text-muted">
+            Feiertage auf Arbeitstagen von Monatsstunden-Mitarbeitern reduzieren das Monats-Soll.
+            Formel: Budget ÷ (Arbeitstage − Feiertage auf Arbeitstagen)
+          </p>
+        </div>
+        <label class="switch">
+          <input
+            type="checkbox"
+            aria-label="Feiertagsabzug für Monatsstunden aktivieren"
+            checked={monthlyHoursHolidayDeduction}
+            onchange={saveHolidayDeduction}
+            disabled={holidayDeductionSaving}
+          />
+          <span class="switch-slider"></span>
+        </label>
       </div>
     </div>
 
