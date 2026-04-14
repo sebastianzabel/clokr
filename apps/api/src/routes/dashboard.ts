@@ -6,9 +6,11 @@ import {
   todayInTz,
   dateStrInTz,
   weekRangeUtc,
+  monthRangeUtc,
   calcExpectedMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
+  iterateDaysInTz,
 } from "../utils/timezone";
 import { resolvePresenceState } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
@@ -50,52 +52,149 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }
       }
 
-      // ── Diese Woche: gearbeitete Stunden ──────────────────────────────
-      const weekEntries = await app.prisma.timeEntry.findMany({
+      // ── Aktueller Arbeitsplan ─────────────────────────────────────────
+      const schedule = await getEffectiveSchedule(app, employeeId);
+      const isMonthlyHoursSchedule = String(schedule.type ?? "") === "MONTHLY_HOURS";
+
+      // Fetch tenant info (federal state for holidays; holiday deduction config for MONTHLY_HOURS)
+      const [personalTenant, tenantConfig] = await Promise.all([
+        app.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { federalState: true },
+        }),
+        isMonthlyHoursSchedule
+          ? app.prisma.tenantConfig.findUnique({
+              where: { tenantId },
+              select: { monthlyHoursHolidayDeduction: true },
+            })
+          : Promise.resolve(null),
+      ]);
+      const personalStateCode = personalTenant?.federalState
+        ? (STATE_MAP[personalTenant.federalState] ?? null)
+        : null;
+
+      // ── Diese Woche / Dieser Monat: gearbeitete Stunden ──────────────
+
+      // For MONTHLY_HOURS: fetch hours worked this month (monthStart..today).
+      // For FIXED_WEEKLY: fetch hours worked this week (weekStart..weekEnd).
+      let workedQueryStart: Date;
+      let workedQueryEnd: Date;
+      let monthStart: Date | null = null;
+      let monthEnd: Date | null = null;
+
+      if (isMonthlyHoursSchedule) {
+        const todayZoned = today;
+        const y = parseInt(dateStrInTz(todayZoned, tz).slice(0, 4));
+        const m = parseInt(dateStrInTz(todayZoned, tz).slice(5, 7));
+        const range = monthRangeUtc(y, m, tz);
+        monthStart = range.start;
+        monthEnd = range.end;
+        workedQueryStart = monthStart;
+        workedQueryEnd = today; // Ist = hours worked so far this month
+      } else {
+        workedQueryStart = weekStart;
+        workedQueryEnd = weekEnd;
+      }
+
+      const periodEntries = await app.prisma.timeEntry.findMany({
         where: {
           employeeId,
           deletedAt: null,
-          date: { gte: weekStart, lte: weekEnd },
+          date: { gte: workedQueryStart, lte: workedQueryEnd },
           type: "WORK",
           endTime: { not: null },
         },
       });
 
-      let weekMinutes = 0;
-      for (const e of weekEntries) {
+      let periodWorkedMinutes = 0;
+      for (const e of periodEntries) {
         if (e.endTime) {
-          weekMinutes +=
+          periodWorkedMinutes +=
             (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
         }
       }
 
-      // ── Soll-Stunden diese Woche (bis heute, Feiertage abgezogen) ────
-      const schedule = await getEffectiveSchedule(app, employeeId);
-      const clampedEnd = new Date(Math.min(today.getTime(), weekEnd.getTime()));
-      let weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
+      // Keep weekMinutes for backwards-compat (used as week.workedHours for FIXED_WEEKLY)
+      const weekMinutes = isMonthlyHoursSchedule ? 0 : periodWorkedMinutes;
 
-      // Subtract holidays: fetch tenant federal state and deduct schedule hours for each
-      // holiday that falls within [weekStart, clampedEnd]
-      const personalTenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const personalStateCode = personalTenant?.federalState
-        ? (STATE_MAP[personalTenant.federalState] ?? null)
-        : null;
-      const personalStartYear = new Date(weekStart).getFullYear();
-      const personalEndYear = new Date(clampedEnd).getFullYear();
-      const personalHolidays = getHolidays(personalStartYear, personalStateCode);
-      if (personalEndYear !== personalStartYear)
-        personalHolidays.push(...getHolidays(personalEndYear, personalStateCode));
-      for (const h of personalHolidays) {
-        const hDate = new Date(h.date + "T12:00:00Z");
-        if (hDate >= weekStart && hDate <= clampedEnd) {
-          const dow = getDayOfWeekInTz(hDate, tz);
-          weekSollMinutes -= getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      // ── Soll-Stunden ──────────────────────────────────────────────────
+
+      let weekSollMinutes = 0;
+      let monthSollMinutes = 0;
+
+      if (isMonthlyHoursSchedule) {
+        // MONTHLY_HOURS: show full monthly budget as Soll, optionally reduced by holidays.
+        const mh = Number(schedule.monthlyHours ?? 0);
+        if (mh > 0 && monthStart && monthEnd) {
+          const holidayDeductionEnabled = tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+          if (holidayDeductionEnabled && personalStateCode !== undefined) {
+            // Replicate reports.ts calcShouldMinutes holiday deduction logic:
+            // dailySoll = budget / workdays_in_month; deduct dailySoll for each holiday on a workday.
+            const DOW_KEYS_MH = [
+              "sundayHours",
+              "mondayHours",
+              "tuesdayHours",
+              "wednesdayHours",
+              "thursdayHours",
+              "fridayHours",
+              "saturdayHours",
+            ] as const;
+            let monthWorkdays = 0;
+            iterateDaysInTz(monthStart, monthEnd, tz, (dow) => {
+              if (Number((schedule as Record<string, unknown>)[DOW_KEYS_MH[dow]] ?? 0) > 0)
+                monthWorkdays++;
+            });
+
+            if (monthWorkdays > 0) {
+              const dailySollMin = (mh * 60) / monthWorkdays;
+              const monthYear = monthStart.getUTCFullYear();
+              const monthEndYear = monthEnd.getUTCFullYear();
+              const monthHolidays = getHolidays(monthYear, personalStateCode);
+              if (monthEndYear !== monthYear)
+                monthHolidays.push(...getHolidays(monthEndYear, personalStateCode));
+              let holidayDeductionMin = 0;
+              for (const h of monthHolidays) {
+                const hDate = new Date(h.date + "T12:00:00Z");
+                if (hDate >= monthStart && hDate <= monthEnd) {
+                  const dow = getDayOfWeekInTz(hDate, tz);
+                  if (Number((schedule as Record<string, unknown>)[DOW_KEYS_MH[dow]] ?? 0) > 0) {
+                    holidayDeductionMin += dailySollMin;
+                  }
+                }
+              }
+              monthSollMinutes = Math.max(0, Math.round(mh * 60 - holidayDeductionMin));
+            } else {
+              // No per-day config (flexible Minijobber): full budget, no deduction
+              monthSollMinutes = mh * 60;
+            }
+          } else {
+            monthSollMinutes = mh * 60;
+          }
         }
+      } else {
+        // FIXED_WEEKLY: sum scheduled hours from week start up to today (inclusive).
+        // clampedEnd = today limits to hours that "should have been worked by now".
+        const personalStartYear = new Date(weekStart).getFullYear();
+        const personalEndYear = new Date(weekEnd).getFullYear();
+        const personalHolidays = getHolidays(personalStartYear, personalStateCode);
+        if (personalEndYear !== personalStartYear)
+          personalHolidays.push(...getHolidays(personalEndYear, personalStateCode));
+
+        const clampedEnd = new Date(Math.min(today.getTime(), weekEnd.getTime()));
+        weekSollMinutes = calcExpectedMinutesTz(schedule, weekStart, clampedEnd, tz);
+
+        // Subtract holidays that fall within [weekStart, clampedEnd]
+        for (const h of personalHolidays) {
+          const hDate = new Date(h.date + "T12:00:00Z");
+          if (hDate >= weekStart && hDate <= clampedEnd) {
+            const dow = getDayOfWeekInTz(hDate, tz);
+            weekSollMinutes -=
+              getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+          }
+        }
+        if (weekSollMinutes < 0) weekSollMinutes = 0;
       }
-      if (weekSollMinutes < 0) weekSollMinutes = 0;
 
       // ── Überstunden ───────────────────────────────────────────────────
       const overtimeAccount = await app.prisma.overtimeAccount.findUnique({
@@ -117,6 +216,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
       return {
         today: { workedHours: round(todayMinutes / 60), entries: todayEntries.length },
         week: { workedHours: round(weekMinutes / 60), targetHours: round(weekSollMinutes / 60) },
+        // For MONTHLY_HOURS employees the dashboard widget shows a monthly view instead of weekly.
+        // periodType tells the frontend which widget to render.
+        periodType: isMonthlyHoursSchedule ? "month" : "week",
+        month: isMonthlyHoursSchedule
+          ? {
+              workedHours: round(periodWorkedMinutes / 60),
+              targetHours: round(monthSollMinutes / 60),
+            }
+          : undefined,
         overtime: { balanceHours: round(overtimeBalance) },
         vacation: {
           remaining: totalVacation - usedVacation,

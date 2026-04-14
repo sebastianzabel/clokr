@@ -8,7 +8,9 @@ import {
   monthRangeUtc,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
+  iterateDaysInTz,
 } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 import {
   generateMonthlyReportPdf,
   generateVacationOverviewPdf,
@@ -90,6 +92,7 @@ function computeEmployeeSummary(
   start: Date,
   end: Date,
   tz: string,
+  holidayDeductionOpts?: { enabled: boolean; stateCode: string | null },
 ): {
   workedHours: number;
   targetHours: number;
@@ -130,7 +133,55 @@ function computeEmployeeSummary(
     const latestSchedule = getScheduleForDate(schedules, end);
     if (latestSchedule && String(latestSchedule.type) === "MONTHLY_HOURS") {
       const mh = Number(latestSchedule.monthlyHours ?? 0);
-      return mh > 0 ? mh * 60 : 0;
+      if (mh <= 0) return 0;
+
+      // Phase 15: apply holiday deduction when tenant toggle is enabled
+      if (holidayDeductionOpts?.enabled && holidayDeductionOpts.stateCode !== undefined) {
+        const DOW_KEYS_MH = [
+          "sundayHours",
+          "mondayHours",
+          "tuesdayHours",
+          "wednesdayHours",
+          "thursdayHours",
+          "fridayHours",
+          "saturdayHours",
+        ] as const;
+        // Count working days in the full calendar month (denominator for dailySoll)
+        let monthWorkdays = 0;
+        iterateDaysInTz(start, end, tz, (dow) => {
+          if (Number(latestSchedule[DOW_KEYS_MH[dow]] ?? 0) > 0) monthWorkdays++;
+        });
+        if (monthWorkdays > 0) {
+          const dailySollMin = (mh * 60) / monthWorkdays;
+          // Fetch holidays in the month and count those falling on configured workdays
+          const startYear = start.getUTCFullYear();
+          const endYear = end.getUTCFullYear();
+          const holidays = getHolidays(
+            startYear,
+            holidayDeductionOpts.stateCode as Parameters<typeof getHolidays>[1],
+          );
+          if (endYear !== startYear)
+            holidays.push(
+              ...getHolidays(
+                endYear,
+                holidayDeductionOpts.stateCode as Parameters<typeof getHolidays>[1],
+              ),
+            );
+          let holidayDeductionMin = 0;
+          for (const h of holidays) {
+            const hDate = new Date(h.date + "T12:00:00Z");
+            if (hDate >= start && hDate <= end) {
+              const dow = getDayOfWeekInTz(hDate, tz);
+              if (Number(latestSchedule[DOW_KEYS_MH[dow]] ?? 0) > 0) {
+                holidayDeductionMin += dailySollMin;
+              }
+            }
+          }
+          return Math.max(0, Math.round(mh * 60 - holidayDeductionMin));
+        }
+      }
+
+      return mh * 60;
     }
     let totalMin = 0;
     const cur = new Date(effectiveStart);
@@ -178,9 +229,7 @@ function computeEmployeeSummary(
 
   // ── Worked hours ─────────────────────────────────────────────────────────
   const workedMin = emp.timeEntries.reduce((sum, e) => {
-    const slotMin = e.endTime
-      ? (e.endTime.getTime() - e.startTime.getTime()) / 60000
-      : 0;
+    const slotMin = e.endTime ? (e.endTime.getTime() - e.startTime.getTime()) / 60000 : 0;
     return sum + slotMin - Number(e.breakMinutes ?? 0);
   }, 0);
 
@@ -258,8 +307,7 @@ function computeEmployeeSummary(
     breakMin: Number(e.breakMinutes ?? 0),
     netHours: e.endTime
       ? Math.round(
-          (((e.endTime.getTime() - e.startTime.getTime()) / 60000 -
-            Number(e.breakMinutes ?? 0)) /
+          (((e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)) /
             60) *
             100,
         ) / 100
@@ -339,6 +387,22 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
+      // Phase 15: fetch tenant config for MONTHLY_HOURS holiday deduction
+      const [tenantCfg, tenantRow] = await Promise.all([
+        app.prisma.tenantConfig.findUnique({
+          where: { tenantId: req.user.tenantId },
+          select: { monthlyHoursHolidayDeduction: true },
+        }),
+        app.prisma.tenant.findUnique({
+          where: { id: req.user.tenantId },
+          select: { federalState: true },
+        }),
+      ]);
+      const monthlyHolidayDeductionOpts = {
+        enabled: tenantCfg?.monthlyHoursHolidayDeduction === true,
+        stateCode: tenantRow?.federalState ? (STATE_MAP[tenantRow.federalState] ?? null) : null,
+      };
+
       // Alle Mitarbeiter des Tenants (oder nur einen)
       const employees = (await app.prisma.employee.findMany({
         where: {
@@ -352,7 +416,7 @@ export async function reportRoutes(app: FastifyInstance) {
       })) as unknown as EmployeeWithIncludes[];
 
       const rows = employees.map((emp) => {
-        const summary = computeEmployeeSummary(emp, start, end, tz);
+        const summary = computeEmployeeSummary(emp, start, end, tz, monthlyHolidayDeductionOpts);
         return {
           employeeId: emp.id,
           employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -642,10 +706,21 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
+      const [tenant, pdfTenantCfg] = await Promise.all([
+        app.prisma.tenant.findUnique({
+          where: { id: req.user.tenantId },
+          select: { name: true, federalState: true },
+        }),
+        app.prisma.tenantConfig.findUnique({
+          where: { tenantId: req.user.tenantId },
+          select: { monthlyHoursHolidayDeduction: true },
+        }),
+      ]);
+
+      const pdfHolidayDeductionOpts = {
+        enabled: pdfTenantCfg?.monthlyHoursHolidayDeduction === true,
+        stateCode: tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null,
+      };
 
       const emp = (await app.prisma.employee.findFirst({
         where: {
@@ -660,7 +735,7 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
-      const summary = computeEmployeeSummary(emp, start, end, tz);
+      const summary = computeEmployeeSummary(emp, start, end, tz, pdfHolidayDeductionOpts);
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -716,10 +791,21 @@ export async function reportRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
       const { start, end } = monthRangeUtc(y, m, tz);
 
-      const tenant = await app.prisma.tenant.findUnique({
-        where: { id: req.user.tenantId },
-        select: { name: true },
-      });
+      const [tenant, allPdfTenantCfg] = await Promise.all([
+        app.prisma.tenant.findUnique({
+          where: { id: req.user.tenantId },
+          select: { name: true, federalState: true },
+        }),
+        app.prisma.tenantConfig.findUnique({
+          where: { tenantId: req.user.tenantId },
+          select: { monthlyHoursHolidayDeduction: true },
+        }),
+      ]);
+
+      const allPdfHolidayDeductionOpts = {
+        enabled: allPdfTenantCfg?.monthlyHoursHolidayDeduction === true,
+        stateCode: tenant?.federalState ? (STATE_MAP[tenant.federalState] ?? null) : null,
+      };
 
       const employees = (await app.prisma.employee.findMany({
         where: {
@@ -737,7 +823,7 @@ export async function reportRoutes(app: FastifyInstance) {
       }
 
       const rows = employees.map((emp) => {
-        const summary = computeEmployeeSummary(emp, start, end, tz);
+        const summary = computeEmployeeSummary(emp, start, end, tz, allPdfHolidayDeductionOpts);
         return {
           employeeName: `${emp.firstName} ${emp.lastName}`,
           employeeNumber: emp.employeeNumber,

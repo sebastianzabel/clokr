@@ -331,19 +331,60 @@
       }
     }
 
+    // For MONTHLY_HOURS: detect whether any per-day hours are configured.
+    // When none are set (pure flexible Minijobber), treat Mon-Fri as workdays.
+    const hasPerDayHours =
+      monthly && sched
+        ? ["mondayHours", "tuesdayHours", "wednesdayHours", "thursdayHours", "fridayHours"].some(
+            (k) => Number(sched[k as keyof WorkSchedule] ?? 0) > 0,
+          )
+        : false;
+
     let dailySollMin = 0;
     if (monthly && sched) {
       const monthlyBudgetMin = Number(sched.monthlyHours ?? 0) * 60;
       if (monthlyBudgetMin > 0) {
-        // Phase 15: when toggle enabled, exclude holidays on configured workdays from denominator
-        let qualifyingHolidayDates: string[] | undefined;
-        if (monthlyHoursHolidayDeduction) {
-          qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
-            const d = new Date(dateStr + "T12:00:00");
-            return isConfiguredWorkday(sched, d);
-          });
+        // Phase 15: holiday deduction logic for MONTHLY_HOURS.
+        //
+        // Toggle ON  (monthlyHoursHolidayDeduction=true):
+        //   dailySollMin = budget / totalWorkdays  (fixed rate)
+        //   Holiday days get expectedMin=0 → total reduces by holiday count × dailySollMin
+        //   Matches backend: shouldMin = budget - sum(dailySollMin per holiday on workday)
+        //
+        // Toggle OFF:
+        //   dailySollMin = budget / (totalWorkdays - holidayWorkdays)  (redistribution)
+        //   Holiday days still get expectedMin=0, but the higher daily rate compensates
+        //   → totalMonthExpected stays at full budget
+        //
+        // For flexible Minijobber (no per-day hours): treat Mon-Fri as workdays.
+
+        // Identify qualifying holiday dates (holidays falling on configured workdays)
+        const qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
+          const d = new Date(dateStr + "T12:00:00");
+          if (hasPerDayHours) return isConfiguredWorkday(sched, d);
+          const dow = d.getDay();
+          return dow >= 1 && dow <= 5;
+        });
+
+        // When toggle is ON: use ALL workdays as denominator (holidays will zero out their days)
+        // When toggle is OFF: exclude holidays from denominator so total redistributes to full budget
+        const excludeForDenom = monthlyHoursHolidayDeduction ? [] : qualifyingHolidayDates;
+
+        let workingDays: number;
+        if (hasPerDayHours) {
+          workingDays = countWorkingDaysInMonth(monthStart, sched, excludeForDenom);
+        } else {
+          // Flexible Minijobber: count Mon-Fri days in month
+          const excludeSet = new Set(excludeForDenom);
+          workingDays = 0;
+          const end = endOfMonth(monthStart);
+          const cur = new Date(monthStart);
+          while (cur <= end) {
+            const dow = cur.getDay();
+            if (dow >= 1 && dow <= 5 && !excludeSet.has(format(cur, "yyyy-MM-dd"))) workingDays++;
+            cur.setDate(cur.getDate() + 1);
+          }
         }
-        const workingDays = countWorkingDaysInMonth(monthStart, sched, qualifyingHolidayDates);
         if (workingDays > 0) dailySollMin = Math.round(monthlyBudgetMin / workingDays);
       }
     }
@@ -367,6 +408,7 @@
           hireDateStr,
           monthly,
           dailySollMin,
+          hasPerDayHours,
         ),
       );
     }
@@ -383,6 +425,7 @@
           hireDateStr,
           monthly,
           dailySollMin,
+          hasPerDayHours,
         ),
       );
       cur.setDate(cur.getDate() + 1);
@@ -402,6 +445,7 @@
           hireDateStr,
           monthly,
           dailySollMin,
+          hasPerDayHours,
         ),
       );
     }
@@ -418,6 +462,7 @@
     hireDateStr: string | null = null,
     monthly: boolean = false,
     dailySollMin: number = 0,
+    hasPerDayHours: boolean = true,
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -436,11 +481,14 @@
     const isBeforeHire = hireDateStr ? dateStr < hireDateStr : false;
 
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
-    // Bei MONTHLY_HOURS mit konfigurierten Wochentagen: dailySollMin auf Arbeitstagen setzen
+    // Bei MONTHLY_HOURS: dailySollMin auf konfigurierten Arbeitstagen setzen.
+    // Flexible Minijobber (keine per-day Stunden): Mo-Fr als Arbeitstage annehmen.
     let expectedMin: number;
     if (monthly) {
-      expectedMin =
-        dailySollMin > 0 && sched && isConfiguredWorkday(sched, date) ? dailySollMin : 0;
+      const isWorkday = hasPerDayHours
+        ? dailySollMin > 0 && sched && isConfiguredWorkday(sched, date)
+        : dailySollMin > 0 && dow >= 1 && dow <= 5;
+      expectedMin = isWorkday ? dailySollMin : 0;
     } else {
       expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
     }
@@ -828,6 +876,12 @@
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
   let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
+  // Full-month expected: sum of all current-month days' expectedMin (incl. future).
+  // For MONTHLY_HOURS this reflects the holiday-deducted Soll when the toggle is ON,
+  // because buildCalendarDays computes dailySollMin after excluding qualifying holidays.
+  let totalMonthExpected = $derived(
+    calendarDays.filter((d) => d.isCurrentMonth).reduce((s, d) => s + d.expectedMin, 0),
+  );
   let mBalance = $derived(
     // Use totalExpected for both schedule types: for MONTHLY_HOURS it sums
     // holiday-deducted dailySollMin from calendarDays, matching the backend logic.
@@ -973,7 +1027,7 @@
       <div class="msummary-item">
         <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
         <span class="msummary-value"
-          >{fmtMin(hasMonthlyTarget ? monthlyTarget : totalExpected)}h</span
+          >{fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected)}h</span
         >
       </div>
     {/if}
