@@ -246,7 +246,28 @@ export async function leaveRoutes(app: FastifyInstance) {
         if (ent1 && split.year1Days > 0) {
           const co1 = getEffectiveCarryOver(ent1, start);
           const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
-          if (split.year1Days > avail1) {
+
+          // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement
+          const empForExit = await app.prisma.employee.findUnique({
+            where: { id: employeeId, tenantId },
+            select: { exitDate: true },
+          });
+          const exitDate = empForExit?.exitDate ?? null;
+          if (
+            exitDate &&
+            exitDate.getFullYear() === year1 &&
+            exitDate.getMonth() < 6
+          ) {
+            const proRata = calculateProRataVacation(Number(ent1.totalDays), year1, exitDate);
+            const used = Number(ent1.usedDays);
+            if (split.year1Days > proRata - used) {
+              return reply.code(400).send({
+                error: `Anteiliger Urlaub bei Austritt in H1 überschritten (${proRata} Tage anteilig)`,
+                available: proRata - used,
+                requested: split.year1Days,
+              });
+            }
+          } else if (split.year1Days > avail1) {
             return reply.code(400).send({
               error: `Nicht genug Urlaubstage in ${year1}`,
               available: avail1,
