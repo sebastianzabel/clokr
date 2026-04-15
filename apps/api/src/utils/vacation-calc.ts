@@ -124,6 +124,9 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
   // Employee already left before this year → no entitlement
   if (exitYear < year) return 0;
 
+  // § 5 Abs. 2 BUrlG: Beschäftigung in der zweiten Jahreshälfte → voller Urlaubsanspruch
+  if (exitDate.getMonth() >= 6) return baseDays;
+
   // Count volle Beschäftigungsmonate: month is full only if exitDate >= last day of that month
   let monthsWorked = 0;
   for (let month = 0; month < 12; month++) {
