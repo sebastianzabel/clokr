@@ -500,8 +500,8 @@
     let status: CalStatus = "noExpect";
     if (isFuture) status = "future";
     else if (absence && !absence.half && !isFuture) status = "absence";
-    else if (monthly && expectedMin === 0) {
-      // Monatsstunden without per-day Soll: only show whether worked
+    else if (monthly) {
+      // MONTHLY_HOURS: no per-day targets — only show whether worked, never "missing"
       if (isToday) status = hasEntries ? "today-ok" : "today-empty";
       else if (hasEntries) status = "noExpect";
       else status = "noExpect";
@@ -883,9 +883,11 @@
     calendarDays.filter((d) => d.isCurrentMonth).reduce((s, d) => s + d.expectedMin, 0),
   );
   let mBalance = $derived(
-    // Use totalExpected for both schedule types: for MONTHLY_HOURS it sums
-    // holiday-deducted dailySollMin from calendarDays, matching the backend logic.
-    totalWorked - totalExpected,
+    // For MONTHLY_HOURS with a monthly target: compare worked against the full month budget
+    // (totalMonthExpected), not the partial daily accrual (totalExpected). Using totalExpected
+    // would only count workdays up to today × dailySollMin (e.g. 8 × 45min = 6h instead of 15h).
+    // For FIXED_WEEKLY and no-target MONTHLY_HOURS: keep the up-to-today accrual.
+    hasMonthlyTarget ? totalWorked - totalMonthExpected : totalWorked - totalExpected,
   );
   // Check if there are entries for today
   let hasTodayEntries = $derived(
@@ -1226,11 +1228,11 @@
                 </span>
               {/if}
               <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-              {#if day.expectedMin > 0}
+              {#if day.expectedMin > 0 && !isMonthlyHours}
                 {@const b = day.workedMin - day.expectedMin}
                 <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
               {/if}
-            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture}
+            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
               <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
             {/if}
           </div>
