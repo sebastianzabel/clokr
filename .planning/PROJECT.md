@@ -2,23 +2,13 @@
 
 ## What This Is
 
-Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections. v1.2 shipped a complete UI redesign: glassmorphism design system (3 themes: lila/hell/dunkel), Clockodo-inspired sidebar, redesigned dashboard and calendars with gap-based island grid and spanning leave bars. The app is now feature-complete, reporting-capable, and visually polished for live customer use.
+Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections. v1.2 shipped a complete UI redesign: glassmorphism design system (3 themes: lila/hell/dunkel), Clockodo-inspired sidebar, redesigned dashboard and calendars with gap-based island grid and spanning leave bars. v1.3 shipped MONTHLY_HOURS overhaul: fixed null-budget bugs, lock enforcement on Monatsabschluss, per-employee CARRY_FORWARD/TRACK_ONLY overtime mode, weekday configuration with per-day Soll, and tenant-level holiday deduction toggle. The app now correctly supports the full range of German hourly workers (Minijobber and SVP Teilzeit).
 
-## Current Milestone: v1.3 Monthly Hours Overhaul
+## v1.3 Shipped
 
-**Goal:** Fix broken MONTHLY_HOURS behavior and extend for SVP hourly workers — 0h bug, per-employee overtime carry-forward config, globally configurable holiday deductions, and optional fixed weekdays.
-
-**Target features:**
-- Bug: `monthlyHours = 0/null` → no daily Soll, no +/- display in calendar
-- Overtime handling: per-employee configurable (`CARRY_FORWARD` vs `TRACK_ONLY`)
-- Feiertage/Absences: globally configurable whether they reduce monthly Soll for MONTHLY_HOURS workers (via TenantConfig)
-- Fixed weekdays (optional): MONTHLY_HOURS employees can configure working days → daily Soll = monthly budget ÷ working days in month
-
-## v1.2 Shipped
-
-**Shipped:** 2026-04-13
+**Shipped:** 2026-04-14
 **Stack:** Fastify + SvelteKit 5 (runes) + Prisma + PostgreSQL 18
-**Codebase:** ~65,000 LOC (TypeScript + Svelte; +13K lines from UI redesign)
+**Codebase:** ~72,000 LOC (TypeScript + Svelte; +6,970 lines from MONTHLY_HOURS overhaul)
 
 ## Core Value
 
@@ -71,14 +61,17 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 - ✓ Zeiterfassung calendar: gap-based island grid (3px, 6px cells), status stripes, token legend — v1.2
 - ✓ Leave calendar: gap-based cells, continuous spanning bars for multi-day leave, inset drag ring — v1.2
 - ✓ card-animate entrance animation consistent across all admin sub-pages — v1.2
+- ✓ MONTHLY_HOURS null-budget (0/null monthlyHours): no 422 error, pure tracking mode, no daily Soll, no +/- display — v1.3
+- ✓ ArbZG §3 24-week average check skipped for MONTHLY_HOURS employees — v1.3
+- ✓ Monatsabschluss lock enforced on POST /time-entries (SaldoSnapshot composite key) — v1.3
+- ✓ Atomic unlock-month endpoint (snapshot delete + entry unlock in $transaction) with audit trail — v1.3
+- ✓ Per-employee overtime handling mode: CARRY_FORWARD / TRACK_ONLY for MONTHLY_HOURS schedules — v1.3
+- ✓ Weekday configuration per MONTHLY_HOURS employee (boolean chip picker, 7 weekday flags) — v1.3
+- ✓ Per-day Soll in calendar for MONTHLY_HOURS = budget ÷ working days in month — v1.3
+- ✓ Tenant-level holiday deduction toggle: public holidays on configured workdays reduce monthly Soll — v1.3
+- ✓ TRACK_ONLY retroactive snapshot guard: isTrackOnly forces carryOver=0 in recalculate-snapshots — v1.3
 
 ### Active
-
-**v1.3 — Monthly Hours Overhaul:**
-- [ ] Fix: MONTHLY_HOURS with monthlyHours = 0/null shows no daily Soll and no +/- in calendar
-- [ ] Feature: Per-employee overtime handling config for MONTHLY_HOURS (CARRY_FORWARD vs TRACK_ONLY)
-- [ ] Feature: TenantConfig toggle — whether Feiertage/absences reduce monthly Soll for MONTHLY_HOURS workers
-- [ ] Feature: Optional fixed weekdays for MONTHLY_HOURS (enables daily Soll = budget ÷ working days in month)
 
 **Deferred (v1.4+):**
 - [ ] Leave-Antrag-Modal visual polish (UI-12) — deferred from v1.2
@@ -103,11 +96,13 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 - v1.0 shipped 2026-03-31: 3 phases, 15 plans, 28 tasks
 - v1.1 shipped 2026-04-12: 4 phases, 12 plans, 16 requirements; 44 files changed, +8,405/-793 lines
 - v1.2 shipped 2026-04-13: 3 phases, 9 plans; 81 files changed, +12,939/-1,392 lines (2 days)
+- v1.3 shipped 2026-04-14: 5 phases, 11 plans; 42 files changed, +6,970/-182 lines (2 days)
 - Test coverage: lines≥40%, functions≥41%, branches≥28% (thresholds enforced 4pp below baseline)
 - Known gap: tenant isolation gap on GET /employees/:id — pre-existing, documented in test comments
 - E2E tests: desktop-chrome, mobile-chrome, tablet; storageState auth shared
-- Saldo reads are now O(1) via stored OvertimeAccount.balanceHours; snapshot-based architecture (Issue #6) is next major performance milestone
-- UI: 3 active themes (lila/hell/dunkel), glassmorphism tokens, Clockodo-style sidebar; Phase 11 (mobile/admin/reports polish) deferred to v1.3
+- Saldo reads are O(1) via stored OvertimeAccount.balanceHours; snapshot-based architecture (Issue #6) is next major performance milestone
+- UI: 3 active themes (lila/hell/dunkel), glassmorphism tokens, Clockodo-style sidebar
+- MONTHLY_HOURS schedule type now fully correct: null budget, lock enforcement, carry-forward/track-only, weekday config, holiday deduction
 
 ## Constraints
 
@@ -143,6 +138,11 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 | Gap-based calendar grid (not shared borders) | 3px gap + border-radius on cells gives island look; padding:3px prevents radius clipping at overflow:hidden boundary | ✓ Good |
 | Spanning leave bars via CSS classes (bar-start/middle/end) | Segment-per-cell approach lets week-row wrap naturally without JS layout math | ✓ Good |
 | card-animate applied to content, not skeleton | Skeleton is ephemeral — animation belongs on content that persists | ✓ Good |
+| overtimeMode as String (not Prisma enum) | Avoids schema migration complexity; Zod enum validates at API boundary | ✓ Good |
+| isPureTracking guard server-side (not client-supplied) | Prevents client from bypassing saldo logic by sending false schedule data | ✓ Good |
+| isTrackOnly guard in all 4 computation sites | Ensures TRACK_ONLY carryOver=0 even in retroactive recalculation paths | ✓ Good |
+| TenantConfig.monthlyHoursHolidayDeduction @default(false) | Zero-migration for existing tenants; opt-in toggle semantics | ✓ Good |
+| Lock check via SaldoSnapshot composite key (not entry count) | Authoritative even when no entries exist yet for the month | ✓ Good |
 
 ## Evolution
 
@@ -165,4 +165,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-13 — v1.3 milestone started (Monthly Hours Overhaul: 0h bug, overtime carry-forward, fixed weekdays)_
+_Last updated: 2026-04-14 after v1.3 milestone — Monthly Hours Overhaul shipped_

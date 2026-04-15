@@ -109,6 +109,113 @@
 
 ---
 
+## Milestone: v1.2 — UI Polish
+
+**Shipped:** 2026-04-13
+**Phases:** 3 (08-10) | **Plans:** 9 | **Commits:** ~58 | **Duration:** 2 days
+
+### What Was Built
+
+- Glass token system: 10 new tokens (`--glass-bg`, `--glass-blur`, `--glass-highlight`, etc.), `@supports (backdrop-filter)` fallback, `prefers-reduced-transparency` media query
+- 3 new themes (lila/hell/dunkel) replacing 4 old themes (nacht/wald/schiefer/pflaume) — ~415 lines removed
+- Sidebar redesigned: dark Clockodo-style, icon opacity system (0.6→1.0 on active), compact 8px/16px spacing, rgba white text
+- Card/button/badge overhaul: 18px border-radius cards, pill buttons (9999px), theme dot-picker replaces text dropdown
+- Dashboard: glass stat-cards, widget headers standardized (title-left/action-right), cell-badge semantic colors, today-column inset ring
+- Zeiterfassung calendar: gap-based island grid (3px gaps, 6px rounded cells), colored left-border status stripes, token-only legend (no hardcoded hex)
+- Leave calendar: gap-based cells, continuous spanning bars for multi-day leave (bar-start/middle/end CSS classes), inset drag selection ring
+- `/overtime` route deleted (dead code); card-animate added consistently across 6 admin sub-pages missing it
+
+### What Worked
+
+- **Gap-based calendar grid**: replacing border-based layout with `gap: 3px` + `border-radius: 6px` on cells was a single CSS change with dramatic visual impact; the `padding: 3px` on `.cal-grid` was a non-obvious but critical fix to prevent radius clipping at `overflow: hidden` boundaries
+- **Spanning bar CSS classes** (bar-start/middle/end): segment-per-cell approach let week-row wrapping happen naturally without JS layout math; far simpler than a grid overlay approach
+- **Discussion phase before UI phases**: capturing design decisions (glassmorphism subtlety level, "one dominant glass surface" principle, Clockodo inspiration) in CONTEXT.md eliminated back-and-forth during execution
+- **Token-first approach**: replacing all hardcoded hex values with CSS custom properties in Phase 8 meant Phase 10 color changes were 1-line edits
+- **Quick tasks mid-milestone**: card-animate consistency fix and leave bar gap fix were handled as quick tasks without interrupting phase flow
+
+### What Was Inefficient
+
+- **SUMMARY.md one_liner still garbled**: gsd-tools milestone complete extracted incomplete sentences ("Replaced 5 old tokens with 10 new tokens:") as accomplishments; required manual MILESTONES.md correction again — same issue as v1.1
+- **Phase 11 not executed**: 5 requirements (UI-12 through UI-17 except UI-16) deferred to v1.3; this was a scope decision, not an inefficiency, but means the milestone is incomplete on paper
+- **UAT left at 7 pending items**: human UAT items were defined but not verified before phase completion; milestone was approved based on user visual review, not structured test execution
+- **leave calendar fix required post-plan quick tasks**: bar segments had visible gaps at 3px grid boundary, requiring `fix/leave-cal-bar-gaps` branch and two fix commits after Phase 10 was "complete"
+
+### Patterns Established
+
+- `gap: 3px` + `padding: 3px` on `.cal-grid`, `border-radius: 6px` on `.cal-cell` — canonical island calendar grid pattern; `padding` on grid prevents radius clipping at `overflow: hidden` parent boundary
+- `color-mix(in srgb, var(--token) N%, transparent)` for tinted backgrounds — dark-theme-safe alternative to `rgba()` with hardcoded values
+- CSS class variants for spanning UI elements: `bar-start` / `bar-middle` / `bar-end` lets CSS handle visual joins without JS geometry
+- `card-animate` on content wrapper (not skeleton) — skeleton is ephemeral; animation belongs on the element that persists after load
+
+### Key Lessons
+
+1. **Design token discipline pays compound interest**: every hex value replaced in Phase 8 saved a theme-specific fix in Phase 10; the debt is invisible until you try to theme something
+2. **Gap-based grids beat border-based grids for island UX**: `border-collapse: collapse` makes theming impossible; gap + individual border-radius is more CSS, but zero hacks
+3. **SUMMARY.md one_liner field is still not being written correctly**: 3 milestones in, gsd-tools still can't extract clean one_liners; write them explicitly at plan-end, always
+4. **Post-phase fix branches add commit noise**: the `fix/leave-cal-bar-gaps` branch required its own PR/merge flow; consider folding visual polish fixes into the same plan rather than branching post-verification
+5. **Defer Phase 11 explicitly, not silently**: UI-12 through UI-17 just didn't happen — next milestone planning should explicitly decide whether to carry them forward or drop them
+
+### Cost Observations
+
+- Sessions: ~2 intensive days (2026-04-11 → 2026-04-13)
+- Notable: fastest milestone by LOC/day — 13K lines across 81 files in 2 days; UI work is high-volume but low-complexity per change
+- Quick tasks: 2 fix commits (card-animate consistency, leave bar gaps) added ~15 commits to the milestone range
+
+---
+
+## Milestone: v1.3 — Monthly Hours Overhaul
+
+**Shipped:** 2026-04-14
+**Phases:** 5 (11-15) | **Plans:** 11 | **Commits:** ~73 | **Duration:** 2 days
+
+### What Was Built
+
+- Fixed MONTHLY_HOURS null-budget bugs: no 422 on save, pure tracking mode with no daily Soll/+/- display, ArbZG 24-week average warning correctly skipped
+- Monatsabschluss lock enforcement: POST /time-entries blocked (SaldoSnapshot composite key, HTTP 403), atomic unlock-month endpoint with $transaction + full audit trail, 15-day grace period in auto-close
+- Lock UI: Abgeschlossen badge, Entsperren button for managers, hidden edit/delete controls, lock icon in calendar cells — all derived from loaded entry data without extra requests
+- Per-employee overtime mode: CARRY_FORWARD accumulates excess hours in OvertimeAccount; TRACK_ONLY records balance but holds carryOver at 0 across all 4 computation sites
+- Weekday configuration: boolean chip picker in admin (eMonWd…eSunWd flags), per-day Soll = monthly budget ÷ working days in month displayed in calendar
+- Tenant holiday deduction toggle: public holidays on configured workdays reduce monthly Soll when enabled; applied symmetrically at all 4 computation sites
+- Post-audit fix: INTEG-01 — missing isTrackOnly guard in recalculate-snapshots.ts; TRACK_ONLY employees were accumulating carry-over during retroactive schedule-change recalculation
+
+### What Worked
+
+- **Milestone audit caught a real bug**: INTEG-01 (missing isTrackOnly guard in recalculate-snapshots.ts) would have silently corrupted TRACK_ONLY overtime balances on schedule changes; the audit found it, UAT confirmed the fix
+- **isPureTracking guard pattern** established in Phase 11 propagated cleanly through Phases 12-15; each new computation site followed the same guard structure
+- **4-site consistency rule** for saldo computation (updateOvertimeAccount, close-month, auto-close, recalculate-snapshots) made it easy to verify TENANT-01 toggle coverage — check all 4, done
+- **Phase 15 UAT driven by real user testing**: both issues found (dashboard widget showing week Soll instead of month, toggle inversion) were caught by live testing, not just code inspection
+- **Nyquist validation on Phase 15**: 17/17 tests green before milestone close gave high confidence in the holiday deduction logic
+
+### What Was Inefficient
+
+- **Two phases (11, 15) had no VERIFICATION.md**: audit flagged them as "orphaned"; UAT substituted but the formal verification artifact was missing — caused `gaps_found` audit status that required manual promotion to `passed`
+- **UAT for Phase 15 required a debug + fix cycle**: the dashboard MONTHLY_HOURS widget was showing week-scoped Soll instead of month-scoped; root cause (calcExpectedMinutesTz ignoring date range for MONTHLY_HOURS) required a separate debug session and WR-01..04 fix commits
+- **SUMMARY.md one_liner extraction broken again**: gsd-tools milestone complete returned "One-liner:" placeholders for 6 of 11 plans; MILESTONES.md accomplishments required manual review — same issue for the 4th consecutive milestone
+
+### Patterns Established
+
+- `isTrackOnly = schedule.overtimeMode === "TRACK_ONLY"` guard before carryOver write — must be applied at ALL saldo computation sites (updateOvertimeAccount, close-month, auto-close, recalculate-snapshots)
+- `isPureTracking = schedule.monthlyHours == null || schedule.monthlyHours === 0` — server-side guard, never trust client-supplied schedule type
+- SaldoSnapshot composite key as lock authority — more robust than entry count; works even when no entries exist for the month
+- `periodType: MONTHLY` + `periodStart` composite unique key pattern for lock detection in POST /time-entries
+- Boolean Prisma field with `@default(false)` for feature toggles (TenantConfig.monthlyHoursHolidayDeduction) — zero-migration for existing tenants
+
+### Key Lessons
+
+1. **Run `/gsd:audit-milestone` before completion, not after** — this milestone had `gaps_found` status that blocked completion until INTEG-01 was fixed; the audit is most valuable when run before UAT, not after
+2. **VERIFICATION.md is not optional for audit compliance** — phases without VERIFICATION.md always produce orphaned requirements in the audit; even a brief verification pass prevents this
+3. **"4 computation sites" is a feature contract, not an implementation detail** — when adding saldo modifiers (holiday deduction, TRACK_ONLY), explicitly list all 4 sites in the plan and verify each; partial coverage causes silent discrepancies
+4. **Dashboard widget scope matters**: MONTHLY_HOURS dashboard tile used a week-scoped API call instead of month-scoped; for hourly workers, monthly is the correct granularity — validate widget scope in Phase planning
+5. **SUMMARY.md one_liner is still not being written** — 4 milestones in, same extraction failure; this needs to be a required field in the plan template, checked by the executor before completing each plan
+
+### Cost Observations
+
+- Sessions: 2 days (2026-04-13 → 2026-04-14)
+- Notable: 5 phases completed in 2 days; post-execution UAT revealed real issues (dashboard scope bug, toggle inversion) that required a debug session — actual shipping took longer than execution
+- Audit value: ~1 hour of audit + fix work prevented a silent data corruption bug (INTEG-01) from reaching production
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -117,6 +224,8 @@
 | --------- | ------- | ------ | ------------------ |
 | v1.0      | ~95     | 3      | First milestone — baseline established |
 | v1.1      | ~37     | 4      | Yolo mode sprint; worktree merge safety still a gap |
+| v1.2      | ~58     | 3      | Pure UI milestone; fastest LOC/day; SUMMARY one_liner still broken |
+| v1.3      | ~73     | 5      | Backend-heavy overhaul; audit caught real bug (INTEG-01); UAT found 2 real issues |
 
 ### Cumulative Quality
 
@@ -124,3 +233,5 @@
 | --------- | ---------- | --------- | ----------------- |
 | v1.0      | ~150+      | 5 flows   | lines=40%, fn=41%, branches=28% |
 | v1.1      | ~190+      | 5 flows   | lines=40%, fn=41%, branches=28% (unchanged) |
+| v1.2      | ~190+      | 5 flows   | lines=40%, fn=41%, branches=28% (UI only — no new tests) |
+| v1.3      | ~220+      | 5 flows   | lines=40%, fn=41%, branches=28% (13+ integration tests added: lock guard, unlock-month, minijob) |

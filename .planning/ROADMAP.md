@@ -5,7 +5,7 @@
 - ✅ **v1.0 Production Readiness** — Phases 1-3 (shipped 2026-03-31)
 - ✅ **v1.1 Reporting & DATEV** — Phases 4-7 (shipped 2026-04-12)
 - ✅ **v1.2 UI Polish** — Phases 8-10 (shipped 2026-04-13)
-- 🔄 **v1.3 Monthly Hours Overhaul** — Phases 11-15 (in progress)
+- ✅ **v1.3 Monthly Hours Overhaul** — Phases 11-15 (shipped 2026-04-14)
 
 ## Phases
 
@@ -42,13 +42,15 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 </details>
 
 <details>
-<summary>🔄 v1.3 Monthly Hours Overhaul (Phases 11-15) — IN PROGRESS</summary>
+<summary>✅ v1.3 Monthly Hours Overhaul (Phases 11-15) — SHIPPED 2026-04-14</summary>
+
+See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 
 - [x] Phase 11: Schema Bug Fixes — MONTHLY_HOURS (2/2 plans) — completed 2026-04-13
 - [x] Phase 12: Monatsabschluss Lock Enforcement (3/3 plans) — completed 2026-04-13
 - [x] Phase 13: Overtime Handling Mode — CARRY_FORWARD / TRACK_ONLY (3/3 plans) — completed 2026-04-13
 - [x] Phase 14: Weekday Configuration & Per-Day Soll (2/2 plans) — completed 2026-04-13
-- [ ] Phase 15: Tenant Holiday Deduction Configuration (0/3 plans)
+- [x] Phase 15: Tenant Holiday Deduction Configuration (3/3 plans) — completed 2026-04-13
 
 </details>
 
@@ -70,7 +72,7 @@ See `.planning/milestones/v1.1-ROADMAP.md` for full details.
 | 12. Lock Enforcement          | v1.3 | 3/3 | Complete | 2026-04-13 |
 | 13. Overtime Handling Mode    | v1.3 | 3/3 | Complete   | 2026-04-13 |
 | 14. Weekday Config & Per-Day Soll | v1.3 | 2/2 | Complete   | 2026-04-13 |
-| 15. Tenant Holiday Deduction  | v1.3 | 0/3 | Not Started | — |
+| 15. Tenant Holiday Deduction  | v1.3 | 3/3 | Complete   | 2026-04-13 |
 
 ### Phase 12: Monatsabschluss Lock Enforcement
 
@@ -101,12 +103,12 @@ Plans:
 **Goal:** Allow tenant admins to configure whether public holidays on a MONTHLY_HOURS employee's configured workdays reduce the monthly Soll.
 **Requirements**: TENANT-01
 **Depends on:** Phase 14
-**Plans:** 3 plans
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 15-01-PLAN.md — Schema field + Settings API + toggle persistence test
-- [ ] 15-02-PLAN.md — Backend holiday deduction logic at all 4 computation sites
-- [ ] 15-03-PLAN.md — Frontend admin toggle + calendar Soll display
+- [x] 15-01-PLAN.md — Schema field + Settings API + toggle persistence test
+- [x] 15-02-PLAN.md — Backend holiday deduction logic at all 4 computation sites
+- [x] 15-03-PLAN.md — Frontend admin toggle + calendar Soll display
 
 ## Backlog
 
@@ -116,3 +118,15 @@ Plans:
 
 **Status:** Backlog — candidate for Phase 16+
 **Related:** Phase 14 (Weekday Configuration)
+
+### Phase 16: § 5 BUrlG June 30th rule: full vacation entitlement on exit after June 30
+
+**Status:** ✓ Complete
+**Goal:** Implement § 5 Abs. 2 BUrlG "Halbjahresregel": employees exiting in H2 (July 1+) receive the full annual vacation entitlement; H1 exits are capped at pro-rata. Expose effectiveEntitlementDays in GET /entitlements.
+**Requirements**: BURLG-H2-01, BURLG-H2-02, BURLG-H2-03, BURLG-H2-04, BURLG-H2-05
+**Depends on:** Phase 15
+**Plans:** 2/2 plans complete
+
+Plans:
+- [x] 16-01-PLAN.md — calculateProRataVacation H2 branch (TDD) + H2 test coverage
+- [x] 16-02-PLAN.md — Leave booking H1 cap + GET /entitlements effectiveEntitlementDays
