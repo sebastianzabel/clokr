@@ -128,6 +128,19 @@ describe("calculateProRataVacation", () => {
     expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 5, 30))).toBe(15);
   });
 
+  it("returns baseDays when exitDate is Jul 1 (H2 — § 5 Abs. 2 BUrlG)", () => {
+    // July = month index 6 → H2 → full entitlement, no pro-rata
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 6, 1))).toBe(30);
+  });
+
+  it("returns baseDays when exitDate is Aug 15 (H2)", () => {
+    expect(calculateProRataVacation(30, YEAR, new Date(YEAR, 7, 15))).toBe(30);
+  });
+
+  it("returns baseDays for non-30 base on H2 exit (base=25, Jul 1)", () => {
+    expect(calculateProRataVacation(25, YEAR, new Date(YEAR, 6, 1))).toBe(25);
+  });
+
   it("returns 12.5 when exitDate is Jun 15 and base is 30 (5/12, rounded up)", () => {
     // Jun 15 is NOT the last day of June → 5 volle Monate (Jan-May)
     // 30 × 5/12 = 12.5 → already a half-day, no rounding needed
