@@ -238,6 +238,14 @@ export async function leaveRoutes(app: FastifyInstance) {
           ? splitDaysAcrossYears(start, end, body.halfDay, holidays)
           : { year1Days: days, year2Days: 0, year1, year2 };
 
+        // § 5 Abs. 2 BUrlG: fetch exit date once so both year-1 and year-2 blocks can use it.
+        // Hoisted out of the year-1 guard so cross-year bookings can apply the H1 cap to year 2.
+        const empForExit = await app.prisma.employee.findUnique({
+          where: { id: employeeId, tenantId },
+          select: { exitDate: true },
+        });
+        const exitDate = empForExit?.exitDate ?? null;
+
         // ── Year 1: check entitlement ──
         await autoCarryOver(app.prisma, tenantId, employeeId, leaveTypeId, year1);
         const ent1 = await app.prisma.leaveEntitlement.findUnique({
@@ -247,17 +255,13 @@ export async function leaveRoutes(app: FastifyInstance) {
           const co1 = getEffectiveCarryOver(ent1, start);
           const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
 
-          // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement
-          const empForExit = await app.prisma.employee.findUnique({
-            where: { id: employeeId, tenantId },
-            select: { exitDate: true },
-          });
-          const exitDate = empForExit?.exitDate ?? null;
-          if (
-            exitDate &&
-            exitDate.getFullYear() === year1 &&
-            exitDate.getMonth() < 6
-          ) {
+          // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement.
+          // Carry-over days are prior-year entitlement already accrued and are not subject to
+          // § 5 Abs. 2 BUrlG pro-ration (which applies only to the current-year "Urlaubsanspruch").
+          // Therefore only `totalDays` (current-year entitlement) is passed to calculateProRataVacation,
+          // and the cap comparison uses `usedDays` directly (carry-over usage already deducted by
+          // the normal avail1 path; the H1 path caps new-year days independently).
+          if (exitDate && exitDate.getFullYear() === year1 && exitDate.getMonth() < 6) {
             const proRata = calculateProRataVacation(Number(ent1.totalDays), year1, exitDate);
             const used = Number(ent1.usedDays);
             if (split.year1Days > proRata - used) {
@@ -289,7 +293,16 @@ export async function leaveRoutes(app: FastifyInstance) {
           });
           if (ent2) {
             const co2 = getEffectiveCarryOver(ent2, end);
-            const avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
+            let avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
+
+            // § 5 Abs. 2 BUrlG: apply H1 cap symmetrically to year 2 when employee exits in H1
+            // of year 2 (mirrors the year-1 check above for cross-year bookings).
+            // Carry-over is excluded from the cap base for the same reason as year 1.
+            if (exitDate && exitDate.getFullYear() === year2 && exitDate.getMonth() < 6) {
+              const proRata2 = calculateProRataVacation(Number(ent2.totalDays), year2, exitDate);
+              avail2 = Math.min(avail2, proRata2 - Number(ent2.usedDays));
+            }
+
             if (split.year2Days > avail2) {
               return reply.code(400).send({
                 error: `Nicht genug Urlaubstage in ${year2}`,
@@ -782,30 +795,34 @@ export async function leaveRoutes(app: FastifyInstance) {
             });
             if (empWithExit?.exitDate) {
               const exitYear = empWithExit.exitDate.getFullYear();
-              const vacLeaveType = await app.prisma.leaveType.findFirst({
-                where: { tenantId: empWithExit.tenantId, name: "Urlaub" },
-              });
-              if (vacLeaveType) {
-                const entitlement = await app.prisma.leaveEntitlement.findFirst({
-                  where: {
-                    employeeId: existing.employeeId,
-                    leaveTypeId: vacLeaveType.id,
-                    year: exitYear,
-                  },
+              // § 5 Abs. 2 BUrlG: H2 exits (July–December) receive full entitlement — no pro-rata
+              // cap applies, so no warning is possible. Guard against false-positive warnings.
+              if (empWithExit.exitDate.getMonth() < 6) {
+                const vacLeaveType = await app.prisma.leaveType.findFirst({
+                  where: { tenantId: empWithExit.tenantId, name: "Urlaub" },
                 });
-                if (entitlement) {
-                  const proRata = calculateProRataVacation(
-                    Number(entitlement.totalDays),
-                    exitYear,
-                    empWithExit.exitDate,
-                  );
-                  const used = Number(entitlement.usedDays);
-                  if (used > proRata) {
-                    proRataWarning = {
-                      used,
-                      entitlement: proRata,
-                      message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
-                    };
+                if (vacLeaveType) {
+                  const entitlement = await app.prisma.leaveEntitlement.findFirst({
+                    where: {
+                      employeeId: existing.employeeId,
+                      leaveTypeId: vacLeaveType.id,
+                      year: exitYear,
+                    },
+                  });
+                  if (entitlement) {
+                    const proRata = calculateProRataVacation(
+                      Number(entitlement.totalDays),
+                      exitYear,
+                      empWithExit.exitDate,
+                    );
+                    const used = Number(entitlement.usedDays);
+                    if (used > proRata) {
+                      proRataWarning = {
+                        used,
+                        entitlement: proRata,
+                        message: `Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt (${used} Tage) als ihm anteilig zusteht (${proRata} Tage). Bitte prüfen Sie, ob eine Rückforderung nötig ist.`,
+                      };
+                    }
                   }
                 }
               }
