@@ -1,5 +1,41 @@
 # Milestones
 
+## v1.3 Monthly Hours Overhaul (Shipped: 2026-04-14)
+
+**Phases completed:** 4 phases, 11 plans, 12 tasks
+
+**Key accomplishments:**
+
+- SaldoSnapshot-based POST /time-entries lock guard (403), atomic unlock-month endpoint with audit trail, and configurable 15-day grace period in auto-close-month
+- Proactive lock feedback in the time-entries page: Abgeschlossen badge, Entsperren button for managers, hidden edit/delete for locked rows, and lock icon in calendar cells — all derived from already-loaded entry data.
+- 13 Vitest integration tests covering POST /time-entries lock guard (D-04/D-05), unlock-month role check and atomicity (D-01/D-02/D-03), tenant isolation (T-12-05), and close-month earlyClose response (D-12) — all green
+- One-liner:
+- One-liner:
+- Überstunden-Modus select field added to schedule edit modal for MONTHLY_HOURS employees, wired to PUT /settings/work/:employeeId with German labels and hint text.
+- One-liner:
+- One-liner:
+- One-liner:
+- Toggle-guarded dailySoll holiday deduction applied symmetrically across all 4 saldo computation sites (updateOvertimeAccount, close-month, auto-close, recalculate-snapshots), plus computed-holiday merge bugfix in recalculate-snapshots
+- One-liner:
+
+---
+
+## v1.2 UI Polish (Shipped: 2026-04-13)
+
+**Phases completed:** 3 phases, 9 plans, 12 tasks
+
+**Key accomplishments:**
+
+- Glass token system overhauled — 10 new tokens (`--glass-bg`, `--glass-blur`, `--glass-highlight`, etc.), 3 new themes (lila, hell, dunkel), old nacht/wald/schiefer themes removed
+- Sidebar modernized to Clockodo-style dark nav — icon opacity 0.6→1.0 on active, compact 8px/16px spacing, rgba white text system
+- Card, button, input, and badge components overhaul — 18px border-radius cards, pill buttons (9999px), theme dot-picker replaces text dropdown
+- Dashboard redesigned — glass stat-cards, widget headers standardized to title-left/action-right, cell-badge semantic colors, today-column inset ring
+- Zeiterfassung calendar redesigned — gap-based island grid (3px gaps, 6px rounded cells), colored left-border status stripes, token-only legend
+- Leave calendar redesigned — gap-based cells, continuous spanning bars for multi-day leave (left-capped/flat/right-capped), inset drag selection ring
+- card-animate entrance animation added consistently across all 6 admin sub-pages previously missing it
+
+---
+
 ## v1.1 Reporting & DATEV (Shipped: 2026-04-12)
 
 **Phases completed:** 4 phases (04-07), 12 plans, 16 requirements delivered

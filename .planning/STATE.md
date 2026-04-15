@@ -4,7 +4,7 @@ milestone: v1.1
 milestone_name: Reporting & DATEV
 status: complete
 last_updated: "2026-04-12T00:00:00.000Z"
-last_activity: 2026-04-12 — v1.1 milestone archived
+last_activity: 2026-04-15 — Phase 16 complete (§ 5 Abs. 2 BUrlG Halbjahresregel)
 progress:
   total_phases: 4
   completed_phases: 4

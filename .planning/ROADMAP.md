@@ -121,11 +121,12 @@ Plans:
 
 ### Phase 16: § 5 BUrlG June 30th rule: full vacation entitlement on exit after June 30
 
+**Status:** ✓ Complete
 **Goal:** Implement § 5 Abs. 2 BUrlG "Halbjahresregel": employees exiting in H2 (July 1+) receive the full annual vacation entitlement; H1 exits are capped at pro-rata. Expose effectiveEntitlementDays in GET /entitlements.
 **Requirements**: BURLG-H2-01, BURLG-H2-02, BURLG-H2-03, BURLG-H2-04, BURLG-H2-05
 **Depends on:** Phase 15
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 16-01-PLAN.md — calculateProRataVacation H2 branch (TDD) + H2 test coverage
-- [ ] 16-02-PLAN.md — Leave booking H1 cap + GET /entitlements effectiveEntitlementDays
+- [x] 16-01-PLAN.md — calculateProRataVacation H2 branch (TDD) + H2 test coverage
+- [x] 16-02-PLAN.md — Leave booking H1 cap + GET /entitlements effectiveEntitlementDays
