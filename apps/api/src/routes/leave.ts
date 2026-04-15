@@ -1295,6 +1295,13 @@ export async function leaveRoutes(app: FastifyInstance) {
         })
       ).map((t) => t.id);
 
+      // Fetch exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG)
+      const empForEntitlement = await app.prisma.employee.findUnique({
+        where: { id: employeeId, tenantId },
+        select: { exitDate: true },
+      });
+      const employeeExitDate = empForEntitlement?.exitDate ?? null;
+
       // usedDays aus tatsächlich genehmigten Anträgen neu berechnen
       for (const row of rows) {
         const isVacation = vacationNames.includes(row.leaveType.name);
@@ -1321,15 +1328,23 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      // typeCode + effektiven Resturlaub im Response markieren
-      return rows.map((r) => ({
-        ...r,
-        typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
-          ([, d]) => d.name === r.leaveType.name,
-        )?.[0] ?? "VACATION") as TypeCode,
-        effectiveCarryOverDays: getEffectiveCarryOver(r, new Date()),
-        carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
-      }));
+      // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
+      return rows.map((r) => {
+        const isVacationRow = vacationNames.includes(r.leaveType.name);
+        const effectiveEntitlementDays =
+          isVacationRow && employeeExitDate
+            ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
+            : Number(r.totalDays);
+        return {
+          ...r,
+          typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
+            ([, d]) => d.name === r.leaveType.name,
+          )?.[0] ?? "VACATION") as TypeCode,
+          effectiveCarryOverDays: getEffectiveCarryOver(r, new Date()),
+          carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
+          effectiveEntitlementDays,
+        };
+      });
     },
   });
 }
