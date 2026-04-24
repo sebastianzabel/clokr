@@ -541,10 +541,10 @@ export async function reportRoutes(app: FastifyInstance) {
       // ── DATEV LODAS ASCII-Import Format ────────────────────────────
       // Produces a CP1252-encoded .txt file with three INI sections:
       //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
-      //   [Satzbeschreibung] – describes the 11-field semicolon format of Bewegungsdaten rows
+      //   [Satzbeschreibung] – describes the 12-field semicolon format of Bewegungsdaten rows
       //   [Bewegungsdaten]   – actual employee rows via datevLine() helper
       //
-      // 11 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
+      // 12 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
       // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
       // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
       //   CONFIGURABLE:
@@ -602,23 +602,26 @@ export async function reportRoutes(app: FastifyInstance) {
           .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
       }
 
-      /** DATEV-Zeile: 11 Felder, leere Felder = Semikolon */
+      /** DATEV-Zeile: 12 Felder, leere Felder = Semikolon */
       function datevLine(
         pn: string,
-        tag: string,
+        name: string,
+        datum: string,
         ausfall: string,
         lohnart: number,
         stunden: number,
         tage: number,
       ): string {
-        return `${pn};${tag};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
+        return `${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
       }
 
       for (const emp of employees) {
         const pn = emp.employeeNumber;
-        // Kalendertag = letzter Tag des Monats (DATEV-Konvention für Monatswerte)
+        // Employee name for DATEV identification
+        const name = `${emp.lastName} ${emp.firstName}`;
+        // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
         const lastDay = new Date(y, m, 0).getDate();
-        const tag = String(lastDay).padStart(2, "0");
+        const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
 
         // Arbeitsstunden
         const workedMinutes = emp.timeEntries.reduce((sum, e) => {
@@ -644,17 +647,20 @@ export async function reportRoutes(app: FastifyInstance) {
         const maternityDays = daysForName(emp, "Mutterschutz");
         const parentalDays = daysForName(emp, "Elternzeit");
 
-        // DATEV-Zeilen (Format: 11 Felder, Semikolon-getrennt)
-        lines.push(datevLine(pn, tag, "", lna.normal, workedHours, 0));
-        if (sickDays > 0) lines.push(datevLine(pn, tag, "K", lna.krank, 0, sickDays));
-        if (sickChildDays > 0) lines.push(datevLine(pn, tag, "K", 201, 0, sickChildDays));
-        if (vacationDays > 0) lines.push(datevLine(pn, tag, "U", lna.urlaub, 0, vacationDays));
-        if (overtimeCompDays > 0) lines.push(datevLine(pn, tag, "U", 301, 0, overtimeCompDays));
-        if (specialDays > 0) lines.push(datevLine(pn, tag, "S", lna.sonderurlaub, 0, specialDays));
-        if (educationDays > 0) lines.push(datevLine(pn, tag, "S", 303, 0, educationDays));
-        if (unpaidDays > 0) lines.push(datevLine(pn, tag, "", 304, 0, unpaidDays));
-        if (maternityDays > 0) lines.push(datevLine(pn, tag, "", 310, 0, maternityDays));
-        if (parentalDays > 0) lines.push(datevLine(pn, tag, "", 320, 0, parentalDays));
+        // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt)
+        lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
+        if (sickDays > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDays));
+        if (sickChildDays > 0) lines.push(datevLine(pn, name, datum, "K", 201, 0, sickChildDays));
+        if (vacationDays > 0)
+          lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDays));
+        if (overtimeCompDays > 0)
+          lines.push(datevLine(pn, name, datum, "U", 301, 0, overtimeCompDays));
+        if (specialDays > 0)
+          lines.push(datevLine(pn, name, datum, "S", lna.sonderurlaub, 0, specialDays));
+        if (educationDays > 0) lines.push(datevLine(pn, name, datum, "S", 303, 0, educationDays));
+        if (unpaidDays > 0) lines.push(datevLine(pn, name, datum, "", 304, 0, unpaidDays));
+        if (maternityDays > 0) lines.push(datevLine(pn, name, datum, "", 310, 0, maternityDays));
+        if (parentalDays > 0) lines.push(datevLine(pn, name, datum, "", 320, 0, parentalDays));
       }
 
       await app.audit({
@@ -673,7 +679,7 @@ export async function reportRoutes(app: FastifyInstance) {
         "Datumsangaben=DDMMJJJJ",
         "",
         "[Satzbeschreibung]",
-        "20;u_lod_bwd_buchung_kst;pnr#bwd;u_lod_lna_nr#bwd;ausfallkennzeichen#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
+        "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
         "",
         "[Bewegungsdaten]",
       ].join(CRLF);
