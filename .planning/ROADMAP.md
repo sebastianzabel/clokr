@@ -60,7 +60,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 
 **Milestone Goal:** Clean separation between personal employee views and manager team views, with a modernised Reports page and per-employee export endpoints.
 
-- [ ] **Phase 17: Personal Page Cleanup** — Remove employee selector and team approval tab from personal pages
+- [x] **Phase 17: Personal Page Cleanup** — Remove employee selector and team approval tab from personal pages (completed 2026-04-25)
 - [ ] **Phase 18: Team Route Scaffold & Sidebar Nav** — Create `/team/*` routes and MANAGER sidebar group
 - [ ] **Phase 19: Team Time-Entries Page** — Manager view of team time entries with correction workflow
 - [ ] **Phase 20: Team Leave Page** — Manager view of team leave requests with approval/rejection
@@ -83,7 +83,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 
 Plans:
 - [x] 17-01-PLAN.md — Remove employee selector from Zeiterfassung page (NAV-01)
-- [ ] 17-02-PLAN.md — Remove approvals tab and employee selector from Abwesenheiten page (NAV-02)
+- [x] 17-02-PLAN.md — Remove approvals tab and employee selector from Abwesenheiten page (NAV-02)
 **UI hint**: yes
 
 ### Phase 18: Team Route Scaffold & Sidebar Nav
@@ -177,7 +177,7 @@ Plans:
 | 14. Weekday Config & Per-Day Soll | v1.3 | 2/2 | Complete | 2026-04-13 |
 | 15. Tenant Holiday Deduction | v1.3 | 3/3 | Complete | 2026-04-13 |
 | 16. BUrlG H2 Exit Rule | v1.3 | 2/2 | Complete | 2026-04-25 |
-| 17. Personal Page Cleanup | v1.4 | 1/2 | In Progress|  |
+| 17. Personal Page Cleanup | v1.4 | 2/2 | Complete   | 2026-04-25 |
 | 18. Team Route Scaffold & Sidebar Nav | v1.4 | 0/TBD | Not started | - |
 | 19. Team Time-Entries Page | v1.4 | 0/TBD | Not started | - |
 | 20. Team Leave Page | v1.4 | 0/TBD | Not started | - |

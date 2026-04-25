@@ -2,23 +2,23 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: executing
-stopped_at: Completed 17-personal-page-cleanup/17-01-PLAN.md
-last_updated: "2026-04-25T20:09:39.864Z"
+status: verifying
+stopped_at: Completed 17-personal-page-cleanup/17-02-PLAN.md
+last_updated: "2026-04-25T20:12:29.873Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 50
+  completed_plans: 2
+  percent: 100
 ---
 
 ## Current Position
 
 Phase: 17 (Personal Page Cleanup) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-25
 
 Progress: [░░░░░░░░░░] 0%
@@ -59,6 +59,7 @@ Recent decisions affecting v1.4:
 - [v1.3]: Server-side route protection out of scope — hooks.server.ts never decodes JWTs; onMount guard is the correct pattern
 - [Phase 17-personal-page-cleanup]: Remove unlock button from personal Zeiterfassung page entirely — it was a manager-only action that moves to team pages in later phases
 - [Phase 17-personal-page-cleanup]: Personal time-entries page now uses ownEmployeeId directly with no selectedEmployeeId indirection — own-data-only scope
+- [Phase 17-personal-page-cleanup]: iCal team export ungated from isManager — all employees can download team absence calendar
 
 ### Pending Todos
 
@@ -70,6 +71,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-25T20:09:39.861Z
-Stopped at: Completed 17-personal-page-cleanup/17-01-PLAN.md
+Last session: 2026-04-25T20:12:29.870Z
+Stopped at: Completed 17-personal-page-cleanup/17-02-PLAN.md
 Resume file: None
