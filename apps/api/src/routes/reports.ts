@@ -457,7 +457,7 @@ export async function reportRoutes(app: FastifyInstance) {
           employee: { tenantId: req.user.tenantId },
         },
         include: {
-          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
+          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
           leaveType: true,
         },
       });
