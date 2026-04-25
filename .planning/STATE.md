@@ -3,20 +3,20 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: verifying
-stopped_at: Completed 20-team-leave-page/20-01-PLAN.md
-last_updated: "2026-04-25T20:50:59.354Z"
+stopped_at: Completed 21-per-employee-export-api/21-01-PLAN.md
+last_updated: "2026-04-25T21:02:52.082Z"
 last_activity: 2026-04-25
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 6
-  completed_plans: 6
+  completed_phases: 5
+  total_plans: 7
+  completed_plans: 7
   percent: 100
 ---
 
 ## Current Position
 
-Phase: 20 (Team Leave Page) — EXECUTING
+Phase: 21 (Per-Employee Export API) — EXECUTING
 Plan: 1 of 1
 Status: Phase complete — ready for verification
 Last activity: 2026-04-25
@@ -28,7 +28,7 @@ Progress: [████████░░] 83%
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Reliable, secure, legally compliant time tracking SaaS ready for live customers
-**Current focus:** Phase 20 — Team Leave Page
+**Current focus:** Phase 21 — Per-Employee Export API
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Recent decisions affecting v1.4:
 - [Phase 19-team-time-entries-page]: onMount defers loadAll() until employee selected — no wasted API call on page load
 - [Phase 19-team-time-entries-page]: Manager POST uses source=CORRECTION (not MANUAL) to distinguish manager corrections in audit trail
 - [Phase 20-team-leave-page]: Team leave page forks personal leave page: no submit form, team-wide data, approval code restored from pre-Phase-17 history
+- [Phase 21-per-employee-export-api]: buildDatevLodas() kept module-scope (not exported) to avoid leaking DATEV format details outside reports.ts
 
 ### Pending Todos
 
@@ -78,6 +79,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-25T20:50:59.350Z
-Stopped at: Completed 20-team-leave-page/20-01-PLAN.md
+Last session: 2026-04-25T21:02:52.079Z
+Stopped at: Completed 21-per-employee-export-api/21-01-PLAN.md
 Resume file: None

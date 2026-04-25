@@ -64,7 +64,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 - [x] **Phase 18: Team Route Scaffold & Sidebar Nav** — Create `/team/*` routes and MANAGER sidebar group (completed 2026-04-25)
 - [ ] **Phase 19: Team Time-Entries Page** — Manager view of team time entries with correction workflow
 - [x] **Phase 20: Team Leave Page** — Manager view of team leave requests with approval/rejection (completed 2026-04-25)
-- [ ] **Phase 21: Per-Employee Export API** — Single-employee DATEV LODAS and PDF export endpoints
+- [x] **Phase 21: Per-Employee Export API** — Single-employee DATEV LODAS and PDF export endpoints (completed 2026-04-25)
 - [ ] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons
 - [ ] **Phase 23: Glass-Card UI Polish** — Schichten and NFC-Terminal pages get glass-card frames
 
@@ -145,7 +145,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 21-01-PLAN.md — Extract buildDatevLodas() + add per-employee DATEV endpoint (RPT-03, RPT-04)
+- [x] 21-01-PLAN.md — Extract buildDatevLodas() + add per-employee DATEV endpoint (RPT-03, RPT-04)
 
 ### Phase 22: Reports Page Redesign
 **Goal**: The Reports page is fully redesigned with glass-card layout, a month/year period selector on every widget, and export buttons wired to the per-employee endpoints
@@ -194,7 +194,7 @@ Plans:
 | 18. Team Route Scaffold & Sidebar Nav | v1.4 | 2/2 | Complete   | 2026-04-25 |
 | 19. Team Time-Entries Page | v1.4 | 0/1 | Not started | - |
 | 20. Team Leave Page | v1.4 | 1/1 | Complete   | 2026-04-25 |
-| 21. Per-Employee Export API | v1.4 | 0/1 | Not started | - |
+| 21. Per-Employee Export API | v1.4 | 1/1 | Complete   | 2026-04-25 |
 | 22. Reports Page Redesign | v1.4 | 0/TBD | Not started | - |
 | 23. Glass-Card UI Polish | v1.4 | 0/TBD | Not started | - |
 

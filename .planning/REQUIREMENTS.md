@@ -24,8 +24,8 @@
 
 - [ ] **RPT-01**: Reports page redesigned with modernized Glass-Design (charts, tables, export buttons)
 - [ ] **RPT-02**: Reports page has month/year period selector on all widgets
-- [ ] **RPT-03**: Manager can export single employee as DATEV LODAS TXT
-- [ ] **RPT-04**: Manager can export single employee as PDF (tabellarischer Stundennachweis)
+- [x] **RPT-03**: Manager can export single employee as DATEV LODAS TXT
+- [x] **RPT-04**: Manager can export single employee as PDF (tabellarischer Stundennachweis)
 
 ### UI Polish
 
@@ -66,8 +66,8 @@
 | TEAM-02 | Phase 19 | Pending |
 | TEAM-04 | Phase 19 | Pending |
 | TEAM-03 | Phase 20 | Complete |
-| RPT-03 | Phase 21 | Pending |
-| RPT-04 | Phase 21 | Pending |
+| RPT-03 | Phase 21 | Complete |
+| RPT-04 | Phase 21 | Complete |
 | RPT-01 | Phase 22 | Pending |
 | RPT-02 | Phase 22 | Pending |
 | UI-01 | Phase 23 | Pending |
