@@ -82,7 +82,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 17-01-PLAN.md — Remove employee selector from Zeiterfassung page (NAV-01)
+- [x] 17-01-PLAN.md — Remove employee selector from Zeiterfassung page (NAV-01)
 - [ ] 17-02-PLAN.md — Remove approvals tab and employee selector from Abwesenheiten page (NAV-02)
 **UI hint**: yes
 
@@ -177,7 +177,7 @@ Plans:
 | 14. Weekday Config & Per-Day Soll | v1.3 | 2/2 | Complete | 2026-04-13 |
 | 15. Tenant Holiday Deduction | v1.3 | 3/3 | Complete | 2026-04-13 |
 | 16. BUrlG H2 Exit Rule | v1.3 | 2/2 | Complete | 2026-04-25 |
-| 17. Personal Page Cleanup | v1.4 | 0/2 | Not started | - |
+| 17. Personal Page Cleanup | v1.4 | 1/2 | In Progress|  |
 | 18. Team Route Scaffold & Sidebar Nav | v1.4 | 0/TBD | Not started | - |
 | 19. Team Time-Entries Page | v1.4 | 0/TBD | Not started | - |
 | 20. Team Leave Page | v1.4 | 0/TBD | Not started | - |

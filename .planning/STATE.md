@@ -2,43 +2,74 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: "Defining requirements"
-last_updated: "2026-04-25"
+status: executing
+stopped_at: Completed 17-personal-page-cleanup/17-01-PLAN.md
+last_updated: "2026-04-25T20:09:39.864Z"
+last_activity: 2026-04-25
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 50
 ---
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-04-25 — Milestone v1.4 started
+Phase: 17 (Personal Page Cleanup) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
+Last activity: 2026-04-25
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Reliable, secure, legally compliant time tracking SaaS ready for live customers
-**Current focus:** v1.4 Manager/MA-Trennung & Reports
+**Current focus:** Phase 17 — Personal Page Cleanup
+
+## Performance Metrics
+
+**Velocity:**
+
+- Total plans completed: 47 (across v1.0–v1.3)
+- Average duration: ~30 min/plan (estimated)
+- Total execution time: ~24 hours (v1.0–v1.3)
+
+**Recent Trend:**
+
+- v1.3: 11 plans, 5 phases in 1 day
+- Trend: Stable
+
+*Updated after each plan completion*
 
 ## Accumulated Context
 
-### Milestones Shipped
+### Decisions
 
-| Version | Name | Shipped | Phases | Plans |
-|---------|------|---------|--------|-------|
-| v1.0 | Production Readiness | 2026-03-31 | 3 | 15 |
-| v1.1 | Reporting & DATEV | 2026-04-12 | 4 | 12 |
-| v1.2 | UI Polish | 2026-04-13 | 3 | 9 |
-| v1.3 | Monthly Hours Overhaul | 2026-04-14 | 5 | 11 |
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting v1.4:
 
-### Quick Tasks Completed
+- [v1.4 research]: Personal page cleanup first — removes merge conflict risk for team route additions
+- [v1.4 research]: DATEV utility extraction (Phase 21) prerequisite before Reports wires export buttons (Phase 22)
+- [v1.4 research]: Glass-card polish (Phase 23) independent of all team/routing work — lowest risk, do last
+- [v1.4 research]: TEAM-04 (employee name search filter) assigned to Phase 19 — pattern established there, reused in Phase 20
+- [v1.3]: Server-side route protection out of scope — hooks.server.ts never decodes JWTs; onMount guard is the correct pattern
+- [Phase 17-personal-page-cleanup]: Remove unlock button from personal Zeiterfassung page entirely — it was a manager-only action that moves to team pages in later phases
+- [Phase 17-personal-page-cleanup]: Personal time-entries page now uses ownEmployeeId directly with no selectedEmployeeId indirection — own-data-only scope
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260412-326 | Fix dashboard overtime trend chart to use SaldoSnapshots as data points | 2026-04-12 | 15f0683 | [260412-326-fix-dashboard-overtime-trend-chart-to-us](./quick/260412-326-fix-dashboard-overtime-trend-chart-to-us/) |
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+None yet.
+
+## Session Continuity
+
+Last session: 2026-04-25T20:09:39.861Z
+Stopped at: Completed 17-personal-page-cleanup/17-01-PLAN.md
+Resume file: None
