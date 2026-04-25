@@ -55,7 +55,7 @@
   type OvertimeOverview = { employees: OvertimeEmployee[] };
 
   type LeaveOverviewRow = {
-    employee: { firstName: string; lastName: string; employeeNumber: string };
+    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
     leaveType: { id: string; name: string };
     year: number;
     totalDays: number;
@@ -71,8 +71,9 @@
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
-  let datevMonth = $state(currentMonth);
-  let datevYear = $state(currentYear);
+  // Shared period selector
+  let selectedMonth = $state(currentMonth);
+  let selectedYear = $state(currentYear);
 
   let datevLoading = $state(false);
   let datevError = $state("");
@@ -165,7 +166,6 @@
 
   // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
 
-  let leaveOverviewYear = $state(currentYear);
   let leaveOverview: LeaveOverviewRow[] | null = $state(null);
   let leaveOverviewLoading = $state(false);
   let leaveOverviewError = $state("");
@@ -209,16 +209,26 @@
     };
   }
 
+  // Per-employee download error state
+  let empDownloadErrors = $state<Record<string, string>>({});
+
+  // ── Reactive reload when period changes ────────────────────────────────────
+
+  $effect(() => {
+    const _m = selectedMonth;
+    const _y = selectedYear;
+    if (isManager) {
+      void loadTodayAttendance();
+      void loadOvertimeOverview();
+      void loadLeaveOverview();
+    }
+  });
+
   // ── onMount ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
     const auth = getStore(authStore);
     currentRole = auth.user?.role ?? null;
-    if (isManager) {
-      await loadTodayAttendance();
-      await loadOvertimeOverview();
-      await loadLeaveOverview();
-    }
   });
 
   onDestroy(() => {
@@ -325,7 +335,7 @@
     leaveOverviewError = "";
     try {
       leaveOverview = await api.get<LeaveOverviewRow[]>(
-        `/reports/leave-overview?year=${leaveOverviewYear}`,
+        `/reports/leave-overview?year=${selectedYear}`,
       );
     } catch (e: unknown) {
       leaveOverviewError =
@@ -344,9 +354,12 @@
       const { get } = await import("svelte/store");
       const auth = get(authSt);
 
-      const res = await fetch(`/api/v1/reports/datev?month=${datevMonth}&year=${datevYear}`, {
-        headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
-      });
+      const res = await fetch(
+        `/api/v1/reports/datev?month=${selectedMonth}&year=${selectedYear}`,
+        {
+          headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+        },
+      );
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -357,7 +370,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.txt`;
+      a.download = `DATEV_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
@@ -420,6 +433,56 @@
       companyPdfError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
     } finally {
       companyPdfLoading = false;
+    }
+  }
+
+  async function downloadEmployeePdf(employeeId: string, name: string) {
+    const key = `pdf-${employeeId}`;
+    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+    try {
+      await downloadPdf(
+        `/reports/monthly/pdf?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
+        `Stundennachweis_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.pdf`,
+      );
+    } catch (e: unknown) {
+      empDownloadErrors = {
+        ...empDownloadErrors,
+        [key]: e instanceof Error ? e.message : "PDF-Download fehlgeschlagen",
+      };
+    }
+  }
+
+  async function downloadEmployeeDatev(employeeId: string, name: string) {
+    const key = `datev-${employeeId}`;
+    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+    try {
+      const { authStore: authSt } = await import("$stores/auth");
+      const { get } = await import("svelte/store");
+      const auth = get(authSt);
+      const res = await fetch(
+        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
+        {
+          headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `DATEV_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (e: unknown) {
+      empDownloadErrors = {
+        ...empDownloadErrors,
+        [`datev-${employeeId}`]: e instanceof Error ? e.message : "DATEV-Download fehlgeschlagen",
+      };
     }
   }
 
@@ -486,9 +549,24 @@
   <p>Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen</p>
 </div>
 
+<!-- Shared period selector -->
+<div class="period-bar card card-body card-animate">
+  <span class="period-label">Zeitraum</span>
+  <select bind:value={selectedMonth} class="period-select">
+    {#each months as name, i (i)}
+      <option value={i + 1}>{name}</option>
+    {/each}
+  </select>
+  <select bind:value={selectedYear} class="period-select">
+    {#each years as y (y)}
+      <option value={y}>{y}</option>
+    {/each}
+  </select>
+</div>
+
 <div class="reports-grid">
   <!-- DATEV Export Card -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--green">
       <span class="report-icon-lg">📁</span>
     </div>
@@ -499,24 +577,10 @@
       </div>
     </div>
 
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="datev-month">Monat</label>
-        <select id="datev-month" bind:value={datevMonth} class="form-input">
-          {#each months as name, i (i)}
-            <option value={i + 1}>{name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="datev-year">Jahr</label>
-        <select id="datev-year" bind:value={datevYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
+    <p class="report-period-hint">
+      Zeitraum: {months[selectedMonth - 1]}
+      {selectedYear}
+    </p>
 
     <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
       {#if datevLoading}
@@ -536,7 +600,7 @@
   </div>
 
   <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--blue">
       <span class="report-icon-lg">🏖</span>
     </div>
@@ -578,7 +642,7 @@
   </div>
 
   <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--purple">
       <span class="report-icon-lg">📑</span>
     </div>
@@ -643,13 +707,15 @@
 
 <!-- Heutige Anwesenheit (RPT-03) — ADMIN / MANAGER only -->
 {#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Heutige Anwesenheit</h2>
-      {#if todayAttendance}
-        <span class="section-date">{todayAttendance.date}</span>
-      {/if}
-    </header>
+  <section class="widget-card card card-body card-animate">
+    <div class="widget-header">
+      <h3 class="widget-title">Heutige Anwesenheit</h3>
+      <div class="widget-actions">
+        {#if todayAttendance}
+          <span class="section-date">{todayAttendance.date}</span>
+        {/if}
+      </div>
+    </div>
 
     {#if todayLoading}
       <p class="section-placeholder">Lade Anwesenheit…</p>
@@ -712,10 +778,11 @@
 
 <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) — ADMIN / MANAGER only -->
 {#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Überstunden-Übersicht</h2>
-    </header>
+  <section class="widget-card card card-body card-animate">
+    <div class="widget-header">
+      <h3 class="widget-title">Überstunden-Übersicht</h3>
+      <div class="widget-actions"></div>
+    </div>
 
     {#if overtimeLoading}
       <p class="section-placeholder">Lade Überstunden-Saldo…</p>
@@ -737,6 +804,7 @@
               </th>
               <th>Status</th>
               <th>Verlauf (6 Monate)</th>
+              <th class="actions-col">Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -757,6 +825,24 @@
                     <span class="no-trend">(kein Verlauf)</span>
                   {/if}
                 </td>
+                <td class="row-actions">
+                  <button
+                    class="btn-icon btn-icon-pdf"
+                    title="Stundennachweis PDF ({row.name})"
+                    onclick={() => downloadEmployeePdf(row.id, row.name)}
+                  >PDF</button>
+                  <button
+                    class="btn-icon btn-icon-datev"
+                    title="DATEV LODAS ({row.name})"
+                    onclick={() => downloadEmployeeDatev(row.id, row.name)}
+                  >TXT</button>
+                  {#if empDownloadErrors[`pdf-${row.id}`]}
+                    <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                  {/if}
+                  {#if empDownloadErrors[`datev-${row.id}`]}
+                    <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -773,18 +859,11 @@
 
 <!-- Urlaubsübersicht (RPT-02) — ADMIN / MANAGER only -->
 {#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Urlaubsübersicht</h2>
-      <label class="year-selector">
-        <span>Jahr</span>
-        <select bind:value={leaveOverviewYear} onchange={loadLeaveOverview}>
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </label>
-    </header>
+  <section class="widget-card card card-body card-animate">
+    <div class="widget-header">
+      <h3 class="widget-title">Urlaubsübersicht</h3>
+      <div class="widget-actions"></div>
+    </div>
 
     {#if leaveOverviewLoading}
       <p class="section-placeholder">Lade Urlaubsübersicht…</p>
@@ -805,6 +884,7 @@
               <th class="numeric">Genommen</th>
               <th class="numeric">Geplant</th>
               <th class="numeric">Rest</th>
+              <th class="actions-col">Aktionen</th>
             </tr>
           </thead>
           <tbody>
@@ -818,6 +898,16 @@
                 <td class="numeric">{formatDays(row.usedDays)}</td>
                 <td class="numeric">{formatDays(row.pendingDays)}</td>
                 <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                <td class="row-actions">
+                  <button
+                    class="btn-icon btn-icon-pdf"
+                    title="Stundennachweis PDF ({row.employee.firstName} {row.employee.lastName})"
+                    onclick={() => downloadEmployeePdf(row.employee.id, `${row.employee.firstName} ${row.employee.lastName}`)}
+                  >PDF</button>
+                  {#if empDownloadErrors[`pdf-${row.employee.id}`]}
+                    <span class="row-dl-error">{empDownloadErrors[`pdf-${row.employee.id}`]}</span>
+                  {/if}
+                </td>
               </tr>
             {/each}
           </tbody>
@@ -902,6 +992,12 @@
     font-size: 0.875rem;
   }
 
+  .report-period-hint {
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
   .report-controls {
     display: flex;
     gap: 0.875rem;
@@ -927,30 +1023,66 @@
     }
   }
 
-  /* ── Manager sections ─────────────────────────────────────────────────── */
+  /* ── Period bar ───────────────────────────────────────────────────────────── */
 
-  .section.card-animate {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
-    border-radius: 16px;
-    padding: 1.5rem;
+  .period-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .period-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .period-select {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .period-select:focus {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 1px;
+  }
+
+  /* ── Manager widget cards ─────────────────────────────────────────────────── */
+
+  .widget-card {
     margin-top: 2rem;
   }
 
-  .section-head {
+  .widget-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
     margin-bottom: 1rem;
   }
 
-  .section-head h2 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: var(--color-text-heading);
+  .widget-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
     margin: 0;
+  }
+
+  .widget-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .section-date {
@@ -1130,51 +1262,64 @@
     font-style: italic;
   }
 
-  @media (max-width: 720px) {
-    .attendance-summary {
-      grid-template-columns: repeat(2, 1fr);
-    }
+  /* ── Per-employee action buttons ─────────────────────────────────────────── */
 
-    .sparkline-cell {
-      display: none;
-    }
-
-    .overtime-table th:last-child,
-    .overtime-table td:last-child {
-      display: none;
-    }
+  .actions-col {
+    width: 110px;
+    text-align: right;
   }
 
-  @media (max-width: 700px) {
-    .reports-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Urlaubsübersicht */
-
-  .year-selector {
+  .row-actions {
+    text-align: right;
+    white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
+    gap: 0.375rem;
+    justify-content: flex-end;
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-subtle);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    line-height: 1;
+  }
+
+  .btn-icon:hover {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+    border-color: var(--color-brand);
+  }
+
+  .btn-icon-pdf {
     color: var(--color-text-muted);
   }
 
-  .year-selector select {
-    background: var(--color-bg-subtle);
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 0.375rem 0.625rem;
-    font-size: 0.875rem;
-    font-family: inherit;
+  .btn-icon-datev {
+    color: var(--color-text-muted);
   }
 
-  .year-selector select:focus {
-    outline: 2px solid var(--color-brand);
-    outline-offset: 1px;
+  .row-dl-error {
+    font-size: 0.75rem;
+    color: var(--color-red, red);
+    display: block;
+    margin-top: 0.25rem;
   }
+
+  /* ── Urlaubsübersicht ─────────────────────────────────────────────────────── */
 
   .leave-overview-table {
     width: 100%;
@@ -1205,5 +1350,33 @@
   .leave-overview-table .numeric.strong {
     font-weight: 700;
     color: var(--color-text-heading);
+  }
+
+  /* ── Responsive ───────────────────────────────────────────────────────────── */
+
+  @media (max-width: 720px) {
+    .attendance-summary {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .sparkline-cell {
+      display: none;
+    }
+
+    .overtime-table th:nth-last-child(2),
+    .overtime-table td:nth-last-child(2) {
+      display: none;
+    }
+
+    .actions-col,
+    .row-actions {
+      display: none;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .reports-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
