@@ -156,7 +156,10 @@ Plans:
   2. Every widget on the Reports page has a month/year period selector that filters its data independently
   3. A manager can click an export button next to an employee row and download their DATEV LODAS TXT for the selected period
   4. A manager can click an export button next to an employee row and download their PDF Stundennachweis for the selected period
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 22-01-PLAN.md — Glass-card redesign, shared period selector, per-employee export buttons (RPT-01, RPT-02)
 **UI hint**: yes
 
 ### Phase 23: Glass-Card UI Polish
@@ -195,7 +198,7 @@ Plans:
 | 19. Team Time-Entries Page | v1.4 | 0/1 | Not started | - |
 | 20. Team Leave Page | v1.4 | 1/1 | Complete   | 2026-04-25 |
 | 21. Per-Employee Export API | v1.4 | 1/1 | Complete   | 2026-04-25 |
-| 22. Reports Page Redesign | v1.4 | 0/TBD | Not started | - |
+| 22. Reports Page Redesign | v1.4 | 0/1 | Not started | - |
 | 23. Glass-Card UI Polish | v1.4 | 0/TBD | Not started | - |
 
 ## Backlog
