@@ -337,6 +337,147 @@ function computeEmployeeSummary(
   };
 }
 
+// ── buildDatevLodas ───────────────────────────────────────────────────────────
+// Shared utility — produces a CP1252-encoded Buffer containing a valid DATEV LODAS
+// TXT file (three INI sections: [Allgemein], [Satzbeschreibung], [Bewegungsdaten]).
+// Used by both the company-wide GET /datev and the per-employee GET /datev/employee.
+type DatevEmployee = {
+  employeeNumber: string;
+  firstName: string;
+  lastName: string;
+  timeEntries: Array<{
+    startTime: Date;
+    endTime: Date | null;
+    breakMinutes: number | bigint | null;
+  }>;
+  absences: Array<{ startDate: Date; endDate: Date; type: string }>;
+  leaveRequests: Array<{ startDate: Date; endDate: Date; leaveType: { name: string } }>;
+};
+
+function buildDatevLodas(params: {
+  employees: DatevEmployee[];
+  year: number;
+  month: number;
+  start: Date;
+  end: Date;
+  lna: { normal: number; urlaub: number; krank: number; sonderurlaub: number };
+}): Buffer {
+  const { employees, year: y, month: m, start, end, lna } = params;
+  const CRLF = "\r\n";
+  const lines: string[] = [];
+
+  /** Dezimal mit Komma formatieren */
+  function dec(n: number, digits = 2): string {
+    return n.toFixed(digits).replace(".", ",");
+  }
+
+  /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
+  function workDaysInMonthRange(from: Date, to: Date): number {
+    const s = from < start ? start : from;
+    const e2 = to > end ? end : to;
+    let count = 0;
+    const cur = new Date(s);
+    while (cur <= e2) {
+      const dow = cur.getUTCDay();
+      if (dow !== 0 && dow !== 6) count++;
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return count;
+  }
+
+  function daysForName(emp: DatevEmployee, name: string): number {
+    return emp.leaveRequests
+      .filter((lr) => lr.leaveType.name === name)
+      .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
+  }
+
+  /** DATEV-Zeile: 12 Felder, leere Felder = Semikolon */
+  function datevLine(
+    pn: string,
+    name: string,
+    datum: string,
+    ausfall: string,
+    lohnart: number,
+    stunden: number,
+    tage: number,
+  ): string {
+    return `${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
+  }
+
+  for (const emp of employees) {
+    const pn = emp.employeeNumber;
+    // Employee name for DATEV identification
+    const name = `${emp.lastName} ${emp.firstName}`;
+    // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
+    const lastDay = new Date(y, m, 0).getDate();
+    const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
+
+    // Arbeitsstunden
+    const workedMinutes = emp.timeEntries.reduce((sum, e) => {
+      if (!e.endTime) return sum;
+      return (
+        sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes ?? 0)
+      );
+    }, 0);
+    const workedHours = workedMinutes / 60;
+
+    // Krankheit aus Absence-Modell
+    const sickDays = emp.absences
+      .filter((a) => a.type === "SICK")
+      .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
+    const sickChildDays = emp.absences
+      .filter((a) => a.type === "SICK_CHILD")
+      .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
+
+    // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
+    const vacationDays = daysForName(emp, "Urlaub");
+    const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
+    const specialDays = daysForName(emp, "Sonderurlaub");
+    const educationDays = daysForName(emp, "Bildungsurlaub");
+    const unpaidDays = daysForName(emp, "Unbezahlter Urlaub");
+    const maternityDays = daysForName(emp, "Mutterschutz");
+    const parentalDays = daysForName(emp, "Elternzeit");
+
+    // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt)
+    lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
+    if (sickDays > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDays));
+    if (sickChildDays > 0) lines.push(datevLine(pn, name, datum, "K", 201, 0, sickChildDays));
+    if (vacationDays > 0) lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDays));
+    if (overtimeCompDays > 0) lines.push(datevLine(pn, name, datum, "U", 301, 0, overtimeCompDays));
+    if (specialDays > 0)
+      lines.push(datevLine(pn, name, datum, "S", lna.sonderurlaub, 0, specialDays));
+    if (educationDays > 0) lines.push(datevLine(pn, name, datum, "S", 303, 0, educationDays));
+    if (unpaidDays > 0) lines.push(datevLine(pn, name, datum, "", 304, 0, unpaidDays));
+    if (maternityDays > 0) lines.push(datevLine(pn, name, datum, "", 310, 0, maternityDays));
+    if (parentalDays > 0) lines.push(datevLine(pn, name, datum, "", 320, 0, parentalDays));
+  }
+
+  // ── DATEV LODAS ASCII-Import Format ──────────────────────────────────────
+  // Produces a CP1252-encoded .txt file with three INI sections:
+  //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
+  //   [Satzbeschreibung] – describes the 12-field semicolon format of Bewegungsdaten rows
+  //   [Bewegungsdaten]   – actual employee rows
+  //
+  // 12 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
+  // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
+  const iniHeader = [
+    "[Allgemein]",
+    "Ziel=LODAS",
+    "Version_SST=1.0",
+    "BeraterNr=0",
+    "MandantenNr=0",
+    "Datumsangaben=DDMMJJJJ",
+    "",
+    "[Satzbeschreibung]",
+    "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
+    "",
+    "[Bewegungsdaten]",
+  ].join(CRLF);
+
+  const bodyText = iniHeader + CRLF + lines.join(CRLF) + CRLF;
+  return iconv.encode(bodyText, "win1252") as Buffer;
+}
+
 // ── Common employee include shape ─────────────────────────────────────────────
 function buildEmployeeInclude(start: Date, end: Date) {
   return {
@@ -538,14 +679,7 @@ export async function reportRoutes(app: FastifyInstance) {
         },
       });
 
-      // ── DATEV LODAS ASCII-Import Format ────────────────────────────
-      // Produces a CP1252-encoded .txt file with three INI sections:
-      //   [Allgemein]        – Ziel=LODAS, Version_SST=1.0, BeraterNr=0, MandantenNr=0, Datumsangaben=DDMMJJJJ
-      //   [Satzbeschreibung] – describes the 12-field semicolon format of Bewegungsdaten rows
-      //   [Bewegungsdaten]   – actual employee rows via datevLine() helper
-      //
-      // 12 Felder pro Datenzeile, Semikolon-getrennt, Dezimal-Komma, CRLF line endings.
-      // Ausfallschlüssel: U=Urlaub, K=Krank, S=Sonderurlaub, (leer)=Arbeit
+      // Read configurable Lohnartennummern from TenantConfig
       // Lohnarten (4 konfigurierbar via TenantConfig, 6 hardcoded):
       //   CONFIGURABLE:
       //     datevNormalstundenNr (default 100) = Normalstunden
@@ -556,8 +690,6 @@ export async function reportRoutes(app: FastifyInstance) {
       //     201 = Krankheit Kind         | 301 = Überstundenausgleich
       //     303 = Bildungsurlaub         | 304 = Unbezahlter Urlaub
       //     310 = Mutterschutz           | 320 = Elternzeit
-
-      // Read configurable Lohnartennummern from TenantConfig
       const datevConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
         select: {
@@ -574,94 +706,7 @@ export async function reportRoutes(app: FastifyInstance) {
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
 
-      const CRLF = "\r\n";
-      const lines: string[] = [];
-
-      /** Dezimal mit Komma formatieren */
-      function dec(n: number, digits = 2): string {
-        return n.toFixed(digits).replace(".", ",");
-      }
-
-      /** Arbeitstage (Mo-Fr) im Schnittmenge aus [from,to] ∩ [start,end] zählen */
-      function workDaysInMonthRange(from: Date, to: Date): number {
-        const s = from < start ? start : from;
-        const e2 = to > end ? end : to;
-        let count = 0;
-        const cur = new Date(s);
-        while (cur <= e2) {
-          const dow = cur.getUTCDay();
-          if (dow !== 0 && dow !== 6) count++;
-          cur.setUTCDate(cur.getUTCDate() + 1);
-        }
-        return count;
-      }
-
-      function daysForName(emp: (typeof employees)[0], name: string): number {
-        return emp.leaveRequests
-          .filter((lr) => lr.leaveType.name === name)
-          .reduce((sum, lr) => sum + workDaysInMonthRange(lr.startDate, lr.endDate), 0);
-      }
-
-      /** DATEV-Zeile: 12 Felder, leere Felder = Semikolon */
-      function datevLine(
-        pn: string,
-        name: string,
-        datum: string,
-        ausfall: string,
-        lohnart: number,
-        stunden: number,
-        tage: number,
-      ): string {
-        return `${pn};${name};${datum};${ausfall};${lohnart};${stunden > 0 ? dec(stunden) : ""};${tage > 0 ? dec(tage, 1) : ""};;;;;`;
-      }
-
-      for (const emp of employees) {
-        const pn = emp.employeeNumber;
-        // Employee name for DATEV identification
-        const name = `${emp.lastName} ${emp.firstName}`;
-        // Kalendertag = letzter Tag des Monats im DDMMJJJJ-Format (DATEV-Konvention)
-        const lastDay = new Date(y, m, 0).getDate();
-        const datum = `${String(lastDay).padStart(2, "0")}${String(m).padStart(2, "0")}${y}`;
-
-        // Arbeitsstunden
-        const workedMinutes = emp.timeEntries.reduce((sum, e) => {
-          if (!e.endTime) return sum;
-          return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - e.breakMinutes;
-        }, 0);
-        const workedHours = workedMinutes / 60;
-
-        // Krankheit aus Absence-Modell
-        const sickDays = emp.absences
-          .filter((a) => a.type === "SICK")
-          .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
-        const sickChildDays = emp.absences
-          .filter((a) => a.type === "SICK_CHILD")
-          .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
-
-        // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
-        const vacationDays = daysForName(emp, "Urlaub");
-        const overtimeCompDays = daysForName(emp, "Überstundenausgleich");
-        const specialDays = daysForName(emp, "Sonderurlaub");
-        const educationDays = daysForName(emp, "Bildungsurlaub");
-        const unpaidDays = daysForName(emp, "Unbezahlter Urlaub");
-        const maternityDays = daysForName(emp, "Mutterschutz");
-        const parentalDays = daysForName(emp, "Elternzeit");
-
-        // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt)
-        lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
-        if (sickDays > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDays));
-        if (sickChildDays > 0) lines.push(datevLine(pn, name, datum, "K", 201, 0, sickChildDays));
-        if (vacationDays > 0)
-          lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDays));
-        if (overtimeCompDays > 0)
-          lines.push(datevLine(pn, name, datum, "U", 301, 0, overtimeCompDays));
-        if (specialDays > 0)
-          lines.push(datevLine(pn, name, datum, "S", lna.sonderurlaub, 0, specialDays));
-        if (educationDays > 0) lines.push(datevLine(pn, name, datum, "S", 303, 0, educationDays));
-        if (unpaidDays > 0) lines.push(datevLine(pn, name, datum, "", 304, 0, unpaidDays));
-        if (maternityDays > 0) lines.push(datevLine(pn, name, datum, "", 310, 0, maternityDays));
-        if (parentalDays > 0) lines.push(datevLine(pn, name, datum, "", 320, 0, parentalDays));
-      }
+      const buf = buildDatevLodas({ employees, year: y, month: m, start, end, lna });
 
       await app.audit({
         userId: req.user.sub,
@@ -670,25 +715,100 @@ export async function reportRoutes(app: FastifyInstance) {
         newValue: { type: "DATEV", year, month },
       });
 
-      const iniHeader = [
-        "[Allgemein]",
-        "Ziel=LODAS",
-        "Version_SST=1.0",
-        "BeraterNr=0",
-        "MandantenNr=0",
-        "Datumsangaben=DDMMJJJJ",
-        "",
-        "[Satzbeschreibung]",
-        "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
-        "",
-        "[Bewegungsdaten]",
-      ].join(CRLF);
-
-      const bodyText = iniHeader + CRLF + lines.join(CRLF) + CRLF;
-      const buf: Buffer = iconv.encode(bodyText, "win1252");
-
       reply.header("Content-Type", "application/octet-stream");
       reply.header("Content-Disposition", `attachment; filename="datev-${year}-${month}.txt"`);
+      return reply.send(buf);
+    },
+  });
+
+  // GET /api/v1/reports/datev/employee?employeeId=&year=&month=  – Per-Employee DATEV LODAS Export (RPT-03)
+  app.get("/datev/employee", {
+    schema: { tags: ["Berichte"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { employeeId, year, month } = req.query as {
+        employeeId?: string;
+        year: string;
+        month: string;
+      };
+
+      if (!employeeId || employeeId.trim() === "") {
+        return reply.code(400).send({ error: "Ungültige Parameter" });
+      }
+      const y = parseInt(year);
+      const m = parseInt(month);
+      if (isNaN(y) || isNaN(m) || m < 1 || m > 12) {
+        return reply.code(400).send({ error: "Ungültige Parameter" });
+      }
+
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const { start, end } = monthRangeUtc(y, m, tz);
+
+      const datevConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: {
+          datevNormalstundenNr: true,
+          datevUrlaubNr: true,
+          datevKrankNr: true,
+          datevSonderurlaubNr: true,
+        },
+      });
+      const lna = {
+        normal: datevConfig?.datevNormalstundenNr ?? 100,
+        urlaub: datevConfig?.datevUrlaubNr ?? 300,
+        krank: datevConfig?.datevKrankNr ?? 200,
+        sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
+      };
+
+      const emp = await app.prisma.employee.findFirst({
+        where: {
+          id: employeeId,
+          tenantId: req.user.tenantId, // tenant isolation — mandatory
+          exitDate: null,
+          user: { isActive: true },
+        },
+        include: {
+          timeEntries: {
+            where: {
+              deletedAt: null,
+              date: { gte: start, lte: end },
+              endTime: { not: null },
+              isInvalid: false,
+            },
+          },
+          absences: {
+            where: { deletedAt: null, startDate: { lte: end }, endDate: { gte: start } },
+          },
+          leaveRequests: {
+            where: {
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: end },
+              endDate: { gte: start },
+            },
+            include: { leaveType: true },
+          },
+        },
+      });
+
+      if (!emp) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const buf = buildDatevLodas({ employees: [emp], year: y, month: m, start, end, lna });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "EXPORT",
+        entity: "Report",
+        newValue: { type: "DATEV_EMPLOYEE", year, month, employeeId },
+      });
+
+      reply.header("Content-Type", "application/octet-stream");
+      reply.header(
+        "Content-Disposition",
+        `attachment; filename="datev-${y}-${String(m).padStart(2, "0")}-${emp.employeeNumber}.txt"`,
+      );
       return reply.send(buf);
     },
   });
