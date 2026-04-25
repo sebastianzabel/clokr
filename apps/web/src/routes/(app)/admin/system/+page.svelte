@@ -1249,16 +1249,18 @@
         {/if}
       </div>
     </div>
+  </div>
 
-    <hr class="sys-divider" />
+  <!-- ── NFC-Terminals ──────────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2 class="section-header">NFC-Terminals</h2>
+    <p class="text-muted">
+      API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
+    </p>
+  </div>
 
-    <!-- NFC-Terminals -->
+  <div class="card card-body settings-card card-animate">
     <div class="sys-section">
-      <h3 class="sys-title">NFC-Terminals</h3>
-      <p class="text-muted" style="margin-bottom: 1rem;">
-        API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
-      </p>
-
       {#if showNewKey}
         <div class="alert alert-success" style="margin: 1rem 0;">
           <div>
