@@ -2,24 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: executing
-stopped_at: Completed 19-team-time-entries-page/19-01-PLAN.md
-last_updated: "2026-04-25T20:36:16Z"
-last_activity: 2026-04-25 -- Phase 19 complete (19-01 team time-entries page)
+status: verifying
+stopped_at: Completed 20-team-leave-page/20-01-PLAN.md
+last_updated: "2026-04-25T20:50:59.354Z"
+last_activity: 2026-04-25
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 6
-  completed_plans: 5
-  percent: 83
+  completed_plans: 6
+  percent: 100
 ---
 
 ## Current Position
 
-Phase: 19 (Team Time-Entries Page) — COMPLETE
-Plan: 1 of 1 — DONE
-Status: Phase 19 complete — all 1 plan executed
-Last activity: 2026-04-25 -- Phase 19 complete (19-01 team time-entries page)
+Phase: 20 (Team Leave Page) — EXECUTING
+Plan: 1 of 1
+Status: Phase complete — ready for verification
+Last activity: 2026-04-25
 
 Progress: [████████░░] 83%
 
@@ -28,7 +28,7 @@ Progress: [████████░░] 83%
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Reliable, secure, legally compliant time tracking SaaS ready for live customers
-**Current focus:** Phase 19 — Team Time-Entries Page
+**Current focus:** Phase 20 — Team Leave Page
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Recent decisions affecting v1.4:
 - [Phase 19-team-time-entries-page]: Fork personal page rather than build from scratch — ensures full feature parity (ArbZG, lock enforcement, MONTHLY_HOURS, break slots)
 - [Phase 19-team-time-entries-page]: onMount defers loadAll() until employee selected — no wasted API call on page load
 - [Phase 19-team-time-entries-page]: Manager POST uses source=CORRECTION (not MANUAL) to distinguish manager corrections in audit trail
+- [Phase 20-team-leave-page]: Team leave page forks personal leave page: no submit form, team-wide data, approval code restored from pre-Phase-17 history
 
 ### Pending Todos
 
@@ -77,6 +78,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-25T20:36:16Z
-Stopped at: Completed 19-team-time-entries-page/19-01-PLAN.md
+Last session: 2026-04-25T20:50:59.350Z
+Stopped at: Completed 20-team-leave-page/20-01-PLAN.md
 Resume file: None

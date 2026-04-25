@@ -17,7 +17,7 @@
 
 - [ ] **TEAM-01**: Manager can view time entries of any team member on team time-entries page
 - [ ] **TEAM-02**: Manager can create/edit time entries for team members (correction workflow)
-- [ ] **TEAM-03**: Manager can approve/reject leave requests on team leave page
+- [x] **TEAM-03**: Manager can approve/reject leave requests on team leave page
 - [ ] **TEAM-04**: Manager can filter employees by name search on team pages
 
 ### Reports & Exports
@@ -65,7 +65,7 @@
 | TEAM-01 | Phase 19 | Pending |
 | TEAM-02 | Phase 19 | Pending |
 | TEAM-04 | Phase 19 | Pending |
-| TEAM-03 | Phase 20 | Pending |
+| TEAM-03 | Phase 20 | Complete |
 | RPT-03 | Phase 21 | Pending |
 | RPT-04 | Phase 21 | Pending |
 | RPT-01 | Phase 22 | Pending |

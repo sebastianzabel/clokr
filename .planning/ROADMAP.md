@@ -63,7 +63,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 - [x] **Phase 17: Personal Page Cleanup** — Remove employee selector and team approval tab from personal pages (completed 2026-04-25)
 - [x] **Phase 18: Team Route Scaffold & Sidebar Nav** — Create `/team/*` routes and MANAGER sidebar group (completed 2026-04-25)
 - [ ] **Phase 19: Team Time-Entries Page** — Manager view of team time entries with correction workflow
-- [ ] **Phase 20: Team Leave Page** — Manager view of team leave requests with approval/rejection
+- [x] **Phase 20: Team Leave Page** — Manager view of team leave requests with approval/rejection (completed 2026-04-25)
 - [ ] **Phase 21: Per-Employee Export API** — Single-employee DATEV LODAS and PDF export endpoints
 - [ ] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons
 - [ ] **Phase 23: Glass-Card UI Polish** — Schichten and NFC-Terminal pages get glass-card frames
@@ -130,7 +130,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 20-01-PLAN.md — Replace placeholder with full team leave page (TEAM-03)
+- [x] 20-01-PLAN.md — Replace placeholder with full team leave page (TEAM-03)
 **UI hint**: yes
 
 ### Phase 21: Per-Employee Export API
@@ -190,7 +190,7 @@ Plans:
 | 17. Personal Page Cleanup | v1.4 | 2/2 | Complete   | 2026-04-25 |
 | 18. Team Route Scaffold & Sidebar Nav | v1.4 | 2/2 | Complete   | 2026-04-25 |
 | 19. Team Time-Entries Page | v1.4 | 0/1 | Not started | - |
-| 20. Team Leave Page | v1.4 | 0/1 | Not started | - |
+| 20. Team Leave Page | v1.4 | 1/1 | Complete   | 2026-04-25 |
 | 21. Per-Employee Export API | v1.4 | 0/TBD | Not started | - |
 | 22. Reports Page Redesign | v1.4 | 0/TBD | Not started | - |
 | 23. Glass-Card UI Polish | v1.4 | 0/TBD | Not started | - |
