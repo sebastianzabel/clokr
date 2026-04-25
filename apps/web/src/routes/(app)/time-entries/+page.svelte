@@ -89,13 +89,6 @@
     message: string;
   }
 
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
   let schedule: WorkSchedule | null = $state(null);
@@ -143,21 +136,7 @@
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
 
-  // Manager: employee selector
-  let employees: Employee[] = $state([]);
-  let selectedEmployeeId = $state<string | null>(null);
-
   const ownEmployeeId = $authStore.user?.employeeId ?? null;
-  // The active employee ID: either the selected employee (for managers) or the logged-in user
-  let employeeId = $derived(selectedEmployeeId ?? ownEmployeeId);
-  let isViewingOther = $derived(
-    selectedEmployeeId !== null && selectedEmployeeId !== ownEmployeeId,
-  );
-  let selectedEmployeeName = $derived.by(() => {
-    if (!isViewingOther) return null;
-    const emp = employees.find((e) => e.id === selectedEmployeeId);
-    return emp ? `${emp.firstName} ${emp.lastName}` : null;
-  });
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -172,16 +151,6 @@
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
 
-    // Load employee list for managers
-    const role = $authStore.user?.role;
-    if (role === "ADMIN" || role === "MANAGER") {
-      try {
-        const rawEmployees = await api.get<Employee[]>("/employees");
-        employees = rawEmployees;
-      } catch {
-        // Ignore — employee selector won't be shown
-      }
-    }
     await loadAll();
   });
 
@@ -190,10 +159,7 @@
     error = "";
     try {
       const year = calMonth.getFullYear();
-      const activeEmpId = employeeId;
-      // When manager views another employee, pass employeeId to the API
-      const empQuery =
-        activeEmpId && activeEmpId !== ownEmployeeId ? `&employeeId=${activeEmpId}` : "";
+      const activeEmpId = ownEmployeeId;
       const [
         rawEntries,
         rawSchedule,
@@ -203,7 +169,7 @@
         rawEmployee,
         rawConfig,
       ] = await Promise.all([
-        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}${empQuery}`),
+        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
         activeEmpId
           ? api.get<WorkSchedule>(`/settings/work/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
@@ -250,11 +216,6 @@
     } finally {
       loading = false;
     }
-  }
-
-  async function onEmployeeChange(newId: string) {
-    selectedEmployeeId = newId === "" ? null : newId;
-    await loadAll();
   }
 
   let showMonthPicker = $state(false);
@@ -748,7 +709,6 @@
         });
       } else {
         await api.post("/time-entries", {
-          ...(isViewingOther ? { employeeId: selectedEmployeeId } : {}),
           date: formDate,
           startTime: startISO,
           endTime: endISO,
@@ -792,26 +752,6 @@
       error = e instanceof Error ? e.message : "Fehler beim Revalidieren";
     }
   }
-
-  // D-10: Unlock the current month for the selected employee
-  async function unlockMonth() {
-    const empId = selectedEmployeeId || $authStore.user?.employeeId || "";
-    if (!empId) return;
-    try {
-      await api.post("/overtime/unlock-month", {
-        employeeId: empId,
-        year: calMonth.getFullYear(),
-        month: calMonth.getMonth() + 1,
-      });
-      await loadAll();
-    } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Entsperren";
-    }
-  }
-
-  const isManager = $derived(
-    $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
-  );
 
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
@@ -978,28 +918,6 @@
   </button>
 </div>
 
-{#if isManager && employees.length > 0}
-  <div class="employee-selector card-animate">
-    <label class="form-label" for="emp-select">Mitarbeiter</label>
-    <select
-      id="emp-select"
-      class="form-input"
-      value={selectedEmployeeId ?? ""}
-      onchange={(e) => onEmployeeChange(e.currentTarget.value)}
-    >
-      <option value="">Meine Einträge</option>
-      {#each employees as emp (emp.id)}
-        {#if emp.id !== ownEmployeeId}
-          <option value={emp.id}>{emp.lastName}, {emp.firstName} ({emp.employeeNumber})</option>
-        {/if}
-      {/each}
-    </select>
-    {#if isViewingOther}
-      <span class="viewing-other-hint">Einträge von {selectedEmployeeName}</span>
-    {/if}
-  </div>
-{/if}
-
 <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -1073,11 +991,6 @@
           <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
         </svg>
         <span class="msummary-lock-label">Abgeschlossen</span>
-        {#if isManager}
-          <button class="btn btn-sm btn-ghost msummary-unlock-btn" onclick={unlockMonth}>
-            Entsperren
-          </button>
-        {/if}
       </div>
     {/if}
   </div>
@@ -1312,17 +1225,6 @@
             <td class="action-cell">
               {#if slot.isLocked}
                 <!-- locked entries are read-only; no actions shown (D-08) -->
-              {:else if slot.isInvalid && isManager}
-                <span class="row-actions row-actions--visible">
-                  <button
-                    class="btn btn-sm btn-warning"
-                    onclick={() => revalidateEntry(slot.id)}
-                    title="Eintrag revalidieren und freigeben">Freigeben</button
-                  >
-                  <button class="btn-icon" onclick={() => openEdit(slot)} title="Korrigieren"
-                    >✏️</button
-                  >
-                </span>
               {:else if deleteConfirmId === slot.id}
                 <span class="del-confirm">
                   <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
@@ -1371,15 +1273,7 @@
   >
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
-        <h2>
-          {editEntry
-            ? isViewingOther
-              ? `Eintrag korrigieren (${selectedEmployeeName})`
-              : "Eintrag bearbeiten"
-            : isViewingOther
-              ? `Neuer Eintrag für ${selectedEmployeeName}`
-              : "Neuen Eintrag hinzufügen"}
-        </h2>
+        <h2>{editEntry ? "Eintrag bearbeiten" : "Neuen Eintrag hinzufügen"}</h2>
         <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -1510,46 +1404,6 @@
 
 <style>
   /* page-header-compact → global in app.css */
-
-  /* ── Employee Selector (Manager) ────────────────────────────────── */
-  .employee-selector {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem 1rem;
-    background: var(--color-brand-tint);
-    border: 1px solid var(--color-brand-tint-hover);
-    border-radius: 8px;
-  }
-  .employee-selector .form-label {
-    margin: 0;
-    white-space: nowrap;
-    font-weight: 500;
-  }
-  .employee-selector .form-input {
-    max-width: 320px;
-  }
-  .viewing-other-hint {
-    font-size: 0.85rem;
-    color: var(--color-brand);
-    font-weight: 500;
-  }
-
-  /* ── Warning button ────────────────────────────────────────────── */
-  .btn-warning {
-    background: var(--color-yellow);
-    color: #fff;
-    border: none;
-    border-radius: 6px;
-    padding: 0.25rem 0.625rem;
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .btn-warning:hover {
-    background: var(--color-yellow-border);
-  }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
   .month-nav-standalone {
