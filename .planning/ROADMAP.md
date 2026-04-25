@@ -170,7 +170,10 @@ Plans:
   1. The Schichten page top-level content block uses `var(--glass-bg)`, `var(--glass-border)`, and `var(--glass-shadow)` surfaces
   2. The NFC-Terminal overview page top-level content block uses the same glass-card token set
   3. Both pages pass a visual check in all three themes (lila, hell, dunkel) without colour contrast issues
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 23-01-PLAN.md — Apply glass tokens to Schichten grid wrapper + extract NFC section into own card (UI-01, UI-02)
 **UI hint**: yes
 
 ## Progress
@@ -199,7 +202,7 @@ Plans:
 | 20. Team Leave Page | v1.4 | 1/1 | Complete   | 2026-04-25 |
 | 21. Per-Employee Export API | v1.4 | 1/1 | Complete   | 2026-04-25 |
 | 22. Reports Page Redesign | v1.4 | 0/1 | Not started | - |
-| 23. Glass-Card UI Polish | v1.4 | 0/TBD | Not started | - |
+| 23. Glass-Card UI Polish | v1.4 | 0/1 | Not started | - |
 
 ## Backlog
 
