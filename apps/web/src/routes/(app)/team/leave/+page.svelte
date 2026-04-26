@@ -1118,11 +1118,14 @@
   /* ── Employee selector / combobox ──────────────────────────────────── */
   .employee-selector {
     margin-bottom: 1rem;
+    position: relative;
+    z-index: 10;
   }
 
   .emp-combobox {
     position: relative;
     max-width: 360px;
+    z-index: 100;
   }
 
   .emp-input-wrap {
