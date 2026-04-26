@@ -2274,6 +2274,8 @@
   /* ── Mitarbeiter-Auswahl ─────────────────────────────────────────── */
   .employee-selector {
     margin-bottom: 0.75rem;
+    position: relative;
+    z-index: 10;
   }
 
   .emp-combobox {
