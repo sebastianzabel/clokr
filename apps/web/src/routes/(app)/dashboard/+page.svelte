@@ -131,6 +131,7 @@
 
   // Open items widget
   let openItems: {
+    pendingApprovals: number;
     missingDays: string[];
     pendingRequests: number;
     invalidEntries: number;
@@ -1058,6 +1059,17 @@
                 <span class="oi-link">→</span>
               </a>
             {/if}
+            {#if openItems.pendingApprovals > 0}
+              <a href="/leave?view=approvals" class="oi-row">
+                <span class="oi-dot oi-dot--approval"></span>
+                <span
+                  >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
+                    ? "r Antrag"
+                    : " Anträge"}</span
+                >
+                <span class="oi-link">→</span>
+              </a>
+            {/if}
           {/if}
         </div>
       </div>
@@ -1588,6 +1600,9 @@
   }
   .oi-dot--fix {
     background: var(--color-blue);
+  }
+  .oi-dot--approval {
+    background: var(--color-brand);
   }
   .oi-item {
     display: flex;

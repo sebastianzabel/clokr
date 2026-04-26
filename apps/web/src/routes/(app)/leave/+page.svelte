@@ -66,12 +66,8 @@
     return TYPE_OPTIONS.find((t) => t.code === code)?.label ?? code;
   }
 
-  // ── Auth ──────────────────────────────────────────────────────────────────
-  const isManager = ["ADMIN", "MANAGER"].includes($authStore.user?.role ?? "");
-
   // ── State ─────────────────────────────────────────────────────────────────
   let myRequests: LeaveRequest[] = $state([]);
-  let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
   let error = $state("");
 
@@ -116,18 +112,6 @@
   let overlapLoading = $state(false);
   let overlapTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Review-Modal
-  let reviewModal: LeaveRequest | null = $state(null);
-  let reviewOverlap: OverlapEntry[] = $state([]);
-  let reviewNote = $state("");
-  let reviewSaving = $state(false);
-  let reviewError = $state("");
-
-  // Attest-State (im Review-Modal und Standalone)
-  let reviewAttestPresent = $state(false);
-  let reviewAttestFrom = $state("");
-  let reviewAttestTo = $state("");
-
   // Attest-Modal (für bereits genehmigte Krankmeldungen)
   let attestModal: LeaveRequest | null = $state(null);
   let attestPresent = $state(false);
@@ -138,10 +122,6 @@
 
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
-
-  // Calendar filter — "" = Alle, "mine" = Meine, or employeeId for specific person (manager)
-  let calFilter = $state("");
-  let calEmployees: Employee[] = $state([]);
 
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
@@ -187,13 +167,6 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
   interface CalEntry {
     id: string;
     isOwn: boolean;
@@ -209,7 +182,7 @@
     isHoliday: boolean;
   }
 
-  type View = "calendar" | "list" | "approvals";
+  type View = "calendar" | "list";
   let view: View = $state("calendar");
 
   /** Format a local Date to YYYY-MM-DD without UTC shift */
@@ -382,27 +355,11 @@
     loadCalendar();
     loadVacationSummary();
 
-    if (isManager) {
-      api
-        .get<Employee[]>("/employees")
-        .then((list) => {
-          calEmployees = list;
-        })
-        .catch(() => {});
-    }
-
-    // Deep-link: view param from dashboard
-    const viewParam = $page.url.searchParams.get("view");
-    if (viewParam === "approvals" && isManager) {
-      view = "approvals";
-    }
-
     // Deep-link: highlight a specific request from notification
     const requestId = $page.url.searchParams.get("request");
     if (requestId) {
       highlightRequestId = requestId;
-      // Switch to approvals tab if manager, otherwise list
-      view = isManager ? "approvals" : "list";
+      view = "list";
       // Scroll to highlighted request after DOM update
       requestAnimationFrame(() => {
         const el = document.getElementById(`request-${requestId}`);
@@ -426,17 +383,10 @@
     try {
       const year = new Date().getFullYear();
       const myEmployeeId = $authStore.user?.employeeId;
-      const [mine, all] = await Promise.all([
-        api.get<LeaveRequest[]>(
-          `/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
-        ),
-        isManager
-          ? api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`)
-          : Promise.resolve([] as LeaveRequest[]),
-      ]);
+      const mine = await api.get<LeaveRequest[]>(
+        `/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+      );
       myRequests = mine;
-      // Manager: all pending requests (including own — shown in separate tab)
-      pendingRequests = all;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -644,55 +594,6 @@
     formNote = req.note ?? "";
     showForm = true;
     window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  // ── Review-Modal öffnen ───────────────────────────────────────────────────
-  async function openReview(req: LeaveRequest) {
-    reviewModal = req;
-    reviewNote = "";
-    reviewError = "";
-    reviewOverlap = [];
-    // Attest-Felder vorbelegen
-    reviewAttestPresent = req.attestPresent ?? false;
-    reviewAttestFrom = req.attestValidFrom ?? "";
-    reviewAttestTo = req.attestValidTo ?? "";
-    try {
-      reviewOverlap = await api.get<OverlapEntry[]>(
-        `/leave/overlap?startDate=${req.startDate}&endDate=${req.endDate}`,
-      );
-    } catch {
-      /* ignore */
-    }
-  }
-
-  function closeReview() {
-    reviewModal = null;
-  }
-
-  async function submitReview(status: "APPROVED" | "REJECTED") {
-    if (!reviewModal) return;
-    reviewSaving = true;
-    reviewError = "";
-    try {
-      await api.patch(`/leave/requests/${reviewModal.id}/review`, {
-        status,
-        reviewNote: reviewNote || null,
-      });
-      // Attest für Krankmeldungen gleichzeitig speichern
-      if (SICK_CODES.includes(reviewModal.typeCode)) {
-        await api.patch(`/leave/requests/${reviewModal.id}/attest`, {
-          attestPresent: reviewAttestPresent,
-          attestValidFrom: reviewAttestPresent && reviewAttestFrom ? reviewAttestFrom : null,
-          attestValidTo: reviewAttestPresent && reviewAttestTo ? reviewAttestTo : null,
-        });
-      }
-      reviewModal = null;
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
-    } catch (e: unknown) {
-      reviewError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      reviewSaving = false;
-    }
   }
 
   // ── Attest-Modal (für bereits genehmigte Krankmeldungen) ─────────────────
@@ -927,10 +828,6 @@
   onkeydown={(e) => {
     if (e.key === "Escape") {
       if (showForm) resetForm();
-      if (reviewModal) {
-        reviewModal = null;
-        reviewError = "";
-      }
       if (attestModal) {
         attestModal = null;
         attestError = "";
@@ -957,27 +854,6 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
-<!-- ── Mitarbeiter-Selector ───────────────────────────────────────────────── -->
-<div class="employee-selector card-animate">
-  <label class="form-label" for="cal-emp-select">Mitarbeiter</label>
-  <select
-    id="cal-emp-select"
-    class="form-input"
-    value={calFilter}
-    onchange={(e) => (calFilter = e.currentTarget.value)}
-  >
-    <option value="">Alle Mitarbeiter</option>
-    <option value="mine">Meine Einträge</option>
-    {#if isManager}
-      {#each calEmployees as emp (emp.id)}
-        {#if emp.id !== $authStore.user?.employeeId}
-          <option value={emp.id}>{emp.lastName}, {emp.firstName}</option>
-        {/if}
-      {/each}
-    {/if}
-  </select>
-</div>
-
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -990,18 +866,6 @@
   <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
     Meine Anträge
   </button>
-  {#if isManager}
-    <button
-      class="view-tab"
-      class:view-tab--active={view === "approvals"}
-      onclick={() => (view = "approvals")}
-    >
-      Genehmigungen
-      {#if pendingRequests.length > 0}
-        <span class="tab-badge">{pendingRequests.length}</span>
-      {/if}
-    </button>
-  {/if}
 </div>
 
 <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
@@ -1435,12 +1299,7 @@
               </div>
             {/if}
             <div class="cal-chips">
-              {#each absences.filter((e) => {
-                const visible = isManager || e.status === "APPROVED";
-                if (calFilter === "mine") return e.isOwn;
-                if (calFilter !== "") return e.employeeId === calFilter;
-                return e.isOwn || visible;
-              }) as e (e.id)}
+              {#each absences.filter((e) => e.isOwn || e.status === "APPROVED") as e (e.id)}
                 {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
                 {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                 {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
@@ -1453,14 +1312,14 @@
                   class:cal-chip--pending={e.status === "PENDING" ||
                     e.status === "CANCELLATION_REQUESTED"}
                   class:cal-chip--own={e.isOwn}
-                  style="background:{typeColor(e.typeCode, e.status, e.isOwn || isManager)}"
-                  title="{e.firstName} {e.lastName}{(e.isOwn || isManager) && e.typeName
+                  style="background:{typeColor(e.typeCode, e.status, e.isOwn)}"
+                  title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
                     ? ' · ' + e.typeName
                     : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
                 >
                   {#if _showLabel}
                     <span class="cal-chip-name">{e.firstName}</span>
-                    {#if (e.isOwn || isManager) && e.typeName}
+                    {#if e.isOwn && e.typeName}
                       <span class="cal-chip-type">{e.typeName}</span>
                     {:else}
                       <span class="cal-chip-type">abwesend</span>
@@ -1525,15 +1384,13 @@
       >
         {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
       </button>
-      {#if isManager}
-        <button
-          class="btn btn-ghost btn-sm"
-          onclick={() => downloadIcal("team")}
-          disabled={icalDownloading}
-        >
-          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
-        </button>
-      {/if}
+      <button
+        class="btn btn-ghost btn-sm"
+        onclick={() => downloadIcal("team")}
+        disabled={icalDownloading}
+      >
+        {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
+      </button>
     </div>
   </div>
 {/if}
@@ -1582,7 +1439,7 @@
 
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
   <div class="section-header">
-    <h2>{isManager ? "Alle Anträge" : "Meine Anträge"}</h2>
+    <h2>Meine Anträge</h2>
   </div>
 
   {#if loading}
@@ -1624,7 +1481,6 @@
       <table class="data-table">
         <thead>
           <tr>
-            {#if isManager}<th>Mitarbeiter</th>{/if}
             <th>Art</th>
             <th>Von</th>
             <th>Bis</th>
@@ -1638,9 +1494,6 @@
           {#each pagedMyRequests as req (req.id)}
             {@const isOwn = req.employeeId === $authStore.user?.employeeId}
             <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-              {#if isManager}
-                <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-              {/if}
               <td>{typeName(req.typeCode)}</td>
               <td class="font-mono">{fmtDate(req.startDate)}</td>
               <td class="font-mono">{fmtDate(req.endDate)}</td>
@@ -1679,16 +1532,6 @@
                     onclick={() => cancelRequest(req.id)}>Stornieren</button
                   >
                 {/if}
-                {#if isManager && SICK_CODES.includes(req.typeCode) && (req.status === "APPROVED" || req.status === "PENDING")}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openAttestModal(req)}
-                    >Attest</button
-                  >
-                {/if}
-                {#if isManager && (req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED")}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
-                    {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
-                  </button>
-                {/if}
               </td>
             </tr>
           {/each}
@@ -1702,203 +1545,6 @@
     </div>
   {/if}
 {/if}<!-- Ende Liste -->
-
-<!-- ── Genehmigungen (Manager) ─────────────────────────────────────────────── -->
-{#if view === "approvals"}
-  {#if !loading && pendingRequests.length > 0}
-    <div class="pending-list">
-      {#each pendingRequests as req (req.id)}
-        <div
-          class="pending-card card"
-          id="request-{req.id}"
-          class:highlight-row={highlightRequestId === req.id}
-        >
-          <div class="pending-info">
-            <span class="pending-name">{req.employee.firstName} {req.employee.lastName}</span>
-            {#if req.status === "CANCELLATION_REQUESTED"}
-              <span class="badge badge-orange" style="font-size:0.75rem">Stornierung beantragt</span
-              >
-            {:else}
-              <span class="pending-type">{typeName(req.typeCode)}</span>
-            {/if}
-            <span class="pending-dates">{fmtDate(req.startDate)} – {fmtDate(req.endDate)}</span>
-            <span class="pending-days text-muted">{daysLabel(Number(req.days), req.halfDay)}</span>
-            {#if req.note}
-              <span class="pending-note text-muted">„{req.note}"</span>
-            {/if}
-          </div>
-          <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
-            {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen →" : "Prüfen →"}
-          </button>
-        </div>
-      {/each}
-    </div>
-  {:else if !loading}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">✅</span>
-      <h3>Keine offenen Anträge</h3>
-      <p class="text-muted">Alle Anträge wurden bearbeitet.</p>
-    </div>
-  {/if}
-{/if}
-
-<!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
-{#if reviewModal}
-  <div class="modal-backdrop" onclick={self(closeReview)} role="presentation">
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>
-          {reviewModal.status === "CANCELLATION_REQUESTED"
-            ? "Stornierungsantrag prüfen"
-            : "Antrag prüfen"}
-        </h2>
-        <button class="btn-icon" onclick={closeReview} aria-label="Schließen">✕</button>
-      </div>
-
-      <div class="modal-body">
-        <!-- Antrag-Details -->
-        <div class="review-grid">
-          <div class="review-field">
-            <span class="review-label">Mitarbeiter</span>
-            <span class="review-value"
-              >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
-            >
-          </div>
-          <div class="review-field">
-            <span class="review-label">Art</span>
-            <span class="review-value">{typeName(reviewModal.typeCode)}</span>
-          </div>
-          <div class="review-field">
-            <span class="review-label">Zeitraum</span>
-            <span class="review-value font-mono"
-              >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
-            >
-          </div>
-          <div class="review-field">
-            <span class="review-label">Umfang</span>
-            <span class="review-value"
-              >{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span
-            >
-          </div>
-          {#if reviewModal.note}
-            <div class="review-field review-field--full">
-              <span class="review-label">Anmerkung Mitarbeiter</span>
-              <span class="review-value">„{reviewModal.note}"</span>
-            </div>
-          {/if}
-        </div>
-
-        <!-- Parallele Abwesenheiten -->
-        <div class="overlap-box" style="margin-top:1.25rem">
-          <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
-          {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
-            <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-          {:else}
-            <div class="overlap-list">
-              {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
-                <div class="overlap-row">
-                  <span class="overlap-name">{o.employeeName}</span>
-                  <span class="overlap-type">abwesend</span>
-                  <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Attest (nur für Krankmeldungen) -->
-        {#if SICK_CODES.includes(reviewModal.typeCode)}
-          <div class="attest-box" style="margin-top:1.25rem">
-            <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
-            <label class="toggle-label">
-              <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
-              <span>Attest liegt vor</span>
-            </label>
-            {#if reviewAttestPresent}
-              <div class="attest-dates">
-                <div class="form-group">
-                  <label class="form-label" for="r-attest-from">Gültig von</label>
-                  <input
-                    id="r-attest-from"
-                    type="date"
-                    bind:value={reviewAttestFrom}
-                    class="form-input"
-                    style="max-width:160px"
-                  />
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="r-attest-to">Gültig bis</label>
-                  <input
-                    id="r-attest-to"
-                    type="date"
-                    bind:value={reviewAttestTo}
-                    class="form-input"
-                    style="max-width:160px"
-                  />
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Review-Notiz -->
-        <div class="form-group" style="margin-top:1.25rem">
-          <label class="form-label" for="review-note">Anmerkung (optional)</label>
-          <input
-            id="review-note"
-            type="text"
-            bind:value={reviewNote}
-            class="form-input"
-            placeholder="Grund für Ablehnung o.ä."
-          />
-        </div>
-
-        {#if reviewError}
-          <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-            <span>⚠</span><span>{reviewError}</span>
-          </div>
-        {/if}
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={closeReview} disabled={reviewSaving}>
-          Abbrechen
-        </button>
-        {#if reviewModal.status === "CANCELLATION_REQUESTED"}
-          <button
-            class="btn btn-ghost"
-            onclick={() => submitReview("REJECTED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Stornierung ablehnen"}
-          </button>
-          <button
-            class="btn btn-danger"
-            onclick={() => submitReview("APPROVED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Stornierung genehmigen"}
-          </button>
-        {:else}
-          <button
-            class="btn btn-danger"
-            onclick={() => submitReview("REJECTED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Ablehnen"}
-          </button>
-          <button
-            class="btn btn-primary"
-            onclick={() => submitReview("APPROVED")}
-            disabled={reviewSaving}
-          >
-            {reviewSaving ? "…" : "Genehmigen"}
-          </button>
-        {/if}
-      </div>
-    </div>
-  </div>
-{/if}
 
 <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
 {#if attestModal}
@@ -2177,51 +1823,6 @@
     accent-color: var(--color-brand);
   }
 
-  /* ── Pending Cards ────────────────────────────────────────────────── */
-  .pending-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-  }
-  .pending-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding: 0.875rem 1.25rem;
-  }
-  .pending-info {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-    flex: 1;
-    min-width: 0;
-  }
-  .pending-name {
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .pending-type {
-    color: var(--color-brand);
-    font-weight: 500;
-  }
-  .pending-dates {
-    font-family: var(--font-mono);
-    font-size: 0.9375rem;
-    white-space: nowrap;
-  }
-  .pending-days {
-    font-size: 0.875rem;
-  }
-  .pending-note {
-    font-size: 0.875rem;
-    font-style: italic;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
   /* ── Table ────────────────────────────────────────────────────────── */
   .text-center {
     text-align: center;
@@ -2314,36 +1915,6 @@
     padding: 1rem 1.5rem;
     border-top: 1px solid var(--gray-200);
     background: var(--gray-50, #f9fafb);
-  }
-
-  /* ── Review Grid ──────────────────────────────────────────────────── */
-  .review-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem 1.5rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
-    border-radius: 8px;
-    padding: 1rem 1.25rem;
-  }
-  .review-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-  }
-  .review-field--full {
-    grid-column: 1 / -1;
-  }
-  .review-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--color-text-muted);
-  }
-  .review-value {
-    font-size: 0.9375rem;
-    font-weight: 500;
   }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
@@ -2697,12 +2268,6 @@
     .form-grid {
       grid-template-columns: 1fr 1fr;
     }
-    .review-grid {
-      grid-template-columns: 1fr;
-    }
-    .pending-info {
-      gap: 0.5rem;
-    }
     .overlap-dates {
       margin-left: 0;
     }
@@ -2714,23 +2279,5 @@
     .form-grid {
       grid-template-columns: 1fr;
     }
-  }
-  .employee-selector {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    padding: 0.75rem 1rem;
-    background: var(--color-brand-tint);
-    border: 1px solid var(--color-brand-tint-hover);
-    border-radius: 8px;
-  }
-  .employee-selector .form-label {
-    margin: 0;
-    white-space: nowrap;
-    font-weight: 500;
-  }
-  .employee-selector .form-input {
-    max-width: 320px;
   }
 </style>
