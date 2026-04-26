@@ -8,6 +8,7 @@ import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
 const tenantConfigSchema = z.object({
+  tenantName: z.string().min(1).max(200).optional(),
   applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
   defaultWeeklyHours: z.number().min(1).max(60).optional(),
   defaultMondayHours: z.number().min(0).max(24).optional(),
@@ -153,7 +154,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         monthlyHoursHolidayDeduction: false,
       };
 
-      return { ...base, federalState: tenant?.federalState ?? "NIEDERSACHSEN" };
+      return {
+        ...base,
+        federalState: tenant?.federalState ?? "NIEDERSACHSEN",
+        tenantName: tenant?.name ?? "",
+      };
     },
   });
 
@@ -165,8 +170,13 @@ export async function settingsRoutes(app: FastifyInstance) {
       const body = tenantConfigSchema.parse(req.body);
       const tenantId = req.user.tenantId;
 
-      // federalState gehört zum Tenant, nicht zur TenantConfig
-      const { federalState, applyToExisting, ...configBody } = body;
+      // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
+      const { federalState, tenantName, applyToExisting, ...configBody } = body;
+
+      // Build tenant update data (name + federalState live on Tenant model)
+      const tenantUpdate: Record<string, unknown> = {};
+      if (federalState) tenantUpdate.federalState = federalState as FederalState;
+      if (tenantName !== undefined) tenantUpdate.name = tenantName;
 
       const [config] = await Promise.all([
         app.prisma.tenantConfig.upsert({
@@ -174,10 +184,10 @@ export async function settingsRoutes(app: FastifyInstance) {
           update: configBody,
           create: { tenantId, ...configBody },
         }),
-        federalState
+        Object.keys(tenantUpdate).length > 0
           ? app.prisma.tenant.update({
               where: { id: tenantId },
-              data: { federalState: federalState as FederalState },
+              data: tenantUpdate,
             })
           : Promise.resolve(null),
       ]);

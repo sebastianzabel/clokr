@@ -1155,7 +1155,7 @@ export async function reportRoutes(app: FastifyInstance) {
         }
       >();
       for (const e of entitlements) {
-        if (e.leaveType.name !== "Urlaub") continue;
+        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);
@@ -1241,7 +1241,7 @@ export async function reportRoutes(app: FastifyInstance) {
       >();
 
       for (const e of entitlements) {
-        if (e.leaveType.name !== "Urlaub") continue;
+        if (!e.leaveType.name.toLowerCase().includes("urlaub")) continue;
         const key = e.employee.employeeNumber;
         const existing = empMap.get(key);
         const total = Number(e.totalDays);

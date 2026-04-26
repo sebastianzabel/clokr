@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { get as getStore } from "svelte/store";
@@ -40,7 +41,13 @@
   type TodayAttendance = {
     date: string;
     employees: TodayEmployee[];
-    summary: { present: number; absent: number; clockedIn: number; missing: number; holiday: number };
+    summary: {
+      present: number;
+      absent: number;
+      clockedIn: number;
+      missing: number;
+      holiday: number;
+    };
   };
 
   type OvertimeEmployee = {
@@ -71,10 +78,13 @@
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
-  // Shared period selector
+  // Shared period selector — controls Team-Übersicht widgets
   let selectedMonth = $state(currentMonth);
   let selectedYear = $state(currentYear);
 
+  // DATEV export card — own period selector
+  let datevMonth = $state(currentMonth);
+  let datevYear = $state(currentYear);
   let datevLoading = $state(false);
   let datevError = $state("");
 
@@ -145,9 +155,10 @@
     const rows = overtimeOverview?.employees ?? [];
     const copy = rows.slice();
     copy.sort((a, b) => {
-      let cmp = 0;
-      if (sortColumn === "name") cmp = a.name.localeCompare(b.name, "de");
-      else cmp = a.balanceHours - b.balanceHours;
+      const cmp =
+        sortColumn === "name"
+          ? a.name.localeCompare(b.name, "de")
+          : a.balanceHours - b.balanceHours;
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
@@ -229,6 +240,10 @@
   onMount(async () => {
     const auth = getStore(authStore);
     currentRole = auth.user?.role ?? null;
+    if (!["ADMIN", "MANAGER"].includes(currentRole ?? "")) {
+      goto("/dashboard");
+      return;
+    }
   });
 
   onDestroy(() => {
@@ -323,7 +338,8 @@
     try {
       overtimeOverview = await api.get<OvertimeOverview>("/dashboard/overtime-overview");
     } catch (e: unknown) {
-      overtimeError = e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
+      overtimeError =
+        e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
     } finally {
       overtimeLoading = false;
     }
@@ -354,12 +370,9 @@
       const { get } = await import("svelte/store");
       const auth = get(authSt);
 
-      const res = await fetch(
-        `/api/v1/reports/datev?month=${selectedMonth}&year=${selectedYear}`,
-        {
-          headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
-        },
-      );
+      const res = await fetch(`/api/v1/reports/datev?month=${datevMonth}&year=${datevYear}`, {
+        headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+      });
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -370,7 +383,7 @@
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `DATEV_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.txt`;
+      a.download = `DATEV_${datevYear}_${String(datevMonth).padStart(2, "0")}.txt`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: unknown) {
@@ -549,21 +562,6 @@
   <p>Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen</p>
 </div>
 
-<!-- Shared period selector -->
-<div class="period-bar card card-body card-animate">
-  <span class="period-label">Zeitraum</span>
-  <select bind:value={selectedMonth} class="period-select">
-    {#each months as name, i (i)}
-      <option value={i + 1}>{name}</option>
-    {/each}
-  </select>
-  <select bind:value={selectedYear} class="period-select">
-    {#each years as y (y)}
-      <option value={y}>{y}</option>
-    {/each}
-  </select>
-</div>
-
 <div class="reports-grid">
   <!-- DATEV Export Card -->
   <div class="card card-body card-animate report-card">
@@ -577,10 +575,24 @@
       </div>
     </div>
 
-    <p class="report-period-hint">
-      Zeitraum: {months[selectedMonth - 1]}
-      {selectedYear}
-    </p>
+    <div class="report-controls">
+      <div class="form-group">
+        <label class="form-label" for="datev-month">Monat</label>
+        <select id="datev-month" bind:value={datevMonth} class="form-input">
+          {#each months as name, i (i)}
+            <option value={i + 1}>{name}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="datev-year">Jahr</label>
+        <select id="datev-year" bind:value={datevYear} class="form-input">
+          {#each years as y (y)}
+            <option value={y}>{y}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
 
     <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
       {#if datevLoading}
@@ -705,221 +717,228 @@
   </div>
 </div>
 
-<!-- Heutige Anwesenheit (RPT-03) — ADMIN / MANAGER only -->
+<!-- Team-Übersicht — ADMIN / MANAGER only -->
 {#if isManager}
-  <section class="widget-card card card-body card-animate">
-    <div class="widget-header">
-      <h3 class="widget-title">Heutige Anwesenheit</h3>
-      <div class="widget-actions">
-        {#if todayAttendance}
-          <span class="section-date">{todayAttendance.date}</span>
-        {/if}
+  <div class="team-overview-section card-animate">
+    <div class="team-overview-header">
+      <h2>Team-Übersicht</h2>
+      <div class="team-period-controls">
+        <select bind:value={selectedMonth} class="period-select">
+          {#each months as name, i (i)}
+            <option value={i + 1}>{name}</option>
+          {/each}
+        </select>
+        <select bind:value={selectedYear} class="period-select">
+          {#each years as y (y)}
+            <option value={y}>{y}</option>
+          {/each}
+        </select>
       </div>
     </div>
 
-    {#if todayLoading}
-      <p class="section-placeholder">Lade Anwesenheit…</p>
-    {:else if todayError}
-      <p class="section-error">{todayError}</p>
-    {:else if todayAttendance}
-      <div class="attendance-summary">
-        <div class="summary-chip">
-          <span class="label">Anwesend</span>
-          <span class="value">{todayAttendance.summary.present}</span>
+    <!-- Heutige Anwesenheit (RPT-03) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Heutige Anwesenheit</h3>
+        <div class="widget-actions">
+          {#if todayAttendance}
+            <span class="section-date">{todayAttendance.date}</span>
+          {/if}
         </div>
-        <div class="summary-chip">
-          <span class="label">Eingestempelt</span>
-          <span class="value">{todayAttendance.summary.clockedIn}</span>
-        </div>
-        <div class="summary-chip">
-          <span class="label">Abwesend</span>
-          <span class="value">{todayAttendance.summary.absent}</span>
-        </div>
-        <div class="summary-chip">
-          <span class="label">Fehlend</span>
-          <span class="value">{todayAttendance.summary.missing}</span>
-        </div>
-        {#if todayAttendance.summary.holiday > 0}
+      </div>
+
+      {#if todayLoading}
+        <p class="section-placeholder">Lade Anwesenheit…</p>
+      {:else if todayError}
+        <p class="section-error">{todayError}</p>
+      {:else if todayAttendance}
+        <div class="attendance-summary">
           <div class="summary-chip">
-            <span class="label">Feiertag</span>
-            <span class="value">{todayAttendance.summary.holiday}</span>
+            <span class="label">Anwesend</span>
+            <span class="value">{todayAttendance.summary.present}</span>
           </div>
-        {/if}
-      </div>
+          <div class="summary-chip">
+            <span class="label">Eingestempelt</span>
+            <span class="value">{todayAttendance.summary.clockedIn}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Abwesend</span>
+            <span class="value">{todayAttendance.summary.absent}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Fehlend</span>
+            <span class="value">{todayAttendance.summary.missing}</span>
+          </div>
+          {#if todayAttendance.summary.holiday > 0}
+            <div class="summary-chip">
+              <span class="label">Feiertag</span>
+              <span class="value">{todayAttendance.summary.holiday}</span>
+            </div>
+          {/if}
+        </div>
 
-      <div class="table-wrap">
-        <table class="attendance-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Nr.</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedTodayRows as row (row.id)}
+        <div class="table-wrap">
+          <table class="attendance-table">
+            <thead>
               <tr>
-                <td>{row.name}</td>
-                <td>{row.employeeNumber}</td>
-                <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                <th>Status</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each pagedTodayRows as row (row.id)}
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.employeeNumber}</td>
+                  <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={todayAttendance.employees.length}
+          bind:page={todayPage}
+          bind:pageSize={todayPageSize}
+        />
+      {/if}
+    </section>
+
+    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Überstunden-Übersicht</h3>
+        <div class="widget-actions"></div>
       </div>
-      <Pagination
-        total={todayAttendance.employees.length}
-        bind:page={todayPage}
-        bind:pageSize={todayPageSize}
-      />
-    {/if}
-  </section>
-{/if}
 
-<!-- Überstunden-Übersicht (RPT-01 + SALDO-03) — ADMIN / MANAGER only -->
-{#if isManager}
-  <section class="widget-card card card-body card-animate">
-    <div class="widget-header">
-      <h3 class="widget-title">Überstunden-Übersicht</h3>
-      <div class="widget-actions"></div>
-    </div>
-
-    {#if overtimeLoading}
-      <p class="section-placeholder">Lade Überstunden-Saldo…</p>
-    {:else if overtimeError}
-      <p class="section-error">{overtimeError}</p>
-    {:else if overtimeOverview}
-      <div class="table-wrap">
-        <table class="overtime-table">
-          <thead>
-            <tr>
-              <th class="sortable" onclick={() => toggleSort("name")}>
-                Mitarbeiter
-                {#if sortColumn === "name"}<span class="sort-arrow">{sortDir === "asc" ? "▲" : "▼"}</span>{/if}
-              </th>
-              <th>Nr.</th>
-              <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                Saldo (h)
-                {#if sortColumn === "balance"}<span class="sort-arrow">{sortDir === "asc" ? "▲" : "▼"}</span>{/if}
-              </th>
-              <th>Status</th>
-              <th>Verlauf (6 Monate)</th>
-              <th class="actions-col">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedOvertimeRows as row (row.id)}
+      {#if overtimeLoading}
+        <p class="section-placeholder">Lade Überstunden-Saldo…</p>
+      {:else if overtimeError}
+        <p class="section-error">{overtimeError}</p>
+      {:else if overtimeOverview}
+        <div class="table-wrap">
+          <table class="overtime-table">
+            <thead>
               <tr>
-                <td>{row.name}</td>
-                <td>{row.employeeNumber}</td>
-                <td class="numeric">{formatBalance(row.balanceHours)}</td>
-                <td><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span></td>
-                <td class="sparkline-cell">
-                  {#if row.snapshots.length >= 2}
-                    <canvas
-                      width="100"
-                      height="28"
-                      use:registerCanvas={row.id}
-                    ></canvas>
-                  {:else}
-                    <span class="no-trend">(kein Verlauf)</span>
-                  {/if}
-                </td>
-                <td class="row-actions">
-                  <button
-                    class="btn-icon btn-icon-pdf"
-                    title="Stundennachweis PDF ({row.name})"
-                    onclick={() => downloadEmployeePdf(row.id, row.name)}
-                  >PDF</button>
-                  <button
-                    class="btn-icon btn-icon-datev"
-                    title="DATEV LODAS ({row.name})"
-                    onclick={() => downloadEmployeeDatev(row.id, row.name)}
-                  >TXT</button>
-                  {#if empDownloadErrors[`pdf-${row.id}`]}
-                    <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
-                  {/if}
-                  {#if empDownloadErrors[`datev-${row.id}`]}
-                    <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
-                  {/if}
-                </td>
+                <th class="sortable" onclick={() => toggleSort("name")}>
+                  Mitarbeiter
+                  {#if sortColumn === "name"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th>Nr.</th>
+                <th class="sortable numeric" onclick={() => toggleSort("balance")}>
+                  Saldo (h)
+                  {#if sortColumn === "balance"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th>Status</th>
+                <th>Verlauf (6 Monate)</th>
+                <th class="actions-col">Aktionen</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each pagedOvertimeRows as row (row.id)}
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.employeeNumber}</td>
+                  <td class="numeric">{formatBalance(row.balanceHours)}</td>
+                  <td
+                    ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
+                    ></td
+                  >
+                  <td class="sparkline-cell">
+                    {#if row.snapshots.length >= 2}
+                      <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
+                    {:else}
+                      <span class="no-trend">(kein Verlauf)</span>
+                    {/if}
+                  </td>
+                  <td class="row-actions">
+                    <button
+                      class="btn-icon btn-icon-pdf"
+                      title="Stundennachweis PDF ({row.name})"
+                      onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-datev"
+                      title="DATEV LODAS ({row.name})"
+                      onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
+                    >
+                    {#if empDownloadErrors[`pdf-${row.id}`]}
+                      <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                    {/if}
+                    {#if empDownloadErrors[`datev-${row.id}`]}
+                      <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={sortedOvertime.length}
+          bind:page={overtimePage}
+          bind:pageSize={overtimePageSize}
+        />
+      {/if}
+    </section>
+
+    <!-- Urlaubsübersicht (RPT-02) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Urlaubsübersicht</h3>
+        <div class="widget-actions"></div>
       </div>
-      <Pagination
-        total={sortedOvertime.length}
-        bind:page={overtimePage}
-        bind:pageSize={overtimePageSize}
-      />
-    {/if}
-  </section>
-{/if}
 
-<!-- Urlaubsübersicht (RPT-02) — ADMIN / MANAGER only -->
-{#if isManager}
-  <section class="widget-card card card-body card-animate">
-    <div class="widget-header">
-      <h3 class="widget-title">Urlaubsübersicht</h3>
-      <div class="widget-actions"></div>
-    </div>
-
-    {#if leaveOverviewLoading}
-      <p class="section-placeholder">Lade Urlaubsübersicht…</p>
-    {:else if leaveOverviewError}
-      <p class="section-error">{leaveOverviewError}</p>
-    {:else if leaveOverviewRows.length === 0}
-      <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
-    {:else}
-      <div class="table-wrap">
-        <table class="leave-overview-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Nr.</th>
-              <th>Urlaubsart</th>
-              <th class="numeric">Gesamt</th>
-              <th class="numeric">Übertrag</th>
-              <th class="numeric">Genommen</th>
-              <th class="numeric">Geplant</th>
-              <th class="numeric">Rest</th>
-              <th class="actions-col">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+      {#if leaveOverviewLoading}
+        <p class="section-placeholder">Lade Urlaubsübersicht…</p>
+      {:else if leaveOverviewError}
+        <p class="section-error">{leaveOverviewError}</p>
+      {:else if leaveOverviewRows.length === 0}
+        <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
+      {:else}
+        <div class="table-wrap">
+          <table class="leave-overview-table">
+            <thead>
               <tr>
-                <td>{row.employee.firstName} {row.employee.lastName}</td>
-                <td>{row.employee.employeeNumber}</td>
-                <td>{row.leaveType.name}</td>
-                <td class="numeric">{formatDays(row.totalDays)}</td>
-                <td class="numeric">{formatDays(row.carriedOverDays)}</td>
-                <td class="numeric">{formatDays(row.usedDays)}</td>
-                <td class="numeric">{formatDays(row.pendingDays)}</td>
-                <td class="numeric strong">{formatDays(row.remainingDays)}</td>
-                <td class="row-actions">
-                  <button
-                    class="btn-icon btn-icon-pdf"
-                    title="Stundennachweis PDF ({row.employee.firstName} {row.employee.lastName})"
-                    onclick={() => downloadEmployeePdf(row.employee.id, `${row.employee.firstName} ${row.employee.lastName}`)}
-                  >PDF</button>
-                  {#if empDownloadErrors[`pdf-${row.employee.id}`]}
-                    <span class="row-dl-error">{empDownloadErrors[`pdf-${row.employee.id}`]}</span>
-                  {/if}
-                </td>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                <th>Urlaubsart</th>
+                <th class="numeric">Gesamt</th>
+                <th class="numeric">Übertrag</th>
+                <th class="numeric">Genommen</th>
+                <th class="numeric">Geplant</th>
+                <th class="numeric">Rest</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        total={leaveOverviewRows.length}
-        bind:page={leaveOverviewPage}
-        bind:pageSize={leaveOverviewPageSize}
-      />
-    {/if}
-  </section>
+            </thead>
+            <tbody>
+              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+                <tr>
+                  <td>{row.employee.firstName} {row.employee.lastName}</td>
+                  <td>{row.employee.employeeNumber}</td>
+                  <td>{row.leaveType.name}</td>
+                  <td class="numeric">{formatDays(row.totalDays)}</td>
+                  <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                  <td class="numeric">{formatDays(row.usedDays)}</td>
+                  <td class="numeric">{formatDays(row.pendingDays)}</td>
+                  <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={leaveOverviewRows.length}
+          bind:page={leaveOverviewPage}
+          bind:pageSize={leaveOverviewPageSize}
+        />
+      {/if}
+    </section>
+  </div>
 {/if}
 
 <style>
@@ -992,12 +1011,6 @@
     font-size: 0.875rem;
   }
 
-  .report-period-hint {
-    font-size: 0.8125rem;
-    color: var(--color-text-muted);
-    margin: 0;
-  }
-
   .report-controls {
     display: flex;
     gap: 0.875rem;
@@ -1023,22 +1036,32 @@
     }
   }
 
-  /* ── Period bar ───────────────────────────────────────────────────────────── */
+  /* ── Team overview section ───────────────────────────────────────────────── */
 
-  .period-bar {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1.5rem;
-    flex-wrap: wrap;
+  .team-overview-section {
+    margin-top: 2rem;
   }
 
-  .period-label {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+  .team-overview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .team-overview-header h2 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-text-heading);
+    margin: 0;
+  }
+
+  .team-period-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .period-select {
@@ -1060,7 +1083,7 @@
   /* ── Manager widget cards ─────────────────────────────────────────────────── */
 
   .widget-card {
-    margin-top: 2rem;
+    margin-top: 1rem;
   }
 
   .widget-header {

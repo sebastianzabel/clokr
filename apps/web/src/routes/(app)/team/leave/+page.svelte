@@ -68,7 +68,14 @@
 
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
+  interface Employee {
+    id: string;
+    firstName: string;
+    lastName: string;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
+  let employees: Employee[] = $state([]);
   let allTeamRequests: LeaveRequest[] = $state([]);
   let pendingRequests: LeaveRequest[] = $state([]);
   let loading = $state(true);
@@ -278,12 +285,14 @@
     error = "";
     try {
       const year = new Date().getFullYear();
-      const [all, pending] = await Promise.all([
+      const [all, pending, emps] = await Promise.all([
         api.get<LeaveRequest[]>(`/leave/requests?year=${year}`),
         api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`),
+        api.get<Employee[]>("/employees"),
       ]);
       allTeamRequests = all;
       pendingRequests = pending;
+      employees = emps;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -393,8 +402,44 @@
     return days === 1 ? "1 Tag" : `${days} Tage`;
   }
 
-  // Abgeleiteter Kalender
-  let calMap = $derived(buildCalMap(calEntries));
+  // ── Mitarbeiter-Filter (global für alle Tabs) ────────────────────────────
+  let filterEmployeeId = $state<string>("");
+  let empSearch = $state("");
+  let empDropdownOpen = $state(false);
+
+  // Employee list sorted by lastName for dropdown
+  let employeeOptions = $derived(
+    employees
+      .map((e) => ({ id: e.id, name: `${e.lastName}, ${e.firstName}` }))
+      .sort((a, b) => a.name.localeCompare(b.name, "de")),
+  );
+
+  let filteredEmpOptions = $derived(
+    employeeOptions.filter((e) => {
+      if (!empSearch.trim()) return true;
+      const q = empSearch.toLowerCase();
+      return e.name.toLowerCase().includes(q);
+    }),
+  );
+
+  function selectEmployee(emp: { id: string; name: string } | null) {
+    filterEmployeeId = emp?.id ?? "";
+    empSearch = "";
+    empDropdownOpen = false;
+  }
+
+  // Filtered views based on selected employee
+  let filteredCalEntries = $derived(
+    filterEmployeeId ? calEntries.filter((e) => e.employeeId === filterEmployeeId) : calEntries,
+  );
+  let filteredPendingRequests = $derived(
+    filterEmployeeId
+      ? pendingRequests.filter((r) => r.employeeId === filterEmployeeId)
+      : pendingRequests,
+  );
+
+  // Abgeleiteter Kalender (uses filteredCalEntries)
+  let calMap = $derived(buildCalMap(filteredCalEntries));
   let calDays = $derived(buildCalDays(calYear, calMonth));
 
   // ── Anträge-Filter + Pagination ───────────────────────────────────────────
@@ -405,6 +450,7 @@
 
   let filteredTeamRequests = $derived(
     allTeamRequests.filter((req) => {
+      if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
       return true;
@@ -472,6 +518,84 @@
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
 
+<!-- ── Mitarbeiter-Filter ──────────────────────────────────────────────────── -->
+<div class="employee-selector card-animate">
+  <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
+      {#if filterEmployeeId && !empDropdownOpen}
+        <span class="emp-selected-name">
+          {employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter"}
+        </span>
+      {:else}
+        <input
+          class="emp-search-input"
+          type="text"
+          placeholder={filterEmployeeId
+            ? (employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter")
+            : "Alle Mitarbeiter"}
+          bind:value={empSearch}
+          onfocus={() => (empDropdownOpen = true)}
+          oninput={() => (empDropdownOpen = true)}
+          aria-label="Mitarbeiter suchen"
+          autocomplete="off"
+        />
+      {/if}
+      <svg
+        class="emp-chevron"
+        class:emp-chevron--up={empDropdownOpen}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        aria-hidden="true"
+      >
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
+    </div>
+    {#if empDropdownOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
+      <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
+        <li
+          class="emp-dropdown-item"
+          class:emp-dropdown-item--active={filterEmployeeId === ""}
+          role="option"
+          aria-selected={filterEmployeeId === ""}
+          tabindex="0"
+          onclick={() => selectEmployee(null)}
+          onkeydown={(e) => {
+            if (e.key === "Enter" || e.key === " ") selectEmployee(null);
+          }}
+        >
+          Alle Mitarbeiter
+        </li>
+        {#if filteredEmpOptions.length === 0}
+          <li class="emp-dropdown-empty">Keine Treffer</li>
+        {:else}
+          {#each filteredEmpOptions as emp (emp.id)}
+            <li
+              class="emp-dropdown-item"
+              class:emp-dropdown-item--active={emp.id === filterEmployeeId}
+              role="option"
+              aria-selected={emp.id === filterEmployeeId}
+              tabindex="0"
+              onclick={() => selectEmployee(emp)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
+              }}
+            >
+              {emp.name}
+            </li>
+          {/each}
+        {/if}
+      </ul>
+    {/if}
+  </div>
+</div>
+
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
   <button
@@ -490,8 +614,8 @@
     onclick={() => (view = "approvals")}
   >
     Genehmigungen
-    {#if pendingRequests.length > 0}
-      <span class="tab-badge">{pendingRequests.length}</span>
+    {#if filteredPendingRequests.length > 0}
+      <span class="tab-badge">{filteredPendingRequests.length}</span>
     {/if}
   </button>
 </div>
@@ -789,9 +913,9 @@
 
 <!-- ── Genehmigungen ──────────────────────────────────────────────────────── -->
 {#if view === "approvals"}
-  {#if !loading && pendingRequests.length > 0}
+  {#if !loading && filteredPendingRequests.length > 0}
     <div class="pending-list">
-      {#each pendingRequests as req (req.id)}
+      {#each filteredPendingRequests as req (req.id)}
         <div
           class="pending-card card"
           id="request-{req.id}"
@@ -991,6 +1115,113 @@
 {/if}
 
 <style>
+  /* ── Employee selector / combobox ──────────────────────────────────── */
+  .employee-selector {
+    margin-bottom: 1rem;
+  }
+
+  .emp-combobox {
+    position: relative;
+    max-width: 360px;
+  }
+
+  .emp-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--glass-shadow);
+    cursor: pointer;
+    min-height: 2.5rem;
+  }
+
+  .emp-combobox--open .emp-input-wrap {
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
+  }
+
+  .emp-selected-name {
+    flex: 1;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .emp-search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+    min-width: 0;
+  }
+
+  .emp-search-input::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  .emp-chevron {
+    flex-shrink: 0;
+    color: var(--color-text-muted);
+    transition: transform 0.15s;
+  }
+
+  .emp-chevron--up {
+    transform: rotate(180deg);
+  }
+
+  .emp-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+
+  .emp-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 50;
+  }
+
+  .emp-dropdown-item {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .emp-dropdown-item:hover,
+  .emp-dropdown-item:focus {
+    background: var(--color-bg-subtle);
+    outline: none;
+  }
+
+  .emp-dropdown-item--active {
+    color: var(--color-brand);
+    font-weight: 600;
+  }
+
+  .emp-dropdown-empty {
+    padding: 0.75rem 0.875rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+  }
+
   /* ── Highlight from notification deep-link ────────────────────────── */
   @keyframes highlight-fade {
     0% {

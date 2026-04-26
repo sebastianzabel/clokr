@@ -744,6 +744,7 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          source: "CORRECTION",
         });
       } else {
         await api.post("/time-entries", {
@@ -1026,6 +1027,71 @@
   </div>
 </div>
 
+<!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste + Empty State) ───── -->
+{#snippet navContent()}
+  <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+    >
+  </button>
+  <div class="cal-nav-center">
+    <button
+      class="cal-nav-title"
+      onclick={() => {
+        pickerYear = calMonth.getFullYear();
+        showMonthPicker = !showMonthPicker;
+      }}
+      title="Monat/Jahr wählen"
+    >
+      {format(calMonth, "MMMM yyyy", { locale: de })}
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
+      >
+    </button>
+    {#if showMonthPicker}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
+      <div class="month-picker">
+        <div class="month-picker-year">
+          <button onclick={() => pickerYear--}>‹</button>
+          <span>{pickerYear}</span>
+          <button onclick={() => pickerYear++}>›</button>
+        </div>
+        <div class="month-picker-grid">
+          {#each MONTH_NAMES_SHORT as name, i (i)}
+            <button
+              class="month-picker-btn"
+              class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
+              onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
+            >
+          {/each}
+        </div>
+        <button class="month-picker-today" onclick={gotoToday}>Heute</button>
+      </div>
+    {/if}
+  </div>
+  <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+    >
+  </button>
+{/snippet}
+
 {#if selectedEmployee}
   <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
   <div class="view-tabs">
@@ -1104,71 +1170,6 @@
       {/if}
     </div>
   {/if}
-
-  <!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste) ───── -->
-  {#snippet navContent()}
-    <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-      >
-    </button>
-    <div class="cal-nav-center">
-      <button
-        class="cal-nav-title"
-        onclick={() => {
-          pickerYear = calMonth.getFullYear();
-          showMonthPicker = !showMonthPicker;
-        }}
-        title="Monat/Jahr wählen"
-      >
-        {format(calMonth, "MMMM yyyy", { locale: de })}
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-        >
-      </button>
-      {#if showMonthPicker}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-        <div class="month-picker">
-          <div class="month-picker-year">
-            <button onclick={() => pickerYear--}>‹</button>
-            <span>{pickerYear}</span>
-            <button onclick={() => pickerYear++}>›</button>
-          </div>
-          <div class="month-picker-grid">
-            {#each MONTH_NAMES_SHORT as name, i (i)}
-              <button
-                class="month-picker-btn"
-                class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
-                onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
-              >
-            {/each}
-          </div>
-          <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-        </div>
-      {/if}
-    </div>
-    <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-      >
-    </button>
-  {/snippet}
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
@@ -1375,26 +1376,43 @@
     {/if}
   {/if}
 {:else}
-  <div class="no-emp-card card card-animate">
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="40"
-      height="40"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.5"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      class="no-emp-icon"
-      aria-hidden="true"
-    >
-      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-      <circle cx="9" cy="7" r="4" />
-      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-    </svg>
-    <p class="no-emp-text">Wähle einen Mitarbeiter aus, um dessen Zeiteinträge anzuzeigen.</p>
+  <!-- Empty calendar when no employee selected -->
+  {@const y = calMonth.getFullYear()}
+  {@const m = calMonth.getMonth()}
+  {@const firstDay = new Date(y, m, 1)}
+  {@const startDow = (firstDay.getDay() + 6) % 7}
+  {@const daysInMonth = new Date(y, m + 1, 0).getDate()}
+  {@const totalCells = startDow + daysInMonth + ((7 - ((startDow + daysInMonth) % 7)) % 7)}
+  <div class="cal-section card card-animate">
+    <div class="cal-nav">
+      {@render navContent()}
+    </div>
+    <div class="cal-grid cal-header-row">
+      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
+        <div class="cal-dow">{d}</div>
+      {/each}
+    </div>
+    <div class="cal-grid">
+      {#each Array(totalCells) as _, i (i)}
+        {@const dayNum = i - startDow + 1}
+        {@const isCurrentMonth = dayNum >= 1 && dayNum <= daysInMonth}
+        {@const displayDay = isCurrentMonth
+          ? dayNum
+          : dayNum < 1
+            ? new Date(y, m, dayNum).getDate()
+            : new Date(y, m + 1, dayNum - daysInMonth).getDate()}
+        {@const cellDow = i % 7}
+        <div
+          class="cal-cell cal-cell--noExpect"
+          class:cal-other={!isCurrentMonth}
+          class:cal-current={isCurrentMonth}
+          class:cal-weekend={cellDow >= 5}
+        >
+          <span class="cal-day-num">{displayDay}</span>
+        </div>
+      {/each}
+    </div>
+    <p class="no-emp-hint">Mitarbeiter auswählen, um Zeiteinträge anzuzeigen.</p>
   </div>
 {/if}
 
@@ -2361,6 +2379,13 @@
   }
 
   /* ── No-employee empty state ──────────────────────────────────────── */
+  .no-emp-hint {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+    margin: 0;
+  }
   .no-emp-card {
     padding: 3rem 2rem;
     display: flex;
