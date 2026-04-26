@@ -181,24 +181,23 @@
   let isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
   // Employee nav group (always shown to all authenticated users)
-  let employeeNavItems = $derived(
-    [
-      { href: "/dashboard", icon: "home", label: "Dashboard" },
-      { href: "/time-entries", icon: "clock", label: "Zeiterfassung" },
-      { href: "/leave", icon: "calendar-off", label: "Abwesenheiten" },
-    ],
-  );
+  let employeeNavItems = $derived([
+    { href: "/dashboard", icon: "home", label: "Dashboard" },
+    { href: "/time-entries", icon: "clock", label: "Zeiterfassung" },
+    { href: "/leave", icon: "calendar-off", label: "Abwesenheiten" },
+  ]);
 
   // Manager nav group (shown only when isManager)
   let managerNavItems = $derived(
     isManager
       ? [
+          { href: "/team/time-entries", icon: "users", label: "Team-Zeiten" },
+          { href: "/team/leave", icon: "calendar-check", label: "Team-Abwesenheiten" },
           { href: "/reports", icon: "bar-chart-3", label: "Berichte" },
           { href: "/admin", icon: "settings", label: "Admin" },
         ]
       : [],
   );
-
 </script>
 
 {#snippet navSvgIcon(name: string, size?: number)}
@@ -237,6 +236,17 @@
         d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
       />
       <circle cx="12" cy="12" r="3" />
+    {:else if name === "users"}
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    {:else if name === "calendar-check"}
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <rect width="18" height="18" x="3" y="4" rx="2" />
+      <path d="M3 10h18" />
+      <path d="m9 16 2 2 4-4" />
     {/if}
   </svg>
 {/snippet}
@@ -366,7 +376,8 @@
             {@const active =
               item.href === "/dashboard"
                 ? $page.url.pathname === "/dashboard"
-                : $page.url.pathname === item.href || $page.url.pathname.startsWith(item.href + "/")}
+                : $page.url.pathname === item.href ||
+                  $page.url.pathname.startsWith(item.href + "/")}
             <a
               href={item.href}
               class="nav-item"
@@ -622,7 +633,7 @@
   .brand-name {
     font-size: 1.15rem;
     font-weight: 800;
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(255, 255, 255, 0.9);
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -643,7 +654,7 @@
     min-width: 44px;
     min-height: 44px;
     border-radius: var(--radius-sm);
-    color: rgba(255, 255, 255, 0.60);
+    color: rgba(255, 255, 255, 0.6);
     transition:
       background-color 0.12s,
       color 0.12s;
@@ -654,7 +665,7 @@
 
   .notification-bell:hover {
     background-color: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(255, 255, 255, 0.9);
   }
 
   .notification-badge {
@@ -884,7 +895,7 @@
 
   .nav-item:hover:not(.nav-item--disabled):not(.nav-item--active) {
     background-color: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(255, 255, 255, 0.9);
   }
 
   .nav-item--active {
@@ -905,7 +916,7 @@
   }
 
   .nav-item--active .nav-icon {
-    opacity: 1.0;
+    opacity: 1;
   }
 
   .nav-item:hover .nav-icon {
@@ -939,7 +950,7 @@
     gap: 0.625rem;
     min-width: 0;
     text-decoration: none;
-    color: rgba(255, 255, 255, 0.80);
+    color: rgba(255, 255, 255, 0.8);
     padding: 0.375rem 0.5rem;
     border-radius: var(--radius-sm);
     transition: background 0.15s;
@@ -986,7 +997,7 @@
 
   .sidebar-user-role {
     font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.50);
+    color: rgba(255, 255, 255, 0.5);
   }
 
   .sidebar-footer-actions {
@@ -1000,7 +1011,7 @@
     gap: 0.4rem;
     border: 1px solid rgba(255, 255, 255, 0.12);
     background-color: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.60);
+    color: rgba(255, 255, 255, 0.6);
   }
 
   .logout-btn:hover {
@@ -1051,7 +1062,7 @@
     gap: 0.15rem;
     padding: 0.375rem 0.125rem;
     text-decoration: none;
-    color: rgba(255, 255, 255, 0.60);
+    color: rgba(255, 255, 255, 0.6);
     font-size: 0.6875rem;
     font-weight: 500;
     transition: color 0.12s;
@@ -1123,7 +1134,7 @@
   .mobile-header-name {
     font-size: 0.9375rem;
     font-weight: 700;
-    color: rgba(255, 255, 255, 0.90);
+    color: rgba(255, 255, 255, 0.9);
   }
 
   .notification-dropdown--mobile {

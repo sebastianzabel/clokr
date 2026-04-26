@@ -5,6 +5,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
 
   interface TenantConfig {
+    tenantName?: string;
     federalState: string;
     timezone: string;
     defaultWeeklyHours: number;
@@ -75,8 +76,9 @@
   let loading = $state(true);
   let error = $state("");
 
-  // Federal state
+  // Federal state + tenant name
   let gFederalState = $state("NIEDERSACHSEN");
+  let gTenantName = $state("");
   let _gOtherFields: Omit<TenantConfig, "federalState"> | null = null;
   let stateSaving = $state(false);
   let stateSaved = $state(false);
@@ -255,6 +257,7 @@
     try {
       const cfg = await api.get<TenantConfig>("/settings/work");
       gFederalState = cfg.federalState ?? "NIEDERSACHSEN";
+      gTenantName = cfg.tenantName ?? "";
       gTimezone = cfg.timezone ?? "Europe/Berlin";
       _gOtherFields = {
         defaultWeeklyHours: Number(cfg.defaultWeeklyHours),
@@ -380,6 +383,7 @@
     try {
       await api.put("/settings/work", {
         ..._gOtherFields,
+        tenantName: gTenantName,
         federalState: gFederalState,
         timezone: gTimezone,
       });
@@ -720,14 +724,25 @@
 
     <hr class="sys-divider" />
 
-    <!-- Zeitzone + Bundesland -->
+    <!-- Firmenname + Zeitzone + Bundesland -->
     <div class="sys-section">
-      <h3 class="sys-title">Region & Zeitzone</h3>
+      <h3 class="sys-title">Unternehmen & Region</h3>
       {#if stateError}
         <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
           <span>⚠</span><span>{stateError}</span>
         </div>
       {/if}
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label class="form-label" for="g-tenant-name">Firmenname</label>
+        <input
+          id="g-tenant-name"
+          type="text"
+          bind:value={gTenantName}
+          class="form-input"
+          placeholder="Name des Unternehmens"
+        />
+        <p class="form-hint text-muted">Wird in PDF-Exporten als Überschrift verwendet.</p>
+      </div>
       <div class="inline-fields">
         <div class="form-group">
           <label class="form-label" for="g-federal-state">Bundesland</label>
@@ -1249,16 +1264,18 @@
         {/if}
       </div>
     </div>
+  </div>
 
-    <hr class="sys-divider" />
+  <!-- ── NFC-Terminals ──────────────────────────────────────────────────── -->
+  <div class="section-label">
+    <h2 class="section-header">NFC-Terminals</h2>
+    <p class="text-muted">
+      API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
+    </p>
+  </div>
 
-    <!-- NFC-Terminals -->
+  <div class="card card-body settings-card card-animate">
     <div class="sys-section">
-      <h3 class="sys-title">NFC-Terminals</h3>
-      <p class="text-muted" style="margin-bottom: 1rem;">
-        API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
-      </p>
-
       {#if showNewKey}
         <div class="alert alert-success" style="margin: 1rem 0;">
           <div>

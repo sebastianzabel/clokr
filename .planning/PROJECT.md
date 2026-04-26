@@ -70,17 +70,23 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 - ✓ Per-day Soll in calendar for MONTHLY_HOURS = budget ÷ working days in month — v1.3
 - ✓ Tenant-level holiday deduction toggle: public holidays on configured workdays reduce monthly Soll — v1.3
 - ✓ TRACK_ONLY retroactive snapshot guard: isTrackOnly forces carryOver=0 in recalculate-snapshots — v1.3
+- ✓ CI/CD pipeline with test/lint/build gates — pre-v1.0 (PR #3)
+- ✓ Monatsabschluss SaldoSnapshot architecture (Issue #6) — pre-v1.0 (PR #8, #14)
+- ✓ Leave-Antrag-Modal visual polish (UI-12) — v1.2 (satisfied by Phase 9 glassmorphism)
 
 ### Active
 
-**Deferred (v1.4+):**
-- [ ] Leave-Antrag-Modal visual polish (UI-12) — deferred from v1.2
-- [ ] Reports page redesign (UI-13) — deferred from v1.2
-- [ ] Admin pages full redesign (UI-14) — deferred from v1.2
-- [ ] Mobile 390px overflow check + 44px touch targets audit (UI-15) — deferred from v1.2
-- [ ] Remaining pages glass-card frame: Schichten, NFC-Terminal overview (UI-17) — deferred from v1.2
-- [ ] CI/CD pipeline with test/lint/build gates
-- [ ] Monatsabschluss SaldoSnapshot architecture (Issue #6) — snapshot-based saldo replaces hire-date recalc
+- [ ] Manager/MA UI separation — eigene Manager-Seiten für Team-Zeiterfassung und Team-Abwesenheiten
+- [ ] Manager sidebar navigation — eigener Team-Bereich mit eigenen Menüpunkten
+- [ ] Personal pages show only own data — kein Employee-Selector auf persönlichen Seiten
+- [ ] Team dashboards with batch actions for managers
+- [ ] Reports page redesign (UI-13) — Charts, Tabellen, Export-Buttons modernisiert
+- [ ] Per-employee DATEV-TXT export (LODAS format, single employee)
+- [ ] Per-employee PDF export (tabular time entries)
+- [ ] Remaining pages glass-card frame: Schichten, NFC-Terminal overview (UI-17)
+
+**Deferred (v1.5+):**
+- [ ] Mobile 390px overflow check + 44px touch targets audit (UI-15) — after UI restructuring complete
 
 ### Out of Scope
 
@@ -144,6 +150,20 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 | TenantConfig.monthlyHoursHolidayDeduction @default(false) | Zero-migration for existing tenants; opt-in toggle semantics | ✓ Good |
 | Lock check via SaldoSnapshot composite key (not entry count) | Authoritative even when no entries exist yet for the month | ✓ Good |
 
+## Current Milestone: v1.4 Manager/MA-Trennung & Reports
+
+**Goal:** Saubere Trennung zwischen persönlichem Bereich und Manager-Ansichten, Reports-Seite überarbeiten mit Einzel-MA-Exporten
+
+**Target features:**
+- Eigene Manager-Seiten für Team-Zeiterfassung und Team-Abwesenheiten
+- Eigene Manager-Navigation in der Sidebar (Team-Bereich)
+- Persönliche Seiten zeigen nur eigene Daten (kein Employee-Selector mehr)
+- Team-Dashboards mit Batch-Aktionen für Manager
+- Reports-Seite Redesign — Charts, Tabellen, Export-Buttons modernisiert
+- Einzel-MA DATEV-TXT Export (LODAS-Format pro Mitarbeiter)
+- Einzel-MA PDF Export (tabellarische Arbeitszeiten)
+- Restliche Seiten (Schichten, NFC-Terminal) Glass-Card-Rahmen
+
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
@@ -165,4 +185,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-14 after v1.3 milestone — Monthly Hours Overhaul shipped_
+_Last updated: 2026-04-25 after v1.4 milestone start — Manager/MA-Trennung & Reports_

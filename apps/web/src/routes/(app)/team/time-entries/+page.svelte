@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
-  import { authStore } from "$stores/auth";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
 
@@ -89,6 +88,12 @@
     message: string;
   }
 
+  interface Employee {
+    id: string;
+    firstName: string;
+    lastName: string;
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   let entries: TimeEntry[] = $state([]);
   let schedule: WorkSchedule | null = $state(null);
@@ -136,7 +141,21 @@
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
 
-  const ownEmployeeId = $authStore.user?.employeeId ?? null;
+  // ── Employee selector state ────────────────────────────────────────────────
+  let employees: Employee[] = $state([]);
+  let selectedEmployeeId = $state<string | null>(null);
+  let empSearch = $state("");
+  let empDropdownOpen = $state(false);
+
+  let selectedEmployee = $derived(employees.find((e) => e.id === selectedEmployeeId) ?? null);
+
+  let filteredEmployees = $derived(
+    employees.filter((e) => {
+      if (!empSearch.trim()) return true;
+      const q = empSearch.toLowerCase();
+      return e.firstName.toLowerCase().includes(q) || e.lastName.toLowerCase().includes(q);
+    }),
+  );
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -151,15 +170,35 @@
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
 
-    await loadAll();
+    // Load employee list for selector
+    try {
+      const raw = await api.get<Employee[]>("/employees");
+      employees = raw.sort((a, b) => {
+        const ln = a.lastName.localeCompare(b.lastName, "de");
+        return ln !== 0 ? ln : a.firstName.localeCompare(b.firstName, "de");
+      });
+    } catch {
+      // Non-fatal — selector stays empty
+    }
+    // Do NOT call loadAll() here — wait for employee selection
   });
 
   async function loadAll() {
+    if (!selectedEmployeeId) {
+      entries = [];
+      schedule = null;
+      holidays = new Map();
+      absences = [];
+      overtimeTotalHours = null;
+      hireDate = null;
+      calendarDays = [];
+      return;
+    }
     loading = true;
     error = "";
     try {
       const year = calMonth.getFullYear();
-      const activeEmpId = ownEmployeeId;
+      const empId = selectedEmployeeId;
       const [
         rawEntries,
         rawSchedule,
@@ -169,22 +208,14 @@
         rawEmployee,
         rawConfig,
       ] = await Promise.all([
-        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
-        activeEmpId
-          ? api.get<WorkSchedule>(`/settings/work/${activeEmpId}`).catch(() => null)
-          : Promise.resolve(null),
+        api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
+        api.get<WorkSchedule>(`/settings/work/${empId}`).catch(() => null),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
-        activeEmpId
-          ? api
-              .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${activeEmpId}`)
-              .catch(() => [] as Absence[])
-          : Promise.resolve([] as Absence[]),
-        activeEmpId
-          ? api.get<{ balanceHours: number }>(`/overtime/${activeEmpId}`).catch(() => null)
-          : Promise.resolve(null),
-        activeEmpId
-          ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
-          : Promise.resolve(null),
+        api
+          .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
+          .catch(() => [] as Absence[]),
+        api.get<{ balanceHours: number }>(`/overtime/${empId}`).catch(() => null),
+        api.get<{ hireDate?: string }>(`/employees/${empId}`).catch(() => null),
         api
           .get<{
             arbzgEnabled?: boolean;
@@ -216,6 +247,13 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function selectEmployee(emp: Employee) {
+    selectedEmployeeId = emp.id;
+    empSearch = "";
+    empDropdownOpen = false;
+    await loadAll();
   }
 
   let showMonthPicker = $state(false);
@@ -706,6 +744,7 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          source: "CORRECTION",
         });
       } else {
         await api.post("/time-entries", {
@@ -715,6 +754,8 @@
           breakMinutes: formBreakTotal,
           breaks: breaksPayload,
           note: formNote || null,
+          employeeId: selectedEmployeeId,
+          source: "CORRECTION",
         });
       }
       closeModal();
@@ -904,7 +945,7 @@
   );
 </script>
 
-<svelte:head><title>Zeiterfassung – Clokr</title></svelte:head>
+<svelte:head><title>Team-Zeiten – Clokr</title></svelte:head>
 <svelte:window
   onkeydown={(e) => {
     if (e.key === "Escape" && modalOpen) closeModal();
@@ -912,91 +953,81 @@
 />
 
 <div class="page-header-compact">
-  <h1>Zeiterfassung</h1>
-  <button class="btn btn-primary" onclick={() => openAdd()}>
-    <span aria-hidden="true">＋</span> Eintrag hinzufügen
-  </button>
+  <h1>Team-Zeiten</h1>
+  {#if selectedEmployee}
+    <button class="btn btn-primary" onclick={() => openAdd()}>
+      <span aria-hidden="true">＋</span> Eintrag hinzufügen
+    </button>
+  {/if}
 </div>
 
-<!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-<div class="view-tabs">
-  <button
-    class="view-tab"
-    class:view-tab--active={teView === "calendar"}
-    onclick={() => (teView = "calendar")}
-  >
-    Kalender
-  </button>
-  <button
-    class="view-tab"
-    class:view-tab--active={teView === "list"}
-    onclick={() => (teView = "list")}
-  >
-    Liste
-  </button>
-</div>
-
-{#if error}
-  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-{/if}
-
-<!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
-{#if schedule}
-  <div class="month-summary card-animate">
-    {#if !isMonthlyHours || hasMonthlyTarget}
-      <div class="msummary-item">
-        <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
-        <span class="msummary-value"
-          >{fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected)}h</span
-        >
-      </div>
-    {/if}
-    <div class="msummary-item">
-      <span class="msummary-label">Ist</span>
-      <span class="msummary-value">{fmtMin(totalWorked)}h</span>
-    </div>
-    <div class="msummary-divider"></div>
-    <div class="msummary-item">
-      <span class="msummary-label">Monat-Saldo</span>
-      <span
-        class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}"
-        >{isMonthlyHours && !hasMonthlyTarget
-          ? fmtMin(totalWorked) + "h"
-          : fmtBalance(mBalance)}</span
+<!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
+<div class="employee-selector">
+  <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
+      {#if selectedEmployee && !empDropdownOpen}
+        <span class="emp-selected-name">
+          {selectedEmployee.firstName}
+          {selectedEmployee.lastName}
+        </span>
+      {:else}
+        <input
+          class="emp-search-input"
+          type="text"
+          placeholder={selectedEmployee
+            ? `${selectedEmployee.firstName} ${selectedEmployee.lastName}`
+            : "Mitarbeiter auswählen…"}
+          bind:value={empSearch}
+          onfocus={() => (empDropdownOpen = true)}
+          oninput={() => (empDropdownOpen = true)}
+          aria-label="Mitarbeiter suchen"
+          autocomplete="off"
+        />
+      {/if}
+      <svg
+        class="emp-chevron"
+        class:emp-chevron--up={empDropdownOpen}
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        aria-hidden="true"
       >
+        <polyline points="6 9 12 15 18 9" />
+      </svg>
     </div>
-    {#if overtimeTotalHours !== null}
-      <div class="msummary-divider"></div>
-      <div class="msummary-item">
-        <span class="msummary-label">Gesamt-Saldo</span>
-        <span class="msummary-value bal {balClass(Math.round(overtimeTotalHours * 60))}"
-          >{fmtBalance(Math.round(overtimeTotalHours * 60))}</span
-        >
-      </div>
-    {/if}
-    {#if monthIsLocked}
-      <div class="msummary-divider"></div>
-      <div class="msummary-item msummary-lock">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          style="color: var(--color-text-muted); flex-shrink: 0;"
-          aria-hidden="true"
-        >
-          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-        </svg>
-        <span class="msummary-lock-label">Abgeschlossen</span>
-      </div>
+    {#if empDropdownOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="emp-backdrop" onclick={() => (empDropdownOpen = false)}></div>
+      <ul class="emp-dropdown" role="listbox" aria-label="Mitarbeiterliste">
+        {#if filteredEmployees.length === 0}
+          <li class="emp-dropdown-empty">Keine Treffer</li>
+        {:else}
+          {#each filteredEmployees as emp (emp.id)}
+            <li
+              class="emp-dropdown-item"
+              class:emp-dropdown-item--active={emp.id === selectedEmployeeId}
+              role="option"
+              aria-selected={emp.id === selectedEmployeeId}
+              tabindex="0"
+              onclick={() => selectEmployee(emp)}
+              onkeydown={(e) => {
+                if (e.key === "Enter" || e.key === " ") selectEmployee(emp);
+              }}
+            >
+              {emp.lastName}, {emp.firstName}
+            </li>
+          {/each}
+        {/if}
+      </ul>
     {/if}
   </div>
-{/if}
+</div>
 
-<!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste) ───── -->
+<!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste + Empty State) ───── -->
 {#snippet navContent()}
   <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
     <svg
@@ -1061,205 +1092,328 @@
   </button>
 {/snippet}
 
-<!-- ── Kalender ─────────────────────────────────────────────────────────── -->
-{#if teView === "calendar"}
+{#if selectedEmployee}
+  <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
+  <div class="view-tabs">
+    <button
+      class="view-tab"
+      class:view-tab--active={teView === "calendar"}
+      onclick={() => (teView = "calendar")}
+    >
+      Kalender
+    </button>
+    <button
+      class="view-tab"
+      class:view-tab--active={teView === "list"}
+      onclick={() => (teView = "list")}
+    >
+      Liste
+    </button>
+  </div>
+
+  {#if error}
+    <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+  {/if}
+
+  <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
+  {#if schedule}
+    <div class="month-summary card-animate">
+      {#if !isMonthlyHours || hasMonthlyTarget}
+        <div class="msummary-item">
+          <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
+          <span class="msummary-value"
+            >{fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected)}h</span
+          >
+        </div>
+      {/if}
+      <div class="msummary-item">
+        <span class="msummary-label">Ist</span>
+        <span class="msummary-value">{fmtMin(totalWorked)}h</span>
+      </div>
+      <div class="msummary-divider"></div>
+      <div class="msummary-item">
+        <span class="msummary-label">Monat-Saldo</span>
+        <span
+          class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}"
+          >{isMonthlyHours && !hasMonthlyTarget
+            ? fmtMin(totalWorked) + "h"
+            : fmtBalance(mBalance)}</span
+        >
+      </div>
+      {#if overtimeTotalHours !== null}
+        <div class="msummary-divider"></div>
+        <div class="msummary-item">
+          <span class="msummary-label">Gesamt-Saldo</span>
+          <span class="msummary-value bal {balClass(Math.round(overtimeTotalHours * 60))}"
+            >{fmtBalance(Math.round(overtimeTotalHours * 60))}</span
+          >
+        </div>
+      {/if}
+      {#if monthIsLocked}
+        <div class="msummary-divider"></div>
+        <div class="msummary-item msummary-lock">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            style="color: var(--color-text-muted); flex-shrink: 0;"
+            aria-hidden="true"
+          >
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+          </svg>
+          <span class="msummary-lock-label">Abgeschlossen</span>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
+  {#if teView === "calendar"}
+    <div class="cal-section card card-animate">
+      <div class="cal-nav">
+        {@render navContent()}
+      </div>
+      <!-- Wochentage-Header -->
+      <div class="cal-grid cal-header-row">
+        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
+          <div class="cal-dow">{d}</div>
+        {/each}
+      </div>
+
+      <!-- Tage -->
+      {#if loading}
+        <div class="cal-grid">
+          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+        </div>
+      {:else}
+        <div class="cal-grid">
+          {#each calendarDays as day (day.dateStr)}
+            <div
+              data-date={day.dateStr}
+              class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
+                ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
+                : ''}"
+              class:cal-other={!day.isCurrentMonth}
+              class:cal-current={day.isCurrentMonth}
+              class:cal-today={day.isToday}
+              class:cal-weekend={day.isWeekend}
+              class:cal-holiday={day.isHoliday && day.isCurrentMonth}
+              class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
+              class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
+              class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
+              title={day.isBeforeHire
+                ? "Vor Eintrittsdatum"
+                : day.isHoliday
+                  ? day.holidayName
+                  : day.absenceType
+                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                    : undefined}
+              role="button"
+              tabindex="0"
+              onclick={() => {
+                if (day.isCurrentMonth && !day.isBeforeHire) openAdd(day.dateStr);
+              }}
+              onkeydown={(e) => {
+                if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth && !day.isBeforeHire)
+                  openAdd(day.dateStr);
+              }}
+            >
+              <span class="cal-day-num">{day.dayNum}</span>
+              {#if day.isHoliday && day.isCurrentMonth}
+                <span class="cal-holiday-label">{day.holidayName}</span>
+              {:else if day.absenceType}
+                <span class="cal-abs-type"
+                  >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
+                >
+              {/if}
+              {#if day.isBeforeHire}
+                <span class="day-before-hire">—</span>
+              {:else if day.isCurrentMonth && day.hasEntries}
+                {#if lockedDateSet.has(day.dateStr)}
+                  <span class="cal-lock-icon" aria-label="Gesperrt">
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      style="color: var(--color-text-muted);"
+                      aria-hidden="true"
+                    >
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                  </span>
+                {/if}
+                <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
+                {#if day.expectedMin > 0 && !isMonthlyHours}
+                  {@const b = day.workedMin - day.expectedMin}
+                  <span class="day-bal {balClass(b)}"
+                    >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
+                  >
+                {/if}
+              {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
+                <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Legende -->
+      <div class="cal-legend">
+        <span class="leg leg-ok">Soll erfüllt</span>
+        <span class="leg leg-partial">Teilweise</span>
+        <span class="leg leg-missing">Fehlt</span>
+        <span class="leg leg-noexpect">Kein Soll</span>
+        <span class="leg leg-abs-vacation">Urlaub</span>
+        <span class="leg leg-abs-sick">Krank</span>
+        <span class="leg leg-abs-special">Sonderurlaub</span>
+        <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
+  {#if teView === "list"}
+    <div class="cal-nav month-nav-standalone">
+      {@render navContent()}
+    </div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Von</th>
+            <th>Bis</th>
+            <th>Pause</th>
+            <th>Netto</th>
+            <th>Quelle</th>
+            <th>Notiz</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each allEntries as slot (slot.id)}
+            {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+            {@const slotArbzg = arbzgDayMap.get(slotDate)}
+            <tr class:row-invalid={slot.isInvalid}>
+              <td class="font-mono"
+                >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                  day: "2-digit",
+                  month: "2-digit",
+                  year: "numeric",
+                })}{#if slotArbzg}
+                  <span class="list-arbzg-hint"
+                    >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                      class="arbzg-tooltip"
+                      >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                          />{/if}{/each}</span
+                    ></span
+                  >
+                {/if}</td
+              >
+              <td class="font-mono">{fmtTime(slot.startTime)}</td>
+              <td class="font-mono">
+                {#if slot.endTime}{fmtTime(slot.endTime)}
+                {:else}<span class="badge badge-green">Aktiv</span>{/if}
+              </td>
+              <td>{fmtBreaks(slot)}</td>
+              <td class="font-mono font-medium">{slotNet(slot)}</td>
+              <td
+                ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
+                ></td
+              >
+              <td class="note-cell text-muted">
+                {#if slot.isInvalid && slot.invalidReason}
+                  <span class="invalid-reason">{slot.invalidReason}</span>
+                {:else}
+                  {slot.note ?? "---"}
+                {/if}
+              </td>
+              <td class="action-cell">
+                {#if slot.isLocked}
+                  <!-- locked entries are read-only; no actions shown (D-08) -->
+                {:else if deleteConfirmId === slot.id}
+                  <span class="del-confirm">
+                    <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
+                    <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
+                      >Ja</button
+                    >
+                    <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
+                      >Nein</button
+                    >
+                  </span>
+                {:else}
+                  <span class="row-actions row-actions--visible">
+                    <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                      >✏️</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-danger"
+                      onclick={() => (deleteConfirmId = slot.id)}
+                      title="Löschen">🗑</button
+                    >
+                  </span>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+    {#if allEntries.length === 0}
+      <div class="empty-state card card-body">
+        <span class="empty-icon">📋</span>
+        <h3>Keine Einträge</h3>
+        <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+      </div>
+    {/if}
+  {/if}
+{:else}
+  <!-- Empty calendar when no employee selected -->
+  {@const y = calMonth.getFullYear()}
+  {@const m = calMonth.getMonth()}
+  {@const firstDay = new Date(y, m, 1)}
+  {@const startDow = (firstDay.getDay() + 6) % 7}
+  {@const daysInMonth = new Date(y, m + 1, 0).getDate()}
+  {@const totalCells = startDow + daysInMonth + ((7 - ((startDow + daysInMonth) % 7)) % 7)}
   <div class="cal-section card card-animate">
     <div class="cal-nav">
       {@render navContent()}
     </div>
-    <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
         <div class="cal-dow">{d}</div>
       {/each}
     </div>
-
-    <!-- Tage -->
-    {#if loading}
-      <div class="cal-grid">
-        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
-      </div>
-    {:else}
-      <div class="cal-grid">
-        {#each calendarDays as day (day.dateStr)}
-          <div
-            data-date={day.dateStr}
-            class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
-              ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-              : ''}"
-            class:cal-other={!day.isCurrentMonth}
-            class:cal-current={day.isCurrentMonth}
-            class:cal-today={day.isToday}
-            class:cal-weekend={day.isWeekend}
-            class:cal-holiday={day.isHoliday && day.isCurrentMonth}
-            class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
-            class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-            class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
-            title={day.isBeforeHire
-              ? "Vor Eintrittsdatum"
-              : day.isHoliday
-                ? day.holidayName
-                : day.absenceType
-                  ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                  : undefined}
-            role="button"
-            tabindex="0"
-            onclick={() => {
-              if (day.isCurrentMonth && !day.isBeforeHire) openAdd(day.dateStr);
-            }}
-            onkeydown={(e) => {
-              if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth && !day.isBeforeHire)
-                openAdd(day.dateStr);
-            }}
-          >
-            <span class="cal-day-num">{day.dayNum}</span>
-            {#if day.isHoliday && day.isCurrentMonth}
-              <span class="cal-holiday-label">{day.holidayName}</span>
-            {:else if day.absenceType}
-              <span class="cal-abs-type"
-                >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
-              >
-            {/if}
-            {#if day.isBeforeHire}
-              <span class="day-before-hire">—</span>
-            {:else if day.isCurrentMonth && day.hasEntries}
-              {#if lockedDateSet.has(day.dateStr)}
-                <span class="cal-lock-icon" aria-label="Gesperrt">
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    style="color: var(--color-text-muted);"
-                    aria-hidden="true"
-                  >
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                  </svg>
-                </span>
-              {/if}
-              <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-              {#if day.expectedMin > 0 && !isMonthlyHours}
-                {@const b = day.workedMin - day.expectedMin}
-                <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
-              {/if}
-            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
-              <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    <!-- Legende -->
-    <div class="cal-legend">
-      <span class="leg leg-ok">Soll erfüllt</span>
-      <span class="leg leg-partial">Teilweise</span>
-      <span class="leg leg-missing">Fehlt</span>
-      <span class="leg leg-noexpect">Kein Soll</span>
-      <span class="leg leg-abs-vacation">Urlaub</span>
-      <span class="leg leg-abs-sick">Krank</span>
-      <span class="leg leg-abs-special">Sonderurlaub</span>
-      <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
+    <div class="cal-grid">
+      {#each Array(totalCells) as _, i (i)}
+        {@const dayNum = i - startDow + 1}
+        {@const isCurrentMonth = dayNum >= 1 && dayNum <= daysInMonth}
+        {@const displayDay = isCurrentMonth
+          ? dayNum
+          : dayNum < 1
+            ? new Date(y, m, dayNum).getDate()
+            : new Date(y, m + 1, dayNum - daysInMonth).getDate()}
+        {@const cellDow = i % 7}
+        <div
+          class="cal-cell cal-cell--noExpect"
+          class:cal-other={!isCurrentMonth}
+          class:cal-current={isCurrentMonth}
+          class:cal-weekend={cellDow >= 5}
+        >
+          <span class="cal-day-num">{displayDay}</span>
+        </div>
+      {/each}
     </div>
+    <p class="no-emp-hint">Mitarbeiter auswählen, um Zeiteinträge anzuzeigen.</p>
   </div>
-{/if}
-
-<!-- ── Listenansicht ──────────────────────────────────────────────────── -->
-{#if teView === "list"}
-  <div class="cal-nav month-nav-standalone">
-    {@render navContent()}
-  </div>
-  <div class="table-wrapper">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Datum</th>
-          <th>Von</th>
-          <th>Bis</th>
-          <th>Pause</th>
-          <th>Netto</th>
-          <th>Quelle</th>
-          <th>Notiz</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each allEntries as slot (slot.id)}
-          {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-          {@const slotArbzg = arbzgDayMap.get(slotDate)}
-          <tr class:row-invalid={slot.isInvalid}>
-            <td class="font-mono"
-              >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                day: "2-digit",
-                month: "2-digit",
-                year: "numeric",
-              })}{#if slotArbzg}
-                <span class="list-arbzg-hint"
-                  >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                    class="arbzg-tooltip"
-                    >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                        />{/if}{/each}</span
-                  ></span
-                >
-              {/if}</td
-            >
-            <td class="font-mono">{fmtTime(slot.startTime)}</td>
-            <td class="font-mono">
-              {#if slot.endTime}{fmtTime(slot.endTime)}
-              {:else}<span class="badge badge-green">Aktiv</span>{/if}
-            </td>
-            <td>{fmtBreaks(slot)}</td>
-            <td class="font-mono font-medium">{slotNet(slot)}</td>
-            <td><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span></td
-            >
-            <td class="note-cell text-muted">
-              {#if slot.isInvalid && slot.invalidReason}
-                <span class="invalid-reason">{slot.invalidReason}</span>
-              {:else}
-                {slot.note ?? "---"}
-              {/if}
-            </td>
-            <td class="action-cell">
-              {#if slot.isLocked}
-                <!-- locked entries are read-only; no actions shown (D-08) -->
-              {:else if deleteConfirmId === slot.id}
-                <span class="del-confirm">
-                  <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                  <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                    >Ja</button
-                  >
-                  <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                    >Nein</button
-                  >
-                </span>
-              {:else}
-                <span class="row-actions row-actions--visible">
-                  <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                    >✏️</button
-                  >
-                  <button
-                    class="btn-icon btn-icon-danger"
-                    onclick={() => (deleteConfirmId = slot.id)}
-                    title="Löschen">🗑</button
-                  >
-                </span>
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-  </div>
-  {#if allEntries.length === 0}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">📋</span>
-      <h3>Keine Einträge</h3>
-      <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
-    </div>
-  {/if}
 {/if}
 
 <!-- ── Modal ──────────────────────────────────────────────────────────────── -->
@@ -1273,7 +1427,17 @@
   >
     <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
       <div class="modal-header">
-        <h2>{editEntry ? "Eintrag bearbeiten" : "Neuen Eintrag hinzufügen"}</h2>
+        <h2>
+          {#if editEntry}
+            Eintrag bearbeiten{selectedEmployee
+              ? ` (${selectedEmployee.firstName} ${selectedEmployee.lastName})`
+              : ""}
+          {:else}
+            Neuer Eintrag{selectedEmployee
+              ? ` für ${selectedEmployee.firstName} ${selectedEmployee.lastName}`
+              : " hinzufügen"}
+          {/if}
+        </h2>
         <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -2105,5 +2269,144 @@
     .cal-legend {
       gap: 0.5rem 0.75rem;
     }
+  }
+
+  /* ── Mitarbeiter-Auswahl ─────────────────────────────────────────── */
+  .employee-selector {
+    margin-bottom: 0.75rem;
+    position: relative;
+    z-index: 10;
+  }
+
+  .emp-combobox {
+    position: relative;
+    max-width: 360px;
+  }
+
+  .emp-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.875rem;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--glass-shadow);
+    cursor: pointer;
+    min-height: 2.5rem;
+  }
+
+  .emp-combobox--open .emp-input-wrap {
+    border-color: var(--color-brand);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
+  }
+
+  .emp-selected-name {
+    flex: 1;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .emp-search-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+    min-width: 0;
+  }
+
+  .emp-search-input::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  .emp-chevron {
+    flex-shrink: 0;
+    color: var(--color-text-muted);
+    transition: transform 0.15s;
+  }
+
+  .emp-chevron--up {
+    transform: rotate(180deg);
+  }
+
+  .emp-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+  }
+
+  .emp-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    max-height: 280px;
+    overflow-y: auto;
+    z-index: 50;
+  }
+
+  .emp-dropdown-item {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.9375rem;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .emp-dropdown-item:hover,
+  .emp-dropdown-item:focus {
+    background: var(--color-bg-subtle);
+    outline: none;
+  }
+
+  .emp-dropdown-item--active {
+    color: var(--color-brand);
+    font-weight: 600;
+  }
+
+  .emp-dropdown-empty {
+    padding: 0.75rem 0.875rem;
+    font-size: 0.875rem;
+    color: var(--color-text-muted);
+  }
+
+  /* ── No-employee empty state ──────────────────────────────────────── */
+  .no-emp-hint {
+    text-align: center;
+    padding: 1.5rem 1rem;
+    color: var(--color-text-muted);
+    font-size: 0.875rem;
+    margin: 0;
+  }
+  .no-emp-card {
+    padding: 3rem 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .no-emp-icon {
+    color: var(--color-brand);
+    opacity: 0.5;
+  }
+
+  .no-emp-text {
+    font-size: 0.9375rem;
+    color: var(--color-text-muted);
+    max-width: 32rem;
+    margin: 0;
+    line-height: 1.6;
   }
 </style>

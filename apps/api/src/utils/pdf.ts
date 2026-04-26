@@ -74,12 +74,20 @@ export interface LeaveListData {
 
 function drawColoredHeader(doc: PDFKit.PDFDocument, title: string, subtitle: string): void {
   doc.rect(0, 0, doc.page.width, HEADER_H).fill(BRAND_COLOR);
-  doc.fillColor("#ffffff").fontSize(14).font("Helvetica-Bold").text(title, 50, 12, {
-    width: doc.page.width - 100,
-  });
-  doc.fillColor("#d4d4f7").fontSize(9).font("Helvetica").text(subtitle, 50, 28, {
-    width: doc.page.width - 100,
-  });
+  doc
+    .fillColor("#ffffff")
+    .fontSize(14)
+    .font("Helvetica-Bold")
+    .text(title, 50, 12, {
+      width: doc.page.width - 100,
+    });
+  doc
+    .fillColor("#d4d4f7")
+    .fontSize(9)
+    .font("Helvetica")
+    .text(subtitle, 50, 28, {
+      width: doc.page.width - 100,
+    });
   doc.fillColor("#111827"); // reset for body
   doc.y = HEADER_H + 16;
 }
@@ -137,10 +145,10 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     const col3 = 340;
     let sy = summaryY + 10;
 
-    doc.text(`Soll-Stunden: ${data.targetHours.toFixed(1)} h`, col1, sy);
-    doc.text(`Ist-Stunden: ${data.workedHours.toFixed(1)} h`, col2, sy);
+    doc.text(`Soll-Stunden: ${data.targetHours.toFixed(2)} h`, col1, sy);
+    doc.text(`Ist-Stunden: ${data.workedHours.toFixed(2)} h`, col2, sy);
     doc.text(
-      `Überstunden: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(1)} h`,
+      `Überstunden: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(2)} h`,
       col3,
       sy,
     );
@@ -170,7 +178,10 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
         x += colWidths[i];
       });
 
-      doc.moveTo(50, tableTop + 14).lineTo(doc.page.width - 50, tableTop + 14).stroke("#e5e7eb");
+      doc
+        .moveTo(50, tableTop + 14)
+        .lineTo(doc.page.width - 50, tableTop + 14)
+        .stroke("#e5e7eb");
 
       doc.fontSize(8).font("Helvetica");
       let rowY = tableTop + 18;
@@ -190,7 +201,7 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
         x += colWidths[2];
         doc.text(`${entry.breakMin} min`, x, rowY, { width: colWidths[3] });
         x += colWidths[3];
-        doc.text(`${entry.netHours.toFixed(1)} h`, x, rowY, { width: colWidths[4] });
+        doc.text(`${entry.netHours.toFixed(2)} h`, x, rowY, { width: colWidths[4] });
         x += colWidths[4];
         doc.text(entry.note || "", x, rowY, { width: colWidths[5] });
 
@@ -242,17 +253,21 @@ export function streamCompanyMonthlyReportPdf(
   }
 
   // ── Cover page ────────────────────────────────────────
-  drawColoredHeader(
-    doc,
-    data.tenantName,
-    `Monatsbericht \u2014 ${data.month} \u2014 ${roleLabel}`,
-  );
+  drawColoredHeader(doc, data.tenantName, `Monatsbericht \u2014 ${data.month} \u2014 ${roleLabel}`);
 
   // Summary table header
   doc.fontSize(11).font("Helvetica-Bold").fillColor("#111827").text("Übersicht");
   doc.moveDown(0.5);
 
-  const summaryHeaders = ["Mitarbeiter", "Nr.", "Soll (h)", "Ist (h)", "Saldo (h)", "Urlaub", "Krank"];
+  const summaryHeaders = [
+    "Mitarbeiter",
+    "Nr.",
+    "Soll (h)",
+    "Ist (h)",
+    "Saldo (h)",
+    "Urlaub",
+    "Krank",
+  ];
   const summaryWidths = [150, 60, 60, 60, 60, 50, 50];
   const tableMargin = 50;
   const ROW_H = 16;
@@ -265,7 +280,10 @@ export function streamCompanyMonthlyReportPdf(
     doc.text(h, tx, tableTop, { width: summaryWidths[i] });
     tx += summaryWidths[i];
   });
-  doc.moveTo(tableMargin, tableTop + 14).lineTo(doc.page.width - tableMargin, tableTop + 14).stroke("#e5e7eb");
+  doc
+    .moveTo(tableMargin, tableTop + 14)
+    .lineTo(doc.page.width - tableMargin, tableTop + 14)
+    .stroke("#e5e7eb");
 
   doc.fontSize(8).font("Helvetica").fillColor("#111827");
   let rowY = tableTop + 18;
@@ -280,20 +298,31 @@ export function streamCompanyMonthlyReportPdf(
         doc.text(h, hx, rowY, { width: summaryWidths[i] });
         hx += summaryWidths[i];
       });
-      doc.moveTo(tableMargin, rowY + 14).lineTo(doc.page.width - tableMargin, rowY + 14).stroke("#e5e7eb");
+      doc
+        .moveTo(tableMargin, rowY + 14)
+        .lineTo(doc.page.width - tableMargin, rowY + 14)
+        .stroke("#e5e7eb");
       doc.fontSize(8).font("Helvetica").fillColor("#111827");
       rowY += 18;
     }
 
     let rx = tableMargin;
     const saldo = row.workedHours - row.targetHours;
-    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] }); rx += summaryWidths[0];
-    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] }); rx += summaryWidths[1];
-    doc.text(row.targetHours.toFixed(1), rx, rowY, { width: summaryWidths[2] }); rx += summaryWidths[2];
-    doc.text(row.workedHours.toFixed(1), rx, rowY, { width: summaryWidths[3] }); rx += summaryWidths[3];
-    doc.text(`${saldo >= 0 ? "+" : ""}${saldo.toFixed(1)}`, rx, rowY, { width: summaryWidths[4] }); rx += summaryWidths[4];
-    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] }); rx += summaryWidths[5];
-    doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, { width: summaryWidths[6] });
+    doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
+    rx += summaryWidths[0];
+    doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
+    rx += summaryWidths[1];
+    doc.text(row.targetHours.toFixed(2), rx, rowY, { width: summaryWidths[2] });
+    rx += summaryWidths[2];
+    doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
+    rx += summaryWidths[3];
+    doc.text(`${saldo >= 0 ? "+" : ""}${saldo.toFixed(2)}`, rx, rowY, { width: summaryWidths[4] });
+    rx += summaryWidths[4];
+    doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] });
+    rx += summaryWidths[5];
+    doc.text(String(row.sickDaysWithAttest + row.sickDaysWithoutAttest), rx, rowY, {
+      width: summaryWidths[6],
+    });
     rowY += ROW_H;
   }
 
@@ -330,15 +359,20 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
       doc.y = nextPage();
     }
 
+    doc.x = 50; // Reset x cursor after table rows
     doc
       .fontSize(10)
       .font("Helvetica-Bold")
       .fillColor("#111827")
-      .text(`${emp.employeeName} (${emp.employeeNumber}) \u2014 Gesamt: ${emp.totalDays} Tage`);
+      .text(`${emp.employeeName} (${emp.employeeNumber}) \u2014 Gesamt: ${emp.totalDays} Tage`, 50);
     doc.moveDown(0.3);
 
     if (emp.periods.length === 0) {
-      doc.fontSize(8).font("Helvetica").fillColor("#6b7280").text("Keine genehmigten Urlaubsanträge.");
+      doc
+        .fontSize(8)
+        .font("Helvetica")
+        .fillColor("#6b7280")
+        .text("Keine genehmigten Urlaubsanträge.", 50);
       doc.fillColor("#111827");
     } else {
       // Table header
@@ -349,7 +383,10 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
         doc.text(h, hx, tTop, { width: colWidths[i] });
         hx += colWidths[i];
       });
-      doc.moveTo(50, tTop + 14).lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tTop + 14).stroke("#e5e7eb");
+      doc
+        .moveTo(50, tTop + 14)
+        .lineTo(50 + colWidths.reduce((a, b) => a + b, 0), tTop + 14)
+        .stroke("#e5e7eb");
 
       doc.fontSize(8).font("Helvetica").fillColor("#111827");
       let ry = tTop + 18;
@@ -359,9 +396,12 @@ export function streamLeaveListPdf(doc: PDFKit.PDFDocument, data: LeaveListData)
           ry = nextPage();
         }
         let rx = 50;
-        doc.text(period.startDate, rx, ry, { width: colWidths[0] }); rx += colWidths[0];
-        doc.text(period.endDate, rx, ry, { width: colWidths[1] }); rx += colWidths[1];
-        doc.text(period.leaveTypeName, rx, ry, { width: colWidths[2] }); rx += colWidths[2];
+        doc.text(period.startDate, rx, ry, { width: colWidths[0] });
+        rx += colWidths[0];
+        doc.text(period.endDate, rx, ry, { width: colWidths[1] });
+        rx += colWidths[1];
+        doc.text(period.leaveTypeName, rx, ry, { width: colWidths[2] });
+        rx += colWidths[2];
         doc.text(String(period.days), rx, ry, { width: colWidths[3] });
         ry += 14;
       }
@@ -395,7 +435,7 @@ export function streamVacationOverviewPdf(
   doc
     .fontSize(18)
     .font("Helvetica-Bold")
-    .text(`Clokr \u2014 Urlaubsübersicht`, { align: "center" });
+    .text(`${data.tenantName} \u2014 Urlaubsübersicht`, { align: "center" });
   doc
     .fontSize(10)
     .font("Helvetica")

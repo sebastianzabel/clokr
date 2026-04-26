@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { get as getStore } from "svelte/store";
@@ -40,7 +41,13 @@
   type TodayAttendance = {
     date: string;
     employees: TodayEmployee[];
-    summary: { present: number; absent: number; clockedIn: number; missing: number; holiday: number };
+    summary: {
+      present: number;
+      absent: number;
+      clockedIn: number;
+      missing: number;
+      holiday: number;
+    };
   };
 
   type OvertimeEmployee = {
@@ -55,7 +62,7 @@
   type OvertimeOverview = { employees: OvertimeEmployee[] };
 
   type LeaveOverviewRow = {
-    employee: { firstName: string; lastName: string; employeeNumber: string };
+    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
     leaveType: { id: string; name: string };
     year: number;
     totalDays: number;
@@ -71,9 +78,13 @@
   const currentYear = currentDate.getFullYear();
   const currentMonth = currentDate.getMonth() + 1;
 
+  // Shared period selector — controls Team-Übersicht widgets
+  let selectedMonth = $state(currentMonth);
+  let selectedYear = $state(currentYear);
+
+  // DATEV export card — own period selector
   let datevMonth = $state(currentMonth);
   let datevYear = $state(currentYear);
-
   let datevLoading = $state(false);
   let datevError = $state("");
 
@@ -144,9 +155,10 @@
     const rows = overtimeOverview?.employees ?? [];
     const copy = rows.slice();
     copy.sort((a, b) => {
-      let cmp = 0;
-      if (sortColumn === "name") cmp = a.name.localeCompare(b.name, "de");
-      else cmp = a.balanceHours - b.balanceHours;
+      const cmp =
+        sortColumn === "name"
+          ? a.name.localeCompare(b.name, "de")
+          : a.balanceHours - b.balanceHours;
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
@@ -165,7 +177,6 @@
 
   // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
 
-  let leaveOverviewYear = $state(currentYear);
   let leaveOverview: LeaveOverviewRow[] | null = $state(null);
   let leaveOverviewLoading = $state(false);
   let leaveOverviewError = $state("");
@@ -209,15 +220,29 @@
     };
   }
 
+  // Per-employee download error state
+  let empDownloadErrors = $state<Record<string, string>>({});
+
+  // ── Reactive reload when period changes ────────────────────────────────────
+
+  $effect(() => {
+    const _m = selectedMonth;
+    const _y = selectedYear;
+    if (isManager) {
+      void loadTodayAttendance();
+      void loadOvertimeOverview();
+      void loadLeaveOverview();
+    }
+  });
+
   // ── onMount ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
     const auth = getStore(authStore);
     currentRole = auth.user?.role ?? null;
-    if (isManager) {
-      await loadTodayAttendance();
-      await loadOvertimeOverview();
-      await loadLeaveOverview();
+    if (!["ADMIN", "MANAGER"].includes(currentRole ?? "")) {
+      goto("/dashboard");
+      return;
     }
   });
 
@@ -313,7 +338,8 @@
     try {
       overtimeOverview = await api.get<OvertimeOverview>("/dashboard/overtime-overview");
     } catch (e: unknown) {
-      overtimeError = e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
+      overtimeError =
+        e instanceof Error ? e.message : "Fehler beim Laden der Überstunden-Übersicht";
     } finally {
       overtimeLoading = false;
     }
@@ -325,7 +351,7 @@
     leaveOverviewError = "";
     try {
       leaveOverview = await api.get<LeaveOverviewRow[]>(
-        `/reports/leave-overview?year=${leaveOverviewYear}`,
+        `/reports/leave-overview?year=${selectedYear}`,
       );
     } catch (e: unknown) {
       leaveOverviewError =
@@ -423,6 +449,56 @@
     }
   }
 
+  async function downloadEmployeePdf(employeeId: string, name: string) {
+    const key = `pdf-${employeeId}`;
+    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+    try {
+      await downloadPdf(
+        `/reports/monthly/pdf?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
+        `Stundennachweis_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.pdf`,
+      );
+    } catch (e: unknown) {
+      empDownloadErrors = {
+        ...empDownloadErrors,
+        [key]: e instanceof Error ? e.message : "PDF-Download fehlgeschlagen",
+      };
+    }
+  }
+
+  async function downloadEmployeeDatev(employeeId: string, name: string) {
+    const key = `datev-${employeeId}`;
+    empDownloadErrors = { ...empDownloadErrors, [key]: "" };
+    try {
+      const { authStore: authSt } = await import("$stores/auth");
+      const { get } = await import("svelte/store");
+      const auth = get(authSt);
+      const res = await fetch(
+        `/api/v1/reports/datev/employee?employeeId=${employeeId}&year=${selectedYear}&month=${selectedMonth}`,
+        {
+          headers: auth.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+        },
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error((data as { error?: string }).error ?? "Download fehlgeschlagen");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `DATEV_${name.replace(/\s+/g, "_")}_${selectedYear}_${String(selectedMonth).padStart(2, "0")}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 100);
+    } catch (e: unknown) {
+      empDownloadErrors = {
+        ...empDownloadErrors,
+        [`datev-${employeeId}`]: e instanceof Error ? e.message : "DATEV-Download fehlgeschlagen",
+      };
+    }
+  }
+
   // ── Helpers ────────────────────────────────────────────────────────────────
 
   function formatDays(n: number): string {
@@ -488,7 +564,7 @@
 
 <div class="reports-grid">
   <!-- DATEV Export Card -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--green">
       <span class="report-icon-lg">📁</span>
     </div>
@@ -536,7 +612,7 @@
   </div>
 
   <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--blue">
       <span class="report-icon-lg">🏖</span>
     </div>
@@ -578,7 +654,7 @@
   </div>
 
   <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-  <div class="card card-body report-card">
+  <div class="card card-body card-animate report-card">
     <div class="report-card-icon-section report-card-icon-section--purple">
       <span class="report-icon-lg">📑</span>
     </div>
@@ -641,195 +717,228 @@
   </div>
 </div>
 
-<!-- Heutige Anwesenheit (RPT-03) — ADMIN / MANAGER only -->
+<!-- Team-Übersicht — ADMIN / MANAGER only -->
 {#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Heutige Anwesenheit</h2>
-      {#if todayAttendance}
-        <span class="section-date">{todayAttendance.date}</span>
-      {/if}
-    </header>
-
-    {#if todayLoading}
-      <p class="section-placeholder">Lade Anwesenheit…</p>
-    {:else if todayError}
-      <p class="section-error">{todayError}</p>
-    {:else if todayAttendance}
-      <div class="attendance-summary">
-        <div class="summary-chip">
-          <span class="label">Anwesend</span>
-          <span class="value">{todayAttendance.summary.present}</span>
-        </div>
-        <div class="summary-chip">
-          <span class="label">Eingestempelt</span>
-          <span class="value">{todayAttendance.summary.clockedIn}</span>
-        </div>
-        <div class="summary-chip">
-          <span class="label">Abwesend</span>
-          <span class="value">{todayAttendance.summary.absent}</span>
-        </div>
-        <div class="summary-chip">
-          <span class="label">Fehlend</span>
-          <span class="value">{todayAttendance.summary.missing}</span>
-        </div>
-        {#if todayAttendance.summary.holiday > 0}
-          <div class="summary-chip">
-            <span class="label">Feiertag</span>
-            <span class="value">{todayAttendance.summary.holiday}</span>
-          </div>
-        {/if}
-      </div>
-
-      <div class="table-wrap">
-        <table class="attendance-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Nr.</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedTodayRows as row (row.id)}
-              <tr>
-                <td>{row.name}</td>
-                <td>{row.employeeNumber}</td>
-                <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        total={todayAttendance.employees.length}
-        bind:page={todayPage}
-        bind:pageSize={todayPageSize}
-      />
-    {/if}
-  </section>
-{/if}
-
-<!-- Überstunden-Übersicht (RPT-01 + SALDO-03) — ADMIN / MANAGER only -->
-{#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Überstunden-Übersicht</h2>
-    </header>
-
-    {#if overtimeLoading}
-      <p class="section-placeholder">Lade Überstunden-Saldo…</p>
-    {:else if overtimeError}
-      <p class="section-error">{overtimeError}</p>
-    {:else if overtimeOverview}
-      <div class="table-wrap">
-        <table class="overtime-table">
-          <thead>
-            <tr>
-              <th class="sortable" onclick={() => toggleSort("name")}>
-                Mitarbeiter
-                {#if sortColumn === "name"}<span class="sort-arrow">{sortDir === "asc" ? "▲" : "▼"}</span>{/if}
-              </th>
-              <th>Nr.</th>
-              <th class="sortable numeric" onclick={() => toggleSort("balance")}>
-                Saldo (h)
-                {#if sortColumn === "balance"}<span class="sort-arrow">{sortDir === "asc" ? "▲" : "▼"}</span>{/if}
-              </th>
-              <th>Status</th>
-              <th>Verlauf (6 Monate)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedOvertimeRows as row (row.id)}
-              <tr>
-                <td>{row.name}</td>
-                <td>{row.employeeNumber}</td>
-                <td class="numeric">{formatBalance(row.balanceHours)}</td>
-                <td><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span></td>
-                <td class="sparkline-cell">
-                  {#if row.snapshots.length >= 2}
-                    <canvas
-                      width="100"
-                      height="28"
-                      use:registerCanvas={row.id}
-                    ></canvas>
-                  {:else}
-                    <span class="no-trend">(kein Verlauf)</span>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        total={sortedOvertime.length}
-        bind:page={overtimePage}
-        bind:pageSize={overtimePageSize}
-      />
-    {/if}
-  </section>
-{/if}
-
-<!-- Urlaubsübersicht (RPT-02) — ADMIN / MANAGER only -->
-{#if isManager}
-  <section class="section card-animate">
-    <header class="section-head">
-      <h2>Urlaubsübersicht</h2>
-      <label class="year-selector">
-        <span>Jahr</span>
-        <select bind:value={leaveOverviewYear} onchange={loadLeaveOverview}>
+  <div class="team-overview-section card-animate">
+    <div class="team-overview-header">
+      <h2>Team-Übersicht</h2>
+      <div class="team-period-controls">
+        <select bind:value={selectedMonth} class="period-select">
+          {#each months as name, i (i)}
+            <option value={i + 1}>{name}</option>
+          {/each}
+        </select>
+        <select bind:value={selectedYear} class="period-select">
           {#each years as y (y)}
             <option value={y}>{y}</option>
           {/each}
         </select>
-      </label>
-    </header>
-
-    {#if leaveOverviewLoading}
-      <p class="section-placeholder">Lade Urlaubsübersicht…</p>
-    {:else if leaveOverviewError}
-      <p class="section-error">{leaveOverviewError}</p>
-    {:else if leaveOverviewRows.length === 0}
-      <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
-    {:else}
-      <div class="table-wrap">
-        <table class="leave-overview-table">
-          <thead>
-            <tr>
-              <th>Mitarbeiter</th>
-              <th>Nr.</th>
-              <th>Urlaubsart</th>
-              <th class="numeric">Gesamt</th>
-              <th class="numeric">Übertrag</th>
-              <th class="numeric">Genommen</th>
-              <th class="numeric">Geplant</th>
-              <th class="numeric">Rest</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
-              <tr>
-                <td>{row.employee.firstName} {row.employee.lastName}</td>
-                <td>{row.employee.employeeNumber}</td>
-                <td>{row.leaveType.name}</td>
-                <td class="numeric">{formatDays(row.totalDays)}</td>
-                <td class="numeric">{formatDays(row.carriedOverDays)}</td>
-                <td class="numeric">{formatDays(row.usedDays)}</td>
-                <td class="numeric">{formatDays(row.pendingDays)}</td>
-                <td class="numeric strong">{formatDays(row.remainingDays)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
       </div>
-      <Pagination
-        total={leaveOverviewRows.length}
-        bind:page={leaveOverviewPage}
-        bind:pageSize={leaveOverviewPageSize}
-      />
-    {/if}
-  </section>
+    </div>
+
+    <!-- Heutige Anwesenheit (RPT-03) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Heutige Anwesenheit</h3>
+        <div class="widget-actions">
+          {#if todayAttendance}
+            <span class="section-date">{todayAttendance.date}</span>
+          {/if}
+        </div>
+      </div>
+
+      {#if todayLoading}
+        <p class="section-placeholder">Lade Anwesenheit…</p>
+      {:else if todayError}
+        <p class="section-error">{todayError}</p>
+      {:else if todayAttendance}
+        <div class="attendance-summary">
+          <div class="summary-chip">
+            <span class="label">Anwesend</span>
+            <span class="value">{todayAttendance.summary.present}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Eingestempelt</span>
+            <span class="value">{todayAttendance.summary.clockedIn}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Abwesend</span>
+            <span class="value">{todayAttendance.summary.absent}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Fehlend</span>
+            <span class="value">{todayAttendance.summary.missing}</span>
+          </div>
+          {#if todayAttendance.summary.holiday > 0}
+            <div class="summary-chip">
+              <span class="label">Feiertag</span>
+              <span class="value">{todayAttendance.summary.holiday}</span>
+            </div>
+          {/if}
+        </div>
+
+        <div class="table-wrap">
+          <table class="attendance-table">
+            <thead>
+              <tr>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedTodayRows as row (row.id)}
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.employeeNumber}</td>
+                  <td><span class={statusClass(row.status)}>{statusLabel(row)}</span></td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={todayAttendance.employees.length}
+          bind:page={todayPage}
+          bind:pageSize={todayPageSize}
+        />
+      {/if}
+    </section>
+
+    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Überstunden-Übersicht</h3>
+        <div class="widget-actions"></div>
+      </div>
+
+      {#if overtimeLoading}
+        <p class="section-placeholder">Lade Überstunden-Saldo…</p>
+      {:else if overtimeError}
+        <p class="section-error">{overtimeError}</p>
+      {:else if overtimeOverview}
+        <div class="table-wrap">
+          <table class="overtime-table">
+            <thead>
+              <tr>
+                <th class="sortable" onclick={() => toggleSort("name")}>
+                  Mitarbeiter
+                  {#if sortColumn === "name"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th>Nr.</th>
+                <th class="sortable numeric" onclick={() => toggleSort("balance")}>
+                  Saldo (h)
+                  {#if sortColumn === "balance"}<span class="sort-arrow"
+                      >{sortDir === "asc" ? "▲" : "▼"}</span
+                    >{/if}
+                </th>
+                <th>Status</th>
+                <th>Verlauf (6 Monate)</th>
+                <th class="actions-col">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedOvertimeRows as row (row.id)}
+                <tr>
+                  <td>{row.name}</td>
+                  <td>{row.employeeNumber}</td>
+                  <td class="numeric">{formatBalance(row.balanceHours)}</td>
+                  <td
+                    ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
+                    ></td
+                  >
+                  <td class="sparkline-cell">
+                    {#if row.snapshots.length >= 2}
+                      <canvas width="100" height="28" use:registerCanvas={row.id}></canvas>
+                    {:else}
+                      <span class="no-trend">(kein Verlauf)</span>
+                    {/if}
+                  </td>
+                  <td class="row-actions">
+                    <button
+                      class="btn-icon btn-icon-pdf"
+                      title="Stundennachweis PDF ({row.name})"
+                      onclick={() => downloadEmployeePdf(row.id, row.name)}>PDF</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-datev"
+                      title="DATEV LODAS ({row.name})"
+                      onclick={() => downloadEmployeeDatev(row.id, row.name)}>TXT</button
+                    >
+                    {#if empDownloadErrors[`pdf-${row.id}`]}
+                      <span class="row-dl-error">{empDownloadErrors[`pdf-${row.id}`]}</span>
+                    {/if}
+                    {#if empDownloadErrors[`datev-${row.id}`]}
+                      <span class="row-dl-error">{empDownloadErrors[`datev-${row.id}`]}</span>
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={sortedOvertime.length}
+          bind:page={overtimePage}
+          bind:pageSize={overtimePageSize}
+        />
+      {/if}
+    </section>
+
+    <!-- Urlaubsübersicht (RPT-02) -->
+    <section class="widget-card card card-body">
+      <div class="widget-header">
+        <h3 class="widget-title">Urlaubsübersicht</h3>
+        <div class="widget-actions"></div>
+      </div>
+
+      {#if leaveOverviewLoading}
+        <p class="section-placeholder">Lade Urlaubsübersicht…</p>
+      {:else if leaveOverviewError}
+        <p class="section-error">{leaveOverviewError}</p>
+      {:else if leaveOverviewRows.length === 0}
+        <p class="section-placeholder">Keine Einträge für dieses Jahr</p>
+      {:else}
+        <div class="table-wrap">
+          <table class="leave-overview-table">
+            <thead>
+              <tr>
+                <th>Mitarbeiter</th>
+                <th>Nr.</th>
+                <th>Urlaubsart</th>
+                <th class="numeric">Gesamt</th>
+                <th class="numeric">Übertrag</th>
+                <th class="numeric">Genommen</th>
+                <th class="numeric">Geplant</th>
+                <th class="numeric">Rest</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedLeaveOverviewRows as row (row.employee.employeeNumber + ":" + row.leaveType.id)}
+                <tr>
+                  <td>{row.employee.firstName} {row.employee.lastName}</td>
+                  <td>{row.employee.employeeNumber}</td>
+                  <td>{row.leaveType.name}</td>
+                  <td class="numeric">{formatDays(row.totalDays)}</td>
+                  <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                  <td class="numeric">{formatDays(row.usedDays)}</td>
+                  <td class="numeric">{formatDays(row.pendingDays)}</td>
+                  <td class="numeric strong">{formatDays(row.remainingDays)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={leaveOverviewRows.length}
+          bind:page={leaveOverviewPage}
+          bind:pageSize={leaveOverviewPageSize}
+        />
+      {/if}
+    </section>
+  </div>
 {/if}
 
 <style>
@@ -927,30 +1036,76 @@
     }
   }
 
-  /* ── Manager sections ─────────────────────────────────────────────────── */
+  /* ── Team overview section ───────────────────────────────────────────────── */
 
-  .section.card-animate {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
-    border-radius: 16px;
-    padding: 1.5rem;
+  .team-overview-section {
     margin-top: 2rem;
   }
 
-  .section-head {
+  .team-overview-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
     margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
   }
 
-  .section-head h2 {
+  .team-overview-header h2 {
     font-size: 1.125rem;
     font-weight: 700;
     color: var(--color-text-heading);
     margin: 0;
+  }
+
+  .team-period-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .period-select {
+    background: var(--color-bg-subtle);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.375rem 0.625rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    cursor: pointer;
+  }
+
+  .period-select:focus {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 1px;
+  }
+
+  /* ── Manager widget cards ─────────────────────────────────────────────────── */
+
+  .widget-card {
+    margin-top: 1rem;
+  }
+
+  .widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .widget-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    margin: 0;
+  }
+
+  .widget-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .section-date {
@@ -1130,51 +1285,64 @@
     font-style: italic;
   }
 
-  @media (max-width: 720px) {
-    .attendance-summary {
-      grid-template-columns: repeat(2, 1fr);
-    }
+  /* ── Per-employee action buttons ─────────────────────────────────────────── */
 
-    .sparkline-cell {
-      display: none;
-    }
-
-    .overtime-table th:last-child,
-    .overtime-table td:last-child {
-      display: none;
-    }
+  .actions-col {
+    width: 110px;
+    text-align: right;
   }
 
-  @media (max-width: 700px) {
-    .reports-grid {
-      grid-template-columns: 1fr;
-    }
-  }
-
-  /* Urlaubsübersicht */
-
-  .year-selector {
+  .row-actions {
+    text-align: right;
+    white-space: nowrap;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    font-size: 0.875rem;
+    gap: 0.375rem;
+    justify-content: flex-end;
+  }
+
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.5rem;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-subtle);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    line-height: 1;
+  }
+
+  .btn-icon:hover {
+    background: var(--color-brand-tint);
+    color: var(--color-brand);
+    border-color: var(--color-brand);
+  }
+
+  .btn-icon-pdf {
     color: var(--color-text-muted);
   }
 
-  .year-selector select {
-    background: var(--color-bg-subtle);
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 0.375rem 0.625rem;
-    font-size: 0.875rem;
-    font-family: inherit;
+  .btn-icon-datev {
+    color: var(--color-text-muted);
   }
 
-  .year-selector select:focus {
-    outline: 2px solid var(--color-brand);
-    outline-offset: 1px;
+  .row-dl-error {
+    font-size: 0.75rem;
+    color: var(--color-red, red);
+    display: block;
+    margin-top: 0.25rem;
   }
+
+  /* ── Urlaubsübersicht ─────────────────────────────────────────────────────── */
 
   .leave-overview-table {
     width: 100%;
@@ -1205,5 +1373,33 @@
   .leave-overview-table .numeric.strong {
     font-weight: 700;
     color: var(--color-text-heading);
+  }
+
+  /* ── Responsive ───────────────────────────────────────────────────────────── */
+
+  @media (max-width: 720px) {
+    .attendance-summary {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
+    .sparkline-cell {
+      display: none;
+    }
+
+    .overtime-table th:nth-last-child(2),
+    .overtime-table td:nth-last-child(2) {
+      display: none;
+    }
+
+    .actions-col,
+    .row-actions {
+      display: none;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .reports-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

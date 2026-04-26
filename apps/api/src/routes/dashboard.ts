@@ -747,79 +747,107 @@ export async function dashboardRoutes(app: FastifyInstance) {
     },
   });
 
-  // GET /api/v1/dashboard/open-items — offene Vorgänge für den MA
+  // GET /api/v1/dashboard/open-items — offene Vorgänge für den MA (+ pending approvals für Manager)
   app.get("/open-items", {
     schema: { tags: ["Dashboard"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
-      const employeeId = req.user.employeeId!;
+      const employeeId = req.user.employeeId;
       const tenantId = req.user.tenantId;
+      const role = req.user.role;
+      const isManager = role === "ADMIN" || role === "MANAGER";
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const today = todayInTz(tz);
       const sevenDaysAgo = new Date(today);
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-      // 1. Missing time entries (workdays without entries in last 7 days)
-      const schedule = await getEffectiveSchedule(app, employeeId);
-      const recentEntries = await app.prisma.timeEntry.findMany({
-        where: {
-          employeeId,
-          deletedAt: null,
-          type: "WORK",
-          date: { gte: sevenDaysAgo, lt: today },
-        },
-        select: { date: true },
-      });
-      const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
-
-      // Fetch holidays for the 7-day window (window can span two years near Jan 1)
-      const openItemsTenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const openItemsStateCode = openItemsTenant?.federalState
-        ? (STATE_MAP[openItemsTenant.federalState] ?? null)
-        : null;
-      const startYear = sevenDaysAgo.getFullYear();
-      const endYear = today.getFullYear();
-      const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
-      if (endYear !== startYear)
-        openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
-      const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
-
+      // Personal open items (only when the user has an employee record)
       const missingDays: string[] = [];
-      const cursor = new Date(sevenDaysAgo);
-      while (cursor < today) {
-        const dateStr = dateStrInTz(cursor, tz);
-        if (openItemsHolidaySet.has(dateStr)) {
+      let pendingRequestsCount = 0;
+      let invalidEntriesCount = 0;
+
+      if (employeeId) {
+        // 1. Missing time entries (workdays without entries in last 7 days)
+        const schedule = await getEffectiveSchedule(app, employeeId);
+        const recentEntries = await app.prisma.timeEntry.findMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            type: "WORK",
+            date: { gte: sevenDaysAgo, lt: today },
+          },
+          select: { date: true },
+        });
+        const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
+
+        // Fetch holidays for the 7-day window (window can span two years near Jan 1)
+        const openItemsTenant = await app.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { federalState: true },
+        });
+        const openItemsStateCode = openItemsTenant?.federalState
+          ? (STATE_MAP[openItemsTenant.federalState] ?? null)
+          : null;
+        const startYear = sevenDaysAgo.getFullYear();
+        const endYear = today.getFullYear();
+        const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
+        if (endYear !== startYear)
+          openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
+        const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
+
+        const cursor = new Date(sevenDaysAgo);
+        while (cursor < today) {
+          const dateStr = dateStrInTz(cursor, tz);
+          if (openItemsHolidaySet.has(dateStr)) {
+            cursor.setDate(cursor.getDate() + 1);
+            continue;
+          }
+          const dow = getDayOfWeekInTz(cursor, tz);
+          const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
+          if (expectedH > 0 && !entryDates.has(dateStr)) {
+            missingDays.push(dateStr);
+          }
           cursor.setDate(cursor.getDate() + 1);
-          continue;
         }
-        const dow = getDayOfWeekInTz(cursor, tz);
-        const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
-        if (expectedH > 0 && !entryDates.has(dateStr)) {
-          missingDays.push(dateStr);
-        }
-        cursor.setDate(cursor.getDate() + 1);
+
+        // 2. Own pending leave requests
+        const pendingRequests = await app.prisma.leaveRequest.findMany({
+          where: { employeeId, deletedAt: null, status: "PENDING" },
+          select: { id: true },
+        });
+        pendingRequestsCount = pendingRequests.length;
+
+        // 3. Invalidated time entries
+        const invalidEntries = await app.prisma.timeEntry.findMany({
+          where: { employeeId, deletedAt: null, isInvalid: true },
+          select: { id: true },
+        });
+        invalidEntriesCount = invalidEntries.length;
       }
 
-      // 2. Pending leave requests
-      const pendingRequests = await app.prisma.leaveRequest.findMany({
-        where: { employeeId, deletedAt: null, status: "PENDING" },
-        select: { id: true, startDate: true, endDate: true },
-      });
+      // 4. Team-wide pending approvals (only for managers/admins)
+      let pendingApprovalsCount = 0;
+      if (isManager) {
+        pendingApprovalsCount = await app.prisma.leaveRequest.count({
+          where: {
+            employee: { tenantId },
+            deletedAt: null,
+            status: { in: ["PENDING", "CANCELLATION_REQUESTED"] },
+            // Exclude own requests so they don't double-count with pendingRequests
+            ...(employeeId ? { employeeId: { not: employeeId } } : {}),
+          },
+        });
+      }
 
-      // 3. Invalidated time entries
-      const invalidEntries = await app.prisma.timeEntry.findMany({
-        where: { employeeId, deletedAt: null, isInvalid: true },
-        select: { id: true, date: true, invalidReason: true },
-      });
+      const total =
+        missingDays.length + pendingRequestsCount + invalidEntriesCount + pendingApprovalsCount;
 
       return {
         missingDays,
-        pendingRequests: pendingRequests.length,
-        invalidEntries: invalidEntries.length,
-        total: missingDays.length + pendingRequests.length + invalidEntries.length,
+        pendingRequests: pendingRequestsCount,
+        invalidEntries: invalidEntriesCount,
+        pendingApprovals: pendingApprovalsCount,
+        total,
       };
     },
   });
