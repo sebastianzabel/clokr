@@ -49,6 +49,9 @@ export default [
   // Type-aware rules — requires parserOptions.project
   {
     files: ["**/*.ts"],
+    // Standalone scripts (not part of any app's tsconfig) opt out of
+    // type-aware linting; they still get the non-type-aware rules below.
+    ignores: ["apps/web/scripts/**", "apps/api/scripts/**"],
     languageOptions: {
       parserOptions: {
         project: true,
