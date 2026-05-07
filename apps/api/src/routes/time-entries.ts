@@ -1040,6 +1040,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if (body.breakMinutes !== undefined && !body.breaks) patch.breakMinutes = body.breakMinutes;
       if ("note" in body) patch.note = body.note ?? null;
 
+      // Auto-revalidate: if endTime is now set and entry was invalid due to missing clock-out
+      if (updatedEnd && existing.isInvalid && existing.invalidReason === "Ausstempeln fehlt") {
+        patch.isInvalid = false;
+        patch.invalidReason = null;
+      }
+
       // Handle break slots update
       if (body.breaks) {
         const newBreakSlots = body.breaks.map((b) => ({
