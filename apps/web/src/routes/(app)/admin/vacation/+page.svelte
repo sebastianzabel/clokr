@@ -385,27 +385,28 @@
         type: eType,
         weeklyHours: eType === "FIXED_WEEKLY" ? eWeekly : 0,
         monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
-        mondayHours: eType === "FIXED_WEEKLY" ? eMon : (eMonWd ? 1 : 0),
-        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : (eTueWd ? 1 : 0),
-        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : (eWedWd ? 1 : 0),
-        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : (eThuWd ? 1 : 0),
-        fridayHours: eType === "FIXED_WEEKLY" ? eFri : (eFriWd ? 1 : 0),
-        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : (eSatWd ? 1 : 0),
-        sundayHours: eType === "FIXED_WEEKLY" ? eSun : (eSunWd ? 1 : 0),
+        mondayHours: eType === "FIXED_WEEKLY" ? eMon : eMonWd ? 1 : 0,
+        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : eTueWd ? 1 : 0,
+        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : eWedWd ? 1 : 0,
+        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : eThuWd ? 1 : 0,
+        fridayHours: eType === "FIXED_WEEKLY" ? eFri : eFriWd ? 1 : 0,
+        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : eSatWd ? 1 : 0,
+        sundayHours: eType === "FIXED_WEEKLY" ? eSun : eSunWd ? 1 : 0,
         overtimeThreshold: eThreshold,
         allowOvertimePayout: ePayout,
         overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
         validFrom: eValidFrom,
       });
 
-      if (eVacTotal !== null) {
-        await api.put(`/settings/vacation/${empModal.id}`, {
-          year: eVacYear,
-          totalDays: eVacTotal,
-          carriedOverDays: eVacCarried,
-          carryOverDeadline: eVacDeadline || null,
-        });
-      }
+      // Always persist vacation entitlement so admins can set carriedOverDays
+      // even when "Urlaubstage gesamt" was left empty (the placeholder hint
+      // tells admins to leave it blank for the auto value — honor that).
+      await api.put(`/settings/vacation/${empModal.id}`, {
+        year: eVacYear,
+        totalDays: eVacTotal ?? eVacSuggestion,
+        carriedOverDays: eVacCarried,
+        carryOverDeadline: eVacDeadline || null,
+      });
 
       employees = employees.map((e) =>
         e.id === empModal!.id ? { ...e, workSchedule: updated } : e,
@@ -1149,28 +1150,70 @@
 
           <div class="form-group" style="margin-bottom:1.25rem;">
             <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
-            <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input" style="max-width:280px;">
+            <select
+              id="e-overtime-mode"
+              bind:value={eOvertimeMode}
+              class="form-input"
+              style="max-width:280px;"
+            >
               <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
               <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
             </select>
             <p class="form-hint text-muted">
-              Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden dokumentiert, Saldo bleibt bei 0.
+              Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden
+              dokumentiert, Saldo bleibt bei 0.
             </p>
           </div>
 
           <div class="form-group" style="margin-bottom:1.25rem;">
             <span class="form-label">Feste Arbeitstage</span>
             <div class="weekday-chips">
-              <button type="button" class="wd-chip" class:wd-chip--active={eMonWd} onclick={() => (eMonWd = !eMonWd)}>Mo</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eTueWd} onclick={() => (eTueWd = !eTueWd)}>Di</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eWedWd} onclick={() => (eWedWd = !eWedWd)}>Mi</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eThuWd} onclick={() => (eThuWd = !eThuWd)}>Do</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eFriWd} onclick={() => (eFriWd = !eFriWd)}>Fr</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eSatWd} onclick={() => (eSatWd = !eSatWd)}>Sa</button>
-              <button type="button" class="wd-chip" class:wd-chip--active={eSunWd} onclick={() => (eSunWd = !eSunWd)}>So</button>
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eMonWd}
+                onclick={() => (eMonWd = !eMonWd)}>Mo</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eTueWd}
+                onclick={() => (eTueWd = !eTueWd)}>Di</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eWedWd}
+                onclick={() => (eWedWd = !eWedWd)}>Mi</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eThuWd}
+                onclick={() => (eThuWd = !eThuWd)}>Do</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eFriWd}
+                onclick={() => (eFriWd = !eFriWd)}>Fr</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eSatWd}
+                onclick={() => (eSatWd = !eSatWd)}>Sa</button
+              >
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={eSunWd}
+                onclick={() => (eSunWd = !eSunWd)}>So</button
+              >
             </div>
             <p class="form-hint text-muted">
-              Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide; Arbeitstage im Monat).
+              Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide;
+              Arbeitstage im Monat).
             </p>
           </div>
         {:else}
