@@ -68,3 +68,34 @@ export async function listOptedInEmployees(): Promise<OptedInEmployee[]> {
   const res = await api.get<{ employees: OptedInEmployee[] }>("/admin/presence-sources/opted-in");
   return res.employees;
 }
+
+// ── Employee self-service: /me/wifi ────────────────────────────────────────
+
+export interface MyWifiDevice {
+  id: string;
+  mac: string;
+  label: string | null;
+}
+
+export interface MyWifiData {
+  wifiPresenceEnabled: boolean;
+  devices: MyWifiDevice[];
+}
+
+export async function getMyWifi(): Promise<MyWifiData> {
+  return api.get<MyWifiData>("/me/wifi");
+}
+
+export async function updateMyWifi(
+  wifiPresenceEnabled: boolean,
+): Promise<{ wifiPresenceEnabled: boolean }> {
+  return api.patch<{ wifiPresenceEnabled: boolean }>("/me/wifi", { wifiPresenceEnabled });
+}
+
+export async function addMyDevice(mac: string, label?: string): Promise<MyWifiDevice> {
+  return api.post<MyWifiDevice>("/me/wifi/devices", { mac, label: label ?? null });
+}
+
+export async function removeMyDevice(id: string): Promise<void> {
+  await api.delete(`/me/wifi/devices/${id}`);
+}
