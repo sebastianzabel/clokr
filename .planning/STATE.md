@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: executing
-stopped_at: Completed 25-01-PLAN.md (schema foundation for WiFi-presence)
-last_updated: "2026-05-11T19:00:59.930Z"
+stopped_at: Completed 25-02-PLAN.md (normalizeMac + getCurrentShift utilities)
+last_updated: "2026-05-11T19:05:50.263Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 7
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-05-11
 
@@ -74,6 +74,8 @@ Recent decisions affecting v1.4:
 - [Phase 21-per-employee-export-api]: buildDatevLodas() kept module-scope (not exported) to avoid leaking DATEV format details outside reports.ts
 - [Phase 23-glass-card-ui-polish]: Promoted NFC-Terminals h3/p title to section-label div to match API Keys reference pattern
 - [Phase 25]: PresenceSource uses soft-delete (deletedAt); PresenceDevice uses onDelete: Cascade to Employee; Employee.wifiMacs coexists with PresenceDevice for webhook fallback lookup; wifiPresenceEnabled=false enforces GDPR opt-in
+- [Phase 25]: Overnight shift detected by numeric HH:MM comparison; endDay+1 avoids schema changes
+- [Phase 25]: normalizeMac strip-first approach handles all MAC formats in one pass
 
 ### Pending Todos
 
@@ -85,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11T19:00:59.926Z
-Stopped at: Completed 25-01-PLAN.md (schema foundation for WiFi-presence)
+Last session: 2026-05-11T19:05:50.259Z
+Stopped at: Completed 25-02-PLAN.md (normalizeMac + getCurrentShift utilities)
 Resume file: None
