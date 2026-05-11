@@ -117,9 +117,18 @@ void pollOnce();
 const pollTimer = setInterval(() => void pollOnce(), pollIntervalMs);
 
 // ── GET /devices HTTP server ──────────────────────────────────────────────────
+// CR-02: require the same CLOKR_PRESENCE_KEY as a Bearer token so that only
+// the Clokr API proxy (which forwards the key) can read the host table.
 
 const server = createServer((req, res) => {
   if (req.method === "GET" && req.url === "/devices") {
+    // Authenticate: require Bearer token matching CLOKR_PRESENCE_KEY
+    const auth = req.headers["authorization"] ?? "";
+    if (auth !== `Bearer ${CLOKR_PRESENCE_KEY}`) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
     const payload = JSON.stringify(lastHosts);
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(payload);
