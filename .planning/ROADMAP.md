@@ -6,7 +6,7 @@
 - ✅ **v1.1 Reporting & DATEV** — Phases 4-7 (shipped 2026-04-12)
 - ✅ **v1.2 UI Polish** — Phases 8-10 (shipped 2026-04-13)
 - ✅ **v1.3 Monthly Hours Overhaul** — Phases 11-16 (shipped 2026-04-14)
-- 🚧 **v1.4 Manager/MA-Trennung & Reports** — Phases 17-25 (in progress)
+- ✅ **v1.4 Manager/MA-Trennung & Reports** — Phases 17-25 (shipped 2026-05-11)
 
 ## Phases
 
@@ -62,10 +62,10 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 
 - [x] **Phase 17: Personal Page Cleanup** — Remove employee selector and team approval tab from personal pages (completed 2026-04-25)
 - [x] **Phase 18: Team Route Scaffold & Sidebar Nav** — Create `/team/*` routes and MANAGER sidebar group (completed 2026-04-25)
-- [ ] **Phase 19: Team Time-Entries Page** — Manager view of team time entries with correction workflow
+- [x] **Phase 19: Team Time-Entries Page** — Manager view of team time entries with correction workflow (completed 2026-04-25)
 - [x] **Phase 20: Team Leave Page** — Manager view of team leave requests with approval/rejection (completed 2026-04-25)
 - [x] **Phase 21: Per-Employee Export API** — Single-employee DATEV LODAS and PDF export endpoints (completed 2026-04-25)
-- [ ] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons
+- [x] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons (completed 2026-04-25)
 - [x] **Phase 23: Glass-Card UI Polish** — Schichten and NFC-Terminal pages get glass-card frames (completed 2026-04-25)
 - [x] **Phase 24: v1.4 UAT Fixes** — DATEV permission, LODAS header, year-scoped team-leave, manager-on-behalf-of (completed 2026-05-11)
 - [x] **Phase 25: WiFi-Presence Stempel (FritzBox)** — Auto clock-in/out from phone WiFi presence on FritzBox, aligned to scheduled shift ±15min (completed 2026-05-11)
