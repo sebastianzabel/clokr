@@ -233,7 +233,7 @@ Plans:
 **Goal:** Auto-stamp employees when their phone connects to / disconnects from the office WiFi (FritzBox host list via TR-064). Trigger clock-in/out only when the event lies within ±15 min of a scheduled shift start/end — otherwise log-only. Audit-traceable as `source=WIFI`, GDPR-opt-in per employee.
 **Requirements**: WIFI-01 (FritzBox polling), WIFI-02 (MAC→employee mapping), WIFI-03 (shift-window gate), WIFI-04 (opt-in + audit), WIFI-05 (admin/MA Mac-management UI)
 **Depends on:** Phase 24
-**Plans:** 7/9 plans executed
+**Plans:** 8/9 plans executed
 
 Plans:
 - [x] 25-01-PLAN.md — Schema migration: PresenceSource model, PresenceDevice model, Employee wifi fields, TenantConfig.wifiPresenceWindowMinutes, AuditLog.purgeable, TimeEntrySource.WIFI (WIFI-01, WIFI-02, WIFI-04)
@@ -242,6 +242,6 @@ Plans:
 - [x] 25-04-PLAN.md — PresenceSource admin CRUD: GET/POST/DELETE for API key management (WIFI-04)
 - [x] 25-05-PLAN.md — Employee self-service wifi endpoint: PATCH /me/wifi + MAC normalizer utility (WIFI-02, WIFI-04)
 - [x] 25-06-PLAN.md — Admin WiFi-Presence UI page: key management + device list + opt-in overview (WIFI-02, WIFI-05)
-- [ ] 25-07-PLAN.md — Profile "Meine Geräte" section: opt-in toggle + MAC list + add/remove (WIFI-02, WIFI-04, WIFI-05)
+- [x] 25-07-PLAN.md — Profile "Meine Geräte" section: opt-in toggle + MAC list + add/remove (WIFI-02, WIFI-04, WIFI-05)
 - [x] 25-08-PLAN.md — Data-retention cron extension: 90-day purge of purgeable AuditLog entries (WIFI-04)
 - [ ] 25-09-PLAN.md — FritzBox adapter standalone service: TR-064 poller + state machine + webhook poster + Docker (WIFI-01)
