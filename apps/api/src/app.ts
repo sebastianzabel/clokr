@@ -37,6 +37,7 @@ import { terminalRoutes } from "./routes/terminals";
 import { specialLeaveRoutes } from "./routes/special-leave";
 import { avatarRoutes } from "./routes/avatars";
 import { apiKeyRoutes } from "./routes/api-keys";
+import { presenceRoutes } from "./routes/presence";
 
 export async function buildApp() {
   // ── Logger configuration ──────────────────────────────────
@@ -132,9 +133,10 @@ export async function buildApp() {
 
   await app.register(helmet, {
     contentSecurityPolicy: false, // API is JSON-only; no HTML served (Swagger UI excluded)
-    hsts: config.NODE_ENV === "production"
-      ? { maxAge: 31536000, includeSubDomains: true, preload: false }
-      : false,
+    hsts:
+      config.NODE_ENV === "production"
+        ? { maxAge: 31536000, includeSubDomains: true, preload: false }
+        : false,
   });
   await app.register(cors, {
     origin: config.CORS_ORIGIN,
@@ -235,6 +237,7 @@ export async function buildApp() {
   await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
+  await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
 
   // ── Client Error Logging ─────────────────────────────────
   app.post("/api/v1/logs/client", {
