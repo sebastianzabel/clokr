@@ -48,11 +48,12 @@ export async function presenceRoutes(app: FastifyInstance) {
       const eventTime = new Date(body.timestamp);
 
       // ── 3. MAC → Employee lookup (opt-in + tenant-scoped) ─────────────────
+      // Employee has no deletedAt — DSGVO "deletion" is anonymization via user.isActive=false
       const employee = await app.prisma.employee.findFirst({
         where: {
           tenantId,
           wifiMacs: { has: mac },
-          deletedAt: null,
+          user: { isActive: true },
         },
       });
 

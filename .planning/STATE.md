@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: executing
-stopped_at: Completed 25-02-PLAN.md (normalizeMac + getCurrentShift utilities)
-last_updated: "2026-05-11T19:05:50.263Z"
+stopped_at: Completed 25-05-PLAN.md
+last_updated: "2026-05-11T19:13:21.393Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 7
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-05-11
 
@@ -76,6 +76,9 @@ Recent decisions affecting v1.4:
 - [Phase 25]: PresenceSource uses soft-delete (deletedAt); PresenceDevice uses onDelete: Cascade to Employee; Employee.wifiMacs coexists with PresenceDevice for webhook fallback lookup; wifiPresenceEnabled=false enforces GDPR opt-in
 - [Phase 25]: Overnight shift detected by numeric HH:MM comparison; endDay+1 avoids schema changes
 - [Phase 25]: normalizeMac strip-first approach handles all MAC formats in one pass
+- [Phase 25]: tenantId_mac uniqueness: MAC deduplication is per-tenant (not per-employee) — actual constraint from plan 25-01 schema
+- [Phase 25]: wifiOptInAt never nulled on opt-out — preserves GDPR consent withdrawal trace
+- [Phase 25]: purgeable flag intentionally absent from all wifi consent audit entries — consent events permanently retained
 
 ### Pending Todos
 
@@ -87,6 +90,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11T19:05:50.259Z
-Stopped at: Completed 25-02-PLAN.md (normalizeMac + getCurrentShift utilities)
+Last session: 2026-05-11T19:13:21.389Z
+Stopped at: Completed 25-05-PLAN.md
 Resume file: None
