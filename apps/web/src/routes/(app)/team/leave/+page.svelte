@@ -245,6 +245,14 @@
     if (calYear !== prevYear) loadData();
   }
 
+  // Selected-month range for the list view (client-side overlap filter).
+  let monthStart = $derived(`${calYear}-${String(calMonth).padStart(2, "0")}-01`);
+  let monthEnd = $derived(
+    `${calYear}-${String(calMonth).padStart(2, "0")}-${String(
+      new Date(calYear, calMonth, 0).getDate(),
+    ).padStart(2, "0")}`,
+  );
+
   const MONTH_NAMES = [
     "Januar",
     "Februar",
@@ -284,9 +292,8 @@
     loading = true;
     error = "";
     try {
-      const year = new Date().getFullYear();
       const [all, pending, emps] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${year}`),
+        api.get<LeaveRequest[]>(`/leave/requests?year=${calYear}`),
         api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`),
         api.get<Employee[]>("/employees"),
       ]);
@@ -450,6 +457,8 @@
 
   let filteredTeamRequests = $derived(
     allTeamRequests.filter((req) => {
+      // Month-overlap filter: keep requests that intersect the selected month.
+      if (req.endDate < monthStart || req.startDate > monthEnd) return false;
       if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
