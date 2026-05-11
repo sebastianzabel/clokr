@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: executing
-stopped_at: Completed 25-03-PLAN.md (presence webhook handler)
-last_updated: "2026-05-11T19:18:55.861Z"
+stopped_at: Completed 25-04-PLAN.md
+last_updated: "2026-05-11T19:23:45.364Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 7
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
-Plan: 6 of 9
+Plan: 7 of 9
 Status: Ready to execute
 Last activity: 2026-05-11
 
@@ -82,6 +82,8 @@ Recent decisions affecting v1.4:
 - [Phase 25]: Use minimum tenant retention (most restrictive) as global AuditLog purge cutoff since AuditLog has no tenantId
 - [Phase 25]: Hard-delete purgeable=true AuditLog rows justified by DSGVO Art. 5(1)(e) — WiFi-presence-only events are not payroll-relevant
 - [Phase 25]: Presence webhook uses direct prisma.auditLog.create (not app.audit) for purgeable field support; Employee lookup uses user.isActive=true (no deletedAt on Employee model)
+- [Phase 25]: GET /opted-in registered before /:id routes to prevent Fastify path collision
+- [Phase 25]: Soft delete sets both deletedAt and isActive=false (audit-proof, never hard-delete)
 
 ### Pending Todos
 
@@ -93,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11T19:18:55.857Z
-Stopped at: Completed 25-03-PLAN.md (presence webhook handler)
+Last session: 2026-05-11T19:23:45.360Z
+Stopped at: Completed 25-04-PLAN.md
 Resume file: None
