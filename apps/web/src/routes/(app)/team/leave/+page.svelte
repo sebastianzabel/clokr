@@ -96,6 +96,31 @@
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
+  // ── Manager-on-behalf-of: Neue Abwesenheit anlegen ───────────────────────
+  interface CreateForm {
+    employeeId: string;
+    type: TypeCode;
+    startDate: string;
+    endDate: string;
+    halfDay: boolean;
+    note: string;
+  }
+  function emptyCreateForm(): CreateForm {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      employeeId: "",
+      type: "VACATION",
+      startDate: today,
+      endDate: today,
+      halfDay: false,
+      note: "",
+    };
+  }
+  let createModalOpen = $state(false);
+  let createForm: CreateForm = $state(emptyCreateForm());
+  let createSaving = $state(false);
+  let createError = $state("");
+
   // ── Kalender ──────────────────────────────────────────────────────────────
   interface CalEntry {
     id: string;
@@ -501,6 +526,46 @@
       icalDownloading = false;
     }
   }
+
+  function openCreate() {
+    createForm = emptyCreateForm();
+    createError = "";
+    createModalOpen = true;
+  }
+  function closeCreate() {
+    if (createSaving) return;
+    createModalOpen = false;
+  }
+  async function submitCreate(e: Event) {
+    e.preventDefault();
+    createError = "";
+    if (!createForm.employeeId) {
+      createError = "Bitte einen Mitarbeiter auswählen";
+      return;
+    }
+    if (createForm.endDate < createForm.startDate) {
+      createError = "Enddatum muss nach Startdatum liegen";
+      return;
+    }
+    createSaving = true;
+    try {
+      await api.post("/leave/requests", {
+        employeeId: createForm.employeeId,
+        type: createForm.type,
+        startDate: createForm.startDate,
+        endDate: createForm.endDate,
+        halfDay: createForm.halfDay,
+        note: createForm.note || null,
+      });
+      createModalOpen = false;
+      await Promise.all([loadData(), loadCalendar()]);
+    } catch (err: unknown) {
+      const apiErr = err as { data?: { error?: string }; message?: string };
+      createError = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Anlegen";
+    } finally {
+      createSaving = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -605,28 +670,35 @@
   </div>
 </div>
 
-<!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs">
-  <button
-    class="view-tab"
-    class:view-tab--active={view === "calendar"}
-    onclick={() => (view = "calendar")}
-  >
-    Kalender
-  </button>
-  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
-    Anträge
-  </button>
-  <button
-    class="view-tab"
-    class:view-tab--active={view === "approvals"}
-    onclick={() => (view = "approvals")}
-  >
-    Genehmigungen
-    {#if filteredPendingRequests.length > 0}
-      <span class="tab-badge">{filteredPendingRequests.length}</span>
-    {/if}
-  </button>
+<!-- ── View-Toggle + Manager-Aktionen ─────────────────────────────────────── -->
+<div class="view-tabs-row">
+  <div class="view-tabs">
+    <button
+      class="view-tab"
+      class:view-tab--active={view === "calendar"}
+      onclick={() => (view = "calendar")}
+    >
+      Kalender
+    </button>
+    <button
+      class="view-tab"
+      class:view-tab--active={view === "list"}
+      onclick={() => (view = "list")}
+    >
+      Anträge
+    </button>
+    <button
+      class="view-tab"
+      class:view-tab--active={view === "approvals"}
+      onclick={() => (view = "approvals")}
+    >
+      Genehmigungen
+      {#if filteredPendingRequests.length > 0}
+        <span class="tab-badge">{filteredPendingRequests.length}</span>
+      {/if}
+    </button>
+  </div>
+  <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
 </div>
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
@@ -1123,6 +1195,72 @@
   </div>
 {/if}
 
+<!-- ── Create-Modal: Neue Abwesenheit anlegen (Manager-on-behalf-of) ─────── -->
+{#if createModalOpen}
+  <div class="modal-backdrop" onclick={self(closeCreate)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
+      <div class="modal-header">
+        <h2>Neue Abwesenheit anlegen</h2>
+        <button class="btn-icon" onclick={closeCreate} aria-label="Schließen">✕</button>
+      </div>
+      <form class="modal-body" onsubmit={submitCreate}>
+        <div class="form-row">
+          <label for="create-emp">Mitarbeiter</label>
+          <select id="create-emp" bind:value={createForm.employeeId} required>
+            <option value="" disabled>— Mitarbeiter wählen —</option>
+            {#each employees as emp (emp.id)}
+              <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="create-type">Art</label>
+          <select id="create-type" bind:value={createForm.type} required>
+            {#each TYPE_OPTIONS as opt (opt.code)}
+              <option value={opt.code}>{opt.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-row form-row-2col">
+          <div>
+            <label for="create-start">Von</label>
+            <input id="create-start" type="date" bind:value={createForm.startDate} required />
+          </div>
+          <div>
+            <label for="create-end">Bis</label>
+            <input id="create-end" type="date" bind:value={createForm.endDate} required />
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={createForm.halfDay} />
+            Halber Tag
+          </label>
+        </div>
+        <div class="form-row">
+          <label for="create-note">Notiz (optional)</label>
+          <textarea id="create-note" rows="3" bind:value={createForm.note}></textarea>
+        </div>
+        {#if createError}
+          <p class="form-error">{createError}</p>
+        {/if}
+        <p class="form-hint">
+          Der Antrag wird mit Status <strong>Ausstehend</strong> angelegt und kann anschließend unter
+          „Genehmigungen“ freigegeben werden.
+        </p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick={closeCreate} disabled={createSaving}>
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary" disabled={createSaving}>
+            {createSaving ? "Speichert…" : "Speichern"}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
 <style>
   /* ── Employee selector / combobox ──────────────────────────────────── */
   .employee-selector {
@@ -1477,6 +1615,86 @@
     padding: 1rem 1.5rem;
     border-top: 1px solid var(--gray-200);
     background: var(--gray-50, #f9fafb);
+  }
+
+  /* ── View tabs row + manager actions ───────────────────────────────── */
+  .view-tabs-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+  .view-tabs-row :global(.view-tabs) {
+    margin-bottom: 0;
+  }
+
+  /* ── Create-Modal Form ─────────────────────────────────────────────── */
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin-bottom: 0.875rem;
+  }
+  .form-row label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--color-text-muted, #555);
+  }
+  .form-row input,
+  .form-row select,
+  .form-row textarea {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border, #d1d5db);
+    border-radius: 6px;
+    background: var(--color-surface, #fff);
+    color: var(--color-text, #1f2937);
+    font-size: 0.875rem;
+    font-family: inherit;
+  }
+  .form-row textarea {
+    resize: vertical;
+    min-height: 64px;
+  }
+  .form-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.875rem;
+  }
+  .form-row-2col > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .checkbox-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .form-error {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-danger-tint, #fee2e2);
+    border: 1px solid var(--color-danger, #f87171);
+    border-radius: 6px;
+    color: var(--color-danger, #b91c1c);
+    font-size: 0.8125rem;
+  }
+  .form-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b7280);
+    margin: 0.5rem 0 0.875rem;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--gray-200);
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */

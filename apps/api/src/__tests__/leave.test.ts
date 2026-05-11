@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -210,7 +211,9 @@ describe("Leave / Absence API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entitlements = JSON.parse(beforeRes.body);
-      const vacEnt = entitlements.find((e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub");
+      const vacEnt = entitlements.find(
+        (e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub",
+      );
       const usedBefore = Number(vacEnt?.usedDays ?? 0);
 
       // Create and approve 2-day vacation
@@ -240,7 +243,9 @@ describe("Leave / Absence API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const entAfter = JSON.parse(afterRes.body);
-      const vacEntAfter = entAfter.find((e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub");
+      const vacEntAfter = entAfter.find(
+        (e: { leaveType?: { name: string }; usedDays?: number }) => e.leaveType?.name === "Urlaub",
+      );
       const usedAfter = Number(vacEntAfter?.usedDays ?? 0);
 
       expect(usedAfter).toBe(usedBefore + Number(days));
@@ -654,6 +659,130 @@ describe("Leave / Absence API", () => {
 
       // usedDays in 2025 should have increased (days from the Dec portion deducted)
       expect(usedAfter2025).toBeGreaterThan(usedBefore2025);
+    });
+  });
+
+  // ── UAT-04: Manager-on-behalf-of absence creation ─────────────────────────
+  describe("POST /api/v1/leave/requests (manager-on-behalf-of)", () => {
+    let mgrToken: string;
+    let mgrEmployeeId: string;
+    let otherTenant: Awaited<ReturnType<typeof seedTestData>>;
+
+    beforeAll(async () => {
+      const passwordHash = await bcrypt.hash("test1234", 10);
+      const email = `mgr-leave-${Date.now()}@test.de`;
+      const mgrUser = await app.prisma.user.create({
+        data: { email, passwordHash, role: "MANAGER", isActive: true },
+      });
+      const mgrEmp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `M-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "Onbehalf",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      mgrEmployeeId = mgrEmp.id;
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email, password: "test1234" },
+      });
+      mgrToken = JSON.parse(loginRes.body).accessToken;
+
+      // Separate tenant for the cross-tenant test.
+      otherTenant = await seedTestData(app, "lv-other");
+    });
+
+    afterAll(async () => {
+      try {
+        await cleanupTestData(app, otherTenant.tenant.id);
+      } catch (err) {
+        console.error("Cross-tenant cleanup failed:", err);
+      }
+    });
+
+    it("MANAGER creates absence on behalf of an employee in their tenant", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${mgrToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2027-09-07",
+          endDate: "2027-09-09",
+          employeeId: data.employee.id,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.employeeId).toBe(data.employee.id);
+      expect(body.status).toBe("PENDING");
+
+      // Audit log captures the manager-on-behalf-of marker.
+      const auditEntry = await app.prisma.auditLog.findFirst({
+        where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
+      });
+      expect(auditEntry).not.toBeNull();
+      const newValue = auditEntry?.newValue as Record<string, unknown> | null;
+      expect(newValue?.source).toBe("MANAGER_CREATED");
+      expect(newValue?.actorRole).toBe("MANAGER");
+      expect(newValue?.targetEmployeeId).toBe(data.employee.id);
+    });
+
+    it("EMPLOYEE cannot create absence for another employee", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2027-10-12",
+          endDate: "2027-10-12",
+          employeeId: mgrEmployeeId,
+        },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("MANAGER cannot create absence for an employee in a different tenant", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${mgrToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2027-11-02",
+          endDate: "2027-11-02",
+          employeeId: otherTenant.employee.id,
+        },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("MANAGER self-create (no employeeId in body) follows normal self-flow", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${mgrToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2027-12-14",
+          endDate: "2027-12-14",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.employeeId).toBe(mgrEmployeeId);
+      expect(body.status).toBe("PENDING");
+
+      const auditEntry = await app.prisma.auditLog.findFirst({
+        where: { entity: "LeaveRequest", entityId: body.id, action: "CREATE" },
+      });
+      const newValue = auditEntry?.newValue as Record<string, unknown> | null;
+      expect(newValue?.source).toBeUndefined();
     });
   });
 });
