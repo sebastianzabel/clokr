@@ -140,7 +140,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Manager-on-behalf-of: caller must be MANAGER or ADMIN, target employee must
       // belong to the caller's tenant. Otherwise fall back to self-create.
-      let employeeId: string | null;
+      let employeeId: string | null | undefined;
       let isOnBehalfOf = false;
       if (body.employeeId && body.employeeId !== req.user.employeeId) {
         if (req.user.role !== "MANAGER" && req.user.role !== "ADMIN") {
