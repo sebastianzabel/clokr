@@ -58,10 +58,24 @@ export async function listDevices(sourceId: string): Promise<FritzDevice[]> {
   return res.devices;
 }
 
-export async function mapDevice(sourceId: string, mac: string, employeeId: string): Promise<void> {
-  await api.post(`/admin/presence-sources/${sourceId}/devices/${encodeURIComponent(mac)}/assign`, {
-    employeeId,
-  });
+export async function mapDevice(
+  sourceId: string,
+  mac: string,
+  employeeId: string,
+): Promise<{ employeeId: string; mac: string; optInAutoEnabled: boolean }> {
+  return await api.post<{ employeeId: string; mac: string; optInAutoEnabled: boolean }>(
+    `/admin/presence-sources/${sourceId}/devices/${encodeURIComponent(mac)}/assign`,
+    { employeeId },
+  );
+}
+
+export async function unmapDevice(
+  sourceId: string,
+  mac: string,
+): Promise<{ success: boolean; optInAutoDisabled: boolean }> {
+  return await api.delete<{ success: boolean; optInAutoDisabled: boolean }>(
+    `/admin/presence-sources/${sourceId}/devices/${encodeURIComponent(mac)}`,
+  );
 }
 
 export async function listOptedInEmployees(): Promise<OptedInEmployee[]> {

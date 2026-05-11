@@ -290,7 +290,34 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         if (!adapterRes.ok) {
           return reply.code(502).send({ error: "Adapter nicht erreichbar" });
         }
-        return reply.send(await adapterRes.json());
+
+        type AdapterDevice = { mac: string; hostname: string; active: boolean; ip?: string };
+        const rawDevices = (await adapterRes.json()) as AdapterDevice[];
+
+        // Cross-reference with PresenceDevice mapping table to enrich with employee assignment
+        const macs = rawDevices.map((d) => d.mac.toLowerCase());
+        const mappings = await app.prisma.presenceDevice.findMany({
+          where: { tenantId: req.user.tenantId, mac: { in: macs } },
+          include: { employee: { select: { id: true, firstName: true, lastName: true } } },
+        });
+        const mappingByMac = new Map(mappings.map((m) => [m.mac, m]));
+
+        const devices = rawDevices.map((d) => {
+          const mac = d.mac.toLowerCase();
+          const mapping = mappingByMac.get(mac);
+          return {
+            mac,
+            hostname: d.hostname,
+            online: d.active,
+            lastSeen: null as string | null,
+            assignedEmployeeId: mapping?.employee.id ?? null,
+            assignedEmployeeName: mapping
+              ? `${mapping.employee.firstName} ${mapping.employee.lastName}`.trim()
+              : null,
+          };
+        });
+
+        return reply.send({ devices });
       } catch {
         return reply.code(502).send({ error: "Adapter nicht erreichbar" });
       }
@@ -338,18 +365,126 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         },
       });
 
+      // Auto-enable WiFi-presence opt-in if not already active (DSGVO note in audit log).
+      // Assumes consent is covered by Betriebsvereinbarung / Arbeitsvertrag — admin acts on
+      // behalf of the employee. The MA can revoke at any time via /settings.
+      let optInWasEnabled = false;
+      if (!employee.wifiPresenceEnabled) {
+        await app.prisma.employee.update({
+          where: { id: body.employeeId },
+          data: {
+            wifiPresenceEnabled: true,
+            wifiOptInAt: employee.wifiOptInAt ?? new Date(),
+          },
+        });
+        optInWasEnabled = true;
+
+        await app.prisma.auditLog.create({
+          data: {
+            userId: req.user.sub,
+            action: "WIFI_OPT_IN_BY_ADMIN",
+            entity: "Employee",
+            entityId: body.employeeId,
+            oldValue: { wifiPresenceEnabled: false },
+            newValue: { wifiPresenceEnabled: true, source: "admin-device-assignment" },
+            ipAddress: req.ip,
+          },
+        });
+      }
+
       await app.prisma.auditLog.create({
         data: {
           userId: req.user.sub,
           action: "ASSIGN_DEVICE",
           entity: "PresenceDevice",
           entityId: device.id,
-          newValue: { mac, employeeId: body.employeeId },
+          newValue: { mac, employeeId: body.employeeId, optInAutoEnabled: optInWasEnabled },
           ipAddress: req.ip,
         },
       });
 
-      return { employeeId: device.employeeId, mac: device.mac };
+      return {
+        employeeId: device.employeeId,
+        mac: device.mac,
+        optInAutoEnabled: optInWasEnabled,
+      };
+    },
+  });
+
+  // ── DELETE /:id/devices/:mac — remove MAC ↔ employee mapping ───
+  app.delete("/:id/devices/:mac", {
+    schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id, mac: rawMac } = z
+        .object({ id: z.string().uuid(), mac: z.string() })
+        .parse(req.params);
+
+      const source = await app.prisma.presenceSource.findFirst({
+        where: { id, tenantId: req.user.tenantId, deletedAt: null },
+      });
+      if (!source) return reply.code(404).send({ error: "Präsenzquelle nicht gefunden" });
+
+      let mac: string;
+      try {
+        mac = normalizeMac(rawMac);
+      } catch {
+        return reply.code(400).send({ error: "Ungültige MAC-Adresse" });
+      }
+
+      const device = await app.prisma.presenceDevice.findUnique({
+        where: { tenantId_mac: { tenantId: req.user.tenantId, mac } },
+      });
+      if (!device) return reply.code(404).send({ error: "Zuweisung nicht gefunden" });
+
+      await app.prisma.presenceDevice.delete({
+        where: { id: device.id },
+      });
+
+      // If this was the employee's last device, also disable opt-in
+      // (wifiOptInAt is preserved as audit trail of past consent).
+      let optInWasDisabled = false;
+      const remainingDevices = await app.prisma.presenceDevice.count({
+        where: { tenantId: req.user.tenantId, employeeId: device.employeeId },
+      });
+      if (remainingDevices === 0) {
+        const employee = await app.prisma.employee.findUnique({
+          where: { id: device.employeeId },
+          select: { wifiPresenceEnabled: true },
+        });
+        if (employee?.wifiPresenceEnabled) {
+          await app.prisma.employee.update({
+            where: { id: device.employeeId },
+            data: { wifiPresenceEnabled: false },
+          });
+          optInWasDisabled = true;
+          await app.prisma.auditLog.create({
+            data: {
+              userId: req.user.sub,
+              action: "WIFI_OPT_OUT_BY_ADMIN",
+              entity: "Employee",
+              entityId: device.employeeId,
+              oldValue: { wifiPresenceEnabled: true },
+              newValue: { wifiPresenceEnabled: false, source: "last-device-unassigned" },
+              ipAddress: req.ip,
+            },
+          });
+        }
+      }
+
+      await app.prisma.auditLog.create({
+        data: {
+          userId: req.user.sub,
+          action: "UNASSIGN_DEVICE",
+          entity: "PresenceDevice",
+          entityId: device.id,
+          oldValue: { mac: device.mac, employeeId: device.employeeId },
+          newValue: { optInAutoDisabled: optInWasDisabled, remainingDevices },
+          ipAddress: req.ip,
+        },
+      });
+
+      return { success: true, optInAutoDisabled: optInWasDisabled };
     },
   });
 }

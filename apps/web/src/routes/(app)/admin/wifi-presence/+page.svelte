@@ -7,12 +7,14 @@
     revokeSource,
     listDevices,
     mapDevice,
+    unmapDevice,
     listOptedInEmployees,
     type PresenceSource,
     type FritzDevice,
     type OptedInEmployee,
   } from "$lib/api/presence";
   import { api } from "$api/client";
+  import { toasts } from "$stores/toast";
 
   // ── Block 1: Presence-Quellen ─────────────────────────────────────────────
   let sources: PresenceSource[] = $state([]);
@@ -27,7 +29,7 @@
   let srcPageSize = $state(10);
   let pagedSources = $derived(sources.slice((srcPage - 1) * srcPageSize, srcPage * srcPageSize));
 
-  // ── Block 2: FritzBox-Geräteliste ────────────────────────────────────────
+  // ── Block 2: WiFi-Geräteliste ────────────────────────────────────────────
   interface Employee {
     id: string;
     firstName: string;
@@ -54,15 +56,20 @@
 
   onMount(async () => {
     await Promise.all([loadSources(), loadOptedIn()]);
-    // Load employees list for device assignment dropdown
+    // Load employees list for device assignment dropdown.
+    // GET /employees returns the array directly (not wrapped in { employees }).
     try {
-      const res = await api.get<{ employees: Employee[] }>("/employees?pageSize=500");
-      employees = res.employees ?? [];
+      const res = await api.get<Employee[] | { employees: Employee[] }>("/employees");
+      employees = Array.isArray(res) ? res : (res.employees ?? []);
     } catch {
       /* non-fatal — assignment dropdown will be empty */
     }
     sourcesLoading = false;
     optInLoading = false;
+    // Auto-load device list when a source is available — saves the manual refresh click
+    if (selectedSourceId) {
+      refreshDevices();
+    }
   });
 
   async function loadSources() {
@@ -146,7 +153,7 @@
     if (!employeeId || !selectedSourceId) return;
     deviceAssigning = { ...deviceAssigning, [mac]: true };
     try {
-      await mapDevice(selectedSourceId, mac, employeeId);
+      const result = await mapDevice(selectedSourceId, mac, employeeId);
       const matched = employees.find((e) => e.id === employeeId);
       const name = matched ? `${matched.firstName} ${matched.lastName}` : employeeId;
       // Update local device record
@@ -159,18 +166,43 @@
             }
           : d,
       );
+      if (result.optInAutoEnabled) {
+        toasts.success(`${name} zugewiesen — WiFi-Opt-In automatisch aktiviert`);
+        // Refresh opt-in overview so Block 3 reflects the new opt-in
+        loadOptedIn();
+      } else {
+        toasts.success(`${name} zugewiesen`);
+      }
     } catch {
-      /* ignore */
+      toasts.error("Zuweisung fehlgeschlagen");
     } finally {
       deviceAssigning = { ...deviceAssigning, [mac]: false };
     }
   }
 
-  function clearAssignment(mac: string) {
-    devices = devices.map((d) =>
-      d.mac === mac ? { ...d, assignedEmployeeId: null, assignedEmployeeName: null } : d,
-    );
-    deviceAssignSelect = { ...deviceAssignSelect, [mac]: "" };
+  async function unassignDevice(mac: string) {
+    if (!selectedSourceId) return;
+    const dev = devices.find((d) => d.mac === mac);
+    const name = dev?.assignedEmployeeName ?? "Mitarbeiter";
+    if (!confirm(`Zuweisung von "${name}" zu MAC ${mac} aufheben?`)) return;
+    deviceAssigning = { ...deviceAssigning, [mac]: true };
+    try {
+      const result = await unmapDevice(selectedSourceId, mac);
+      devices = devices.map((d) =>
+        d.mac === mac ? { ...d, assignedEmployeeId: null, assignedEmployeeName: null } : d,
+      );
+      deviceAssignSelect = { ...deviceAssignSelect, [mac]: "" };
+      if (result.optInAutoDisabled) {
+        toasts.success(`Zuweisung aufgehoben — WiFi-Opt-In für ${name} deaktiviert`);
+        loadOptedIn();
+      } else {
+        toasts.success("Zuweisung aufgehoben");
+      }
+    } catch {
+      toasts.error("Zuweisung konnte nicht aufgehoben werden");
+    } finally {
+      deviceAssigning = { ...deviceAssigning, [mac]: false };
+    }
   }
 
   function formatLastSeen(iso: string | null): string {
@@ -305,9 +337,9 @@
   {/if}
 </div>
 
-<!-- ── Block 2: FritzBox-Geräteliste ─────────────────────────────────────── -->
+<!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────────── -->
 <div class="section-label card-animate">
-  <h2 class="section-header">FritzBox-Geräteliste</h2>
+  <h2 class="section-header">WiFi-Geräteliste</h2>
   <p class="text-muted">
     Aktuell mit dem Netzwerk verbundene Geräte. MAC-Adressen können Mitarbeitern zugewiesen werden.
   </p>
@@ -408,8 +440,13 @@
                     Zuweisung speichern
                   </button>
                 {:else if dev.assignedEmployeeId}
-                  <button class="btn btn-sm btn-ghost" onclick={() => clearAssignment(dev.mac)}>
-                    Bearbeiten
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    style="color: var(--color-red);"
+                    onclick={() => unassignDevice(dev.mac)}
+                    disabled={deviceAssigning[dev.mac]}
+                  >
+                    Zuweisung aufheben
                   </button>
                 {/if}
               </td>
@@ -421,7 +458,8 @@
     </div>
   {:else if devicesLastRefreshed}
     <p class="text-muted">
-      Keine Geräte gefunden. Stellen Sie sicher, dass der FritzBox-Adapter läuft und verbunden ist.
+      Keine Geräte gefunden. Stellen Sie sicher, dass der WiFi-Adapter (z.B. FritzBox) läuft und
+      verbunden ist.
     </p>
   {:else}
     <p class="text-muted">
