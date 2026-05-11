@@ -31,7 +31,7 @@ export async function presenceRoutes(app: FastifyInstance) {
       const source = await app.prisma.presenceSource.findUnique({
         where: { keyHash },
       });
-      if (!source || source.revokedAt) {
+      if (!source || source.revokedAt || !source.isActive) {
         return reply.code(401).send({ error: "Ungültiger oder widerrufener Presence-Key" });
       }
 
@@ -59,6 +59,21 @@ export async function presenceRoutes(app: FastifyInstance) {
           },
         },
       });
+
+      // WR-01: explicit cross-tenant guard — reject if device's employee belongs
+      // to a different tenant (guards against data-migration anomalies)
+      if (device && device.employee.tenantId !== tenantId) {
+        app.log.error(
+          {
+            deviceId: device.id,
+            deviceTenantId: device.employee.tenantId,
+            sourceTenantId: tenantId,
+          },
+          "PresenceDevice tenant mismatch — skipping event",
+        );
+        return reply.code(200).send({ ok: true });
+      }
+
       let employee = device && device.employee.user?.isActive ? device.employee : null;
 
       if (!employee) {
