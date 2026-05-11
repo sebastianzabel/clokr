@@ -3,23 +3,23 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: verifying
-stopped_at: Completed 24-04-PLAN.md (manager-on-behalf-of leave creation)
-last_updated: "2026-05-11T00:00:00.000Z"
+stopped_at: Completed 25-wifi-presence-stempel-fritzbox-25-09-PLAN.md
+last_updated: "2026-05-11T19:44:16.625Z"
 last_activity: 2026-05-11
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 13
-  completed_plans: 13
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 9
+  completed_plans: 9
   percent: 100
 ---
 
 ## Current Position
 
-Phase: 23 (Glass-Card UI Polish) — EXECUTING
-Plan: 1 of 1
+Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
+Plan: 9 of 9
 Status: Phase complete — ready for verification
-Last activity: 2026-04-25
+Last activity: 2026-05-11
 
 Progress: [████████░░] 83%
 
@@ -28,7 +28,7 @@ Progress: [████████░░] 83%
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Reliable, secure, legally compliant time tracking SaaS ready for live customers
-**Current focus:** Phase 23 — Glass-Card UI Polish
+**Current focus:** Phase 25 — wifi-presence-stempel-fritzbox
 
 ## Performance Metrics
 
@@ -73,6 +73,22 @@ Recent decisions affecting v1.4:
 - [Phase 20-team-leave-page]: Team leave page forks personal leave page: no submit form, team-wide data, approval code restored from pre-Phase-17 history
 - [Phase 21-per-employee-export-api]: buildDatevLodas() kept module-scope (not exported) to avoid leaking DATEV format details outside reports.ts
 - [Phase 23-glass-card-ui-polish]: Promoted NFC-Terminals h3/p title to section-label div to match API Keys reference pattern
+- [Phase 25]: PresenceSource uses soft-delete (deletedAt); PresenceDevice uses onDelete: Cascade to Employee; Employee.wifiMacs coexists with PresenceDevice for webhook fallback lookup; wifiPresenceEnabled=false enforces GDPR opt-in
+- [Phase 25]: Overnight shift detected by numeric HH:MM comparison; endDay+1 avoids schema changes
+- [Phase 25]: normalizeMac strip-first approach handles all MAC formats in one pass
+- [Phase 25]: tenantId_mac uniqueness: MAC deduplication is per-tenant (not per-employee) — actual constraint from plan 25-01 schema
+- [Phase 25]: wifiOptInAt never nulled on opt-out — preserves GDPR consent withdrawal trace
+- [Phase 25]: purgeable flag intentionally absent from all wifi consent audit entries — consent events permanently retained
+- [Phase 25]: Use minimum tenant retention (most restrictive) as global AuditLog purge cutoff since AuditLog has no tenantId
+- [Phase 25]: Hard-delete purgeable=true AuditLog rows justified by DSGVO Art. 5(1)(e) — WiFi-presence-only events are not payroll-relevant
+- [Phase 25]: Presence webhook uses direct prisma.auditLog.create (not app.audit) for purgeable field support; Employee lookup uses user.isActive=true (no deletedAt on Employee model)
+- [Phase 25]: GET /opted-in registered before /:id routes to prevent Fastify path collision
+- [Phase 25]: Soft delete sets both deletedAt and isActive=false (audit-proof, never hard-delete)
+- [Phase 25-wifi-presence-stempel-fritzbox]: Status dot uses CSS classes (status-dot/status-dot--online) not inline hex — maps to var(--color-green)/var(--color-text-muted)
+- [Phase 25-07]: api.patch() confirmed available in client.ts — no fallback to api.put() needed for PATCH /me/wifi
+- [Phase 25-07]: MAC list visible regardless of opt-in state — allows pre-configuration before enabling WiFi presence
+- [Phase 25]: fritzbox-adapter: ABSENT_THRESHOLD=6 (6 consecutive polls) balances disconnect responsiveness vs spurious events from brief WiFi hiccups
+- [Phase 25]: fritzbox-adapter: GAP_THRESHOLD_MS=30min — short reconnects are silent to avoid spurious clock-in/out pairs
 
 ### Pending Todos
 
@@ -84,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-25T21:25:28.212Z
-Stopped at: Completed 23-glass-card-ui-polish-01-PLAN.md
+Last session: 2026-05-11T19:44:07.388Z
+Stopped at: Completed 25-wifi-presence-stempel-fritzbox-25-09-PLAN.md
 Resume file: None

@@ -125,6 +125,27 @@ services:
     profiles:
       - backup
 
+  fritzbox-adapter:
+    build:
+      context: apps/fritzbox-adapter
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      FRITZBOX_URL: "${FRITZBOX_URL:-http://fritz.box:49000}"
+      FRITZBOX_USER: "${FRITZBOX_USER:-}"
+      FRITZBOX_PASS: "${FRITZBOX_PASS:-}"
+      CLOKR_API_URL: "http://api:4000"
+      CLOKR_PRESENCE_KEY: "${CLOKR_PRESENCE_KEY:-}"
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
+      DEVICES_BIND: "0.0.0.0"
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      api:
+        condition: service_healthy
+    profiles:
+      - fritzbox
+
 volumes:
   postgres_data:
   redis_data:

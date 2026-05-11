@@ -31,6 +31,7 @@
       { href: "/admin/system", label: "System", show: true },
       { href: "/admin/import", label: "Import", show: isAdmin },
       { href: "/admin/audit", label: "Audit Log", show: isAdmin },
+      { href: "/admin/wifi-presence", label: "WiFi-Präsenz", show: isAdmin },
     ].filter((t) => t.show),
   );
 

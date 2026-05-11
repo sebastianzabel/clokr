@@ -28,6 +28,8 @@ model Tenant {
   terminalApiKeys   TerminalApiKey[]
   apiKeys           ApiKey[]
   specialLeaveRules SpecialLeaveRule[]
+  presenceSources   PresenceSource[]
+  presenceDevices   PresenceDevice[]
 }
 
 // ─────────────────────────────────────────────
@@ -143,6 +145,8 @@ model TenantConfig {
   datevUrlaubNr        Int @default(300)
   datevKrankNr         Int @default(200)
   datevSonderurlaubNr  Int @default(302)
+  // WiFi-Presence
+  wifiPresenceWindowMinutes Int @default(15)  // Shift-window gate: ±N minutes around shift start/end
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
@@ -220,6 +224,9 @@ model Employee {
   firstName        String
   lastName         String
   nfcCardId        String?  @unique  // NFC Karten-ID
+  wifiMacs              String[]   @default([])         // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled   Boolean    @default(false)       // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt           DateTime?  @db.Timestamptz      // timestamp when employee opted in (null = not opted in)
   avatarPath       String?            // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   hireDate         DateTime @db.Timestamptz
   exitDate         DateTime? @db.Timestamptz
@@ -239,6 +246,7 @@ model Employee {
   invitations           Invitation[]
   shutdownExceptions    CompanyShutdownException[]
   shifts                Shift[]
+  presenceDevices       PresenceDevice[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -542,6 +550,7 @@ model AuditLog {
   newValue   Json?
   ipAddress  String?
   userAgent  String?
+  purgeable  Boolean  @default(false)   // DSGVO Art. 5(1)(e): presence-only events (no stamp created) auto-purge after 90 days
   createdAt  DateTime @default(now()) @db.Timestamptz
 
   user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -566,6 +575,52 @@ model TerminalApiKey {
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────
+// WIFI PRESENCE SOURCES (Adapter-Auth-Keys)
+// ─────────────────────────────────────────────
+
+model PresenceSource {
+  id          String    @id @default(uuid())
+  tenantId    String
+  name        String                            // Human-readable label (e.g. "Büro FritzBox")
+  keyHash     String    @unique                 // SHA-256 of the raw clk_ key (never stored in plaintext)
+  keyPrefix   String                            // First 8 chars of raw key for UI display (e.g. "clk_ab12")
+  adapterUrl    String?                           // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
+  adapterSecret String?                           // Bearer token the API sends to the adapter's /devices endpoint (CR-02)
+  isActive    Boolean   @default(true)          // Admin can disable without deleting (PATCH endpoint)
+  lastUsedAt  DateTime? @db.Timestamptz         // Updated on every successful webhook auth (adapter health signal)
+  revokedAt   DateTime? @db.Timestamptz         // Soft-revoke; null = active
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+  deletedAt   DateTime? @db.Timestamptz         // Soft-delete (audit-proof: never hard-delete)
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([keyHash])
+}
+
+// ─────────────────────────────────────────────
+// WIFI PRESENCE DEVICES (MAC→Employee mapping)
+// ─────────────────────────────────────────────
+
+model PresenceDevice {
+  id            String    @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  mac           String                            // Normalized lowercase colon-separated: "aa:bb:cc:dd:ee:ff"
+  label         String?                           // Optional human-readable label (e.g. "iPhone Sebastian", "Tablet")
+  addedByUserId String?                           // userId of the person who created the mapping (null = system)
+  addedAt       DateTime  @default(now()) @db.Timestamptz
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, mac])   // One MAC maps to exactly one employee per tenant
+  @@index([tenantId])
+  @@index([employeeId])
 }
 
 model ApiKey {
@@ -625,6 +680,7 @@ enum TimeEntrySource {
   MOBILE
   MANUAL
   CORRECTION
+  WIFI
 }
 
 enum OvertimeTransactionType {
