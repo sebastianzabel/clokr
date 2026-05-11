@@ -215,7 +215,7 @@
 
 <div class="page-header card-animate">
   <h1 class="page-title">WiFi-Presence</h1>
-  <p class="text-muted">FritzBox-Geräte verwalten und Mitarbeiter zuweisen</p>
+  <p class="text-muted">WiFi-Geräte verwalten und Mitarbeiter zuweisen</p>
 </div>
 
 <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────────── -->
