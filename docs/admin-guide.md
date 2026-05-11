@@ -14,11 +14,13 @@
 Zwei Modelle stehen zur Verfügung:
 
 **Feste Wochenstunden (FIXED_WEEKLY)**
+
 - Wöchentliche Stunden mit Verteilung auf Wochentage
 - Beispiel: 40 h/Woche, Mo–Fr je 8 h
 - Saldo-Berechnung täglich, Feiertage und Urlaub reduzieren Sollstunden
 
 **Monatsstunden (MONTHLY_HOURS)**
+
 - Monatliches Stundenbudget für flexible Arbeit / Minijob
 - Kein tägliches Soll, keine Feiertags-Abzüge
 - Optional: ohne Stundenlimit (reine Zeiterfassung)
@@ -114,19 +116,21 @@ CSV-Vorlagen stehen zum Download bereit.
 - Vor- und Nachher-Werte bei Updates
 - Nicht löschbar, nicht editierbar
 
+Details zu rechtlichen Aufbewahrungsfristen, Anonymisierungs-Verhalten, ArbZG-Prüfungen und BUrlG-Regeln siehe [compliance.md](./compliance.md).
+
 ---
 
 ## Systemeinstellungen
 
 **Admin → System**:
 
-| Einstellung | Beschreibung |
-|-------------|--------------|
-| Theme | Erscheinungsbild (Pflaume, Nacht, Wald, Schiefer) |
-| Bundesland | Bestimmt gesetzliche Feiertage |
-| Zeitzone | Zuordnung von Zeitstempeln |
-| 2FA | E-Mail-OTP bei Login aktivieren |
-| Session-Timeout | Automatische Abmeldung nach Inaktivität |
-| Account-Lockout | Sperrung nach X Fehlversuchen |
-| SMTP | E-Mail-Versand konfigurieren |
-| API-Schlüssel | Programmatischer Zugriff für externe Tools |
+| Einstellung     | Beschreibung                                      |
+| --------------- | ------------------------------------------------- |
+| Theme           | Erscheinungsbild (Pflaume, Nacht, Wald, Schiefer) |
+| Bundesland      | Bestimmt gesetzliche Feiertage                    |
+| Zeitzone        | Zuordnung von Zeitstempeln                        |
+| 2FA             | E-Mail-OTP bei Login aktivieren                   |
+| Session-Timeout | Automatische Abmeldung nach Inaktivität           |
+| Account-Lockout | Sperrung nach X Fehlversuchen                     |
+| SMTP            | E-Mail-Versand konfigurieren                      |
+| API-Schlüssel   | Programmatischer Zugriff für externe Tools        |

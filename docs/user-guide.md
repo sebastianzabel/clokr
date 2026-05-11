@@ -49,7 +49,7 @@ Clokr prüft automatisch:
 - **§ 4** — Pausenpflicht (> 6 h → 30 min, > 9 h → 45 min)
 - **§ 5** — Mindestruhezeit (11 h zwischen Arbeitsende und nächstem Beginn)
 
-Bei Verstößen erscheint ein Warnhinweis im Eintrag.
+Bei Verstößen erscheint ein Warnhinweis im Eintrag. Vollständiges Regelwerk siehe [compliance.md](./compliance.md).
 
 ---
 
@@ -64,13 +64,13 @@ Bei Verstößen erscheint ein Warnhinweis im Eintrag.
 
 ### Antragsstatus
 
-| Status                   | Bedeutung                                              |
-|--------------------------|--------------------------------------------------------|
-| Ausstehend               | Wartet auf Genehmigung                                 |
-| Genehmigt                | Bestätigt, wird im Kalender angezeigt                  |
-| Abgelehnt                | Nicht genehmigt                                        |
-| Stornierung angefragt    | Stornierung beantragt, wartet auf zweiten Manager      |
-| Storniert                | Urlaub wurde rückgängig gemacht                        |
+| Status                | Bedeutung                                         |
+| --------------------- | ------------------------------------------------- |
+| Ausstehend            | Wartet auf Genehmigung                            |
+| Genehmigt             | Bestätigt, wird im Kalender angezeigt             |
+| Abgelehnt             | Nicht genehmigt                                   |
+| Stornierung angefragt | Stornierung beantragt, wartet auf zweiten Manager |
+| Storniert             | Urlaub wurde rückgängig gemacht                   |
 
 ### Urlaubsanspruch
 
