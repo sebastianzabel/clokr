@@ -82,6 +82,9 @@ const createSchema = z
     halfDay: z.boolean().default(false),
     note: z.string().optional().nullable(),
     specialLeaveRuleId: z.string().uuid().optional().nullable(),
+    // Manager-on-behalf-of: when set, the caller (must be MANAGER or ADMIN) creates
+    // the request for this employee instead of themselves. Tenant isolation is enforced.
+    employeeId: z.string().uuid().optional(),
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
@@ -134,7 +137,25 @@ export async function leaveRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const body = createSchema.parse(req.body);
-      const employeeId = req.user.employeeId;
+
+      // Manager-on-behalf-of: caller must be MANAGER or ADMIN, target employee must
+      // belong to the caller's tenant. Otherwise fall back to self-create.
+      let employeeId: string | null | undefined;
+      let isOnBehalfOf = false;
+      if (body.employeeId && body.employeeId !== req.user.employeeId) {
+        if (req.user.role !== "MANAGER" && req.user.role !== "ADMIN") {
+          return reply.code(403).send({ error: "Nur Manager dürfen Anträge für andere stellen" });
+        }
+        const target = await app.prisma.employee.findFirst({
+          where: { id: body.employeeId, tenantId: req.user.tenantId },
+          select: { id: true },
+        });
+        if (!target) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        employeeId = body.employeeId;
+        isOnBehalfOf = true;
+      } else {
+        employeeId = req.user.employeeId;
+      }
       if (!employeeId) return reply.code(400).send({ error: "Kein Mitarbeiter-Profil" });
 
       const start = new Date(body.startDate);
@@ -374,7 +395,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "LeaveRequest",
         entityId: request.id,
-        newValue: { type: body.type, startDate: body.startDate, endDate: body.endDate, days },
+        newValue: {
+          type: body.type,
+          startDate: body.startDate,
+          endDate: body.endDate,
+          days,
+          ...(isOnBehalfOf && {
+            source: "MANAGER_CREATED",
+            actorRole: req.user.role,
+            targetEmployeeId: employeeId,
+          }),
+        },
       });
 
       // ── Benachrichtigung: Manager über neuen Antrag informieren ──

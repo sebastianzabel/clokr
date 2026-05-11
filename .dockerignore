@@ -1,11 +1,17 @@
 node_modules
+**/node_modules
 .svelte-kit
+**/.svelte-kit
 dist
+**/dist
 build
+**/build
 .turbo
+**/.turbo
 .claude
 .git
 *.log
 .DS_Store
 coverage
+**/coverage
 backups
