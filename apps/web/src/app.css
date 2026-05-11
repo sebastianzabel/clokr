@@ -1603,7 +1603,18 @@ textarea.form-input {
 /* ─── Calendar shared: holiday + weekend cells ───────────────────────────────────── */
 .cal-cell.cal-holiday:not(.cal-other):not(.cal-selected) {
   background: var(--color-brand-tint) !important;
-  border-left: 3px solid var(--color-brand);
+}
+.cal-cell.cal-holiday:not(.cal-other):not(.cal-selected)::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-brand);
+  border-radius: 6px 0 0 6px;
+  z-index: 2;
+  pointer-events: none;
 }
 
 .cal-cell.cal-weekend:not(.cal-other):not(.cal-selected) {

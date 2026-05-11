@@ -96,6 +96,31 @@
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
+  // ── Manager-on-behalf-of: Neue Abwesenheit anlegen ───────────────────────
+  interface CreateForm {
+    employeeId: string;
+    type: TypeCode;
+    startDate: string;
+    endDate: string;
+    halfDay: boolean;
+    note: string;
+  }
+  function emptyCreateForm(): CreateForm {
+    const today = new Date().toISOString().slice(0, 10);
+    return {
+      employeeId: "",
+      type: "VACATION",
+      startDate: today,
+      endDate: today,
+      halfDay: false,
+      note: "",
+    };
+  }
+  let createModalOpen = $state(false);
+  let createForm: CreateForm = $state(emptyCreateForm());
+  let createSaving = $state(false);
+  let createError = $state("");
+
   // ── Kalender ──────────────────────────────────────────────────────────────
   interface CalEntry {
     id: string;
@@ -244,6 +269,20 @@
     loadCalendar();
     if (calYear !== prevYear) loadData();
   }
+  function prevYear() {
+    calYear--;
+    loadCalendar();
+    loadData();
+  }
+  function nextYear() {
+    calYear++;
+    loadCalendar();
+    loadData();
+  }
+
+  // Year dropdown options for the list-view filter (current ± 2).
+  const _currentYear = new Date().getFullYear();
+  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
 
   const MONTH_NAMES = [
     "Januar",
@@ -284,9 +323,8 @@
     loading = true;
     error = "";
     try {
-      const year = new Date().getFullYear();
       const [all, pending, emps] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${year}`),
+        api.get<LeaveRequest[]>(`/leave/requests?year=${calYear}`),
         api.get<LeaveRequest[]>(`/leave/requests?status=PENDING`),
         api.get<Employee[]>("/employees"),
       ]);
@@ -492,6 +530,46 @@
       icalDownloading = false;
     }
   }
+
+  function openCreate() {
+    createForm = emptyCreateForm();
+    createError = "";
+    createModalOpen = true;
+  }
+  function closeCreate() {
+    if (createSaving) return;
+    createModalOpen = false;
+  }
+  async function submitCreate(e: Event) {
+    e.preventDefault();
+    createError = "";
+    if (!createForm.employeeId) {
+      createError = "Bitte einen Mitarbeiter auswählen";
+      return;
+    }
+    if (createForm.endDate < createForm.startDate) {
+      createError = "Enddatum muss nach Startdatum liegen";
+      return;
+    }
+    createSaving = true;
+    try {
+      await api.post("/leave/requests", {
+        employeeId: createForm.employeeId,
+        type: createForm.type,
+        startDate: createForm.startDate,
+        endDate: createForm.endDate,
+        halfDay: createForm.halfDay,
+        note: createForm.note || null,
+      });
+      createModalOpen = false;
+      await Promise.all([loadData(), loadCalendar()]);
+    } catch (err: unknown) {
+      const apiErr = err as { data?: { error?: string }; message?: string };
+      createError = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Anlegen";
+    } finally {
+      createSaving = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -512,6 +590,9 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <div class="page-header-compact">
   <h1>Team-Abwesenheiten</h1>
+  {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
+    <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
+  {/if}
 </div>
 
 {#if error}
@@ -812,20 +893,53 @@
 
 <!-- ── Anträge-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
-  <div class="section-header">
+  <!-- Jahr-Navigation für Listenansicht -->
+  <div class="cal-nav list-month-nav card-animate">
+    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+      >
+    </button>
+    <div class="cal-nav-center">
+      <select
+        class="cal-year-select"
+        bind:value={calYear}
+        onchange={() => {
+          loadData();
+          loadCalendar();
+        }}
+        aria-label="Jahr wählen"
+      >
+        {#each yearOptions as y (y)}
+          <option value={y}>{y}</option>
+        {/each}
+      </select>
+    </div>
+    <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+      >
+    </button>
+  </div>
+
+  <div class="section-header card-animate">
     <h2>Alle Anträge</h2>
   </div>
 
   {#if loading}
-    <div class="card card-body" style="height:180px"></div>
-  {:else if allTeamRequests.length === 0}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">🏖️</span>
-      <h3>Keine Anträge gefunden.</h3>
-      <p class="text-muted">Es liegen noch keine Abwesenheitsanträge vor.</p>
-    </div>
+    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
   {:else}
-    <div class="filter-bar">
+    <div class="filter-bar card-animate">
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
@@ -851,63 +965,70 @@
       <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
     </div>
 
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Mitarbeiter</th>
-            <th>Art</th>
-            <th>Von</th>
-            <th>Bis</th>
-            <th class="text-center">Umfang</th>
-            <th>Status</th>
-            <th>Anmerkung</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedTeamRequests as req (req.id)}
-            <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-              <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-              <td>{typeName(req.typeCode)}</td>
-              <td class="font-mono">{fmtDate(req.startDate)}</td>
-              <td class="font-mono">{fmtDate(req.endDate)}</td>
-              <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
-              <td>
-                <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
-                {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                  <span
-                    class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    style="margin-left:0.25rem;font-size:0.7rem"
-                  >
-                    {req.attestPresent ? "Attest" : "Kein Attest"}
-                  </span>
-                {/if}
-              </td>
-              <td class="note-cell text-muted">
-                {#if req.status === "REJECTED" && req.reviewNote}
-                  <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                {:else}
-                  {req.note ?? "—"}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
-                    {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
-                  </button>
-                {/if}
-              </td>
+    {#if allTeamRequests.length === 0}
+      <div class="empty-state card card-body">
+        <span class="empty-icon">🏖️</span>
+        <h3>Keine Anträge in {calYear}.</h3>
+        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+      </div>
+    {:else}
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Mitarbeiter</th>
+              <th>Art</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th class="text-center">Umfang</th>
+              <th>Status</th>
+              <th>Anmerkung</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination
-        total={filteredTeamRequests.length}
-        bind:page={teamReqPage}
-        bind:pageSize={teamReqPageSize}
-      />
-    </div>
+          </thead>
+          <tbody>
+            {#each pagedTeamRequests as req (req.id)}
+              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+                <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
+                <td>{typeName(req.typeCode)}</td>
+                <td class="font-mono">{fmtDate(req.startDate)}</td>
+                <td class="font-mono">{fmtDate(req.endDate)}</td>
+                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                <td>
+                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                </td>
+                <td class="note-cell text-muted">
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                  {:else}
+                    {req.note ?? "—"}
+                  {/if}
+                </td>
+                <td class="action-cell">
+                  {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
+                    <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
+                      {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination
+          total={filteredTeamRequests.length}
+          bind:page={teamReqPage}
+          bind:pageSize={teamReqPageSize}
+        />
+      </div>
+    {/if}
   {/if}
 {/if}
 
@@ -997,7 +1118,7 @@
         </div>
 
         <!-- Parallele Abwesenheiten -->
-        <div class="overlap-box" style="margin-top:1.25rem">
+        <div class="overlap-box review-section">
           <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
           {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
             <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
@@ -1016,7 +1137,7 @@
 
         <!-- Attest (nur für Krankmeldungen) -->
         {#if SICK_CODES.includes(reviewModal.typeCode)}
-          <div class="attest-box" style="margin-top:1.25rem">
+          <div class="attest-box review-section">
             <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
             <label class="toggle-label">
               <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
@@ -1050,7 +1171,7 @@
         {/if}
 
         <!-- Review-Notiz -->
-        <div class="form-group" style="margin-top:1.25rem">
+        <div class="form-group review-section">
           <label class="form-label" for="review-note">Anmerkung (optional)</label>
           <input
             id="review-note"
@@ -1110,6 +1231,85 @@
           </p>
         {/if}
       </div>
+    </div>
+  </div>
+{/if}
+
+<!-- ── Create-Modal: Neue Abwesenheit anlegen (Manager-on-behalf-of) ─────── -->
+{#if createModalOpen}
+  <div class="modal-backdrop" onclick={self(closeCreate)} role="presentation">
+    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
+      <div class="modal-header">
+        <h2>Neue Abwesenheit anlegen</h2>
+        <button class="btn-icon" onclick={closeCreate} aria-label="Schließen">✕</button>
+      </div>
+      <form class="modal-body" onsubmit={submitCreate}>
+        <div class="form-group">
+          <label class="form-label" for="create-emp">Mitarbeiter</label>
+          <select id="create-emp" class="form-input" bind:value={createForm.employeeId} required>
+            <option value="" disabled>— Mitarbeiter wählen —</option>
+            {#each employees as emp (emp.id)}
+              <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="create-type">Art</label>
+          <select id="create-type" class="form-input" bind:value={createForm.type} required>
+            {#each TYPE_OPTIONS as opt (opt.code)}
+              <option value={opt.code}>{opt.label}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-grid-2col">
+          <div class="form-group">
+            <label class="form-label" for="create-start">Von</label>
+            <input
+              id="create-start"
+              type="date"
+              class="form-input"
+              bind:value={createForm.startDate}
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="create-end">Bis</label>
+            <input
+              id="create-end"
+              type="date"
+              class="form-input"
+              bind:value={createForm.endDate}
+              required
+            />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={createForm.halfDay} />
+            Halber Tag
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="create-note">Notiz (optional)</label>
+          <textarea id="create-note" class="form-input" rows="3" bind:value={createForm.note}
+          ></textarea>
+        </div>
+        {#if createError}
+          <p class="form-error">{createError}</p>
+        {/if}
+        <p class="form-hint">
+          Der Antrag wird mit Status <strong>Ausstehend</strong> angelegt und kann anschließend unter
+          „Genehmigungen“ freigegeben werden.
+        </p>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-ghost" onclick={closeCreate} disabled={createSaving}>
+            Abbrechen
+          </button>
+          <button type="submit" class="btn btn-primary" disabled={createSaving}>
+            {createSaving ? "Speichert…" : "Speichern"}
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 {/if}
@@ -1255,8 +1455,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1414,7 +1614,7 @@
     font-size: 2.5rem;
   }
   .empty-state h3 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
   }
 
   /* ── Modal ────────────────────────────────────────────────────────── */
@@ -1451,10 +1651,10 @@
     align-items: center;
     justify-content: space-between;
     padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--color-border-subtle);
   }
   .modal-header h2 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 600;
     margin: 0;
   }
@@ -1466,8 +1666,51 @@
     justify-content: flex-end;
     gap: 0.625rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-subtle);
+  }
+
+  /* ── Create-Modal Form ─────────────────────────────────────────────── */
+  .modal-body :global(.form-group) {
+    margin-bottom: 1rem;
+  }
+  .modal-body :global(textarea.form-input) {
+    resize: vertical;
+    min-height: 64px;
+  }
+  .form-grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+  .checkbox-row {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+  .form-error {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0.75rem;
+    background: var(--color-danger-tint, #fee2e2);
+    border: 1px solid var(--color-danger, #f87171);
+    border-radius: 6px;
+    color: var(--color-danger, #b91c1c);
+    font-size: 0.8125rem;
+  }
+  .form-hint {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b7280);
+    margin: 0.5rem 0 0.875rem;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.625rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border-subtle);
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
@@ -1475,8 +1718,8 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 1rem 1.25rem;
   }
@@ -1503,7 +1746,7 @@
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--color-red, #dc2626);
-    color: #fff;
+    color: white;
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1530,6 +1773,30 @@
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
+  .list-month-nav {
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-lg, 0.75rem);
+    margin-bottom: 1rem;
+  }
+  .cal-year-select {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-text-heading);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+  }
+  .cal-year-select:hover,
+  .cal-year-select:focus-visible {
+    background-color: var(--color-brand-tint);
+    outline: none;
+  }
   .cal-nav-right {
     display: flex;
     align-items: center;
@@ -1570,6 +1837,7 @@
   .cal-chips {
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     gap: 2px;
     flex: 1;
     min-height: 0;
@@ -1582,7 +1850,7 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: #fff;
+    color: white;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -1591,18 +1859,18 @@
   }
   .cal-chip--bar-start {
     border-radius: 4px 0 0 4px;
-    margin-right: -3px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-end {
     border-radius: 0 4px 4px 0;
-    margin-left: -3px;
+    margin-left: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-middle {
     border-radius: 0;
-    margin-left: -3px;
-    margin-right: -3px;
+    margin-left: -1.5px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--pending {
@@ -1636,8 +1904,15 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+  .badge-attest {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+  }
+  .review-section {
+    margin-top: 1.25rem;
   }
   .legend-dot {
     width: 10px;
@@ -1665,8 +1940,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;

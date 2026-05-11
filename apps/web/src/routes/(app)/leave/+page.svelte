@@ -314,6 +314,20 @@
     loadCalendar();
     if (calYear !== prevYear) loadData();
   }
+  function prevYear() {
+    calYear--;
+    loadCalendar();
+    loadData();
+  }
+  function nextYear() {
+    calYear++;
+    loadCalendar();
+    loadData();
+  }
+
+  // Year dropdown options for the list-view filter (current ± 2).
+  const _currentYear = new Date().getFullYear();
+  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
 
   const MONTH_NAMES = [
     "Januar",
@@ -381,10 +395,9 @@
     loading = true;
     error = "";
     try {
-      const year = new Date().getFullYear();
       const myEmployeeId = $authStore.user?.employeeId;
       const mine = await api.get<LeaveRequest[]>(
-        `/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+        `/leave/requests?year=${calYear}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
       );
       myRequests = mine;
     } catch (e: unknown) {
@@ -779,12 +792,6 @@
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
-      // Month overlap filter — include request if its interval overlaps the selected month
-      const monthStart = new Date(calYear, calMonth - 1, 1);
-      const monthEnd = new Date(calYear, calMonth, 0, 23, 59, 59);
-      const reqStart = new Date(req.startDate);
-      const reqEnd = new Date(req.endDate);
-      if (reqEnd < monthStart || reqStart > monthEnd) return false;
       return true;
     }),
   );
@@ -841,11 +848,11 @@
   <h1>Abwesenheiten</h1>
   {#if !showForm}
     <button
-      class="btn btn-primary"
+      class="btn btn-primary btn-sm"
       onclick={() => {
         editingRequest = null;
         showForm = true;
-      }}>✚ Neuer Antrag</button
+      }}>+ Neue Abwesenheit</button
     >
   {/if}
 </div>
@@ -1132,56 +1139,52 @@
   </div>
 {/if}
 
+<!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
+{#if proRataWarning}
+  <div class="alert alert-warning card-animate" role="status">
+    Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
+    ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
+    nötig ist.
+  </div>
+{/if}
+{#if showVacSummary}
+  <div class="vac-summary card-animate">
+    <div class="vac-summary-item">
+      <span class="vac-summary-label">Jahresanspruch</span>
+      <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
+    </div>
+    {#if vacSummaryCarryOver > 0}
+      <div class="vac-summary-item">
+        <span class="vac-summary-label">Resturlaub</span>
+        <span
+          class="vac-summary-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-summary-carry'}"
+        >
+          {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining} Tage
+        </span>
+      </div>
+    {/if}
+    <div class="vac-summary-item">
+      <span class="vac-summary-label">Genommen</span>
+      <span class="vac-summary-value">{vacSummaryUsed} Tage</span>
+    </div>
+    {#if vacSummaryPlanned > 0}
+      <div class="vac-summary-item">
+        <span class="vac-summary-label">Geplant</span>
+        <span class="vac-summary-value vac-summary-planned">{vacSummaryPlanned} Tage</span>
+      </div>
+    {/if}
+    <div class="vac-summary-divider"></div>
+    <div class="vac-summary-item vac-summary-item--highlight">
+      <span class="vac-summary-label">Verbleibend</span>
+      <span class="vac-summary-value {vacSummaryLeft < 0 ? 'vac-summary-warn' : 'vac-summary-left'}"
+        >{vacSummaryLeft} Tage</span
+      >
+    </div>
+  </div>
+{/if}
+
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
-  <!-- Pro-rata Warnung bei Austrittsdatum -->
-  {#if proRataWarning}
-    <div class="alert alert-warning card-animate" role="status">
-      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
-      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
-      nötig ist.
-    </div>
-  {/if}
-  <!-- Urlaubsübersicht -->
-  {#if showVacSummary}
-    <div class="vac-summary card-animate">
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Jahresanspruch</span>
-        <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
-      </div>
-      {#if vacSummaryCarryOver > 0}
-        <div class="vac-summary-item">
-          <span class="vac-summary-label">Resturlaub</span>
-          <span
-            class="vac-summary-value {vacSummaryCarryOverRemaining === 0
-              ? ''
-              : 'vac-summary-carry'}"
-          >
-            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining} Tage
-          </span>
-        </div>
-      {/if}
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Genommen</span>
-        <span class="vac-summary-value">{vacSummaryUsed} Tage</span>
-      </div>
-      {#if vacSummaryPlanned > 0}
-        <div class="vac-summary-item">
-          <span class="vac-summary-label">Geplant</span>
-          <span class="vac-summary-value vac-summary-planned">{vacSummaryPlanned} Tage</span>
-        </div>
-      {/if}
-      <div class="vac-summary-divider"></div>
-      <div class="vac-summary-item vac-summary-item--highlight">
-        <span class="vac-summary-label">Verbleibend</span>
-        <span
-          class="vac-summary-value {vacSummaryLeft < 0 ? 'vac-summary-warn' : 'vac-summary-left'}"
-          >{vacSummaryLeft} Tage</span
-        >
-      </div>
-    </div>
-  {/if}
-
   <div class="cal-section card card-animate">
     <!-- Navigation -->
     <div class="cal-nav">
@@ -1397,14 +1400,9 @@
 
 <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
-  <!-- Monat-Navigation für Listenansicht -->
-  <div class="cal-nav list-month-nav">
-    <button
-      class="nav-btn"
-      onclick={prevMonth}
-      title="Vorheriger Monat"
-      aria-label="Vorheriger Monat"
-    >
+  <!-- Jahr-Navigation für Listenansicht -->
+  <div class="cal-nav list-month-nav card-animate">
+    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
       <svg
         width="18"
         height="18"
@@ -1415,43 +1413,41 @@
       >
     </button>
     <div class="cal-nav-center">
-      <span class="cal-nav-title">{MONTH_NAMES[calMonth - 1]} {calYear}</span>
-    </div>
-    <div style="display:flex;align-items:center;gap:0.5rem;">
-      <button class="btn btn-sm btn-ghost" onclick={gotoToday}>Heute</button>
-      <button
-        class="nav-btn"
-        onclick={nextMonth}
-        title="Nächster Monat"
-        aria-label="Nächster Monat"
+      <select
+        class="cal-year-select"
+        bind:value={calYear}
+        onchange={() => {
+          loadData();
+          loadCalendar();
+        }}
+        aria-label="Jahr wählen"
       >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
+        {#each yearOptions as y (y)}
+          <option value={y}>{y}</option>
+        {/each}
+      </select>
     </div>
+    <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+      >
+    </button>
   </div>
 
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
-  <div class="section-header">
+  <div class="section-header card-animate">
     <h2>Meine Anträge</h2>
   </div>
 
   {#if loading}
-    <div class="card card-body" style="height:180px"></div>
-  {:else if myRequests.length === 0}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">🏖️</span>
-      <h3>Noch keine Anträge</h3>
-      <p class="text-muted">Erstelle deinen ersten Abwesenheitsantrag.</p>
-    </div>
+    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
   {:else}
-    <div class="filter-bar">
+    <div class="filter-bar card-animate">
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
@@ -1474,75 +1470,82 @@
           <option value={t.code}>{t.label}</option>
         {/each}
       </select>
-      <span class="filter-count">{filteredMyRequests.length} im Monat</span>
+      <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
     </div>
 
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Art</th>
-            <th>Von</th>
-            <th>Bis</th>
-            <th class="text-center">Umfang</th>
-            <th>Status</th>
-            <th>Anmerkung</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedMyRequests as req (req.id)}
-            {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-            <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-              <td>{typeName(req.typeCode)}</td>
-              <td class="font-mono">{fmtDate(req.startDate)}</td>
-              <td class="font-mono">{fmtDate(req.endDate)}</td>
-              <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
-              <td>
-                <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
-                {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                  <span
-                    class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    style="margin-left:0.25rem;font-size:0.7rem"
-                  >
-                    {req.attestPresent ? "Attest" : "Kein Attest"}
-                  </span>
-                {/if}
-              </td>
-              <td class="note-cell text-muted">
-                {#if req.status === "REJECTED" && req.reviewNote}
-                  <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                {:else}
-                  {req.note ?? "—"}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#if isOwn && req.status === "PENDING"}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
-                    >Bearbeiten</button
-                  >
-                  <button
-                    class="btn btn-sm btn-ghost text-red"
-                    onclick={() => cancelRequest(req.id)}>Zurückziehen</button
-                  >
-                {/if}
-                {#if isOwn && req.status === "APPROVED"}
-                  <button
-                    class="btn btn-sm btn-ghost text-red"
-                    onclick={() => cancelRequest(req.id)}>Stornieren</button
-                  >
-                {/if}
-              </td>
+    {#if myRequests.length === 0}
+      <div class="empty-state card card-body">
+        <span class="empty-icon">🏖️</span>
+        <h3>Keine Anträge in {calYear}</h3>
+        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+      </div>
+    {:else}
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Art</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th class="text-center">Umfang</th>
+              <th>Status</th>
+              <th>Anmerkung</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination
-        total={filteredMyRequests.length}
-        bind:page={myReqPage}
-        bind:pageSize={myReqPageSize}
-      />
-    </div>
+          </thead>
+          <tbody>
+            {#each pagedMyRequests as req (req.id)}
+              {@const isOwn = req.employeeId === $authStore.user?.employeeId}
+              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+                <td>{typeName(req.typeCode)}</td>
+                <td class="font-mono">{fmtDate(req.startDate)}</td>
+                <td class="font-mono">{fmtDate(req.endDate)}</td>
+                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                <td>
+                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                </td>
+                <td class="note-cell text-muted">
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                  {:else}
+                    {req.note ?? "—"}
+                  {/if}
+                </td>
+                <td class="action-cell">
+                  {#if isOwn && req.status === "PENDING"}
+                    <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
+                      >Bearbeiten</button
+                    >
+                    <button
+                      class="btn btn-sm btn-ghost text-red"
+                      onclick={() => cancelRequest(req.id)}>Zurückziehen</button
+                    >
+                  {/if}
+                  {#if isOwn && req.status === "APPROVED"}
+                    <button
+                      class="btn btn-sm btn-ghost text-red"
+                      onclick={() => cancelRequest(req.id)}>Stornieren</button
+                    >
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination
+          total={filteredMyRequests.length}
+          bind:page={myReqPage}
+          bind:pageSize={myReqPageSize}
+        />
+      </div>
+    {/if}
   {/if}
 {/if}<!-- Ende Liste -->
 
@@ -1665,7 +1668,7 @@
     max-width: 640px;
     max-height: 88vh;
     overflow-y: auto;
-    background: var(--glass-bg-strong, var(--color-surface));
+    background: var(--glass-bg-overlay, var(--color-surface));
     backdrop-filter: blur(var(--glass-blur, 16px));
     -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
     border: 1px solid var(--color-border);
@@ -1747,8 +1750,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1861,7 +1864,7 @@
     font-size: 2.5rem;
   }
   .empty-state h3 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
   }
 
   /* ── Modal ────────────────────────────────────────────────────────── */
@@ -1898,10 +1901,10 @@
     align-items: center;
     justify-content: space-between;
     padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--color-border-subtle);
   }
   .modal-header h2 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 600;
     margin: 0;
   }
@@ -1913,14 +1916,14 @@
     justify-content: flex-end;
     gap: 0.625rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-subtle);
   }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--color-red, #dc2626);
-    color: #fff;
+    color: white;
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1945,8 +1948,8 @@
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1981,7 +1984,7 @@
   }
   .balance-divider {
     height: 1px;
-    background: var(--gray-200);
+    background: var(--color-border-subtle);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -2080,9 +2083,28 @@
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
   .list-month-nav {
-    border: 1px solid var(--gray-200, #e5e7eb);
+    border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
+  }
+  .cal-year-select {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-text-heading);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+  }
+  .cal-year-select:hover,
+  .cal-year-select:focus-visible {
+    background-color: var(--color-brand-tint);
+    outline: none;
   }
   .cal-nav-right {
     display: flex;
@@ -2133,6 +2155,7 @@
   .cal-chips {
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     gap: 2px;
     flex: 1;
     min-height: 0;
@@ -2145,7 +2168,7 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: #fff;
+    color: white;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2154,18 +2177,18 @@
   }
   .cal-chip--bar-start {
     border-radius: 4px 0 0 4px;
-    margin-right: -3px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-end {
     border-radius: 0 4px 4px 0;
-    margin-left: -3px;
+    margin-left: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-middle {
     border-radius: 0;
-    margin-left: -3px;
-    margin-right: -3px;
+    margin-left: -1.5px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--pending {
@@ -2199,8 +2222,12 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+  .badge-attest {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
   }
   .legend-dot {
     width: 10px;
@@ -2228,8 +2255,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;

@@ -467,6 +467,7 @@ function buildDatevLodas(params: {
     "BeraterNr=0",
     "MandantenNr=0",
     "Datumsangaben=DDMMJJJJ",
+    `Abrechnungszeitraum=${String(m).padStart(2, "0")}${y}`,
     "",
     "[Satzbeschreibung]",
     "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",
@@ -641,7 +642,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/datev?year=&month=  – DATEV LODAS Export
   app.get("/datev", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
       const y = parseInt(year);

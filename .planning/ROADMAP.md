@@ -212,3 +212,16 @@ Plans:
 
 **Status:** Backlog — candidate for v1.5+
 **Related:** Phase 14 (Weekday Configuration)
+
+### Phase 24: v1.4 UAT Fixes
+
+**Goal:** Resolve 4 v1.4 UAT findings: (1) Manager permission error on DATEV txt export endpoint; (2) DATEV LODAS export missing Abrechnungszeitraum/Beleg_Datum header block; (3) Non-functional month filter on Abwesenheitsliste (year-only granularity); (4) Manager capability to create absences for employees (fork pattern from Phase 19).
+**Requirements**: UAT-01, UAT-02, UAT-03, UAT-04
+**Depends on:** Phase 23
+**Plans:** 4 plans
+
+Plans:
+- [ ] 24-01: Allow MANAGER role on company-wide DATEV export (1-line guard fix + test)
+- [ ] 24-02: Add Abrechnungszeitraum=MMYYYY to LODAS [Allgemein] header
+- [ ] 24-03: Make Team-Abwesenheiten list view month-aware (use calYear/calMonth for filter and reload)
+- [ ] 24-04: Manager-on-behalf-of leave creation (API: optional employeeId + role/tenant gate; UI: modal on team-leave page)
