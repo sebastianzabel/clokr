@@ -443,4 +443,58 @@ describe("POST /api/v1/presence/events", () => {
 
     await cleanTimeEntries();
   });
+
+  // ── REQ-10: enrollment via PresenceDevice (admin/MA UI path) ──
+  // Regression test: webhook MUST look up MAC in PresenceDevice table, not only Employee.wifiMacs.
+  // Without this, MACs enrolled via admin/wifi-presence or /settings UI never trigger stamping.
+  it("REQ-10: MAC enrolled via PresenceDevice triggers clock-in", async () => {
+    await setupEmployee({ wifiMacs: [], wifiPresenceEnabled: true });
+    await cleanTimeEntries();
+
+    // Enroll the MAC ONLY via PresenceDevice (the path used by admin + self-service UIs)
+    await app.prisma.presenceDevice.deleteMany({
+      where: { tenantId: data.tenant.id, mac: TEST_MAC_NORMALIZED },
+    });
+    await app.prisma.presenceDevice.create({
+      data: {
+        tenantId: data.tenant.id,
+        employeeId: data.employee.id,
+        mac: TEST_MAC_NORMALIZED,
+        label: "Test Phone",
+      },
+    });
+
+    const before = new Date();
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/presence/events",
+      headers: { authorization: `Bearer ${RAW_KEY}` },
+      payload: {
+        mac: TEST_MAC_RAW,
+        eventType: "connected",
+        timestamp: IN_WINDOW_TIMESTAMP,
+        adapter: "fritzbox",
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+
+    // TimeEntry created with source=WIFI
+    const entry = await app.prisma.timeEntry.findFirst({
+      where: { employeeId: data.employee.id, source: "WIFI" },
+    });
+    expect(entry).not.toBeNull();
+
+    // No WIFI_UNKNOWN_MAC was written
+    const unknownLog = await app.prisma.auditLog.findFirst({
+      where: { action: "WIFI_UNKNOWN_MAC", createdAt: { gte: before } },
+    });
+    expect(unknownLog).toBeNull();
+
+    await cleanTimeEntries();
+    await app.prisma.presenceDevice.deleteMany({
+      where: { tenantId: data.tenant.id, mac: TEST_MAC_NORMALIZED },
+    });
+  });
 });
