@@ -48,14 +48,30 @@ export async function presenceRoutes(app: FastifyInstance) {
       const eventTime = new Date(body.timestamp);
 
       // ── 3. MAC → Employee lookup (opt-in + tenant-scoped) ─────────────────
+      // Per design (25-CONTEXT.md): check PresenceDevice (admin- or MA-enrolled) first,
+      // then fall back to Employee.wifiMacs[] for legacy/direct entries.
       // Employee has no deletedAt — DSGVO "deletion" is anonymization via user.isActive=false
-      const employee = await app.prisma.employee.findFirst({
-        where: {
-          tenantId,
-          wifiMacs: { has: mac },
-          user: { isActive: true },
+      const device = await app.prisma.presenceDevice.findUnique({
+        where: { tenantId_mac: { tenantId, mac } },
+        include: {
+          employee: {
+            include: { user: { select: { isActive: true } } },
+          },
         },
       });
+      let employee = device && device.employee.user?.isActive ? device.employee : null;
+
+      if (!employee) {
+        // Fallback: legacy wifiMacs[] array on Employee
+        employee = await app.prisma.employee.findFirst({
+          where: {
+            tenantId,
+            wifiMacs: { has: mac },
+            user: { isActive: true },
+          },
+          include: { user: { select: { isActive: true } } },
+        });
+      }
 
       if (!employee) {
         // Unknown MAC — purgeable presence-only event (DSGVO Art. 5(1)(e): auto-purge after 90 days)
