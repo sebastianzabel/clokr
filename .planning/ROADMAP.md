@@ -6,7 +6,7 @@
 - ✅ **v1.1 Reporting & DATEV** — Phases 4-7 (shipped 2026-04-12)
 - ✅ **v1.2 UI Polish** — Phases 8-10 (shipped 2026-04-13)
 - ✅ **v1.3 Monthly Hours Overhaul** — Phases 11-16 (shipped 2026-04-14)
-- 🚧 **v1.4 Manager/MA-Trennung & Reports** — Phases 17-23 (in progress)
+- 🚧 **v1.4 Manager/MA-Trennung & Reports** — Phases 17-25 (in progress)
 
 ## Phases
 
@@ -67,6 +67,8 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 - [x] **Phase 21: Per-Employee Export API** — Single-employee DATEV LODAS and PDF export endpoints (completed 2026-04-25)
 - [ ] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons
 - [x] **Phase 23: Glass-Card UI Polish** — Schichten and NFC-Terminal pages get glass-card frames (completed 2026-04-25)
+- [x] **Phase 24: v1.4 UAT Fixes** — DATEV permission, LODAS header, year-scoped team-leave, manager-on-behalf-of (completed 2026-05-11)
+- [ ] **Phase 25: WiFi-Presence Stempel (FritzBox)** — Auto clock-in/out from phone WiFi presence on FritzBox, aligned to scheduled shift ±15min
 
 ## Phase Details
 
@@ -221,7 +223,25 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 24-01: Allow MANAGER role on company-wide DATEV export (1-line guard fix + test)
-- [ ] 24-02: Add Abrechnungszeitraum=MMYYYY to LODAS [Allgemein] header
-- [ ] 24-03: Make Team-Abwesenheiten list view month-aware (use calYear/calMonth for filter and reload)
-- [ ] 24-04: Manager-on-behalf-of leave creation (API: optional employeeId + role/tenant gate; UI: modal on team-leave page)
+- [x] 24-01: Allow MANAGER role on company-wide DATEV export (1-line guard fix + test)
+- [x] 24-02: Add Abrechnungszeitraum=MMYYYY to LODAS [Allgemein] header
+- [x] 24-03: Make Team-Abwesenheiten list view month-aware (use calYear/calMonth for filter and reload)
+- [x] 24-04: Manager-on-behalf-of leave creation (API: optional employeeId + role/tenant gate; UI: modal on team-leave page)
+
+### Phase 25: WiFi-Presence Stempel (FritzBox)
+
+**Goal:** Auto-stamp employees when their phone connects to / disconnects from the office WiFi (FritzBox host list via TR-064). Trigger clock-in/out only when the event lies within ±15 min of a scheduled shift start/end — otherwise log-only. Audit-traceable as `source=WIFI`, GDPR-opt-in per employee.
+**Requirements**: WIFI-01 (FritzBox polling), WIFI-02 (MAC→employee mapping), WIFI-03 (shift-window gate), WIFI-04 (opt-in + audit), WIFI-05 (admin/MA Mac-management UI)
+**Depends on:** Phase 24
+**Plans:** 9 plans
+
+Plans:
+- [ ] 25-01-PLAN.md — Schema migration: PresenceSource model, PresenceDevice model, Employee wifi fields, TenantConfig.wifiPresenceWindowMinutes, AuditLog.purgeable, TimeEntrySource.WIFI (WIFI-01, WIFI-02, WIFI-04)
+- [ ] 25-02-PLAN.md — getCurrentShift utility + test scaffold (WIFI-03)
+- [ ] 25-03-PLAN.md — Presence webhook handler: auth, MAC lookup, opt-in gate, shift-window gate, dedup, clock-in/out transaction (WIFI-01, WIFI-03, WIFI-04)
+- [ ] 25-04-PLAN.md — PresenceSource admin CRUD: GET/POST/DELETE for API key management (WIFI-04)
+- [ ] 25-05-PLAN.md — Employee self-service wifi endpoint: PATCH /me/wifi + MAC normalizer utility (WIFI-02, WIFI-04)
+- [ ] 25-06-PLAN.md — Admin WiFi-Presence UI page: key management + device list + opt-in overview (WIFI-02, WIFI-05)
+- [ ] 25-07-PLAN.md — Profile "Meine Geräte" section: opt-in toggle + MAC list + add/remove (WIFI-02, WIFI-04, WIFI-05)
+- [ ] 25-08-PLAN.md — Data-retention cron extension: 90-day purge of purgeable AuditLog entries (WIFI-04)
+- [ ] 25-09-PLAN.md — FritzBox adapter standalone service: TR-064 poller + state machine + webhook poster + Docker (WIFI-01)
