@@ -38,6 +38,7 @@ import { specialLeaveRoutes } from "./routes/special-leave";
 import { avatarRoutes } from "./routes/avatars";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { presenceRoutes } from "./routes/presence";
+import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 
 export async function buildApp() {
   // ── Logger configuration ──────────────────────────────────
@@ -238,6 +239,7 @@ export async function buildApp() {
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
+  await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
 
   // ── Client Error Logging ─────────────────────────────────
   app.post("/api/v1/logs/client", {
