@@ -893,12 +893,6 @@
 
   {#if loading}
     <div class="card card-body" style="height:180px"></div>
-  {:else if allTeamRequests.length === 0}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">🏖️</span>
-      <h3>Keine Anträge gefunden.</h3>
-      <p class="text-muted">Es liegen noch keine Abwesenheitsanträge vor.</p>
-    </div>
   {:else}
     <div class="filter-bar">
       <select
@@ -939,63 +933,71 @@
       <span class="filter-count">{filteredTeamRequests.length} Anträge</span>
     </div>
 
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Mitarbeiter</th>
-            <th>Art</th>
-            <th>Von</th>
-            <th>Bis</th>
-            <th class="text-center">Umfang</th>
-            <th>Status</th>
-            <th>Anmerkung</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedTeamRequests as req (req.id)}
-            <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-              <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
-              <td>{typeName(req.typeCode)}</td>
-              <td class="font-mono">{fmtDate(req.startDate)}</td>
-              <td class="font-mono">{fmtDate(req.endDate)}</td>
-              <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
-              <td>
-                <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
-                {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                  <span
-                    class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    style="margin-left:0.25rem;font-size:0.7rem"
-                  >
-                    {req.attestPresent ? "Attest" : "Kein Attest"}
-                  </span>
-                {/if}
-              </td>
-              <td class="note-cell text-muted">
-                {#if req.status === "REJECTED" && req.reviewNote}
-                  <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                {:else}
-                  {req.note ?? "—"}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
-                    {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
-                  </button>
-                {/if}
-              </td>
+    {#if allTeamRequests.length === 0}
+      <div class="empty-state card card-body">
+        <span class="empty-icon">🏖️</span>
+        <h3>Keine Anträge in {calYear}.</h3>
+        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+      </div>
+    {:else}
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Mitarbeiter</th>
+              <th>Art</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th class="text-center">Umfang</th>
+              <th>Status</th>
+              <th>Anmerkung</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination
-        total={filteredTeamRequests.length}
-        bind:page={teamReqPage}
-        bind:pageSize={teamReqPageSize}
-      />
-    </div>
+          </thead>
+          <tbody>
+            {#each pagedTeamRequests as req (req.id)}
+              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+                <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
+                <td>{typeName(req.typeCode)}</td>
+                <td class="font-mono">{fmtDate(req.startDate)}</td>
+                <td class="font-mono">{fmtDate(req.endDate)}</td>
+                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                <td>
+                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                      style="margin-left:0.25rem;font-size:0.7rem"
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                </td>
+                <td class="note-cell text-muted">
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                  {:else}
+                    {req.note ?? "—"}
+                  {/if}
+                </td>
+                <td class="action-cell">
+                  {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
+                    <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
+                      {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination
+          total={filteredTeamRequests.length}
+          bind:page={teamReqPage}
+          bind:pageSize={teamReqPageSize}
+        />
+      </div>
+    {/if}
   {/if}
 {/if}
 
