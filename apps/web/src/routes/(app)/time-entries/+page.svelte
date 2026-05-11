@@ -913,9 +913,7 @@
 
 <div class="page-header-compact">
   <h1>Zeiterfassung</h1>
-  <button class="btn btn-primary" onclick={() => openAdd()}>
-    <span aria-hidden="true">＋</span> Eintrag hinzufügen
-  </button>
+  <button class="btn btn-primary btn-sm" onclick={() => openAdd()}>+ Neuer Eintrag</button>
 </div>
 
 <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
