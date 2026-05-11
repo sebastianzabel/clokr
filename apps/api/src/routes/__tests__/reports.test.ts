@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
@@ -202,6 +203,48 @@ describe("Reports API", () => {
       });
       const body = iconv.decode(res.rawPayload, "win1252");
       expect(body).toContain(";301;");
+    });
+
+    // ── Permission tests (UAT-01) ──────────────────────────────────────────
+    it("DATEV-04a: MANAGER can call company-wide DATEV export", async () => {
+      const passwordHash = await bcrypt.hash("test1234", 10);
+      const managerEmail = `mgr-perm-${Date.now()}@test.de`;
+      const mgrUser = await app.prisma.user.create({
+        data: { email: managerEmail, passwordHash, role: "MANAGER", isActive: true },
+      });
+      await app.prisma.employee.create({
+        data: {
+          tenantId: datevData.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `M-${Date.now()}`,
+          firstName: "Manager",
+          lastName: "Perm",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: managerEmail, password: "test1234" },
+      });
+      const { accessToken: managerToken } = JSON.parse(loginRes.body);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${managerToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toBe("application/octet-stream");
+    });
+
+    it("DATEV-04b: EMPLOYEE cannot call company-wide DATEV export", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
     });
   });
 
@@ -417,9 +460,7 @@ describe("Reports API", () => {
       const prisma = app.prisma;
 
       // Create a manager user + employee in the tenant
-      const mgrPwHash = await import("bcryptjs").then((b) =>
-        b.default.hash("test1234", 10),
-      );
+      const mgrPwHash = await import("bcryptjs").then((b) => b.default.hash("test1234", 10));
       const mgrUser = await prisma.user.create({
         data: {
           email: `mgr-att-${Date.now()}@test.de`,
@@ -464,7 +505,9 @@ describe("Reports API", () => {
 
       // Today (UTC midnight) for entry creation
       const now = new Date();
-      const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const todayUtc = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+      );
 
       // Helper to create a Mon-Fri schedule for an employee
       async function makeWorkSchedule(empId: string) {
@@ -504,7 +547,9 @@ describe("Reports API", () => {
         },
       });
       await makeWorkSchedule(empCIRecord.id);
-      await prisma.overtimeAccount.create({ data: { employeeId: empCIRecord.id, balanceHours: 0 } });
+      await prisma.overtimeAccount.create({
+        data: { employeeId: empCIRecord.id, balanceHours: 0 },
+      });
       await prisma.timeEntry.create({
         data: {
           employeeId: empCIRecord.id,
@@ -818,8 +863,7 @@ describe("Reports API", () => {
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.body);
         const tenantBEmp = body.employees.find(
-          (e: { employeeNumber: string }) =>
-            e.employeeNumber === tenantB.employee.employeeNumber,
+          (e: { employeeNumber: string }) => e.employeeNumber === tenantB.employee.employeeNumber,
         );
         expect(tenantBEmp).toBeUndefined();
       } finally {
@@ -1048,9 +1092,7 @@ describe("Reports API", () => {
       const prisma = app.prisma;
 
       // Create a manager user + employee for tenant A
-      const mgrPwHash = await import("bcryptjs").then((b) =>
-        b.default.hash("test1234", 10),
-      );
+      const mgrPwHash = await import("bcryptjs").then((b) => b.default.hash("test1234", 10));
       const mgrUser = await prisma.user.create({
         data: {
           email: `mgr-ot-${Date.now()}@test.de`,
