@@ -20,6 +20,7 @@
   let newSourceName = $state("");
   let newSourceAdapterUrl = $state("");
   let sourceCreating = $state(false);
+  let sourceCreateError = $state("");
   let newRawKey = $state("");
   let showNewKey = $state(false);
   let srcPage = $state(1);
@@ -86,6 +87,7 @@
   async function handleCreateSource() {
     if (!newSourceName.trim()) return;
     sourceCreating = true;
+    sourceCreateError = "";
     try {
       const res = await createSource(newSourceName.trim(), newSourceAdapterUrl.trim() || undefined);
       newRawKey = res.rawKey;
@@ -94,7 +96,7 @@
       newSourceAdapterUrl = "";
       await loadSources();
     } catch {
-      /* error — showNewKey stays false */
+      sourceCreateError = "Schlüssel konnte nicht erstellt werden. Bitte versuchen Sie es erneut.";
     } finally {
       sourceCreating = false;
     }
@@ -244,6 +246,10 @@
       Schlüssel erstellen
     </button>
   </div>
+
+  {#if sourceCreateError}
+    <p class="form-error" role="alert">{sourceCreateError}</p>
+  {/if}
 
   {#if sourcesLoading}
     <div

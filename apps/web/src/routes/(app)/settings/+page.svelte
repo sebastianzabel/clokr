@@ -372,27 +372,33 @@
 
     <!-- Add MAC form -->
     <div class="mac-add-form">
-      <input
-        class="form-input mac-input"
-        type="text"
-        bind:value={newMac}
-        placeholder="z.B. aa:bb:cc:dd:ee:ff"
-        aria-label="MAC-Adresse"
-        onblur={() => {
-          if (newMac && !newMacValid) {
-            macError = "Ungültige MAC-Adresse. Format: aa:bb:cc:dd:ee:ff";
-          } else {
-            macError = "";
-          }
-        }}
-      />
-      <input
-        class="form-input"
-        type="text"
-        bind:value={macLabel}
-        placeholder="Bezeichnung (optional)"
-        aria-label="Gerätebezeichnung"
-      />
+      <div class="mac-field">
+        <label class="form-label" for="wifi-mac-input">MAC-Adresse</label>
+        <input
+          id="wifi-mac-input"
+          class="form-input mac-input"
+          type="text"
+          bind:value={newMac}
+          placeholder="z.B. aa:bb:cc:dd:ee:ff"
+          onblur={() => {
+            if (newMac && !newMacValid) {
+              macError = "Ungültige MAC-Adresse. Format: aa:bb:cc:dd:ee:ff";
+            } else {
+              macError = "";
+            }
+          }}
+        />
+      </div>
+      <div class="mac-field">
+        <label class="form-label" for="wifi-mac-label">Bezeichnung (optional)</label>
+        <input
+          id="wifi-mac-label"
+          class="form-input"
+          type="text"
+          bind:value={macLabel}
+          placeholder="z.B. iPhone, Tablet"
+        />
+      </div>
       <button class="btn btn-primary" onclick={addMacDevice} disabled={!newMacValid || macAdding}>
         {macAdding ? "Hinzufügen…" : "Gerät hinzufügen"}
       </button>
@@ -558,7 +564,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: white;
+    background: var(--color-surface);
     transition: transform 0.2s;
   }
   .wifi-toggle-input:checked {
@@ -602,12 +608,18 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .mac-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    min-width: 180px;
   }
   .mac-input {
     font-family: var(--font-mono);
     font-size: 0.9375rem;
-    flex: 1;
-    min-width: 180px;
   }
   .form-error {
     color: var(--color-red);
