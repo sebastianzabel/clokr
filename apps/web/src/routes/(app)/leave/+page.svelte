@@ -381,10 +381,9 @@
     loading = true;
     error = "";
     try {
-      const year = new Date().getFullYear();
       const myEmployeeId = $authStore.user?.employeeId;
       const mine = await api.get<LeaveRequest[]>(
-        `/leave/requests?year=${year}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
+        `/leave/requests?year=${calYear}${myEmployeeId ? `&employeeId=${myEmployeeId}` : ""}`,
       );
       myRequests = mine;
     } catch (e: unknown) {
@@ -393,6 +392,10 @@
       loading = false;
     }
   }
+
+  // Year selector for the list view (current year ± 2).
+  const _currentYear = new Date().getFullYear();
+  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
 
   async function loadVacationSummary() {
     const userId = $authStore.user?.employeeId;
@@ -779,12 +782,6 @@
     myRequests.filter((req) => {
       if (filterLeaveStatus && req.status !== filterLeaveStatus) return false;
       if (filterLeaveType && req.typeCode !== filterLeaveType) return false;
-      // Month overlap filter — include request if its interval overlaps the selected month
-      const monthStart = new Date(calYear, calMonth - 1, 1);
-      const monthEnd = new Date(calYear, calMonth, 0, 23, 59, 59);
-      const reqStart = new Date(req.startDate);
-      const reqEnd = new Date(req.endDate);
-      if (reqEnd < monthStart || reqStart > monthEnd) return false;
       return true;
     }),
   );
@@ -841,11 +838,11 @@
   <h1>Abwesenheiten</h1>
   {#if !showForm}
     <button
-      class="btn btn-primary"
+      class="btn btn-primary btn-sm"
       onclick={() => {
         editingRequest = null;
         showForm = true;
-      }}>✚ Neuer Antrag</button
+      }}>+ Neuer Antrag</button
     >
   {/if}
 </div>
@@ -1444,14 +1441,21 @@
 
   {#if loading}
     <div class="card card-body" style="height:180px"></div>
-  {:else if myRequests.length === 0}
-    <div class="empty-state card card-body">
-      <span class="empty-icon">🏖️</span>
-      <h3>Noch keine Anträge</h3>
-      <p class="text-muted">Erstelle deinen ersten Abwesenheitsantrag.</p>
-    </div>
   {:else}
     <div class="filter-bar">
+      <select
+        class="form-input filter-select"
+        bind:value={calYear}
+        onchange={() => {
+          loadData();
+          loadCalendar();
+        }}
+        aria-label="Jahr wählen"
+      >
+        {#each yearOptions as y (y)}
+          <option value={y}>{y}</option>
+        {/each}
+      </select>
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
@@ -1474,75 +1478,83 @@
           <option value={t.code}>{t.label}</option>
         {/each}
       </select>
-      <span class="filter-count">{filteredMyRequests.length} im Monat</span>
+      <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
     </div>
 
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Art</th>
-            <th>Von</th>
-            <th>Bis</th>
-            <th class="text-center">Umfang</th>
-            <th>Status</th>
-            <th>Anmerkung</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedMyRequests as req (req.id)}
-            {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-            <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-              <td>{typeName(req.typeCode)}</td>
-              <td class="font-mono">{fmtDate(req.startDate)}</td>
-              <td class="font-mono">{fmtDate(req.endDate)}</td>
-              <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
-              <td>
-                <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
-                {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                  <span
-                    class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    style="margin-left:0.25rem;font-size:0.7rem"
-                  >
-                    {req.attestPresent ? "Attest" : "Kein Attest"}
-                  </span>
-                {/if}
-              </td>
-              <td class="note-cell text-muted">
-                {#if req.status === "REJECTED" && req.reviewNote}
-                  <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                {:else}
-                  {req.note ?? "—"}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#if isOwn && req.status === "PENDING"}
-                  <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
-                    >Bearbeiten</button
-                  >
-                  <button
-                    class="btn btn-sm btn-ghost text-red"
-                    onclick={() => cancelRequest(req.id)}>Zurückziehen</button
-                  >
-                {/if}
-                {#if isOwn && req.status === "APPROVED"}
-                  <button
-                    class="btn btn-sm btn-ghost text-red"
-                    onclick={() => cancelRequest(req.id)}>Stornieren</button
-                  >
-                {/if}
-              </td>
+    {#if myRequests.length === 0}
+      <div class="empty-state card card-body">
+        <span class="empty-icon">🏖️</span>
+        <h3>Keine Anträge in {calYear}</h3>
+        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+      </div>
+    {:else}
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Art</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th class="text-center">Umfang</th>
+              <th>Status</th>
+              <th>Anmerkung</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination
-        total={filteredMyRequests.length}
-        bind:page={myReqPage}
-        bind:pageSize={myReqPageSize}
-      />
-    </div>
+          </thead>
+          <tbody>
+            {#each pagedMyRequests as req (req.id)}
+              {@const isOwn = req.employeeId === $authStore.user?.employeeId}
+              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+                <td>{typeName(req.typeCode)}</td>
+                <td class="font-mono">{fmtDate(req.startDate)}</td>
+                <td class="font-mono">{fmtDate(req.endDate)}</td>
+                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                <td>
+                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                    <span
+                      class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
+                      style="margin-left:0.25rem;font-size:0.7rem"
+                    >
+                      {req.attestPresent ? "Attest" : "Kein Attest"}
+                    </span>
+                  {/if}
+                </td>
+                <td class="note-cell text-muted">
+                  {#if req.status === "REJECTED" && req.reviewNote}
+                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                  {:else}
+                    {req.note ?? "—"}
+                  {/if}
+                </td>
+                <td class="action-cell">
+                  {#if isOwn && req.status === "PENDING"}
+                    <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
+                      >Bearbeiten</button
+                    >
+                    <button
+                      class="btn btn-sm btn-ghost text-red"
+                      onclick={() => cancelRequest(req.id)}>Zurückziehen</button
+                    >
+                  {/if}
+                  {#if isOwn && req.status === "APPROVED"}
+                    <button
+                      class="btn btn-sm btn-ghost text-red"
+                      onclick={() => cancelRequest(req.id)}>Stornieren</button
+                    >
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination
+          total={filteredMyRequests.length}
+          bind:page={myReqPage}
+          bind:pageSize={myReqPageSize}
+        />
+      </div>
+    {/if}
   {/if}
 {/if}<!-- Ende Liste -->
 

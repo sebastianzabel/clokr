@@ -580,6 +580,7 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <div class="page-header-compact">
   <h1>Team-Abwesenheiten</h1>
+  <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
 </div>
 
 {#if error}
@@ -664,35 +665,28 @@
   </div>
 </div>
 
-<!-- ── View-Toggle + Manager-Aktionen ─────────────────────────────────────── -->
-<div class="view-tabs-row">
-  <div class="view-tabs">
-    <button
-      class="view-tab"
-      class:view-tab--active={view === "calendar"}
-      onclick={() => (view = "calendar")}
-    >
-      Kalender
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={view === "list"}
-      onclick={() => (view = "list")}
-    >
-      Anträge
-    </button>
-    <button
-      class="view-tab"
-      class:view-tab--active={view === "approvals"}
-      onclick={() => (view = "approvals")}
-    >
-      Genehmigungen
-      {#if filteredPendingRequests.length > 0}
-        <span class="tab-badge">{filteredPendingRequests.length}</span>
-      {/if}
-    </button>
-  </div>
-  <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
+<!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
+<div class="view-tabs">
+  <button
+    class="view-tab"
+    class:view-tab--active={view === "calendar"}
+    onclick={() => (view = "calendar")}
+  >
+    Kalender
+  </button>
+  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
+    Anträge
+  </button>
+  <button
+    class="view-tab"
+    class:view-tab--active={view === "approvals"}
+    onclick={() => (view = "approvals")}
+  >
+    Genehmigungen
+    {#if filteredPendingRequests.length > 0}
+      <span class="tab-badge">{filteredPendingRequests.length}</span>
+    {/if}
+  </button>
 </div>
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
@@ -1624,19 +1618,6 @@
     padding: 1rem 1.5rem;
     border-top: 1px solid var(--gray-200);
     background: var(--gray-50, #f9fafb);
-  }
-
-  /* ── View tabs row + manager actions ───────────────────────────────── */
-  .view-tabs-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-  }
-  .view-tabs-row :global(.view-tabs) {
-    margin-bottom: 0;
   }
 
   /* ── Create-Modal Form ─────────────────────────────────────────────── */
