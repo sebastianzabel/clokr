@@ -13,12 +13,19 @@ export interface FritzDevice {
 /**
  * Normalize any MAC address format to lowercase colon-separated octets.
  * Accepts: "AA-BB-CC-DD-EE-FF", "AABBCCDDEEFF", "aa:bb:cc:dd:ee:ff"
- * Returns: "aa:bb:cc:dd:ee:ff"
+ * Returns: "aa:bb:cc:dd:ee:ff", or "" for invalid input.
+ *
+ * WR-04: Returns empty string (rather than silently lowercasing raw input)
+ * when the stripped hex is not exactly 12 characters. Callers must filter
+ * out empty strings. This is consistent with the API's normalizeMac which
+ * throws on invalid input — a bad MAC from the FritzBox is skipped here
+ * rather than forwarded to the API where it would cause a 400 response.
  */
 export function normalizeMac(raw: string): string {
   const hex = raw.replace(/[^0-9a-fA-F]/g, "");
   if (hex.length !== 12) {
-    return raw.toLowerCase(); // best-effort for unexpected formats
+    console.warn(`[fritzbox-adapter] Skipping device with invalid MAC: ${JSON.stringify(raw)}`);
+    return ""; // callers must check and skip empty MACs
   }
   return hex.match(/.{2}/g)!.join(":").toLowerCase();
 }
@@ -203,12 +210,15 @@ export class Tr064Client {
       const ip = /<(?:IPAddress|ip)>(.*?)<\/(?:IPAddress|ip)>/i.exec(item)?.[1] ?? "";
 
       if (macRaw) {
-        devices.push({
-          mac: normalizeMac(macRaw),
-          hostname,
-          active: activeRaw === "1",
-          ip,
-        });
+        const normalizedMac = normalizeMac(macRaw);
+        if (normalizedMac) {
+          devices.push({
+            mac: normalizedMac,
+            hostname,
+            active: activeRaw === "1",
+            ip,
+          });
+        }
       }
     }
 
@@ -264,12 +274,15 @@ export class Tr064Client {
         const ip = /<NewIPAddress>(.*?)<\/NewIPAddress>/i.exec(entryXml)?.[1] ?? "";
 
         if (macRaw) {
-          devices.push({
-            mac: normalizeMac(macRaw),
-            hostname,
-            active: activeRaw === "1",
-            ip,
-          });
+          const normalizedMac = normalizeMac(macRaw);
+          if (normalizedMac) {
+            devices.push({
+              mac: normalizedMac,
+              hostname,
+              active: activeRaw === "1",
+              ip,
+            });
+          }
         }
       } catch {
         // Skip individual entry on error — partial list is better than none
