@@ -30,7 +30,7 @@
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.3",
     "prettier-plugin-svelte": "^3.5.1",
-    "svelte-eslint-parser": "^1.6.0",
+    "svelte-eslint-parser": "^1.6.1",
     "tsx": "^4.21.0",
     "turbo": "^2.9.8",
     "typescript": "^6.0.3",
