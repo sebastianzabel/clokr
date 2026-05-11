@@ -107,7 +107,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── PATCH /:id — update name, adapterUrl, and/or isActive ────
+  // ── PATCH /:id — update name, adapterUrl, adapterSecret, and/or isActive ────
   app.patch("/:id", {
     schema: { tags: ["Admin - Presence Sources"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
@@ -117,6 +117,8 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         .object({
           name: z.string().min(1).max(100).optional(),
           adapterUrl: z.string().url().nullable().optional(),
+          // CR-02: secret the API forwards as Bearer token to the adapter's /devices endpoint
+          adapterSecret: z.string().min(1).nullable().optional(),
           isActive: z.boolean().optional(),
         })
         .refine((b) => Object.keys(b).length > 0, {
@@ -140,6 +142,7 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         data: {
           ...(body.name !== undefined && { name: body.name }),
           ...(body.adapterUrl !== undefined && { adapterUrl: body.adapterUrl }),
+          ...(body.adapterSecret !== undefined && { adapterSecret: body.adapterSecret }),
           ...(body.isActive !== undefined && { isActive: body.isActive }),
         },
         select: {
@@ -164,6 +167,10 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
           newValue: {
             ...(body.name !== undefined && { name: body.name }),
             ...(body.adapterUrl !== undefined && { adapterUrl: body.adapterUrl }),
+            // Note: adapterSecret intentionally omitted from audit log (not logged in plaintext)
+            ...(body.adapterSecret !== undefined && {
+              adapterSecret: body.adapterSecret !== null ? "[set]" : null,
+            }),
             ...(body.isActive !== undefined && { isActive: body.isActive }),
           },
           ipAddress: req.ip,
@@ -222,8 +229,62 @@ export async function adminPresenceSourcesRoutes(app: FastifyInstance) {
         return reply.code(502).send({ error: "Kein Adapter-URL konfiguriert" });
       }
 
+      // ── SSRF guard: validate adapterUrl before proxying ───────────────────────
+      // CR-01: Reject private/loopback IPs and non-http(s) schemes to prevent
+      // SSRF attacks via admin-controlled adapterUrl field.
+      const ALLOWED_SCHEMES = new Set(["http:", "https:"]);
+      // Patterns for private / link-local / loopback ranges
+      const PRIVATE_IP_PATTERNS = [
+        /^127\./,
+        /^10\./,
+        /^172\.(1[6-9]|2\d|3[01])\./,
+        /^192\.168\./,
+        /^169\.254\./, // link-local / cloud metadata (AWS, GCP)
+        /^::1$/,
+        /^fd[0-9a-f]{2}:/i, // ULA IPv6
+        /^fe80:/i, // link-local IPv6
+      ];
+      // Allowlisted service hostnames (Docker Compose internal network)
+      const ALLOWED_HOSTNAMES = new Set(["fritzbox-adapter"]);
+
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(source.adapterUrl);
+      } catch {
+        return reply.code(502).send({ error: "Ungültige Adapter-URL" });
+      }
+
+      if (!ALLOWED_SCHEMES.has(parsedUrl.protocol)) {
+        return reply.code(502).send({ error: "Adapter-URL muss http oder https verwenden" });
+      }
+
+      const hostname = parsedUrl.hostname;
+
+      // Allow known Docker service hostnames without IP check
+      if (!ALLOWED_HOSTNAMES.has(hostname)) {
+        if (
+          hostname === "localhost" ||
+          PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(hostname))
+        ) {
+          app.log.warn(
+            { hostname, sourceId: id },
+            "SSRF guard: blocked private/loopback adapter URL",
+          );
+          return reply
+            .code(502)
+            .send({ error: "Adapter-URL zeigt auf eine nicht erlaubte Adresse" });
+        }
+      }
+
+      // Forward the adapter secret if configured (CR-02: authenticated proxy)
+      const proxyHeaders: Record<string, string> = {};
+      if (source.adapterSecret) {
+        proxyHeaders["Authorization"] = `Bearer ${source.adapterSecret}`;
+      }
+
       try {
         const adapterRes = await fetch(`${source.adapterUrl}/devices`, {
+          headers: proxyHeaders,
           signal: AbortSignal.timeout(5000),
         });
         if (!adapterRes.ok) {

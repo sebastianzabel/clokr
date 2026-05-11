@@ -587,7 +587,8 @@ model PresenceSource {
   name        String                            // Human-readable label (e.g. "Büro FritzBox")
   keyHash     String    @unique                 // SHA-256 of the raw clk_ key (never stored in plaintext)
   keyPrefix   String                            // First 8 chars of raw key for UI display (e.g. "clk_ab12")
-  adapterUrl  String?                           // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
+  adapterUrl    String?                           // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
+  adapterSecret String?                           // Bearer token the API sends to the adapter's /devices endpoint (CR-02)
   isActive    Boolean   @default(true)          // Admin can disable without deleting (PATCH endpoint)
   lastUsedAt  DateTime? @db.Timestamptz         // Updated on every successful webhook auth (adapter health signal)
   revokedAt   DateTime? @db.Timestamptz         // Soft-revoke; null = active
