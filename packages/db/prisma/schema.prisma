@@ -143,6 +143,8 @@ model TenantConfig {
   datevUrlaubNr        Int @default(300)
   datevKrankNr         Int @default(200)
   datevSonderurlaubNr  Int @default(302)
+  // WiFi-Presence
+  wifiPresenceWindowMinutes Int @default(15)  // Shift-window gate: ±N minutes around shift start/end
   createdAt            DateTime @default(now()) @db.Timestamptz
   updatedAt            DateTime @updatedAt      @db.Timestamptz
 
@@ -220,6 +222,9 @@ model Employee {
   firstName        String
   lastName         String
   nfcCardId        String?  @unique  // NFC Karten-ID
+  wifiMacs              String[]   @default([])         // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled   Boolean    @default(false)       // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt           DateTime?  @db.Timestamptz      // timestamp when employee opted in (null = not opted in)
   avatarPath       String?            // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   hireDate         DateTime @db.Timestamptz
   exitDate         DateTime? @db.Timestamptz
@@ -239,6 +244,7 @@ model Employee {
   invitations           Invitation[]
   shutdownExceptions    CompanyShutdownException[]
   shifts                Shift[]
+  presenceDevices       PresenceDevice[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -542,6 +548,7 @@ model AuditLog {
   newValue   Json?
   ipAddress  String?
   userAgent  String?
+  purgeable  Boolean  @default(false)   // DSGVO Art. 5(1)(e): presence-only events (no stamp created) auto-purge after 90 days
   createdAt  DateTime @default(now()) @db.Timestamptz
 
   user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -625,6 +632,7 @@ enum TimeEntrySource {
   MOBILE
   MANUAL
   CORRECTION
+  WIFI
 }
 
 enum OvertimeTransactionType {
