@@ -2,24 +2,24 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: verifying
-stopped_at: Completed 24-04-PLAN.md (manager-on-behalf-of leave creation)
-last_updated: "2026-05-11T00:00:00.000Z"
+status: executing
+stopped_at: Completed 25-01-PLAN.md (schema foundation for WiFi-presence)
+last_updated: "2026-05-11T19:00:59.930Z"
 last_activity: 2026-05-11
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 13
-  completed_plans: 13
+  total_phases: 7
+  completed_phases: 7
+  total_plans: 9
+  completed_plans: 9
   percent: 100
 ---
 
 ## Current Position
 
-Phase: 23 (Glass-Card UI Polish) — EXECUTING
-Plan: 1 of 1
-Status: Phase complete — ready for verification
-Last activity: 2026-04-25
+Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
+Plan: 2 of 9
+Status: Ready to execute
+Last activity: 2026-05-11
 
 Progress: [████████░░] 83%
 
@@ -28,7 +28,7 @@ Progress: [████████░░] 83%
 See: .planning/PROJECT.md (updated 2026-04-25)
 
 **Core value:** Reliable, secure, legally compliant time tracking SaaS ready for live customers
-**Current focus:** Phase 23 — Glass-Card UI Polish
+**Current focus:** Phase 25 — wifi-presence-stempel-fritzbox
 
 ## Performance Metrics
 
@@ -73,6 +73,7 @@ Recent decisions affecting v1.4:
 - [Phase 20-team-leave-page]: Team leave page forks personal leave page: no submit form, team-wide data, approval code restored from pre-Phase-17 history
 - [Phase 21-per-employee-export-api]: buildDatevLodas() kept module-scope (not exported) to avoid leaking DATEV format details outside reports.ts
 - [Phase 23-glass-card-ui-polish]: Promoted NFC-Terminals h3/p title to section-label div to match API Keys reference pattern
+- [Phase 25]: PresenceSource uses soft-delete (deletedAt); PresenceDevice uses onDelete: Cascade to Employee; Employee.wifiMacs coexists with PresenceDevice for webhook fallback lookup; wifiPresenceEnabled=false enforces GDPR opt-in
 
 ### Pending Todos
 
@@ -84,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-25T21:25:28.212Z
-Stopped at: Completed 23-glass-card-ui-polish-01-PLAN.md
+Last session: 2026-05-11T19:00:59.926Z
+Stopped at: Completed 25-01-PLAN.md (schema foundation for WiFi-presence)
 Resume file: None
