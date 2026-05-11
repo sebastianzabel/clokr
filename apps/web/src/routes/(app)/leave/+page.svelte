@@ -314,6 +314,24 @@
     loadCalendar();
     if (calYear !== prevYear) loadData();
   }
+  function prevYear() {
+    calYear--;
+    loadCalendar();
+    loadData();
+  }
+  function nextYear() {
+    calYear++;
+    loadCalendar();
+    loadData();
+  }
+  function gotoTodayYear() {
+    const cur = new Date().getFullYear();
+    if (calYear !== cur) {
+      calYear = cur;
+      loadCalendar();
+      loadData();
+    }
+  }
 
   const MONTH_NAMES = [
     "Januar",
@@ -392,10 +410,6 @@
       loading = false;
     }
   }
-
-  // Year selector for the list view (current year ± 2).
-  const _currentYear = new Date().getFullYear();
-  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
 
   async function loadVacationSummary() {
     const userId = $authStore.user?.employeeId;
@@ -842,7 +856,7 @@
       onclick={() => {
         editingRequest = null;
         showForm = true;
-      }}>+ Neuer Antrag</button
+      }}>+ Neue Abwesenheit</button
     >
   {/if}
 </div>
@@ -1129,56 +1143,52 @@
   </div>
 {/if}
 
+<!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
+{#if proRataWarning}
+  <div class="alert alert-warning card-animate" role="status">
+    Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
+    ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
+    nötig ist.
+  </div>
+{/if}
+{#if showVacSummary}
+  <div class="vac-summary card-animate">
+    <div class="vac-summary-item">
+      <span class="vac-summary-label">Jahresanspruch</span>
+      <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
+    </div>
+    {#if vacSummaryCarryOver > 0}
+      <div class="vac-summary-item">
+        <span class="vac-summary-label">Resturlaub</span>
+        <span
+          class="vac-summary-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-summary-carry'}"
+        >
+          {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining} Tage
+        </span>
+      </div>
+    {/if}
+    <div class="vac-summary-item">
+      <span class="vac-summary-label">Genommen</span>
+      <span class="vac-summary-value">{vacSummaryUsed} Tage</span>
+    </div>
+    {#if vacSummaryPlanned > 0}
+      <div class="vac-summary-item">
+        <span class="vac-summary-label">Geplant</span>
+        <span class="vac-summary-value vac-summary-planned">{vacSummaryPlanned} Tage</span>
+      </div>
+    {/if}
+    <div class="vac-summary-divider"></div>
+    <div class="vac-summary-item vac-summary-item--highlight">
+      <span class="vac-summary-label">Verbleibend</span>
+      <span class="vac-summary-value {vacSummaryLeft < 0 ? 'vac-summary-warn' : 'vac-summary-left'}"
+        >{vacSummaryLeft} Tage</span
+      >
+    </div>
+  </div>
+{/if}
+
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
-  <!-- Pro-rata Warnung bei Austrittsdatum -->
-  {#if proRataWarning}
-    <div class="alert alert-warning card-animate" role="status">
-      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
-      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
-      nötig ist.
-    </div>
-  {/if}
-  <!-- Urlaubsübersicht -->
-  {#if showVacSummary}
-    <div class="vac-summary card-animate">
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Jahresanspruch</span>
-        <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
-      </div>
-      {#if vacSummaryCarryOver > 0}
-        <div class="vac-summary-item">
-          <span class="vac-summary-label">Resturlaub</span>
-          <span
-            class="vac-summary-value {vacSummaryCarryOverRemaining === 0
-              ? ''
-              : 'vac-summary-carry'}"
-          >
-            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining} Tage
-          </span>
-        </div>
-      {/if}
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Genommen</span>
-        <span class="vac-summary-value">{vacSummaryUsed} Tage</span>
-      </div>
-      {#if vacSummaryPlanned > 0}
-        <div class="vac-summary-item">
-          <span class="vac-summary-label">Geplant</span>
-          <span class="vac-summary-value vac-summary-planned">{vacSummaryPlanned} Tage</span>
-        </div>
-      {/if}
-      <div class="vac-summary-divider"></div>
-      <div class="vac-summary-item vac-summary-item--highlight">
-        <span class="vac-summary-label">Verbleibend</span>
-        <span
-          class="vac-summary-value {vacSummaryLeft < 0 ? 'vac-summary-warn' : 'vac-summary-left'}"
-          >{vacSummaryLeft} Tage</span
-        >
-      </div>
-    </div>
-  {/if}
-
   <div class="cal-section card card-animate">
     <!-- Navigation -->
     <div class="cal-nav">
@@ -1394,14 +1404,9 @@
 
 <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
-  <!-- Monat-Navigation für Listenansicht -->
-  <div class="cal-nav list-month-nav">
-    <button
-      class="nav-btn"
-      onclick={prevMonth}
-      title="Vorheriger Monat"
-      aria-label="Vorheriger Monat"
-    >
+  <!-- Jahr-Navigation für Listenansicht -->
+  <div class="cal-nav list-month-nav card-animate">
+    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
       <svg
         width="18"
         height="18"
@@ -1412,16 +1417,11 @@
       >
     </button>
     <div class="cal-nav-center">
-      <span class="cal-nav-title">{MONTH_NAMES[calMonth - 1]} {calYear}</span>
+      <span class="cal-nav-title">{calYear}</span>
     </div>
     <div style="display:flex;align-items:center;gap:0.5rem;">
-      <button class="btn btn-sm btn-ghost" onclick={gotoToday}>Heute</button>
-      <button
-        class="nav-btn"
-        onclick={nextMonth}
-        title="Nächster Monat"
-        aria-label="Nächster Monat"
-      >
+      <button class="btn btn-sm btn-ghost" onclick={gotoTodayYear}>Heute</button>
+      <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
         <svg
           width="18"
           height="18"
@@ -1435,27 +1435,14 @@
   </div>
 
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
-  <div class="section-header">
+  <div class="section-header card-animate">
     <h2>Meine Anträge</h2>
   </div>
 
   {#if loading}
-    <div class="card card-body" style="height:180px"></div>
+    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
   {:else}
-    <div class="filter-bar">
-      <select
-        class="form-input filter-select"
-        bind:value={calYear}
-        onchange={() => {
-          loadData();
-          loadCalendar();
-        }}
-        aria-label="Jahr wählen"
-      >
-        {#each yearOptions as y (y)}
-          <option value={y}>{y}</option>
-        {/each}
-      </select>
+    <div class="filter-bar card-animate">
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
@@ -1513,8 +1500,7 @@
                   <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
-                      class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                      style="margin-left:0.25rem;font-size:0.7rem"
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
                     >
                       {req.attestPresent ? "Attest" : "Kein Attest"}
                     </span>
@@ -1677,7 +1663,7 @@
     max-width: 640px;
     max-height: 88vh;
     overflow-y: auto;
-    background: var(--glass-bg-strong, var(--color-surface));
+    background: var(--glass-bg-overlay, var(--color-surface));
     backdrop-filter: blur(var(--glass-blur, 16px));
     -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
     border: 1px solid var(--color-border);
@@ -1759,8 +1745,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1873,7 +1859,7 @@
     font-size: 2.5rem;
   }
   .empty-state h3 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
   }
 
   /* ── Modal ────────────────────────────────────────────────────────── */
@@ -1910,10 +1896,10 @@
     align-items: center;
     justify-content: space-between;
     padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--color-border-subtle);
   }
   .modal-header h2 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 600;
     margin: 0;
   }
@@ -1925,14 +1911,14 @@
     justify-content: flex-end;
     gap: 0.625rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-subtle);
   }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--color-red, #dc2626);
-    color: #fff;
+    color: white;
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1957,8 +1943,8 @@
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1993,7 +1979,7 @@
   }
   .balance-divider {
     height: 1px;
-    background: var(--gray-200);
+    background: var(--color-border-subtle);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
@@ -2092,7 +2078,7 @@
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
   .list-month-nav {
-    border: 1px solid var(--gray-200, #e5e7eb);
+    border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
   }
@@ -2145,6 +2131,7 @@
   .cal-chips {
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     gap: 2px;
     flex: 1;
     min-height: 0;
@@ -2157,7 +2144,7 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: #fff;
+    color: white;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -2211,8 +2198,12 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+  .badge-attest {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
   }
   .legend-dot {
     width: 10px;
@@ -2240,8 +2231,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;

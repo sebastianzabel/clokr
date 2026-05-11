@@ -269,6 +269,24 @@
     loadCalendar();
     if (calYear !== prevYear) loadData();
   }
+  function prevYear() {
+    calYear--;
+    loadCalendar();
+    loadData();
+  }
+  function nextYear() {
+    calYear++;
+    loadCalendar();
+    loadData();
+  }
+  function gotoTodayYear() {
+    const cur = new Date().getFullYear();
+    if (calYear !== cur) {
+      calYear = cur;
+      loadCalendar();
+      loadData();
+    }
+  }
 
   const MONTH_NAMES = [
     "Januar",
@@ -472,10 +490,6 @@
   let teamReqPage = $state(1);
   let teamReqPageSize = $state(10);
 
-  // Year selector for the list view (current year ± 2).
-  const _currentYear = new Date().getFullYear();
-  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
-
   let filteredTeamRequests = $derived(
     allTeamRequests.filter((req) => {
       if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
@@ -580,7 +594,9 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <div class="page-header-compact">
   <h1>Team-Abwesenheiten</h1>
-  <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
+  {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
+    <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
+  {/if}
 </div>
 
 {#if error}
@@ -881,27 +897,44 @@
 
 <!-- ── Anträge-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
-  <div class="section-header">
+  <!-- Jahr-Navigation für Listenansicht -->
+  <div class="cal-nav list-month-nav card-animate">
+    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+      >
+    </button>
+    <div class="cal-nav-center">
+      <span class="cal-nav-title">{calYear}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <button class="btn btn-sm btn-ghost" onclick={gotoTodayYear}>Heute</button>
+      <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+        >
+      </button>
+    </div>
+  </div>
+
+  <div class="section-header card-animate">
     <h2>Alle Anträge</h2>
   </div>
 
   {#if loading}
-    <div class="card card-body" style="height:180px"></div>
+    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
   {:else}
-    <div class="filter-bar">
-      <select
-        class="form-input filter-select"
-        bind:value={calYear}
-        onchange={() => {
-          loadData();
-          loadCalendar();
-        }}
-        aria-label="Jahr wählen"
-      >
-        {#each yearOptions as y (y)}
-          <option value={y}>{y}</option>
-        {/each}
-      </select>
+    <div class="filter-bar card-animate">
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
@@ -960,8 +993,7 @@
                   <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
-                      class="badge {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                      style="margin-left:0.25rem;font-size:0.7rem"
+                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
                     >
                       {req.attestPresent ? "Attest" : "Kein Attest"}
                     </span>
@@ -1081,7 +1113,7 @@
         </div>
 
         <!-- Parallele Abwesenheiten -->
-        <div class="overlap-box" style="margin-top:1.25rem">
+        <div class="overlap-box review-section">
           <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
           {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
             <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
@@ -1100,7 +1132,7 @@
 
         <!-- Attest (nur für Krankmeldungen) -->
         {#if SICK_CODES.includes(reviewModal.typeCode)}
-          <div class="attest-box" style="margin-top:1.25rem">
+          <div class="attest-box review-section">
             <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
             <label class="toggle-label">
               <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
@@ -1134,7 +1166,7 @@
         {/if}
 
         <!-- Review-Notiz -->
-        <div class="form-group" style="margin-top:1.25rem">
+        <div class="form-group review-section">
           <label class="form-label" for="review-note">Anmerkung (optional)</label>
           <input
             id="review-note"
@@ -1207,42 +1239,55 @@
         <button class="btn-icon" onclick={closeCreate} aria-label="Schließen">✕</button>
       </div>
       <form class="modal-body" onsubmit={submitCreate}>
-        <div class="form-row">
-          <label for="create-emp">Mitarbeiter</label>
-          <select id="create-emp" bind:value={createForm.employeeId} required>
+        <div class="form-group">
+          <label class="form-label" for="create-emp">Mitarbeiter</label>
+          <select id="create-emp" class="form-input" bind:value={createForm.employeeId} required>
             <option value="" disabled>— Mitarbeiter wählen —</option>
             {#each employees as emp (emp.id)}
               <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
             {/each}
           </select>
         </div>
-        <div class="form-row">
-          <label for="create-type">Art</label>
-          <select id="create-type" bind:value={createForm.type} required>
+        <div class="form-group">
+          <label class="form-label" for="create-type">Art</label>
+          <select id="create-type" class="form-input" bind:value={createForm.type} required>
             {#each TYPE_OPTIONS as opt (opt.code)}
               <option value={opt.code}>{opt.label}</option>
             {/each}
           </select>
         </div>
-        <div class="form-row form-row-2col">
-          <div>
-            <label for="create-start">Von</label>
-            <input id="create-start" type="date" bind:value={createForm.startDate} required />
+        <div class="form-grid-2col">
+          <div class="form-group">
+            <label class="form-label" for="create-start">Von</label>
+            <input
+              id="create-start"
+              type="date"
+              class="form-input"
+              bind:value={createForm.startDate}
+              required
+            />
           </div>
-          <div>
-            <label for="create-end">Bis</label>
-            <input id="create-end" type="date" bind:value={createForm.endDate} required />
+          <div class="form-group">
+            <label class="form-label" for="create-end">Bis</label>
+            <input
+              id="create-end"
+              type="date"
+              class="form-input"
+              bind:value={createForm.endDate}
+              required
+            />
           </div>
         </div>
-        <div class="form-row">
+        <div class="form-group">
           <label class="checkbox-row">
             <input type="checkbox" bind:checked={createForm.halfDay} />
             Halber Tag
           </label>
         </div>
-        <div class="form-row">
-          <label for="create-note">Notiz (optional)</label>
-          <textarea id="create-note" rows="3" bind:value={createForm.note}></textarea>
+        <div class="form-group">
+          <label class="form-label" for="create-note">Notiz (optional)</label>
+          <textarea id="create-note" class="form-input" rows="3" bind:value={createForm.note}
+          ></textarea>
         </div>
         {#if createError}
           <p class="form-error">{createError}</p>
@@ -1405,8 +1450,8 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1564,7 +1609,7 @@
     font-size: 2.5rem;
   }
   .empty-state h3 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
   }
 
   /* ── Modal ────────────────────────────────────────────────────────── */
@@ -1601,10 +1646,10 @@
     align-items: center;
     justify-content: space-between;
     padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
+    border-bottom: 1px solid var(--color-border-subtle);
   }
   .modal-header h2 {
-    font-size: 1.0625rem;
+    font-size: 1rem;
     font-weight: 600;
     margin: 0;
   }
@@ -1616,46 +1661,22 @@
     justify-content: flex-end;
     gap: 0.625rem;
     padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-subtle);
   }
 
   /* ── Create-Modal Form ─────────────────────────────────────────────── */
-  .form-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-    margin-bottom: 0.875rem;
+  .modal-body :global(.form-group) {
+    margin-bottom: 1rem;
   }
-  .form-row label {
-    font-size: 0.8125rem;
-    font-weight: 500;
-    color: var(--color-text-muted, #555);
-  }
-  .form-row input,
-  .form-row select,
-  .form-row textarea {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border, #d1d5db);
-    border-radius: 6px;
-    background: var(--color-surface, #fff);
-    color: var(--color-text, #1f2937);
-    font-size: 0.875rem;
-    font-family: inherit;
-  }
-  .form-row textarea {
+  .modal-body :global(textarea.form-input) {
     resize: vertical;
     min-height: 64px;
   }
-  .form-row-2col {
+  .form-grid-2col {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.875rem;
-  }
-  .form-row-2col > div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
+    gap: 1rem;
   }
   .checkbox-row {
     display: flex !important;
@@ -1684,7 +1705,7 @@
     gap: 0.625rem;
     margin-top: 1rem;
     padding-top: 1rem;
-    border-top: 1px solid var(--gray-200);
+    border-top: 1px solid var(--color-border-subtle);
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
@@ -1692,8 +1713,8 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 8px;
     padding: 1rem 1.25rem;
   }
@@ -1720,7 +1741,7 @@
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
     background: var(--color-red, #dc2626);
-    color: #fff;
+    color: white;
     border: none;
     border-radius: 8px;
     padding: 0.5rem 1.25rem;
@@ -1787,6 +1808,7 @@
   .cal-chips {
     display: flex;
     flex-direction: column;
+    justify-content: flex-end;
     gap: 2px;
     flex: 1;
     min-height: 0;
@@ -1799,7 +1821,7 @@
     gap: 0.2rem;
     padding: 2px 0.4rem;
     border-radius: 4px;
-    color: #fff;
+    color: white;
     font-size: 0.75rem;
     line-height: 1.4;
     overflow: hidden;
@@ -1853,8 +1875,15 @@
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--color-text-muted);
+  }
+  .badge-attest {
+    margin-left: 0.25rem;
+    font-size: 0.75rem;
+  }
+  .review-section {
+    margin-top: 1.25rem;
   }
   .legend-dot {
     width: 10px;
@@ -1882,8 +1911,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--gray-50, #f9fafb);
-    border: 1px solid var(--gray-200);
+    background: var(--color-bg-subtle);
+    border: 1px solid var(--color-border-subtle);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
