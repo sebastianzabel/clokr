@@ -4,6 +4,7 @@ import cron, { type ScheduledTask } from "node-cron";
 declare module "fastify" {
   interface FastifyInstance {
     runRetention?: () => Promise<void>;
+    runPurgeableAuditLogs?: () => Promise<void>;
   }
 }
 
@@ -120,6 +121,47 @@ export const dataRetentionPlugin = fp(async (app) => {
     }
   }
 
+  // ── Purgeable AuditLog Purge ────────────────────────────────────────────────
+  // DSGVO Art. 5(1)(e) Datensparsamkeit: WiFi-Presence-only AuditLog entries
+  // (purgeable=true) that never produced a TimeEntry are not payroll-relevant
+  // and must not accumulate indefinitely. Entries with purgeable=true are purged
+  // after the configured window. §147 AO 10-year retention applies only to
+  // payroll-relevant entries (purgeable=false). Ref: Phase 25 CONTEXT.md.
+  async function runPurgeableAuditLogs() {
+    app.log.info("AuditLog-Purge: Starte Bereinigung purgeable Einträge");
+
+    // Determine the minimum configured retention across all tenants.
+    // AuditLog has no tenantId column, so we apply the shortest window
+    // (most privacy-preserving) as the global cutoff.
+    const tenants = await app.prisma.tenant.findMany({
+      include: { config: true },
+    });
+
+    // Default to 90 days if no tenant has a custom config.
+    // T-25-08-02: Math.max(1, days) prevents a mis-configured 0-day window
+    // from purging nearly everything — minimum effective window is 1 day.
+    const minRetentionDays = tenants.reduce<number>((min, t) => {
+      const configured =
+        (t.config as { purgeableAuditRetentionDays?: number } | null)
+          ?.purgeableAuditRetentionDays ?? 90;
+      return Math.min(min, Math.max(1, configured));
+    }, 90);
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - minRetentionDays);
+
+    const result = await app.prisma.auditLog.deleteMany({
+      where: {
+        purgeable: true,
+        createdAt: { lt: cutoff },
+      },
+    });
+
+    app.log.info(
+      `AuditLog-Purge: ${result.count} purgeable Einträge gelöscht (Cutoff: ${cutoff.toISOString()}, Fenster: ${minRetentionDays} Tage)`,
+    );
+  }
+
   // Schedule: January 2nd at 03:00
   const task = cron.schedule("0 3 2 1 *", () => {
     runRetention().catch((err) => app.log.error({ err }, "Data-Retention fehlgeschlagen"));
@@ -127,8 +169,16 @@ export const dataRetentionPlugin = fp(async (app) => {
   tasks.push(task);
   app.log.info("Data-Retention: Jährliche Archivierung geplant (2. Januar, 03:00)");
 
+  // Daily purgeable AuditLog purge — 03:00 every day
+  const purgeTask = cron.schedule("0 3 * * *", () => {
+    runPurgeableAuditLogs().catch((err) => app.log.error({ err }, "AuditLog-Purge fehlgeschlagen"));
+  });
+  tasks.push(purgeTask);
+  app.log.info("AuditLog-Purge: Tägl. Bereinigung geplant (03:00)");
+
   // Expose for manual trigger
   app.decorate("runRetention", runRetention);
+  app.decorate("runPurgeableAuditLogs", runPurgeableAuditLogs);
 
   app.addHook("onClose", () => {
     tasks.forEach((t) => void t.stop());
