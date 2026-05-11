@@ -472,6 +472,10 @@
   let teamReqPage = $state(1);
   let teamReqPageSize = $state(10);
 
+  // Year selector for the list view (current year ± 2).
+  const _currentYear = new Date().getFullYear();
+  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
+
   let filteredTeamRequests = $derived(
     allTeamRequests.filter((req) => {
       if (filterEmployeeId && req.employeeId !== filterEmployeeId) return false;
@@ -897,6 +901,19 @@
     </div>
   {:else}
     <div class="filter-bar">
+      <select
+        class="form-input filter-select"
+        bind:value={calYear}
+        onchange={() => {
+          loadData();
+          loadCalendar();
+        }}
+        aria-label="Jahr wählen"
+      >
+        {#each yearOptions as y (y)}
+          <option value={y}>{y}</option>
+        {/each}
+      </select>
       <select
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
