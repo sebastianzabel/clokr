@@ -467,6 +467,7 @@ function buildDatevLodas(params: {
     "BeraterNr=0",
     "MandantenNr=0",
     "Datumsangaben=DDMMJJJJ",
+    `Abrechnungszeitraum=${String(m).padStart(2, "0")}${y}`,
     "",
     "[Satzbeschreibung]",
     "20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd",

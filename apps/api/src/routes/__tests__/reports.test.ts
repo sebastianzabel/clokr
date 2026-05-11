@@ -110,6 +110,33 @@ describe("Reports API", () => {
       expect(body).toContain("Datumsangaben=DDMMJJJJ");
     });
 
+    it("DATEV-01d: [Allgemein] contains Abrechnungszeitraum=MMYYYY for the export period", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=4",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Abrechnungszeitraum=042026");
+      // Verify position: Abrechnungszeitraum line must appear inside [Allgemein] block,
+      // i.e. before [Satzbeschreibung].
+      const lines = body.split(/\r\n/);
+      const periodIdx = lines.findIndex((l: string) => l.startsWith("Abrechnungszeitraum="));
+      const satzIdx = lines.findIndex((l: string) => l === "[Satzbeschreibung]");
+      expect(periodIdx).toBeGreaterThan(0);
+      expect(satzIdx).toBeGreaterThan(periodIdx);
+    });
+
+    it("DATEV-01e: Abrechnungszeitraum zero-pads single-digit months", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/reports/datev?year=2026&month=1",
+        headers: { authorization: `Bearer ${datevData.adminToken}` },
+      });
+      const body = iconv.decode(res.rawPayload, "win1252");
+      expect(body).toContain("Abrechnungszeitraum=012026");
+    });
+
     it("DATEV-01c: [Satzbeschreibung] contains a row starting with '20;'", async () => {
       const res = await app.inject({
         method: "GET",
