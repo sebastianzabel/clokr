@@ -324,14 +324,10 @@
     loadCalendar();
     loadData();
   }
-  function gotoTodayYear() {
-    const cur = new Date().getFullYear();
-    if (calYear !== cur) {
-      calYear = cur;
-      loadCalendar();
-      loadData();
-    }
-  }
+
+  // Year dropdown options for the list-view filter (current ± 2).
+  const _currentYear = new Date().getFullYear();
+  const yearOptions = [_currentYear - 2, _currentYear - 1, _currentYear, _currentYear + 1];
 
   const MONTH_NAMES = [
     "Januar",
@@ -1417,21 +1413,30 @@
       >
     </button>
     <div class="cal-nav-center">
-      <span class="cal-nav-title">{calYear}</span>
+      <select
+        class="cal-year-select"
+        bind:value={calYear}
+        onchange={() => {
+          loadData();
+          loadCalendar();
+        }}
+        aria-label="Jahr wählen"
+      >
+        {#each yearOptions as y (y)}
+          <option value={y}>{y}</option>
+        {/each}
+      </select>
     </div>
-    <div style="display:flex;align-items:center;gap:0.5rem;">
-      <button class="btn btn-sm btn-ghost" onclick={gotoTodayYear}>Heute</button>
-      <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
-    </div>
+    <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+      >
+    </button>
   </div>
 
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
@@ -2082,6 +2087,25 @@
     border-radius: var(--radius-lg, 0.75rem);
     margin-bottom: 1rem;
   }
+  .cal-year-select {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: var(--color-text-heading);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+  }
+  .cal-year-select:hover,
+  .cal-year-select:focus-visible {
+    background-color: var(--color-brand-tint);
+    outline: none;
+  }
   .cal-nav-right {
     display: flex;
     align-items: center;
@@ -2153,18 +2177,18 @@
   }
   .cal-chip--bar-start {
     border-radius: 4px 0 0 4px;
-    margin-right: -3px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-end {
     border-radius: 0 4px 4px 0;
-    margin-left: -3px;
+    margin-left: -1.5px;
     height: 22px;
   }
   .cal-chip--bar-middle {
     border-radius: 0;
-    margin-left: -3px;
-    margin-right: -3px;
+    margin-left: -1.5px;
+    margin-right: -1.5px;
     height: 22px;
   }
   .cal-chip--pending {
