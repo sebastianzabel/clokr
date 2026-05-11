@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: executing
-stopped_at: Completed 25-wifi-presence-stempel-fritzbox-25-07-PLAN.md
-last_updated: "2026-05-11T19:35:00.470Z"
+status: verifying
+stopped_at: Completed 25-wifi-presence-stempel-fritzbox-25-09-PLAN.md
+last_updated: "2026-05-11T19:44:16.625Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 7
@@ -18,7 +18,7 @@ progress:
 
 Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
 Plan: 9 of 9
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-11
 
 Progress: [████████░░] 83%
@@ -87,6 +87,8 @@ Recent decisions affecting v1.4:
 - [Phase 25-wifi-presence-stempel-fritzbox]: Status dot uses CSS classes (status-dot/status-dot--online) not inline hex — maps to var(--color-green)/var(--color-text-muted)
 - [Phase 25-07]: api.patch() confirmed available in client.ts — no fallback to api.put() needed for PATCH /me/wifi
 - [Phase 25-07]: MAC list visible regardless of opt-in state — allows pre-configuration before enabling WiFi presence
+- [Phase 25]: fritzbox-adapter: ABSENT_THRESHOLD=6 (6 consecutive polls) balances disconnect responsiveness vs spurious events from brief WiFi hiccups
+- [Phase 25]: fritzbox-adapter: GAP_THRESHOLD_MS=30min — short reconnects are silent to avoid spurious clock-in/out pairs
 
 ### Pending Todos
 
@@ -98,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11T19:35:00.466Z
-Stopped at: Completed 25-wifi-presence-stempel-fritzbox-25-07-PLAN.md
+Last session: 2026-05-11T19:44:07.388Z
+Stopped at: Completed 25-wifi-presence-stempel-fritzbox-25-09-PLAN.md
 Resume file: None

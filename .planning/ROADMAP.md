@@ -68,7 +68,7 @@ See `.planning/milestones/v1.3-ROADMAP.md` for full details.
 - [ ] **Phase 22: Reports Page Redesign** — Glass-design modernization with period selector and export buttons
 - [x] **Phase 23: Glass-Card UI Polish** — Schichten and NFC-Terminal pages get glass-card frames (completed 2026-04-25)
 - [x] **Phase 24: v1.4 UAT Fixes** — DATEV permission, LODAS header, year-scoped team-leave, manager-on-behalf-of (completed 2026-05-11)
-- [ ] **Phase 25: WiFi-Presence Stempel (FritzBox)** — Auto clock-in/out from phone WiFi presence on FritzBox, aligned to scheduled shift ±15min
+- [x] **Phase 25: WiFi-Presence Stempel (FritzBox)** — Auto clock-in/out from phone WiFi presence on FritzBox, aligned to scheduled shift ±15min (completed 2026-05-11)
 
 ## Phase Details
 
@@ -233,7 +233,7 @@ Plans:
 **Goal:** Auto-stamp employees when their phone connects to / disconnects from the office WiFi (FritzBox host list via TR-064). Trigger clock-in/out only when the event lies within ±15 min of a scheduled shift start/end — otherwise log-only. Audit-traceable as `source=WIFI`, GDPR-opt-in per employee.
 **Requirements**: WIFI-01 (FritzBox polling), WIFI-02 (MAC→employee mapping), WIFI-03 (shift-window gate), WIFI-04 (opt-in + audit), WIFI-05 (admin/MA Mac-management UI)
 **Depends on:** Phase 24
-**Plans:** 8/9 plans executed
+**Plans:** 9/9 plans complete
 
 Plans:
 - [x] 25-01-PLAN.md — Schema migration: PresenceSource model, PresenceDevice model, Employee wifi fields, TenantConfig.wifiPresenceWindowMinutes, AuditLog.purgeable, TimeEntrySource.WIFI (WIFI-01, WIFI-02, WIFI-04)
@@ -244,4 +244,4 @@ Plans:
 - [x] 25-06-PLAN.md — Admin WiFi-Presence UI page: key management + device list + opt-in overview (WIFI-02, WIFI-05)
 - [x] 25-07-PLAN.md — Profile "Meine Geräte" section: opt-in toggle + MAC list + add/remove (WIFI-02, WIFI-04, WIFI-05)
 - [x] 25-08-PLAN.md — Data-retention cron extension: 90-day purge of purgeable AuditLog entries (WIFI-04)
-- [ ] 25-09-PLAN.md — FritzBox adapter standalone service: TR-064 poller + state machine + webhook poster + Docker (WIFI-01)
+- [x] 25-09-PLAN.md — FritzBox adapter standalone service: TR-064 poller + state machine + webhook poster + Docker (WIFI-01)
