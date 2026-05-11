@@ -28,6 +28,8 @@ model Tenant {
   terminalApiKeys   TerminalApiKey[]
   apiKeys           ApiKey[]
   specialLeaveRules SpecialLeaveRule[]
+  presenceSources   PresenceSource[]
+  presenceDevices   PresenceDevice[]
 }
 
 // ─────────────────────────────────────────────
@@ -573,6 +575,51 @@ model TerminalApiKey {
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   @@index([tenantId])
+}
+
+// ─────────────────────────────────────────────
+// WIFI PRESENCE SOURCES (Adapter-Auth-Keys)
+// ─────────────────────────────────────────────
+
+model PresenceSource {
+  id          String    @id @default(uuid())
+  tenantId    String
+  name        String                            // Human-readable label (e.g. "Büro FritzBox")
+  keyHash     String    @unique                 // SHA-256 of the raw clk_ key (never stored in plaintext)
+  keyPrefix   String                            // First 8 chars of raw key for UI display (e.g. "clk_ab12")
+  adapterUrl  String?                           // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
+  isActive    Boolean   @default(true)          // Admin can disable without deleting (PATCH endpoint)
+  lastUsedAt  DateTime? @db.Timestamptz         // Updated on every successful webhook auth (adapter health signal)
+  revokedAt   DateTime? @db.Timestamptz         // Soft-revoke; null = active
+  createdAt   DateTime  @default(now()) @db.Timestamptz
+  updatedAt   DateTime  @updatedAt @db.Timestamptz
+  deletedAt   DateTime? @db.Timestamptz         // Soft-delete (audit-proof: never hard-delete)
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([keyHash])
+}
+
+// ─────────────────────────────────────────────
+// WIFI PRESENCE DEVICES (MAC→Employee mapping)
+// ─────────────────────────────────────────────
+
+model PresenceDevice {
+  id            String    @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  mac           String                            // Normalized lowercase colon-separated: "aa:bb:cc:dd:ee:ff"
+  label         String?                           // Optional human-readable label (e.g. "iPhone Sebastian", "Tablet")
+  addedByUserId String?                           // userId of the person who created the mapping (null = system)
+  addedAt       DateTime  @default(now()) @db.Timestamptz
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, mac])   // One MAC maps to exactly one employee per tenant
+  @@index([tenantId])
+  @@index([employeeId])
 }
 
 model ApiKey {
