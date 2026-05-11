@@ -2,13 +2,14 @@
 
 ## What This Is
 
-Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections. v1.2 shipped a complete UI redesign: glassmorphism design system (3 themes: lila/hell/dunkel), Clockodo-inspired sidebar, redesigned dashboard and calendars with gap-based island grid and spanning leave bars. v1.3 shipped MONTHLY_HOURS overhaul: fixed null-budget bugs, lock enforcement on Monatsabschluss, per-employee CARRY_FORWARD/TRACK_ONLY overtime mode, weekday configuration with per-day Soll, and tenant-level holiday deduction toggle. The app now correctly supports the full range of German hourly workers (Minijobber and SVP Teilzeit).
+Clokr is a German-language, audit-proof time tracking and leave management SaaS for small to mid-size companies. It handles time entries, breaks, overtime saldo, leave requests with BUrlG-compliant carry-over, ArbZG compliance checks, NFC terminal integration, and multi-tenant administration. v1.0 shipped production-ready (test coverage, legal compliance, DSGVO-compliant fonts, mobile-responsive UI). v1.1 shipped full reporting: DATEV LODAS export, company-wide PDF reports, and three manager dashboard sections. v1.2 shipped a complete UI redesign: glassmorphism design system (3 themes: lila/hell/dunkel), Clockodo-inspired sidebar, redesigned dashboard and calendars with gap-based island grid and spanning leave bars. v1.3 shipped MONTHLY_HOURS overhaul: fixed null-budget bugs, lock enforcement on Monatsabschluss, per-employee CARRY_FORWARD/TRACK_ONLY overtime mode, weekday configuration with per-day Soll, and tenant-level holiday deduction toggle. v1.4 shipped Manager/MA-Trennung & Reports: clean separation between personal and team views, dedicated `/team/*` routes with role-guarded layout, redesigned Reports page with per-employee DATEV LODAS + PDF exports, glass-card polish on Schichten and NFC-Terminal pages, four UAT fixes (DATEV permission/header, month-filter, manager-on-behalf-of), and a new WiFi-Presence auto-stamping integration with FritzBox (TR-064 polling + shift-window gate + GDPR opt-in).
 
-## v1.3 Shipped
+## v1.4 Shipped
 
-**Shipped:** 2026-04-14
+**Shipped:** 2026-05-11
 **Stack:** Fastify + SvelteKit 5 (runes) + Prisma + PostgreSQL 18
-**Codebase:** ~72,000 LOC (TypeScript + Svelte; +6,970 lines from MONTHLY_HOURS overhaul)
+**Codebase:** ~78,000 LOC (TypeScript + Svelte; +~6,000 lines for v1.4)
+**Current State:** v1.4 shipped, no active milestone
 
 ## Core Value
 
@@ -76,17 +77,16 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 
 ### Active
 
-- [ ] Manager/MA UI separation — eigene Manager-Seiten für Team-Zeiterfassung und Team-Abwesenheiten
-- [ ] Manager sidebar navigation — eigener Team-Bereich mit eigenen Menüpunkten
-- [ ] Personal pages show only own data — kein Employee-Selector auf persönlichen Seiten
-- [ ] Team dashboards with batch actions for managers
-- [ ] Reports page redesign (UI-13) — Charts, Tabellen, Export-Buttons modernisiert
-- [ ] Per-employee DATEV-TXT export (LODAS format, single employee)
-- [ ] Per-employee PDF export (tabular time entries)
-- [ ] Remaining pages glass-card frame: Schichten, NFC-Terminal overview (UI-17)
+_No active milestone — v1.4 shipped 2026-05-11. Next milestone TBD._
 
 **Deferred (v1.5+):**
 - [ ] Mobile 390px overflow check + 44px touch targets audit (UI-15) — after UI restructuring complete
+- [ ] Batch approve leave requests from team page (RPT-05)
+- [ ] Leave balance bar chart in Reports (RPT-06)
+- [ ] Drill-down detail view from Reports widgets (RPT-07)
+- [ ] Carry-over expiry warnings in Reports (RPT-08)
+- [ ] PDF with company branding + signature fields (RPT-09)
+- [ ] Per-day hour allocation for MONTHLY_HOURS (SCHED-V14-01)
 
 ### Out of Scope
 
@@ -149,20 +149,42 @@ The app must be reliable, secure, and legally compliant enough to go live with r
 | isTrackOnly guard in all 4 computation sites | Ensures TRACK_ONLY carryOver=0 even in retroactive recalculation paths | ✓ Good |
 | TenantConfig.monthlyHoursHolidayDeduction @default(false) | Zero-migration for existing tenants; opt-in toggle semantics | ✓ Good |
 | Lock check via SaldoSnapshot composite key (not entry count) | Authoritative even when no entries exist yet for the month | ✓ Good |
+| Personal page cleanup first (Phase 17) | Removes merge conflict risk for team route additions | ✓ Good |
+| DATEV utility extraction (Phase 21) before Reports UI (Phase 22) | Decouples API contract from page layout | ✓ Good |
+| Phase 19 forks personal page (not built from scratch) | Ensures full feature parity (ArbZG, lock enforcement, MONTHLY_HOURS) | ✓ Good |
+| Manager POST uses source=CORRECTION (not MANUAL) | Distinguishes manager corrections in audit trail | ✓ Good |
+| buildDatevLodas() module-scope (not exported) | Avoids leaking DATEV format details outside reports.ts | ✓ Good |
+| PresenceSource soft-delete, PresenceDevice cascade | Audit-proof for keys, GDPR-deletable for personal devices | ✓ Good |
+| wifiOptInAt never nulled on opt-out | Preserves GDPR consent withdrawal trace | ✓ Good |
+| purgeable=true AuditLog hard-deleted after 90 days | DSGVO Art. 5(1)(e) — WiFi-presence events are not payroll-relevant | ✓ Good |
+| WiFi consent audit entries never marked purgeable | Consent events permanently retained | ✓ Good |
+| Use minimum tenant retention as global AuditLog purge cutoff | AuditLog has no tenantId — most restrictive wins | ✓ Good |
+| tenantId_mac uniqueness (not per-employee) | MAC dedup matters at tenant scope, not per user | ✓ Good |
+| FritzBox adapter standalone Docker service | Decouples LAN device discovery from API process | ✓ Good |
+| ABSENT_THRESHOLD=6 + GAP_THRESHOLD_MS=30min | Balances responsiveness vs spurious events from brief WiFi hiccups | ✓ Good |
 
-## Current Milestone: v1.4 Manager/MA-Trennung & Reports
+## Current Milestone
 
-**Goal:** Saubere Trennung zwischen persönlichem Bereich und Manager-Ansichten, Reports-Seite überarbeiten mit Einzel-MA-Exporten
+_No active milestone — v1.4 shipped 2026-05-11._
 
-**Target features:**
-- Eigene Manager-Seiten für Team-Zeiterfassung und Team-Abwesenheiten
-- Eigene Manager-Navigation in der Sidebar (Team-Bereich)
-- Persönliche Seiten zeigen nur eigene Daten (kein Employee-Selector mehr)
-- Team-Dashboards mit Batch-Aktionen für Manager
-- Reports-Seite Redesign — Charts, Tabellen, Export-Buttons modernisiert
-- Einzel-MA DATEV-TXT Export (LODAS-Format pro Mitarbeiter)
-- Einzel-MA PDF Export (tabellarische Arbeitszeiten)
-- Restliche Seiten (Schichten, NFC-Terminal) Glass-Card-Rahmen
+**Next milestone:** TBD (start via `/gsd-new-milestone`)
+
+## Recently Shipped: v1.4 Manager/MA-Trennung & Reports
+
+**Shipped:** 2026-05-11
+**Phases:** 17-25 (22 plans)
+**See:** `.planning/milestones/v1.4-ROADMAP.md`
+
+**Delivered:**
+- Personal/Team page separation with role-guarded `/team/*` layout
+- Manager sidebar with Team-Zeiten + Team-Abwesenheiten nav
+- Team time-entries page (CRUD on behalf of any team member, name search)
+- Team leave page (approve/reject + create on behalf of)
+- Per-employee DATEV LODAS TXT and PDF Stundennachweis endpoints
+- Reports page glass-card redesign with shared period selector
+- Glass-card frames for Schichten + NFC-Terminal pages
+- UAT fixes: DATEV MANAGER role, LODAS Abrechnungszeitraum header, month-filter on Team-Abwesenheiten, manager-on-behalf-of leave
+- WiFi-Presence auto-stamping: FritzBox TR-064 poller, shift-window gate ±15min, GDPR opt-in, 90-day purgeable AuditLog
 
 ## Evolution
 
@@ -185,4 +207,4 @@ This document evolves at phase transitions and milestone boundaries.
 
 ---
 
-_Last updated: 2026-04-25 after v1.4 milestone start — Manager/MA-Trennung & Reports_
+_Last updated: 2026-05-11 after v1.4 milestone shipped — Manager/MA-Trennung & Reports archived to .planning/milestones/v1.4-ROADMAP.md_
