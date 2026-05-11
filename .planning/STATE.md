@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
 status: executing
-stopped_at: Completed 25-04-PLAN.md
-last_updated: "2026-05-11T19:23:45.364Z"
+stopped_at: Completed 25-wifi-presence-stempel-fritzbox-25-06-PLAN.md
+last_updated: "2026-05-11T19:28:31.821Z"
 last_activity: 2026-05-11
 progress:
   total_phases: 7
@@ -17,7 +17,7 @@ progress:
 ## Current Position
 
 Phase: 25 (wifi-presence-stempel-fritzbox) — EXECUTING
-Plan: 7 of 9
+Plan: 8 of 9
 Status: Ready to execute
 Last activity: 2026-05-11
 
@@ -84,6 +84,7 @@ Recent decisions affecting v1.4:
 - [Phase 25]: Presence webhook uses direct prisma.auditLog.create (not app.audit) for purgeable field support; Employee lookup uses user.isActive=true (no deletedAt on Employee model)
 - [Phase 25]: GET /opted-in registered before /:id routes to prevent Fastify path collision
 - [Phase 25]: Soft delete sets both deletedAt and isActive=false (audit-proof, never hard-delete)
+- [Phase 25-wifi-presence-stempel-fritzbox]: Status dot uses CSS classes (status-dot/status-dot--online) not inline hex — maps to var(--color-green)/var(--color-text-muted)
 
 ### Pending Todos
 
@@ -95,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-11T19:23:45.360Z
-Stopped at: Completed 25-04-PLAN.md
+Last session: 2026-05-11T19:28:31.817Z
+Stopped at: Completed 25-wifi-presence-stempel-fritzbox-25-06-PLAN.md
 Resume file: None
