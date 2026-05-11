@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.4
 milestone_name: Manager/MA-Trennung & Reports
-status: verifying
-stopped_at: Completed 23-glass-card-ui-polish-01-PLAN.md
-last_updated: "2026-04-25T21:25:28.215Z"
-last_activity: 2026-04-25
+status: planning
+stopped_at: Phase 24 planned (4 plans) — ready for execution
+last_updated: "2026-05-11T00:00:00.000Z"
+last_activity: 2026-05-11
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
-  total_plans: 9
+  total_plans: 13
   completed_plans: 9
-  percent: 100
+  percent: 69
 ---
 
 ## Current Position
@@ -46,6 +46,10 @@ See: .planning/PROJECT.md (updated 2026-04-25)
 *Updated after each plan completion*
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 24 added (2026-05-11): v1.4 UAT Fixes — 3 bugs (DATEV permissions, DATEV header, month filter) + 1 small feature (manager-creates-absences)
 
 ### Decisions
 

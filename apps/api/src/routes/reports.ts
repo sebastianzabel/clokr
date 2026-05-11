@@ -641,7 +641,7 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/datev?year=&month=  – DATEV LODAS Export
   app.get("/datev", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN"),
+    preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const { year, month } = req.query as { year: string; month: string };
       const y = parseInt(year);
