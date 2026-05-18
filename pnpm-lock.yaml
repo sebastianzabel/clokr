@@ -192,8 +192,8 @@ importers:
   apps/fritzbox-adapter:
     dependencies:
       dotenv:
-        specifier: ^16.4.7
-        version: 16.6.1
+        specifier: ^17.4.2
+        version: 17.4.2
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -1811,10 +1811,6 @@ packages:
 
   dfa@1.2.0:
     resolution: {integrity: sha512-ED3jP8saaweFTjeGX8HQPjeC1YYyZs98jGNZx6IiBvxW7JG5v492kamAQB3m2wop07CvU/RQmzcKr6bgcC5D/Q==}
-
-  dotenv@16.6.1:
-    resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
-    engines: {node: '>=12'}
 
   dotenv@17.4.2:
     resolution: {integrity: sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw==}
@@ -4458,7 +4454,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.1.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.5(@types/node@25.6.2)(@vitest/coverage-v8@4.1.5)(vite@8.0.11(@types/node@25.6.2)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.4))
+      vitest: 4.1.5(@types/node@22.19.18)(@vitest/coverage-v8@4.1.5)(vite@8.0.11(@types/node@22.19.18)(esbuild@0.27.4)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.4))
 
   '@vitest/expect@4.1.5':
     dependencies:
@@ -4782,8 +4778,6 @@ snapshots:
   devalue@5.8.0: {}
 
   dfa@1.2.0: {}
-
-  dotenv@16.6.1: {}
 
   dotenv@17.4.2: {}
 
