@@ -12,9 +12,9 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
-    "@tanstack/svelte-query": "^6.1.28",
+    "@tanstack/svelte-query": "^6.1.29",
     "chart.js": "^4.5.1",
-    "date-fns": "^4.1.0"
+    "date-fns": "^4.2.0"
   },
   "devDependencies": {
     "@sveltejs/adapter-node": "^5.5.4",
@@ -26,6 +26,6 @@
     "svelte-check": "^4.4.8",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.11"
+    "vite": "^8.0.13"
   }
 }
