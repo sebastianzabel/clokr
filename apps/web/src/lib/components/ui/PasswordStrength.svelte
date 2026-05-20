@@ -54,7 +54,7 @@
   }
   .pw-bar-track {
     height: 4px;
-    background: var(--gray-200);
+    background: var(--border);
     border-radius: 2px;
     overflow: hidden;
     margin-bottom: 0.5rem;
@@ -64,9 +64,9 @@
     border-radius: 2px;
     transition: width 0.3s ease, background 0.3s ease;
   }
-  .pw-weak { background: var(--color-red); }
-  .pw-medium { background: var(--color-yellow); }
-  .pw-strong { background: var(--color-green); }
+  .pw-weak { background: var(--bad); }
+  .pw-medium { background: var(--warn); }
+  .pw-strong { background: var(--good); }
   .pw-checks {
     list-style: none;
     padding: 0;
@@ -77,13 +77,13 @@
   }
   .pw-check {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     display: flex;
     align-items: center;
     gap: 0.25rem;
   }
   .pw-check-ok {
-    color: var(--color-green);
+    color: var(--good);
   }
   .pw-check-icon {
     font-size: 0.7rem;

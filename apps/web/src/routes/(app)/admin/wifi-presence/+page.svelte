@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Pagination from "$lib/components/ui/Pagination.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import Modal from "$components/ui/Modal.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import {
     listSources,
     createSource,
@@ -42,10 +47,22 @@
   let devicesError = $state("");
   let devicesLastRefreshed = $state<Date | null>(null);
   let deviceAssigning = $state<Record<string, boolean>>({}); // mac -> saving
-  let deviceAssignSelect = $state<Record<string, string>>({}); // mac -> selected employeeId
   let devPage = $state(1);
   let devPageSize = $state(10);
   let pagedDevices = $derived(devices.slice((devPage - 1) * devPageSize, devPage * devPageSize));
+
+  // Device-Assign Modal state
+  let assignModalOpen = $state(false);
+  let assignModalDevice: FritzDevice | null = $state(null);
+  let assignModalEmployeeId = $state("");
+
+  // Bestätigungs-Dialoge
+  let revokeConfirm = $state<{ open: boolean; id: string | null }>({ open: false, id: null });
+  let unassignConfirm = $state<{ open: boolean; mac: string | null; name: string }>({
+    open: false,
+    mac: null,
+    name: "",
+  });
 
   // ── Block 3: Opt-in-Übersicht ─────────────────────────────────────────────
   let optedIn: OptedInEmployee[] = $state([]);
@@ -109,13 +126,14 @@
     }
   }
 
-  async function handleRevokeSource(id: string) {
-    if (
-      !confirm("Presence-Quelle widerrufen? Aktive Adapter können sich dann nicht mehr einloggen.")
-    )
-      return;
+  function askRevokeSource(id: string) {
+    revokeConfirm = { open: true, id };
+  }
+
+  async function confirmRevokeSource() {
+    if (!revokeConfirm.id) return;
     try {
-      await revokeSource(id);
+      await revokeSource(revokeConfirm.id);
       await loadSources();
     } catch {
       /* ignore */
@@ -133,12 +151,6 @@
     try {
       devices = await listDevices(selectedSourceId);
       devicesLastRefreshed = new Date();
-      // Initialise per-device select state from current assignment
-      const sel: Record<string, string> = {};
-      for (const d of devices) {
-        sel[d.mac] = d.assignedEmployeeId ?? "";
-      }
-      deviceAssignSelect = sel;
       devPage = 1;
     } catch {
       devicesError =
@@ -148,9 +160,22 @@
     }
   }
 
-  async function saveAssignment(mac: string) {
-    const employeeId = deviceAssignSelect[mac];
-    if (!employeeId || !selectedSourceId) return;
+  function openAssignModal(dev: FritzDevice) {
+    assignModalDevice = dev;
+    assignModalEmployeeId = dev.assignedEmployeeId ?? "";
+    assignModalOpen = true;
+  }
+
+  function closeAssignModal() {
+    assignModalOpen = false;
+    assignModalDevice = null;
+    assignModalEmployeeId = "";
+  }
+
+  async function saveAssignment() {
+    if (!assignModalDevice || !assignModalEmployeeId || !selectedSourceId) return;
+    const mac = assignModalDevice.mac;
+    const employeeId = assignModalEmployeeId;
     deviceAssigning = { ...deviceAssigning, [mac]: true };
     try {
       const result = await mapDevice(selectedSourceId, mac, employeeId);
@@ -173,6 +198,7 @@
       } else {
         toasts.success(`${name} zugewiesen`);
       }
+      closeAssignModal();
     } catch {
       toasts.error("Zuweisung fehlgeschlagen");
     } finally {
@@ -180,18 +206,22 @@
     }
   }
 
-  async function unassignDevice(mac: string) {
-    if (!selectedSourceId) return;
+  function askUnassignDevice(mac: string) {
     const dev = devices.find((d) => d.mac === mac);
     const name = dev?.assignedEmployeeName ?? "Mitarbeiter";
-    if (!confirm(`Zuweisung von "${name}" zu MAC ${mac} aufheben?`)) return;
+    unassignConfirm = { open: true, mac, name };
+  }
+
+  async function unassignDevice() {
+    const mac = unassignConfirm.mac;
+    if (!selectedSourceId || !mac) return;
+    const name = unassignConfirm.name;
     deviceAssigning = { ...deviceAssigning, [mac]: true };
     try {
       const result = await unmapDevice(selectedSourceId, mac);
       devices = devices.map((d) =>
         d.mac === mac ? { ...d, assignedEmployeeId: null, assignedEmployeeName: null } : d,
       );
-      deviceAssignSelect = { ...deviceAssignSelect, [mac]: "" };
       if (result.optInAutoDisabled) {
         toasts.success(`Zuweisung aufgehoben — WiFi-Opt-In für ${name} deaktiviert`);
         loadOptedIn();
@@ -211,362 +241,550 @@
   }
 </script>
 
-<svelte:head><title>WiFi-Presence – Clokr</title></svelte:head>
+<svelte:head><title>WiFi-Präsenz – Clokr</title></svelte:head>
 
-<div class="page-header card-animate">
-  <h1 class="page-title">WiFi-Presence</h1>
-  <p class="text-muted">WiFi-Geräte verwalten und Mitarbeiter zuweisen</p>
-</div>
+<section class="page">
+  <PageHead
+    eyebrow="Administration"
+    title="WiFi-Präsenz"
+    accent="Präsenz"
+    sub="WiFi-Quellen verwalten, Geräte Mitarbeitern zuweisen und Opt-Ins überblicken."
+  />
 
-<!-- ── Block 1: Presence-Quellen ──────────────────────────────────────────── -->
-<div class="section-label card-animate">
-  <h2 class="section-header">Presence-Quellen</h2>
-  <p class="text-muted">
-    API-Schlüssel für WiFi-Presence-Adapter verwalten. Jede Quelle benötigt einen eigenen Schlüssel.
-  </p>
-</div>
+  <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────── -->
+  <Card animate>
+    <CardHeader title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten" />
 
-<div class="card card-body settings-card card-animate">
-  {#if showNewKey}
-    <div class="alert alert-success" role="status" aria-live="polite" style="margin: 1rem 0;">
-      <div>
-        <strong>Neuer Schlüssel erstellt!</strong>
-        <p style="margin: 0.5rem 0;">
-          Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
-        </p>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <code
-            style="flex: 1; padding: 0.5rem; background: var(--color-bg-subtle); border-radius: var(--radius-sm); word-break: break-all; font-size: 0.8125rem;"
-            >{newRawKey}</code
-          >
-          <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newRawKey)}
-            >Schlüssel kopieren</button
+    {#if showNewKey}
+      <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
+        <div>
+          <strong>Neuer Schlüssel erstellt!</strong>
+          <p class="key-hint">Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:</p>
+          <div class="key-row">
+            <code class="key-value">{newRawKey}</code>
+            <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newRawKey)}
+              >Schlüssel kopieren</button
+            >
+          </div>
+          <button
+            class="btn btn-sm btn-ghost close-key-btn"
+            onclick={() => {
+              showNewKey = false;
+              newRawKey = "";
+            }}>Schließen</button
           >
         </div>
-        <button
-          class="btn btn-sm btn-ghost"
-          style="margin-top: 0.5rem;"
-          onclick={() => {
-            showNewKey = false;
-            newRawKey = "";
-          }}>Schließen</button
-        >
+      </div>
+    {/if}
+
+    <div class="source-create-row">
+      <input
+        type="text"
+        class="form-input source-name-input"
+        bind:value={newSourceName}
+        placeholder="Quellen-Name (z.B. FritzBox Büro)"
+      />
+      <input
+        type="url"
+        class="form-input source-url-input"
+        bind:value={newSourceAdapterUrl}
+        placeholder="Adapter-URL (optional)"
+      />
+      <button
+        class="btn btn-primary"
+        onclick={handleCreateSource}
+        disabled={sourceCreating || !newSourceName.trim()}
+      >
+        Schlüssel erstellen
+      </button>
+    </div>
+
+    {#if sourceCreateError}
+      <p class="form-error" role="alert">{sourceCreateError}</p>
+    {/if}
+
+    {#if sourcesLoading}
+      <div class="skeleton skeleton-text source-skel"></div>
+    {:else if sources.length > 0}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Schlüssel-Prefix</th>
+              <th>Zuletzt verwendet</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each pagedSources as src (src.id)}
+              <tr class:row-revoked={src.revokedAt}>
+                <td>{src.name}</td>
+                <td><code class="mono-sm">{src.keyPrefix}</code></td>
+                <td>{src.lastUsedAt ? new Date(src.lastUsedAt).toLocaleString("de-DE") : "Nie"}</td>
+                <td>
+                  {#if src.revokedAt}
+                    <span class="badge badge-red">Widerrufen</span>
+                  {:else}
+                    <span class="badge badge-green">Aktiv</span>
+                  {/if}
+                </td>
+                <td>
+                  {#if !src.revokedAt}
+                    <button
+                      class="btn btn-sm btn-ghost btn-danger-text"
+                      onclick={() => askRevokeSource(src.id)}
+                    >
+                      Quelle widerrufen
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination total={sources.length} bind:page={srcPage} bind:pageSize={srcPageSize} />
+      </div>
+    {:else}
+      <p class="text-muted empty-msg">
+        Noch keine Presence-Quellen. Erstellen Sie einen Schlüssel für Ihren ersten Adapter.
+      </p>
+    {/if}
+  </Card>
+
+  <!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────── -->
+  <Card animate>
+    <CardHeader title="WiFi-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen" />
+
+    <div class="devices-toolbar">
+      <div class="devices-toolbar-left">
+        {#if sources.filter((s) => !s.revokedAt).length > 1}
+          <select class="form-input source-select" bind:value={selectedSourceId}>
+            {#each sources.filter((s) => !s.revokedAt) as src (src.id)}
+              <option value={src.id}>{src.name}</option>
+            {/each}
+          </select>
+        {/if}
+        <span class="text-muted refresh-hint">
+          {devicesLastRefreshed
+            ? `Zuletzt aktualisiert: ${devicesLastRefreshed.toLocaleTimeString("de-DE")}`
+            : "Noch nicht geladen"}
+        </span>
+      </div>
+      <button
+        class="btn btn-outline btn-sm"
+        onclick={refreshDevices}
+        disabled={devicesLoading || !selectedSourceId}
+      >
+        {devicesLoading ? "Aktualisieren…" : "Liste aktualisieren"}
+      </button>
+    </div>
+
+    {#if devicesError}
+      <div class="alert alert-error" role="alert">
+        <span aria-hidden="true">⚠</span>
+        <span>{devicesError}</span>
+      </div>
+    {:else if devicesLoading}
+      <div class="skeleton skeleton-text devices-skel"></div>
+    {:else if devices.length > 0}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>MAC-Adresse</th>
+              <th>Hostname</th>
+              <th>Zuletzt gesehen</th>
+              <th>Status</th>
+              <th>Mitarbeiter</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each pagedDevices as dev (dev.mac)}
+              <tr>
+                <td><code class="mono-sm">{dev.mac}</code></td>
+                <td>{dev.hostname || "—"}</td>
+                <td class="cell-sm">{formatLastSeen(dev.lastSeen)}</td>
+                <td>
+                  <span class="status-cell">
+                    <span
+                      class="status-dot"
+                      class:status-dot--online={dev.online}
+                      aria-hidden="true"
+                    ></span>
+                    {dev.online ? "Online" : "Offline"}
+                  </span>
+                </td>
+                <td>
+                  {#if dev.assignedEmployeeId}
+                    <span class="cell-sm">{dev.assignedEmployeeName ?? dev.assignedEmployeeId}</span
+                    >
+                  {:else}
+                    <span class="text-muted cell-sm">Nicht zugewiesen</span>
+                  {/if}
+                </td>
+                <td>
+                  {#if dev.assignedEmployeeId}
+                    <button
+                      class="btn btn-sm btn-ghost btn-danger-text"
+                      onclick={() => askUnassignDevice(dev.mac)}
+                      disabled={deviceAssigning[dev.mac]}
+                    >
+                      Aufheben
+                    </button>
+                  {:else}
+                    <button
+                      class="btn btn-sm btn-outline"
+                      onclick={() => openAssignModal(dev)}
+                      disabled={deviceAssigning[dev.mac]}
+                    >
+                      Zuweisen
+                    </button>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination total={devices.length} bind:page={devPage} bind:pageSize={devPageSize} />
+      </div>
+    {:else if devicesLastRefreshed}
+      <p class="text-muted empty-msg">
+        Keine Geräte gefunden. Stellen Sie sicher, dass der WiFi-Adapter (z.B. FritzBox) läuft und
+        verbunden ist.
+      </p>
+    {:else}
+      <p class="text-muted empty-msg">
+        Klicken Sie auf "Liste aktualisieren", um die verbundenen Geräte zu laden.
+      </p>
+    {/if}
+  </Card>
+
+  <!-- ── Block 3: Opt-in-Übersicht ─────────────────────────────────────── -->
+  <Card animate>
+    <CardHeader
+      title="Opt-In-Übersicht"
+      sub="Welche Mitarbeiter haben WiFi-Präsenzerkennung aktiviert"
+    />
+
+    {#if optInLoading}
+      <div class="skeleton skeleton-text optin-skel"></div>
+    {:else if optedIn.length > 0}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Mitarbeiter</th>
+              <th>Opt-In</th>
+              <th>MAC-Adressen</th>
+              <th>Aktiviert am</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each pagedOptedIn as emp (emp.id)}
+              <tr>
+                <td>{emp.firstName} {emp.lastName}</td>
+                <td>
+                  {#if emp.wifiPresenceEnabled}
+                    <span class="badge badge-green">Aktiv</span>
+                  {:else}
+                    <span class="badge badge-gray">Inaktiv</span>
+                  {/if}
+                </td>
+                <td class="cell-sm">
+                  {#if emp.wifiMacs.length === 0}
+                    <span class="text-muted">—</span>
+                  {:else if emp.wifiMacs.length <= 2}
+                    {#each emp.wifiMacs as mac (mac)}
+                      <code class="mono-sm mac-chip">{mac}</code>
+                    {/each}
+                  {:else}
+                    <span class="badge badge-blue">{emp.wifiMacs.length} Geräte</span>
+                  {/if}
+                </td>
+                <td class="cell-sm">
+                  {emp.wifiOptInAt ? new Date(emp.wifiOptInAt).toLocaleDateString("de-DE") : "—"}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination total={optedIn.length} bind:page={optPage} bind:pageSize={optPageSize} />
+      </div>
+    {:else}
+      <p class="text-muted empty-msg">Kein Mitarbeiter hat WiFi-Präsenzerkennung aktiviert.</p>
+    {/if}
+  </Card>
+</section>
+
+<!-- ── Bestätigungs-Dialoge ──────────────────────────────────────────────── -->
+<ConfirmDialog
+  bind:open={revokeConfirm.open}
+  title="Presence-Quelle widerrufen?"
+  description="Aktive Adapter können sich dann nicht mehr einloggen."
+  confirmLabel="Widerrufen"
+  danger
+  onConfirm={confirmRevokeSource}
+/>
+
+<ConfirmDialog
+  bind:open={unassignConfirm.open}
+  title="Zuweisung aufheben?"
+  description={`Die MAC-Adresse wird von ${unassignConfirm.name} getrennt.`}
+  confirmLabel="Aufheben"
+  danger
+  onConfirm={unassignDevice}
+/>
+
+<!-- ── Device-Assign Modal ────────────────────────────────────────────────── -->
+{#if assignModalDevice}
+  <Modal
+    bind:open={assignModalOpen}
+    eyebrow="Gerät zuweisen"
+    title={assignModalDevice.hostname || assignModalDevice.mac}
+  >
+    <div class="device-meta">
+      <div class="meta-row">
+        <span class="meta-label">MAC-Adresse</span>
+        <code class="mono-sm">{assignModalDevice.mac}</code>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Status</span>
+        <span class="status-cell">
+          <span
+            class="status-dot"
+            class:status-dot--online={assignModalDevice.online}
+            aria-hidden="true"
+          ></span>
+          {assignModalDevice.online ? "Online" : "Offline"}
+        </span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Zuletzt gesehen</span>
+        <span class="cell-sm">{formatLastSeen(assignModalDevice.lastSeen)}</span>
       </div>
     </div>
-  {/if}
-
-  <div style="display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap;">
-    <input
-      type="text"
-      class="form-input"
-      bind:value={newSourceName}
-      placeholder="Quellen-Name (z.B. FritzBox Büro)"
-      style="flex: 1; min-width: 200px;"
-    />
-    <input
-      type="url"
-      class="form-input"
-      bind:value={newSourceAdapterUrl}
-      placeholder="Adapter-URL (optional)"
-      style="flex: 1; min-width: 180px;"
-    />
-    <button
-      class="btn btn-primary"
-      onclick={handleCreateSource}
-      disabled={sourceCreating || !newSourceName.trim()}
-    >
-      Schlüssel erstellen
-    </button>
-  </div>
-
-  {#if sourceCreateError}
-    <p class="form-error" role="alert">{sourceCreateError}</p>
-  {/if}
-
-  {#if sourcesLoading}
-    <div
-      class="skeleton skeleton-text"
-      style="height: 48px; border-radius: var(--radius-md);"
-    ></div>
-  {:else if sources.length > 0}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Schlüssel-Prefix</th>
-            <th>Zuletzt verwendet</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedSources as src (src.id)}
-            <tr class:row-revoked={src.revokedAt}>
-              <td>{src.name}</td>
-              <td><code style="font-size: 0.8125rem;">{src.keyPrefix}</code></td>
-              <td>{src.lastUsedAt ? new Date(src.lastUsedAt).toLocaleString("de-DE") : "Nie"}</td>
-              <td>
-                {#if src.revokedAt}
-                  <span class="badge badge-red">Widerrufen</span>
-                {:else}
-                  <span class="badge badge-green">Aktiv</span>
-                {/if}
-              </td>
-              <td>
-                {#if !src.revokedAt}
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    style="color: var(--color-red);"
-                    onclick={() => handleRevokeSource(src.id)}
-                  >
-                    Quelle widerrufen
-                  </button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination total={sources.length} bind:page={srcPage} bind:pageSize={srcPageSize} />
+    <div class="form-group">
+      <label class="form-label" for="assign-emp">Mitarbeiter</label>
+      <select id="assign-emp" class="form-input" bind:value={assignModalEmployeeId}>
+        <option value="">Mitarbeiter auswählen…</option>
+        {#each employees as emp (emp.id)}
+          <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
+        {/each}
+      </select>
+      <p class="text-muted form-hint">
+        Bei der ersten Zuweisung wird WiFi-Präsenzerkennung für den Mitarbeiter automatisch
+        aktiviert.
+      </p>
     </div>
-  {:else}
-    <p class="text-muted">
-      Noch keine Presence-Quellen. Erstellen Sie einen Schlüssel für Ihren ersten Adapter.
-    </p>
-  {/if}
-</div>
-
-<!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────────── -->
-<div class="section-label card-animate">
-  <h2 class="section-header">WiFi-Geräteliste</h2>
-  <p class="text-muted">
-    Aktuell mit dem Netzwerk verbundene Geräte. MAC-Adressen können Mitarbeitern zugewiesen werden.
-  </p>
-</div>
-
-<div class="card card-body settings-card card-animate">
-  <div
-    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem;"
-  >
-    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-      {#if sources.filter((s) => !s.revokedAt).length > 1}
-        <select class="form-input" bind:value={selectedSourceId} style="width: auto;">
-          {#each sources.filter((s) => !s.revokedAt) as src (src.id)}
-            <option value={src.id}>{src.name}</option>
-          {/each}
-        </select>
-      {/if}
-      <span class="text-muted" style="font-size: 0.8125rem;">
-        {devicesLastRefreshed
-          ? `Zuletzt aktualisiert: ${devicesLastRefreshed.toLocaleTimeString("de-DE")}`
-          : "Noch nicht geladen"}
-      </span>
-    </div>
-    <button
-      class="btn btn-outline btn-sm"
-      onclick={refreshDevices}
-      disabled={devicesLoading || !selectedSourceId}
-    >
-      {devicesLoading ? "Aktualisieren…" : "Liste aktualisieren"}
-    </button>
-  </div>
-
-  {#if devicesError}
-    <div class="alert alert-error" role="alert">
-      <span aria-hidden="true">⚠</span>
-      <span>{devicesError}</span>
-    </div>
-  {:else if devicesLoading}
-    <div
-      class="skeleton skeleton-text"
-      style="height: 120px; border-radius: var(--radius-md);"
-    ></div>
-  {:else if devices.length > 0}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>MAC-Adresse</th>
-            <th>Hostname</th>
-            <th>Zuletzt gesehen</th>
-            <th>Status</th>
-            <th>Mitarbeiter</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedDevices as dev (dev.mac)}
-            <tr>
-              <td
-                ><code style="font-size: 0.8125rem; font-family: var(--font-mono);">{dev.mac}</code
-                ></td
-              >
-              <td>{dev.hostname || "—"}</td>
-              <td style="font-size: 0.875rem;">{formatLastSeen(dev.lastSeen)}</td>
-              <td>
-                <span style="display: inline-flex; align-items: center; gap: 0.375rem;">
-                  <span class="status-dot" class:status-dot--online={dev.online} aria-hidden="true"
-                  ></span>
-                  {dev.online ? "Online" : "Offline"}
-                </span>
-              </td>
-              <td>
-                {#if dev.assignedEmployeeId}
-                  <span style="font-size: 0.875rem;"
-                    >{dev.assignedEmployeeName ?? dev.assignedEmployeeId}</span
-                  >
-                {:else}
-                  <select
-                    class="form-input"
-                    bind:value={deviceAssignSelect[dev.mac]}
-                    disabled={deviceAssigning[dev.mac]}
-                    style="font-size: 0.875rem; padding: 0.25rem 0.5rem; min-width: 160px;"
-                  >
-                    <option value="">Mitarbeiter zuweisen…</option>
-                    {#each employees as emp (emp.id)}
-                      <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-                    {/each}
-                  </select>
-                {/if}
-              </td>
-              <td>
-                {#if !dev.assignedEmployeeId && deviceAssignSelect[dev.mac]}
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    onclick={() => saveAssignment(dev.mac)}
-                    disabled={deviceAssigning[dev.mac]}
-                  >
-                    Zuweisung speichern
-                  </button>
-                {:else if dev.assignedEmployeeId}
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    style="color: var(--color-red);"
-                    onclick={() => unassignDevice(dev.mac)}
-                    disabled={deviceAssigning[dev.mac]}
-                  >
-                    Zuweisung aufheben
-                  </button>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination total={devices.length} bind:page={devPage} bind:pageSize={devPageSize} />
-    </div>
-  {:else if devicesLastRefreshed}
-    <p class="text-muted">
-      Keine Geräte gefunden. Stellen Sie sicher, dass der WiFi-Adapter (z.B. FritzBox) läuft und
-      verbunden ist.
-    </p>
-  {:else}
-    <p class="text-muted">
-      Klicken Sie auf "Liste aktualisieren", um die verbundenen Geräte zu laden.
-    </p>
-  {/if}
-</div>
-
-<!-- ── Block 3: Opt-in-Übersicht ──────────────────────────────────────────── -->
-<div class="section-label card-animate">
-  <h2 class="section-header">Opt-in-Übersicht</h2>
-  <p class="text-muted">Welche Mitarbeiter haben WiFi-Präsenzerkennung aktiviert.</p>
-</div>
-
-<div class="card card-body settings-card card-animate">
-  {#if optInLoading}
-    <div
-      class="skeleton skeleton-text"
-      style="height: 48px; border-radius: var(--radius-md);"
-    ></div>
-  {:else if optedIn.length > 0}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Mitarbeiter</th>
-            <th>Opt-in</th>
-            <th>MAC-Adressen</th>
-            <th>Aktiviert am</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each pagedOptedIn as emp (emp.id)}
-            <tr>
-              <td>{emp.firstName} {emp.lastName}</td>
-              <td>
-                {#if emp.wifiPresenceEnabled}
-                  <span class="badge badge-green">Aktiv</span>
-                {:else}
-                  <span class="badge badge-gray">Inaktiv</span>
-                {/if}
-              </td>
-              <td style="font-size: 0.875rem;">
-                {#if emp.wifiMacs.length === 0}
-                  <span class="text-muted">—</span>
-                {:else if emp.wifiMacs.length <= 2}
-                  {#each emp.wifiMacs as mac (mac)}
-                    <code
-                      style="font-size: 0.8125rem; margin-right: 0.25rem; font-family: var(--font-mono);"
-                      >{mac}</code
-                    >
-                  {/each}
-                {:else}
-                  <span class="badge badge-blue">{emp.wifiMacs.length} Geräte</span>
-                {/if}
-              </td>
-              <td style="font-size: 0.875rem;">
-                {emp.wifiOptInAt ? new Date(emp.wifiOptInAt).toLocaleDateString("de-DE") : "—"}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <Pagination total={optedIn.length} bind:page={optPage} bind:pageSize={optPageSize} />
-    </div>
-  {:else}
-    <p class="text-muted">Kein Mitarbeiter hat WiFi-Präsenzerkennung aktiviert.</p>
-  {/if}
-</div>
+    {#snippet footer()}
+      <button
+        class="btn btn-ghost"
+        onclick={closeAssignModal}
+        disabled={deviceAssigning[assignModalDevice!.mac]}>Abbrechen</button
+      >
+      <button
+        class="btn btn-primary"
+        onclick={saveAssignment}
+        disabled={!assignModalEmployeeId || deviceAssigning[assignModalDevice!.mac]}
+      >
+        {deviceAssigning[assignModalDevice!.mac] ? "Speichern…" : "Zuweisung speichern"}
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
 
 <style>
-  .page-header {
-    margin-bottom: 2rem;
+  /* .page wrapper is global (app.css) — no per-page padding/max-width. */
+
+  /* ── Block 1: Presence-Quellen ───────────────────────────────────── */
+  .new-key-alert {
+    margin-bottom: var(--s-4);
+  }
+  .key-hint {
+    margin: 0.5rem 0;
+  }
+  .key-row {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .key-value {
+    flex: 1;
+    padding: 0.5rem;
+    background: var(--bg-subtle);
+    border-radius: var(--r-sm);
+    word-break: break-all;
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+  }
+  .close-key-btn {
+    margin-top: 0.5rem;
   }
 
-  .page-title {
-    font-size: 1.375rem;
-    font-weight: 700;
-    color: var(--color-text-heading);
-    margin: 0 0 0.25rem;
+  .source-create-row {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: var(--s-4);
+    flex-wrap: wrap;
+  }
+  .source-name-input {
+    flex: 1;
+    min-width: 200px;
+  }
+  .source-url-input {
+    flex: 1;
+    min-width: 180px;
   }
 
-  .section-label {
-    margin: 2rem 0 0.75rem;
+  .source-skel,
+  .devices-skel,
+  .optin-skel {
+    height: 48px;
+    border-radius: var(--r-md);
+  }
+  .devices-skel {
+    height: 120px;
   }
 
-  .settings-card {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
+  .empty-msg {
+    margin: 0;
   }
 
+  .mono-sm {
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+  }
+
+  .cell-sm {
+    font-size: 0.875rem;
+  }
+
+  .btn-danger-text {
+    color: var(--bad);
+  }
+
+  /* ── Tables ──────────────────────────────────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+  }
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .data-table th {
+    text-align: left;
+    padding: 0.625rem 0.75rem;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    border-bottom: 2px solid var(--border);
+  }
+  .data-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+
+  /* ── Block 2: Devices ─────────────────────────────────────────── */
+  .devices-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--s-4);
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .devices-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  .source-select {
+    width: auto;
+  }
+  .refresh-hint {
+    font-size: 0.8125rem;
+  }
+
+  .status-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
   .status-dot {
     display: inline-block;
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--color-text-muted);
+    background: var(--text-muted);
     flex-shrink: 0;
   }
-
   .status-dot--online {
-    background: var(--color-green);
+    background: var(--good);
+  }
+
+  /* ── Block 3: Opt-in ──────────────────────────────────────────── */
+  .mac-chip {
+    margin-right: 0.25rem;
   }
 
   :global(.row-revoked) {
     opacity: 0.5;
+  }
+
+  /* ── Assign-modal body styles ──────────────────────────────────── */
+  .device-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    background: var(--bg-subtle);
+    border-radius: var(--r-md);
+  }
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    font-size: 0.875rem;
+  }
+  .meta-label {
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+
+  .form-hint {
+    font-size: 0.8125rem;
+    margin: 6px 0 0;
+    line-height: 1.5;
+  }
+
+  .text-muted {
+    color: var(--text-muted);
+  }
+
+  /* ── Alert ───────────────────────────────────────────────────── */
+  .alert {
+    padding: 0.75rem 1rem;
+    border-radius: var(--r-sm);
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+  }
+  .alert-success {
+    background: var(--bg-subtle);
+    color: var(--good);
+    border: 1px solid var(--good);
+  }
+  .alert-error {
+    background: var(--bg-subtle);
+    color: var(--bad);
+    border: 1px solid var(--bad);
   }
 </style>

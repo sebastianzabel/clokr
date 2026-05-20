@@ -1,5 +1,8 @@
 <script lang="ts">
   import { api } from "$api/client";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
 
   type ImportMode = "employees" | "time-entries";
 
@@ -39,13 +42,18 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     const lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
     const sep = lines[0].includes(";") ? ";" : ",";
-    const headers = lines[0].split(sep).map(h => h.trim().replace(/^["']|["']$/g, ""));
-    return lines.slice(1).filter(l => l.trim()).map(line => {
-      const values = line.split(sep).map(v => v.trim().replace(/^["']|["']$/g, ""));
-      const row: Record<string, string> = {};
-      headers.forEach((h, i) => { row[h] = values[i] ?? ""; });
-      return row;
-    });
+    const headers = lines[0].split(sep).map((h) => h.trim().replace(/^["']|["']$/g, ""));
+    return lines
+      .slice(1)
+      .filter((l) => l.trim())
+      .map((line) => {
+        const values = line.split(sep).map((v) => v.trim().replace(/^["']|["']$/g, ""));
+        const row: Record<string, string> = {};
+        headers.forEach((h, i) => {
+          row[h] = values[i] ?? "";
+        });
+        return row;
+      });
   }
 
   function handlePreview() {
@@ -108,106 +116,101 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 </script>
 
 <svelte:head>
-  <title>Import – Clokr</title>
+  <title>CSV Import – Clokr</title>
 </svelte:head>
 
-<div class="page-header-row" style="margin-bottom:1.5rem">
-  <div>
-    <h2 class="section-header">CSV Import</h2>
-    <p class="text-muted" style="font-size:0.875rem;margin-top:0.125rem;">
-      Mitarbeiter oder Zeiteintr&auml;ge per CSV importieren
-    </p>
-  </div>
-</div>
+<div class="page">
+<PageHead
+  eyebrow="Administration"
+  title="CSV Import"
+  accent="Import"
+  sub="Mitarbeiter oder Zeiteinträge per CSV importieren — Vorschau prüfen, dann übernehmen. Jeder Import wird im Audit-Log protokolliert."
+/>
 
 <!-- Mode Toggle -->
-<div class="view-tabs" style="margin-bottom:1.5rem">
+<div class="view-tabs mode-tabs">
   <button
     class="view-tab"
-    class:view-tab--active={mode === 'employees'}
-    onclick={() => switchMode('employees')}
+    class:view-tab--active={mode === "employees"}
+    onclick={() => switchMode("employees")}
   >
     Mitarbeiter
   </button>
   <button
     class="view-tab"
-    class:view-tab--active={mode === 'time-entries'}
-    onclick={() => switchMode('time-entries')}
+    class:view-tab--active={mode === "time-entries"}
+    onclick={() => switchMode("time-entries")}
   >
     Zeiteinträge
   </button>
 </div>
 
 {#if error}
-  <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
+  <div class="alert alert-error error-banner" role="alert">
     <span>&#x26A0;</span><span>{error}</span>
   </div>
 {/if}
 
 <!-- CSV Input -->
-<div class="card card-body card-animate" style="margin-bottom:1.25rem">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.75rem">
-    <label for="csv-input" style="font-weight:600;font-size:0.875rem;">CSV-Daten</label>
-    <div style="display:flex;gap:0.5rem;align-items:center">
-      <label class="btn btn-sm btn-ghost" style="cursor:pointer">
+<Card animate class="csv-card">
+  <CardHeader title="CSV-Daten" sub="Datei laden oder Inhalt einfügen">
+    {#snippet actions()}
+      <label class="btn btn-ghost sm file-label">
         Datei laden
         <input
           type="file"
           accept=".csv,.txt"
           onchange={handleFileUpload}
-          style="display:none"
+          class="file-input-hidden"
         />
       </label>
       {#if csvText}
-        <button class="btn btn-sm btn-ghost" onclick={reset}>Leeren</button>
+        <button class="btn btn-ghost sm" onclick={reset}>Leeren</button>
       {/if}
-    </div>
+    {/snippet}
+  </CardHeader>
+
+  <div class="form-group">
+    <label for="csv-input" class="form-label">CSV-Inhalt</label>
+    <textarea
+      id="csv-input"
+      class="form-input csv-textarea"
+      bind:value={csvText}
+      placeholder="CSV hier einfügen oder Datei hochladen..."
+      rows="10"
+    ></textarea>
   </div>
 
-  <textarea
-    id="csv-input"
-    class="form-input csv-textarea"
-    bind:value={csvText}
-    placeholder="CSV hier einf&uuml;gen oder Datei hochladen..."
-    rows="10"
-  ></textarea>
-
-  <details class="example-hint" style="margin-top:0.75rem">
-    <summary class="text-muted" style="font-size:0.8125rem;cursor:pointer;">
-      Beispielformat anzeigen
-    </summary>
+  <details class="example-hint">
+    <summary class="example-summary"> Beispielformat anzeigen </summary>
     <pre class="example-pre">{exampleText}</pre>
   </details>
-</div>
 
-<!-- Actions -->
-<div style="display:flex;gap:0.75rem;margin-bottom:1.5rem">
-  <button
-    class="btn btn-sm btn-ghost"
-    onclick={handlePreview}
-    disabled={!csvText.trim() || loading}
-  >
-    Vorschau
-  </button>
-  <button
-    class="btn btn-sm btn-primary"
-    onclick={handleImport}
-    disabled={!csvText.trim() || loading}
-  >
-    {#if loading}
-      Importiere...
-    {:else}
-      Importieren
-    {/if}
-  </button>
-</div>
+  <div class="card-foot">
+    <span class="foot-meta">
+      {csvText.trim() ? "Bereit für Vorschau oder Import." : "Noch keine Daten geladen."}
+    </span>
+    <span class="spacer"></span>
+    <button class="btn btn-outline sm" onclick={handlePreview} disabled={!csvText.trim() || loading}>
+      Vorschau
+    </button>
+    <button class="btn btn-primary sm" onclick={handleImport} disabled={!csvText.trim() || loading}>
+      {#if loading}
+        Importiere…
+      {:else}
+        Importieren
+      {/if}
+    </button>
+  </div>
+</Card>
 
 <!-- Preview Table -->
 {#if showPreview && preview.length > 0}
-  <div class="card card-body" style="margin-bottom:1.5rem">
-    <h3 style="font-size:0.9375rem;font-weight:600;margin-bottom:0.75rem">
-      Vorschau ({preview.length} Zeilen)
-    </h3>
+  <Card animate class="preview-card">
+    <CardHeader
+      title="Vorschau"
+      sub={`${preview.length} Zeile${preview.length === 1 ? "" : "n"} erkannt`}
+    />
     <div class="table-wrapper">
       <table class="data-table">
         <thead>
@@ -221,26 +224,24 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
         <tbody>
           {#each preview as row, i (i)}
             <tr>
-              <td class="text-muted" style="font-size:0.8125rem">{i + 1}</td>
+              <td class="row-num">{i + 1}</td>
               {#each Object.values(row) as val, j (j)}
-                <td style="font-size:0.875rem">{val}</td>
+                <td class="cell-data">{val}</td>
               {/each}
             </tr>
           {/each}
         </tbody>
       </table>
     </div>
-  </div>
+  </Card>
 {/if}
 
 <!-- Results -->
 {#if result}
-  <div class="card card-body">
-    <h3 style="font-size:0.9375rem;font-weight:600;margin-bottom:0.75rem">
-      Import-Ergebnis
-    </h3>
+  <Card animate>
+    <CardHeader title="Import-Ergebnis" sub="Zeilenweise Auswertung" />
 
-    <div class="result-summary" style="margin-bottom:1rem">
+    <div class="result-summary">
       <span class="badge badge-gray">{result.total} Gesamt</span>
       <span class="badge badge-green">{result.imported} Importiert</span>
       {#if result.errors > 0}
@@ -249,7 +250,7 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     </div>
 
     {#if result.details.length > 0}
-      <div class="table-wrapper">
+      <div class="table-wrapper result-table">
         <table class="data-table">
           <thead>
             <tr>
@@ -264,16 +265,16 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
           <tbody>
             {#each result.details as detail (detail.row)}
               <tr>
-                <td style="font-size:0.875rem">{detail.row}</td>
+                <td class="cell-data">{detail.row}</td>
                 <td>
                   <span class="badge {detail.status === 'ok' ? 'badge-green' : 'badge-red'}">
                     {detail.status === "ok" ? "OK" : "Fehler"}
                   </span>
                 </td>
                 {#if mode === "employees"}
-                  <td style="font-size:0.875rem">{detail.email ?? "–"}</td>
+                  <td class="cell-data">{detail.email ?? "–"}</td>
                 {/if}
-                <td style="font-size:0.8125rem" class="text-muted">
+                <td class="cell-detail">
                   {detail.error ?? "–"}
                 </td>
               </tr>
@@ -282,33 +283,96 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
         </table>
       </div>
     {/if}
-  </div>
+  </Card>
 {/if}
+</div>
 
 <style>
+  .mode-tabs {
+    margin-bottom: 1.5rem;
+  }
+
+  .error-banner {
+    margin-bottom: 1rem;
+  }
+
+  :global(.csv-card) {
+    margin-bottom: 1.25rem;
+  }
+
+  :global(.preview-card) {
+    margin-bottom: 1.5rem;
+  }
+
+  .file-label {
+    cursor: pointer;
+  }
+
+  .file-input-hidden {
+    display: none;
+  }
+
+  .example-hint {
+    margin-top: 0.75rem;
+  }
+
   .csv-textarea {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: 0.8125rem;
     resize: vertical;
     min-height: 120px;
   }
 
+  .example-summary {
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    cursor: pointer;
+  }
+
   .example-pre {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-mono);
     font-size: 0.75rem;
-    background-color: var(--color-bg-subtle, #f5f5f5);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm, 4px);
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     padding: 0.75rem;
     overflow-x: auto;
     white-space: pre;
     margin-top: 0.5rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
+  }
+
+  .foot-meta {
+    color: var(--text-muted);
+    font-size: 12.5px;
+  }
+
+  .spacer {
+    flex: 1;
   }
 
   .result-summary {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+
+  .result-table {
+    margin-top: 1rem;
+  }
+
+  .row-num {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .cell-data {
+    font-size: 0.875rem;
+    color: var(--text);
+  }
+
+  .cell-detail {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
   }
 </style>

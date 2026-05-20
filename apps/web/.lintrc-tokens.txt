@@ -1,0 +1,66 @@
+# clokr v1.5 token lint — banned legacy CSS variable patterns
+#
+# These tokens were retired with the v1.5 design system rollout.
+# Use canonical tokens from `apps/web/src/tokens.css` instead.
+#
+# Run `pnpm --filter @clokr/web lint:tokens` (or grep manually) to verify.
+# CI fails if any of these patterns are introduced.
+
+# === BANNED ===
+var(--color-
+var(--glass-
+var(--radius-
+var(--gray-
+
+# === REPLACEMENTS (cheat sheet) ===
+# --color-brand          → --brand
+# --color-brand-dark     → --brand-dark
+# --color-brand-light    → --brand-light
+# --color-brand-tint     → --brand-soft
+# --color-surface        → --bg-card
+# --color-surface-raised → --bg-elevated
+# --color-bg             → --bg
+# --color-bg-subtle      → --bg-subtle
+# --color-bg-muted       → --bg-alt
+# --color-text           → --text
+# --color-text-muted     → --text-muted
+# --color-text-heading   → --text
+# --color-border         → --border
+# --color-green*         → --good* (good / good-soft)
+# --color-yellow*        → --warn* (warn / warn-soft)
+# --color-red*           → --bad*  (bad / bad-soft)
+# --color-purple*        → --brand*
+# --color-danger         → --bad
+# --color-blue*          → inline (#2563eb / rgba(37, 99, 235, X)) — no v1.5 token
+# --color-orange*        → inline (#c2410c / rgba(194, 65, 12, X)) — no v1.5 token
+# --glass-bg             → --bg-card
+# --glass-bg-subtle      → --bg-subtle
+# --glass-border         → --border
+# --glass-shadow         → --shadow-md
+# --glass-blur           → 0px (flat surfaces in v1.5, D-20)
+# --radius-sm            → --r-sm
+# --radius-md            → --r-md
+# --radius-lg            → --r-lg
+# --gray-50              → --bg-card
+# --gray-100             → --bg-subtle
+# --gray-200, --gray-300 → --border
+# --gray-400             → --text-faint
+# --gray-500, --gray-600 → --text-muted
+# --gray-700..900        → --text
+
+# === DENSITY RULE (Phase 33-02, I18N-03) ===
+# Outer card padding MUST use `var(--pad-card)` so the density toggle affects it.
+# Interior spacing (gaps, header/body/foot padding INSIDE a card) uses `var(--s-*)`.
+#
+# This is enforced because [data-density="compact"] in tokens.css flips
+# --pad-card from 24px to 16px. A card that hardcodes `padding: 24px` will not
+# shrink in compact mode and breaks the global density affordance.
+#
+# Canonical recipe (apps/web/src/app.css, COMP-01):
+#   .card {
+#     padding: var(--pad-card);
+#     ...
+#   }
+#
+# Modals, scrims, popovers, empty-state text and other non-card surfaces are
+# exempt — they are not part of the density-aware card surface system.

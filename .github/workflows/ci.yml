@@ -65,6 +65,12 @@ jobs:
           echo "warnings=${LINT_WARNINGS:-0}" >> $GITHUB_OUTPUT
           echo "$LINT_OUTPUT"
 
+      - name: Lint UI primitives usage
+        run: pnpm --filter @clokr/web lint:ui
+
+      - name: Primitive class alignment
+        run: pnpm --filter @clokr/web lint:ui-classes
+
       - name: Type check API
         id: typecheck
         run: |

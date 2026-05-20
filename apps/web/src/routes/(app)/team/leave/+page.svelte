@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { self } from "svelte/legacy";
-
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Modal from "$components/ui/Modal.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -81,8 +81,9 @@
   let loading = $state(true);
   let error = $state("");
 
-  // Review-Modal
+  // Review-Modal (Modal primitive owns Escape/backdrop/focus-trap)
   let reviewModal: LeaveRequest | null = $state(null);
+  let reviewOpen = $state(false);
   let reviewOverlap: OverlapEntry[] = $state([]);
   let reviewNote = $state("");
   let reviewSaving = $state(false);
@@ -360,6 +361,7 @@
   // ── Review-Modal ──────────────────────────────────────────────────────────
   async function openReview(req: LeaveRequest) {
     reviewModal = req;
+    reviewOpen = true;
     reviewNote = "";
     reviewError = "";
     reviewOverlap = [];
@@ -376,6 +378,7 @@
   }
 
   function closeReview() {
+    reviewOpen = false;
     reviewModal = null;
   }
 
@@ -395,6 +398,7 @@
           attestValidTo: reviewAttestPresent && reviewAttestTo ? reviewAttestTo : null,
         });
       }
+      reviewOpen = false;
       reviewModal = null;
       await Promise.all([loadData(), loadCalendar()]);
     } catch (e: unknown) {
@@ -576,24 +580,16 @@
   <title>Team-Abwesenheiten – Clokr</title>
 </svelte:head>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") {
-      if (reviewModal) {
-        reviewModal = null;
-        reviewError = "";
-      }
-    }
-  }}
-/>
+<!-- Modal primitive owns Escape handling. -->
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<div class="page-header-compact">
-  <h1>Team-Abwesenheiten</h1>
-  {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
-    <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
-  {/if}
-</div>
+<PageHead eyebrow="Team" title="Team-Anträge" accent="Anträge">
+  {#snippet actions()}
+    {#if $authStore.user?.role === "MANAGER" || $authStore.user?.role === "ADMIN"}
+      <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neue Abwesenheit</button>
+    {/if}
+  {/snippet}
+</PageHead>
 
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
@@ -819,7 +815,7 @@
                   class:cal-chip--pending={e.status === "PENDING" ||
                     e.status === "CANCELLATION_REQUESTED"}
                   class:cal-chip--own={e.isOwn}
-                  style="background:{typeColor(e.typeCode, e.status, e.isOwn)}"
+                  style:background={typeColor(e.typeCode, e.status, e.isOwn)}
                   title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
                     ? ' · ' + e.typeName
                     : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
@@ -843,29 +839,29 @@
     <!-- Legende -->
     <div class="cal-legend">
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-vacation)"></span>Urlaub</span
+        ><span class="legend-dot" style:background="var(--leave-type-vacation)"></span>Urlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-overtime)"
+        ><span class="legend-dot" style:background="var(--leave-type-overtime)"
         ></span>ÜSt-Ausgleich</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick)"></span>Krank</span
+        ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick-child)"
+        ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
         ></span>Kinderkrank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-special)"
+        ><span class="legend-dot" style:background="var(--leave-type-special)"
         ></span>Sonderurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-education)"
+        ><span class="legend-dot" style:background="var(--leave-type-education)"
         ></span>Bildungsurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-absent)"></span>Abwesend</span
+        ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
       >
       <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
       <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
@@ -873,7 +869,7 @@
   </div>
 
   <!-- iCal-Download -->
-  <div class="ical-section">
+  <div class="ical-section card-animate">
     <div class="ical-header">
       <span class="ical-icon">📥</span>
       <div>
@@ -966,13 +962,13 @@
     </div>
 
     {#if allTeamRequests.length === 0}
-      <div class="empty-state card card-body">
+      <div class="empty-state card card-body card-animate">
         <span class="empty-icon">🏖️</span>
         <h3>Keine Anträge in {calYear}.</h3>
         <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
       </div>
     {:else}
-      <div class="table-wrapper">
+      <div class="table-wrapper card card-animate">
         <table class="data-table">
           <thead>
             <tr>
@@ -1038,7 +1034,7 @@
     <div class="pending-list">
       {#each filteredPendingRequests as req (req.id)}
         <div
-          class="pending-card card"
+          class="pending-card card card-animate"
           id="request-{req.id}"
           class:highlight-row={highlightRequestId === req.id}
         >
@@ -1063,7 +1059,7 @@
       {/each}
     </div>
   {:else if !loading}
-    <div class="empty-state card card-body">
+    <div class="empty-state card card-body card-animate">
       <span class="empty-icon">✅</span>
       <h3>Keine offenen Anträge</h3>
       <p class="text-muted">Alle Anträge wurden bearbeitet.</p>
@@ -1073,245 +1069,234 @@
 
 <!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
 {#if reviewModal}
-  <div class="modal-backdrop" onclick={self(closeReview)} role="presentation">
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>
-          {reviewModal.status === "CANCELLATION_REQUESTED"
-            ? "Stornierungsantrag prüfen"
-            : "Antrag prüfen"}
-        </h2>
-        <button class="btn-icon" onclick={closeReview} aria-label="Schließen">✕</button>
+  <Modal
+    bind:open={reviewOpen}
+    eyebrow={reviewModal.status === "CANCELLATION_REQUESTED" ? "Stornierung" : "Antrag"}
+    title={reviewModal.status === "CANCELLATION_REQUESTED"
+      ? "Stornierungsantrag prüfen"
+      : "Antrag prüfen"}
+  >
+    <!-- Antrag-Details -->
+    <div class="review-grid">
+      <div class="review-field">
+        <span class="review-label">Mitarbeiter</span>
+        <span class="review-value"
+          >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
+        >
       </div>
-
-      <div class="modal-body">
-        <!-- Antrag-Details -->
-        <div class="review-grid">
-          <div class="review-field">
-            <span class="review-label">Mitarbeiter</span>
-            <span class="review-value"
-              >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
-            >
-          </div>
-          <div class="review-field">
-            <span class="review-label">Art</span>
-            <span class="review-value">{typeName(reviewModal.typeCode)}</span>
-          </div>
-          <div class="review-field">
-            <span class="review-label">Zeitraum</span>
-            <span class="review-value font-mono"
-              >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
-            >
-          </div>
-          <div class="review-field">
-            <span class="review-label">Umfang</span>
-            <span class="review-value"
-              >{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span
-            >
-          </div>
-          {#if reviewModal.note}
-            <div class="review-field review-field--full">
-              <span class="review-label">Anmerkung Mitarbeiter</span>
-              <span class="review-value">„{reviewModal.note}"</span>
-            </div>
-          {/if}
-        </div>
-
-        <!-- Parallele Abwesenheiten -->
-        <div class="overlap-box review-section">
-          <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
-          {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
-            <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-          {:else}
-            <div class="overlap-list">
-              {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
-                <div class="overlap-row">
-                  <span class="overlap-name">{o.employeeName}</span>
-                  <span class="overlap-type">abwesend</span>
-                  <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Attest (nur für Krankmeldungen) -->
-        {#if SICK_CODES.includes(reviewModal.typeCode)}
-          <div class="attest-box review-section">
-            <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
-            <label class="toggle-label">
-              <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
-              <span>Attest liegt vor</span>
-            </label>
-            {#if reviewAttestPresent}
-              <div class="attest-dates">
-                <div class="form-group">
-                  <label class="form-label" for="r-attest-from">Gültig von</label>
-                  <input
-                    id="r-attest-from"
-                    type="date"
-                    bind:value={reviewAttestFrom}
-                    class="form-input"
-                    style="max-width:160px"
-                  />
-                </div>
-                <div class="form-group">
-                  <label class="form-label" for="r-attest-to">Gültig bis</label>
-                  <input
-                    id="r-attest-to"
-                    type="date"
-                    bind:value={reviewAttestTo}
-                    class="form-input"
-                    style="max-width:160px"
-                  />
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Review-Notiz -->
-        <div class="form-group review-section">
-          <label class="form-label" for="review-note">Anmerkung (optional)</label>
-          <input
-            id="review-note"
-            type="text"
-            bind:value={reviewNote}
-            class="form-input"
-            placeholder="Grund für Ablehnung o.ä."
-          />
-        </div>
-
-        {#if reviewError}
-          <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-            <span>⚠</span><span>{reviewError}</span>
-          </div>
-        {/if}
+      <div class="review-field">
+        <span class="review-label">Art</span>
+        <span class="review-value">{typeName(reviewModal.typeCode)}</span>
       </div>
-
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={closeReview} disabled={reviewSaving}>
-          Abbrechen
-        </button>
-        {#if reviewModal.employeeId !== $authStore.user?.employeeId}
-          {#if reviewModal.status === "CANCELLATION_REQUESTED"}
-            <button
-              class="btn btn-ghost"
-              onclick={() => submitReview("REJECTED")}
-              disabled={reviewSaving}
-            >
-              {reviewSaving ? "…" : "Stornierung ablehnen"}
-            </button>
-            <button
-              class="btn btn-danger"
-              onclick={() => submitReview("APPROVED")}
-              disabled={reviewSaving}
-            >
-              {reviewSaving ? "…" : "Stornierung genehmigen"}
-            </button>
-          {:else}
-            <button
-              class="btn btn-danger"
-              onclick={() => submitReview("REJECTED")}
-              disabled={reviewSaving}
-            >
-              {reviewSaving ? "…" : "Ablehnen"}
-            </button>
-            <button
-              class="btn btn-primary"
-              onclick={() => submitReview("APPROVED")}
-              disabled={reviewSaving}
-            >
-              {reviewSaving ? "…" : "Genehmigen"}
-            </button>
-          {/if}
-        {:else}
-          <p class="text-muted" style="font-size:0.875rem;margin-right:auto">
-            Eigene Anträge können nicht selbst genehmigt werden.
-          </p>
-        {/if}
+      <div class="review-field">
+        <span class="review-label">Zeitraum</span>
+        <span class="review-value font-mono"
+          >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
+        >
       </div>
+      <div class="review-field">
+        <span class="review-label">Umfang</span>
+        <span class="review-value">{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span>
+      </div>
+      {#if reviewModal.note}
+        <div class="review-field review-field--full">
+          <span class="review-label">Anmerkung Mitarbeiter</span>
+          <span class="review-value">„{reviewModal.note}"</span>
+        </div>
+      {/if}
     </div>
-  </div>
+
+    <!-- Parallele Abwesenheiten -->
+    <div class="overlap-box review-section">
+      <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
+      {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
+        <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
+      {:else}
+        <div class="overlap-list">
+          {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
+            <div class="overlap-row">
+              <span class="overlap-name">{o.employeeName}</span>
+              <span class="overlap-type">abwesend</span>
+              <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Attest (nur für Krankmeldungen) -->
+    {#if SICK_CODES.includes(reviewModal.typeCode)}
+      <div class="attest-box review-section">
+        <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
+          <span>Attest liegt vor</span>
+        </label>
+        {#if reviewAttestPresent}
+          <div class="attest-dates">
+            <div class="form-group">
+              <label class="form-label" for="r-attest-from">Gültig von</label>
+              <input
+                id="r-attest-from"
+                type="date"
+                bind:value={reviewAttestFrom}
+                class="form-input attest-date-input"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="r-attest-to">Gültig bis</label>
+              <input
+                id="r-attest-to"
+                type="date"
+                bind:value={reviewAttestTo}
+                class="form-input attest-date-input"
+              />
+            </div>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- Review-Notiz -->
+    <div class="form-group review-section">
+      <label class="form-label" for="review-note">Anmerkung (optional)</label>
+      <input
+        id="review-note"
+        type="text"
+        bind:value={reviewNote}
+        class="form-input"
+        placeholder="Grund für Ablehnung o.ä."
+      />
+    </div>
+
+    {#if reviewError}
+      <div class="alert alert-error review-error" role="alert">
+        <span>⚠</span><span>{reviewError}</span>
+      </div>
+    {/if}
+
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeReview} disabled={reviewSaving}>
+        Abbrechen
+      </button>
+      {#if reviewModal!.employeeId !== $authStore.user?.employeeId}
+        {#if reviewModal!.status === "CANCELLATION_REQUESTED"}
+          <button
+            class="btn btn-ghost"
+            onclick={() => submitReview("REJECTED")}
+            disabled={reviewSaving}
+          >
+            {reviewSaving ? "…" : "Stornierung ablehnen"}
+          </button>
+          <button
+            class="btn btn-danger"
+            onclick={() => submitReview("APPROVED")}
+            disabled={reviewSaving}
+          >
+            {reviewSaving ? "…" : "Stornierung genehmigen"}
+          </button>
+        {:else}
+          <button
+            class="btn btn-danger"
+            onclick={() => submitReview("REJECTED")}
+            disabled={reviewSaving}
+          >
+            {reviewSaving ? "…" : "Ablehnen"}
+          </button>
+          <button
+            class="btn btn-primary"
+            onclick={() => submitReview("APPROVED")}
+            disabled={reviewSaving}
+          >
+            {reviewSaving ? "…" : "Genehmigen"}
+          </button>
+        {/if}
+      {:else}
+        <p class="text-muted self-approval-note">
+          Eigene Anträge können nicht selbst genehmigt werden.
+        </p>
+      {/if}
+    {/snippet}
+  </Modal>
 {/if}
 
 <!-- ── Create-Modal: Neue Abwesenheit anlegen (Manager-on-behalf-of) ─────── -->
 {#if createModalOpen}
-  <div class="modal-backdrop" onclick={self(closeCreate)} role="presentation">
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>Neue Abwesenheit anlegen</h2>
-        <button class="btn-icon" onclick={closeCreate} aria-label="Schließen">✕</button>
+  <Modal bind:open={createModalOpen} eyebrow="Team-Anträge" title="Neue Abwesenheit anlegen">
+    <form id="create-leave-form" onsubmit={submitCreate}>
+      <div class="form-group">
+        <label class="form-label" for="create-emp">Mitarbeiter</label>
+        <select id="create-emp" class="form-input" bind:value={createForm.employeeId} required>
+          <option value="" disabled>— Mitarbeiter wählen —</option>
+          {#each employees as emp (emp.id)}
+            <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
+          {/each}
+        </select>
       </div>
-      <form class="modal-body" onsubmit={submitCreate}>
+      <div class="form-group">
+        <label class="form-label" for="create-type">Art</label>
+        <select id="create-type" class="form-input" bind:value={createForm.type} required>
+          {#each TYPE_OPTIONS as opt (opt.code)}
+            <option value={opt.code}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-grid-2col">
         <div class="form-group">
-          <label class="form-label" for="create-emp">Mitarbeiter</label>
-          <select id="create-emp" class="form-input" bind:value={createForm.employeeId} required>
-            <option value="" disabled>— Mitarbeiter wählen —</option>
-            {#each employees as emp (emp.id)}
-              <option value={emp.id}>{emp.firstName} {emp.lastName}</option>
-            {/each}
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="create-type">Art</label>
-          <select id="create-type" class="form-input" bind:value={createForm.type} required>
-            {#each TYPE_OPTIONS as opt (opt.code)}
-              <option value={opt.code}>{opt.label}</option>
-            {/each}
-          </select>
-        </div>
-        <div class="form-grid-2col">
-          <div class="form-group">
-            <label class="form-label" for="create-start">Von</label>
-            <input
-              id="create-start"
-              type="date"
-              class="form-input"
-              bind:value={createForm.startDate}
-              required
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="create-end">Bis</label>
-            <input
-              id="create-end"
-              type="date"
-              class="form-input"
-              bind:value={createForm.endDate}
-              required
-            />
-          </div>
+          <label class="form-label" for="create-start">Von</label>
+          <input
+            id="create-start"
+            type="date"
+            class="form-input"
+            bind:value={createForm.startDate}
+            required
+          />
         </div>
         <div class="form-group">
-          <label class="checkbox-row">
-            <input type="checkbox" bind:checked={createForm.halfDay} />
-            Halber Tag
-          </label>
+          <label class="form-label" for="create-end">Bis</label>
+          <input
+            id="create-end"
+            type="date"
+            class="form-input"
+            bind:value={createForm.endDate}
+            required
+          />
         </div>
-        <div class="form-group">
-          <label class="form-label" for="create-note">Notiz (optional)</label>
-          <textarea id="create-note" class="form-input" rows="3" bind:value={createForm.note}
-          ></textarea>
-        </div>
-        {#if createError}
-          <p class="form-error">{createError}</p>
-        {/if}
-        <p class="form-hint">
-          Der Antrag wird mit Status <strong>Ausstehend</strong> angelegt und kann anschließend unter
-          „Genehmigungen“ freigegeben werden.
-        </p>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-ghost" onclick={closeCreate} disabled={createSaving}>
-            Abbrechen
-          </button>
-          <button type="submit" class="btn btn-primary" disabled={createSaving}>
-            {createSaving ? "Speichert…" : "Speichern"}
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-row">
+          <input type="checkbox" bind:checked={createForm.halfDay} />
+          Halber Tag
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="create-note">Notiz (optional)</label>
+        <textarea id="create-note" class="form-input" rows="3" bind:value={createForm.note}
+        ></textarea>
+      </div>
+      {#if createError}
+        <p class="form-error">{createError}</p>
+      {/if}
+      <p class="form-hint">
+        Der Antrag wird mit Status <strong>Ausstehend</strong> angelegt und kann anschließend unter „Genehmigungen“
+        freigegeben werden.
+      </p>
+    </form>
+
+    {#snippet footer()}
+      <button type="button" class="btn btn-ghost" onclick={closeCreate} disabled={createSaving}>
+        Abbrechen
+      </button>
+      <button
+        type="submit"
+        form="create-leave-form"
+        class="btn btn-primary"
+        disabled={createSaving}
+      >
+        {createSaving ? "Speichert…" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>
@@ -1333,24 +1318,24 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.875rem;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--glass-shadow);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-md);
     cursor: pointer;
     min-height: 2.5rem;
   }
 
   .emp-combobox--open .emp-input-wrap {
-    border-color: var(--color-brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
+    border-color: var(--brand);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
   }
 
   .emp-selected-name {
     flex: 1;
     font-size: 0.9375rem;
     font-weight: 500;
-    color: var(--color-text);
+    color: var(--text);
   }
 
   .emp-search-input {
@@ -1359,17 +1344,17 @@
     outline: none;
     background: transparent;
     font-size: 0.9375rem;
-    color: var(--color-text);
+    color: var(--text);
     min-width: 0;
   }
 
   .emp-search-input::placeholder {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .emp-chevron {
     flex-shrink: 0;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     transition: transform 0.15s;
   }
 
@@ -1388,9 +1373,9 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     box-shadow: var(--shadow-lg);
     list-style: none;
     margin: 0;
@@ -1403,32 +1388,32 @@
   .emp-dropdown-item {
     padding: 0.5rem 0.875rem;
     font-size: 0.9375rem;
-    color: var(--color-text);
+    color: var(--text);
     cursor: pointer;
     transition: background 0.1s;
   }
 
   .emp-dropdown-item:hover,
   .emp-dropdown-item:focus {
-    background: var(--color-bg-subtle);
+    background: var(--bg-subtle);
     outline: none;
   }
 
   .emp-dropdown-item--active {
-    color: var(--color-brand);
+    color: var(--brand);
     font-weight: 600;
   }
 
   .emp-dropdown-empty {
     padding: 0.75rem 0.875rem;
     font-size: 0.875rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   /* ── Highlight from notification deep-link ────────────────────────── */
   @keyframes highlight-fade {
     0% {
-      background-color: var(--color-brand-tint-hover);
+      background-color: var(--brand-soft);
     }
     100% {
       background-color: transparent;
@@ -1447,7 +1432,7 @@
   .section-header h2 {
     font-size: 1rem;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin: 0;
@@ -1455,9 +1440,9 @@
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     padding: 0.875rem 1rem;
   }
   .overlap-title {
@@ -1465,7 +1450,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1488,7 +1473,7 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
   }
   .overlap-dates {
@@ -1499,15 +1484,15 @@
 
   /* ── Attest ───────────────────────────────────────────────────────── */
   .attest-box {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     padding: 0.875rem 1rem;
   }
   .attest-title {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 0.625rem;
@@ -1528,7 +1513,7 @@
   .toggle-cb {
     width: 16px;
     height: 16px;
-    accent-color: var(--color-brand);
+    accent-color: var(--brand);
   }
 
   /* ── Pending Cards ────────────────────────────────────────────────── */
@@ -1558,7 +1543,7 @@
     white-space: nowrap;
   }
   .pending-type {
-    color: var(--color-brand);
+    color: var(--brand);
     font-weight: 500;
   }
   .pending-dates {
@@ -1585,7 +1570,7 @@
     font-size: 0.8125rem;
   }
   .text-red {
-    color: var(--color-red, #dc2626);
+    color: var(--bad);
   }
   .note-cell {
     max-width: 200px;
@@ -1617,64 +1602,13 @@
     font-size: 1rem;
   }
 
-  /* ── Modal ────────────────────────────────────────────────────────── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
+  /* ── Modal body helpers (Modal primitive owns chrome) ────────────── */
+  #create-leave-form {
     display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    padding: 1rem;
-    backdrop-filter: blur(2px);
+    flex-direction: column;
+    gap: 14px;
   }
-  .modal-card {
-    width: 100%;
-    max-width: 560px;
-    padding: 0;
-    overflow: hidden;
-    animation: modal-in 0.18s ease;
-  }
-  @keyframes modal-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--color-border-subtle);
-  }
-  .modal-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-  }
-  .modal-body {
-    padding: 1.25rem 1.5rem;
-  }
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--color-border-subtle);
-    background: var(--color-bg-subtle);
-  }
-
-  /* ── Create-Modal Form ─────────────────────────────────────────────── */
-  .modal-body :global(.form-group) {
-    margin-bottom: 1rem;
-  }
-  .modal-body :global(textarea.form-input) {
+  #create-leave-form :global(textarea.form-input) {
     resize: vertical;
     min-height: 64px;
   }
@@ -1691,26 +1625,28 @@
     cursor: pointer;
   }
   .form-error {
-    margin: 0.5rem 0;
+    margin: 0;
     padding: 0.5rem 0.75rem;
-    background: var(--color-danger-tint, #fee2e2);
-    border: 1px solid var(--color-danger, #f87171);
-    border-radius: 6px;
-    color: var(--color-danger, #b91c1c);
+    background: var(--bad-soft);
+    border: 1px solid var(--bad);
+    border-radius: var(--r-sm);
+    color: var(--bad);
     font-size: 0.8125rem;
   }
   .form-hint {
     font-size: 0.75rem;
-    color: var(--color-text-muted, #6b7280);
-    margin: 0.5rem 0 0.875rem;
+    color: var(--text-muted);
+    margin: 0;
   }
-  .modal-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border-subtle);
+  .attest-date-input {
+    max-width: 160px;
+  }
+  .review-error {
+    margin-top: 0.75rem;
+  }
+  .self-approval-note {
+    font-size: 0.875rem;
+    margin: 0 auto 0 0;
   }
 
   /* ── Review Grid ──────────────────────────────────────────────────── */
@@ -1718,9 +1654,9 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0.75rem 1.5rem;
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: 8px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     padding: 1rem 1.25rem;
   }
   .review-field {
@@ -1736,7 +1672,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .review-value {
     font-size: 0.9375rem;
@@ -1744,49 +1680,26 @@
   }
 
   /* ── Buttons ──────────────────────────────────────────────────────── */
-  .btn-danger {
-    background: var(--color-red, #dc2626);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 0.5rem 1.25rem;
-    font-size: 0.9375rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .btn-danger:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .btn-icon {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    font-size: 1rem;
-    color: var(--color-text-muted);
-  }
+  /* .btn / .btn-danger / .btn-ghost / .btn-icon are defined globally in app.css. */
 
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
   .list-month-nav {
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-lg, 0.75rem);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
     margin-bottom: 1rem;
   }
   .cal-year-select {
     font-size: 1.125rem;
     font-weight: 700;
-    color: var(--color-text-heading);
+    color: var(--text);
     background: transparent;
     border: none;
     cursor: pointer;
     padding: 0.25rem 1.75rem 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm);
     appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -1794,7 +1707,7 @@
   }
   .cal-year-select:hover,
   .cal-year-select:focus-visible {
-    background-color: var(--color-brand-tint);
+    background-color: var(--brand-soft);
     outline: none;
   }
   .cal-nav-right {
@@ -1804,30 +1717,15 @@
     justify-self: end;
   }
 
-  .cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    user-select: none;
-    gap: 3px;
-    padding: 3px;
-  }
+  /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
+     See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
 
-  .cal-cell {
-    min-height: 36px;
-    padding: 0.3rem 0.4rem 0.4rem;
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow: visible;
-    position: relative;
+  .cal-grid {
+    user-select: none;
   }
 
   .cal-cell.cal-current {
     cursor: default;
-  }
-  .cal-cell.cal-current:hover {
-    background: var(--color-bg-subtle, #f3f0ff);
   }
 
   .cal-day-num {
@@ -1905,7 +1803,7 @@
     align-items: center;
     gap: 0.3rem;
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .badge-attest {
     margin-left: 0.25rem;
@@ -1924,8 +1822,8 @@
   .legend-holiday-dot {
     width: 10px;
     height: 10px;
-    background: var(--color-brand-tint);
-    border: 1.5px solid var(--color-brand);
+    background: var(--brand-soft);
+    border: 1.5px solid var(--brand);
     border-radius: 2px;
     flex-shrink: 0;
     display: inline-block;
@@ -1940,9 +1838,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: 10px;
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
     flex-wrap: wrap;
@@ -1962,11 +1860,11 @@
     font-size: 0.875rem;
     font-weight: 600;
     margin: 0;
-    color: var(--color-text);
+    color: var(--text);
   }
   .ical-desc {
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin: 0;
   }
   .ical-actions {

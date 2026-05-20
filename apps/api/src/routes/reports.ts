@@ -2,7 +2,7 @@ import { FastifyInstance } from "fastify";
 import PDFDocument from "pdfkit";
 import iconv from "iconv-lite";
 import { formatInTimeZone } from "date-fns-tz";
-import { requireRole } from "../middleware/auth";
+import { requireAuth, requireRole } from "../middleware/auth";
 import {
   getTenantTimezone,
   monthRangeUtc,
@@ -817,13 +817,20 @@ export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly/pdf?employeeId=&year=&month=
   app.get("/monthly/pdf", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requireAuth,
     handler: async (req, reply) => {
       const { employeeId, year, month } = req.query as {
         employeeId: string;
         year: string;
         month: string;
       };
+
+      // Authorization: ADMIN/MANAGER may download any employee's PDF;
+      // EMPLOYEE may only download their OWN PDF (self-employee check).
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      if (!isManager && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
 
       const y = parseInt(year);
       const m = parseInt(month);

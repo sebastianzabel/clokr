@@ -83,131 +83,111 @@
     U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
-
-/* ─── Theme: Lila (default — AWH Corporate Design) ──────────────────── */
-:root,
-[data-theme="lila"] {
-  /* Brand — based on Traumhaarvilla Corporate Design */
-  --color-brand: #80377b;
-  --color-brand-dark: #5a1f6e;
-  --color-brand-light: #a85ca3;
-  --color-brand-tint: #fdf5fd;
-  --color-brand-tint-hover: #f0e6ef;
-
-  /* Surfaces */
-  --color-surface: #ffffff;
-  --color-surface-raised: #ffffff;
-
-  /* Background — warm tones from CD */
-  --color-bg: #faf9f7;
-  --color-bg-subtle: #f5f3ef;
-  --color-bg-muted: #e8e0ea;
-
-  /* Text — warm stone tones from CD */
-  --color-text: #44403c;
-  --color-text-muted: #6b6760; /* darkened from #78746c — WCAG AA 4.5:1 on --color-bg */
-  --color-text-heading: #1c1917;
-
-  /* Border */
-  --color-border: #e8e0ea;
-  --color-border-subtle: #f0e6ef;
-
-  /* Gray scale — warm plum-tinted neutrals */
-  --gray-50: #faf9f7;
-  --gray-100: #f5f3ef;
-  --gray-200: #e8e0ea;
-  --gray-300: #d5ced8;
-  --gray-400: #a8a49c;
-  --gray-500: #78746c;
-  --gray-600: #5c5650;
-  --gray-700: #44403c;
-  --gray-800: #2a2624;
-  --gray-900: #1c1917;
-
-  /* Status colors */
-  --color-green: #16a34a;
-  --color-green-bg: #f0fdf4;
-  --color-green-border: #bbf7d0;
-  --color-yellow: #ca8a04;
-  --color-yellow-bg: #fefce8;
-  --color-yellow-border: #fef08a;
-  --color-red: #dc2626;
-  --color-red-bg: #fef2f2;
-  --color-red-border: #fecaca;
-  --color-blue: #2563eb;
-  --color-blue-bg: #eff6ff;
-  --color-blue-border: #bfdbfe;
-  --color-purple: #80377b;
-  --color-purple-bg: #fdf5fd;
-  --color-purple-border: #e8c8e5;
-  --color-orange: #c2410c;
-  --color-orange-bg: #fff7ed;
-  --color-orange-border: #fed7aa;
-  --color-danger: #ef4444;
-
-  /* Typography */
-  --font-sans: "DM Sans", system-ui, sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", monospace;
-
-  /* Easing */
-  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-  /* Border radius */
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
-
-  /* Shadows — warm plum tint */
-  --shadow-xs: 0 1px 3px 0 rgba(128, 55, 123, 0.06), 0 1px 2px 0 rgba(128, 55, 123, 0.04);
-  --shadow-sm: 0 2px 8px -1px rgba(128, 55, 123, 0.1), 0 1px 3px -1px rgba(128, 55, 123, 0.06);
-  --shadow-md: 0 8px 20px -4px rgba(128, 55, 123, 0.12), 0 4px 8px -2px rgba(128, 55, 123, 0.06);
-  --shadow-lg: 0 16px 40px -8px rgba(128, 55, 123, 0.16), 0 8px 16px -4px rgba(128, 55, 123, 0.08);
-
-  /* Sidebar */
-  --sidebar-bg: #1e1b2e;
-  --sidebar-border: rgba(255, 255, 255, 0.06);
-  --sidebar-brand-gradient: linear-gradient(180deg, #1e1b2e 0%, #2a1f3d 50%, #1e1b2e 100%);
-  --nav-active-bg: rgba(128, 55, 123, 0.18);
-  --nav-active-color: #d8b4d8;
-  --nav-active-border: #a85ca3;
-
-  /* Glass surfaces */
-  --glass-bg: rgba(255, 255, 255, 0.76);
-  --glass-bg-subtle: rgba(255, 255, 255, 0.55);
-  --glass-bg-overlay: rgba(250, 249, 247, 0.9);
-  --glass-saturate: 160%;
-  --glass-highlight: rgba(255, 255, 255, 0.6);
-  --glass-border: rgba(128, 55, 123, 0.1);
-  --glass-border-light: rgba(255, 255, 255, 0.5);
-  --glass-shadow: 0 8px 32px rgba(128, 55, 123, 0.1), 0 2px 8px rgba(128, 55, 123, 0.05);
-  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  --glass-blur: 16px;
-
-  /* Body gradient */
-  --body-gradient: radial-gradient(ellipse at 80% 10%, rgba(168, 92, 163, 0.1) 0%, transparent 60%);
-
-  /* Theme switch transition */
-  transition:
-    color 200ms ease,
-    background-color 200ms ease;
-
-  /* Leave type chip / legend colors */
-  --leave-type-vacation: #4caf50;
-  --leave-type-overtime: #9c27b0;
-  --leave-type-special: #2196f3;
-  --leave-type-education: #00bcd4;
-  --leave-type-sick: #f44336;
-  --leave-type-sick-child: #ff9800;
-  --leave-type-unpaid: #795548;
-  --leave-type-holiday: #f59e0b;
-  --leave-type-maternity: #e91e63;
-  --leave-type-parental: #ff5722;
-  --leave-type-default: #607d8b;
-  --leave-type-absent: #9e9e9e;
-  --leave-type-absent-muted: #bdbdbd;
+/* Cormorant Garamond (weights 300, 400, 500 + 300/400 italic) — v1.5 serif per design handoff */
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-ext-300.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-300.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-ext-400.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-400.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-ext-500.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-500.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-ext-300italic.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-300italic.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-ext-400italic.woff2") format("woff2");
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+@font-face {
+  font-family: "Cormorant Garamond";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/cormorant-garamond-v21-latin-400italic.woff2") format("woff2");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
 /* ─── Body Gradient Backdrop (Glassmorphism visibility layer) ────────── */
@@ -218,215 +198,6 @@ body::before {
   pointer-events: none;
   z-index: -1;
   background: var(--body-gradient);
-}
-
-/* ─── Theme: Hell (light — Slate-Gray) ───────────────────────────────── */
-[data-theme="hell"] {
-  /* Brand — Slate neutral */
-  --color-brand: #475569;
-  --color-brand-dark: #334155;
-  --color-brand-light: #94a3b8;
-  --color-brand-tint: #f1f5f9;
-  --color-brand-tint-hover: #e2e8f0;
-
-  /* Surfaces */
-  --color-surface: #ffffff;
-  --color-surface-raised: #ffffff;
-
-  /* Background */
-  --color-bg: #f8fafc;
-  --color-bg-subtle: #f1f5f9;
-  --color-bg-muted: #e2e8f0;
-
-  /* Text */
-  --color-text: #334155;
-  --color-text-muted: #64748b;
-  --color-text-heading: #0f172a;
-
-  /* Border */
-  --color-border: #cbd5e1;
-  --color-border-subtle: #e2e8f0;
-
-  /* Gray scale — cool slate */
-  --gray-50: #f8fafc;
-  --gray-100: #f1f5f9;
-  --gray-200: #e2e8f0;
-  --gray-300: #cbd5e1;
-  --gray-400: #94a3b8;
-  --gray-500: #64748b;
-  --gray-600: #475569;
-  --gray-700: #334155;
-  --gray-800: #1e293b;
-  --gray-900: #0f172a;
-
-  /* Status colors — same as lila */
-  --color-green: #16a34a;
-  --color-green-bg: #f0fdf4;
-  --color-green-border: #bbf7d0;
-  --color-yellow: #ca8a04;
-  --color-yellow-bg: #fefce8;
-  --color-yellow-border: #fef08a;
-  --color-red: #dc2626;
-  --color-red-bg: #fef2f2;
-  --color-red-border: #fecaca;
-  --color-blue: #2563eb;
-  --color-blue-bg: #eff6ff;
-  --color-blue-border: #bfdbfe;
-  --color-purple: #475569;
-  --color-purple-bg: #f1f5f9;
-  --color-purple-border: #cbd5e1;
-  --color-orange: #c2410c;
-  --color-orange-bg: #fff7ed;
-  --color-orange-border: #fed7aa;
-  --color-danger: #ef4444;
-
-  /* Shadows — cool slate tint */
-  --shadow-xs: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px 0 rgba(15, 23, 42, 0.03);
-  --shadow-sm: 0 2px 8px -1px rgba(15, 23, 42, 0.06), 0 1px 3px -1px rgba(15, 23, 42, 0.04);
-  --shadow-md: 0 8px 20px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -2px rgba(15, 23, 42, 0.04);
-  --shadow-lg: 0 16px 40px -8px rgba(15, 23, 42, 0.1), 0 8px 16px -4px rgba(15, 23, 42, 0.06);
-
-  /* Sidebar — dark */
-  --sidebar-bg: #1e293b;
-  --sidebar-border: rgba(255, 255, 255, 0.05);
-  --sidebar-brand-gradient: linear-gradient(180deg, #1e293b 0%, #273548 50%, #1e293b 100%);
-  --nav-active-bg: rgba(71, 85, 105, 0.2);
-  --nav-active-color: #cbd5e1;
-  --nav-active-border: #94a3b8;
-
-  /* Glass surfaces */
-  --glass-bg: rgba(255, 255, 255, 0.78);
-  --glass-bg-subtle: rgba(255, 255, 255, 0.55);
-  --glass-bg-overlay: rgba(248, 250, 252, 0.92);
-  --glass-saturate: 140%;
-  --glass-highlight: rgba(255, 255, 255, 0.55);
-  --glass-border: rgba(71, 85, 105, 0.08);
-  --glass-border-light: rgba(255, 255, 255, 0.45);
-  --glass-shadow: 0 8px 32px rgba(15, 23, 42, 0.06), 0 2px 8px rgba(15, 23, 42, 0.04);
-  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.55);
-  --glass-blur: 16px;
-
-  /* Body gradient */
-  --body-gradient: radial-gradient(
-    ellipse at 90% 5%,
-    rgba(148, 163, 184, 0.08) 0%,
-    transparent 55%
-  );
-}
-
-/* ─── Theme: Dunkel (dark — Charcoal) ────────────────────────────────── */
-[data-theme="dunkel"],
-[data-theme="dunkel"] * {
-  color-scheme: dark;
-}
-
-[data-theme="dunkel"] {
-  /* Brand — Slate for dark */
-  --color-brand: #64748b;
-  --color-brand-dark: #475569;
-  --color-brand-light: #94a3b8;
-  --color-brand-tint: rgba(100, 116, 139, 0.12);
-  --color-brand-tint-hover: rgba(100, 116, 139, 0.2);
-
-  /* Surfaces */
-  --color-surface: #1e293b;
-  --color-surface-raised: #273548;
-
-  /* Background */
-  --color-bg: #1e293b;
-  --color-bg-subtle: #273548;
-  --color-bg-muted: #334155;
-
-  /* Text */
-  --color-text: #cbd5e1;
-  --color-text-muted: #94a3b8;
-  --color-text-heading: #f1f5f9;
-
-  /* Border */
-  --color-border: rgba(255, 255, 255, 0.07);
-  --color-border-subtle: rgba(255, 255, 255, 0.05);
-
-  /* Gray scale — inverted for dark */
-  --gray-50: #0f172a;
-  --gray-100: #1e293b;
-  --gray-200: #273548;
-  --gray-300: #334155;
-  --gray-400: #475569;
-  --gray-500: #64748b;
-  --gray-600: #94a3b8;
-  --gray-700: #cbd5e1;
-  --gray-800: #e2e8f0;
-  --gray-900: #f1f5f9;
-
-  /* Status colors — lightened for dark bg */
-  --color-green: #4ade80;
-  --color-green-bg: rgba(74, 222, 128, 0.1);
-  --color-green-border: rgba(74, 222, 128, 0.2);
-  --color-yellow: #fbbf24;
-  --color-yellow-bg: rgba(251, 191, 36, 0.1);
-  --color-yellow-border: rgba(251, 191, 36, 0.2);
-  --color-red: #f87171;
-  --color-red-bg: rgba(248, 113, 113, 0.1);
-  --color-red-border: rgba(248, 113, 113, 0.2);
-  --color-blue: #60a5fa;
-  --color-blue-bg: rgba(96, 165, 250, 0.1);
-  --color-blue-border: rgba(96, 165, 250, 0.2);
-  --color-purple: #94a3b8;
-  --color-purple-bg: rgba(148, 163, 184, 0.1);
-  --color-purple-border: rgba(148, 163, 184, 0.2);
-  --color-orange: #fb923c;
-  --color-orange-bg: rgba(251, 146, 60, 0.1);
-  --color-orange-border: rgba(251, 146, 60, 0.2);
-  --color-danger: #f87171;
-
-  /* Shadows — deep dark */
-  --shadow-xs: 0 1px 3px 0 rgba(0, 0, 0, 0.2), 0 1px 2px 0 rgba(0, 0, 0, 0.15);
-  --shadow-sm: 0 2px 8px -1px rgba(0, 0, 0, 0.3), 0 1px 3px -1px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 8px 20px -4px rgba(0, 0, 0, 0.35), 0 4px 8px -2px rgba(0, 0, 0, 0.25);
-  --shadow-lg: 0 16px 40px -8px rgba(0, 0, 0, 0.45), 0 8px 16px -4px rgba(0, 0, 0, 0.3);
-
-  /* Sidebar — deepest dark */
-  --sidebar-bg: #0f172a;
-  --sidebar-border: rgba(255, 255, 255, 0.05);
-  --sidebar-brand-gradient: linear-gradient(180deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
-  --nav-active-bg: rgba(100, 116, 139, 0.18);
-  --nav-active-color: #cbd5e1;
-  --nav-active-border: #64748b;
-
-  /* Glass surfaces — dark glass */
-  --glass-bg: rgba(30, 41, 59, 0.78);
-  --glass-bg-subtle: rgba(30, 41, 59, 0.55);
-  --glass-bg-overlay: rgba(30, 41, 59, 0.92);
-  --glass-saturate: 120%;
-  --glass-highlight: rgba(255, 255, 255, 0.06);
-  --glass-border: rgba(255, 255, 255, 0.07);
-  --glass-border-light: rgba(255, 255, 255, 0.1);
-  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.25);
-  --glass-shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --glass-blur: 16px;
-
-  /* Body gradient */
-  --body-gradient: radial-gradient(
-    ellipse at 75% 15%,
-    rgba(100, 116, 139, 0.08) 0%,
-    transparent 50%
-  );
-}
-
-/* ─── Dark theme overrides for dunkel ────────────────────────────────── */
-[data-theme="dunkel"] select.form-input {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394A3B8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-}
-
-[data-theme="dunkel"] .form-input {
-  background-color: var(--color-surface-raised);
-  border-color: var(--gray-300);
-  color: var(--color-text);
-}
-
-[data-theme="dunkel"] .form-input:focus {
-  border-color: var(--color-brand-light);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.15);
 }
 
 /* ─── Base Reset ─────────────────────────────────────────────────────── */
@@ -447,8 +218,8 @@ body {
   font-family: var(--font-sans);
   font-size: 1rem;
   line-height: 1.65;
-  color: var(--color-text);
-  background-color: var(--color-bg);
+  color: var(--text);
+  background-color: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   transition:
@@ -463,21 +234,25 @@ h4,
 h5,
 h6 {
   font-family: var(--font-sans);
-  color: var(--color-text-heading);
+  color: var(--text);
   font-weight: 600;
   line-height: 1.3;
   text-wrap: balance;
 }
 
 /* Inline links in body text — must be distinguishable from surrounding text */
-a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user) {
+a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
+    .sidebar-brand
+  ) {
   text-decoration-line: underline;
-  text-decoration-color: var(--color-brand-light);
+  text-decoration-color: var(--brand-light);
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
 }
-a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):hover {
-  text-decoration-color: var(--color-brand);
+a:not(.btn):not(.nav-item):not(.admin-tab):not(.mobile-nav-item):not(.sidebar-user):not(
+    .sidebar-brand
+  ):hover {
+  text-decoration-color: var(--brand);
 }
 
 h1 {
@@ -501,11 +276,11 @@ p {
 }
 
 a {
-  color: var(--color-brand);
+  color: var(--brand);
   text-decoration: none;
 }
 a:hover {
-  color: var(--color-brand-dark);
+  color: var(--brand-dark);
 }
 
 input,
@@ -523,7 +298,7 @@ button {
   gap: 0.4rem;
   padding: 0.625rem 1.35rem;
   min-height: 44px; /* WCAG 2.5.5 touch target minimum */
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   font-family: var(--font-sans);
   font-size: 1rem;
   font-weight: 500;
@@ -543,7 +318,7 @@ button {
 }
 
 .btn:focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -557,52 +332,52 @@ button {
 }
 
 .btn-primary {
-  background-color: var(--color-brand);
+  background-color: var(--brand);
   color: #fff;
-  border-color: var(--color-brand);
+  border-color: var(--brand);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   border-radius: 9999px;
 }
 .btn-primary:hover:not(:disabled) {
-  background-color: var(--color-brand-dark);
-  border-color: var(--color-brand-dark);
+  background-color: var(--brand-dark);
+  border-color: var(--brand-dark);
   color: #fff;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
   transform: translateY(-1px);
 }
 
 .btn-secondary {
-  background-color: var(--color-brand-tint);
-  color: var(--color-brand);
-  border-color: var(--color-border);
+  background-color: var(--brand-soft);
+  color: var(--brand);
+  border-color: var(--border);
   border-radius: 9999px;
 }
 .btn-secondary:hover:not(:disabled) {
-  background-color: var(--color-brand-tint-hover);
-  color: var(--color-brand-dark);
+  background-color: var(--brand-soft);
+  color: var(--brand-dark);
   box-shadow: var(--shadow-xs);
   transform: translateY(-1px);
 }
 
 .btn-outline {
   background-color: transparent;
-  color: var(--color-brand);
-  border-color: var(--color-brand);
+  color: var(--brand);
+  border-color: var(--brand);
 }
 .btn-outline:hover:not(:disabled) {
-  background-color: var(--color-brand-tint);
+  background-color: var(--brand-soft);
   box-shadow: var(--shadow-xs);
   transform: translateY(-1px);
 }
 
 .btn-ghost {
   background-color: transparent;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   border-color: transparent;
 }
 .btn-ghost:hover:not(:disabled) {
-  background-color: var(--color-bg-subtle);
-  color: var(--color-text);
+  background-color: var(--bg-subtle);
+  color: var(--text);
   transform: translateY(-1px);
 }
 
@@ -616,15 +391,15 @@ button {
 .page-title {
   font-size: 1.375rem;
   font-weight: 700;
-  color: var(--color-text-heading);
+  color: var(--text);
   margin-bottom: 1rem;
   line-height: 1.3;
 }
 
 .btn-danger {
-  background-color: var(--color-red);
+  background-color: var(--bad);
   color: #fff;
-  border-color: var(--color-red);
+  border-color: var(--bad);
 }
 .btn-danger:hover:not(:disabled) {
   background-color: #b91c1c;
@@ -669,13 +444,13 @@ button {
   min-height: 44px;
 }
 .theme-dot[aria-checked="true"] {
-  border-color: var(--color-brand);
+  border-color: var(--brand);
 }
 .theme-dot:hover {
   transform: scale(1.1);
 }
 .theme-dot:focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 .theme-dot-inner {
@@ -687,12 +462,12 @@ button {
 
 /* ─── Card ───────────────────────────────────────────────────────────── */
 .card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 18px;
-  box-shadow: var(--glass-shadow), var(--glass-shadow-inset);
-  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-md), none;
+  backdrop-filter: blur(0px) saturate(100%);
+  -webkit-backdrop-filter: blur(0px) saturate(100%);
   overflow: clip;
   transition:
     background-color 0.25s ease,
@@ -714,7 +489,7 @@ button {
   .stat-card,
   .table-wrapper,
   .dialog-content {
-    background: var(--color-surface);
+    background: var(--bg-card);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -731,7 +506,7 @@ button {
   .dialog-content {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    background: var(--color-surface);
+    background: var(--bg-card);
   }
   body::before {
     display: none;
@@ -740,7 +515,7 @@ button {
 
 .card-header {
   padding: 1.25rem 1.75rem;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 /* ─── Badges ─────────────────────────────────────────────────────────── */
@@ -755,49 +530,52 @@ button {
   line-height: 1.4;
   white-space: nowrap;
   letter-spacing: 0.02em;
-  transition: all 0.15s ease;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
 }
 
 .badge-green {
-  background-color: var(--color-green-bg);
-  color: var(--color-green);
-  border: 1px solid var(--color-green-border);
+  background-color: var(--good-soft);
+  color: var(--good);
+  border: 1px solid var(--good-soft);
 }
 
 .badge-yellow {
-  background-color: var(--color-yellow-bg);
-  color: var(--color-yellow);
-  border: 1px solid var(--color-yellow-border);
+  background-color: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid var(--warn-soft);
 }
 
 .badge-red {
-  background-color: var(--color-red-bg);
-  color: var(--color-red);
-  border: 1px solid var(--color-red-border);
+  background-color: var(--bad-soft);
+  color: var(--bad);
+  border: 1px solid var(--bad-soft);
 }
 
 .badge-blue {
-  background-color: var(--color-blue-bg);
-  color: var(--color-blue);
-  border: 1px solid var(--color-blue-border);
+  background-color: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(37, 99, 235, 0.2);
 }
 
 .badge-purple {
-  background-color: var(--color-purple-bg);
-  color: var(--color-purple);
-  border: 1px solid var(--color-purple-border);
+  background-color: var(--brand-soft);
+  color: var(--brand);
+  border: 1px solid var(--brand-soft);
 }
 
 .badge-gray {
-  background-color: var(--gray-100);
-  color: var(--gray-600);
-  border: 1px solid var(--gray-200);
+  background-color: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
 }
 
 .badge-orange {
-  background-color: var(--color-orange-bg);
-  color: var(--color-orange);
-  border: 1px solid var(--color-orange-border);
+  background-color: rgba(194, 65, 12, 0.1);
+  color: #c2410c;
+  border: 1px solid rgba(194, 65, 12, 0.2);
 }
 
 /* ─── Forms ──────────────────────────────────────────────────────────── */
@@ -810,18 +588,18 @@ button {
 .form-label {
   font-size: 0.9375rem;
   font-weight: 500;
-  color: var(--color-text);
+  color: var(--text);
 }
 
 .form-input {
   width: 100%;
   padding: 0.65rem 1rem;
-  border: 1px solid var(--gray-300);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
   font-family: var(--font-sans);
   font-size: 1rem;
-  color: var(--color-text);
-  background-color: var(--color-surface);
+  color: var(--text);
+  background-color: var(--bg-card);
   transition:
     border-color 0.15s,
     box-shadow 0.15s,
@@ -832,21 +610,31 @@ button {
 }
 
 .form-input::placeholder {
-  color: var(--gray-400);
+  color: var(--text-faint);
 }
 
 .form-input:focus-visible,
 .form-input:focus {
-  border-color: var(--color-brand);
+  border-color: var(--brand);
   box-shadow:
-    0 0 0 3px var(--color-brand-tint),
+    0 0 0 3px var(--brand-soft),
     0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
 .form-input:disabled {
-  background-color: var(--gray-100);
-  color: var(--gray-500);
+  background-color: var(--bg-subtle);
+  color: var(--text-muted);
   cursor: not-allowed;
+}
+
+/* iOS Safari zooms inputs that resolve to < 16px font-size on focus.
+   Anchor the size on mobile so this never regresses if root font-size
+   shifts (e.g. via density tokens). */
+@media (max-width: 640px) {
+  .form-input,
+  textarea {
+    font-size: 16px;
+  }
 }
 
 select.form-input {
@@ -859,12 +647,54 @@ select.form-input {
 
 .form-hint {
   font-size: 0.8125rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 .form-error {
   font-size: 0.8125rem;
-  color: var(--color-red);
+  color: var(--bad);
+}
+
+/* ─── Base .input / .select (theme-aware) ──────────────────────────────
+   Many admin tables apply `class="input"` to bare <input> elements without
+   the legacy `.form-input` class. Provide a base rule so dark mode does not
+   fall back to the browser default white background. */
+.input,
+.select {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border, var(--border));
+  border-radius: var(--r-md, var(--r-sm));
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  color: var(--text, var(--text));
+  background-color: var(--bg-card, var(--bg-card));
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    background-color 0.25s;
+  outline: none;
+  appearance: none;
+  touch-action: manipulation;
+}
+
+.input::placeholder {
+  color: var(--text-faint, var(--text-faint));
+}
+
+.input:focus-visible,
+.input:focus,
+.select:focus-visible,
+.select:focus {
+  border-color: var(--brand, var(--brand));
+  box-shadow: 0 0 0 3px var(--brand-soft, var(--brand-soft));
+}
+
+.input:disabled,
+.select:disabled {
+  background-color: var(--bg-subtle, var(--bg-subtle));
+  color: var(--text-muted, var(--text-muted));
+  cursor: not-allowed;
 }
 
 /* ─── Page Header ────────────────────────────────────────────────────── */
@@ -875,13 +705,13 @@ select.form-input {
 .page-header h1 {
   font-size: 1.875rem;
   font-weight: 600;
-  color: var(--color-text-heading);
+  color: var(--text);
   margin-bottom: 0.25rem;
 }
 
 .page-header p {
   font-size: 1rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 
 /* Compact page header variant for pages with tabs below */
@@ -897,7 +727,7 @@ select.form-input {
 .page-header-compact h1 {
   font-size: 1.375rem;
   font-weight: 600;
-  color: var(--color-text-heading);
+  color: var(--text);
   margin: 0;
 }
 
@@ -911,12 +741,12 @@ select.form-input {
 
 /* ─── Stat Card ──────────────────────────────────────────────────────── */
 .stat-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
   padding: 1.5rem 1.75rem;
   transition:
     background-color 0.25s ease,
@@ -926,7 +756,7 @@ select.form-input {
 .stat-card .stat-label {
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 0.5rem;
@@ -935,21 +765,21 @@ select.form-input {
 .stat-card .stat-value {
   font-size: 2.125rem;
   font-weight: 700;
-  color: var(--color-text-heading);
+  color: var(--text);
   line-height: 1.1;
 }
 
 .stat-card .stat-sub {
   font-size: 0.8125rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   margin-top: 0.25rem;
 }
 
 .stat-card .stat-trend-up {
-  color: var(--color-green);
+  color: var(--good);
 }
 .stat-card .stat-trend-down {
-  color: var(--color-red);
+  color: var(--bad);
 }
 
 /* ─── Data Table ─────────────────────────────────────────────────────── */
@@ -957,11 +787,11 @@ select.form-input {
 .table-wrapper {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
 }
 
 .data-table {
@@ -973,8 +803,8 @@ select.form-input {
 }
 
 .data-table thead tr {
-  background-color: var(--gray-50);
-  border-bottom: 1px solid var(--color-border);
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border);
 }
 
 .data-table th {
@@ -984,14 +814,14 @@ select.form-input {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
 .data-table td {
   padding: 1rem 1.125rem;
-  color: var(--color-text);
-  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
   vertical-align: middle;
   font-variant-numeric: tabular-nums;
 }
@@ -1000,10 +830,10 @@ select.form-input {
   border-bottom: none;
 }
 .data-table tbody tr:nth-child(even) {
-  background-color: var(--gray-50);
+  background-color: var(--bg-card);
 }
 .data-table tbody tr:hover {
-  background-color: var(--color-brand-tint);
+  background-color: var(--brand-soft);
 }
 .data-table tbody tr {
   transition: background-color 0.15s ease;
@@ -1012,7 +842,7 @@ select.form-input {
 /* ─── Alert / Info Banner ────────────────────────────────────────────── */
 .alert {
   padding: 1rem 1.25rem;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   font-size: 0.9375rem;
   display: flex;
   align-items: flex-start;
@@ -1021,40 +851,40 @@ select.form-input {
 }
 
 .alert-info {
-  background-color: var(--color-blue-bg);
-  color: var(--color-blue);
-  border-color: var(--color-blue-border);
+  background-color: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.2);
 }
 .alert-warning {
-  background-color: var(--color-yellow-bg);
+  background-color: var(--warn-soft);
   color: #92400e;
-  border-color: var(--color-yellow-border);
+  border-color: var(--warn-soft);
 }
 .alert-error {
-  background-color: var(--color-red-bg);
-  color: var(--color-red);
-  border-color: var(--color-red-border);
+  background-color: var(--bad-soft);
+  color: var(--bad);
+  border-color: var(--bad-soft);
 }
 .alert-success {
-  background-color: var(--color-green-bg);
-  color: var(--color-green);
-  border-color: var(--color-green-border);
+  background-color: var(--good-soft);
+  color: var(--good);
+  border-color: var(--good-soft);
 }
 
 /* ─── Divider ────────────────────────────────────────────────────────── */
 .divider {
   height: 1px;
-  background-color: var(--color-border-subtle);
+  background-color: var(--border);
   border: none;
   margin: 1.5rem 0;
 }
 
 /* ─── Loading Skeleton ───────────────────────────────────────────────── */
 .skeleton {
-  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-200) 50%, var(--gray-100) 75%);
+  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--border) 50%, var(--bg-subtle) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 @keyframes skeleton-shimmer {
@@ -1068,19 +898,19 @@ select.form-input {
 
 /* ─── Utilities ──────────────────────────────────────────────────────── */
 .text-muted {
-  color: var(--color-text-muted);
+  color: var(--text-muted);
 }
 .text-brand {
-  color: var(--color-brand);
+  color: var(--brand);
 }
 .text-green {
-  color: var(--color-green);
+  color: var(--good);
 }
 .text-yellow {
-  color: var(--color-yellow);
+  color: var(--warn);
 }
 .text-red {
-  color: var(--color-red);
+  color: var(--bad);
 }
 
 .font-mono {
@@ -1113,7 +943,7 @@ select.form-input {
   display: flex;
   gap: 0.25rem;
   margin-bottom: 1rem;
-  border-bottom: 2px solid var(--gray-200);
+  border-bottom: 2px solid var(--border);
 }
 
 .view-tab {
@@ -1125,7 +955,7 @@ select.form-input {
   font-family: var(--font-sans);
   font-size: 0.875rem;
   font-weight: 500;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   border-bottom: 2px solid transparent;
   margin-bottom: -2px;
   border-radius: 4px 4px 0 0;
@@ -1135,12 +965,12 @@ select.form-input {
 }
 
 .view-tab:hover {
-  color: var(--color-text);
+  color: var(--text);
 }
 
 .view-tab--active {
-  color: var(--color-brand);
-  border-bottom-color: var(--color-brand);
+  color: var(--brand);
+  border-bottom-color: var(--brand);
   font-weight: 600;
 }
 
@@ -1152,7 +982,7 @@ select.form-input {
   height: 1.125rem;
   padding: 0 0.3rem;
   border-radius: 9999px;
-  background: var(--color-red);
+  background: var(--bad);
   color: #fff;
   font-size: 0.6875rem;
   font-weight: 700;
@@ -1188,7 +1018,7 @@ select.form-input {
 .filter-count {
   margin-left: auto;
   font-size: 0.8125rem;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   white-space: nowrap;
 }
 
@@ -1317,19 +1147,19 @@ select.form-input {
 .skeleton-heading {
   height: 2rem;
   width: 60%;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .skeleton-stat {
   height: 2.5rem;
   width: 80%;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
 }
 
 .skeleton-card {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   padding: 1.5rem 1.75rem;
   min-height: 120px;
 }
@@ -1357,14 +1187,14 @@ select.form-input {
 .input-icon {
   position: absolute;
   left: 0.875rem;
-  color: var(--gray-400);
+  color: var(--text-faint);
   pointer-events: none;
   z-index: 1;
   transition: color 0.15s;
 }
 
 .input-wrapper:focus-within .input-icon {
-  color: var(--color-brand);
+  color: var(--brand);
 }
 
 .form-input--icon {
@@ -1382,8 +1212,8 @@ select.form-input {
   border: none;
   cursor: pointer;
   padding: 0.375rem;
-  border-radius: var(--radius-sm);
-  color: var(--gray-400);
+  border-radius: var(--r-sm);
+  color: var(--text-faint);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1393,8 +1223,8 @@ select.form-input {
 }
 
 .password-toggle:hover {
-  color: var(--color-text);
-  background-color: var(--color-bg-subtle);
+  color: var(--text);
+  background-color: var(--bg-subtle);
 }
 
 /* Smoother focus transition */
@@ -1435,7 +1265,7 @@ textarea.form-input {
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: var(--color-surface);
+  background-color: var(--bg-card);
 }
 
 .data-table th.sortable {
@@ -1445,7 +1275,7 @@ textarea.form-input {
 }
 
 .data-table th.sortable:hover {
-  color: var(--color-brand);
+  color: var(--brand);
 }
 
 .data-table th .sort-indicator {
@@ -1461,7 +1291,7 @@ textarea.form-input {
 
 .data-table th.sorted .sort-indicator {
   opacity: 1;
-  color: var(--color-brand);
+  color: var(--brand);
 }
 
 /* Row action overlay on hover */
@@ -1492,10 +1322,10 @@ textarea.form-input {
   top: -100%;
   left: 50%;
   transform: translateX(-50%);
-  background: var(--color-brand);
+  background: var(--brand);
   color: #fff;
   padding: 0.5rem 1.25rem;
-  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  border-radius: 0 0 var(--r-sm) var(--r-sm);
   z-index: 10000;
   font-size: 0.875rem;
   font-weight: 500;
@@ -1509,7 +1339,7 @@ textarea.form-input {
 
 /* Improved focus-visible styles */
 :focus-visible {
-  outline: 2px solid var(--color-brand);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
@@ -1550,11 +1380,11 @@ textarea.form-input {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: var(--glass-bg-strong, var(--color-surface));
-  backdrop-filter: blur(var(--glass-blur));
-  -webkit-backdrop-filter: blur(var(--glass-blur));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  backdrop-filter: blur(0px);
+  -webkit-backdrop-filter: blur(0px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);
   z-index: 501;
   max-width: 90vw;
@@ -1579,7 +1409,7 @@ textarea.form-input {
   align-items: center;
   justify-content: space-between;
   padding: 1.25rem 1.5rem;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--border);
 }
 
 .dialog-header h2 {
@@ -1597,12 +1427,12 @@ textarea.form-input {
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 1rem 1.5rem;
-  border-top: 1px solid var(--color-border-subtle);
+  border-top: 1px solid var(--border);
 }
 
 /* ─── Calendar shared: holiday + weekend cells ───────────────────────────────────── */
 .cal-cell.cal-holiday:not(.cal-other):not(.cal-selected) {
-  background: var(--color-brand-tint) !important;
+  background: var(--brand-soft) !important;
 }
 .cal-cell.cal-holiday:not(.cal-other):not(.cal-selected)::before {
   content: "";
@@ -1611,39 +1441,39 @@ textarea.form-input {
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--color-brand);
+  background: var(--brand);
   border-radius: 6px 0 0 6px;
   z-index: 2;
   pointer-events: none;
 }
 
 .cal-cell.cal-weekend:not(.cal-other):not(.cal-selected) {
-  background: var(--color-bg-subtle) !important;
+  background: var(--bg-subtle) !important;
 }
 
 /* ─── Leave-type absence cell backgrounds (used by .cal-abs-* in Zeiterfassung) ── */
 .cal-cell.cal-abs-vacation:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-vacation) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-sick:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-sick) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-special:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-special) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-special) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-overtime_comp:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-overtime) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-education:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-education) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-education) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 .cal-cell.cal-abs-unpaid:not(.cal-selected) {
-  background: color-mix(in srgb, var(--leave-type-unpaid) 15%, var(--color-surface)) !important;
+  background: color-mix(in srgb, var(--leave-type-unpaid) 15%, var(--bg-card)) !important;
   opacity: 1;
 }
 
@@ -1654,8 +1484,8 @@ textarea.form-input {
   margin-bottom: 1rem;
 }
 .cal-header-row {
-  border-bottom: 1.5px solid var(--gray-200, #e5e7eb);
-  background: var(--gray-50, #f9fafb);
+  border-bottom: 1.5px solid var(--border);
+  background: var(--bg-card);
 }
 .cal-dow {
   padding: 0.5rem;
@@ -1664,14 +1494,145 @@ textarea.form-input {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
+}
+/* v1.5 canonical page wrapper — ALL (app)/ pages should wrap their content
+   in <div class="page"> for consistent vertical rhythm between sections.
+   Padding + max-width are inherited from the outer .main container; do NOT
+   re-declare them in scoped page styles (see CLAUDE.md UI Consistency Rules). */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+
+/* v1.5 canonical calendar cell — ALL calendar views inherit this recipe.
+   Reference page: /time-entries. Per-page scoped overrides for .cal-cell /
+   .cal-grid are forbidden (see CLAUDE.md UI Consistency Rules). */
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  padding: 3px;
 }
 .cal-cell {
-  background: var(--color-surface);
+  /* button reset (calendar cells render as <button type="button">) */
+  appearance: none;
+  font: inherit;
+  text-align: inherit;
+  color: inherit;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  min-height: 86px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease),
+    background 160ms var(--ease);
+  position: relative;
+}
+.cal-cell:disabled {
+  cursor: default;
+}
+.cal-cell:not(.cal-other):hover {
+  border-color: var(--brand-light);
+}
+.cal-cell.cal-today {
+  outline: 1.5px solid var(--brand-light);
+  outline-offset: -1.5px;
+}
+.cal-cell.cal-weekend:not(.cal-today) {
+  background: var(--bg-subtle);
+}
+.cal-cell.cal-cell--disabled {
+  opacity: 0.4;
+  pointer-events: none;
+  cursor: default;
+  background: var(--bg-subtle) !important;
+}
+/* Status accent: left rule only — keeps mini-card surface for v1.5 look. */
+.cal-cell--ok {
+  border-left: 3px solid var(--good);
+}
+.cal-cell--partial {
+  border-left: 3px solid var(--warn);
+}
+.cal-cell--missing {
+  border-left: 3px solid var(--bad);
+}
+.cal-cell--today-ok {
+  border-left: 3px solid var(--good);
+}
+.cal-cell--today-partial {
+  border-left: 3px solid var(--warn);
+}
+/* ArbZG over: border + warn glyph top-right via ::after */
+.cal-cell.cal-cell--arbzg-warn {
+  border-color: var(--warn);
+}
+.cal-cell.cal-cell--arbzg-warn::after {
+  content: "⚠";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--warn);
+  pointer-events: none;
+}
+/* Canonical cell-content typography */
+.cal-cell .day-worked {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  color: var(--text);
+  line-height: 1;
+}
+.cal-cell.cal-cell--arbzg-warn .day-worked {
+  color: var(--bad);
+}
+.cal-cell .day-bal {
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.cal-cell .day-bal.pos {
+  color: var(--good);
+}
+.cal-cell .day-bal.neg {
+  color: var(--bad);
+}
+.cal-cell .day-missing {
+  font-size: 0.7rem;
+  font-family: var(--font-mono);
+  color: var(--bad);
+  opacity: 0.75;
+}
+.cal-cell .day-before-hire {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.cal-cell .cal-abs-type {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.65;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* WR-02: skeleton must override base background */
 .cal-cell.skeleton {
-  background: linear-gradient(90deg, var(--gray-100) 25%, var(--gray-200) 50%, var(--gray-100) 75%);
+  background: linear-gradient(90deg, var(--bg-subtle) 25%, var(--border) 50%, var(--bg-subtle) 75%);
   background-size: 200% 100%;
   animation: skeleton-shimmer 1.5s infinite;
 }
@@ -1679,16 +1640,16 @@ textarea.form-input {
 .cal-cell.cal-other:not(.cal-selected) {
   opacity: 0.35;
   cursor: default;
-  background: var(--gray-50, #f9fafb);
+  background: var(--bg-card);
 }
 .cal-today {
-  box-shadow: inset 0 0 0 2px var(--color-brand);
+  box-shadow: inset 0 0 0 2px var(--brand);
 }
 /* ─── Calendar: selection state ─────────────────────────────────────────── */
 .cal-cell.cal-selected:not(.cal-other) {
-  background-color: var(--color-brand) !important;
+  background-color: var(--brand) !important;
   box-shadow:
-    0 0 0 2px var(--color-brand),
+    0 0 0 2px var(--brand),
     0 4px 12px rgba(0, 0, 0, 0.15) !important;
   z-index: 1;
 }
@@ -1702,26 +1663,26 @@ textarea.form-input {
 }
 /* today+selected: ring + bg-subtle; text reverts so day-worked/bal stay readable */
 .cal-cell.cal-selected.cal-today:not(.cal-other) {
-  background-color: var(--color-bg-subtle) !important;
-  box-shadow: inset 0 0 0 2px var(--color-brand) !important;
+  background-color: var(--bg-subtle) !important;
+  box-shadow: inset 0 0 0 2px var(--brand) !important;
 }
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-worked,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-bal,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-missing,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-abs-type,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-holiday-label {
-  color: var(--color-text-muted) !important;
+  color: var(--text-muted) !important;
 }
 /* .cal-day-num: white on brand circle (handled by .cal-today .cal-day-num below) */
 .cal-day-num {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--color-text-muted);
+  color: var(--text-muted);
   line-height: 1;
   flex-shrink: 0;
 }
 .cal-today .cal-day-num {
-  background: var(--color-brand);
+  background: var(--brand);
   color: white;
   width: 20px;
   height: 20px;
@@ -1734,7 +1695,7 @@ textarea.form-input {
 .cal-holiday-label {
   display: block;
   font-size: 0.6875rem;
-  color: var(--color-brand);
+  color: var(--brand);
   font-weight: 600;
   line-height: 1.2;
   overflow: hidden;
@@ -1748,36 +1709,40 @@ textarea.form-input {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   padding: 1rem 1.25rem;
-  border-bottom: 1px solid var(--gray-200, #e5e7eb);
-  background: var(--gray-50, #f9fafb);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
 }
 .cal-nav-center {
   position: relative;
   justify-self: center;
 }
 .nav-btn {
-  background: var(--color-surface);
-  border: 1.5px solid var(--gray-200, #e5e7eb);
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
   border-radius: 8px;
   padding: 0.6875rem;
   min-height: 44px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  color: var(--color-text);
-  transition: all 0.15s ease;
+  color: var(--text);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
   box-shadow: var(--shadow-xs);
 }
 .nav-btn:hover {
-  background: var(--color-brand-tint);
-  border-color: var(--color-brand-light);
-  color: var(--color-brand);
+  background: var(--brand-soft);
+  border-color: var(--brand-light);
+  color: var(--brand);
 }
 .cal-nav-title {
   font-size: 1.125rem;
   font-weight: 700;
   text-transform: capitalize;
-  color: var(--color-text-heading);
+  color: var(--text);
   letter-spacing: -0.01em;
   background: none;
   border: none;
@@ -1787,11 +1752,11 @@ textarea.form-input {
   gap: 0.375rem;
   padding: 0.6875rem 0.5rem;
   min-height: 44px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   transition: background 0.15s;
 }
 .cal-nav-title:hover {
-  background: var(--color-bg-subtle);
+  background: var(--bg-subtle);
 }
 .month-picker-backdrop {
   position: fixed;
@@ -1804,9 +1769,9 @@ textarea.form-input {
   left: 50%;
   transform: translateX(-50%);
   z-index: 20;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
   box-shadow: var(--shadow-lg);
   padding: 0.75rem;
   min-width: 240px;
@@ -1826,12 +1791,12 @@ textarea.form-input {
   cursor: pointer;
   font-size: 1.25rem;
   padding: 0.25rem 0.5rem;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-muted);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
 }
 .month-picker-year button:hover {
-  background: var(--color-bg-subtle);
-  color: var(--color-text);
+  background: var(--bg-subtle);
+  color: var(--text);
 }
 .month-picker-grid {
   display: grid;
@@ -1841,43 +1806,45 @@ textarea.form-input {
 .month-picker-btn {
   padding: 0.375rem;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--r-sm);
   background: none;
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 500;
-  color: var(--color-text);
-  transition: all 0.15s;
+  color: var(--text);
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
 }
 .month-picker-btn:hover {
-  background: var(--color-brand-tint);
-  color: var(--color-brand);
+  background: var(--brand-soft);
+  color: var(--brand);
 }
 .month-picker-btn.active {
-  background: var(--color-brand);
+  background: var(--brand);
   color: white;
 }
 .month-picker-today {
   width: 100%;
   margin-top: 0.5rem;
   padding: 0.375rem;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
   background: none;
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 500;
-  color: var(--color-brand);
+  color: var(--brand);
 }
 .month-picker-today:hover {
-  background: var(--color-brand-tint);
+  background: var(--brand-soft);
 }
 
 /* ── Widget Action Links (Phase 9) ──────────────────────────────── */
 .widget-action {
   font-size: 0.8125rem;
   font-weight: 400;
-  color: var(--color-brand);
+  color: var(--brand);
   text-decoration: none;
   transition: opacity 150ms ease-out;
   white-space: nowrap;
@@ -1895,4 +1862,1044 @@ textarea.form-input {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ─── v1.5 component recipes ─────────────────────────────────────────
+   Canonical class-level styles for the v1.5 design system. Consume tokens
+   from tokens.css directly (no --color-* prefix). Legacy v1.2 button/card
+   rules earlier in this file are SUPERSEDED by these recipes (later cascade
+   wins). Sweeping legacy classes is the job of phases 29-32. */
+
+/* ─── Cards (COMP-01) ─── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--pad-card);
+  position: relative;
+}
+.card.dark-fill {
+  background: var(--bg-elevated);
+}
+
+.card-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  gap: 14px;
+}
+.card-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.card-sub {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--brand-light);
+  font-size: 13px;
+  margin-top: 2px;
+}
+.card-hd-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+.card-foot {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ─── KPI card (COMP-04) ─── */
+/* The KPIStat primitive (lib/components/ui/KPIStat.svelte) emits prefixed
+   class names (.kpi-label, .kpi-value, .kpi-unit, .kpi-delta). Older pages
+   use the bare class names (.label, .value, .unit, .delta) inside .kpi.
+   Both must render identically — selectors below match either. */
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kpi .label,
+.kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.kpi .value,
+.kpi-value {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 38px;
+  line-height: 1;
+  letter-spacing: 0.005em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.kpi .value .u,
+.kpi-unit {
+  font-size: 14px;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-variant-numeric: normal;
+}
+.kpi .delta,
+.kpi-delta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.kpi .delta.up,
+.kpi-delta-good {
+  color: var(--good);
+}
+.kpi .delta.down,
+.kpi-delta-bad {
+  color: var(--bad);
+}
+.kpi-delta-warn {
+  color: var(--warn);
+}
+
+/* KPI bar (8 px pill with brand fill — used in KPI cards per COMP-04) */
+.kpi .bar {
+  background: var(--bg-subtle);
+  border-radius: var(--r-pill);
+  height: 8px;
+  overflow: hidden;
+  position: relative;
+  margin-top: 8px;
+}
+.kpi .bar-fill {
+  background: var(--brand);
+  height: 100%;
+  border-radius: inherit;
+  transition: width 400ms var(--ease-out);
+}
+
+/* ─── Buttons (COMP-02) — supersede legacy .btn rules earlier in this file ─── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 13.5px;
+  line-height: 1.2;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 160ms var(--ease),
+    color 160ms var(--ease),
+    border-color 160ms var(--ease),
+    box-shadow 160ms var(--ease),
+    transform 160ms var(--ease);
+  white-space: nowrap;
+  letter-spacing: 0.005em;
+  /* No min-height: 44px here — handoff spec is 9/16 padding. Touch targets are addressed
+     via .btn.lg for primary CTAs on mobile and via focus ring affordance. */
+  min-height: 0;
+}
+.btn-primary {
+  background: var(--brand);
+  color: var(--text-on-brand);
+  box-shadow: var(--shadow-brand);
+  border-color: transparent;
+  /* Override legacy pill rule from line ~336 */
+  border-radius: var(--r-sm);
+}
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-light);
+  box-shadow: var(--shadow-brand-lg);
+  transform: translateY(-1px);
+}
+.btn-outline {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: transparent;
+  border-radius: var(--r-sm);
+}
+.btn-outline:hover:not(:disabled) {
+  background: var(--bg-subtle);
+}
+.btn-ghost {
+  color: var(--text-muted);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--r-sm);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+.btn-danger {
+  background: transparent;
+  color: var(--bad);
+  border-color: rgba(180, 35, 24, 0.3);
+  border-radius: var(--r-sm);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--bad-soft);
+}
+.btn.lg {
+  padding: 12px 22px;
+  font-size: 14.5px;
+}
+.btn.sm {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+.btn.xs {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Chips / status pills (COMP-03) ─── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+.chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.chip-good {
+  color: var(--good);
+  background: var(--good-soft);
+  border-color: transparent;
+}
+.chip-warn {
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-color: transparent;
+}
+.chip-bad {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: transparent;
+}
+.chip-brand {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: transparent;
+}
+[data-mode="dark"] .chip-brand {
+  color: var(--brand-light);
+}
+[data-mode="dark"] .chip-good {
+  color: #6bd49a;
+}
+[data-mode="dark"] .chip-warn {
+  color: #fbbf24;
+}
+[data-mode="dark"] .chip-bad {
+  color: #f87171;
+}
+
+/* ─── Focus ring (COMP-06) — universal accessible focus indicator ─── */
+/* Reset default browser outline only for elements that explicitly opt in to a custom
+   focus style via :focus-visible. This preserves keyboard accessibility everywhere. */
+:where(button, a, input, select, textarea, [tabindex], summary):focus-visible {
+  outline: 2px solid var(--brand-light);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+/* Suppress the default focus outline on mouse-only focus (Chrome/Edge) but keep it
+   for keyboard via :focus-visible above. */
+:where(button, a, input, select, textarea, [tabindex], summary):focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ─── Hover lift on cards + .card-animate entrance (COMP-07) ─── */
+.card.hover-lift {
+  transition:
+    transform 160ms var(--ease),
+    box-shadow 160ms var(--ease);
+  will-change: transform;
+}
+.card.hover-lift:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* card-animate: fadeUp 400 ms ease-out applied to any primary content block.
+   fadeUp keyframe is declared once in tokens.css (Phase 26). Staggered delays via
+   :nth-child for natural cascade. Reduced-motion users see no animation (universal
+   guard at line ~1660 sets animation-duration: 0.01ms). */
+.card-animate {
+  animation: fadeUp 400ms var(--ease-out) both;
+}
+.card-animate:nth-child(1) {
+  animation-delay: 0ms;
+}
+.card-animate:nth-child(2) {
+  animation-delay: 60ms;
+}
+.card-animate:nth-child(3) {
+  animation-delay: 120ms;
+}
+.card-animate:nth-child(4) {
+  animation-delay: 180ms;
+}
+.card-animate:nth-child(5) {
+  animation-delay: 240ms;
+}
+.card-animate:nth-child(6) {
+  animation-delay: 300ms;
+}
+
+/* Shared `.fade-up` utility (matches handoff styles.css:636 — for one-off elements
+   outside the .card pattern, e.g. toasts, modals, callouts) */
+.fade-up {
+  animation: fadeUp 400ms var(--ease-out) both;
+}
+
+/* ─── Brand rule helper (used by PageHead, also reusable in section headers) ─── */
+.brand-rule {
+  width: 42px;
+  height: 2px;
+  background: var(--brand);
+  margin-bottom: 14px;
+  border-radius: 1px;
+}
+
+/* ─── Serif italic eyebrow helper (used by card-sub and elsewhere) ─── */
+.serif-eyebrow {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--brand-light);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+}
+
+/* ─── Grid-12 layout primitives (v1.5 handoff substrate) ───
+   Used by employee dashboard (Phase 29) and other multi-column pages.
+   Below 960px, the 12-col grid collapses to 6-col and all col-* spans become 6. */
+.grid {
+  display: grid;
+  gap: 16px;
+}
+.grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+.grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.grid-12 {
+  grid-template-columns: repeat(12, 1fr);
+  gap: 18px;
+}
+.col-4 {
+  grid-column: span 4;
+}
+.col-5 {
+  grid-column: span 5;
+}
+.col-6 {
+  grid-column: span 6;
+}
+.col-7 {
+  grid-column: span 7;
+}
+.col-8 {
+  grid-column: span 8;
+}
+.col-12 {
+  grid-column: span 12;
+}
+@media (max-width: 960px) {
+  .grid-2,
+  .grid-3,
+  .grid-4 {
+    grid-template-columns: 1fr;
+  }
+  .grid-12 {
+    grid-template-columns: repeat(6, 1fr);
+  }
+  .col-4,
+  .col-5,
+  .col-6,
+  .col-7,
+  .col-8 {
+    grid-column: span 6;
+  }
+}
+
+/* ─── Timer card (EMP-01) + live-pulse dot (FONT-05 substrate) ───
+   Composes with .card. Replaces the .card white surface with a brand-gradient hero
+   used only on the employee dashboard. */
+.timer-card {
+  background: linear-gradient(135deg, var(--brand-dark), var(--brand));
+  color: white;
+  border: 0;
+  overflow: hidden;
+  position: relative;
+}
+.timer-card::before {
+  content: "";
+  position: absolute;
+  top: -40%;
+  right: -20%;
+  width: 280px;
+  height: 280px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12), transparent 70%);
+  pointer-events: none;
+}
+.timer-card .timer-display {
+  font-family: var(--font-serif);
+  font-weight: 300;
+  font-size: 96px;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  margin: 12px 0 8px;
+}
+.timer-card .timer-sub {
+  font-style: italic;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  opacity: 0.85;
+}
+.timer-card .card-title {
+  color: rgba(255, 255, 255, 0.7);
+}
+.timer-card .card-foot {
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+/* Live pulse dot (used in .timer-card to signal active timer).
+   Green is intentionally fixed (#6BD49A) — must read as "live/active" across
+   all three themes, not the theme accent. */
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6bd49a;
+  display: inline-block;
+  box-shadow: 0 0 0 0 rgba(107, 212, 154, 0.5);
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(107, 212, 154, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* ─── Callout (EMP-04 — inline ArbZG/notice block) ───
+   Used by /time-entries entry editor modal for §3 / §4 / §5 ArbZG warnings
+   and by future screens for inline informational/error notices.
+   Three variants: default (warn), .brand (informational), .error (hard error). */
+.callout {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: var(--warn-soft);
+  border: 1px solid transparent;
+  font-size: 13px;
+  color: var(--warn);
+  align-items: flex-start;
+}
+.callout.brand {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+[data-mode="dark"] .callout.brand {
+  color: var(--brand-light);
+}
+[data-mode="dark"] .callout {
+  color: #fbbf24;
+}
+.callout.error {
+  background: var(--bad-soft);
+  color: var(--bad);
+}
+[data-mode="dark"] .callout.error {
+  color: #f87171;
+}
+.callout .ico {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.callout b {
+  font-weight: 700;
+}
+.callout p {
+  margin: 0;
+  line-height: 1.5;
+  color: inherit;
+}
+/* Multiple .callout children inside the same modal-body stack with a 10px gap */
+.modal-body .callout + .callout {
+  margin-top: -4px;
+}
+
+/* ─── v1.5 Modal recipes (gap-fill from Phase 28-02) + approval row (MGR-01) ─── */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 16, 24, 0.55);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overscroll-behavior: contain;
+  animation: fadeUp 200ms var(--ease-out);
+}
+.modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(20, 16, 24, 0.28);
+}
+.modal-hd {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 22px 26px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-hd h3 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 4px 0 0;
+  color: var(--text);
+}
+.modal-body {
+  padding: 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text);
+}
+.modal-foot {
+  padding: 16px 26px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-subtle);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.modal-foot .spacer {
+  flex: 1;
+}
+.modal-close {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+.modal-close:hover {
+  background: var(--bg-subtle);
+  color: var(--text);
+}
+
+/* MiniStat block used inside modal-body — three across, label + serif value */
+.mini-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mini-stat .label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.mini-stat .value {
+  font-family: var(--font-serif);
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Approval row (MGR-01) — 4-column grid: 44px avatar / 1fr name+meta / auto dates / auto actions.
+   Renders as <button class="approval-row"> when clickable (semantic primitive). */
+.approval-row {
+  /* button reset (clickable variant renders as <button type="button">) */
+  appearance: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 44px 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: background 120ms var(--ease);
+}
+button.approval-row:disabled {
+  cursor: default;
+}
+.approval-row:last-child {
+  border-bottom: 0;
+}
+.approval-row:hover {
+  background: var(--bg-subtle);
+}
+.approval-row .avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+[data-mode="dark"] .approval-row .avatar {
+  color: var(--brand-light);
+}
+.approval-row .who-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.approval-row .who-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.approval-row .dates {
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.approval-row .dates .days-sub {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.approval-row .actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Prefixed approval-row sub-classes (Phase 34-06 primitive).
+   The ApprovalRow.svelte component emits these classes; legacy
+   `.avatar` / `.who-name` / `.who-meta` / `.dates` / `.days-sub`
+   / `.actions` aliases above stay for pre-migration callers. */
+.approval-row .approval-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  display: grid;
+  place-items: center;
+  font-weight: 600;
+  font-size: 13px;
+}
+[data-mode="dark"] .approval-row .approval-avatar {
+  color: var(--brand-light);
+}
+.approval-row .approval-name-meta {
+  min-width: 0;
+}
+.approval-row .approval-name {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.approval-row .approval-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.approval-row .approval-dates {
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.approval-row .approval-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Tab bar inside .card (handoff-canonical inbox header) */
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.tab-bar .spacer {
+  flex: 1;
+}
+.tab-bar .count-pill {
+  margin-left: 4px;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--r-pill);
+  background: var(--bg-subtle);
+  color: var(--text-faint);
+}
+.tab-bar .btn-primary .count-pill {
+  background: rgba(255, 255, 255, 0.22);
+  color: white;
+}
+
+/* ─── v1.5 Shift grid + pill recipes (MGR-04) ─── */
+.shift-grid {
+  display: grid;
+  grid-template-columns: 160px repeat(7, 1fr);
+  gap: 2px;
+  background: var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.shift-grid .head {
+  background: var(--bg-card);
+  padding: 12px 10px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  font-weight: 600;
+  text-align: center;
+}
+.shift-grid .head.today-col {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.shift-grid .who-cell {
+  background: var(--bg-card);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.shift-grid .who-cell .name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.shift-grid .who-cell .role {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.shift-grid .shift-cell {
+  background: var(--bg-card);
+  min-height: 56px;
+  padding: 6px;
+  display: grid;
+  place-items: center;
+}
+.shift-grid .shift-cell.off {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* Pill rendering a shift assignment in handoff violet-tint */
+.shift-pill {
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[data-mode="dark"] .shift-pill {
+  color: var(--brand-light);
+}
+.shift-pill.late {
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+}
+
+/* ── Modern skin layer ───────────────────────────────────────────────
+   Activated only when `<html data-skin="modern">`. Editorial skin (no
+   attribute set) is the default and these rules MUST NOT apply.
+   Token values (colors, radii, fonts) come from tokens.css; this section
+   adds the glassmorphism / dot-grid / neon surface treatments on top of
+   the editorial component recipes already defined above. */
+
+/* Dot-grid backdrop */
+[data-skin="modern"] body {
+  background:
+    radial-gradient(circle at 12% 18%, rgba(184, 121, 240, 0.12), transparent 42%),
+    radial-gradient(circle at 88% 84%, rgba(124, 140, 255, 0.1), transparent 46%), var(--bg);
+  background-attachment: fixed;
+}
+[data-skin="modern"][data-mode="dark"] body {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(184, 121, 240, 0.22), transparent 44%),
+    radial-gradient(circle at 88% 84%, rgba(124, 140, 255, 0.16), transparent 48%),
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size:
+    auto,
+    auto,
+    24px 24px;
+}
+[data-skin="modern"][data-mode="light"] body {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(184, 121, 240, 0.1), transparent 44%),
+    radial-gradient(circle at 88% 84%, rgba(124, 140, 255, 0.08), transparent 48%),
+    radial-gradient(rgba(20, 20, 30, 0.06) 1px, transparent 1px);
+  background-size:
+    auto,
+    auto,
+    24px 24px;
+}
+
+/* Sidebar + topbar — translucent glass panes */
+[data-skin="modern"] .sidebar,
+[data-skin="modern"] .topbar {
+  background: var(--bg-card);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border-color: var(--border);
+}
+[data-skin="modern"] .sidebar {
+  border-right: 1px solid var(--border);
+}
+[data-skin="modern"] .topbar {
+  border-bottom: 1px solid var(--border);
+}
+
+/* Sidebar nav items — pill style */
+[data-skin="modern"] .nav-item {
+  border-radius: var(--r-pill);
+  font-weight: 500;
+  transition:
+    background 160ms var(--ease-out),
+    color 160ms var(--ease-out);
+}
+[data-skin="modern"] .nav-item:hover {
+  background: var(--brand-soft);
+  color: var(--text);
+}
+[data-skin="modern"] .nav-item.active,
+[data-skin="modern"] .nav-item[aria-current="page"] {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+/* H1 — large display sans + gradient accent for <em> */
+[data-skin="modern"] h1 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+[data-skin="modern"] h1 em {
+  font-style: normal;
+  font-weight: 800;
+  background: linear-gradient(135deg, var(--brand-light), var(--brand));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Eyebrow — neon pill badge.
+   PageHead.svelte renders `<div class="eyebrow">`; some inline pages use
+   `.page-eyebrow`. Apply both so modern skin lights them up uniformly. */
+[data-skin="modern"] .eyebrow,
+[data-skin="modern"] .page-eyebrow {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Card — glass surface with subtle corner sheen.
+   .timer-card is excluded because it composes .card but keeps its own
+   brand-gradient hero (white text on brand background). */
+[data-skin="modern"] .card:not(.timer-card) {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  position: relative;
+  overflow: hidden;
+}
+[data-skin="modern"] .card:not(.timer-card)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent 40%);
+  opacity: 0.8;
+}
+[data-skin="modern"][data-mode="light"] .card:not(.timer-card)::before {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.55), transparent 40%);
+}
+/* Timer card under modern skin: keep brand-gradient hero, drop any
+   glass styling that would erase the background, and use the modern
+   brighter brand for the gradient stops. */
+[data-skin="modern"] .timer-card {
+  background: linear-gradient(135deg, var(--brand-dark), var(--brand));
+  color: white;
+  border: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--shadow-brand, 0 18px 60px rgba(184, 121, 240, 0.45));
+}
+
+/* KPI — huge sans value with mono unit */
+[data-skin="modern"] .kpi .value {
+  font-family: var(--font-sans);
+  font-weight: 800;
+  font-size: 48px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+[data-skin="modern"] .kpi .value .unit,
+[data-skin="modern"] .kpi .unit {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 0.55em;
+  margin-left: 0.25em;
+  color: var(--text-muted);
+}
+
+/* Buttons — pill with gradient on primary */
+[data-skin="modern"] .btn {
+  border-radius: var(--r-pill);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+[data-skin="modern"] .btn-primary,
+[data-skin="modern"] .btn.primary,
+[data-skin="modern"] .btn-brand {
+  background: linear-gradient(135deg, var(--brand-light), var(--brand));
+  border: 0;
+  color: var(--text-on-brand);
+  box-shadow: var(--shadow-brand);
+}
+[data-skin="modern"][data-mode="dark"] .btn-primary,
+[data-skin="modern"][data-mode="dark"] .btn.primary,
+[data-skin="modern"][data-mode="dark"] .btn-brand {
+  color: #0a0a10;
+}
+[data-skin="modern"] .btn-primary:hover,
+[data-skin="modern"] .btn.primary:hover,
+[data-skin="modern"] .btn-brand:hover {
+  box-shadow: var(--shadow-brand-lg);
+  transform: translateY(-1px);
+}
+
+/* Tabular numerics in tables */
+[data-skin="modern"] .table td.num,
+[data-skin="modern"] table td.num,
+[data-skin="modern"] .tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Calendar "today" — neon ring (app uses .cal-today, not .today) */
+[data-skin="modern"] .cal-cell.cal-today {
+  position: relative;
+  box-shadow:
+    0 0 0 2px var(--brand),
+    0 0 18px var(--brand-soft);
+}
+
+/* `.serif` opt-out — under modern skin we coerce serif back to sans because
+   modern is a sans-only display system. Editorial pages that opt-in to
+   serif via `.serif` still get sans when the skin is modern. */
+[data-skin="modern"] .serif {
+  font-family: var(--font-sans);
+  font-style: normal;
+  font-weight: 600;
 }

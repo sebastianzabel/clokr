@@ -289,7 +289,7 @@
 <style>
   .login-page {
     min-height: 100dvh;
-    background: var(--color-bg);
+    background: var(--bg);
     display: flex;
     align-items: stretch;
     position: relative;
@@ -311,7 +311,7 @@
   .login-page::before {
     width: 600px;
     height: 600px;
-    background: var(--color-brand);
+    background: var(--brand);
     top: -200px;
     right: -100px;
     animation: float-orb 20s ease-in-out infinite;
@@ -320,7 +320,7 @@
   .login-page::after {
     width: 400px;
     height: 400px;
-    background: var(--color-brand-light);
+    background: var(--brand-light);
     bottom: -100px;
     left: -50px;
     animation: float-orb 15s ease-in-out infinite reverse;
@@ -354,7 +354,7 @@
     align-items: center;
     justify-content: center;
     padding: 3rem;
-    background: linear-gradient(135deg, var(--color-brand) 0%, var(--color-brand-dark) 100%);
+    background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
     color: #fff;
     position: relative;
     overflow: hidden;
@@ -418,7 +418,7 @@
     align-items: center;
     justify-content: center;
     padding: 2rem;
-    background: var(--color-bg);
+    background: var(--bg);
   }
 
   .login-card {
@@ -454,19 +454,19 @@
   .login-logo-text {
     font-size: 1.25rem;
     font-weight: 700;
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .login-heading {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--color-text-heading);
+    color: var(--text);
     margin-bottom: 0.375rem;
   }
 
   .login-subtitle {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin-bottom: 2rem;
   }
 
@@ -486,7 +486,7 @@
   .input-icon {
     position: absolute;
     left: 0.875rem;
-    color: var(--gray-400);
+    color: var(--text-faint);
     pointer-events: none;
     z-index: 1;
   }
@@ -506,8 +506,8 @@
     border: none;
     cursor: pointer;
     padding: 0.375rem;
-    border-radius: var(--radius-sm);
-    color: var(--gray-400);
+    border-radius: var(--r-sm);
+    color: var(--text-faint);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -517,8 +517,8 @@
   }
 
   .password-toggle:hover {
-    color: var(--color-text);
-    background-color: var(--color-bg-subtle);
+    color: var(--text);
+    background-color: var(--bg-subtle);
   }
 
   .login-submit {
@@ -555,7 +555,7 @@
     align-items: center;
     gap: 0.375rem;
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     cursor: pointer;
   }
   .remember-me input {
@@ -563,7 +563,7 @@
   }
   .forgot-link {
     font-size: 0.8125rem;
-    color: var(--color-brand);
+    color: var(--brand);
     text-decoration: none;
   }
   .forgot-link:hover {

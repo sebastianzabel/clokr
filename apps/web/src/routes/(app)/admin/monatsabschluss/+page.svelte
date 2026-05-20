@@ -1,6 +1,11 @@
 <script lang="ts">
   import { api } from "$api/client";
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import Modal from "$components/ui/Modal.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
   interface MissingEmployee {
     employeeName: string;
@@ -66,6 +71,11 @@
   // Per-employee closing state
   let closingEmployee = $state<string | null>(null);
 
+  // Confirm modal state
+  let confirmModalOpen = $state(false);
+  let confirmMonth = $state<number | null>(null);
+  let confirmEmployeeId = $state<string | null>(null);
+
   const years = $derived(
     Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
   );
@@ -117,6 +127,30 @@
     return null;
   });
 
+  // 4-step stepper definitions (Prüfen → Korrigieren → Bestätigen → Sperren)
+  const STEPS = [
+    { label: "Prüfen", hint: "Vollständigkeit prüfen" },
+    { label: "Korrigieren", hint: "Fehlende Einträge nachholen" },
+    { label: "Bestätigen", hint: "Salden bestätigen" },
+    { label: "Sperren", hint: "Monat isLocked=true setzen" },
+  ];
+
+  // Active step derived from the currently expanded month, or the first actionable one.
+  // 0=Prüfen, 1=Korrigieren, 2=Bestätigen, 3=Sperren
+  const activeStepIndex = $derived.by(() => {
+    let ms: MonthStatus | undefined;
+    if (expandedMonth != null) {
+      ms = monthStatuses.find((m) => m.month === expandedMonth);
+    } else if (firstActionableMonth != null) {
+      ms = monthStatuses.find((m) => m.month === firstActionableMonth);
+    }
+    if (!ms) return 0;
+    if (ms.status === "closed") return 3; // Sperren (done)
+    if (ms.status === "ready") return 2; // Bestätigen (current)
+    if (ms.status === "partial") return 1; // Korrigieren
+    return 0; // Prüfen (default for open/blocked/no_data)
+  });
+
   // Auto-close hint
   let autoCloseHint = $derived.by(() => {
     const hasOpenMonths = monthStatuses.some(
@@ -128,6 +162,48 @@
     }
     return "Nur noch manuell möglich";
   });
+
+  // Confirm modal helpers
+  let confirmTitle = $derived.by(() => {
+    if (confirmMonth == null) return "Monat sperren";
+    const ms = monthStatuses.find((m) => m.month === confirmMonth);
+    const name = ms?.name ?? `Monat ${confirmMonth}`;
+    if (confirmEmployeeId) {
+      const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
+      return `${name} ${selectedYear} – ${emp?.employeeName ?? "Mitarbeiter"} sperren?`;
+    }
+    return `${name} ${selectedYear} sperren?`;
+  });
+
+  function openConfirmCloseMonth(month: number) {
+    confirmMonth = month;
+    confirmEmployeeId = null;
+    confirmModalOpen = true;
+  }
+
+  function openConfirmCloseEmployee(employeeId: string, month: number) {
+    confirmMonth = month;
+    confirmEmployeeId = employeeId;
+    confirmModalOpen = true;
+  }
+
+  function closeConfirmModal() {
+    confirmModalOpen = false;
+    confirmMonth = null;
+    confirmEmployeeId = null;
+  }
+
+  async function onConfirmProceed() {
+    if (confirmMonth == null) return;
+    const month = confirmMonth;
+    const empId = confirmEmployeeId;
+    closeConfirmModal();
+    if (empId) {
+      await closeEmployee(empId, month);
+    } else {
+      await closeMonth(month);
+    }
+  }
 
   async function loadYearStatus() {
     loading = true;
@@ -268,30 +344,30 @@
     }
   }
 
-  function statusIcon(status: string): string {
+  function statusChipClass(status: string): string {
     switch (status) {
       case "closed":
-        return "\u2705";
-      case "partial":
-        return "\u26a0\ufe0f";
+        return "chip chip-good";
       case "ready":
-        return "\ud83d\udfe2";
-      case "open":
-        return "\u274c";
+        return "chip chip-brand";
+      case "partial":
+        return "chip chip-warn";
       case "blocked":
-        return "\ud83d\udd12";
+        return "chip chip-warn";
+      case "open":
+        return "chip";
       case "future":
-        return "\u2014";
+        return "chip";
       case "no_data":
-        return "\u2014";
+        return "chip";
       default:
-        return "";
+        return "chip";
     }
   }
 
   function reasonText(ms: MonthStatus): string {
-    if (ms.status === "closed") return "\u2014";
-    if (ms.status === "future") return "\u2014";
+    if (ms.status === "closed") return "—";
+    if (ms.status === "future") return "—";
     if (ms.status === "no_data") return "Keine Erfassung in diesem Zeitraum";
     if (ms.status === "blocked") {
       // Find the first non-closed month before this one
@@ -311,7 +387,7 @@
     if (ms.status === "ready") {
       return "Alle Mitarbeiter bereit";
     }
-    return "\u2014";
+    return "—";
   }
 
   async function closeEmployee(employeeId: string, month: number) {
@@ -373,236 +449,461 @@
 
 <svelte:head><title>Monatsabschluss - Clokr</title></svelte:head>
 
+<div class="page">
 <div class="ma-page">
-  <h2 class="page-title">Monatsabschluss</h2>
+  <PageHead
+    eyebrow="Administration"
+    title={`Monatsabschluss ${selectedYear}`}
+    accent={String(selectedYear)}
+    sub="Audit-proof monatlicher Abschluss: prüfen, Salden berechnen, bestätigen, sperren (isLocked=true). Nach dem Abschluss sind alle Einträge des Monats unveränderlich — Korrekturen nur per Stornobuchung."
+  />
 
-  <div class="ma-controls">
-    <div class="control-row">
-      <label class="control-group">
-        <span class="control-label">Jahr</span>
-        <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </label>
+  <!-- 4-step visual stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) -->
+  <Card animate class="stepper-card">
+    <CardHeader title="Ablauf" sub="Vier Schritte zum Monatsabschluss" />
+    <ol class="stepper">
+      {#each STEPS as step, i (i)}
+        <li class="step" class:active={i === activeStepIndex} class:done={i < activeStepIndex}>
+          <div class="step-row">
+            <span class="step-circle" aria-hidden="true">
+              {#if i < activeStepIndex}
+                <svg viewBox="0 0 16 16" width="14" height="14"
+                  ><path
+                    d="M3 8l3 3 7-7"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    fill="none"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  /></svg
+                >
+              {:else}
+                {i + 1}
+              {/if}
+            </span>
+            <div class="step-text">
+              <div class="step-eyebrow serif-eyebrow">Schritt {i + 1}</div>
+              <div class="step-label">{step.label}</div>
+              <div class="step-hint">{step.hint}</div>
+            </div>
+          </div>
+          {#if i < STEPS.length - 1}
+            <span class="step-connector" class:done={i < activeStepIndex} aria-hidden="true"></span>
+          {/if}
+        </li>
+      {/each}
+    </ol>
+  </Card>
 
-      <label class="control-group">
-        <span class="control-label">Filter</span>
-        <select class="form-select" bind:value={statusFilter}>
-          {#each filterOptions as opt (opt.value)}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
-      </label>
+  <!-- Year + Filter controls inside a v1.5 card -->
+  <Card animate class="controls-card">
+    <CardHeader title="Filter" sub="Jahr und Status wählen" />
+    <div class="ma-controls">
+      <div class="control-row">
+        <label class="control-group">
+          <span class="control-label">Jahr</span>
+          <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
+            {#each years as y (y)}
+              <option value={y}>{y}</option>
+            {/each}
+          </select>
+        </label>
 
-      <div class="control-group control-action">
-        <span class="control-label">&nbsp;</span>
-        <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
-          {loading ? "Wird geladen..." : "Aktualisieren"}
-        </button>
+        <label class="control-group">
+          <span class="control-label">Filter</span>
+          <select class="form-select" bind:value={statusFilter}>
+            {#each filterOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        </label>
+
+        <div class="control-group control-action">
+          <span class="control-label">&nbsp;</span>
+          <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
+            {loading ? "Wird geladen..." : "Aktualisieren"}
+          </button>
+        </div>
       </div>
+
+      {#if autoCloseHint && loaded}
+        <div class="callout brand">
+          <div>
+            <b>Automatischer Abschluss:</b>
+            <p>{autoCloseHint}</p>
+          </div>
+        </div>
+      {/if}
     </div>
-  </div>
+  </Card>
 
   {#if error}
-    <div class="alert alert-error">{error}</div>
+    <div class="callout error" role="alert">
+      <div><p>{error}</p></div>
+    </div>
   {/if}
   {#if success}
-    <div class="alert alert-success">{success}</div>
+    <div class="callout brand" role="status">
+      <div><p>{success}</p></div>
+    </div>
   {/if}
 
   {#if closing}
-    <div class="progress-bar-wrapper">
-      <div class="progress-bar-label">
-        Abschluss läuft... {closingProgress}/{closingTotal}
-      </div>
+    <Card animate class="progress-card">
+      <CardHeader
+        title="Abschluss läuft"
+        sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
+      />
       <div class="progress-bar-track">
         <div
           class="progress-bar-fill"
           style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
         ></div>
       </div>
-    </div>
-  {/if}
-
-  {#if autoCloseHint && loaded}
-    <div class="auto-close-hint">
-      {autoCloseHint}
-    </div>
+    </Card>
   {/if}
 
   {#if loading}
-    <div class="card card-body" style="height:200px;"></div>
+    <Card animate class="loading-placeholder">
+      <div class="loading-spacer"></div>
+    </Card>
   {:else if loaded}
     {#if monthStatuses.length === 0}
-      <p class="text-muted">Keine Daten verfügbar.</p>
+      <Card animate>
+        <p class="text-muted">Keine Daten verfügbar.</p>
+      </Card>
     {:else}
-      <div class="summary-bar card-animate">
-        <span class="summary-item summary-closed">{closedMonthCount} abgeschlossen</span>
-        <span class="summary-item summary-open">{openMonthCount} offen</span>
-        <span class="summary-item summary-total">{monthStatuses.length} gesamt</span>
-      </div>
+      <Card animate class="list-card">
+        <CardHeader
+          title={`Monate ${selectedYear}`}
+          sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
+        />
 
-      <div class="table-wrapper card-animate">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Monat</th>
-              <th>Status</th>
-              <th>Grund</th>
-              <th class="text-right">Aktion</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedMonths as ms (ms.month)}
-              <tr
-                class="month-row"
-                class:row-closed={ms.status === "closed"}
-                class:row-future={ms.status === "future" || ms.status === "no_data"}
-                class:row-blocked={ms.status === "blocked"}
-                class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
-                onclick={() => {
-                  if (ms.status !== "future" && ms.status !== "no_data")
-                    toggleMonthDetail(ms.month);
-                }}
-              >
-                <td class="month-name">
-                  <span class="month-expand-icon">
-                    {#if expandedMonth === ms.month}
-                      &#9660;
-                    {:else if ms.status !== "future" && ms.status !== "no_data"}
-                      &#9654;
-                    {/if}
-                  </span>
-                  {ms.name}
-                  {selectedYear}
-                </td>
-                <td>
-                  <span class="status-badge status-{ms.status}">
-                    {statusIcon(ms.status)}
-                    {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
-                  </span>
-                </td>
-                <td class="reason-cell">
-                  <span class="reason-text">{reasonText(ms)}</span>
-                </td>
-                <td class="text-right">
-                  {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
-                    <button
-                      class="btn btn-sm btn-primary"
-                      disabled={closing}
-                      onclick={(e: MouseEvent) => {
-                        e.stopPropagation();
-                        closeMonth(ms.month);
-                      }}
-                    >
-                      Abschließen
-                    </button>
-                  {:else}
-                    <span class="text-muted text-sm">&mdash;</span>
-                  {/if}
-                </td>
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Monat</th>
+                <th>Status</th>
+                <th>Grund</th>
+                <th class="text-right">Aktion</th>
               </tr>
-              {#if expandedMonth === ms.month}
-                <tr class="detail-row">
-                  <td colspan="4">
-                    {#if detailLoading}
-                      <div class="detail-loading">Lade Details...</div>
-                    {:else if detailEmployees.length === 0}
-                      <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
+            </thead>
+            <tbody>
+              {#each pagedMonths as ms (ms.month)}
+                <tr
+                  class="month-row"
+                  class:row-closed={ms.status === "closed"}
+                  class:row-future={ms.status === "future" || ms.status === "no_data"}
+                  class:row-blocked={ms.status === "blocked"}
+                  class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
+                  onclick={() => {
+                    if (ms.status !== "future" && ms.status !== "no_data")
+                      toggleMonthDetail(ms.month);
+                  }}
+                >
+                  <td class="month-name">
+                    <span class="month-expand-icon">
+                      {#if expandedMonth === ms.month}
+                        &#9660;
+                      {:else if ms.status !== "future" && ms.status !== "no_data"}
+                        &#9654;
+                      {/if}
+                    </span>
+                    {ms.name}
+                    {selectedYear}
+                  </td>
+                  <td>
+                    <span class={statusChipClass(ms.status)}>
+                      <span class="dot"></span>
+                      {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
+                    </span>
+                  </td>
+                  <td class="reason-cell">
+                    <span class="reason-text">{reasonText(ms)}</span>
+                  </td>
+                  <td class="text-right">
+                    {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
+                      <button
+                        class="btn btn-primary btn-sm"
+                        disabled={closing}
+                        onclick={(e: MouseEvent) => {
+                          e.stopPropagation();
+                          openConfirmCloseMonth(ms.month);
+                        }}
+                      >
+                        Abschließen
+                      </button>
                     {:else}
-                      <div class="detail-table-wrapper">
-                        <table class="detail-table">
-                          <thead>
-                            <tr>
-                              <th>Name</th>
-                              <th>Personalnummer</th>
-                              <th>Status</th>
-                              <th>Fehlende Tage</th>
-                              <th></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {#each detailEmployees as emp (emp.employeeId)}
-                              <tr class:detail-row-closed={emp.status === "closed"}>
-                                <td class="employee-name">{emp.employeeName}</td>
-                                <td class="font-mono">{emp.employeeNumber}</td>
-                                <td>
-                                  {#if emp.status === "closed"}
-                                    <span class="status-badge status-closed">Abgeschlossen</span>
-                                  {:else if emp.status === "ready"}
-                                    <span class="status-badge status-ready">Bereit</span>
-                                  {:else}
-                                    <span class="status-badge status-open">Fehlend</span>
-                                  {/if}
-                                </td>
-                                <td class="missing-dates">
-                                  {#if emp.missingDates && emp.missingDates.length > 0}
-                                    <span class="dates-text"
-                                      >{formatMissingDates(emp.missingDates)}</span
-                                    >
-                                    <span class="dates-count">({emp.missingDates.length})</span>
-                                  {:else}
-                                    <span class="text-muted">-</span>
-                                  {/if}
-                                </td>
-                                <td class="text-right">
-                                  {#if emp.status === "ready"}
-                                    <button
-                                      class="btn btn-sm btn-primary"
-                                      disabled={closingEmployee === emp.employeeId || closing}
-                                      onclick={() => closeEmployee(emp.employeeId, expandedMonth!)}
-                                    >
-                                      {closingEmployee === emp.employeeId ? "..." : "Abschließen"}
-                                    </button>
-                                  {:else if emp.status === "closed"}
-                                    <button
-                                      class="btn btn-sm btn-ghost"
-                                      disabled={unlocking === emp.employeeId}
-                                      onclick={() => unlockEmployee(emp.employeeId, expandedMonth!)}
-                                    >
-                                      {unlocking === emp.employeeId ? "..." : "Entsperren"}
-                                    </button>
-                                  {/if}
-                                </td>
-                              </tr>
-                            {/each}
-                          </tbody>
-                        </table>
-                      </div>
+                      <span class="text-muted text-sm">&mdash;</span>
                     {/if}
                   </td>
                 </tr>
-              {/if}
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={filteredMonths.length} bind:page={maPage} bind:pageSize={maPageSize} />
-      </div>
+                {#if expandedMonth === ms.month}
+                  <tr class="detail-row">
+                    <td colspan="4">
+                      {#if ms.status === "ready"}
+                        <div class="detail-callout-wrapper">
+                          <div class="callout warn">
+                            <div>
+                              <b>Achtung: Endgültiger Abschluss.</b>
+                              <p>
+                                Mit dem Abschluss werden alle Zeiteinträge dieses Monats gesperrt
+                                (isLocked=true) und das Audit-Log fortgeschrieben. Änderungen sind
+                                danach nur noch durch Storno-Buchungen möglich (CLAUDE.md
+                                Audit-Proof / Revisionssicherheit).
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      {/if}
+                      {#if detailLoading}
+                        <div class="detail-loading">Lade Details...</div>
+                      {:else if detailEmployees.length === 0}
+                        <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
+                      {:else}
+                        <div class="detail-table-wrapper">
+                          <table class="detail-table">
+                            <thead>
+                              <tr>
+                                <th>Name</th>
+                                <th>Personalnummer</th>
+                                <th>Status</th>
+                                <th>Fehlende Tage</th>
+                                <th></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {#each detailEmployees as emp (emp.employeeId)}
+                                <tr class:detail-row-closed={emp.status === "closed"}>
+                                  <td class="employee-name">{emp.employeeName}</td>
+                                  <td class="font-mono">{emp.employeeNumber}</td>
+                                  <td>
+                                    {#if emp.status === "closed"}
+                                      <span class="chip chip-good">
+                                        <span class="dot"></span>
+                                        Abgeschlossen
+                                      </span>
+                                    {:else if emp.status === "ready"}
+                                      <span class="chip chip-brand">
+                                        <span class="dot"></span>
+                                        Bereit
+                                      </span>
+                                    {:else}
+                                      <span class="chip">
+                                        <span class="dot"></span>
+                                        Fehlend
+                                      </span>
+                                    {/if}
+                                  </td>
+                                  <td class="missing-dates">
+                                    {#if emp.missingDates && emp.missingDates.length > 0}
+                                      <span class="dates-text"
+                                        >{formatMissingDates(emp.missingDates)}</span
+                                      >
+                                      <span class="dates-count">({emp.missingDates.length})</span>
+                                    {:else}
+                                      <span class="text-muted">-</span>
+                                    {/if}
+                                  </td>
+                                  <td class="text-right">
+                                    {#if emp.status === "ready"}
+                                      <button
+                                        class="btn btn-primary btn-sm"
+                                        disabled={closingEmployee === emp.employeeId || closing}
+                                        onclick={() =>
+                                          openConfirmCloseEmployee(emp.employeeId, expandedMonth!)}
+                                      >
+                                        {closingEmployee === emp.employeeId ? "..." : "Abschließen"}
+                                      </button>
+                                    {:else if emp.status === "closed"}
+                                      <button
+                                        class="btn btn-outline btn-sm"
+                                        disabled={unlocking === emp.employeeId}
+                                        onclick={() =>
+                                          unlockEmployee(emp.employeeId, expandedMonth!)}
+                                      >
+                                        {unlocking === emp.employeeId ? "..." : "Entsperren"}
+                                      </button>
+                                    {/if}
+                                  </td>
+                                </tr>
+                              {/each}
+                            </tbody>
+                          </table>
+                        </div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <div class="list-foot">
+          <Pagination total={filteredMonths.length} bind:page={maPage} bind:pageSize={maPageSize} />
+        </div>
+      </Card>
     {/if}
   {:else}
-    <p class="text-muted">Lade Jahresstatus...</p>
+    <Card animate>
+      <p class="text-muted">Lade Jahresstatus...</p>
+    </Card>
   {/if}
+</div>
+
+<!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
+<Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
+  <div class="callout warn" role="alert">
+    <div>
+      <b>Diese Aktion ist nicht rückgängig.</b>
+      <p>
+        Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono">isLocked=true</span
+        >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
+        Revisionssicherheit).
+      </p>
+    </div>
+  </div>
+  <p class="modal-note">
+    Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
+  </p>
+  {#snippet footer()}
+    <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button>
+    <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
+      {#if closing}<Spinner />{/if}
+      Endgültig sperren
+    </button>
+  {/snippet}
+</Modal>
 </div>
 
 <style>
   .ma-page {
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 18px;
   }
 
-  .page-title {
-    font-size: 1.25rem;
-    font-weight: 700;
+  /* ─── Stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) ─── */
+  .stepper {
+    list-style: none;
     margin: 0;
+    padding: 4px 0 4px;
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
   }
 
+  .step {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    position: relative;
+    min-width: 0;
+  }
+
+  .step-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    z-index: 1;
+  }
+
+  .step-circle {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--bg-subtle);
+    color: var(--text-faint);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 13px;
+    border: 1px solid var(--border);
+    transition:
+      background 180ms var(--ease, ease),
+      color 180ms var(--ease, ease),
+      border-color 180ms var(--ease, ease),
+      border-width 180ms var(--ease, ease);
+  }
+
+  .step.active .step-circle {
+    background: var(--brand);
+    color: var(--text-on-brand);
+    border: 3px solid var(--brand-soft);
+  }
+
+  .step.done .step-circle {
+    background: var(--good);
+    color: var(--text-on-brand);
+    border-color: var(--good);
+  }
+
+  .step-text {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .step-eyebrow {
+    font-size: 11px;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+
+  .step-label {
+    font-family: var(--font-sans);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    margin-top: 2px;
+  }
+
+  .step:not(.active):not(.done) .step-label {
+    color: var(--text-muted);
+  }
+
+  .step-hint {
+    font-family: var(--font-sans);
+    font-size: 11.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .step-connector {
+    position: absolute;
+    left: 42px;
+    right: -4px;
+    top: 15px;
+    height: 2px;
+    background: var(--border);
+    border-radius: var(--r-pill);
+    z-index: 0;
+  }
+
+  .step-connector.done {
+    background: var(--brand);
+  }
+
+  @media (max-width: 720px) {
+    .stepper {
+      flex-direction: column;
+      gap: 12px;
+    }
+    .step-connector {
+      display: none;
+    }
+  }
+
+  /* ─── Controls card ─────────────────────────────────── */
   .ma-controls {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 12px;
   }
 
   .control-row {
@@ -624,120 +925,97 @@
   }
 
   .control-label {
-    font-size: 0.8rem;
+    font-family: var(--font-sans);
+    font-size: 11px;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
   }
 
   .form-select {
     padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm, 8px);
-    background: var(--color-surface, var(--color-bg));
-    font-size: 0.875rem;
-    color: var(--color-text);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-card);
     font-family: var(--font-sans);
+    font-size: 0.875rem;
+    color: var(--text);
     transition:
       border-color 0.15s,
       box-shadow 0.15s;
   }
   .form-select:focus {
-    border-color: var(--color-brand);
-    box-shadow: 0 0 0 3px var(--color-brand-tint);
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px var(--brand-soft);
     outline: none;
   }
 
-  .alert {
-    padding: 0.75rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
-  }
-
-  .alert-error {
-    background: var(--red-50, #fef2f2);
-    color: var(--red-700, #b91c1c);
-    border: 1px solid var(--red-200, #fecaca);
-  }
-
-  .alert-success {
-    background: var(--green-50, #f0fdf4);
-    color: var(--green-700, #15803d);
-    border: 1px solid var(--green-200, #bbf7d0);
-  }
-
-  .auto-close-hint {
-    padding: 0.5rem 1rem;
-    border-radius: 0.375rem;
-    font-size: 0.8rem;
-    background: var(--yellow-50, #fefce8);
-    color: var(--yellow-800, #854d0e);
-    border: 1px solid var(--yellow-200, #fef08a);
-  }
-
-  /* Progress bar */
-  .progress-bar-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-
-  .progress-bar-label {
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--color-text-muted);
-  }
-
+  /* ─── Progress card ──────────────────────────────────── */
   .progress-bar-track {
     height: 0.5rem;
-    background: var(--gray-200, #e5e7eb);
-    border-radius: 0.25rem;
+    background: var(--bg-subtle);
+    border-radius: var(--r-pill);
     overflow: hidden;
   }
 
   .progress-bar-fill {
     height: 100%;
-    background: var(--blue-500, #3b82f6);
-    border-radius: 0.25rem;
+    background: var(--brand);
+    border-radius: var(--r-pill);
     transition: width 0.3s ease;
   }
 
-  /* Table */
+  /* ─── List card / table ─────────────────────────────── */
+  /* list-card: kill default card padding so the table fills the card; use
+     :global() because the .card section is rendered by the Card primitive. */
+  :global(.list-card) {
+    padding: 0;
+  }
+
+  /* CardHeader (also from primitive) needs an inset edge for list-card layout. */
+  :global(.list-card .card-hd) {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+
+  .loading-spacer {
+    height: 200px;
+  }
+
+  .list-foot {
+    padding: 8px 16px 16px;
+  }
+
   .table-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
-    border-radius: var(--radius-md, 14px);
-    border: 1px solid var(--glass-border, var(--color-border));
-    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.06));
   }
 
   .table {
     width: 100%;
     border-collapse: collapse;
+    font-family: var(--font-sans);
     font-size: 0.875rem;
   }
 
   .table th {
     text-align: left;
     padding: 0.75rem 1rem;
-    border-bottom: 2px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
     font-weight: 600;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--color-text-muted);
-    background: var(--gray-50, #f9fafb);
+    color: var(--text-muted);
+    background: var(--bg-subtle);
   }
 
   .table td {
     padding: 0.625rem 1rem;
-    border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+    border-bottom: 1px solid var(--border);
     vertical-align: middle;
-  }
-
-  .table tbody tr:nth-child(even) {
-    background-color: var(--gray-50, #f9fafb);
   }
 
   .month-row {
@@ -749,7 +1027,7 @@
   }
 
   .row-clickable:hover {
-    background: var(--color-brand-tint, #f5f3ff) !important;
+    background: var(--brand-soft);
   }
 
   .row-closed {
@@ -773,7 +1051,7 @@
     display: inline-block;
     width: 1rem;
     font-size: 0.65rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .text-right {
@@ -790,81 +1068,29 @@
   }
 
   .text-muted {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.85rem;
   }
 
-  /* Status badges */
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    white-space: nowrap;
-    letter-spacing: 0.01em;
-    transition: all 0.15s ease;
-  }
-
-  .status-closed {
-    background: var(--color-green-bg, #dcfce7);
-    color: var(--color-green, #15803d);
-    border: 1px solid var(--color-green-border, #bbf7d0);
-  }
-
-  .status-partial {
-    background: var(--color-yellow-bg, #fef9c3);
-    color: var(--color-yellow, #854d0e);
-    border: 1px solid var(--color-yellow-border, #fef08a);
-  }
-
-  .status-ready {
-    background: var(--color-blue-bg, #dbeafe);
-    color: var(--color-blue, #1d4ed8);
-    border: 1px solid var(--color-blue-border, #bfdbfe);
-  }
-
-  .status-open {
-    background: var(--color-red-bg, #fee2e2);
-    color: var(--color-red, #b91c1c);
-    border: 1px solid var(--color-red-border, #fecaca);
-  }
-
-  .status-blocked {
-    background: var(--gray-100, #f3f4f6);
-    color: var(--gray-500, #6b7280);
-    border: 1px solid var(--gray-200, #e5e7eb);
-  }
-
-  .status-future {
-    background: var(--gray-100, #f3f4f6);
-    color: var(--gray-400, #9ca3af);
-    border: 1px solid var(--gray-200, #e5e7eb);
-  }
-
-  .status-no_data {
-    background: var(--gray-100, #f3f4f6);
-    color: var(--gray-400, #9ca3af);
-    border: 1px solid var(--gray-200, #e5e7eb);
-  }
-
-  /* Reason column */
+  /* ─── Reason column ─────────────────────────────────── */
   .reason-cell {
     max-width: 400px;
   }
 
   .reason-text {
     font-size: 0.8rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
-  /* Detail row */
+  /* ─── Detail row ────────────────────────────────────── */
   .detail-row td {
     padding: 0;
-    background: var(--gray-50, #f9fafb);
-    border-bottom: 2px solid var(--color-border);
+    background: var(--bg-subtle);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .detail-callout-wrapper {
+    padding: 12px 16px 0;
   }
 
   .detail-loading,
@@ -872,7 +1098,7 @@
     padding: 1rem;
     text-align: center;
     font-size: 0.85rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .detail-table-wrapper {
@@ -882,22 +1108,23 @@
   .detail-table {
     width: 100%;
     border-collapse: collapse;
+    font-family: var(--font-sans);
     font-size: 0.8rem;
   }
 
   .detail-table th {
     text-align: left;
     padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
     font-weight: 600;
     font-size: 0.7rem;
     text-transform: uppercase;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .detail-table td {
     padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
     vertical-align: middle;
   }
 
@@ -909,58 +1136,35 @@
     font-weight: 500;
   }
 
-  /* Missing dates */
+  /* ─── Missing dates ────────────────────────────────── */
   .missing-dates {
     max-width: 320px;
   }
 
   .dates-text {
     font-size: 0.8rem;
-    color: var(--red-600, #dc2626);
+    color: var(--bad, var(--warn));
   }
 
   .dates-count {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin-left: 0.25rem;
   }
 
-  /* Buttons */
+  /* ─── Buttons ──────────────────────────────────────── */
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8rem;
   }
 
-  /* Summary bar */
-  .summary-bar {
-    display: flex;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+  /* ─── Modal body helper (Modal primitive owns backdrop/card/header/footer) ────── */
+  .modal-note {
+    margin: 0;
+    font-family: var(--font-sans);
     font-size: 0.875rem;
-  }
-  .summary-item {
-    padding: 0.5rem 1rem;
-    border-radius: var(--radius-sm, 8px);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    box-shadow: var(--shadow-xs, 0 1px 3px rgba(0, 0, 0, 0.06));
-  }
-  .summary-closed {
-    background: var(--color-green-bg, #f0fdf4);
-    color: var(--color-green, #15803d);
-    border: 1px solid var(--color-green-border, #bbf7d0);
-  }
-  .summary-open {
-    background: var(--color-red-bg, #fef2f2);
-    color: var(--color-red, #b91c1c);
-    border: 1px solid var(--color-red-border, #fecaca);
-  }
-  .summary-total {
-    background: var(--gray-100, #f3f4f6);
-    color: var(--gray-600, #4b5563);
-    border: 1px solid var(--gray-200, #e5e7eb);
+    color: var(--text-muted);
+    line-height: 1.5;
   }
 
   @media (max-width: 640px) {
@@ -971,10 +1175,6 @@
 
     .control-group {
       min-width: 0;
-    }
-
-    .summary-bar {
-      flex-wrap: wrap;
     }
 
     .reason-cell {

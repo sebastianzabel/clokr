@@ -95,7 +95,7 @@
   }
 
   .empty-state-icon {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.4;
     margin-bottom: 1.25rem;
   }
@@ -103,13 +103,13 @@
   .empty-state-title {
     font-size: 1.0625rem;
     font-weight: 600;
-    color: var(--color-text-heading);
+    color: var(--text);
     margin-bottom: 0.5rem;
   }
 
   .empty-state-description {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     max-width: 320px;
     line-height: 1.5;
     margin-bottom: 1.25rem;

@@ -1,1 +1,12 @@
+# One-shot lint:ui-classes (Plan 35-04, UI-21).
+# Strict since Phase 36 (UI-21 closure) — ConfirmDialog regex fixed, .logout
+# added to WHITELIST, every emitted class now resolves to a global recipe or
+# a scoped <style> declaration.
+pnpm --filter @clokr/web lint:ui-classes || exit 1
+
+# One-shot lint:ui (NOT inside lint-staged — see Plan 34-08 rationale).
+# Strict since UI-17 (admin/shifts migrated, all inline-color converted to
+# style: directive, auth pages whitelisted in lint-ui.mjs).
+pnpm --filter @clokr/web lint:ui --staged || exit 1
+
 pnpm exec lint-staged

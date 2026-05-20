@@ -166,6 +166,7 @@ model User {
   emailNotifications   Boolean    @default(true) // Per-user email opt-out
   failedLoginAttempts  Int        @default(0)
   lockedUntil          DateTime?  @db.Timestamptz
+  uiPreferences        Json?      @db.JsonB
   lastFailedLoginAt    DateTime?  @db.Timestamptz
   lastLoginAt          DateTime?  @db.Timestamptz
   createdAt    DateTime   @default(now()) @db.Timestamptz

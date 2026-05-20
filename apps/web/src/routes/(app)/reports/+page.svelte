@@ -1,10 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { get as getStore } from "svelte/store";
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import KPIStat from "$components/ui/KPIStat.svelte";
   import {
     Chart,
     LineController,
@@ -70,6 +73,26 @@
     usedDays: number;
     remainingDays: number;
     pendingDays: number;
+  };
+
+  // EMP-06: Employee monthly closes view
+  type EmpMonthlyClose = {
+    year: number;
+    month: number; // 1-12
+    label: string; // "April 2026"
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    isLocked: boolean;
+  };
+
+  type SnapshotRow = {
+    periodType: "MONTHLY" | "YEARLY";
+    periodStart: string;
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    isLocked: boolean;
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
@@ -223,6 +246,85 @@
   // Per-employee download error state
   let empDownloadErrors = $state<Record<string, string>>({});
 
+  // ── EMP-06: Employee monthly closes view ─────────────────────────────────
+  let empMonthlyCloses: EmpMonthlyClose[] = $state([]);
+  let empClosesLoading = $state(false);
+  let empClosesError = $state("");
+
+  const EMP_MONTH_NAMES = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ];
+
+  async function loadEmployeeMonthlyCloses() {
+    const auth = getStore(authStore);
+    const myEmployeeId = auth.user?.employeeId;
+    if (!myEmployeeId) {
+      empMonthlyCloses = [];
+      return;
+    }
+    empClosesLoading = true;
+    empClosesError = "";
+    try {
+      const rows = await api.get<SnapshotRow[]>(`/overtime/snapshots/${myEmployeeId}`);
+      empMonthlyCloses = rows
+        .filter((r) => r.periodType === "MONTHLY")
+        .slice(0, 12)
+        .map((r) => {
+          const d = new Date(r.periodStart);
+          const y = d.getFullYear();
+          const m = d.getMonth() + 1;
+          return {
+            year: y,
+            month: m,
+            label: `${EMP_MONTH_NAMES[m - 1]} ${y}`,
+            workedMinutes: r.workedMinutes,
+            expectedMinutes: r.expectedMinutes,
+            balanceMinutes: r.balanceMinutes,
+            isLocked: r.isLocked,
+          };
+        });
+    } catch (e: unknown) {
+      empClosesError =
+        e instanceof Error ? e.message : "Monatsabschlüsse konnten nicht geladen werden";
+      empMonthlyCloses = [];
+    } finally {
+      empClosesLoading = false;
+    }
+  }
+
+  function fmtMinutesAsHrs(min: number): string {
+    const sign = min < 0 ? "−" : "";
+    const abs = Math.abs(min);
+    const h = Math.floor(abs / 60);
+    const m = abs % 60;
+    return `${sign}${h}:${String(m).padStart(2, "0")} h`;
+  }
+
+  async function downloadEmployeeMonthlyPdf(year: number, month: number, label: string) {
+    const auth = getStore(authStore);
+    const myEmployeeId = auth.user?.employeeId;
+    if (!myEmployeeId) return;
+    try {
+      await downloadPdf(
+        `/reports/monthly/pdf?employeeId=${myEmployeeId}&year=${year}&month=${month}`,
+        `Stundennachweis_${label.replace(/\s+/g, "_")}.pdf`,
+      );
+    } catch (e: unknown) {
+      empClosesError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
+    }
+  }
+
   // ── Reactive reload when period changes ────────────────────────────────────
 
   $effect(() => {
@@ -240,9 +342,11 @@
   onMount(async () => {
     const auth = getStore(authStore);
     currentRole = auth.user?.role ?? null;
-    if (!["ADMIN", "MANAGER"].includes(currentRole ?? "")) {
-      goto("/dashboard");
-      return;
+    // Persona-aware: employees see their personal monthly closes table;
+    // managers/admins keep their existing onMount-driven $effect-driven loads.
+    const callerIsManager = currentRole === "ADMIN" || currentRole === "MANAGER";
+    if (!callerIsManager) {
+      await loadEmployeeMonthlyCloses();
     }
   });
 
@@ -287,8 +391,8 @@
         const data = row.snapshots.map((s) => s.carryOver / 60);
 
         const brandColor =
-          getComputedStyle(document.documentElement).getPropertyValue("--color-brand").trim() ||
-          "#8b5a8c";
+          getComputedStyle(document.documentElement).getPropertyValue("--brand").trim() ||
+          "#80377B";
 
         const chart = new Chart(canvas, {
           type: "line",
@@ -551,171 +655,358 @@
   function statusBadgeLabel(s: OvertimeEmployee["status"]): string {
     return s === "NORMAL" ? "Normal" : s === "ELEVATED" ? "Erhöht" : "Kritisch";
   }
+
+  // ── KPI summaries (v1.5) ───────────────────────────────────────────────────
+
+  // Manager KPIs — derived from overtime + leave overview
+  let kpiTeamSize = $derived(overtimeOverview?.employees?.length ?? 0);
+  let kpiAvgBalance = $derived.by(() => {
+    const rows = overtimeOverview?.employees ?? [];
+    if (rows.length === 0) return 0;
+    const sum = rows.reduce((acc, r) => acc + r.balanceHours, 0);
+    return sum / rows.length;
+  });
+  let kpiCriticalCount = $derived(
+    (overtimeOverview?.employees ?? []).filter((r) => r.status === "CRITICAL").length,
+  );
+  let kpiUsedDays = $derived((leaveOverview ?? []).reduce((acc, r) => acc + r.usedDays, 0));
+
+  // Employee KPIs — derived from monthly closes
+  let kpiClosedMonths = $derived(empMonthlyCloses.length);
+  let kpiTotalWorkedMin = $derived(empMonthlyCloses.reduce((acc, r) => acc + r.workedMinutes, 0));
+  let kpiTotalExpectedMin = $derived(
+    empMonthlyCloses.reduce((acc, r) => acc + r.expectedMinutes, 0),
+  );
+  let kpiTotalBalanceMin = $derived(empMonthlyCloses.reduce((acc, r) => acc + r.balanceMinutes, 0));
+
+  function fmtHoursFromMin(min: number): string {
+    const sign = min < 0 ? "−" : "";
+    const abs = Math.abs(min);
+    const h = Math.floor(abs / 60);
+    const m = abs % 60;
+    return `${sign}${h}:${String(m).padStart(2, "0")}`;
+  }
+
+  function fmtHoursSigned(min: number): string {
+    const prefix = min > 0 ? "+" : "";
+    return `${prefix}${fmtHoursFromMin(min)}`;
+  }
 </script>
 
 <svelte:head>
   <title>Berichte – Clokr</title>
 </svelte:head>
 
-<div class="page-header">
-  <h1>Berichte &amp; Auswertungen</h1>
-  <p>Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen</p>
-</div>
+<PageHead
+  eyebrow="Mein Bereich"
+  title="Berichte & Auswertungen"
+  accent="Auswertungen"
+  sub={isManager
+    ? "Urlaubslisten, Monatsberichte und DATEV-Exporte erstellen"
+    : "Persönliche Monatsabschlüsse — als PDF zum Download."}
+/>
 
-<div class="reports-grid">
-  <!-- DATEV Export Card -->
-  <div class="card card-body card-animate report-card">
-    <div class="report-card-icon-section report-card-icon-section--green">
-      <span class="report-icon-lg">📁</span>
-    </div>
-    <div class="report-card-header">
-      <div>
-        <h2 class="report-card-title">DATEV Export</h2>
-        <p class="report-card-desc text-muted">TXT-Datei für DATEV-Lohnabrechnung herunterladen</p>
-      </div>
-    </div>
-
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="datev-month">Monat</label>
-        <select id="datev-month" bind:value={datevMonth} class="form-input">
-          {#each months as name, i (i)}
-            <option value={i + 1}>{name}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="datev-year">Jahr</label>
-        <select id="datev-year" bind:value={datevYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-
-    <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
-      {#if datevLoading}
-        <span class="btn-spinner"></span>
-        Vorbereiten…
-      {:else}
-        ↓ TXT herunterladen
-      {/if}
-    </button>
-
-    {#if datevError}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{datevError}</span>
-      </div>
-    {/if}
+<!-- KPI cluster — Card + KPIStat primitives -->
+{#if isManager}
+  <div class="kpi-row">
+    <Card animate>
+      <KPIStat label="Mitarbeiter" value={String(kpiTeamSize)} />
+    </Card>
+    <Card animate>
+      <KPIStat
+        label="Ø Saldo"
+        value={formatBalance(kpiAvgBalance)}
+        unit="h"
+        delta={kpiAvgBalance > 0 ? "positiv" : kpiAvgBalance < 0 ? "negativ" : undefined}
+        deltaTone={kpiAvgBalance > 0 ? "good" : kpiAvgBalance < 0 ? "bad" : "neutral"}
+      />
+    </Card>
+    <Card animate>
+      <KPIStat
+        label="Kritische Salden"
+        value={String(kpiCriticalCount)}
+        deltaTone={kpiCriticalCount > 0 ? "bad" : "neutral"}
+      />
+    </Card>
+    <Card animate>
+      <KPIStat label="Urlaub genutzt" value={formatDays(kpiUsedDays)} unit="Tage" />
+    </Card>
   </div>
-
-  <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
-  <div class="card card-body card-animate report-card">
-    <div class="report-card-icon-section report-card-icon-section--blue">
-      <span class="report-icon-lg">🏖</span>
-    </div>
-    <div class="report-card-header">
-      <div>
-        <h2 class="report-card-title">Urlaubsbericht PDF</h2>
-        <p class="report-card-desc text-muted">
-          Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
-        </p>
-      </div>
-    </div>
-
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="leave-year">Jahr</label>
-        <select id="leave-year" bind:value={leaveYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-
-    <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
-      {#if leaveLoading}
-        <span class="btn-spinner"></span>
-        Vorbereiten…
-      {:else}
-        PDF herunterladen
-      {/if}
-    </button>
-
-    {#if leaveError}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{leaveError}</span>
-      </div>
-    {/if}
+{:else}
+  <div class="kpi-row">
+    <Card animate>
+      <KPIStat label="Abgeschlossen" value={String(kpiClosedMonths)} unit="Monate" />
+    </Card>
+    <Card animate>
+      <KPIStat label="Soll" value={fmtHoursFromMin(kpiTotalExpectedMin)} unit="h" />
+    </Card>
+    <Card animate>
+      <KPIStat label="Ist" value={fmtHoursFromMin(kpiTotalWorkedMin)} unit="h" />
+    </Card>
+    <Card animate>
+      <KPIStat
+        label="Saldo"
+        value={fmtHoursSigned(kpiTotalBalanceMin)}
+        unit="h"
+        deltaTone={kpiTotalBalanceMin > 0
+          ? "good"
+          : kpiTotalBalanceMin < 0
+            ? "bad"
+            : "neutral"}
+      />
+    </Card>
   </div>
+{/if}
 
-  <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
-  <div class="card card-body card-animate report-card">
-    <div class="report-card-icon-section report-card-icon-section--purple">
-      <span class="report-icon-lg">📑</span>
-    </div>
-    <div class="report-card-header">
-      <div>
-        <h2 class="report-card-title">Firmenweiter Monatsbericht</h2>
-        <p class="report-card-desc text-muted">
-          Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
-        </p>
+{#if isManager}
+  <div class="reports-grid">
+    <!-- DATEV Export Card -->
+    <div class="card card-body card-animate report-card">
+      <div class="report-card-icon-section report-card-icon-section--green">
+        <span class="report-icon-lg">📁</span>
       </div>
-    </div>
-
-    <div class="report-controls">
-      <div class="form-group">
-        <label class="form-label" for="company-pdf-month">Monat</label>
-        <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
-          {#each months as name, i (i)}
-            <option value={i + 1}>{name}</option>
-          {/each}
-        </select>
+      <div class="report-card-header">
+        <div>
+          <h2 class="report-card-heading">DATEV Export</h2>
+          <p class="report-card-desc text-muted">
+            TXT-Datei für DATEV-Lohnabrechnung herunterladen
+          </p>
+        </div>
       </div>
-      <div class="form-group">
-        <label class="form-label" for="company-pdf-year">Jahr</label>
-        <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
-          {#each years as y (y)}
-            <option value={y}>{y}</option>
-          {/each}
-        </select>
+
+      <div class="report-controls">
+        <div class="form-group">
+          <label class="form-label" for="datev-month">Monat</label>
+          <select id="datev-month" bind:value={datevMonth} class="form-input">
+            {#each months as name, i (i)}
+              <option value={i + 1}>{name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="datev-year">Jahr</label>
+          <select id="datev-year" bind:value={datevYear} class="form-input">
+            {#each years as y (y)}
+              <option value={y}>{y}</option>
+            {/each}
+          </select>
+        </div>
       </div>
-    </div>
 
-    <div class="form-group">
-      <label class="form-label" for="company-pdf-role">Rolle</label>
-      <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
-        <option value="all">Alle Mitarbeiter</option>
-        <option value="EMPLOYEE">Nur Mitarbeiter</option>
-        <option value="MANAGER">Nur Manager</option>
-      </select>
-    </div>
+      <button class="btn btn-primary" onclick={downloadDatev} disabled={datevLoading}>
+        {#if datevLoading}
+          <span class="btn-spinner"></span>
+          Vorbereiten…
+        {:else}
+          ↓ TXT herunterladen
+        {/if}
+      </button>
 
-    <button
-      class="btn btn-primary"
-      onclick={downloadCompanyMonthlyPdf}
-      disabled={companyPdfLoading}
-    >
-      {#if companyPdfLoading}
-        <span class="btn-spinner"></span>
-        Vorbereiten…
-      {:else}
-        PDF herunterladen
+      {#if datevError}
+        <div class="alert alert-error" role="alert">
+          <span>⚠</span>
+          <span>{datevError}</span>
+        </div>
       {/if}
-    </button>
+    </div>
 
-    {#if companyPdfError}
-      <div class="alert alert-error" role="alert">
-        <span>⚠</span>
-        <span>{companyPdfError}</span>
+    <!-- Urlaubsbericht PDF Card (kombiniert: Urlaubsliste + Urlaubsübersicht) -->
+    <div class="card card-body card-animate report-card">
+      <div class="report-card-icon-section report-card-icon-section--blue">
+        <span class="report-icon-lg">🏖</span>
       </div>
-    {/if}
+      <div class="report-card-header">
+        <div>
+          <h2 class="report-card-heading">Urlaubsbericht PDF</h2>
+          <p class="report-card-desc text-muted">
+            Urlaubsliste &amp; Jahresübersicht der Ansprüche in einem PDF
+          </p>
+        </div>
+      </div>
+
+      <div class="report-controls">
+        <div class="form-group">
+          <label class="form-label" for="leave-year">Jahr</label>
+          <select id="leave-year" bind:value={leaveYear} class="form-input">
+            {#each years as y (y)}
+              <option value={y}>{y}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" onclick={downloadVacationPdf} disabled={leaveLoading}>
+        {#if leaveLoading}
+          <span class="btn-spinner"></span>
+          Vorbereiten…
+        {:else}
+          PDF herunterladen
+        {/if}
+      </button>
+
+      {#if leaveError}
+        <div class="alert alert-error" role="alert">
+          <span>⚠</span>
+          <span>{leaveError}</span>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Company Monthly PDF Card (PDF-01 / PDF-03) -->
+    <div class="card card-body card-animate report-card">
+      <div class="report-card-icon-section report-card-icon-section--purple">
+        <span class="report-icon-lg">📑</span>
+      </div>
+      <div class="report-card-header">
+        <div>
+          <h2 class="report-card-heading">Firmenweiter Monatsbericht</h2>
+          <p class="report-card-desc text-muted">
+            Alle Mitarbeiter in einer PDF — optional nach Rolle gefiltert
+          </p>
+        </div>
+      </div>
+
+      <div class="report-controls">
+        <div class="form-group">
+          <label class="form-label" for="company-pdf-month">Monat</label>
+          <select id="company-pdf-month" bind:value={companyPdfMonth} class="form-input">
+            {#each months as name, i (i)}
+              <option value={i + 1}>{name}</option>
+            {/each}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="company-pdf-year">Jahr</label>
+          <select id="company-pdf-year" bind:value={companyPdfYear} class="form-input">
+            {#each years as y (y)}
+              <option value={y}>{y}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="company-pdf-role">Rolle</label>
+        <select id="company-pdf-role" bind:value={companyPdfRole} class="form-input">
+          <option value="all">Alle Mitarbeiter</option>
+          <option value="EMPLOYEE">Nur Mitarbeiter</option>
+          <option value="MANAGER">Nur Manager</option>
+        </select>
+      </div>
+
+      <button
+        class="btn btn-primary"
+        onclick={downloadCompanyMonthlyPdf}
+        disabled={companyPdfLoading}
+      >
+        {#if companyPdfLoading}
+          <span class="btn-spinner"></span>
+          Vorbereiten…
+        {:else}
+          PDF herunterladen
+        {/if}
+      </button>
+
+      {#if companyPdfError}
+        <div class="alert alert-error" role="alert">
+          <span>⚠</span>
+          <span>{companyPdfError}</span>
+        </div>
+      {/if}
+    </div>
   </div>
-</div>
+{:else}
+  <!-- EMP-06: Employee personal monthly closes -->
+  <Card animate class="emp-closes-card" style="--card-idx: 1;">
+    <div class="emp-closes-hd">
+      <CardHeader title="Monatsabschlüsse" sub="Persönliche Bilanz je Monat" />
+    </div>
+    {#if empClosesLoading}
+      <div class="emp-closes-loading">Lade Monatsabschlüsse…</div>
+    {:else if empClosesError}
+      <div class="emp-closes-error" role="alert">{empClosesError}</div>
+    {:else}
+      <table class="emp-closes-table">
+        <thead>
+          <tr>
+            <th>Monat</th>
+            <th class="num">Soll</th>
+            <th class="num">Ist</th>
+            <th class="num">Diff</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#if empMonthlyCloses.length === 0}
+            <tr>
+              <td colspan="6" class="emp-closes-empty">Noch keine abgeschlossenen Monate</td>
+            </tr>
+          {:else}
+            {#each empMonthlyCloses as row (`${row.year}-${row.month}`)}
+              <tr>
+                <td><b class="emp-month-label">{row.label}</b></td>
+                <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
+                <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
+                <td
+                  class="num"
+                  class:diff-good={row.balanceMinutes > 0}
+                  class:diff-bad={row.balanceMinutes < 0}
+                  class:diff-zero={row.balanceMinutes === 0}
+                >
+                  {row.balanceMinutes > 0 ? "+" : ""}{fmtMinutesAsHrs(row.balanceMinutes)}
+                </td>
+                <td>
+                  {#if row.isLocked}
+                    <span class="chip chip-good">
+                      <svg
+                        width="11"
+                        height="11"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        aria-hidden="true"
+                      >
+                        <rect x="3" y="11" width="18" height="11" rx="2" />
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                      </svg>
+                      Gesperrt
+                    </span>
+                  {:else}
+                    <span class="chip chip-warn"><span class="dot"></span> Offen</span>
+                  {/if}
+                </td>
+                <td class="emp-pdf-cell">
+                  <button
+                    type="button"
+                    class="btn btn-ghost xs"
+                    onclick={() => downloadEmployeeMonthlyPdf(row.year, row.month, row.label)}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      aria-hidden="true"
+                    >
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    PDF
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          {/if}
+        </tbody>
+      </table>
+    {/if}
+  </Card>
+{/if}
 
 <!-- Team-Übersicht — ADMIN / MANAGER only -->
 {#if isManager}
@@ -737,15 +1028,14 @@
     </div>
 
     <!-- Heutige Anwesenheit (RPT-03) -->
-    <section class="widget-card card card-body">
-      <div class="widget-header">
-        <h3 class="widget-title">Heutige Anwesenheit</h3>
-        <div class="widget-actions">
+    <Card animate class="widget-card" style="--card-idx: 1;">
+      <CardHeader title="Heutige Anwesenheit" sub="Status aller Mitarbeiter">
+        {#snippet actions()}
           {#if todayAttendance}
             <span class="section-date">{todayAttendance.date}</span>
           {/if}
-        </div>
-      </div>
+        {/snippet}
+      </CardHeader>
 
       {#if todayLoading}
         <p class="section-placeholder">Lade Anwesenheit…</p>
@@ -803,14 +1093,11 @@
           bind:pageSize={todayPageSize}
         />
       {/if}
-    </section>
+    </Card>
 
     <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
-    <section class="widget-card card card-body">
-      <div class="widget-header">
-        <h3 class="widget-title">Überstunden-Übersicht</h3>
-        <div class="widget-actions"></div>
-      </div>
+    <Card animate class="widget-card" style="--card-idx: 2;">
+      <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
 
       {#if overtimeLoading}
         <p class="section-placeholder">Lade Überstunden-Saldo…</p>
@@ -885,14 +1172,11 @@
           bind:pageSize={overtimePageSize}
         />
       {/if}
-    </section>
+    </Card>
 
     <!-- Urlaubsübersicht (RPT-02) -->
-    <section class="widget-card card card-body">
-      <div class="widget-header">
-        <h3 class="widget-title">Urlaubsübersicht</h3>
-        <div class="widget-actions"></div>
-      </div>
+    <Card animate class="widget-card" style="--card-idx: 3;">
+      <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
 
       {#if leaveOverviewLoading}
         <p class="section-placeholder">Lade Urlaubsübersicht…</p>
@@ -937,11 +1221,31 @@
           bind:pageSize={leaveOverviewPageSize}
         />
       {/if}
-    </section>
+    </Card>
   </div>
 {/if}
 
 <style>
+  /* ── KPI cluster (Card + KPIStat grid) ────────────────────────────────── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  @media (max-width: 960px) {
+    .kpi-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 540px) {
+    .kpi-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .reports-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -970,7 +1274,7 @@
     justify-content: center;
     width: 3.25rem;
     height: 3.25rem;
-    border-radius: var(--radius-sm, 8px);
+    border-radius: var(--r-sm);
     flex-shrink: 0;
     transition: transform 0.2s ease;
   }
@@ -980,15 +1284,15 @@
   }
 
   .report-card-icon-section--purple {
-    background: var(--color-brand-tint, rgba(124, 58, 237, 0.1));
+    background: var(--brand-soft);
   }
 
   .report-card-icon-section--green {
-    background: var(--color-green-bg, rgba(22, 163, 74, 0.1));
+    background: var(--good-soft);
   }
 
   .report-card-icon-section--blue {
-    background: var(--color-blue-bg, rgba(37, 99, 235, 0.1));
+    background: var(--brand-soft);
   }
 
   .report-icon-lg {
@@ -1002,7 +1306,7 @@
     gap: 0.875rem;
   }
 
-  .report-card-title {
+  .report-card-heading {
     font-size: 1.0625rem;
     margin-bottom: 0.25rem;
   }
@@ -1025,7 +1329,7 @@
     width: 1rem;
     height: 1rem;
     border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: var(--color-surface, #fff);
+    border-top-color: var(--bg-card);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -1054,7 +1358,7 @@
   .team-overview-header h2 {
     font-size: 1.125rem;
     font-weight: 700;
-    color: var(--color-text-heading);
+    color: var(--text);
     margin: 0;
   }
 
@@ -1065,9 +1369,9 @@
   }
 
   .period-select {
-    background: var(--color-bg-subtle);
-    color: var(--color-text);
-    border: 1px solid var(--color-border);
+    background: var(--bg-subtle);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.375rem 0.625rem;
     font-size: 0.875rem;
@@ -1076,7 +1380,7 @@
   }
 
   .period-select:focus {
-    outline: 2px solid var(--color-brand);
+    outline: 2px solid var(--brand);
     outline-offset: 1px;
   }
 
@@ -1086,43 +1390,21 @@
     margin-top: 1rem;
   }
 
-  .widget-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-  }
-
-  .widget-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--color-text-muted);
-    margin: 0;
-  }
-
-  .widget-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
   .section-date {
     font-family: var(--font-mono);
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
   }
 
   .section-placeholder,
   .section-error {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.9375rem;
     margin: 0;
   }
 
   .section-error {
-    color: var(--color-red, var(--color-brand));
+    color: var(--bad);
   }
 
   /* Heutige Anwesenheit */
@@ -1135,8 +1417,8 @@
   }
 
   .summary-chip {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.75rem;
     display: flex;
@@ -1146,7 +1428,7 @@
 
   .summary-chip .label {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
@@ -1155,7 +1437,7 @@
     font-family: var(--font-mono);
     font-size: 1.25rem;
     font-weight: 700;
-    color: var(--color-text-heading);
+    color: var(--text);
   }
 
   .table-wrap {
@@ -1172,11 +1454,11 @@
   .attendance-table td {
     padding: 0.625rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
   }
 
   .attendance-table th {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     font-size: 0.8125rem;
     text-transform: uppercase;
@@ -1193,29 +1475,29 @@
 
   .status-present,
   .status-clocked-in {
-    background: var(--color-green-bg, var(--color-brand-tint));
-    color: var(--color-green, var(--color-brand));
+    background: var(--good-soft);
+    color: var(--good);
   }
 
   .status-absent {
-    background: var(--color-yellow-bg, var(--color-bg-subtle));
-    color: var(--color-yellow, var(--color-text-muted));
+    background: var(--warn-soft);
+    color: var(--warn);
   }
 
   .status-holiday {
-    background: var(--color-blue-bg, var(--color-bg-subtle));
-    color: var(--color-blue, var(--color-text-muted));
+    background: var(--brand-soft);
+    color: var(--brand);
   }
 
   .status-missing {
-    background: var(--color-red-bg, var(--color-bg-subtle));
-    color: var(--color-red, var(--color-text));
+    background: var(--bad-soft);
+    color: var(--bad);
   }
 
   .status-scheduled,
   .status-none {
-    background: var(--color-bg-subtle);
-    color: var(--color-text-muted);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
   }
 
   /* Überstunden-Übersicht */
@@ -1230,11 +1512,11 @@
   .overtime-table td {
     padding: 0.625rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
   }
 
   .overtime-table th {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     font-size: 0.8125rem;
     text-transform: uppercase;
@@ -1247,7 +1529,7 @@
   }
 
   .overtime-table th.sortable:hover {
-    color: var(--color-text-heading);
+    color: var(--text);
   }
 
   .overtime-table .numeric {
@@ -1257,22 +1539,22 @@
 
   .sort-arrow {
     margin-left: 0.25rem;
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .status-saldo-normal {
-    background: var(--color-green-bg, var(--color-brand-tint));
-    color: var(--color-green, var(--color-brand));
+    background: var(--good-soft);
+    color: var(--good);
   }
 
   .status-saldo-elevated {
-    background: var(--color-yellow-bg, var(--color-bg-subtle));
-    color: var(--color-yellow, var(--color-text));
+    background: var(--warn-soft);
+    color: var(--warn);
   }
 
   .status-saldo-critical {
-    background: var(--color-red-bg, var(--color-bg-subtle));
-    color: var(--color-red, var(--color-text));
+    background: var(--bad-soft);
+    color: var(--bad);
   }
 
   .sparkline-cell {
@@ -1281,7 +1563,7 @@
 
   .no-trend {
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-style: italic;
   }
 
@@ -1307,9 +1589,9 @@
     justify-content: center;
     padding: 0.25rem 0.5rem;
     border-radius: 6px;
-    border: 1px solid var(--color-border);
-    background: var(--color-bg-subtle);
-    color: var(--color-text-muted);
+    border: 1px solid var(--border);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
     font-size: 0.75rem;
     font-weight: 600;
     font-family: var(--font-mono);
@@ -1322,22 +1604,22 @@
   }
 
   .btn-icon:hover {
-    background: var(--color-brand-tint);
-    color: var(--color-brand);
-    border-color: var(--color-brand);
+    background: var(--brand-soft);
+    color: var(--brand);
+    border-color: var(--brand);
   }
 
   .btn-icon-pdf {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .btn-icon-datev {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .row-dl-error {
     font-size: 0.75rem;
-    color: var(--color-red, red);
+    color: var(--bad);
     display: block;
     margin-top: 0.25rem;
   }
@@ -1354,11 +1636,11 @@
   .leave-overview-table td {
     padding: 0.625rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid var(--border);
   }
 
   .leave-overview-table th {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     font-size: 0.8125rem;
     text-transform: uppercase;
@@ -1372,7 +1654,7 @@
 
   .leave-overview-table .numeric.strong {
     font-weight: 700;
-    color: var(--color-text-heading);
+    color: var(--text);
   }
 
   /* ── Responsive ───────────────────────────────────────────────────────────── */
@@ -1401,5 +1683,78 @@
     .reports-grid {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* ── EMP-06: Employee monthly closes table ──────────────────────── */
+  .emp-closes-card {
+    padding: 0;
+    overflow: hidden;
+  }
+  .emp-closes-hd {
+    padding: 16px 20px 0;
+    margin-bottom: 0;
+  }
+  .emp-closes-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .emp-closes-table th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .emp-closes-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13.5px;
+    vertical-align: middle;
+  }
+  .emp-closes-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .emp-closes-table tbody tr:hover td {
+    background: var(--bg-subtle);
+  }
+  .emp-closes-table .num {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .emp-month-label {
+    font-weight: 600;
+  }
+  .diff-good {
+    color: var(--good);
+  }
+  .diff-bad {
+    color: var(--bad);
+  }
+  .diff-zero {
+    color: var(--text-muted);
+  }
+  .emp-pdf-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .emp-closes-loading {
+    padding: 32px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .emp-closes-error {
+    padding: 16px 24px;
+    color: var(--bad);
+    background: var(--bad-soft);
+    border-bottom: 1px solid var(--border);
+  }
+  .emp-closes-empty {
+    text-align: center;
+    padding: 32px;
+    color: var(--text-muted);
   }
 </style>

@@ -2,6 +2,12 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import MonthBar from "$components/ui/MonthBar.svelte";
+  import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
+  import Modal from "$components/ui/Modal.svelte";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
 
@@ -138,6 +144,14 @@
       return sum + (diff > 0 ? diff : 0);
     }, 0),
   );
+  let formNetMin = $derived.by(() => {
+    if (!formHasEnd || !formStart || !formEnd) return null;
+    const [sh, sm] = formStart.split(":").map(Number);
+    const [eh, em] = formEnd.split(":").map(Number);
+    const gross = eh * 60 + em - (sh * 60 + sm);
+    if (gross <= 0) return 0;
+    return Math.max(0, gross - formBreakTotal);
+  });
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
 
@@ -621,6 +635,12 @@
     return "";
   }
 
+  function balTone(min: number): "pos" | "neg" | undefined {
+    if (min > 0) return "pos";
+    if (min < 0) return "neg";
+    return undefined;
+  }
+
   function absenceLabel(type: string): string {
     const labels: Record<string, string> = {
       VACATION: "Urlaub",
@@ -722,6 +742,16 @@
     editEntry = null;
     deleteConfirmId = "";
   }
+
+  // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
+  // false directly via bind:open. Mirror closeModal's state reset so those
+  // paths leave the page in the same state as the explicit Abbrechen button.
+  $effect(() => {
+    if (!modalOpen) {
+      editEntry = null;
+      deleteConfirmId = "";
+    }
+  });
 
   async function saveEntry() {
     saving = true;
@@ -903,6 +933,39 @@
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
+  // Stat tiles for the MonthBar primitive — empty until an employee/schedule loads.
+  let monthBarStats: MonthBarStat[] = $derived.by(() => {
+    if (!selectedEmployee || !schedule) return [];
+    const stats: MonthBarStat[] = [];
+    if (!isMonthlyHours || hasMonthlyTarget) {
+      stats.push({
+        label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
+        value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+        unit: "h",
+      });
+    }
+    stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
+    if (isMonthlyHours && !hasMonthlyTarget) {
+      stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
+    } else {
+      stats.push({
+        label: "Monat-Saldo",
+        value: fmtBalance(mBalance),
+        unit: "h",
+        tone: balTone(mBalance),
+      });
+    }
+    if (overtimeTotalHours !== null) {
+      const totalMin = Math.round(overtimeTotalHours * 60);
+      stats.push({
+        label: "Gesamt-Saldo",
+        value: fmtBalance(totalMin),
+        unit: "h",
+        tone: balTone(totalMin),
+      });
+    }
+    return stats;
+  });
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
     if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
@@ -952,14 +1015,15 @@
   }}
 />
 
-<div class="page-header-compact">
-  <h1>Team-Zeiten</h1>
-  {#if selectedEmployee}
-    <button class="btn btn-primary" onclick={() => openAdd()}>
-      <span aria-hidden="true">＋</span> Eintrag hinzufügen
-    </button>
-  {/if}
-</div>
+<PageHead eyebrow="Team" title="Team-Zeiten" accent="Zeiten">
+  {#snippet actions()}
+    {#if selectedEmployee}
+      <button class="btn btn-primary" onclick={() => openAdd()}>
+        <span aria-hidden="true">＋</span> Eintrag hinzufügen
+      </button>
+    {/if}
+  {/snippet}
+</PageHead>
 
 <!-- ── Mitarbeiter-Auswahl ─────────────────────────────────────────── -->
 <div class="employee-selector">
@@ -1027,69 +1091,38 @@
   </div>
 </div>
 
-<!-- ── Monat-Navigation (snippet, wiederverwendet in Kalender + Liste + Empty State) ───── -->
-{#snippet navContent()}
-  <button class="nav-btn" onclick={() => gotoMonth(-1)} title="Vorheriger Monat">
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+<!-- ── Combined Month-Bar (MonthBar primitive) ───────────────────────── -->
+{#snippet monthBar()}
+  <Card animate class="te-monthbar-card">
+    <MonthBar
+      eyebrow="Buchungsmonat"
+      date={calMonth}
+      stats={monthBarStats}
+      onPrev={() => gotoMonth(-1)}
+      onNext={() => gotoMonth(1)}
+      onToday={gotoToday}
     >
-  </button>
-  <div class="cal-nav-center">
-    <button
-      class="cal-nav-title"
-      onclick={() => {
-        pickerYear = calMonth.getFullYear();
-        showMonthPicker = !showMonthPicker;
-      }}
-      title="Monat/Jahr wählen"
-    >
-      {format(calMonth, "MMMM yyyy", { locale: de })}
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-      >
-    </button>
-    {#if showMonthPicker}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-      <div class="month-picker">
-        <div class="month-picker-year">
-          <button onclick={() => pickerYear--}>‹</button>
-          <span>{pickerYear}</span>
-          <button onclick={() => pickerYear++}>›</button>
-        </div>
-        <div class="month-picker-grid">
-          {#each MONTH_NAMES_SHORT as name, i (i)}
-            <button
-              class="month-picker-btn"
-              class:active={i === calMonth.getMonth() && pickerYear === calMonth.getFullYear()}
-              onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name}</button
+      {#snippet extraActions()}
+        {#if monthIsLocked}
+          <span class="te-lock-chip" title="Monat ist abgeschlossen">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
             >
-          {/each}
-        </div>
-        <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-      </div>
-    {/if}
-  </div>
-  <button class="nav-btn" onclick={() => gotoMonth(1)} title="Nächster Monat">
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-    >
-  </button>
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+            Abgeschlossen
+          </span>
+        {/if}
+      {/snippet}
+    </MonthBar>
+  </Card>
 {/snippet}
 
 {#if selectedEmployee}
@@ -1115,68 +1148,11 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
-  <!-- ── Monats-Übersicht ───────────────────────────────────────────────── -->
-  {#if schedule}
-    <div class="month-summary card-animate">
-      {#if !isMonthlyHours || hasMonthlyTarget}
-        <div class="msummary-item">
-          <span class="msummary-label">{hasMonthlyTarget ? "Soll (Monat)" : "Soll (bisher)"}</span>
-          <span class="msummary-value"
-            >{fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected)}h</span
-          >
-        </div>
-      {/if}
-      <div class="msummary-item">
-        <span class="msummary-label">Ist</span>
-        <span class="msummary-value">{fmtMin(totalWorked)}h</span>
-      </div>
-      <div class="msummary-divider"></div>
-      <div class="msummary-item">
-        <span class="msummary-label">Monat-Saldo</span>
-        <span
-          class="msummary-value bal {isMonthlyHours && !hasMonthlyTarget ? '' : balClass(mBalance)}"
-          >{isMonthlyHours && !hasMonthlyTarget
-            ? fmtMin(totalWorked) + "h"
-            : fmtBalance(mBalance)}</span
-        >
-      </div>
-      {#if overtimeTotalHours !== null}
-        <div class="msummary-divider"></div>
-        <div class="msummary-item">
-          <span class="msummary-label">Gesamt-Saldo</span>
-          <span class="msummary-value bal {balClass(Math.round(overtimeTotalHours * 60))}"
-            >{fmtBalance(Math.round(overtimeTotalHours * 60))}</span
-          >
-        </div>
-      {/if}
-      {#if monthIsLocked}
-        <div class="msummary-divider"></div>
-        <div class="msummary-item msummary-lock">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            style="color: var(--color-text-muted); flex-shrink: 0;"
-            aria-hidden="true"
-          >
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-          </svg>
-          <span class="msummary-lock-label">Abgeschlossen</span>
-        </div>
-      {/if}
-    </div>
-  {/if}
+  {@render monthBar()}
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
     <div class="cal-section card card-animate">
-      <div class="cal-nav">
-        {@render navContent()}
-      </div>
       <!-- Wochentage-Header -->
       <div class="cal-grid cal-header-row">
         {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -1192,7 +1168,8 @@
       {:else}
         <div class="cal-grid">
           {#each calendarDays as day (day.dateStr)}
-            <div
+            <button
+              type="button"
               data-date={day.dateStr}
               class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
                 ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
@@ -1205,6 +1182,7 @@
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
               class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
+              disabled={day.isBeforeHire || !day.isCurrentMonth}
               title={day.isBeforeHire
                 ? "Vor Eintrittsdatum"
                 : day.isHoliday
@@ -1212,15 +1190,7 @@
                   : day.absenceType
                     ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
                     : undefined}
-              role="button"
-              tabindex="0"
-              onclick={() => {
-                if (day.isCurrentMonth && !day.isBeforeHire) openAdd(day.dateStr);
-              }}
-              onkeydown={(e) => {
-                if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth && !day.isBeforeHire)
-                  openAdd(day.dateStr);
-              }}
+              onclick={() => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
               {#if day.isHoliday && day.isCurrentMonth}
@@ -1242,7 +1212,7 @@
                       fill="none"
                       stroke="currentColor"
                       stroke-width="2.5"
-                      style="color: var(--color-text-muted);"
+                      style:color="var(--text-muted)"
                       aria-hidden="true"
                     >
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
@@ -1260,7 +1230,7 @@
               {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
                 <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
               {/if}
-            </div>
+            </button>
           {/each}
         </div>
       {/if}
@@ -1281,101 +1251,101 @@
 
   <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
   {#if teView === "list"}
-    <div class="cal-nav month-nav-standalone">
-      {@render navContent()}
-    </div>
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Datum</th>
-            <th>Von</th>
-            <th>Bis</th>
-            <th>Pause</th>
-            <th>Netto</th>
-            <th>Quelle</th>
-            <th>Notiz</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each allEntries as slot (slot.id)}
-            {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-            {@const slotArbzg = arbzgDayMap.get(slotDate)}
-            <tr class:row-invalid={slot.isInvalid}>
-              <td class="font-mono"
-                >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  year: "numeric",
-                })}{#if slotArbzg}
-                  <span class="list-arbzg-hint"
-                    >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                      class="arbzg-tooltip"
-                      >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                          />{/if}{/each}</span
-                    ></span
-                  >
-                {/if}</td
-              >
-              <td class="font-mono">{fmtTime(slot.startTime)}</td>
-              <td class="font-mono">
-                {#if slot.endTime}{fmtTime(slot.endTime)}
-                {:else}<span class="badge badge-green">Aktiv</span>{/if}
-              </td>
-              <td>{fmtBreaks(slot)}</td>
-              <td class="font-mono font-medium">{slotNet(slot)}</td>
-              <td
-                ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
-                ></td
-              >
-              <td class="note-cell text-muted">
-                {#if slot.isInvalid && slot.invalidReason}
-                  <span class="invalid-reason">{slot.invalidReason}</span>
-                {:else}
-                  {slot.note ?? "---"}
-                {/if}
-              </td>
-              <td class="action-cell">
-                {#if slot.isLocked}
-                  <!-- locked entries are read-only; no actions shown (D-08) -->
-                {:else if deleteConfirmId === slot.id}
-                  <span class="del-confirm">
-                    <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                    <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                      >Ja</button
-                    >
-                    <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                      >Nein</button
-                    >
-                  </span>
-                {:else}
-                  <span class="row-actions row-actions--visible">
-                    <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                      >✏️</button
-                    >
-                    <button
-                      class="btn-icon btn-icon-danger"
-                      onclick={() => (deleteConfirmId = slot.id)}
-                      title="Löschen">🗑</button
-                    >
-                  </span>
-                {/if}
-              </td>
+    <div class="card card-animate list-card">
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Datum</th>
+              <th>Von</th>
+              <th>Bis</th>
+              <th>Pause</th>
+              <th>Netto</th>
+              <th>Quelle</th>
+              <th>Notiz</th>
+              <th></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-    {#if allEntries.length === 0}
-      <div class="empty-state card card-body">
-        <span class="empty-icon">📋</span>
-        <h3>Keine Einträge</h3>
-        <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+          </thead>
+          <tbody>
+            {#each allEntries as slot (slot.id)}
+              {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+              {@const slotArbzg = arbzgDayMap.get(slotDate)}
+              <tr class:row-invalid={slot.isInvalid}>
+                <td class="font-mono"
+                  >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })}{#if slotArbzg}
+                    <span class="list-arbzg-hint"
+                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                        class="arbzg-tooltip"
+                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                            />{/if}{/each}</span
+                      ></span
+                    >
+                  {/if}</td
+                >
+                <td class="font-mono">{fmtTime(slot.startTime)}</td>
+                <td class="font-mono">
+                  {#if slot.endTime}{fmtTime(slot.endTime)}
+                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                </td>
+                <td>{fmtBreaks(slot)}</td>
+                <td class="font-mono font-medium">{slotNet(slot)}</td>
+                <td
+                  ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
+                  ></td
+                >
+                <td class="note-cell text-muted">
+                  {#if slot.isInvalid && slot.invalidReason}
+                    <span class="invalid-reason">{slot.invalidReason}</span>
+                  {:else}
+                    {slot.note ?? "---"}
+                  {/if}
+                </td>
+                <td class="action-cell">
+                  {#if slot.isLocked}
+                    <!-- locked entries are read-only; no actions shown (D-08) -->
+                  {:else if deleteConfirmId === slot.id}
+                    <span class="del-confirm">
+                      <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
+                      <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
+                        >Ja</button
+                      >
+                      <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
+                        >Nein</button
+                      >
+                    </span>
+                  {:else}
+                    <span class="row-actions row-actions--visible">
+                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                        >✏️</button
+                      >
+                      <button
+                        class="btn-icon btn-icon-danger"
+                        onclick={() => (deleteConfirmId = slot.id)}
+                        title="Löschen">🗑</button
+                      >
+                    </span>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
-    {/if}
+      {#if allEntries.length === 0}
+        <div class="empty-state">
+          <span class="empty-icon">📋</span>
+          <h3>Keine Einträge</h3>
+          <p class="text-muted">Keine Zeiteinträge in diesem Monat.</p>
+        </div>
+      {/if}
+    </div>
   {/if}
 {:else}
+  {@render monthBar()}
   <!-- Empty calendar when no employee selected -->
   {@const y = calMonth.getFullYear()}
   {@const m = calMonth.getMonth()}
@@ -1384,9 +1354,6 @@
   {@const daysInMonth = new Date(y, m + 1, 0).getDate()}
   {@const totalCells = startDow + daysInMonth + ((7 - ((startDow + daysInMonth) % 7)) % 7)}
   <div class="cal-section card card-animate">
-    <div class="cal-nav">
-      {@render navContent()}
-    </div>
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
         <div class="cal-dow">{d}</div>
@@ -1416,228 +1383,137 @@
   </div>
 {/if}
 
-<!-- ── Modal ──────────────────────────────────────────────────────────────── -->
-{#if modalOpen}
-  <div
-    class="modal-backdrop"
-    onclick={(e) => {
-      if (e.target === e.currentTarget) closeModal();
-    }}
-    role="presentation"
-  >
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>
-          {#if editEntry}
-            Eintrag bearbeiten{selectedEmployee
-              ? ` (${selectedEmployee.firstName} ${selectedEmployee.lastName})`
-              : ""}
-          {:else}
-            Neuer Eintrag{selectedEmployee
-              ? ` für ${selectedEmployee.firstName} ${selectedEmployee.lastName}`
-              : " hinzufügen"}
-          {/if}
-        </h2>
-        <button class="btn-icon modal-close" onclick={closeModal} aria-label="Schließen">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            ><line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" /></svg
-          >
-        </button>
+<!-- ── Modal (Modal primitive — owns backdrop/escape/focus-trap) ────────── -->
+<Modal
+  bind:open={modalOpen}
+  eyebrow={(editEntry ? "Eintrag bearbeiten" : "Neuer Eintrag") +
+    (selectedEmployee ? ` · ${selectedEmployee.firstName} ${selectedEmployee.lastName}` : "")}
+  title={formDate
+    ? format(new Date(formDate + "T12:00:00"), "EEEE, d. MMMM yyyy", { locale: de })
+    : "Zeiteintrag"}
+>
+  {#if saveError}
+    <div class="alert alert-error" role="alert"><span>⚠</span><span>{saveError}</span></div>
+  {/if}
+  <div class="form-group">
+    <label class="form-label" for="f-date">Datum</label>
+    <input id="f-date" type="date" bind:value={formDate} class="form-input" />
+  </div>
+  <div class="form-row-two">
+    <div class="form-group">
+      <label class="form-label" for="f-start">Arbeitsbeginn</label>
+      <input id="f-start" type="time" bind:value={formStart} class="form-input" />
+    </div>
+    <div class="form-group">
+      <div class="form-label-row">
+        <label class="form-label" for="f-end">Arbeitsende</label>
+        <label class="end-toggle">
+          <input type="checkbox" bind:checked={formHasEnd} aria-label="Arbeitsende erfasst" />
+          <span class="text-muted end-toggle-hint">erfasst</span>
+        </label>
       </div>
-      <div class="modal-body">
-        {#if saveError}
-          <div class="alert alert-error" role="alert"><span>⚠</span><span>{saveError}</span></div>
-        {/if}
-        <div class="form-group">
-          <label class="form-label" for="f-date">Datum</label>
-          <input id="f-date" type="date" bind:value={formDate} class="form-input" />
-        </div>
-        <div class="form-row-two">
-          <div class="form-group">
-            <label class="form-label" for="f-start">Arbeitsbeginn</label>
-            <input id="f-start" type="time" bind:value={formStart} class="form-input" />
-          </div>
-          <div class="form-group">
-            <div class="form-label-row">
-              <label class="form-label" for="f-end">Arbeitsende</label>
-              <label class="end-toggle">
-                <input type="checkbox" bind:checked={formHasEnd} aria-label="Arbeitsende erfasst" />
-                <span class="text-muted" style="font-size:0.8rem;font-weight:400;">erfasst</span>
-              </label>
-            </div>
-            <input
-              id="f-end"
-              type="time"
-              bind:value={formEnd}
-              class="form-input"
-              disabled={!formHasEnd}
-            />
-          </div>
-        </div>
-        <div class="breaks-section">
-          <span class="form-label">Pausen</span>
-          {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
-            <div class="break-legacy">
-              <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
-              <button
-                class="btn btn-sm btn-ghost"
-                type="button"
-                onclick={() => {
-                  formBreaks = [
-                    { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
-                  ];
-                }}>In Pausen umwandeln</button
-              >
-            </div>
-          {/if}
-          {#each formBreaks as brk, i (i)}
-            <div class="break-row">
-              <input
-                type="time"
-                bind:value={brk.start}
-                class="form-input"
-                aria-label={`Pause ${i + 1} Beginn`}
-              />
-              <span class="break-sep">&ndash;</span>
-              <input
-                type="time"
-                bind:value={brk.end}
-                class="form-input"
-                aria-label={`Pause ${i + 1} Ende`}
-              />
-              <button
-                class="btn-icon"
-                type="button"
-                onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
-                title="Pause entfernen">✕</button
-              >
-            </div>
-          {/each}
-          <button
-            class="btn btn-sm btn-ghost"
-            type="button"
-            onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
-            >+ Pause hinzufügen</button
-          >
-          {#if formBreakTotal > 0}
-            <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
-          {/if}
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="f-note"
-            >Notiz <span class="text-muted">(optional)</span></label
-          >
-          <input
-            id="f-note"
-            type="text"
-            bind:value={formNote}
-            class="form-input"
-            placeholder="z.B. Kundentermin…"
-            maxlength="200"
-          />
-        </div>
-      </div>
-      {#if modalWarnings.length > 0}
-        <div class="modal-arbzg-warnings">
-          {#each modalWarnings as w (w.code)}
-            <div class="arbzg-alert arbzg-{w.severity}" role="alert">
-              <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
-              <span>{w.message}</span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
-        <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>
-          {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
-        </button>
-      </div>
+      <input
+        id="f-end"
+        type="time"
+        bind:value={formEnd}
+        class="form-input"
+        disabled={!formHasEnd}
+      />
     </div>
   </div>
-{/if}
+  <div class="breaks-section">
+    <span class="form-label">Pausen</span>
+    {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
+      <div class="break-legacy">
+        <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
+        <button
+          class="btn btn-sm btn-ghost"
+          type="button"
+          onclick={() => {
+            formBreaks = [
+              { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
+            ];
+          }}>In Pausen umwandeln</button
+        >
+      </div>
+    {/if}
+    {#each formBreaks as brk, i (i)}
+      <div class="break-row">
+        <input
+          type="time"
+          bind:value={brk.start}
+          class="form-input"
+          aria-label={`Pause ${i + 1} Beginn`}
+        />
+        <span class="break-sep">&ndash;</span>
+        <input
+          type="time"
+          bind:value={brk.end}
+          class="form-input"
+          aria-label={`Pause ${i + 1} Ende`}
+        />
+        <button
+          class="btn-icon"
+          type="button"
+          onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
+          title="Pause entfernen">✕</button
+        >
+      </div>
+    {/each}
+    <button
+      class="btn btn-sm btn-ghost"
+      type="button"
+      onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
+      >+ Pause hinzufügen</button
+    >
+    {#if formBreakTotal > 0}
+      <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
+    {/if}
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="f-note">Notiz <span class="text-muted">(optional)</span></label>
+    <input
+      id="f-note"
+      type="text"
+      bind:value={formNote}
+      class="form-input"
+      placeholder="z.B. Kundentermin…"
+      maxlength="200"
+    />
+  </div>
+  {#if formNetMin !== null}
+    <div class="net-display">
+      <span class="net-label">Netto</span>
+      <span class="net-value {modalWarnings.some((w) => w.code === '§3') ? 'net-over' : ''}"
+        >{fmtMin(formNetMin)}<span class="net-unit">h</span></span
+      >
+    </div>
+  {/if}
+  {#if modalWarnings.length > 0}
+    <div class="modal-arbzg-warnings">
+      {#each modalWarnings as w (w.code)}
+        <div class="arbzg-alert arbzg-{w.severity}" role="alert">
+          <span class="arbzg-icon">{w.severity === "error" ? "⛔" : "⚠️"}</span>
+          <span>{w.message}</span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+  {#snippet footer()}
+    <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
+    <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>
+      {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
+    </button>
+  {/snippet}
+</Modal>
 
 <style>
-  /* page-header-compact → global in app.css */
-
-  /* ── Kalender ─────────────────────────────────────────────────────── */
-  .month-nav-standalone {
-    border: 1px solid var(--gray-200, #e5e7eb);
-    border-radius: var(--radius-lg, 0.75rem);
-    margin-bottom: 1rem;
+  /* ── MonthBar card spacing (primitive itself has no margin) ────────── */
+  :global(.te-monthbar-card) {
+    margin-bottom: 18px;
   }
 
-  .bal.pos {
-    color: var(--color-green);
-  }
-  .bal.neg {
-    color: var(--color-red);
-  }
-
-  /* ── Summary Bar ─────────────────────────────────────── */
-  .month-summary {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    padding: 0.875rem 1.25rem;
-    background: var(--glass-bg, rgba(255, 255, 255, 0.6));
-    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
-    border-radius: var(--radius-md);
-    margin-bottom: 0.75rem;
-    flex-wrap: wrap;
-    font-size: 0.875rem;
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
-  }
-  .msummary-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .msummary-divider {
-    width: 1px;
-    height: 1.25rem;
-    background: var(--color-border);
-    flex-shrink: 0;
-  }
-  .msummary-label {
-    color: var(--color-text-muted);
-    font-size: 0.8125rem;
-    font-weight: 500;
-  }
-  .msummary-value {
-    font-weight: 700;
-    font-family: var(--font-mono);
-    color: var(--color-text-heading);
-    font-size: 0.9375rem;
-  }
-
-  /* D-09/D-10: Lock badge in month summary */
-  .msummary-lock {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-    color: var(--color-text-muted);
-  }
-
-  .msummary-lock-label {
-    font-size: 0.875rem;
-    color: var(--color-text-muted);
-  }
-
-  .msummary-unlock-btn {
-    margin-left: 0.25rem;
-  }
+  /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
   /* D-07: Lock icon overlay in calendar cells */
   .cal-lock-icon {
@@ -1649,80 +1525,54 @@
   /* ── View Tabs ───────────────────────────────────────── */
   /* view-tabs, view-tab → global in app.css */
 
+  /* ── List card (v1.5) ────────────────────────────────── */
+  .list-card {
+    padding: 0;
+    overflow: hidden;
+  }
+  .list-card .table-wrapper {
+    overflow-x: auto;
+  }
+  .list-card .empty-state {
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .list-card .empty-state .empty-icon {
+    font-size: 32px;
+    display: block;
+    margin-bottom: 8px;
+    opacity: 0.6;
+  }
+  .list-card .empty-state h3 {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 18px;
+    margin: 0 0 4px;
+    color: var(--text);
+  }
+  .list-card .empty-state p {
+    margin: 0;
+    font-size: 13px;
+  }
+
   /* ── List view actions always visible ────────────────── */
   .row-actions--visible {
     opacity: 1 !important;
   }
 
-  .cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 3px;
-    padding: 3px;
-  }
+  /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
+     Status modifiers (--ok, --partial, --missing, --arbzg-warn) and cell
+     content typography (.day-worked, .day-bal) also live in app.css.
+     See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
 
-  .cal-cell {
-    min-height: 72px;
-    padding: 0.3rem 0.4rem;
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    cursor: pointer;
-    transition:
-      background 0.12s,
-      box-shadow 0.12s;
-    position: relative;
-  }
-
-  /* Tage vor dem Eintrittsdatum */
-  :global(.cal-cell.cal-cell--disabled) {
-    opacity: 0.4;
-    pointer-events: none;
-    cursor: default;
-    background: var(--gray-50, #f9fafb) !important;
-  }
-
-  :global(.cal-cell.cal-cell--arbzg-warn) {
-    border-left: 3px solid var(--color-yellow);
-    background: color-mix(in srgb, var(--color-yellow) 8%, transparent);
-  }
   .day-before-hire {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.5;
   }
-  .cal-cell:not(.cal-other):hover {
-    background: color-mix(in srgb, var(--color-brand) 8%, transparent);
-    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-brand) 25%, transparent);
-  }
 
-  /* Status-Farben */
-  .cal-cell--ok {
-    background: var(--color-green-bg);
-    border-left: 3px solid var(--color-green);
-  }
-  .cal-cell--partial {
-    background: var(--color-yellow-bg);
-    border-left: 3px solid var(--color-yellow);
-  }
-  .cal-cell--missing {
-    background: var(--color-red-bg);
-    border-left: 3px solid var(--color-red);
-  }
-  .cal-cell--today-ok {
-    background: var(--color-green-bg);
-    border-left: 3px solid var(--color-green);
-  }
-  .cal-cell--today-partial {
-    background: var(--color-yellow-bg);
-    border-left: 3px solid var(--color-yellow);
-  }
-
-  /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
-  /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
-
-  /* Nachbarmonat-Tage mit Abwesenheit etwas heller darstellen */
+  /* Status modifiers + cell-content typography → global app.css (v1.5 canonical). */
 
   .cal-abs-type {
     display: block;
@@ -1737,27 +1587,10 @@
     white-space: nowrap;
   }
 
-  .day-worked {
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: var(--font-mono);
-    color: var(--color-text);
-  }
-  .day-bal {
-    font-size: 0.6875rem;
-    font-family: var(--font-mono);
-    font-weight: 600;
-  }
-  .day-bal.pos {
-    color: var(--color-green);
-  }
-  .day-bal.neg {
-    color: var(--color-red);
-  }
   .day-missing {
     font-size: 0.7rem;
     font-family: var(--font-mono);
-    color: var(--color-red);
+    color: var(--bad);
     opacity: 0.75;
   }
 
@@ -1774,7 +1607,7 @@
     gap: 0.4rem;
     font-size: 0.75rem;
     font-weight: 500;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .leg::before {
     content: "";
@@ -1784,20 +1617,20 @@
     border-radius: 3px;
   }
   .leg-ok::before {
-    background: var(--color-green-bg);
-    border: 1px solid color-mix(in srgb, var(--color-green) 25%, transparent);
+    background: var(--good-soft);
+    border: 1px solid color-mix(in srgb, var(--good) 25%, transparent);
   }
   .leg-partial::before {
-    background: var(--color-yellow-bg);
-    border: 1px solid color-mix(in srgb, var(--color-yellow) 25%, transparent);
+    background: var(--warn-soft);
+    border: 1px solid color-mix(in srgb, var(--warn) 25%, transparent);
   }
   .leg-missing::before {
-    background: var(--color-red-bg);
-    border: 1px solid color-mix(in srgb, var(--color-red) 25%, transparent);
+    background: var(--bad-soft);
+    border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
   }
   .leg-noexpect::before {
-    background: var(--gray-100, #f3f4f6);
-    border: 1px solid var(--gray-200);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
   }
   .leg-abs-vacation::before {
     background: var(--leave-type-vacation);
@@ -1829,8 +1662,8 @@
     padding: 0.875rem 1rem;
     gap: 1rem;
     flex-wrap: wrap;
-    border-bottom: 1px solid var(--gray-100, #f3f4f6);
-    background: var(--gray-50, #f9fafb);
+    border-bottom: 1px solid var(--bg-subtle);
+    background: var(--bg-card);
   }
 
   .day-detail-title {
@@ -1853,24 +1686,24 @@
   }
 
   .dstat {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .dstat strong {
-    color: var(--color-text);
+    color: var(--text);
     font-weight: 600;
   }
   .dstat.bal.pos strong {
-    color: var(--color-green);
+    color: var(--good);
   }
   .dstat.bal.neg strong {
-    color: var(--color-red);
+    color: var(--bad);
   }
 
   .day-empty {
     padding: 1.5rem 1rem;
     display: flex;
     align-items: center;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
   }
 
@@ -1889,19 +1722,19 @@
     font-size: 0.7rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-align: left;
     white-space: nowrap;
-    background: var(--gray-50, #f9fafb);
-    border-bottom: 1px solid var(--gray-200);
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border);
   }
   .slots-table tbody td {
     padding: 0.5rem 0.75rem;
-    border-top: 1px solid var(--gray-100, #f3f4f6);
+    border-top: 1px solid var(--bg-subtle);
     vertical-align: middle;
   }
   .slots-table tbody tr:hover {
-    background: var(--gray-50, #f9fafb);
+    background: var(--bg-card);
   }
   .note-cell {
     max-width: 160px;
@@ -1935,7 +1768,7 @@
     gap: 0.375rem;
   }
   .row-del td {
-    background: var(--color-red-bg);
+    background: var(--bad-soft);
   }
 
   .row-invalid {
@@ -1943,13 +1776,13 @@
   }
   .row-invalid td {
     text-decoration: line-through;
-    background: var(--color-red-bg);
+    background: var(--bad-soft);
   }
   .row-invalid td:last-child {
     text-decoration: none;
   }
   .row-invalid .invalid-reason {
-    color: var(--color-red);
+    color: var(--bad);
     font-size: 0.8rem;
     font-weight: 500;
     text-decoration: none;
@@ -1968,18 +1801,18 @@
     border-radius: 4px;
     font-size: 0.9375rem;
     line-height: 1;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     transition: background 0.15s;
   }
   .btn-icon:hover {
-    background: var(--gray-100);
+    background: var(--bg-subtle);
   }
   .btn-icon-danger {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .btn-icon-danger:hover {
-    background: var(--color-red-bg);
-    color: var(--color-red);
+    background: var(--bad-soft);
+    color: var(--bad);
   }
 
   /* Ensure delete confirmation button has white text on red background */
@@ -1988,105 +1821,57 @@
   }
   .btn-danger-sm {
     color: white;
-    background: var(--color-danger);
+    background: var(--bad);
     border-radius: 4px;
     font-size: 0.8125rem;
     padding: 0.125rem 0.375rem;
   }
 
-  /* ── Modal ────────────────────────────────────────────────────────── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 500;
-    padding: 1rem;
-    backdrop-filter: blur(4px);
-    animation: backdrop-in 0.15s ease;
-  }
-  @keyframes backdrop-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-  .modal-card {
-    width: 100%;
-    max-width: 460px;
-    max-height: 88vh;
-    overflow-y: auto;
-    padding: 0;
-    background: var(--glass-bg-strong, var(--color-surface));
-    backdrop-filter: blur(var(--glass-blur, 16px));
-    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    animation: modal-in 0.2s var(--ease-out);
-  }
-  @keyframes modal-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-  .modal-header {
+  /* Modal styles live in the Modal primitive (.scrim/.modal/.modal-hd/.modal-foot). */
+
+  /* ── Netto summary row ─────────────────────────────────────────── */
+  .net-display {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
+    padding: 12px 16px;
+    background: var(--bg-subtle);
+    border-radius: var(--r-sm);
+    margin-top: 4px;
   }
-  .modal-header h2 {
-    font-size: 1.0625rem;
+  .net-label {
+    font-size: 11px;
     font-weight: 600;
-    margin: 0;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
   }
-  .modal-close {
-    color: var(--color-text-muted);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.375rem;
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
+  .net-value {
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    font-size: 24px;
+    font-weight: 400;
+    color: var(--text);
+    line-height: 1;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
   }
-  .modal-close:hover {
-    background-color: var(--color-bg-subtle);
-    color: var(--color-text);
+  .net-value.net-over {
+    color: var(--bad);
   }
-  .modal-body {
-    padding: 1.25rem 1.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
+  .net-unit {
+    font-family: var(--font-sans);
+    font-variant-numeric: normal;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
   }
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
-  }
+
   .form-row-two {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
+    gap: 14px;
   }
   .form-label-row {
     display: flex;
@@ -2124,7 +1909,7 @@
     min-width: 0;
   }
   .break-sep {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-weight: 600;
     flex-shrink: 0;
   }
@@ -2136,7 +1921,7 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.5rem 0.625rem;
-    background: var(--gray-50, #f9fafb);
+    background: var(--bg-card);
     border-radius: 6px;
     font-size: 0.8125rem;
   }
@@ -2149,8 +1934,9 @@
   .modal-arbzg-warnings {
     display: flex;
     flex-direction: column;
-    gap: 0.375rem;
-    padding: 0 1.25rem 0.5rem;
+    gap: 10px;
+    padding: 0 26px 4px;
+    margin-top: 4px;
   }
   .list-arbzg-hint {
     margin-left: 0.375rem;
@@ -2163,7 +1949,7 @@
     position: absolute;
     bottom: 100%;
     left: 0;
-    background: var(--gray-900, #111827);
+    background: var(--text);
     color: #fff;
     font-size: 0.75rem;
     line-height: 1.4;
@@ -2207,14 +1993,14 @@
   }
 
   .arbzg-warning {
-    background: var(--color-yellow-bg);
-    border: 1.5px solid var(--color-yellow-border);
-    color: var(--color-yellow);
+    background: var(--warn-soft);
+    border: 1.5px solid var(--warn-soft);
+    color: var(--warn);
   }
   .arbzg-error {
-    background: var(--color-red-bg);
-    border: 1.5px solid var(--color-red-border);
-    color: var(--color-red);
+    background: var(--bad-soft);
+    border: 1.5px solid var(--bad-soft);
+    color: var(--bad);
   }
 
   .arbzg-icon {
@@ -2288,24 +2074,24 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.5rem 0.875rem;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--glass-shadow);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-md);
     cursor: pointer;
     min-height: 2.5rem;
   }
 
   .emp-combobox--open .emp-input-wrap {
-    border-color: var(--color-brand);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 20%, transparent);
+    border-color: var(--brand);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
   }
 
   .emp-selected-name {
     flex: 1;
     font-size: 0.9375rem;
     font-weight: 500;
-    color: var(--color-text);
+    color: var(--text);
   }
 
   .emp-search-input {
@@ -2314,17 +2100,17 @@
     outline: none;
     background: transparent;
     font-size: 0.9375rem;
-    color: var(--color-text);
+    color: var(--text);
     min-width: 0;
   }
 
   .emp-search-input::placeholder {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .emp-chevron {
     flex-shrink: 0;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     transition: transform 0.15s;
   }
 
@@ -2343,9 +2129,9 @@
     top: calc(100% + 4px);
     left: 0;
     right: 0;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     box-shadow: var(--shadow-lg);
     list-style: none;
     margin: 0;
@@ -2358,33 +2144,33 @@
   .emp-dropdown-item {
     padding: 0.5rem 0.875rem;
     font-size: 0.9375rem;
-    color: var(--color-text);
+    color: var(--text);
     cursor: pointer;
     transition: background 0.1s;
   }
 
   .emp-dropdown-item:hover,
   .emp-dropdown-item:focus {
-    background: var(--color-bg-subtle);
+    background: var(--bg-subtle);
     outline: none;
   }
 
   .emp-dropdown-item--active {
-    color: var(--color-brand);
+    color: var(--brand);
     font-weight: 600;
   }
 
   .emp-dropdown-empty {
     padding: 0.75rem 0.875rem;
     font-size: 0.875rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   /* ── No-employee empty state ──────────────────────────────────────── */
   .no-emp-hint {
     text-align: center;
     padding: 1.5rem 1rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
     margin: 0;
   }
@@ -2398,13 +2184,13 @@
   }
 
   .no-emp-icon {
-    color: var(--color-brand);
+    color: var(--brand);
     opacity: 0.5;
   }
 
   .no-emp-text {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     max-width: 32rem;
     margin: 0;
     line-height: 1.6;

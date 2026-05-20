@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "$api/client";
-  import { theme, themes } from "$stores/theme";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import Spinner from "$components/ui/Spinner.svelte";
 
   interface TenantConfig {
     tenantName?: string;
@@ -658,9 +661,9 @@
         "/integrations/phorest/test",
         {},
       );
-      phTestResult = res.success ? `✅ ${res.message}` : `❌ ${res.error}`;
+      phTestResult = res.success ? `✓ ${res.message}` : `✕ ${res.error}`;
     } catch (e: unknown) {
-      phTestResult = `❌ ${e instanceof Error ? e.message : "Fehler"}`;
+      phTestResult = `✕ ${e instanceof Error ? e.message : "Fehler"}`;
     } finally {
       phTesting = false;
     }
@@ -693,42 +696,33 @@
   <title>System – Clokr</title>
 </svelte:head>
 
-{#if loading}
-  <div class="card card-body" style="height:220px;"></div>
-{:else if error}
-  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-{:else}
-  <!-- ── Systemeinstellungen ─────────────────────────────────────────────── -->
-  <div class="card sys-card card-animate">
-    <!-- Erscheinungsbild -->
-    <div class="sys-section">
-      <h3 class="sys-title">Erscheinungsbild</h3>
-      <div class="form-group">
-        <span class="form-label">Theme</span>
-        <div class="theme-picker" role="radiogroup" aria-label="Theme auswählen">
-          {#each themes as t (t.id)}
-            <button
-              class="theme-dot"
-              type="button"
-              aria-checked={$theme === t.id ? "true" : "false"}
-              aria-label={t.label}
-              title="Theme: {t.label}"
-              onclick={() => theme.set(t.id)}
-            >
-              <span class="theme-dot-inner" style="background-color: {t.color}"></span>
-            </button>
-          {/each}
-        </div>
-      </div>
-    </div>
+<div class="page">
+  <PageHead
+    eyebrow="Administration"
+    title="System"
+    accent="System"
+    sub="Mandant, Sicherheit, Integrationen und Schlüssel verwalten"
+  />
 
-    <hr class="sys-divider" />
+  {#if loading}
+    <Card animate class="sys-loading-card"></Card>
+  {:else if error}
+    <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+  {:else}
+    <!-- ── Erscheinungsbild ─────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Erscheinungsbild" sub="Theme & Branding" />
+      <p class="sys-note">
+        Theme, Modus und Dichte werden jetzt auf der eigenen Seite
+        <a href="/admin/themes">Themes &amp; Branding</a> verwaltet.
+      </p>
+    </Card>
 
-    <!-- Firmenname + Zeitzone + Bundesland -->
-    <div class="sys-section">
-      <h3 class="sys-title">Unternehmen & Region</h3>
+    <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone" />
       {#if stateError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{stateError}</span>
         </div>
       {/if}
@@ -769,19 +763,18 @@
       </div>
       <div class="settings-actions">
         <button class="btn btn-primary" onclick={saveFederalState} disabled={stateSaving}>
-          {stateSaving ? "Speichern…" : "Speichern"}
+          {#if stateSaving}<Spinner />{/if}
+          Speichern
         </button>
         {#if stateSaved}
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- Arbeitszeit -->
-    <div class="sys-section">
-      <h3 class="sys-title">Arbeitszeit</h3>
+    <!-- ── Arbeitszeit ──────────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Arbeitszeit" sub="Monatsstunden & Feiertagsabzug" />
       <div class="toggle-row">
         <div class="toggle-info">
           <span class="toggle-row-label">Feiertage kürzen Monatsstunden-Soll</span>
@@ -801,15 +794,13 @@
           <span class="switch-slider"></span>
         </label>
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- Sicherheit / 2FA -->
-    <div class="sys-section">
-      <h3 class="sys-title">Sicherheit</h3>
+    <!-- ── Sicherheit / 2FA ─────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Sicherheit" sub="Zwei-Faktor-Authentifizierung" />
       {#if twoFaError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{twoFaError}</span>
         </div>
       {/if}
@@ -831,19 +822,17 @@
           <span class="switch-slider"></span>
         </label>
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- Session-Management -->
-    <div class="sys-section">
-      <h3 class="sys-title">Session-Management</h3>
+    <!-- ── Session-Management ───────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Session-Management" sub="Timeouts & Sperrzeiten" />
       {#if sessionError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{sessionError}</span>
         </div>
       {/if}
-      <div class="settings-grid">
+      <div class="form-grid">
         <div class="form-group">
           <label class="form-label" for="session-timeout">Inaktivitäts-Timeout (Minuten)</label>
           <input
@@ -873,7 +862,7 @@
           </p>
         </div>
       </div>
-      <div class="toggle-row" style="margin-top:0.75rem">
+      <div class="toggle-row" style="margin-top: 0.75rem;">
         <div class="toggle-info">
           <span class="toggle-row-label">"Angemeldet bleiben" erlauben</span>
         </div>
@@ -887,7 +876,7 @@
         </label>
       </div>
       {#if rememberMeEnabled}
-        <div class="settings-grid" style="margin-top:0.5rem">
+        <div class="form-grid" style="margin-top: 0.5rem;">
           <div class="form-group">
             <label class="form-label" for="remember-days">"Angemeldet bleiben" Dauer (Tage)</label>
             <input
@@ -901,7 +890,7 @@
           </div>
         </div>
       {/if}
-      <div class="settings-grid" style="margin-top:0.75rem">
+      <div class="form-grid" style="margin-top: 0.75rem;">
         <div class="form-group">
           <label class="form-label" for="max-sessions">Max. gleichzeitige Sessions</label>
           <input
@@ -917,7 +906,7 @@
           </p>
         </div>
       </div>
-      <div class="settings-grid" style="margin-top:0.75rem">
+      <div class="form-grid" style="margin-top: 0.75rem;">
         <div class="form-group">
           <label class="form-label" for="login-max-attempts">Max. Fehlversuche bis Sperre</label>
           <input
@@ -952,19 +941,17 @@
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- Passwort-Richtlinie (BSI) -->
-    <div class="sys-section">
-      <h3 class="sys-title">Passwort-Richtlinie (BSI)</h3>
+    <!-- ── Passwort-Richtlinie ──────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln" />
       {#if pwError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{pwError}</span>
         </div>
       {/if}
-      <div class="settings-grid">
+      <div class="form-grid">
         <div class="form-group">
           <label class="form-label" for="pw-min-length">Mindestlänge</label>
           <input
@@ -978,7 +965,7 @@
           <p class="form-hint text-muted">BSI empfiehlt mindestens 12 Zeichen.</p>
         </div>
       </div>
-      <div class="toggle-row" style="margin-top:0.75rem">
+      <div class="toggle-row" style="margin-top: 0.75rem;">
         <div class="toggle-info">
           <span class="toggle-row-label">Großbuchstabe erforderlich</span>
         </div>
@@ -1034,15 +1021,13 @@
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- E-Mail-Benachrichtigungen -->
-    <div class="sys-section">
-      <h3 class="sys-title">E-Mail-Benachrichtigungen</h3>
+    <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden" />
       {#if emailError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{emailError}</span>
         </div>
       {/if}
@@ -1063,66 +1048,72 @@
         </label>
       </div>
       {#if emailEnabled}
-        <h4 class="sys-subtitle" style="margin-top:1rem">Benachrichtigungstypen</h4>
+        <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
         <div class="toggle-row">
           <span class="toggle-row-label">Neuer Urlaubsantrag</span>
-          <label class="switch"
-            ><input
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Neuer Urlaubsantrag"
               bind:checked={emailOnLeaveRequest}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
-          <label class="switch"
-            ><input
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
               bind:checked={emailOnLeaveDecision}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Überstunden-Warnung</span>
-          <label class="switch"
-            ><input
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Überstunden-Warnung"
               bind:checked={emailOnOvertimeWarning}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Fehlende Zeiteinträge</span>
-          <label class="switch"
-            ><input
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Fehlende Zeiteinträge"
               bind:checked={emailOnMissingEntries}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
         <div class="toggle-row">
           <span class="toggle-row-label">Vergessene Stempelung</span>
-          <label class="switch"
-            ><input
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Vergessene Stempelung"
               bind:checked={emailOnClockOutReminder}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
         <div class="toggle-row">
-          <span class="toggle-row-label">Monatsabschluss</span>
-          <label class="switch"
-            ><input
+          <span class="toggle-row-label" translate="no">Monatsabschluss</span>
+          <label class="switch">
+            <input
               type="checkbox"
               aria-label="Benachrichtigung: Monatsabschluss"
               bind:checked={emailOnMonthClose}
-            /><span class="switch-slider"></span></label
-          >
+            />
+            <span class="switch-slider"></span>
+          </label>
         </div>
       {/if}
       <div class="settings-actions">
@@ -1133,20 +1124,18 @@
           <span class="saved-hint">✓ Gespeichert</span>
         {/if}
       </div>
-    </div>
+    </Card>
 
-    <hr class="sys-divider" />
-
-    <!-- E-Mail / SMTP -->
-    <div class="sys-section">
-      <h3 class="sys-title">E-Mail / SMTP</h3>
+    <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren" />
       {#if smtpError}
-        <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
           <span>⚠</span><span>{smtpError}</span>
         </div>
       {/if}
       {#if smtpSaved}
-        <div class="alert alert-success" role="alert" style="margin-bottom:1rem;">
+        <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
           <span>✓</span><span>SMTP gespeichert.</span>
         </div>
       {/if}
@@ -1248,52 +1237,40 @@
             bind:value={smtpTestEmail}
             class="form-input"
             placeholder="test@example.com"
-            style="max-width:280px;"
+            style="max-width: 280px;"
           />
           <button class="btn btn-ghost" onclick={testSmtp} disabled={smtpTesting || !smtpTestEmail}>
             {smtpTesting ? "Senden…" : "Testmail senden"}
           </button>
         </div>
         {#if smtpTestResult}
-          <p class="text-success" style="margin-top:0.5rem;font-size:0.875rem;">
-            ✓ {smtpTestResult}
-          </p>
+          <p class="smtp-test-success">✓ {smtpTestResult}</p>
         {/if}
         {#if smtpTestError}
-          <p class="text-danger" style="margin-top:0.5rem;font-size:0.875rem;">⚠ {smtpTestError}</p>
+          <p class="smtp-test-error">⚠ {smtpTestError}</p>
         {/if}
       </div>
-    </div>
-  </div>
+    </Card>
 
-  <!-- ── NFC-Terminals ──────────────────────────────────────────────────── -->
-  <div class="section-label">
-    <h2 class="section-header">NFC-Terminals</h2>
-    <p class="text-muted">
-      API-Schlüssel für NFC-Terminals verwalten. Jedes Terminal benötigt einen eigenen Schlüssel.
-    </p>
-  </div>
+    <!-- ── NFC-Terminals ────────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="NFC-Terminals" sub="API-Schlüssel für stationäre Geräte" />
 
-  <div class="card card-body settings-card card-animate">
-    <div class="sys-section">
       {#if showNewKey}
-        <div class="alert alert-success" style="margin: 1rem 0;">
+        <div class="alert alert-success" style="margin-bottom: 1rem;">
           <div>
             <strong>Neuer Schlüssel erstellt!</strong>
             <p style="margin: 0.5rem 0;">
               Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
             </p>
-            <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <code
-                style="flex: 1; padding: 0.5rem; background: var(--color-bg-subtle); border-radius: var(--radius-sm); word-break: break-all; font-size: 0.8125rem;"
-                >{newKeyRaw}</code
-              >
-              <button class="btn btn-sm btn-ghost" onclick={() => copyToClipboard(newKeyRaw)}
+            <div class="key-display">
+              <code class="key-code">{newKeyRaw}</code>
+              <button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(newKeyRaw)}
                 >Kopieren</button
               >
             </div>
             <button
-              class="btn btn-sm btn-ghost"
+              class="btn btn-ghost btn-sm"
               style="margin-top: 0.5rem;"
               onclick={() => {
                 showNewKey = false;
@@ -1304,13 +1281,12 @@
         </div>
       {/if}
 
-      <div style="display: flex; gap: 0.5rem; margin: 1rem 0;">
+      <div class="inline-create">
         <input
           type="text"
           class="form-input"
           bind:value={newKeyName}
           placeholder="Terminal-Name (z.B. Kasse 1)"
-          style="flex: 1;"
         />
         <button
           class="btn btn-primary"
@@ -1337,7 +1313,7 @@
               {#each pagedTerminalKeys as key (key.id)}
                 <tr class:row-revoked={key.revokedAt}>
                   <td>{key.name}</td>
-                  <td><code style="font-size: 0.8125rem;">{key.keyPrefix}</code></td>
+                  <td><code class="inline-code">{key.keyPrefix}</code></td>
                   <td
                     >{key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleString("de-DE") : "Nie"}</td
                   >
@@ -1351,7 +1327,7 @@
                   <td>
                     {#if !key.revokedAt}
                       <button
-                        class="btn btn-sm btn-ghost text-red"
+                        class="btn btn-sm btn-ghost btn-danger-ghost"
                         onclick={() => revokeTerminalKey(key.id)}>Widerrufen</button
                       >
                     {/if}
@@ -1365,37 +1341,29 @@
       {:else}
         <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
       {/if}
-    </div>
-  </div>
+    </Card>
 
-  <!-- ── API Keys ──────────────────────────────────────────────────────── -->
-  <div class="section-label">
-    <h2 class="section-header">API Keys</h2>
-    <p class="text-muted">Schlüssel für externe Integrationen (Lohnsoftware, Automations)</p>
-  </div>
+    <!-- ── API Keys ─────────────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="API Keys" sub="Schlüssel für externe Integrationen" />
 
-  <div class="card card-body settings-card card-animate">
-    <div class="sys-section">
       {#if showNewApiKey}
-        <div class="alert alert-success" style="margin-bottom:1rem;">
+        <div class="alert alert-success" style="margin-bottom: 1rem;">
           <div>
             <strong>API Key erstellt!</strong>
-            <p style="margin:0.5rem 0">
+            <p style="margin: 0.5rem 0;">
               Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
             </p>
-            <div style="display:flex;gap:0.5rem;align-items:center">
-              <code
-                style="flex:1;padding:0.5rem;background:var(--color-bg-subtle);border-radius:var(--radius-sm);word-break:break-all;font-size:0.8125rem"
-                >{newApiKeyRaw}</code
-              >
+            <div class="key-display">
+              <code class="key-code">{newApiKeyRaw}</code>
               <button
-                class="btn btn-sm btn-ghost"
+                class="btn btn-ghost btn-sm"
                 onclick={() => navigator.clipboard.writeText(newApiKeyRaw)}>Kopieren</button
               >
             </div>
             <button
-              class="btn btn-sm btn-ghost"
-              style="margin-top:0.5rem"
+              class="btn btn-ghost btn-sm"
+              style="margin-top: 0.5rem;"
               onclick={() => {
                 showNewApiKey = false;
                 newApiKeyRaw = "";
@@ -1405,14 +1373,13 @@
         </div>
       {/if}
 
-      <div style="margin-bottom:1rem">
-        <div style="display:flex;gap:0.5rem;margin-bottom:0.75rem">
+      <div class="api-key-create">
+        <div class="inline-create">
           <input
             type="text"
             class="form-input"
             bind:value={newApiKeyName}
             placeholder="Name (z.B. DATEV Export)"
-            style="flex:1"
           />
           <button
             class="btn btn-primary"
@@ -1422,7 +1389,7 @@
             Key erstellen
           </button>
         </div>
-        <div style="display:flex;flex-wrap:wrap;gap:0.375rem">
+        <div class="scope-chips">
           {#each API_SCOPES as s (s.scope)}
             <button
               class="btn btn-sm"
@@ -1442,24 +1409,21 @@
             </thead>
             <tbody>
               {#each pagedApiKeys as key (key.id)}
-                <tr class:inactive={!!key.revokedAt}>
+                <tr class:row-revoked={!!key.revokedAt}>
                   <td>{key.name}</td>
-                  <td><code>{key.keyPrefix}…</code></td>
-                  <td style="font-size:0.75rem">{key.scopes.join(", ")}</td>
-                  <td
-                    >{key.lastUsedAt
-                      ? new Date(key.lastUsedAt).toLocaleDateString("de-DE")
-                      : "Nie"}</td
-                  >
+                  <td><code class="inline-code">{key.keyPrefix}…</code></td>
+                  <td class="scope-cell">{key.scopes.join(", ")}</td>
+                  <td>
+                    {key.lastUsedAt ? new Date(key.lastUsedAt).toLocaleDateString("de-DE") : "Nie"}
+                  </td>
                   <td>
                     {#if !key.revokedAt}
                       <button
-                        class="btn btn-sm btn-ghost"
-                        style="color:var(--color-red)"
+                        class="btn btn-sm btn-ghost btn-danger-ghost"
                         onclick={() => revokeApiKey(key.id)}>Widerrufen</button
                       >
                     {:else}
-                      <span class="text-muted" style="font-size:0.75rem">Widerrufen</span>
+                      <span class="text-muted revoked-label">Widerrufen</span>
                     {/if}
                   </td>
                 </tr>
@@ -1471,293 +1435,250 @@
       {:else}
         <p class="text-muted">Keine API Keys vorhanden.</p>
       {/if}
-    </div>
-  </div>
+    </Card>
 
-  <!-- ── DATEV Export ─────────────────────────────────────────────────── -->
-  <div class="section-label">
-    <h2 class="section-header">DATEV Export</h2>
-    <p class="text-muted">Lohnartennummern für den DATEV LODAS ASCII-Export konfigurieren</p>
-  </div>
-
-  <div class="card card-body settings-card card-animate">
-    {#if datevError}
-      <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
-        <span>⚠</span><span>{datevError}</span>
-      </div>
-    {/if}
-    {#if datevSaved}
-      <div class="alert alert-success" style="margin-bottom:1rem;">
-        DATEV-Konfiguration gespeichert.
-      </div>
-    {/if}
-
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label" for="datev-normal">Normalstunden</label>
-        <input
-          id="datev-normal"
-          type="number"
-          min="1"
-          max="9999"
-          step="1"
-          bind:value={datevNormalstundenNr}
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="datev-urlaub">Urlaub</label>
-        <input
-          id="datev-urlaub"
-          type="number"
-          min="1"
-          max="9999"
-          step="1"
-          bind:value={datevUrlaubNr}
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="datev-krank">Krank / AU</label>
-        <input
-          id="datev-krank"
-          type="number"
-          min="1"
-          max="9999"
-          step="1"
-          bind:value={datevKrankNr}
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="datev-sonder">Sonderurlaub</label>
-        <input
-          id="datev-sonder"
-          type="number"
-          min="1"
-          max="9999"
-          step="1"
-          bind:value={datevSonderurlaubNr}
-          class="form-input"
-        />
-      </div>
-    </div>
-
-    <div style="margin-top:1rem; display:flex; justify-content:flex-end;">
-      <button class="btn btn-primary" onclick={saveDatev} disabled={datevSaving}>
-        {datevSaving ? "Speichert…" : "Speichern"}
-      </button>
-    </div>
-  </div>
-
-  <!-- ── Phorest-Integration ─────────────────────────────────────────────── -->
-  <div class="section-label">
-    <h2 class="section-header">Phorest-Integration</h2>
-    <p class="text-muted">Schichten aus Phorest Salon-Software importieren</p>
-  </div>
-
-  <div class="card card-body settings-card card-animate">
-    {#if phError}
-      <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
-        <span>⚠</span><span>{phError}</span>
-      </div>
-    {/if}
-    {#if phSaved}
-      <div class="alert alert-success" style="margin-bottom:1rem;">
-        Phorest-Konfiguration gespeichert.
-      </div>
-    {/if}
-
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label" for="ph-biz">Business ID</label>
-        <input
-          id="ph-biz"
-          type="text"
-          bind:value={phBusinessId}
-          class="form-input"
-          placeholder="z.B. abc123def456"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="ph-branch">Branch ID</label>
-        <input
-          id="ph-branch"
-          type="text"
-          bind:value={phBranchId}
-          class="form-input"
-          placeholder="z.B. branch-001"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
-        <input
-          id="ph-user"
-          type="text"
-          bind:value={phUsername}
-          class="form-input"
-          placeholder="api@salon.de"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="ph-pass">API-Passwort</label>
-        <input
-          id="ph-pass"
-          type="password"
-          bind:value={phPassword}
-          class="form-input"
-          placeholder="••••••••"
-        />
-      </div>
-    </div>
-
-    <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.5rem;">
-      <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
-        {phSaving ? "Speichern…" : "Konfiguration speichern"}
-      </button>
-      <button class="btn btn-ghost" onclick={testPhorest} disabled={phTesting || !phConfigured}>
-        {phTesting ? "Teste…" : "Verbindung testen"}
-      </button>
-    </div>
-
-    {#if phTestResult}
-      <p style="margin-top:0.75rem; font-size:0.875rem;">{phTestResult}</p>
-    {/if}
-
-    {#if phConfigured}
-      <hr style="margin: 1.5rem 0; border-color: var(--color-border);" />
-
-      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">
-        Automatischer Sync
-      </h3>
-      <label class="toggle-label" style="margin-bottom: 1rem;">
-        <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
-        <span>
-          <strong>Auto-Sync aktivieren</strong><br />
-          <span class="text-muted" style="font-size:0.8125rem;"
-            >Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span
-          >
-        </span>
-      </label>
-
-      {#if phAutoSync}
-        <div class="form-group" style="max-width: 320px; margin-bottom: 1.25rem;">
-          <label class="form-label" for="ph-cron">Zeitplan</label>
-          <select id="ph-cron" bind:value={phSyncCron} class="form-input">
-            <option value="0 3 * * *">Täglich um 03:00</option>
-            <option value="0 */6 * * *">Alle 6 Stunden</option>
-            <option value="0 */2 * * *">Alle 2 Stunden</option>
-            <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
-          </select>
-          <p class="form-hint text-muted">
-            Zeitplan wird beim Speichern der Konfiguration aktiviert.
-          </p>
+    <!-- ── DATEV Export ─────────────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="DATEV Export" sub="Lohnartennummern für LODAS ASCII-Export" />
+      {#if datevError}
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+          <span>⚠</span><span>{datevError}</span>
+        </div>
+      {/if}
+      {#if datevSaved}
+        <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
+          <span>✓</span><span><span translate="no">DATEV</span>-Konfiguration gespeichert.</span>
         </div>
       {/if}
 
-      <h3 style="font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;">
-        Manueller Sync
-      </h3>
       <div class="form-grid">
         <div class="form-group">
-          <label class="form-label" for="ph-sync-start">Von</label>
-          <input id="ph-sync-start" type="date" bind:value={phSyncStart} class="form-input" />
+          <label class="form-label" for="datev-normal">Normalstunden</label>
+          <input
+            id="datev-normal"
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            bind:value={datevNormalstundenNr}
+            class="form-input"
+          />
         </div>
         <div class="form-group">
-          <label class="form-label" for="ph-sync-end">Bis</label>
-          <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
+          <label class="form-label" for="datev-urlaub">Urlaub</label>
+          <input
+            id="datev-urlaub"
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            bind:value={datevUrlaubNr}
+            class="form-input"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="datev-krank">Krank / AU</label>
+          <input
+            id="datev-krank"
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            bind:value={datevKrankNr}
+            class="form-input"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="datev-sonder" translate="no">Sonderurlaub</label>
+          <input
+            id="datev-sonder"
+            type="number"
+            min="1"
+            max="9999"
+            step="1"
+            bind:value={datevSonderurlaubNr}
+            class="form-input"
+          />
         </div>
       </div>
-      <button
-        class="btn btn-primary"
-        onclick={syncPhorest}
-        disabled={phSyncing || !phSyncStart || !phSyncEnd}
-      >
-        {phSyncing ? "Synchronisiere…" : "Schichten importieren"}
-      </button>
-      <p class="form-hint text-muted">
-        Mitarbeiter werden automatisch per E-Mail oder Name zugeordnet.
-      </p>
 
-      {#if phSyncResult}
-        <div
-          style="margin-top:1rem; padding:0.75rem 1rem; background: var(--color-bg-subtle); border-radius: var(--radius-md); font-size: 0.875rem;"
-        >
-          <strong>{phSyncResult.created}</strong> Schichten importiert,
-          <strong>{phSyncResult.skipped}</strong> übersprungen (bereits vorhanden),
-          <strong>{phSyncResult.unmapped}</strong> ohne Zuordnung,
-          <strong>{phSyncResult.errors}</strong> Fehler
+      <div class="settings-actions settings-actions--end">
+        <button class="btn btn-primary" onclick={saveDatev} disabled={datevSaving}>
+          {datevSaving ? "Speichert…" : "Speichern"}
+        </button>
+      </div>
+    </Card>
+
+    <!-- ── Phorest-Integration ──────────────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Phorest-Integration" sub="Schichten aus Salon-Software importieren" />
+      {#if phError}
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+          <span>⚠</span><span>{phError}</span>
         </div>
       {/if}
-    {/if}
-  </div>
-{/if}
+      {#if phSaved}
+        <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
+          <span>✓</span><span>Phorest-Konfiguration gespeichert.</span>
+        </div>
+      {/if}
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ph-biz">Business ID</label>
+          <input
+            id="ph-biz"
+            type="text"
+            bind:value={phBusinessId}
+            class="form-input"
+            placeholder="z.B. abc123def456"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ph-branch">Branch ID</label>
+          <input
+            id="ph-branch"
+            type="text"
+            bind:value={phBranchId}
+            class="form-input"
+            placeholder="z.B. branch-001"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
+          <input
+            id="ph-user"
+            type="text"
+            bind:value={phUsername}
+            class="form-input"
+            placeholder="api@salon.de"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ph-pass">API-Passwort</label>
+          <input
+            id="ph-pass"
+            type="password"
+            bind:value={phPassword}
+            class="form-input"
+            placeholder="••••••••"
+          />
+        </div>
+      </div>
+
+      <div class="settings-actions" style="margin-top: 0.5rem;">
+        <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
+          {phSaving ? "Speichern…" : "Konfiguration speichern"}
+        </button>
+        <button class="btn btn-outline" onclick={testPhorest} disabled={phTesting || !phConfigured}>
+          {phTesting ? "Teste…" : "Verbindung testen"}
+        </button>
+      </div>
+
+      {#if phTestResult}
+        <p class="ph-test-result">{phTestResult}</p>
+      {/if}
+
+      {#if phConfigured}
+        <hr class="ph-divider" />
+
+        <h4 class="sys-subtitle">Automatischer Sync</h4>
+        <label class="toggle-label" style="margin-bottom: 1rem;">
+          <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
+          <span>
+            <strong>Auto-Sync aktivieren</strong><br />
+            <span class="text-muted ph-sync-hint"
+              >Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span
+            >
+          </span>
+        </label>
+
+        {#if phAutoSync}
+          <div class="form-group ph-cron-group">
+            <label class="form-label" for="ph-cron">Zeitplan</label>
+            <select id="ph-cron" bind:value={phSyncCron} class="form-input">
+              <option value="0 3 * * *">Täglich um 03:00</option>
+              <option value="0 */6 * * *">Alle 6 Stunden</option>
+              <option value="0 */2 * * *">Alle 2 Stunden</option>
+              <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
+            </select>
+            <p class="form-hint text-muted">
+              Zeitplan wird beim Speichern der Konfiguration aktiviert.
+            </p>
+          </div>
+        {/if}
+
+        <h4 class="sys-subtitle">Manueller Sync</h4>
+        <div class="form-grid">
+          <div class="form-group">
+            <label class="form-label" for="ph-sync-start">Von</label>
+            <input id="ph-sync-start" type="date" bind:value={phSyncStart} class="form-input" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="ph-sync-end">Bis</label>
+            <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
+          </div>
+        </div>
+        <div class="settings-actions">
+          <button
+            class="btn btn-primary"
+            onclick={syncPhorest}
+            disabled={phSyncing || !phSyncStart || !phSyncEnd}
+          >
+            {phSyncing ? "Synchronisiere…" : "Schichten importieren"}
+          </button>
+        </div>
+        <p class="form-hint text-muted">
+          Mitarbeiter werden automatisch per E-Mail oder Name zugeordnet.
+        </p>
+
+        {#if phSyncResult}
+          <div class="ph-sync-result">
+            <strong>{phSyncResult.created}</strong> Schichten importiert,
+            <strong>{phSyncResult.skipped}</strong> übersprungen (bereits vorhanden),
+            <strong>{phSyncResult.unmapped}</strong> ohne Zuordnung,
+            <strong>{phSyncResult.errors}</strong> Fehler
+          </div>
+        {/if}
+      {/if}
+    </Card>
+  {/if}
+</div>
 
 <style>
-  .theme-picker {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    margin-top: 0.5rem;
+  /* Card spacing — each section is a top-level card */
+  :global(.sys-card) {
+    margin-bottom: 1.5rem;
   }
-  .theme-dot {
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: 50%;
-    border: 2px solid transparent;
-    padding: 3px;
-    background: none;
-    cursor: pointer;
-    transition:
-      border-color 150ms ease,
-      transform 150ms ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  :global(.sys-loading-card) {
+    height: 220px;
+    margin-bottom: 1.5rem;
   }
-  .theme-dot[aria-checked="true"] {
-    border-color: var(--color-brand);
-  }
-  .theme-dot:hover {
-    transform: scale(1.1);
-  }
-  .theme-dot:focus-visible {
-    outline: 2px solid var(--color-brand);
-    outline-offset: 2px;
-  }
-  .theme-dot-inner {
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    display: block;
+  .settings-actions--end {
+    justify-content: flex-end;
   }
 
-  .sys-card {
-    padding: 0;
-    margin-bottom: 2rem;
-  }
-  .sys-section {
-    padding: 1.5rem 1.75rem;
-  }
-  .sys-divider {
-    border: none;
-    border-top: 1px solid var(--color-border-subtle);
+  .sys-note {
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    line-height: 1.55;
     margin: 0;
   }
-  .sys-title {
-    font-size: 1.0625rem;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-    color: var(--color-text-heading);
+  .sys-note a {
+    color: var(--brand);
+    text-decoration: underline;
+  }
+  .sys-note a:hover {
+    color: var(--brand-dark);
   }
 
   .sys-subtitle {
     font-size: 0.875rem;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-bottom: 0.5rem;
+    margin: 1rem 0 0.5rem;
   }
 
   .inline-fields {
@@ -1782,7 +1703,7 @@
   .toggle-row-label {
     font-size: 1rem;
     font-weight: 500;
-    color: var(--color-text);
+    color: var(--text);
   }
 
   .switch {
@@ -1801,7 +1722,7 @@
     position: absolute;
     cursor: pointer;
     inset: 0;
-    background-color: var(--gray-300);
+    background-color: var(--border);
     border-radius: 26px;
     transition: background-color 0.2s;
   }
@@ -1812,13 +1733,13 @@
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background-color: #fff;
+    background-color: var(--bg-card);
     border-radius: 50%;
     transition: transform 0.2s;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-sm);
   }
   .switch input:checked + .switch-slider {
-    background-color: var(--color-brand);
+    background-color: var(--brand);
   }
   .switch input:checked + .switch-slider::before {
     transform: translateX(22px);
@@ -1827,7 +1748,17 @@
   .smtp-test-section {
     margin-top: 1.25rem;
     padding-top: 1.25rem;
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--border);
+  }
+  .smtp-test-success {
+    color: var(--good);
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+  }
+  .smtp-test-error {
+    color: var(--bad);
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
   }
 
   .form-hint {
@@ -1851,6 +1782,7 @@
     gap: 0.75rem;
     margin-top: 0.5rem;
     align-items: center;
+    flex-wrap: wrap;
   }
 
   .smtp-test-row {
@@ -1865,25 +1797,12 @@
     display: inline-block;
     font-size: 0.7rem;
     font-weight: 600;
-    background: #dcfce7;
-    color: #166534;
+    background: var(--good-soft);
+    color: var(--good);
     padding: 0.1rem 0.4rem;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     margin-left: 0.5rem;
     vertical-align: middle;
-  }
-
-  .text-success {
-    color: #166534;
-  }
-  .text-danger {
-    color: #991b1b;
-  }
-
-  .alert-success {
-    background: #f0fdf4;
-    color: #166534;
-    border: 1px solid #bbf7d0;
   }
 
   .toggle-label {
@@ -1898,31 +1817,17 @@
   .toggle-cb {
     width: 16px;
     height: 16px;
-    accent-color: var(--color-brand);
+    accent-color: var(--brand);
   }
 
   .saved-hint {
-    color: var(--color-green, #16a34a);
+    color: var(--good);
     font-weight: 500;
     font-size: 0.9375rem;
   }
 
   .federal-state-select {
     min-width: 220px;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius-md);
-    font-size: 0.875rem;
-  }
-  .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
   }
 
   .row-revoked {
@@ -1940,12 +1845,84 @@
     gap: 1rem;
   }
 
-  .section-label {
+  /* Inline create row (NFC/API key creation) */
+  .inline-create {
+    display: flex;
+    gap: 0.5rem;
     margin-bottom: 1rem;
   }
+  .inline-create .form-input {
+    flex: 1;
+  }
 
-  .settings-card {
-    margin-bottom: 2rem;
+  /* Key display (after creation, shown once) */
+  .key-display {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+  .key-code {
+    flex: 1;
+    padding: 0.5rem;
+    background: var(--bg-subtle);
+    border-radius: var(--r-sm);
+    word-break: break-all;
+    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    color: var(--text);
+  }
+  .inline-code {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--text);
+  }
+
+  /* API key scope chips */
+  .api-key-create {
+    margin-bottom: 1rem;
+  }
+  .scope-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  .scope-cell {
+    font-size: 0.75rem;
+  }
+  .revoked-label {
+    font-size: 0.75rem;
+  }
+
+  /* Danger ghost button: ghost styling with --bad color */
+  .btn-danger-ghost {
+    color: var(--bad);
+  }
+
+  /* Phorest integration extras */
+  .ph-divider {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid var(--border);
+  }
+  .ph-test-result {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--text);
+  }
+  .ph-sync-hint {
+    font-size: 0.8125rem;
+  }
+  .ph-cron-group {
+    max-width: 320px;
+    margin-bottom: 1.25rem;
+  }
+  .ph-sync-result {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-subtle);
+    border-radius: var(--r-md);
+    font-size: 0.875rem;
+    color: var(--text);
   }
 
   @media (max-width: 640px) {
@@ -1962,8 +1939,8 @@
       gap: 1rem;
     }
 
-    .sys-section {
-      padding: 1.25rem 1rem;
+    .inline-create {
+      flex-direction: column;
     }
   }
 </style>

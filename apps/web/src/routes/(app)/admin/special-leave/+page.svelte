@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "$api/client";
-  import Breadcrumb from "$lib/components/ui/Breadcrumb.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
   import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import Modal from "$components/ui/Modal.svelte";
 
   interface SpecialLeaveRule {
     id: string;
@@ -31,8 +34,9 @@
   let createProof = $state(false);
   let creating = $state(false);
 
-  // Edit modal
+  // Edit modal — backing store + open toggle (Modal owns Escape/backdrop/focus-trap)
   let editRule: SpecialLeaveRule | null = $state(null);
+  let editOpen = $state(false);
   let editDays = $state(1);
   let editProof = $state(false);
   let editActive = $state(true);
@@ -82,6 +86,7 @@
     editProof = rule.requiresProof;
     editActive = rule.isActive;
     editReason = rule.reason ?? "";
+    editOpen = true;
   }
 
   async function handleSave() {
@@ -94,6 +99,7 @@
         isActive: editActive,
         reason: editReason.trim() || null,
       });
+      editOpen = false;
       editRule = null;
       await loadRules();
       toasts.success("Regel aktualisiert");
@@ -117,231 +123,203 @@
 </script>
 
 <svelte:head><title>Sonderurlaub – Clokr</title></svelte:head>
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") {
-      showCreate = false;
-      editRule = null;
-    }
-  }}
-/>
 
-<Breadcrumb items={[{ label: "Admin", href: "/admin" }, { label: "Sonderurlaub" }]} />
+<section class="page">
+  <PageHead
+    eyebrow="Administration"
+    title="Sonderurlaub"
+    accent="Sonderurlaub"
+    sub="Gesetzliche Anlässe (§ 616 BGB) werden automatisch angelegt. Tage und Nachweispflicht können angepasst, zusätzliche betriebliche Anlässe hinzugefügt werden."
+  >
+    {#snippet actions()}
+      <button class="btn btn-primary" onclick={() => (showCreate = true)}>+ Neue Regel</button>
+    {/snippet}
+  </PageHead>
 
-<div class="page-header">
-  <h1 class="page-title">Sonderurlaubsregeln</h1>
-  <button class="btn btn-primary" onclick={() => (showCreate = true)}>+ Neue Regel</button>
-</div>
+  <Card animate>
+    <CardHeader title="Regelübersicht" sub="Gesetzliche und betriebliche Anlässe verwalten" />
 
-<p class="text-muted" style="margin-bottom:1.5rem;">
-  Gesetzliche Anlässe (§ 616 BGB) werden automatisch angelegt. Tage und Nachweis­pflicht können
-  angepasst, zusätzliche betriebliche Anlässe hinzugefügt werden.
-</p>
+    {#if loading}
+      <div class="skeleton skeleton-text rules-skel"></div>
+    {:else if rules.length === 0}
+      <p class="text-muted empty-msg">Keine Regeln vorhanden.</p>
+    {:else}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Anlass</th>
+              <th>Tage</th>
+              <th>Nachweis</th>
+              <th>Art</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each pagedRules as rule (rule.id)}
+              <tr class:inactive={!rule.isActive}>
+                <td>
+                  <strong>{rule.name}</strong>
+                  {#if rule.reason}
+                    <br /><span class="text-muted text-sm">{rule.reason}</span>
+                  {/if}
+                </td>
+                <td>{Number(rule.defaultDays)}</td>
+                <td>{rule.requiresProof ? "Ja" : "Nein"}</td>
+                <td>
+                  <span
+                    class="badge"
+                    class:badge-statutory={rule.isStatutory}
+                    class:badge-custom={!rule.isStatutory}
+                  >
+                    {rule.isStatutory ? "Gesetzlich" : "Betrieblich"}
+                  </span>
+                </td>
+                <td>
+                  <span
+                    class="status-dot"
+                    class:active={rule.isActive}
+                    class:deactivated={!rule.isActive}
+                  ></span>
+                  {rule.isActive ? "Aktiv" : "Deaktiviert"}
+                </td>
+                <td class="actions-cell">
+                  <button class="btn btn-ghost btn-sm" onclick={() => openEdit(rule)}
+                    >Bearbeiten</button
+                  >
+                  {#if !rule.isStatutory}
+                    <button
+                      class="btn btn-ghost btn-sm btn-danger-text"
+                      onclick={() => handleDelete(rule)}>Löschen</button
+                    >
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <Pagination total={rules.length} bind:page={slPage} bind:pageSize={slPageSize} />
+      </div>
+    {/if}
+  </Card>
+</section>
 
-{#if loading}
-  <div class="card card-body" style="height:200px;"></div>
-{:else}
-  <div class="table-wrap card-animate">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Anlass</th>
-          <th>Tage</th>
-          <th>Nachweis</th>
-          <th>Art</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each pagedRules as rule (rule.id)}
-          <tr class:inactive={!rule.isActive}>
-            <td>
-              <strong>{rule.name}</strong>
-              {#if rule.reason}
-                <br /><span class="text-muted text-sm">{rule.reason}</span>
-              {/if}
-            </td>
-            <td>{Number(rule.defaultDays)}</td>
-            <td>{rule.requiresProof ? "Ja" : "Nein"}</td>
-            <td>
-              <span
-                class="badge"
-                class:badge-statutory={rule.isStatutory}
-                class:badge-custom={!rule.isStatutory}
-              >
-                {rule.isStatutory ? "Gesetzlich" : "Betrieblich"}
-              </span>
-            </td>
-            <td>
-              <span
-                class="status-dot"
-                class:active={rule.isActive}
-                class:deactivated={!rule.isActive}
-              ></span>
-              {rule.isActive ? "Aktiv" : "Deaktiviert"}
-            </td>
-            <td class="actions-cell">
-              <button class="btn btn-ghost btn-sm" onclick={() => openEdit(rule)}>Bearbeiten</button
-              >
-              {#if !rule.isStatutory}
-                <button class="btn btn-ghost btn-sm text-danger" onclick={() => handleDelete(rule)}
-                  >Löschen</button
-                >
-              {/if}
-            </td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
-    <Pagination total={rules.length} bind:page={slPage} bind:pageSize={slPageSize} />
+<!-- ── Create Modal ──────────────────────────────────────────────────────── -->
+<Modal bind:open={showCreate} eyebrow="Neue Regel" title="Sonderurlaubsregel anlegen">
+  <div class="form-group">
+    <label class="form-label" for="cr-name">Anlass</label>
+    <input
+      id="cr-name"
+      class="form-input"
+      bind:value={createName}
+      placeholder="z. B. Ehrenamtlicher Einsatz"
+    />
   </div>
-{/if}
-
-<!-- Create Modal -->
-{#if showCreate}
-  <div class="modal-backdrop" onclick={() => (showCreate = false)} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <div class="modal-header">
-        <h2 class="modal-title">Neue Sonderurlaubsregel</h2>
-        <button class="modal-close" onclick={() => (showCreate = false)}>✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label" for="cr-name">Anlass</label>
-          <input
-            id="cr-name"
-            class="form-input"
-            bind:value={createName}
-            placeholder="z. B. Ehrenamtlicher Einsatz"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="cr-reason">Beschreibung</label>
-          <input
-            id="cr-reason"
-            class="form-input"
-            bind:value={createReason}
-            placeholder="Optional"
-          />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="cr-days">Tage</label>
-          <input
-            id="cr-days"
-            type="number"
-            class="form-input"
-            min="0.5"
-            max="30"
-            step="0.5"
-            bind:value={createDays}
-          />
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-row-label">Nachweis erforderlich</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={createProof} />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={() => (showCreate = false)}>Abbrechen</button>
-        <button
-          class="btn btn-primary"
-          onclick={handleCreate}
-          disabled={creating || !createName.trim()}
-        >
-          {creating ? "Erstellen…" : "Erstellen"}
-        </button>
-      </div>
-    </div>
+  <div class="form-group">
+    <label class="form-label" for="cr-reason">Beschreibung</label>
+    <input id="cr-reason" class="form-input" bind:value={createReason} placeholder="Optional" />
   </div>
-{/if}
+  <div class="form-group">
+    <label class="form-label" for="cr-days">Tage</label>
+    <input
+      id="cr-days"
+      type="number"
+      class="form-input"
+      min="0.5"
+      max="30"
+      step="0.5"
+      bind:value={createDays}
+    />
+  </div>
+  <div class="toggle-row">
+    <span class="toggle-row-label">Nachweis erforderlich</span>
+    <label class="switch">
+      <input type="checkbox" bind:checked={createProof} />
+      <span class="switch-slider"></span>
+    </label>
+  </div>
+  {#snippet footer()}
+    <button class="btn btn-ghost" onclick={() => (showCreate = false)}>Abbrechen</button>
+    <button class="btn btn-primary" onclick={handleCreate} disabled={creating || !createName.trim()}>
+      {creating ? "Erstellen…" : "Erstellen"}
+    </button>
+  {/snippet}
+</Modal>
 
-<!-- Edit Modal -->
+<!-- ── Edit Modal ────────────────────────────────────────────────────────── -->
 {#if editRule}
-  <div class="modal-backdrop" onclick={() => (editRule = null)} role="presentation">
-    <div class="modal" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-      <div class="modal-header">
-        <h2 class="modal-title">{editRule.name}</h2>
-        <button class="modal-close" onclick={() => (editRule = null)}>✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="form-group">
-          <label class="form-label" for="ed-reason">Beschreibung</label>
-          <input id="ed-reason" class="form-input" bind:value={editReason} />
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="ed-days">Tage</label>
-          <input
-            id="ed-days"
-            type="number"
-            class="form-input"
-            min="0.5"
-            max="30"
-            step="0.5"
-            bind:value={editDays}
-          />
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-row-label">Nachweis erforderlich</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={editProof} />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-        <div class="toggle-row">
-          <span class="toggle-row-label">Aktiv</span>
-          <label class="switch">
-            <input type="checkbox" bind:checked={editActive} />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={() => (editRule = null)}>Abbrechen</button>
-        <button class="btn btn-primary" onclick={handleSave} disabled={saving}>
-          {saving ? "Speichern…" : "Speichern"}
-        </button>
-      </div>
+  <Modal bind:open={editOpen} eyebrow="Regel bearbeiten" title={editRule.name}>
+    <div class="form-group">
+      <label class="form-label" for="ed-reason">Beschreibung</label>
+      <input id="ed-reason" class="form-input" bind:value={editReason} />
     </div>
-  </div>
+    <div class="form-group">
+      <label class="form-label" for="ed-days">Tage</label>
+      <input
+        id="ed-days"
+        type="number"
+        class="form-input"
+        min="0.5"
+        max="30"
+        step="0.5"
+        bind:value={editDays}
+      />
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-row-label">Nachweis erforderlich</span>
+      <label class="switch">
+        <input type="checkbox" bind:checked={editProof} />
+        <span class="switch-slider"></span>
+      </label>
+    </div>
+    <div class="toggle-row">
+      <span class="toggle-row-label">Aktiv</span>
+      <label class="switch">
+        <input type="checkbox" bind:checked={editActive} />
+        <span class="switch-slider"></span>
+      </label>
+    </div>
+    {#snippet footer()}
+      <button
+        class="btn btn-ghost"
+        onclick={() => {
+          editOpen = false;
+          editRule = null;
+        }}>Abbrechen</button
+      >
+      <button class="btn btn-primary" onclick={handleSave} disabled={saving}>
+        {saving ? "Speichern…" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-  }
-  .page-title {
-    font-size: 1.375rem;
-    font-weight: 700;
-  }
+  /* .page wrapper is global (app.css) — no per-page padding/max-width. */
 
+  /* ── Table ─────────────────────────────────────────────────────── */
   .table-wrap {
     overflow-x: auto;
   }
-  .table {
+  .data-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.875rem;
   }
-  .table th {
+  .data-table th {
     text-align: left;
     padding: 0.625rem 0.75rem;
     font-weight: 600;
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--color-text-muted);
-    border-bottom: 2px solid var(--color-border);
+    color: var(--text-muted);
+    border-bottom: 2px solid var(--border);
   }
-  .table td {
+  .data-table td {
     padding: 0.75rem;
-    border-bottom: 1px solid var(--color-border-subtle);
+    border-bottom: 1px solid var(--border);
     vertical-align: middle;
   }
   tr.inactive td {
@@ -359,12 +337,12 @@
     font-weight: 500;
   }
   .badge-statutory {
-    background: var(--color-blue-bg);
-    color: var(--color-blue);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
   }
   .badge-custom {
-    background: var(--color-purple-bg);
-    color: var(--color-purple);
+    background: var(--brand-soft);
+    color: var(--brand);
   }
 
   .status-dot {
@@ -373,20 +351,29 @@
     height: 8px;
     border-radius: 50%;
     margin-right: 0.25rem;
+    background: var(--text-faint);
   }
   .status-dot.active {
-    background: var(--color-green);
+    background: var(--good);
   }
   .status-dot.deactivated {
-    background: var(--gray-400);
+    background: var(--text-faint);
   }
 
   .actions-cell {
     text-align: right;
     white-space: nowrap;
   }
-  .text-danger {
-    color: var(--color-red) !important;
+  .btn-danger-text {
+    color: var(--bad);
+  }
+
+  .rules-skel {
+    height: 200px;
+    border-radius: var(--r-md);
+  }
+  .empty-msg {
+    margin: 0;
   }
 
   .toggle-row {

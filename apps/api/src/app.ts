@@ -28,6 +28,7 @@ import multipart from "@fastify/multipart";
 import { notificationRoutes } from "./routes/notifications";
 import { invitationRoutes } from "./routes/invitations";
 import { auditLogRoutes } from "./routes/audit-logs";
+import { activityRoutes } from "./routes/activity";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./routes/dashboard";
 import { shiftRoutes } from "./routes/shifts";
@@ -39,6 +40,7 @@ import { avatarRoutes } from "./routes/avatars";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
+import { meRoutes } from "./routes/me";
 
 export async function buildApp() {
   // ── Logger configuration ──────────────────────────────────
@@ -228,6 +230,7 @@ export async function buildApp() {
   await app.register(holidayRoutes, { prefix: "/api/v1/holidays" });
   await app.register(invitationRoutes, { prefix: "/api/v1/invitations" });
   await app.register(auditLogRoutes, { prefix: "/api/v1/audit-logs" });
+  await app.register(activityRoutes, { prefix: "/api/v1/activity" });
   await app.register(companyShutdownRoutes, { prefix: "/api/v1/company-shutdowns" });
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
   await app.register(notificationRoutes, { prefix: "/api/v1/notifications" });
@@ -240,6 +243,7 @@ export async function buildApp() {
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
+  await app.register(meRoutes, { prefix: "/api/v1/me" });
 
   // ── Client Error Logging ─────────────────────────────────
   app.post("/api/v1/logs/client", {

@@ -383,11 +383,11 @@
     z-index: 9001;
     display: flex;
     flex-direction: column;
-    background: var(--glass-bg-strong, var(--color-surface));
+    background: var(--bg-card);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
     box-shadow:
       var(--shadow-lg),
       0 0 0 1px rgba(0, 0, 0, 0.03);
@@ -401,13 +401,13 @@
     align-items: center;
     gap: 0.75rem;
     padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--color-border-subtle);
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
   .cmd-search-icon {
     flex-shrink: 0;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .cmd-input {
@@ -417,13 +417,13 @@
     outline: none;
     font-size: 1.0625rem;
     font-family: var(--font-sans);
-    color: var(--color-text);
-    caret-color: var(--color-brand);
+    color: var(--text);
+    caret-color: var(--brand);
     min-width: 0;
   }
 
   .cmd-input::placeholder {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.7;
   }
 
@@ -436,9 +436,9 @@
     font-size: 0.6875rem;
     font-family: var(--font-sans);
     font-weight: 600;
-    color: var(--color-text-muted);
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border);
+    color: var(--text-muted);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 4px;
     line-height: 1.4;
   }
@@ -456,7 +456,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.7;
   }
 
@@ -471,7 +471,7 @@
     cursor: pointer;
     text-align: left;
     font-family: var(--font-sans);
-    color: var(--color-text);
+    color: var(--text);
     transition:
       background-color 0.08s,
       color 0.08s;
@@ -480,21 +480,21 @@
 
   .cmd-item:hover,
   .cmd-item--active {
-    background-color: var(--color-brand-tint);
-    color: var(--color-brand);
+    background-color: var(--brand-soft);
+    color: var(--brand);
   }
 
   .cmd-item--active .cmd-item-desc {
-    color: var(--color-brand-light);
+    color: var(--brand-light);
   }
 
   .cmd-item--active .cmd-item-icon {
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .cmd-item--active .cmd-item-arrow {
     opacity: 1;
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .cmd-item-icon {
@@ -504,7 +504,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     transition: color 0.08s;
   }
 
@@ -524,7 +524,7 @@
 
   .cmd-item-desc {
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     line-height: 1.3;
     transition: color 0.08s;
   }
@@ -532,7 +532,7 @@
   .cmd-item-arrow {
     flex-shrink: 0;
     opacity: 0;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     transition: opacity 0.1s;
   }
 
@@ -545,7 +545,7 @@
     padding: 2rem 1rem;
     text-align: center;
     font-size: 0.875rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   /* ── Footer ──────────────────────────────────────────────────────── */
@@ -554,7 +554,7 @@
     align-items: center;
     gap: 1rem;
     padding: 0.5rem 1rem;
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -563,7 +563,7 @@
     align-items: center;
     gap: 0.25rem;
     font-size: 0.6875rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.7;
   }
 
@@ -577,9 +577,9 @@
     font-size: 0.625rem;
     font-family: var(--font-sans);
     font-weight: 600;
-    color: var(--color-text-muted);
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border);
+    color: var(--text-muted);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 3px;
     line-height: 1;
   }

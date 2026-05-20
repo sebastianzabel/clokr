@@ -2,7 +2,10 @@
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
-  import PasswordStrength from "$lib/components/ui/PasswordStrength.svelte";
+  import { avatarVersion, bumpAvatarVersion } from "$stores/avatar";
+  import PageHead from "$components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import PasswordStrength from "$components/ui/PasswordStrength.svelte";
   import { onMount } from "svelte";
   import {
     getMyWifi,
@@ -41,18 +44,25 @@
 
   // Avatar
   let avatarUploading = $state(false);
-  let avatarKey = $state(0); // Force re-fetch after upload
   let avatarSrc = $state<string | null>(null);
+  let avatarFileInput: HTMLInputElement | null = $state(null);
+
+  function openAvatarPicker() {
+    avatarFileInput?.click();
+  }
 
   $effect(() => {
     const empId = $authStore.user?.employeeId;
     const token = $authStore.accessToken;
-    // avatarKey is read to re-run after upload
-    void avatarKey;
+    // Cross-component cache-bust: bumped via bumpAvatarVersion() after upload
+    const cacheBust = $avatarVersion;
     if (!empId || !token) return;
 
     let objectUrl: string | null = null;
-    fetch(`/api/v1/avatars/${empId}`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`/api/v1/avatars/${empId}?v=${cacheBust}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-cache",
+    })
       .then((r) => (r.ok ? r.blob() : null))
       .then((blob) => {
         if (blob) {
@@ -160,17 +170,23 @@
     try {
       const formData = new FormData();
       formData.append("file", file);
-      await fetch(`/api/v1/avatars/${employeeId}`, {
+      const res = await fetch(`/api/v1/avatars/${employeeId}`, {
         method: "POST",
         headers: { Authorization: `Bearer ${$authStore.accessToken}` },
         body: formData,
       });
-      avatarKey++;
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? `Upload fehlgeschlagen (${res.status})`);
+      }
+      bumpAvatarVersion();
       toasts.success("Avatar aktualisiert");
     } catch (e: unknown) {
       toasts.error(e instanceof Error ? e.message : "Upload fehlgeschlagen");
     } finally {
       avatarUploading = false;
+      // Reset the input so picking the same file again still triggers onchange
+      input.value = "";
     }
   }
 </script>
@@ -178,26 +194,36 @@
 <svelte:head><title>Profil – Clokr</title></svelte:head>
 
 <div class="settings-page">
-  <div class="page-header">
-    <h1 class="page-title">Mein Profil</h1>
-    <p class="page-subtitle">Profilbild und Passwort verwalten</p>
-  </div>
+  <PageHead
+    eyebrow="Mein Bereich"
+    title="Mein Profil"
+    accent="Profil"
+    sub="Profilbild und Passwort verwalten"
+  />
 
   <div class="settings-grid">
     <!-- Avatar -->
-    <div class="card settings-card">
+    <Card class="settings-card">
       <h3 class="section-title">Profilbild</h3>
       <div class="avatar-section">
-        <div class="avatar-wrapper">
+        <button
+          type="button"
+          class="avatar-wrapper"
+          onclick={openAvatarPicker}
+          disabled={avatarUploading}
+          aria-label="Profilbild ändern"
+          title="Profilbild ändern"
+        >
           {#if avatarSrc}
-            <img src={avatarSrc} alt="Avatar" class="avatar-preview" />
+            <img src={avatarSrc} alt="Avatar" class="avatar-preview" width="120" height="120" />
+          {:else}
+            <div class="avatar-initials">
+              {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
+                .charAt(0)
+                .toUpperCase()}
+            </div>
           {/if}
-          <div class="avatar-initials" style={$authStore.user?.employeeId ? "display:none" : ""}>
-            {($authStore.user?.firstName ?? $authStore.user?.email?.[0] ?? "?")
-              .charAt(0)
-              .toUpperCase()}
-          </div>
-          <label class="avatar-overlay" title="Profilbild ändern">
+          <span class="avatar-overlay" aria-hidden="true">
             <svg
               width="24"
               height="24"
@@ -211,22 +237,23 @@
                 d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
               /><circle cx="12" cy="13" r="4" /></svg
             >
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onchange={uploadAvatar}
-              hidden
-            />
-          </label>
-        </div>
+          </span>
+        </button>
+        <input
+          bind:this={avatarFileInput}
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onchange={uploadAvatar}
+          class="avatar-file-input"
+        />
         <p class="avatar-hint text-muted">
           {avatarUploading ? "Hochladen…" : "Klicken zum Ändern"}
         </p>
       </div>
-    </div>
+    </Card>
 
     <!-- Password -->
-    <div class="card settings-card">
+    <Card class="settings-card">
       <h3 class="section-title">Passwort ändern</h3>
       <form
         onsubmit={(e) => {
@@ -281,11 +308,11 @@
           {saving ? "Speichern…" : "Passwort ändern"}
         </button>
       </form>
-    </div>
+    </Card>
   </div>
 
   <!-- WiFi Presence: Meine Geräte -->
-  <div class="card settings-card wifi-card card-animate" style="margin-bottom: 1.5rem;">
+  <Card animate class="settings-card wifi-card">
     <h3 class="section-title">Meine Geräte</h3>
 
     <!-- GDPR notice — always visible, not dismissible -->
@@ -325,7 +352,7 @@
         onchange={toggleWifi}
       />
     </div>
-    <p class="form-hint" style="margin-bottom: 1.25rem;">
+    <p class="form-hint wifi-toggle-hint">
       Wenn aktiviert, kann Clokr Ihre Anwesenheit anhand Ihrer WLAN-Verbindung erkennen und
       automatisch stempeln.
     </p>
@@ -333,9 +360,9 @@
     <!-- MAC device list -->
     <div class="mac-list">
       {#if wifiLoading}
-        <p class="text-muted" style="font-size: 0.8125rem;">Laden…</p>
+        <p class="text-muted mac-list-status">Laden…</p>
       {:else if wifiDevices.length === 0}
-        <p class="text-muted" style="font-size: 0.8125rem;">
+        <p class="text-muted mac-list-status">
           Noch kein Gerät eingetragen. Fügen Sie Ihre MAC-Adresse hinzu.
         </p>
       {:else}
@@ -406,7 +433,7 @@
     {#if macError}
       <p class="form-error" role="alert">{macError}</p>
     {/if}
-  </div>
+  </Card>
 
   <div class="settings-info">
     <p class="text-muted"><strong>E-Mail:</strong> {$authStore.user?.email}</p>
@@ -425,18 +452,13 @@
   .settings-page {
     max-width: 800px;
   }
-  .page-title {
-    font-size: 1.375rem;
-    font-weight: 700;
-    margin-bottom: 1.5rem;
-  }
   .settings-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
     margin-bottom: 1.5rem;
   }
-  .settings-card {
+  :global(.settings-card) {
     padding: 1.5rem;
   }
   .section-title {
@@ -456,26 +478,42 @@
     height: 120px;
     border-radius: 50%;
     cursor: pointer;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    overflow: hidden;
+    display: block;
+  }
+  .avatar-wrapper:disabled {
+    cursor: wait;
+    opacity: 0.7;
+  }
+  .avatar-wrapper:focus-visible {
+    outline: 2px solid var(--brand-light);
+    outline-offset: 2px;
   }
   .avatar-preview {
     width: 120px;
     height: 120px;
     border-radius: 50%;
     object-fit: cover;
-    border: 3px solid var(--color-border);
+    border: 3px solid var(--border);
+    box-sizing: border-box;
+    display: block;
   }
   .avatar-initials {
     width: 120px;
     height: 120px;
     border-radius: 50%;
-    background: var(--color-brand-tint);
-    color: var(--color-brand);
+    background: var(--brand-soft);
+    color: var(--brand);
     font-size: 2.5rem;
     font-weight: 700;
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 3px solid var(--color-border);
+    border: 3px solid var(--border);
+    box-sizing: border-box;
   }
   .avatar-overlay {
     position: absolute;
@@ -487,11 +525,15 @@
     justify-content: center;
     opacity: 0;
     transition: opacity 0.2s;
-    cursor: pointer;
     color: white;
+    pointer-events: none;
   }
-  .avatar-wrapper:hover .avatar-overlay {
+  .avatar-wrapper:hover .avatar-overlay,
+  .avatar-wrapper:focus-visible .avatar-overlay {
     opacity: 1;
+  }
+  .avatar-file-input {
+    display: none;
   }
   .avatar-hint {
     font-size: 0.8125rem;
@@ -502,7 +544,7 @@
     gap: 0.875rem;
   }
   .field-error {
-    color: var(--color-red);
+    color: var(--bad);
     font-size: 0.8125rem;
     margin-top: 0.25rem;
   }
@@ -519,11 +561,9 @@
   }
 
   /* WiFi Meine Geräte card */
-  .wifi-card {
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
+  :global(.wifi-card) {
+    box-shadow: var(--shadow-md);
+    margin-bottom: 1.5rem;
   }
   .wifi-gdpr-note {
     display: flex;
@@ -550,7 +590,7 @@
     width: 2.75rem;
     height: 1.5rem;
     border-radius: 9999px;
-    background: var(--color-border);
+    background: var(--border);
     cursor: pointer;
     position: relative;
     transition: background 0.2s;
@@ -564,24 +604,30 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--color-surface);
+    background: var(--bg-card);
     transition: transform 0.2s;
   }
   .wifi-toggle-input:checked {
-    background: var(--color-brand);
+    background: var(--brand);
   }
   .wifi-toggle-input:checked::after {
     transform: translateX(1.25rem);
   }
   .wifi-toggle-input:focus-visible {
-    outline: 2px solid var(--color-brand);
+    outline: 2px solid var(--brand);
     outline-offset: 2px;
+  }
+  .wifi-toggle-hint {
+    margin-bottom: 1.25rem;
   }
   .mac-list {
     margin: 0 0 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+  .mac-list-status {
+    font-size: 0.8125rem;
   }
   .mac-row {
     display: flex;
@@ -591,11 +637,11 @@
   .mac-code {
     flex: 1;
     padding: 0.5rem 0.75rem;
-    background: var(--color-bg-subtle);
-    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    border-radius: var(--r-sm);
     font-family: var(--font-mono);
     font-size: 0.8125rem;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--border);
   }
   .mac-label-text {
     font-size: 0.8125rem;
@@ -622,7 +668,7 @@
     font-size: 0.9375rem;
   }
   .form-error {
-    color: var(--color-red);
+    color: var(--bad);
     font-size: 0.8125rem;
     margin-top: 0.25rem;
   }

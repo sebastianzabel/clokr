@@ -16,17 +16,21 @@
   const reducedMotion =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // Map toast type to status color CSS variable prefix
-  function colorVar(type: Toast["type"]): string {
+  // Map toast type to v1.5 status token triple (color, bg, border)
+  function toastColors(type: Toast["type"]): { color: string; bg: string; border: string } {
     switch (type) {
       case "success":
-        return "green";
+        return { color: "var(--good)", bg: "var(--good-soft)", border: "var(--good-soft)" };
       case "error":
-        return "red";
+        return { color: "var(--bad)", bg: "var(--bad-soft)", border: "var(--bad-soft)" };
       case "info":
-        return "blue";
+        return {
+          color: "#2563eb",
+          bg: "rgba(37, 99, 235, 0.1)",
+          border: "rgba(37, 99, 235, 0.2)",
+        };
       case "warning":
-        return "yellow";
+        return { color: "var(--warn)", bg: "var(--warn-soft)", border: "var(--warn-soft)" };
     }
   }
 </script>
@@ -40,9 +44,9 @@
         in:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 350, easing: (t) => 1 - Math.pow(1 - t, 3) }}
         out:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 250, easing: (t) => t * t }}
         style="
-          --toast-color: var(--color-{colorVar(toast.type)});
-          --toast-bg: var(--color-{colorVar(toast.type)}-bg);
-          --toast-border: var(--color-{colorVar(toast.type)}-border);
+          --toast-color: {toastColors(toast.type).color};
+          --toast-bg: {toastColors(toast.type).bg};
+          --toast-border: {toastColors(toast.type).border};
         "
       >
         <span class="toast-icon">
@@ -128,13 +132,13 @@
     align-items: flex-start;
     gap: 0.625rem;
     padding: 0.875rem 1rem 0.875rem calc(1rem + 6px);
-    border-radius: var(--radius-sm);
-    background: var(--glass-bg-overlay, var(--color-surface));
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border-radius: var(--r-sm);
+    background: var(--bg-card);
+    backdrop-filter: blur(0px);
+    -webkit-backdrop-filter: blur(0px);
     border: 1px solid var(--toast-border);
     box-shadow: var(--shadow-md);
-    color: var(--color-text);
+    color: var(--text);
     font-size: 0.9375rem;
     line-height: 1.45;
     pointer-events: auto;
@@ -166,7 +170,7 @@
     height: 24px;
     border: none;
     background: transparent;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     cursor: pointer;
     border-radius: 4px;
     padding: 10px;
@@ -177,8 +181,8 @@
   }
 
   .toast-close:hover {
-    background-color: var(--color-bg-muted);
-    color: var(--color-text);
+    background-color: var(--bg-alt);
+    color: var(--text);
   }
 
   /* Colored left accent bar */
@@ -190,7 +194,7 @@
     bottom: 0;
     width: 3px;
     background: var(--toast-color);
-    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+    border-radius: var(--r-sm) 0 0 var(--r-sm);
   }
 
   /* Mobile adjustments */

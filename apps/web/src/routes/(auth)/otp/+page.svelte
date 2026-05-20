@@ -79,7 +79,14 @@
 <div class="login-page">
   <div class="login-card">
     <div class="login-logo">
-      <img src="/clokr-icon.png" alt="Clokr" class="login-logo-img" style="max-width: 64px;" />
+      <img
+        src="/clokr-icon.png"
+        alt="Clokr"
+        class="login-logo-img"
+        width="64"
+        height="64"
+        style="max-width: 64px;"
+      />
       <h1 class="login-title">Zwei-Faktor-Authentifizierung</h1>
       <p class="login-subtitle">Wir haben einen Code an Ihre E-Mail-Adresse gesendet.</p>
     </div>
@@ -143,7 +150,7 @@
 <style>
   .login-page {
     min-height: 100dvh;
-    background-color: var(--color-bg-subtle);
+    background-color: var(--bg-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -151,9 +158,9 @@
   }
 
   .login-card {
-    background: var(--color-surface, #fff);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
     box-shadow: var(--shadow-lg);
     padding: 2.5rem;
     width: 100%;
@@ -167,12 +174,12 @@
   .login-title {
     font-size: 1.5rem;
     font-weight: 700;
-    color: var(--color-brand);
+    color: var(--brand);
     margin-bottom: 0.375rem;
   }
   .login-subtitle {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .login-form {
@@ -223,13 +230,13 @@
 
   .login-footer {
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin: 0;
   }
 
   .back-link {
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-decoration: underline;
   }
 
@@ -238,7 +245,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-md);
     font-size: 0.875rem;
   }
 

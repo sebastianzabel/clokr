@@ -55,6 +55,9 @@ const tenantConfigSchema = z.object({
   enforceMinVacation: z.boolean().optional(),
   carryOverRequiresReason: z.boolean().optional(),
   vacationReminderStartMonth: z.number().int().min(1).max(12).optional(),
+  // Data retention (Phase 31 — ADM-03)
+  // Minimum 2 years (§ 16 Abs. 2 ArbZG), default 10 years (§ 147 AO / § 257 HGB)
+  dataRetentionYears: z.number().int().min(2).max(10).optional(),
   // Reminders
   reminderPendingLeaveHours: z.number().int().min(1).max(720).optional(),
   reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
@@ -152,6 +155,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         datevKrankNr: 200,
         datevSonderurlaubNr: 302,
         monthlyHoursHolidayDeduction: false,
+        dataRetentionYears: 10,
       };
 
       return {
@@ -206,7 +210,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           const current = emp.workSchedules[0];
           if (!current) {
             // MA ohne Schedule → neuen mit Defaults erstellen
-            await app.prisma.workSchedule.create({
+            const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
                 type: "FIXED_WEEKLY",
@@ -223,10 +227,18 @@ export async function settingsRoutes(app: FastifyInstance) {
                 validFrom: now,
               },
             });
+            await app.audit({
+              userId: req.user.sub,
+              action: "CREATE",
+              entity: "WorkSchedule",
+              entityId: created.id,
+              newValue: created,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
             appliedCount++;
           } else if (current.type === "FIXED_WEEKLY") {
             // Nur FIXED_WEEKLY MA updaten (nicht Minijobber)
-            await app.prisma.workSchedule.create({
+            const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
                 type: "FIXED_WEEKLY",
@@ -243,6 +255,15 @@ export async function settingsRoutes(app: FastifyInstance) {
                 allowOvertimePayout: configBody.allowOvertimePayout ?? current.allowOvertimePayout,
                 validFrom: now,
               },
+            });
+            await app.audit({
+              userId: req.user.sub,
+              action: "CREATE",
+              entity: "WorkSchedule",
+              entityId: created.id,
+              oldValue: current,
+              newValue: created,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
             appliedCount++;
           }

@@ -1,11 +1,15 @@
 <script lang="ts">
-  import { preventDefault, self } from "svelte/legacy";
+  import { preventDefault } from "svelte/legacy";
 
   import { onMount, onDestroy } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import KPIStat from "$components/ui/KPIStat.svelte";
+  import Modal from "$components/ui/Modal.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -112,8 +116,9 @@
   let overlapLoading = $state(false);
   let overlapTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Attest-Modal (für bereits genehmigte Krankmeldungen)
+  // Attest-Modal (für bereits genehmigte Krankmeldungen) — Modal primitive owns Escape/backdrop/focus-trap.
   let attestModal: LeaveRequest | null = $state(null);
+  let attestOpen = $state(false);
   let attestPresent = $state(false);
   let attestFrom = $state("");
   let attestTo = $state("");
@@ -368,6 +373,7 @@
     await loadData();
     loadCalendar();
     loadVacationSummary();
+    loadOvertimeBalance();
 
     // Deep-link: highlight a specific request from notification
     const requestId = $page.url.searchParams.get("request");
@@ -438,6 +444,15 @@
       viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
+    }
+  }
+
+  async function loadOvertimeBalance() {
+    try {
+      const r = await api.get<{ balanceHours: number }>("/leave/overtime-balance");
+      overtimeBalance = r.balanceHours;
+    } catch {
+      overtimeBalance = null;
     }
   }
 
@@ -544,6 +559,10 @@
 
   function resetForm() {
     showForm = false;
+    resetFormFields();
+  }
+
+  function resetFormFields() {
     editingRequest = null;
     formType = "VACATION";
     formStart = formEnd = formNote = "";
@@ -616,9 +635,12 @@
     attestFrom = req.attestValidFrom ?? "";
     attestTo = req.attestValidTo ?? "";
     attestError = "";
+    attestOpen = true;
   }
 
   function closeAttestModal() {
+    if (attestSaving) return;
+    attestOpen = false;
     attestModal = null;
   }
 
@@ -632,6 +654,7 @@
         attestValidFrom: attestPresent && attestFrom ? attestFrom : null,
         attestValidTo: attestPresent && attestTo ? attestTo : null,
       });
+      attestOpen = false;
       attestModal = null;
       await loadData();
     } catch (e: unknown) {
@@ -714,6 +737,17 @@
   let pendingVacDays = $derived(
     myRequests
       .filter((r) => r.typeCode === "VACATION" && r.status === "PENDING")
+      .reduce((sum, r) => sum + Number(r.days), 0),
+  );
+  // Sick days (approved SICK + SICK_CHILD) for the currently viewed calendar year
+  let sickDaysYear = $derived(
+    myRequests
+      .filter(
+        (r) =>
+          SICK_CODES.includes(r.typeCode) &&
+          r.status === "APPROVED" &&
+          new Date(r.startDate + "T00:00:00").getFullYear() === calYear,
+      )
       .reduce((sum, r) => sum + Number(r.days), 0),
   );
   let vacSummaryTotal = $derived(vacationBalance?.total ?? 0);
@@ -824,42 +858,76 @@
   $effect(() => {
     if (showForm) loadBalanceForType(formType);
   });
+  // When Modal closes (Escape/backdrop), reset form fields.
+  $effect(() => {
+    if (!showForm) resetFormFields();
+  });
+  // When attest modal closes (Escape/backdrop), clear state.
+  $effect(() => {
+    if (!attestOpen) {
+      attestModal = null;
+      attestError = "";
+    }
+  });
 </script>
 
 <svelte:head>
   <title>Abwesenheiten – Clokr</title>
 </svelte:head>
 
-<svelte:window
-  onmouseup={handleDayMouseUp}
-  onkeydown={(e) => {
-    if (e.key === "Escape") {
-      if (showForm) resetForm();
-      if (attestModal) {
-        attestModal = null;
-        attestError = "";
-      }
-    }
-  }}
-/>
+<svelte:window onmouseup={handleDayMouseUp} />
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<div class="page-header-compact">
-  <h1>Abwesenheiten</h1>
-  {#if !showForm}
-    <button
-      class="btn btn-primary btn-sm"
-      onclick={() => {
-        editingRequest = null;
-        showForm = true;
-      }}>+ Neue Abwesenheit</button
-    >
-  {/if}
-</div>
+<PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
+  {#snippet actions()}
+    {#if !showForm}
+      <button
+        class="btn btn-primary btn-sm"
+        onclick={() => {
+          editingRequest = null;
+          showForm = true;
+        }}>+ Neue Abwesenheit</button
+      >
+    {/if}
+  {/snippet}
+</PageHead>
 
 {#if error}
   <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
 {/if}
+
+<!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
+<div class="kpi-row">
+  <Card animate class="kpi-card">
+    <KPIStat
+      label="Resturlaub"
+      value={vacRemaining === null ? "–" : String(vacRemaining)}
+      unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
+      delta={vacationBalance
+        ? `von ${vacationBalance.total + vacationBalance.carryOver} verfügbar`
+        : undefined}
+    />
+  </Card>
+
+  <Card animate class="kpi-card">
+    <KPIStat
+      label="Überstundenkonto"
+      value={overtimeBalance === null
+        ? "–"
+        : `${overtimeBalance >= 0 ? "+" : "−"}${fmtH(overtimeBalance)}`}
+      delta="aktueller Saldo"
+    />
+  </Card>
+
+  <Card animate class="kpi-card">
+    <KPIStat
+      label="Krankheitstage"
+      value={String(sickDaysYear)}
+      unit={sickDaysYear === 1 ? "Tag" : "Tage"}
+      delta={`in ${calYear}`}
+    />
+  </Card>
+</div>
 
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
 <div class="view-tabs">
@@ -876,268 +944,241 @@
 </div>
 
 <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
-{#if showForm}
-  <div class="form-backdrop" onclick={resetForm} role="presentation"></div>
-  <div
-    class="form-dialog"
-    role="dialog"
-    aria-label={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
-  >
-    <div class="form-dialog-header">
-      <h2>{editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}</h2>
-      <button class="btn-icon" onclick={resetForm} aria-label="Schließen">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          ><line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" /></svg
-        >
-      </button>
+<Modal
+  bind:open={showForm}
+  eyebrow="Urlaub"
+  title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
+>
+  {#if formError}
+    <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
+      <span>⚠</span><span>{formError}</span>
+    </div>
+  {/if}
+
+  <form id="leave-form" onsubmit={preventDefault(submitRequest)} class="form-grid">
+    <div class="form-group">
+      <label class="form-label" for="f-type">Art der Abwesenheit</label>
+      <select
+        id="f-type"
+        bind:value={formType}
+        class="form-input"
+        disabled={!!editingRequest}
+        onchange={() => {
+          if (formType === "SPECIAL") loadSpecialLeaveRules();
+        }}
+      >
+        {#each TYPE_OPTIONS as t (t.code)}
+          <option value={t.code}>{t.label}</option>
+        {/each}
+      </select>
     </div>
 
-    {#if formError}
-      <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
-        <span>⚠</span><span>{formError}</span>
-      </div>
-    {/if}
-
-    <form onsubmit={preventDefault(submitRequest)} class="form-grid">
+    {#if formType === "SPECIAL"}
       <div class="form-group">
-        <label class="form-label" for="f-type">Art der Abwesenheit</label>
-        <select
-          id="f-type"
-          bind:value={formType}
-          class="form-input"
-          disabled={!!editingRequest}
-          onchange={() => {
-            if (formType === "SPECIAL") loadSpecialLeaveRules();
-          }}
-        >
-          {#each TYPE_OPTIONS as t (t.code)}
-            <option value={t.code}>{t.label}</option>
+        <label class="form-label" for="f-special-rule">Anlass</label>
+        <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
+          <option value="">— Anlass wählen —</option>
+          {#each specialLeaveRules as rule (rule.id)}
+            <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
           {/each}
         </select>
       </div>
+    {/if}
 
-      {#if formType === "SPECIAL"}
-        <div class="form-group">
-          <label class="form-label" for="f-special-rule">Anlass</label>
-          <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
-            <option value="">— Anlass wählen —</option>
-            {#each specialLeaveRules as rule (rule.id)}
-              <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
+    <div class="form-group">
+      <label class="form-label" for="f-start">Von</label>
+      <input id="f-start" type="date" bind:value={formStart} required class="form-input" />
+    </div>
 
-      <div class="form-group">
-        <label class="form-label" for="f-start">Von</label>
-        <input id="f-start" type="date" bind:value={formStart} required class="form-input" />
-      </div>
+    <div class="form-group">
+      <label class="form-label" for="f-end">Bis</label>
+      <input
+        id="f-end"
+        type="date"
+        bind:value={formEnd}
+        required
+        min={formStart}
+        class="form-input"
+      />
+    </div>
 
-      <div class="form-group">
-        <label class="form-label" for="f-end">Bis</label>
-        <input
-          id="f-end"
-          type="date"
-          bind:value={formEnd}
-          required
-          min={formStart}
-          class="form-input"
-        />
-      </div>
-
-      <!-- Überstundensaldo-Info -->
-      {#if formType === "OVERTIME_COMP" && overtimeBalance !== null}
-        <div class="form-group form-group--full">
-          <div class="balance-box">
-            <div class="balance-row">
-              <span class="balance-label">Guthaben</span>
-              <span class="balance-value">{fmtH(overtimeBalance)}</span>
-            </div>
-            {#if effectiveDays > 0 || formHalfDay}
-              <div class="balance-row">
-                <span class="balance-label">
-                  Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})
-                </span>
-                <span class="balance-value balance-deduct">
-                  {#if hoursPreviewLoading}
-                    <span class="text-muted">…</span>
-                  {:else}
-                    − {fmtH(hoursNeeded)}
-                  {/if}
-                </span>
-              </div>
-              <div class="balance-divider"></div>
-              <div class="balance-row">
-                <span class="balance-label">Verbleibend</span>
-                <span
-                  class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}"
-                >
-                  {#if hoursPreviewLoading}
-                    <span class="text-muted">…</span>
-                  {:else}
-                    {fmtH(overtimeBalance - hoursNeeded)}
-                  {/if}
-                </span>
-              </div>
-              {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
-                <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
-              {/if}
-            {/if}
-          </div>
-        </div>
-      {/if}
-
-      <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
-      {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
-        <div class="form-group form-group--full">
-          <div class="days-info-bar">
-            <span class="days-info-icon">📅</span>
-            <span class="days-info-text">
-              <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
-              {#if hoursPreviewLoading}
-                <span class="days-info-note">(Feiertage werden geprüft…)</span>
-              {:else if serverDays !== null && serverDays !== formDays}
-                <span class="days-info-note">(Feiertage berücksichtigt)</span>
-              {/if}
-            </span>
-          </div>
-        </div>
-      {/if}
-
-      <!-- Urlaubssaldo-Info -->
-      {#if formType === "VACATION" && vacationBalance !== null}
-        <div class="form-group form-group--full">
-          <div class="balance-box">
-            <div class="balance-row">
-              <span class="balance-label">Jahresanspruch</span>
-              <span class="balance-value">{vacationBalance.total} Tage</span>
-            </div>
-            {#if vacationBalance.carryOver > 0}
-              <div class="balance-row">
-                <span class="balance-label">
-                  Resturlaub Vorjahr
-                  {#if vacationBalance.carryOverDeadline}
-                    <span class="balance-meta"
-                      >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
-                    >
-                  {/if}
-                </span>
-                <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
-              </div>
-            {/if}
-            <div class="balance-row">
-              <span class="balance-label">Genommen</span>
-              <span class="balance-value">− {vacationBalance.used} Tage</span>
-            </div>
-            <div class="balance-row">
-              <span class="balance-label">Verfügbar</span>
-              <span class="balance-value">{vacRemaining} Tage</span>
-            </div>
-            {#if effectiveDays > 0 || formHalfDay}
-              <div class="balance-row">
-                <span class="balance-label">
-                  Wird genutzt
-                  {#if hoursPreviewLoading}
-                    <span class="text-muted">…</span>
-                  {:else}
-                    ({daysLabel(
-                      effectiveDays,
-                      formHalfDay,
-                    )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
-                  {/if}
-                </span>
-                <span class="balance-value balance-deduct">
-                  {#if hoursPreviewLoading}
-                    <span class="text-muted">…</span>
-                  {:else}
-                    − {effectiveDays} {effectiveDays === 1 ? "Tag" : "Tage"}
-                  {/if}
-                </span>
-              </div>
-              <div class="balance-divider"></div>
-              <div class="balance-row">
-                <span class="balance-label">Verbleibend</span>
-                <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                  {#if hoursPreviewLoading}
-                    <span class="text-muted">…</span>
-                  {:else}
-                    {vacAfter} {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}
-                  {/if}
-                </span>
-              </div>
-              {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
-                <p class="balance-hint-warn">⚠ Nicht genug Resturlaub vorhanden</p>
-              {/if}
-            {/if}
-          </div>
-        </div>
-      {/if}
-
+    <!-- Überstundensaldo-Info -->
+    {#if formType === "OVERTIME_COMP" && overtimeBalance !== null}
       <div class="form-group form-group--full">
-        <label class="form-label" for="f-note">Anmerkung (optional)</label>
-        <input
-          id="f-note"
-          type="text"
-          bind:value={formNote}
-          class="form-input"
-          placeholder="z.B. Hochzeit, Arzttermin …"
-        />
-      </div>
-
-      <div class="form-group form-group--full">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={formHalfDay} class="toggle-cb" />
-          <span>Halber Tag</span>
-        </label>
-      </div>
-
-      <!-- Parallele Abwesenheiten -->
-      {#if formStart && formEnd && formStart <= formEnd}
-        <div class="form-group form-group--full">
-          <div class="overlap-box">
-            <p class="overlap-title">
-              Kolleg:innen im gleichen Zeitraum
-              {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
-            </p>
-            {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
-              <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-            {:else}
-              <div class="overlap-list">
-                {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
-                  <div class="overlap-row">
-                    <span class="overlap-name">{o.employeeName}</span>
-                    <span class="overlap-type">abwesend</span>
-                    <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
+        <div class="balance-box">
+          <div class="balance-row">
+            <span class="balance-label">Guthaben</span>
+            <span class="balance-value">{fmtH(overtimeBalance)}</span>
           </div>
+          {#if effectiveDays > 0 || formHalfDay}
+            <div class="balance-row">
+              <span class="balance-label">
+                Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})
+              </span>
+              <span class="balance-value balance-deduct">
+                {#if hoursPreviewLoading}
+                  <span class="text-muted">…</span>
+                {:else}
+                  − {fmtH(hoursNeeded)}
+                {/if}
+              </span>
+            </div>
+            <div class="balance-divider"></div>
+            <div class="balance-row">
+              <span class="balance-label">Verbleibend</span>
+              <span class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}">
+                {#if hoursPreviewLoading}
+                  <span class="text-muted">…</span>
+                {:else}
+                  {fmtH(overtimeBalance - hoursNeeded)}
+                {/if}
+              </span>
+            </div>
+            {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
+              <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
+            {/if}
+          {/if}
         </div>
-      {/if}
-
-      <div class="form-actions form-group--full">
-        <button type="submit" class="btn btn-primary" disabled={formSaving}>
-          {formSaving
-            ? "Speichern…"
-            : editingRequest
-              ? "Änderungen speichern"
-              : "Antrag einreichen"}
-        </button>
-        <button type="button" class="btn btn-ghost" onclick={resetForm}> Abbrechen </button>
       </div>
-    </form>
-  </div>
-{/if}
+    {/if}
+
+    <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
+    {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
+      <div class="form-group form-group--full">
+        <div class="days-info-bar">
+          <span class="days-info-icon">📅</span>
+          <span class="days-info-text">
+            <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
+            {#if hoursPreviewLoading}
+              <span class="days-info-note">(Feiertage werden geprüft…)</span>
+            {:else if serverDays !== null && serverDays !== formDays}
+              <span class="days-info-note">(Feiertage berücksichtigt)</span>
+            {/if}
+          </span>
+        </div>
+      </div>
+    {/if}
+
+    <!-- Urlaubssaldo-Info -->
+    {#if formType === "VACATION" && vacationBalance !== null}
+      <div class="form-group form-group--full">
+        <div class="balance-box">
+          <div class="balance-row">
+            <span class="balance-label">Jahresanspruch</span>
+            <span class="balance-value">{vacationBalance.total} Tage</span>
+          </div>
+          {#if vacationBalance.carryOver > 0}
+            <div class="balance-row">
+              <span class="balance-label">
+                Resturlaub Vorjahr
+                {#if vacationBalance.carryOverDeadline}
+                  <span class="balance-meta"
+                    >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
+                  >
+                {/if}
+              </span>
+              <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
+            </div>
+          {/if}
+          <div class="balance-row">
+            <span class="balance-label">Genommen</span>
+            <span class="balance-value">− {vacationBalance.used} Tage</span>
+          </div>
+          <div class="balance-row">
+            <span class="balance-label">Verfügbar</span>
+            <span class="balance-value">{vacRemaining} Tage</span>
+          </div>
+          {#if effectiveDays > 0 || formHalfDay}
+            <div class="balance-row">
+              <span class="balance-label">
+                Wird genutzt
+                {#if hoursPreviewLoading}
+                  <span class="text-muted">…</span>
+                {:else}
+                  ({daysLabel(
+                    effectiveDays,
+                    formHalfDay,
+                  )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
+                {/if}
+              </span>
+              <span class="balance-value balance-deduct">
+                {#if hoursPreviewLoading}
+                  <span class="text-muted">…</span>
+                {:else}
+                  − {effectiveDays} {effectiveDays === 1 ? "Tag" : "Tage"}
+                {/if}
+              </span>
+            </div>
+            <div class="balance-divider"></div>
+            <div class="balance-row">
+              <span class="balance-label">Verbleibend</span>
+              <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
+                {#if hoursPreviewLoading}
+                  <span class="text-muted">…</span>
+                {:else}
+                  {vacAfter} {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}
+                {/if}
+              </span>
+            </div>
+            {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
+              <p class="balance-hint-warn">⚠ Nicht genug Resturlaub vorhanden</p>
+            {/if}
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <div class="form-group form-group--full">
+      <label class="form-label" for="f-note">Anmerkung (optional)</label>
+      <input
+        id="f-note"
+        type="text"
+        bind:value={formNote}
+        class="form-input"
+        placeholder="z.B. Hochzeit, Arzttermin …"
+      />
+    </div>
+
+    <div class="form-group form-group--full">
+      <label class="toggle-label">
+        <input type="checkbox" bind:checked={formHalfDay} class="toggle-cb" />
+        <span>Halber Tag</span>
+      </label>
+    </div>
+
+    <!-- Parallele Abwesenheiten -->
+    {#if formStart && formEnd && formStart <= formEnd}
+      <div class="form-group form-group--full">
+        <div class="overlap-box">
+          <p class="overlap-title">
+            Kolleg:innen im gleichen Zeitraum
+            {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
+          </p>
+          {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
+            <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
+          {:else}
+            <div class="overlap-list">
+              {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
+                <div class="overlap-row">
+                  <span class="overlap-name">{o.employeeName}</span>
+                  <span class="overlap-type">abwesend</span>
+                  <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
+    <div class="form-actions form-group--full">
+      <button type="submit" class="btn btn-primary" disabled={formSaving}>
+        {formSaving ? "Speichern…" : editingRequest ? "Änderungen speichern" : "Antrag einreichen"}
+      </button>
+      <button type="button" class="btn btn-ghost" onclick={resetForm}> Abbrechen </button>
+    </div>
+  </form>
+</Modal>
 
 <!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
 {#if proRataWarning}
@@ -1147,48 +1188,54 @@
     nötig ist.
   </div>
 {/if}
-{#if showVacSummary}
-  <div class="vac-summary card-animate">
-    <div class="vac-summary-item">
-      <span class="vac-summary-label">Jahresanspruch</span>
-      <span class="vac-summary-value">{vacSummaryTotal} Tage</span>
+{#snippet vacStats()}
+  <div class="vac-stats">
+    <div class="vac-stat">
+      <div class="vac-stat-label">Anspruch</div>
+      <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
     </div>
     {#if vacSummaryCarryOver > 0}
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Resturlaub</span>
-        <span
-          class="vac-summary-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-summary-carry'}"
-        >
-          {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining} Tage
-        </span>
+      <div class="vac-stat">
+        <div class="vac-stat-label">Resturlaub</div>
+        <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
+          {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
+            class="vac-stat-unit">T</span
+          >
+        </div>
       </div>
     {/if}
-    <div class="vac-summary-item">
-      <span class="vac-summary-label">Genommen</span>
-      <span class="vac-summary-value">{vacSummaryUsed} Tage</span>
+    <div class="vac-stat">
+      <div class="vac-stat-label">Genommen</div>
+      <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
     </div>
     {#if vacSummaryPlanned > 0}
-      <div class="vac-summary-item">
-        <span class="vac-summary-label">Geplant</span>
-        <span class="vac-summary-value vac-summary-planned">{vacSummaryPlanned} Tage</span>
+      <div class="vac-stat">
+        <div class="vac-stat-label">Geplant</div>
+        <div class="vac-stat-value vac-stat-planned">
+          {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
+        </div>
       </div>
     {/if}
-    <div class="vac-summary-divider"></div>
-    <div class="vac-summary-item vac-summary-item--highlight">
-      <span class="vac-summary-label">Verbleibend</span>
-      <span class="vac-summary-value {vacSummaryLeft < 0 ? 'vac-summary-warn' : 'vac-summary-left'}"
-        >{vacSummaryLeft} Tage</span
-      >
+    <div class="vac-stat vac-stat--highlight">
+      <div class="vac-stat-label">Verbleibend</div>
+      <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
+        {vacSummaryLeft}<span class="vac-stat-unit">T</span>
+      </div>
     </div>
   </div>
-{/if}
+{/snippet}
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
-  <div class="cal-section card card-animate">
-    <!-- Navigation -->
-    <div class="cal-nav">
-      <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat">
+  <!-- Combined month bar (v1.5 — identisch zu Zeiterfassung, with picker dropdown) -->
+  <div class="card cal-monthbar card-animate">
+    <div class="cal-monthbar-nav">
+      <button
+        class="nav-btn"
+        onclick={prevMonth}
+        title="Vorheriger Monat"
+        aria-label="Vorheriger Monat"
+      >
         <svg
           width="18"
           height="18"
@@ -1198,9 +1245,10 @@
           stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
         >
       </button>
-      <div class="cal-nav-center">
+      <div class="cal-nav-center cal-monthbar-center">
+        <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
         <button
-          class="cal-nav-title"
+          class="cal-monthbar-title"
           onclick={() => {
             pickerYear = calYear;
             showMonthPicker = !showMonthPicker;
@@ -1240,20 +1288,29 @@
           </div>
         {/if}
       </div>
-      <div class="cal-nav-right">
-        <button class="nav-btn" onclick={nextMonth} title="Nächster Monat">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-      </div>
+      <button
+        class="nav-btn"
+        onclick={nextMonth}
+        title="Nächster Monat"
+        aria-label="Nächster Monat"
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+        >
+      </button>
+      <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
     </div>
+    {#if showVacSummary}
+      {@render vacStats()}
+    {/if}
+  </div>
 
+  <div class="cal-section card card-animate">
     <!-- Wochentag-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
@@ -1315,7 +1372,7 @@
                   class:cal-chip--pending={e.status === "PENDING" ||
                     e.status === "CANCELLATION_REQUESTED"}
                   class:cal-chip--own={e.isOwn}
-                  style="background:{typeColor(e.typeCode, e.status, e.isOwn)}"
+                  style:background={typeColor(e.typeCode, e.status, e.isOwn)}
                   title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
                     ? ' · ' + e.typeName
                     : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
@@ -1339,29 +1396,29 @@
     <!-- Legende -->
     <div class="cal-legend">
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-vacation)"></span>Urlaub</span
+        ><span class="legend-dot" style:background="var(--leave-type-vacation)"></span>Urlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-overtime)"
+        ><span class="legend-dot" style:background="var(--leave-type-overtime)"
         ></span>ÜSt-Ausgleich</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick)"></span>Krank</span
+        ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-sick-child)"
+        ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
         ></span>Kinderkrank</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-special)"
+        ><span class="legend-dot" style:background="var(--leave-type-special)"
         ></span>Sonderurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-education)"
+        ><span class="legend-dot" style:background="var(--leave-type-education)"
         ></span>Bildungsurlaub</span
       >
       <span class="legend-item"
-        ><span class="legend-dot" style="background:var(--leave-type-absent)"></span>Abwesend</span
+        ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
       >
       <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
       <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
@@ -1400,43 +1457,42 @@
 
 <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
 {#if view === "list"}
-  <!-- Jahr-Navigation für Listenansicht -->
-  <div class="cal-nav list-month-nav card-animate">
-    <button class="nav-btn" onclick={prevYear} title="Vorheriges Jahr" aria-label="Vorheriges Jahr">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+  <!-- Combined year-bar (v1.5 — identisch zu Zeiterfassung, static year title) -->
+  <div class="card cal-monthbar card-animate">
+    <div class="cal-monthbar-nav">
+      <button
+        class="nav-btn"
+        onclick={prevYear}
+        title="Vorheriges Jahr"
+        aria-label="Vorheriges Jahr"
       >
-    </button>
-    <div class="cal-nav-center">
-      <select
-        class="cal-year-select"
-        bind:value={calYear}
-        onchange={() => {
-          loadData();
-          loadCalendar();
-        }}
-        aria-label="Jahr wählen"
-      >
-        {#each yearOptions as y (y)}
-          <option value={y}>{y}</option>
-        {/each}
-      </select>
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+        >
+      </button>
+      <div class="cal-nav-center cal-monthbar-center">
+        <div class="serif-eyebrow cal-monthbar-eyebrow">Urlaubsjahr</div>
+        <div class="cal-monthbar-title cal-monthbar-title--static">{calYear}</div>
+      </div>
+      <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+        >
+      </button>
     </div>
-    <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-      >
-    </button>
+    {#if showVacSummary}
+      {@render vacStats()}
+    {/if}
   </div>
 
   <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
@@ -1551,71 +1607,86 @@
 
 <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
 {#if attestModal}
-  <div class="modal-backdrop" onclick={self(closeAttestModal)} role="presentation">
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>Attest: {attestModal.employee.firstName} {attestModal.employee.lastName}</h2>
-        <button class="btn-icon" onclick={closeAttestModal} aria-label="Schließen">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-          {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
-            attestModal.typeCode,
-          )}
-        </p>
-        <div class="attest-box">
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
-            <span>Attest liegt vor</span>
-          </label>
-          {#if attestPresent}
-            <div class="attest-dates">
-              <div class="form-group">
-                <label class="form-label" for="a-from">Gültig von</label>
-                <input
-                  id="a-from"
-                  type="date"
-                  bind:value={attestFrom}
-                  class="form-input"
-                  style="max-width:160px"
-                />
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="a-to">Gültig bis</label>
-                <input
-                  id="a-to"
-                  type="date"
-                  bind:value={attestTo}
-                  class="form-input"
-                  style="max-width:160px"
-                />
-              </div>
-            </div>
-          {/if}
-        </div>
-        {#if attestError}
-          <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-            <span>⚠</span><span>{attestError}</span>
+  <Modal
+    bind:open={attestOpen}
+    eyebrow="Krankmeldung"
+    title={`Attest: ${attestModal.employee.firstName} ${attestModal.employee.lastName}`}
+  >
+    <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
+      {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
+        attestModal.typeCode,
+      )}
+    </p>
+    <div class="attest-box">
+      <label class="toggle-label">
+        <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
+        <span>Attest liegt vor</span>
+      </label>
+      {#if attestPresent}
+        <div class="attest-dates">
+          <div class="form-group">
+            <label class="form-label" for="a-from">Gültig von</label>
+            <input
+              id="a-from"
+              type="date"
+              bind:value={attestFrom}
+              class="form-input"
+              style="max-width:160px"
+            />
           </div>
-        {/if}
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
-          >Abbrechen</button
-        >
-        <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
-          {attestSaving ? "Speichern…" : "Speichern"}
-        </button>
-      </div>
+          <div class="form-group">
+            <label class="form-label" for="a-to">Gültig bis</label>
+            <input
+              id="a-to"
+              type="date"
+              bind:value={attestTo}
+              class="form-input"
+              style="max-width:160px"
+            />
+          </div>
+        </div>
+      {/if}
     </div>
-  </div>
+    {#if attestError}
+      <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
+        <span>⚠</span><span>{attestError}</span>
+      </div>
+    {/if}
+
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
+        >Abbrechen</button
+      >
+      <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
+        {attestSaving ? "Speichern…" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>
+  /* ── KPI Row (v1.5 design system) ─────────────────────────────────── */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .kpi-card {
+    /* .card recipe in app.css provides bg, border, radius, padding */
+    min-height: 96px;
+  }
+  @media (max-width: 768px) {
+    .kpi-row {
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+  }
+
   /* ── Highlight from notification deep-link ────────────────────────── */
   @keyframes highlight-fade {
     0% {
-      background-color: var(--color-brand-tint-hover);
+      background-color: var(--brand-soft);
     }
     100% {
       background-color: transparent;
@@ -1624,8 +1695,6 @@
   .highlight-row {
     animation: highlight-fade 3s var(--ease-out) both;
   }
-
-  /* page-header-compact → global in app.css */
 
   .section-header {
     display: flex;
@@ -1636,88 +1705,13 @@
   .section-header h2 {
     font-size: 1rem;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin: 0;
   }
 
-  /* ── Form Card ────────────────────────────────────────────────────── */
-  /* ── Form Modal ─────────────────────────────────────────────────── */
-  .form-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    z-index: 500;
-    animation: backdrop-in 0.15s ease;
-  }
-  @keyframes backdrop-in {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-  .form-dialog {
-    position: fixed;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 92vw;
-    max-width: 640px;
-    max-height: 88vh;
-    overflow-y: auto;
-    background: var(--glass-bg-overlay, var(--color-surface));
-    backdrop-filter: blur(var(--glass-blur, 16px));
-    -webkit-backdrop-filter: blur(var(--glass-blur, 16px));
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg);
-    z-index: 501;
-    padding: 1.75rem;
-    animation: dialog-in 0.2s var(--ease-out);
-  }
-  @keyframes dialog-in {
-    from {
-      opacity: 0;
-      transform: translate(-50%, -48%);
-    }
-    to {
-      opacity: 1;
-      transform: translate(-50%, -50%);
-    }
-  }
-  .form-dialog-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1.25rem;
-  }
-  .form-dialog-header h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin: 0;
-  }
-  .form-dialog-header .btn-icon {
-    color: var(--color-text-muted);
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.375rem;
-    border-radius: var(--radius-sm);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
-  }
-  .form-dialog-header .btn-icon:hover {
-    background-color: var(--color-bg-subtle);
-    color: var(--color-text);
-  }
-
+  /* ── Form (inside Modal primitive) ──────────────────────────────── */
   .form-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -1745,13 +1739,13 @@
   .toggle-cb {
     width: 1rem;
     height: 1rem;
-    accent-color: var(--color-brand);
+    accent-color: var(--brand);
   }
 
   /* ── Overlap ──────────────────────────────────────────────────────── */
   .overlap-box {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.875rem 1rem;
   }
@@ -1760,7 +1754,7 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin: 0 0 0.5rem;
   }
   .overlap-empty {
@@ -1783,7 +1777,7 @@
     font-weight: 600;
   }
   .overlap-type {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
   }
   .overlap-dates {
@@ -1794,15 +1788,15 @@
 
   /* ── Attest ───────────────────────────────────────────────────────── */
   .attest-box {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-sm);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
     padding: 0.875rem 1rem;
   }
   .attest-title {
     font-size: 0.8125rem;
     font-weight: 600;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     margin-bottom: 0.625rem;
@@ -1823,7 +1817,7 @@
   .toggle-cb {
     width: 16px;
     height: 16px;
-    accent-color: var(--color-brand);
+    accent-color: var(--brand);
   }
 
   /* ── Table ────────────────────────────────────────────────────────── */
@@ -1835,7 +1829,7 @@
     font-size: 0.8125rem;
   }
   .text-red {
-    color: var(--color-red, #dc2626);
+    color: var(--bad);
   }
   .note-cell {
     max-width: 200px;
@@ -1867,62 +1861,9 @@
     font-size: 1rem;
   }
 
-  /* ── Modal ────────────────────────────────────────────────────────── */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 200;
-    padding: 1rem;
-    backdrop-filter: blur(2px);
-  }
-  .modal-card {
-    width: 100%;
-    max-width: 560px;
-    padding: 0;
-    overflow: hidden;
-    animation: modal-in 0.18s ease;
-  }
-  @keyframes modal-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--color-border-subtle);
-  }
-  .modal-header h2 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-  }
-  .modal-body {
-    padding: 1.25rem 1.5rem;
-  }
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--color-border-subtle);
-    background: var(--color-bg-subtle);
-  }
-
   /* ── Buttons ──────────────────────────────────────────────────────── */
   .btn-danger {
-    background: var(--color-red, #dc2626);
+    background: var(--bad);
     color: white;
     border: none;
     border-radius: 8px;
@@ -1943,13 +1884,13 @@
     padding: 0.25rem;
     border-radius: 4px;
     font-size: 1rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   /* ── Balance Box ──────────────────────────────────────────────────── */
   .balance-box {
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.875rem 1rem;
     display: flex;
@@ -1964,7 +1905,7 @@
     font-size: 0.9375rem;
   }
   .balance-label {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .balance-value {
     font-weight: 600;
@@ -1973,87 +1914,153 @@
   .balance-meta {
     font-size: 0.8125rem;
     font-weight: 400;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin-left: 0.25rem;
   }
   .balance-deduct {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .balance-warn {
-    color: var(--color-red, #dc2626);
+    color: var(--bad);
   }
   .balance-divider {
     height: 1px;
-    background: var(--color-border-subtle);
+    background: var(--border);
     margin: 0.125rem 0;
   }
   .balance-hint-warn {
     font-size: 0.8125rem;
-    color: var(--color-red, #dc2626);
+    color: var(--bad);
     margin: 0.25rem 0 0;
   }
 
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
-  /* ── Urlaubsübersicht ─────────────────────────────────────────────── */
-  .vac-summary {
+  /* ── Combined Calendar Month-Bar (v1.5 — picker variant, no primitive fit) */
+  .cal-monthbar {
     display: flex;
     align-items: center;
-    gap: 1.5rem;
-    padding: 0.875rem 1.25rem;
-    background: var(--glass-bg, rgba(255, 255, 255, 0.6));
-    border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.5));
-    border-radius: var(--radius-md);
-    margin-bottom: 0.75rem;
+    justify-content: space-between;
+    gap: 24px;
     flex-wrap: wrap;
-    font-size: 0.875rem;
-    box-shadow: var(--glass-shadow);
-    backdrop-filter: blur(var(--glass-blur));
-    -webkit-backdrop-filter: blur(var(--glass-blur));
+    margin-bottom: 18px;
+    padding: 18px 24px;
   }
-  .vac-summary-item {
+
+  .cal-monthbar-nav {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 8px;
+    flex-wrap: nowrap;
   }
-  .vac-summary-item:last-child {
-    margin-left: 0;
+
+  .cal-monthbar-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 200px;
+    text-align: center;
+    position: relative;
   }
-  .vac-summary-divider {
-    width: 1px;
-    height: 1.25rem;
-    background: var(--color-border);
-    flex-shrink: 0;
+
+  .cal-monthbar-eyebrow {
+    font-size: 13px;
+    line-height: 1;
+    margin-bottom: 4px;
   }
-  .vac-summary-label {
-    color: var(--color-text-muted);
-    font-size: 0.8125rem;
-    font-weight: 500;
+
+  .cal-monthbar-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    color: var(--text);
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1.1;
+    letter-spacing: 0.005em;
+    padding: 2px 4px;
+    border-radius: var(--r-sm);
+    text-transform: capitalize;
   }
-  .vac-summary-value {
-    font-weight: 700;
-    font-family: var(--font-mono);
-    color: var(--color-text-heading);
-    font-size: 0.9375rem;
+  .cal-monthbar-title:hover {
+    color: var(--brand-light);
   }
-  .vac-summary-carry {
-    color: var(--color-blue);
+  .cal-monthbar-title svg {
+    color: var(--text-muted);
   }
-  .vac-summary-planned {
-    color: var(--color-yellow);
+  .cal-monthbar-title--static {
+    cursor: default;
+    font-variant-numeric: tabular-nums;
   }
-  .vac-summary-left {
-    color: var(--color-green);
-    font-weight: 700;
+  .cal-monthbar-title--static:hover {
+    color: var(--text);
   }
-  .vac-summary-warn {
-    color: var(--color-red);
-    font-weight: 700;
+
+  .cal-monthbar-today {
+    margin-left: 4px;
   }
-  .vac-summary-item--highlight .vac-summary-label {
+
+  .vac-stats {
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+
+  .vac-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .vac-stat-label {
+    font-size: 10.5px;
     font-weight: 600;
-    color: var(--color-text);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .vac-stat-value {
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--text);
+    line-height: 1;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+  }
+  .vac-stat-value.pos {
+    color: var(--good);
+  }
+  .vac-stat-value.neg {
+    color: var(--bad);
+  }
+  .vac-stat-carry {
+    color: var(--brand);
+  }
+  .vac-stat-planned {
+    color: var(--warn);
+  }
+
+  .vac-stat-unit {
+    font-family: var(--font-sans);
+    font-variant-numeric: normal;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+
+  .vac-stat--highlight .vac-stat-label {
+    color: var(--text);
   }
 
   /* ── Days-Info Bar ────────────────────────────────────────────────── */
@@ -2061,12 +2068,12 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    background: var(--color-brand-tint);
-    border: 1px solid var(--color-brand-tint-hover);
+    background: var(--brand-soft);
+    border: 1px solid var(--brand-soft);
     border-radius: 8px;
     padding: 0.5rem 0.875rem;
     font-size: 0.9375rem;
-    color: var(--color-brand);
+    color: var(--brand);
   }
   .days-info-icon {
     font-size: 1rem;
@@ -2077,48 +2084,16 @@
     margin-left: 0.25rem;
   }
   .days-info-loading {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     font-size: 0.875rem;
   }
 
   /* ── Kalender ─────────────────────────────────────────────────────── */
-  .list-month-nav {
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-lg, 0.75rem);
-    margin-bottom: 1rem;
-  }
-  .cal-year-select {
-    font-size: 1.125rem;
-    font-weight: 700;
-    color: var(--color-text-heading);
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    padding: 0.25rem 1.75rem 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.5'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.5rem center;
-  }
-  .cal-year-select:hover,
-  .cal-year-select:focus-visible {
-    background-color: var(--color-brand-tint);
-    outline: none;
-  }
-  .cal-nav-right {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    justify-self: end;
-  }
+  /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
+     See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
 
   .cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
     user-select: none;
-    gap: 3px;
-    padding: 3px;
   }
 
   .cal-loading {
@@ -2126,26 +2101,13 @@
     pointer-events: none;
   }
 
-  .cal-cell {
-    min-height: 36px;
-    padding: 0.3rem 0.4rem 0.4rem;
-    border-radius: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    overflow: visible;
-    position: relative;
-  }
-
-  .cal-cell.cal-current {
-    cursor: pointer;
-  }
-  .cal-cell.cal-current:hover {
-    background: var(--color-bg-subtle, #f3f0ff);
+  .cal-cell--drag-selected {
+    background: var(--brand-soft) !important;
+    box-shadow: inset 0 0 0 2px var(--brand);
   }
   .cal-cell--drag-selected {
-    background: var(--color-brand-tint, rgba(109, 40, 217, 0.1)) !important;
-    box-shadow: inset 0 0 0 2px var(--color-brand);
+    background: var(--brand-soft) !important;
+    box-shadow: inset 0 0 0 2px var(--brand);
   }
 
   .cal-day-num {
@@ -2223,7 +2185,7 @@
     align-items: center;
     gap: 0.3rem;
     font-size: 0.75rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .badge-attest {
     margin-left: 0.25rem;
@@ -2239,8 +2201,8 @@
   .legend-holiday-dot {
     width: 10px;
     height: 10px;
-    background: var(--color-brand-tint);
-    border: 1.5px solid var(--color-brand);
+    background: var(--brand-soft);
+    border: 1.5px solid var(--brand);
     border-radius: 2px;
     flex-shrink: 0;
     display: inline-block;
@@ -2255,8 +2217,8 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    background: var(--color-bg-subtle);
-    border: 1px solid var(--color-border-subtle);
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
     border-radius: 10px;
     padding: 0.875rem 1.25rem;
     margin-bottom: 1.25rem;
@@ -2277,11 +2239,11 @@
     font-size: 0.875rem;
     font-weight: 600;
     margin: 0;
-    color: var(--color-text);
+    color: var(--text);
   }
   .ical-desc {
     font-size: 0.8125rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     margin: 0;
   }
   .ical-actions {

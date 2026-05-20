@@ -8,18 +8,18 @@ export function getChartTheme() {
   const get = (prop: string) => style.getPropertyValue(prop).trim();
 
   return {
-    brand: get("--color-brand"),
-    brandLight: get("--color-brand-light"),
-    brandTint: get("--color-brand-tint"),
-    green: get("--color-green"),
-    red: get("--color-red"),
-    yellow: get("--color-yellow"),
-    blue: get("--color-blue"),
-    text: get("--color-text"),
-    textMuted: get("--color-text-muted"),
-    border: get("--color-border-subtle"),
-    surface: get("--color-surface"),
-    gridColor: get("--color-border-subtle"),
+    brand: get("--brand"),
+    brandLight: get("--brand-light"),
+    brandTint: get("--brand-soft"),
+    green: get("--good"),
+    red: get("--bad"),
+    yellow: get("--warn"),
+    blue: "#2563eb",
+    text: get("--text"),
+    textMuted: get("--text-muted"),
+    border: get("--border"),
+    surface: get("--bg-card"),
+    gridColor: get("--border"),
     fontFamily: get("--font-sans"),
   };
 }

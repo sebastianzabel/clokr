@@ -163,7 +163,7 @@
 <style>
   .login-page {
     min-height: 100dvh;
-    background-color: var(--color-bg-subtle);
+    background-color: var(--bg-subtle);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -171,9 +171,9 @@
   }
 
   .login-card {
-    background: var(--color-surface, #fff);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--r-lg);
     box-shadow: var(--shadow-lg);
     padding: 2.5rem;
     width: 100%;
@@ -191,7 +191,7 @@
   }
   .login-subtitle {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .login-form {
@@ -226,7 +226,7 @@
   .state-box {
     text-align: center;
     padding: 1.5rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-md);
   }
 
   .state-icon {
@@ -241,10 +241,10 @@
   }
   .state-box p {
     font-size: 0.9375rem;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
   .state-box a {
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .state-error {
@@ -265,7 +265,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    border-radius: var(--radius-md);
+    border-radius: var(--r-md);
     font-size: 0.875rem;
     background: #fef2f2;
     color: #991b1b;

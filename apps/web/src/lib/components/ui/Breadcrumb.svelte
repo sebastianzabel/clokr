@@ -64,22 +64,22 @@
   }
 
   .breadcrumb-sep {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     opacity: 0.5;
   }
 
   .breadcrumb-link {
-    color: var(--color-text-muted);
+    color: var(--text-muted);
     text-decoration: none;
     transition: color 0.15s;
   }
 
   .breadcrumb-link:hover {
-    color: var(--color-brand);
+    color: var(--brand);
   }
 
   .breadcrumb-current {
-    color: var(--color-text);
+    color: var(--text);
     font-weight: 500;
   }
 </style>

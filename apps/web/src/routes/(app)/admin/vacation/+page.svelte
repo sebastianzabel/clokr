@@ -1,9 +1,14 @@
 <script lang="ts">
-  import { run, self } from "svelte/legacy";
+  import { run } from "svelte/legacy";
 
   import { onMount } from "svelte";
   import { api } from "$api/client";
   import Pagination from "$components/ui/Pagination.svelte";
+  import PageHead from "$lib/components/layout/PageHead.svelte";
+  import Card from "$components/ui/Card.svelte";
+  import CardHeader from "$components/ui/CardHeader.svelte";
+  import KPIStat from "$components/ui/KPIStat.svelte";
+  import Modal from "$components/ui/Modal.svelte";
 
   interface TenantConfig {
     defaultWeeklyHours: number;
@@ -165,8 +170,9 @@
     employees.slice((vacPage - 1) * vacPageSize, vacPage * vacPageSize),
   );
 
-  // Mitarbeiter-Modal
+  // Mitarbeiter-Modal — Modal primitive owns Escape/backdrop/focus-trap.
   let empModal: EmployeeRow | null = $state(null);
+  let empModalOpen = $state(false);
   let eType: "FIXED_WEEKLY" | "MONTHLY_HOURS" = $state("FIXED_WEEKLY");
   let eMonthlyHours: number = $state(0);
   let eMon = $state(8),
@@ -203,6 +209,11 @@
     [eMon, eTue, eWed, eThu, eFri, eSat, eSun].filter((h) => h > 0).length,
   );
   let eVacSuggestion = $derived(Math.round((gVacationDays * eWorkingDays) / 5));
+
+  // KPI helpers (read-only summaries surfaced at top of page)
+  let kpiCarryOverLabel = $derived(`${gCarryOverDay}. ${MONTHS[gCarryOverMonth - 1]}`);
+  let kpiEmployeeCount = $derived(employees.length);
+  let kpiCustomScheduleCount = $derived(employees.filter((e) => e.workSchedule).length);
 
   onMount(async () => {
     try {
@@ -319,6 +330,7 @@
 
   async function openEmpModal(emp: EmployeeRow) {
     empModal = emp;
+    empModalOpen = true;
     const s = emp.workSchedule;
     eType = s?.type ?? "FIXED_WEEKLY";
     eMonthlyHours = s?.monthlyHours ? Number(s.monthlyHours) : 0;
@@ -373,6 +385,7 @@
   }
 
   function closeEmpModal() {
+    empModalOpen = false;
     empModal = null;
   }
 
@@ -418,1087 +431,1153 @@
       eSaving = false;
     }
   }
+
+  // When Modal closes (Escape/backdrop while not saving), clear modal state.
+  $effect(() => {
+    if (!empModalOpen && !eSaving) {
+      empModal = null;
+      eError = "";
+    }
+  });
 </script>
 
 <svelte:head>
   <title>Urlaub & Zeiten – Clokr</title>
 </svelte:head>
 
-{#if loading}
-  <div class="card card-body" style="height:220px;"></div>
-{:else if error}
-  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-{:else}
-  <!-- ── Globale Vorgaben ───────────────────────────────────────────────────── -->
+<section class="page">
+  <PageHead
+    eyebrow="Administration"
+    title="Urlaub & Zeiten"
+    accent="Zeiten"
+    sub="Globale Vorgaben für Arbeitszeit, Überstunden, Urlaub und ArbZG-Compliance — sowie individuelle Anpassungen pro Mitarbeiter."
+  />
 
-  <!-- Card 1: Arbeitszeit + Überstunden -->
-  <details class="section-group card-animate" open>
-    <summary class="section-group-header">Arbeitszeit & Überstunden</summary>
-    <div class="settings-section">
-      <h3 class="section-title">Wöchentliche Arbeitszeit</h3>
-      <p class="text-muted section-desc">Standard-Stunden pro Wochentag für alle Mitarbeiter.</p>
+  {#if loading}
+    <div class="card card-animate" style="height:220px;"></div>
+  {:else if error}
+    <div class="alert alert-error card-animate" role="alert">
+      <span>⚠</span><span>{error}</span>
+    </div>
+  {:else}
+    <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
+    <Card animate class="kpi-card">
+      <CardHeader title="Übersicht" sub="Globale Eckdaten auf einen Blick" />
+      <div class="kpi-row">
+        <KPIStat label="Jahresurlaub" value={String(gVacationDays)} unit="T" />
+        <KPIStat label="Wochenstunden" value={gWeekly.toFixed(1)} unit="h" />
+        <KPIStat label="Verfall Resturlaub" value={kpiCarryOverLabel} />
+        <KPIStat
+          label="Mitarbeiter"
+          value={String(kpiEmployeeCount)}
+          unit={kpiCustomScheduleCount > 0 ? `· ${kpiCustomScheduleCount} individuell` : undefined}
+        />
+      </div>
+    </Card>
+
+    <!-- ── Globale Vorgaben ───────────────────────────────────────────────── -->
+
+    <!-- Card 1: Arbeitszeit + Überstunden -->
+    <details class="card card-animate section-group" open>
+      <summary class="section-group-header">
+        <span class="section-group-eyebrow">Konfiguration</span>
+        <span class="section-group-title">Arbeitszeit & Überstunden</span>
+      </summary>
+      <div class="settings-section">
+        <h3 class="section-title">Wöchentliche Arbeitszeit</h3>
+        <p class="section-desc">Standard-Stunden pro Wochentag für alle Mitarbeiter.</p>
+
+        <div class="day-grid">
+          <div class="day-input">
+            <label class="day-label form-label" for="day-mo">Mo</label>
+            <input
+              id="day-mo"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gMon}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-di">Di</label>
+            <input
+              id="day-di"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gTue}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-mi">Mi</label>
+            <input
+              id="day-mi"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gWed}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-do">Do</label>
+            <input
+              id="day-do"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gThu}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-fr">Fr</label>
+            <input
+              id="day-fr"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gFri}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-sa">Sa</label>
+            <input
+              id="day-sa"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gSat}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input">
+            <label class="day-label form-label" for="day-so">So</label>
+            <input
+              id="day-so"
+              type="number"
+              min="0"
+              max="24"
+              step="0.5"
+              bind:value={gSun}
+              class="form-input day-field"
+            />
+          </div>
+          <div class="day-input total-col">
+            <span class="day-label form-label">Σ/Wo</span>
+            <span class="weekly-total">{gWeekly.toFixed(1)}&thinsp;h</span>
+          </div>
+        </div>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <!-- Überstunden -->
+      <div class="settings-section">
+        <h3 class="section-title">Überstunden</h3>
+
+        <div class="inline-settings">
+          <div class="form-group">
+            <label class="form-label" for="g-threshold">Warnschwelle</label>
+            <div class="input-suffix-wrap">
+              <input
+                id="g-threshold"
+                type="number"
+                min="1"
+                max="500"
+                step="1"
+                bind:value={gThreshold}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix">Stunden</span>
+            </div>
+            <p class="form-hint">Ab diesem Saldo: Kritisch-Warnung.</p>
+          </div>
+
+          <div class="form-group">
+            <span class="form-label">Auszahlung</span>
+            <label class="toggle-label">
+              <input type="checkbox" bind:checked={gPayout} class="toggle-cb" />
+              <span>{gPayout ? "Erlaubt" : "Gesperrt"}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 2: Urlaubsanspruch -->
+    <details class="card card-animate section-group" open>
+      <summary class="section-group-header">
+        <span class="section-group-eyebrow">Urlaub</span>
+        <span class="section-group-title">Urlaubsanspruch</span>
+      </summary>
+      <div class="settings-section">
+        <h3 class="section-title">Urlaubsanspruch</h3>
+
+        <div class="inline-settings">
+          <div class="form-group">
+            <label class="form-label" for="g-vac-days">Jahresurlaub (Basis 5-Tage-Woche)</label>
+            <div class="input-suffix-wrap">
+              <input
+                id="g-vac-days"
+                type="number"
+                min="1"
+                max="365"
+                step="1"
+                bind:value={gVacationDays}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix">Tage</span>
+            </div>
+            <p class="form-hint">
+              Teilzeit anteilig (4-Tage-Woche → {Math.round((gVacationDays * 4) / 5)} Tage).
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="g-co-day">Resturlaub verfällt am</label>
+            <div class="carryover-row">
+              <input
+                id="g-co-day"
+                type="number"
+                min="1"
+                max={gMaxDay}
+                step="1"
+                bind:value={gCarryOverDay}
+                class="form-input co-day-input"
+                aria-label="Tag des Verfalls"
+              /><span class="text-muted">.</span>
+              <select
+                id="g-co-month"
+                bind:value={gCarryOverMonth}
+                class="form-input co-month-select"
+                aria-label="Monat des Verfalls"
+              >
+                {#each MONTHS as m, i (i)}
+                  <option value={i + 1}>{m}</option>
+                {/each}
+              </select>
+              <span class="text-muted carryover-suffix">des Folgejahres</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 3: Compliance + Pausen -->
+    <details class="card card-animate section-group">
+      <summary class="section-group-header">
+        <span class="section-group-eyebrow" translate="no">ArbZG</span>
+        <span class="section-group-title">Compliance & Pausen</span>
+      </summary>
+      <div class="settings-section">
+        <h3 class="section-title">Compliance</h3>
+
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <span class="toggle-row-label">ArbZG-Verstöße anzeigen</span>
+            <p class="form-hint">
+              Prüft Höchstarbeitszeit, Pausen und Ruhezeiten (<span translate="no"
+                >§§ 3-5 ArbZG</span
+              >).
+            </p>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              aria-label="ArbZG-Verstöße anzeigen"
+              bind:checked={gArbzgEnabled}
+            />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <!-- Pausen -->
+      <div class="settings-section">
+        <h3 class="section-title">Pausen</h3>
+        <p class="section-desc">
+          Automatische Pausenberechnung nach Arbeitszeitgesetz (<span translate="no">§ 4 ArbZG</span
+          >).
+        </p>
+
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <span class="toggle-row-label">Automatische Pausen</span>
+            <p class="form-hint">
+              Nach 6h werden 30 Min., nach 9h werden 45 Min. Pause automatisch eingetragen.
+            </p>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              aria-label="Automatische Pausen aktivieren"
+              bind:checked={gAutoBreak}
+            />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        {#if gAutoBreak}
+          <div class="form-group break-start-group">
+            <label class="form-label" for="g-break-start">Standard-Pausenbeginn</label>
+            <input
+              id="g-break-start"
+              type="time"
+              bind:value={gDefaultBreakStart}
+              class="form-input break-start-input"
+            />
+            <p class="form-hint">Wird als Vorauswahl im Erfassungsformular verwendet.</p>
+          </div>
+        {/if}
+      </div>
+    </details>
+
+    <!-- Card 4: Benachrichtigungen -->
+    <details class="card card-animate section-group">
+      <summary class="section-group-header">
+        <span class="section-group-eyebrow">Erinnerungen</span>
+        <span class="section-group-title">Benachrichtigungen</span>
+      </summary>
+      <div class="settings-section">
+        <h3 class="section-title">Benachrichtigungen</h3>
+        <p class="section-desc">
+          Automatische Erinnerungen bei fehlenden oder offenen Zeiteinträgen.
+        </p>
+
+        <div class="inline-settings">
+          <div class="form-group">
+            <label class="form-label" for="g-clockout-hours"
+              >Erinnerung bei offener Stempelung nach</label
+            >
+            <div class="input-suffix-wrap">
+              <input
+                id="g-clockout-hours"
+                type="number"
+                min="1"
+                max="48"
+                step="1"
+                bind:value={gClockOutHours}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix">Stunden</span>
+            </div>
+            <p class="form-hint">
+              Mitarbeiter werden erinnert, wenn sie länger als diese Zeit eingestempelt sind.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="g-missing-days"
+              >Erinnerung bei fehlenden Einträgen nach</label
+            >
+            <div class="input-suffix-wrap">
+              <input
+                id="g-missing-days"
+                type="number"
+                min="1"
+                max="90"
+                step="1"
+                bind:value={gMissingDays}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix">Tagen</span>
+            </div>
+            <p class="form-hint">
+              Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
+              wurden.
+            </p>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="g-autoinvalidate-hours"
+              >Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)</label
+            >
+            <div class="input-suffix-wrap">
+              <input
+                id="g-autoinvalidate-hours"
+                type="number"
+                min="0"
+                max="168"
+                step="1"
+                bind:value={gAutoInvalidateHours}
+                class="form-input threshold-input"
+              />
+              <span class="input-suffix">Stunden</span>
+            </div>
+            <p class="form-hint">
+              Offene Einträge ohne Ausstempeln werden nach dieser Zeit als ungültig markiert und
+              müssen manuell korrigiert werden. 0 = deaktiviert.
+            </p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <!-- Card 5: Abwesenheiten & Sonderregelungen -->
+    <details class="card card-animate section-group">
+      <summary class="section-group-header">
+        <span class="section-group-eyebrow" translate="no">BUrlG · EFZG</span>
+        <span class="section-group-title">Abwesenheiten & Sonderregelungen</span>
+      </summary>
+      <div class="settings-section">
+        <h3 class="section-title">Heiligabend & Silvester</h3>
+        <div class="inline-settings">
+          <div class="form-group">
+            <label class="form-label" for="christmas-rule">Heiligabend (24.12.)</label>
+            <select id="christmas-rule" bind:value={christmasEveRule} class="form-input">
+              <option value="NORMAL">Normaler Arbeitstag</option>
+              <option value="HALF_DAY">Halber Tag frei</option>
+              <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="newyears-rule">Silvester (31.12.)</label>
+            <select id="newyears-rule" bind:value={newYearsEveRule} class="form-input">
+              <option value="NORMAL">Normaler Arbeitstag</option>
+              <option value="HALF_DAY">Halber Tag frei</option>
+              <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="holiday-valid-from">Gültig ab Jahr</label>
+            <input
+              id="holiday-valid-from"
+              type="number"
+              min="2020"
+              max="2100"
+              bind:value={holidayRulesValidFromYear}
+              class="form-input"
+            />
+            <p class="form-hint">
+              {#if christmasEveRule === "NORMAL" && newYearsEveRule === "NORMAL"}
+                Aktuell keine Sonderregelung aktiv.
+              {:else if christmasEveRule !== "NORMAL" && newYearsEveRule !== "NORMAL"}
+                Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"})
+                und Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"})
+                gelten ab {holidayRulesValidFromYear}. Für frühere Jahre gelten beide als normaler
+                Arbeitstag.
+              {:else if christmasEveRule !== "NORMAL"}
+                Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"})
+                gilt ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
+                Arbeitstag.
+              {:else}
+                Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) gilt
+                ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
+                Arbeitstag.
+              {/if}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">Urlaubsanträge</h3>
+        <div class="inline-settings">
+          <div class="form-group">
+            <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
+            <input
+              id="lead-time"
+              type="number"
+              min="0"
+              max="365"
+              bind:value={vacationLeadTimeDays}
+              class="form-input"
+            />
+            <p class="form-hint">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
+            <input
+              id="max-advance"
+              type="number"
+              min="0"
+              max="24"
+              bind:value={vacationMaxAdvanceMonths}
+              class="form-input"
+            />
+            <p class="form-hint">0 = unbegrenzt.</p>
+          </div>
+        </div>
+        <label class="form-label toggle-label spaced-top-sm">
+          <input type="checkbox" bind:checked={halfDayAllowed} />
+          Halbe Tage erlauben
+        </label>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">Krankmeldungen</h3>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={sickSelfReport} />
+          Mitarbeiter dürfen Krankmeldung selbst eintragen
+        </label>
+        <div class="inline-settings spaced-top-sm">
+          <div class="form-group">
+            <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tagen)</label>
+            <input
+              id="sick-note-days"
+              type="number"
+              min="1"
+              max="30"
+              bind:value={sickNoteRequiredAfterDays}
+              class="form-input"
+            />
+            <p class="form-hint">§ 5 EFZG — Standard: 3 Tage.</p>
+          </div>
+        </div>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">Teilzeit-Urlaub</h3>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={autoCalcPartTimeVacation} />
+          Automatische Pro-Rata-Berechnung (<span translate="no">BUrlG</span>)
+        </label>
+        {#if autoCalcPartTimeVacation}
+          <div class="inline-settings spaced-top-sm">
+            <div class="form-group">
+              <label class="form-label" for="ft-days">Vollzeit-Arbeitstage/Woche</label>
+              <select id="ft-days" bind:value={fullTimeWorkDaysPerWeek} class="form-input">
+                <option value={5}>5 Tage (Mo–Fr)</option>
+                <option value={6}>6 Tage (Mo–Sa)</option>
+              </select>
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">
+          Urlaubsübertrag & Mindesturlaub (<span translate="no">§ 7 BUrlG</span>)
+        </h3>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={enforceMinVacation} />
+          Gesetzlichen Mindesturlaub durchsetzen (Warnung wenn nicht genommen)
+        </label>
+        <label class="form-label toggle-label spaced-top-xs">
+          <input type="checkbox" bind:checked={carryOverRequiresReason} />
+          Übertrag ins Folgejahr erfordert Begründung (Krankheit, betriebliche Gründe)
+        </label>
+        <div class="inline-settings spaced-top-sm">
+          <div class="form-group">
+            <label class="form-label" for="vac-reminder-month">Verfall-Erinnerung ab Monat</label>
+            <select
+              id="vac-reminder-month"
+              bind:value={vacationReminderStartMonth}
+              class="form-input"
+            >
+              <option value={8}>August</option>
+              <option value={9}>September</option>
+              <option value={10}>Oktober</option>
+              <option value={11}>November</option>
+              <option value={12}>Dezember</option>
+            </select>
+            <p class="form-hint">
+              Ab diesem Monat werden MA über verfallenden Urlaub erinnert (Hinweispflicht EuGH
+              C-684/16).
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">Max. Minusstunden</h3>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={maxNegEnabled} />
+          Limit für negatives Überstundensaldo
+        </label>
+        {#if maxNegEnabled}
+          <div class="inline-settings spaced-top-sm">
+            <div class="form-group">
+              <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
+              <input
+                id="max-neg-hours"
+                type="number"
+                min="1"
+                max="999"
+                step="0.5"
+                bind:value={maxNegHours}
+                class="form-input"
+              />
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <hr class="settings-divider" />
+
+      <div class="settings-section">
+        <h3 class="section-title">Automatische Erinnerungen</h3>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={reminderPendingEnabled} />
+          Offene Urlaubsanträge — Manager erinnern
+        </label>
+        {#if reminderPendingEnabled}
+          <div class="inline-settings spaced-top-xs">
+            <div class="form-group">
+              <label class="form-label" for="rem-pending-h">Nach (Stunden)</label>
+              <input
+                id="rem-pending-h"
+                type="number"
+                min="1"
+                max="720"
+                bind:value={reminderPendingHours}
+                class="form-input"
+              />
+            </div>
+          </div>
+        {/if}
+        <label class="form-label toggle-label spaced-top-sm">
+          <input type="checkbox" bind:checked={reminderUpcomingEnabled} />
+          Bevorstehende Abwesenheiten — Mitarbeiter erinnern
+        </label>
+        {#if reminderUpcomingEnabled}
+          <div class="inline-settings spaced-top-xs">
+            <div class="form-group">
+              <label class="form-label" for="rem-upcoming-d">Tage vorher</label>
+              <input
+                id="rem-upcoming-d"
+                type="number"
+                min="1"
+                max="30"
+                bind:value={reminderUpcomingDays}
+                class="form-input"
+              />
+            </div>
+          </div>
+        {/if}
+      </div>
+    </details>
+
+    <!-- Action bar: save global -->
+    <div class="card card-animate action-card">
+      {#if gError}
+        <div class="alert alert-error" role="alert">
+          <span>⚠</span><span>{gError}</span>
+        </div>
+      {/if}
+      <div class="apply-existing-row">
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={gApplyToExisting} />
+          Auch auf bestehende Mitarbeiter anwenden
+        </label>
+        <p class="form-hint apply-existing-hint">
+          Erstellt neue Schedule-Versionen ab heute für alle MA mit festem Wochenmodell. Minijobber
+          und MA mit individuellen Einstellungen bleiben unverändert.
+        </p>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" onclick={saveGlobal} disabled={gSaving}>
+          {gSaving ? "Speichern…" : "Globale Vorgaben speichern"}
+        </button>
+        {#if gSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
+      </div>
+    </div>
+
+    <!-- ── Pro-Mitarbeiter ─────────────────────────────────────────────── -->
+    {#if employees.length > 0}
+      <Card animate>
+        <CardHeader title="Mitarbeiter" sub="Individuelle Abweichungen von der globalen Vorgabe" />
+
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Nr.</th>
+                <th>Mitarbeiter</th>
+                <th class="text-center">Mo</th>
+                <th class="text-center">Di</th>
+                <th class="text-center">Mi</th>
+                <th class="text-center">Do</th>
+                <th class="text-center">Fr</th>
+                <th class="text-center">Sa</th>
+                <th class="text-center">So</th>
+                <th class="text-center">Σ/Wo</th>
+                <th>Schwelle</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedVacationEmployees as emp (emp.id)}
+                {@const s = emp.workSchedule}
+                <tr>
+                  <td class="text-muted font-mono">{emp.employeeNumber}</td>
+                  <td class="font-medium">{emp.firstName} {emp.lastName}</td>
+                  {#if s?.type === "MONTHLY_HOURS"}
+                    <td class="font-mono text-center" colspan="7">
+                      <span class="chip-brand">{Number(s.monthlyHours).toFixed(1)} h/Monat</span>
+                    </td>
+                  {:else}
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.mondayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.fridayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td
+                    >
+                    <td class="font-mono text-center"
+                      >{s ? Number(s.sundayHours).toFixed(1) : "—"}</td
+                    >
+                  {/if}
+                  <td class="font-mono text-center font-medium">
+                    {#if s}
+                      {#if s.type === "MONTHLY_HOURS"}
+                        {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
+                      {:else}
+                        {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                      {/if}
+                    {:else}
+                      <span class="chip-muted">Global</span>
+                    {/if}
+                  </td>
+                  <td class="font-mono"
+                    >{s ? Number(s.overtimeThreshold).toFixed(0) + " h" : "—"}</td
+                  >
+                  <td>
+                    <button class="btn btn-ghost btn-sm" onclick={() => openEmpModal(emp)}>
+                      Bearbeiten
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <Pagination total={employees.length} bind:page={vacPage} bind:pageSize={vacPageSize} />
+        </div>
+      </Card>
+    {/if}
+  {/if}
+</section>
+
+<!-- ── Mitarbeiter-Modal ────────────────────────────────────────────────────── -->
+{#if empModal}
+  <Modal
+    bind:open={empModalOpen}
+    eyebrow="Mitarbeiter"
+    title={`Einstellungen: ${empModal.firstName} ${empModal.lastName}`}
+  >
+    {#if eError}
+      <div class="alert alert-error modal-alert" role="alert">
+        <span>⚠</span><span>{eError}</span>
+      </div>
+    {/if}
+
+    <h3 class="modal-section-heading">Arbeitszeit</h3>
+
+    <div class="form-group modal-form-group">
+      <label class="form-label" for="e-type">Arbeitszeitmodell</label>
+      <select id="e-type" bind:value={eType} class="form-input modal-select-md">
+        <option value="FIXED_WEEKLY">Feste Wochentage</option>
+        <option value="MONTHLY_HOURS">Monatsstunden</option>
+      </select>
+    </div>
+
+    {#if eType === "MONTHLY_HOURS"}
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
+        <div class="input-suffix-wrap">
+          <input
+            id="e-monthly-hours"
+            type="number"
+            min="0"
+            max="744"
+            step="0.5"
+            bind:value={eMonthlyHours}
+            class="form-input threshold-input"
+          />
+          <span class="input-suffix">Stunden</span>
+        </div>
+        <p class="form-hint">Keine festen Wochentage – Soll wird monatlich berechnet.</p>
+      </div>
+
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
+        <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input modal-select-lg">
+          <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
+          <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
+        </select>
+        <p class="form-hint">
+          Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden
+          dokumentiert, Saldo bleibt bei 0.
+        </p>
+      </div>
+
+      <div class="form-group modal-form-group">
+        <span class="form-label">Feste Arbeitstage</span>
+        <div class="weekday-chips">
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eMonWd}
+            onclick={() => (eMonWd = !eMonWd)}>Mo</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eTueWd}
+            onclick={() => (eTueWd = !eTueWd)}>Di</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eWedWd}
+            onclick={() => (eWedWd = !eWedWd)}>Mi</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eThuWd}
+            onclick={() => (eThuWd = !eThuWd)}>Do</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eFriWd}
+            onclick={() => (eFriWd = !eFriWd)}>Fr</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eSatWd}
+            onclick={() => (eSatWd = !eSatWd)}>Sa</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eSunWd}
+            onclick={() => (eSunWd = !eSunWd)}>So</button
+          >
+        </div>
+        <p class="form-hint">
+          Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide;
+          Arbeitstage im Monat).
+        </p>
+      </div>
+    {:else}
+      <p class="modal-help">Wochenstunden werden automatisch aus den Tagen summiert.</p>
 
       <div class="day-grid">
         <div class="day-input">
-          <label class="day-label form-label" for="day-mo">Mo</label>
+          <label class="day-label form-label" for="emp-day-mo">Mo</label>
           <input
-            id="day-mo"
+            id="emp-day-mo"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gMon}
+            bind:value={eMon}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-di">Di</label>
+          <label class="day-label form-label" for="emp-day-di">Di</label>
           <input
-            id="day-di"
+            id="emp-day-di"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gTue}
+            bind:value={eTue}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-mi">Mi</label>
+          <label class="day-label form-label" for="emp-day-mi">Mi</label>
           <input
-            id="day-mi"
+            id="emp-day-mi"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gWed}
+            bind:value={eWed}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-do">Do</label>
+          <label class="day-label form-label" for="emp-day-do">Do</label>
           <input
-            id="day-do"
+            id="emp-day-do"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gThu}
+            bind:value={eThu}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-fr">Fr</label>
+          <label class="day-label form-label" for="emp-day-fr">Fr</label>
           <input
-            id="day-fr"
+            id="emp-day-fr"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gFri}
+            bind:value={eFri}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-sa">Sa</label>
+          <label class="day-label form-label" for="emp-day-sa">Sa</label>
           <input
-            id="day-sa"
+            id="emp-day-sa"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gSat}
+            bind:value={eSat}
             class="form-input day-field"
           />
         </div>
         <div class="day-input">
-          <label class="day-label form-label" for="day-so">So</label>
+          <label class="day-label form-label" for="emp-day-so">So</label>
           <input
-            id="day-so"
+            id="emp-day-so"
             type="number"
             min="0"
             max="24"
             step="0.5"
-            bind:value={gSun}
+            bind:value={eSun}
             class="form-input day-field"
           />
         </div>
         <div class="day-input total-col">
-          <span class="day-label form-label">Σ/Wo</span>
-          <span class="weekly-total">{gWeekly.toFixed(1)}&thinsp;h</span>
+          <span class="day-label form-label">Σ</span>
+          <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
         </div>
       </div>
-    </div>
+    {/if}
 
-    <hr class="settings-divider" />
-
-    <!-- Überstunden -->
-    <div class="settings-section">
-      <h3 class="section-title">Überstunden</h3>
-
-      <div class="inline-settings">
-        <div class="form-group">
-          <label class="form-label" for="g-threshold">Warnschwelle</label>
-          <div class="input-suffix-wrap">
-            <input
-              id="g-threshold"
-              type="number"
-              min="1"
-              max="500"
-              step="1"
-              bind:value={gThreshold}
-              class="form-input threshold-input"
-            />
-            <span class="input-suffix text-muted">Stunden</span>
-          </div>
-          <p class="form-hint text-muted">Ab diesem Saldo: Kritisch-Warnung.</p>
-        </div>
-
-        <div class="form-group">
-          <span class="form-label">Auszahlung</span>
-          <label class="toggle-label">
-            <input type="checkbox" bind:checked={gPayout} class="toggle-cb" />
-            <span>{gPayout ? "Erlaubt" : "Gesperrt"}</span>
-          </label>
-        </div>
-      </div>
-    </div>
-  </details>
-
-  <!-- Card 2: Urlaubsanspruch -->
-  <details class="section-group card-animate" open>
-    <summary class="section-group-header">Urlaubsanspruch</summary>
-    <div class="settings-section">
-      <h3 class="section-title">Urlaubsanspruch</h3>
-
-      <div class="inline-settings">
-        <div class="form-group">
-          <label class="form-label" for="g-vac-days">Jahresurlaub (Basis 5-Tage-Woche)</label>
-          <div class="input-suffix-wrap">
-            <input
-              id="g-vac-days"
-              type="number"
-              min="1"
-              max="365"
-              step="1"
-              bind:value={gVacationDays}
-              class="form-input threshold-input"
-            />
-            <span class="input-suffix text-muted">Tage</span>
-          </div>
-          <p class="form-hint text-muted">
-            Teilzeit anteilig (4-Tage-Woche → {Math.round((gVacationDays * 4) / 5)} Tage).
-          </p>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="g-co-day">Resturlaub verfällt am</label>
-          <div class="carryover-row">
-            <input
-              id="g-co-day"
-              type="number"
-              min="1"
-              max={gMaxDay}
-              step="1"
-              bind:value={gCarryOverDay}
-              class="form-input co-day-input"
-              aria-label="Tag des Verfalls"
-            /><span class="text-muted">.</span>
-            <select
-              id="g-co-month"
-              bind:value={gCarryOverMonth}
-              class="form-input co-month-select"
-              aria-label="Monat des Verfalls"
-            >
-              {#each MONTHS as m, i (i)}
-                <option value={i + 1}>{m}</option>
-              {/each}
-            </select>
-            <span class="text-muted" style="font-size:0.875rem">des Folgejahres</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  </details>
-
-  <!-- Card 3: Compliance + Pausen -->
-  <details class="section-group card-animate">
-    <summary class="section-group-header">Compliance & Pausen</summary>
-    <div class="settings-section">
-      <h3 class="section-title">Compliance</h3>
-
-      <div class="toggle-row">
-        <div class="toggle-info">
-          <span class="toggle-row-label">ArbZG-Verstöße anzeigen</span>
-          <p class="form-hint text-muted">
-            Prüft Höchstarbeitszeit, Pausen und Ruhezeiten (§§ 3-5 ArbZG).
-          </p>
-        </div>
-        <label class="switch">
+    <div class="extra-row spaced-top-md">
+      <div class="form-group">
+        <label class="form-label" for="e-threshold">Warnschwelle</label>
+        <div class="input-suffix-wrap">
           <input
-            type="checkbox"
-            aria-label="ArbZG-Verstöße anzeigen"
-            bind:checked={gArbzgEnabled}
-          />
-          <span class="switch-slider"></span>
-        </label>
-      </div>
-    </div>
-
-    <hr class="settings-divider" />
-
-    <!-- Pausen -->
-    <div class="settings-section">
-      <h3 class="section-title">Pausen</h3>
-      <p class="text-muted section-desc">
-        Automatische Pausenberechnung nach Arbeitszeitgesetz (§ 4 ArbZG).
-      </p>
-
-      <div class="toggle-row">
-        <div class="toggle-info">
-          <span class="toggle-row-label">Automatische Pausen</span>
-          <p class="form-hint text-muted">
-            Nach 6h werden 30 Min., nach 9h werden 45 Min. Pause automatisch eingetragen.
-          </p>
-        </div>
-        <label class="switch">
-          <input
-            type="checkbox"
-            aria-label="Automatische Pausen aktivieren"
-            bind:checked={gAutoBreak}
-          />
-          <span class="switch-slider"></span>
-        </label>
-      </div>
-
-      {#if gAutoBreak}
-        <div class="form-group" style="margin-top: 1rem;">
-          <label class="form-label" for="g-break-start">Standard-Pausenbeginn</label>
-          <input
-            id="g-break-start"
-            type="time"
-            bind:value={gDefaultBreakStart}
-            class="form-input"
-            style="max-width: 140px;"
-          />
-          <p class="form-hint text-muted">Wird als Vorauswahl im Erfassungsformular verwendet.</p>
-        </div>
-      {/if}
-    </div>
-  </details>
-
-  <!-- Card 4: Benachrichtigungen -->
-  <details class="section-group card-animate">
-    <summary class="section-group-header">Benachrichtigungen</summary>
-    <div class="settings-section">
-      <h3 class="section-title">Benachrichtigungen</h3>
-      <p class="text-muted section-desc">
-        Automatische Erinnerungen bei fehlenden oder offenen Zeiteinträgen.
-      </p>
-
-      <div class="inline-settings">
-        <div class="form-group">
-          <label class="form-label" for="g-clockout-hours"
-            >Erinnerung bei offener Stempelung nach</label
-          >
-          <div class="input-suffix-wrap">
-            <input
-              id="g-clockout-hours"
-              type="number"
-              min="1"
-              max="48"
-              step="1"
-              bind:value={gClockOutHours}
-              class="form-input threshold-input"
-            />
-            <span class="input-suffix text-muted">Stunden</span>
-          </div>
-          <p class="form-hint text-muted">
-            Mitarbeiter werden erinnert, wenn sie länger als diese Zeit eingestempelt sind.
-          </p>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="g-missing-days"
-            >Erinnerung bei fehlenden Einträgen nach</label
-          >
-          <div class="input-suffix-wrap">
-            <input
-              id="g-missing-days"
-              type="number"
-              min="1"
-              max="90"
-              step="1"
-              bind:value={gMissingDays}
-              class="form-input threshold-input"
-            />
-            <span class="input-suffix text-muted">Tagen</span>
-          </div>
-          <p class="form-hint text-muted">
-            Mitarbeiter und Vorgesetzte werden benachrichtigt, wenn keine Zeiteinträge erfasst
-            wurden.
-          </p>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="g-autoinvalidate-hours"
-            >Auto-Invalidierung offener Einträge (Stunden, 0 = deaktiviert)</label
-          >
-          <div class="input-suffix-wrap">
-            <input
-              id="g-autoinvalidate-hours"
-              type="number"
-              min="0"
-              max="168"
-              step="1"
-              bind:value={gAutoInvalidateHours}
-              class="form-input threshold-input"
-            />
-            <span class="input-suffix text-muted">Stunden</span>
-          </div>
-          <p class="form-hint text-muted">
-            Offene Einträge ohne Ausstempeln werden nach dieser Zeit als ungültig markiert und
-            müssen manuell korrigiert werden. 0 = deaktiviert.
-          </p>
-        </div>
-      </div>
-    </div>
-  </details>
-
-  <!-- Card 5: Abwesenheiten & Sonderregelungen -->
-  <details class="section-group card-animate">
-    <summary class="section-group-header">Abwesenheiten & Sonderregelungen</summary>
-    <div class="settings-section">
-      <h3 class="section-title">Heiligabend & Silvester</h3>
-      <div class="inline-settings">
-        <div class="form-group">
-          <label class="form-label" for="christmas-rule">Heiligabend (24.12.)</label>
-          <select id="christmas-rule" bind:value={christmasEveRule} class="form-input">
-            <option value="NORMAL">Normaler Arbeitstag</option>
-            <option value="HALF_DAY">Halber Tag frei</option>
-            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="newyears-rule">Silvester (31.12.)</label>
-          <select id="newyears-rule" bind:value={newYearsEveRule} class="form-input">
-            <option value="NORMAL">Normaler Arbeitstag</option>
-            <option value="HALF_DAY">Halber Tag frei</option>
-            <option value="FULL_DAY_OFF">Ganzer Tag frei</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="holiday-valid-from">Gültig ab Jahr</label>
-          <input
-            id="holiday-valid-from"
-            type="number"
-            min="2020"
-            max="2100"
-            bind:value={holidayRulesValidFromYear}
-            class="form-input"
-          />
-          <p class="form-hint text-muted">
-            {#if christmasEveRule === "NORMAL" && newYearsEveRule === "NORMAL"}
-              Aktuell keine Sonderregelung aktiv.
-            {:else if christmasEveRule !== "NORMAL" && newYearsEveRule !== "NORMAL"}
-              Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) und
-              Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) gelten
-              ab {holidayRulesValidFromYear}. Für frühere Jahre gelten beide als normaler
-              Arbeitstag.
-            {:else if christmasEveRule !== "NORMAL"}
-              Heiligabend ({christmasEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"})
-              gilt ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
-              Arbeitstag.
-            {:else}
-              Silvester ({newYearsEveRule === "HALF_DAY" ? "halber Tag" : "ganzer Tag frei"}) gilt
-              ab {holidayRulesValidFromYear}. Für frühere Jahre gilt der Tag als normaler
-              Arbeitstag.
-            {/if}
-          </p>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <h3 class="section-title">Urlaubsanträge</h3>
-      <div class="inline-settings">
-        <div class="form-group">
-          <label class="form-label" for="lead-time">Vorlaufzeit (Tage)</label>
-          <input
-            id="lead-time"
-            type="number"
-            min="0"
-            max="365"
-            bind:value={vacationLeadTimeDays}
-            class="form-input"
-          />
-          <p class="form-hint text-muted">0 = keine Vorlaufzeit. Gilt nicht für Krankmeldungen.</p>
-        </div>
-        <div class="form-group">
-          <label class="form-label" for="max-advance">Max. Vorausbuchung (Monate)</label>
-          <input
-            id="max-advance"
-            type="number"
-            min="0"
-            max="24"
-            bind:value={vacationMaxAdvanceMonths}
-            class="form-input"
-          />
-          <p class="form-hint text-muted">0 = unbegrenzt.</p>
-        </div>
-      </div>
-      <label class="form-label toggle-label" style="margin-top:0.75rem">
-        <input type="checkbox" bind:checked={halfDayAllowed} />
-        Halbe Tage erlauben
-      </label>
-    </div>
-
-    <div class="settings-section">
-      <h3 class="section-title">Krankmeldungen</h3>
-      <label class="form-label toggle-label">
-        <input type="checkbox" bind:checked={sickSelfReport} />
-        Mitarbeiter dürfen Krankmeldung selbst eintragen
-      </label>
-      <div class="inline-settings" style="margin-top:0.75rem">
-        <div class="form-group">
-          <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tagen)</label>
-          <input
-            id="sick-note-days"
+            id="e-threshold"
             type="number"
             min="1"
-            max="30"
-            bind:value={sickNoteRequiredAfterDays}
-            class="form-input"
+            max="500"
+            bind:value={eThreshold}
+            class="form-input threshold-input"
           />
-          <p class="form-hint text-muted">§ 5 EFZG — Standard: 3 Tage.</p>
+          <span class="input-suffix">Stunden</span>
         </div>
+      </div>
+      <div class="form-group">
+        <span class="form-label">Auszahlung</span>
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={ePayout} class="toggle-cb" />
+          <span>{ePayout ? "Erlaubt" : "Gesperrt"}</span>
+        </label>
       </div>
     </div>
 
-    <div class="settings-section">
-      <h3 class="section-title">Teilzeit-Urlaub</h3>
-      <label class="form-label toggle-label">
-        <input type="checkbox" bind:checked={autoCalcPartTimeVacation} />
-        Automatische Pro-Rata-Berechnung (BUrlG)
-      </label>
-      {#if autoCalcPartTimeVacation}
-        <div class="inline-settings" style="margin-top:0.75rem">
-          <div class="form-group">
-            <label class="form-label" for="ft-days">Vollzeit-Arbeitstage/Woche</label>
-            <select id="ft-days" bind:value={fullTimeWorkDaysPerWeek} class="form-input">
-              <option value={5}>5 Tage (Mo–Fr)</option>
-              <option value={6}>6 Tage (Mo–Sa)</option>
-            </select>
-          </div>
-        </div>
-      {/if}
+    <div class="form-group spaced-top-md">
+      <label class="form-label" for="e-valid-from">Gültig ab</label>
+      <input
+        id="e-valid-from"
+        type="date"
+        bind:value={eValidFrom}
+        class="form-input modal-input-sm"
+      />
     </div>
 
-    <div class="settings-section">
-      <h3 class="section-title">Urlaubsübertrag & Mindesturlaub (§ 7 BUrlG)</h3>
-      <label class="form-label toggle-label">
-        <input type="checkbox" bind:checked={enforceMinVacation} />
-        Gesetzlichen Mindesturlaub durchsetzen (Warnung wenn nicht genommen)
-      </label>
-      <label class="form-label toggle-label" style="margin-top:0.5rem">
-        <input type="checkbox" bind:checked={carryOverRequiresReason} />
-        Übertrag ins Folgejahr erfordert Begründung (Krankheit, betriebliche Gründe)
-      </label>
-      <div class="inline-settings" style="margin-top:0.75rem">
-        <div class="form-group">
-          <label class="form-label" for="vac-reminder-month">Verfall-Erinnerung ab Monat</label>
-          <select
-            id="vac-reminder-month"
-            bind:value={vacationReminderStartMonth}
-            class="form-input"
-          >
-            <option value={8}>August</option>
-            <option value={9}>September</option>
-            <option value={10}>Oktober</option>
-            <option value={11}>November</option>
-            <option value={12}>Dezember</option>
-          </select>
-          <p class="form-hint text-muted">
-            Ab diesem Monat werden MA über verfallenden Urlaub erinnert (Hinweispflicht EuGH
-            C-684/16).
-          </p>
-        </div>
-      </div>
-    </div>
+    <hr class="modal-divider" />
+    <h3 class="modal-section-heading">Urlaubsanspruch {eVacYear}</h3>
 
-    <div class="settings-section">
-      <h3 class="section-title">Max. Minusstunden</h3>
-      <label class="form-label toggle-label">
-        <input type="checkbox" bind:checked={maxNegEnabled} />
-        Limit für negatives Überstundensaldo
-      </label>
-      {#if maxNegEnabled}
-        <div class="inline-settings" style="margin-top:0.75rem">
-          <div class="form-group">
-            <label class="form-label" for="max-neg-hours">Max. Minusstunden (h)</label>
-            <input
-              id="max-neg-hours"
-              type="number"
-              min="1"
-              max="999"
-              step="0.5"
-              bind:value={maxNegHours}
-              class="form-input"
-            />
-          </div>
-        </div>
-      {/if}
-    </div>
-    <div class="settings-section">
-      <h3 class="section-title">Automatische Erinnerungen</h3>
-      <label class="form-label toggle-label">
-        <input type="checkbox" bind:checked={reminderPendingEnabled} />
-        Offene Urlaubsanträge — Manager erinnern
-      </label>
-      {#if reminderPendingEnabled}
-        <div class="inline-settings" style="margin-top:0.5rem">
-          <div class="form-group">
-            <label class="form-label" for="rem-pending-h">Nach (Stunden)</label>
-            <input
-              id="rem-pending-h"
-              type="number"
-              min="1"
-              max="720"
-              bind:value={reminderPendingHours}
-              class="form-input"
-            />
-          </div>
-        </div>
-      {/if}
-      <label class="form-label toggle-label" style="margin-top:0.75rem">
-        <input type="checkbox" bind:checked={reminderUpcomingEnabled} />
-        Bevorstehende Abwesenheiten — Mitarbeiter erinnern
-      </label>
-      {#if reminderUpcomingEnabled}
-        <div class="inline-settings" style="margin-top:0.5rem">
-          <div class="form-group">
-            <label class="form-label" for="rem-upcoming-d">Tage vorher</label>
-            <input
-              id="rem-upcoming-d"
-              type="number"
-              min="1"
-              max="30"
-              bind:value={reminderUpcomingDays}
-              class="form-input"
-            />
-          </div>
-        </div>
-      {/if}
-    </div>
-  </details>
-
-  {#if gError}
-    <div class="alert alert-error" role="alert" style="margin:0.75rem 0 0;">
-      <span>⚠</span><span>{gError}</span>
-    </div>
-  {/if}
-  <div class="apply-existing-row" style="margin: 1rem 0 0;">
-    <label class="form-label toggle-label">
-      <input type="checkbox" bind:checked={gApplyToExisting} />
-      Auch auf bestehende Mitarbeiter anwenden
-    </label>
-    <p class="form-hint text-muted" style="margin: 0.25rem 0 0 1.5rem;">
-      Erstellt neue Schedule-Versionen ab heute für alle MA mit festem Wochenmodell. Minijobber und
-      MA mit individuellen Einstellungen bleiben unverändert.
-    </p>
-  </div>
-  <div class="form-actions">
-    <button class="btn btn-primary" onclick={saveGlobal} disabled={gSaving}>
-      {gSaving ? "Speichern…" : "Globale Vorgaben speichern"}
-    </button>
-    {#if gSaved}
-      <span class="saved-hint">✓ Gespeichert</span>
-    {/if}
-  </div>
-
-  <!-- ── Pro-Mitarbeiter ────────────────────────────────────────────────────── -->
-  {#if employees.length > 0}
-    <div class="section-group">
-      <h3>Arbeitszeit & Urlaub pro Mitarbeiter</h3>
-      <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
-        Individuelle Abweichungen von der globalen Vorgabe
+    {#if eVacLoading}
+      <p class="modal-help">Lade…</p>
+    {:else}
+      <p class="form-hint modal-help-strong">
+        Berechnet aus Arbeitstagen: {eWorkingDays} Tage/Woche →
+        <strong>{eVacSuggestion} Urlaubstage</strong> vorgeschlagen.
       </p>
 
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Nr.</th>
-              <th>Mitarbeiter</th>
-              <th class="text-center">Mo</th>
-              <th class="text-center">Di</th>
-              <th class="text-center">Mi</th>
-              <th class="text-center">Do</th>
-              <th class="text-center">Fr</th>
-              <th class="text-center">Sa</th>
-              <th class="text-center">So</th>
-              <th class="text-center">Σ/Wo</th>
-              <th>Schwelle</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedVacationEmployees as emp (emp.id)}
-              {@const s = emp.workSchedule}
-              <tr>
-                <td class="text-muted font-mono">{emp.employeeNumber}</td>
-                <td class="font-medium">{emp.firstName} {emp.lastName}</td>
-                {#if s?.type === "MONTHLY_HOURS"}
-                  <td class="font-mono text-center" colspan="7">
-                    <span class="badge badge-blue">{Number(s.monthlyHours).toFixed(1)} h/Monat</span
-                    >
-                  </td>
-                {:else}
-                  <td class="font-mono text-center">{s ? Number(s.mondayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center"
-                    >{s ? Number(s.tuesdayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center"
-                    >{s ? Number(s.wednesdayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center"
-                    >{s ? Number(s.thursdayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center">{s ? Number(s.fridayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center"
-                    >{s ? Number(s.saturdayHours).toFixed(1) : "—"}</td
-                  >
-                  <td class="font-mono text-center">{s ? Number(s.sundayHours).toFixed(1) : "—"}</td
-                  >
-                {/if}
-                <td class="font-mono text-center font-medium">
-                  {#if s}
-                    {#if s.type === "MONTHLY_HOURS"}
-                      {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
-                    {:else}
-                      {Number(s.weeklyHours).toFixed(1)}&thinsp;h
-                    {/if}
-                  {:else}
-                    <span class="badge badge-gray">Global</span>
-                  {/if}
-                </td>
-                <td class="font-mono">{s ? Number(s.overtimeThreshold).toFixed(0) + " h" : "—"}</td>
-                <td>
-                  <button class="btn btn-ghost btn-sm" onclick={() => openEmpModal(emp)}>
-                    Bearbeiten
-                  </button>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination total={employees.length} bind:page={vacPage} bind:pageSize={vacPageSize} />
-      </div>
-    </div>
-  {/if}
-{/if}
-
-<!-- ── Mitarbeiter-Modal ────────────────────────────────────────────────────── -->
-{#if empModal}
-  <div class="modal-backdrop" onclick={self(closeEmpModal)} role="presentation">
-    <div class="modal-card card" role="dialog" aria-modal="true" tabindex="-1">
-      <div class="modal-header">
-        <h2>Einstellungen: {empModal.firstName} {empModal.lastName}</h2>
-        <button class="btn-icon modal-close" onclick={closeEmpModal} aria-label="Schließen"
-          >✕</button
-        >
-      </div>
-
-      <div class="modal-body">
-        {#if eError}
-          <div class="alert alert-error" role="alert" style="margin-bottom:1rem;">
-            <span>⚠</span><span>{eError}</span>
+      <div class="extra-row">
+        <div class="form-group">
+          <label class="form-label" for="e-vac-total">Urlaubstage gesamt</label>
+          <div class="input-suffix-wrap">
+            <input
+              id="e-vac-total"
+              type="number"
+              min="0"
+              max="365"
+              step="0.5"
+              bind:value={eVacTotal}
+              placeholder={String(eVacSuggestion)}
+              class="form-input threshold-input"
+            />
+            <span class="input-suffix">Tage</span>
           </div>
-        {/if}
-
-        <h3 class="modal-section-heading">Arbeitszeit</h3>
-
-        <div class="form-group" style="margin-bottom:1rem;">
-          <label class="form-label" for="e-type">Arbeitszeitmodell</label>
-          <select id="e-type" bind:value={eType} class="form-input" style="max-width:240px;">
-            <option value="FIXED_WEEKLY">Feste Wochentage</option>
-            <option value="MONTHLY_HOURS">Monatsstunden</option>
-          </select>
-        </div>
-
-        {#if eType === "MONTHLY_HOURS"}
-          <div class="form-group" style="margin-bottom:1.25rem;">
-            <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
-            <div class="input-suffix-wrap">
-              <input
-                id="e-monthly-hours"
-                type="number"
-                min="0"
-                max="744"
-                step="0.5"
-                bind:value={eMonthlyHours}
-                class="form-input threshold-input"
-              />
-              <span class="input-suffix text-muted">Stunden</span>
-            </div>
-            <p class="form-hint text-muted">
-              Keine festen Wochentage – Soll wird monatlich berechnet.
-            </p>
-          </div>
-
-          <div class="form-group" style="margin-bottom:1.25rem;">
-            <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
-            <select
-              id="e-overtime-mode"
-              bind:value={eOvertimeMode}
-              class="form-input"
-              style="max-width:280px;"
-            >
-              <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
-              <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
-            </select>
-            <p class="form-hint text-muted">
-              Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden
-              dokumentiert, Saldo bleibt bei 0.
-            </p>
-          </div>
-
-          <div class="form-group" style="margin-bottom:1.25rem;">
-            <span class="form-label">Feste Arbeitstage</span>
-            <div class="weekday-chips">
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eMonWd}
-                onclick={() => (eMonWd = !eMonWd)}>Mo</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eTueWd}
-                onclick={() => (eTueWd = !eTueWd)}>Di</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eWedWd}
-                onclick={() => (eWedWd = !eWedWd)}>Mi</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eThuWd}
-                onclick={() => (eThuWd = !eThuWd)}>Do</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eFriWd}
-                onclick={() => (eFriWd = !eFriWd)}>Fr</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eSatWd}
-                onclick={() => (eSatWd = !eSatWd)}>Sa</button
-              >
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={eSunWd}
-                onclick={() => (eSunWd = !eSunWd)}>So</button
-              >
-            </div>
-            <p class="form-hint text-muted">
-              Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide;
-              Arbeitstage im Monat).
-            </p>
-          </div>
-        {:else}
-          <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-            Wochenstunden werden automatisch aus den Tagen summiert.
+          <p class="form-hint">
+            Leer lassen für automatischen Wert ({eVacSuggestion})
           </p>
+        </div>
 
-          <div class="day-grid">
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-mo">Mo</label>
-              <input
-                id="emp-day-mo"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eMon}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-di">Di</label>
-              <input
-                id="emp-day-di"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eTue}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-mi">Mi</label>
-              <input
-                id="emp-day-mi"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eWed}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-do">Do</label>
-              <input
-                id="emp-day-do"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eThu}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-fr">Fr</label>
-              <input
-                id="emp-day-fr"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eFri}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-sa">Sa</label>
-              <input
-                id="emp-day-sa"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eSat}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input">
-              <label class="day-label form-label" for="emp-day-so">So</label>
-              <input
-                id="emp-day-so"
-                type="number"
-                min="0"
-                max="24"
-                step="0.5"
-                bind:value={eSun}
-                class="form-input day-field"
-              />
-            </div>
-            <div class="day-input total-col">
-              <span class="day-label form-label">Σ</span>
-              <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
-            </div>
-          </div>
-        {/if}
-
-        <div class="extra-row" style="margin-top:1rem;">
-          <div class="form-group">
-            <label class="form-label" for="e-threshold">Warnschwelle</label>
-            <div class="input-suffix-wrap">
-              <input
-                id="e-threshold"
-                type="number"
-                min="1"
-                max="500"
-                bind:value={eThreshold}
-                class="form-input threshold-input"
-              />
-              <span class="input-suffix text-muted">Stunden</span>
-            </div>
-          </div>
-          <div class="form-group">
-            <span class="form-label">Auszahlung</span>
-            <label class="toggle-label">
-              <input type="checkbox" bind:checked={ePayout} class="toggle-cb" />
-              <span>{ePayout ? "Erlaubt" : "Gesperrt"}</span>
-            </label>
+        <div class="form-group">
+          <label class="form-label" for="e-vac-carried">Resturlaub Vorjahr</label>
+          <div class="input-suffix-wrap">
+            <input
+              id="e-vac-carried"
+              type="number"
+              min="0"
+              max="365"
+              step="0.5"
+              bind:value={eVacCarried}
+              class="form-input threshold-input"
+            />
+            <span class="input-suffix">Tage</span>
           </div>
         </div>
 
-        <div class="form-group" style="margin-top:1rem;">
-          <label class="form-label" for="e-valid-from">Gültig ab</label>
+        <div class="form-group">
+          <label class="form-label" for="e-vac-deadline">Resturlaub verfällt am</label>
           <input
-            id="e-valid-from"
+            id="e-vac-deadline"
             type="date"
-            bind:value={eValidFrom}
-            class="form-input"
-            style="max-width:180px;"
+            bind:value={eVacDeadline}
+            class="form-input modal-input-sm"
           />
+          <p class="form-hint">Leer lassen für globale Einstellung</p>
         </div>
-
-        <hr class="modal-divider" />
-        <h3 class="modal-section-heading">Urlaubsanspruch {eVacYear}</h3>
-
-        {#if eVacLoading}
-          <p class="text-muted" style="font-size:0.875rem;">Lade…</p>
-        {:else}
-          <p class="form-hint text-muted" style="margin-bottom:0.875rem;">
-            Berechnet aus Arbeitstagen: {eWorkingDays} Tage/Woche →
-            <strong>{eVacSuggestion} Urlaubstage</strong> vorgeschlagen.
-          </p>
-
-          <div class="extra-row">
-            <div class="form-group">
-              <label class="form-label" for="e-vac-total">Urlaubstage gesamt</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-vac-total"
-                  type="number"
-                  min="0"
-                  max="365"
-                  step="0.5"
-                  bind:value={eVacTotal}
-                  placeholder={String(eVacSuggestion)}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix text-muted">Tage</span>
-              </div>
-              <p class="form-hint text-muted">
-                Leer lassen für automatischen Wert ({eVacSuggestion})
-              </p>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="e-vac-carried">Resturlaub Vorjahr</label>
-              <div class="input-suffix-wrap">
-                <input
-                  id="e-vac-carried"
-                  type="number"
-                  min="0"
-                  max="365"
-                  step="0.5"
-                  bind:value={eVacCarried}
-                  class="form-input threshold-input"
-                />
-                <span class="input-suffix text-muted">Tage</span>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="e-vac-deadline">Resturlaub verfällt am</label>
-              <input
-                id="e-vac-deadline"
-                type="date"
-                bind:value={eVacDeadline}
-                class="form-input"
-                style="max-width:180px;"
-              />
-              <p class="form-hint text-muted">Leer lassen für globale Einstellung</p>
-            </div>
-          </div>
-        {/if}
       </div>
+    {/if}
 
-      <div class="modal-footer">
-        <button class="btn btn-ghost" onclick={closeEmpModal} disabled={eSaving}>Abbrechen</button>
-        <button class="btn btn-primary" onclick={saveEmployee} disabled={eSaving}>
-          {eSaving ? "Speichern…" : "Speichern"}
-        </button>
-      </div>
-    </div>
-  </div>
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeEmpModal} disabled={eSaving}>Abbrechen</button>
+      <button class="btn btn-primary" onclick={saveEmployee} disabled={eSaving}>
+        {eSaving ? "Speichern…" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>
+  /* .page wrapper is global (app.css) — no per-page padding/max-width override. */
+
+  /* ── KPI card ───────────────────────────────────────────────────────────── */
+  :global(.kpi-card .card-hd) {
+    margin-bottom: 18px;
+  }
+
+  .kpi-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Collapsible section-group cards (details + summary) ───────────────── */
   .section-group {
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
     padding: 0;
-    margin-bottom: 1.5rem;
     overflow: hidden;
   }
   .section-group-header {
-    font-size: 1.0625rem;
-    font-weight: 700;
-    padding: 1rem 1.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 18px 24px;
     cursor: pointer;
     list-style: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    color: var(--color-text-heading);
+    color: var(--text);
     user-select: none;
-    transition: background 0.15s;
+    transition: background 0.15s var(--ease-out);
+    position: relative;
   }
   .section-group-header:hover {
-    background: var(--color-bg-subtle);
+    background: var(--bg-subtle);
   }
   .section-group-header::after {
-    content: "▸";
-    font-size: 1rem;
-    color: var(--color-text);
-    margin-left: auto;
-    transition: transform 0.2s;
+    content: "›";
+    position: absolute;
+    top: 50%;
+    right: 22px;
+    transform: translateY(-50%);
+    font-size: 22px;
+    color: var(--text-muted);
+    transition: transform 0.2s var(--ease-out);
+    line-height: 1;
   }
   .section-group[open] > .section-group-header::after {
-    transform: rotate(90deg);
+    transform: translateY(-50%) rotate(90deg);
   }
   .section-group-header::-webkit-details-marker {
     display: none;
   }
-  .section-group > h3 {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-    padding: 1.5rem 1.75rem 0.75rem;
-    border-bottom: 1px solid var(--color-border-subtle);
+  .section-group-eyebrow {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-size: 13px;
+    color: var(--brand-light);
+    letter-spacing: 0.02em;
   }
-  .section-group > .text-muted {
-    padding: 0 1.75rem;
-  }
-  .section-group > .table-wrapper {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .settings-card {
-    padding: 0;
-    margin-bottom: 2rem;
+  .section-group-title {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 22px;
+    line-height: 1.1;
+    color: var(--text);
+    letter-spacing: 0.005em;
   }
 
   .settings-section {
-    padding: 1.5rem 1.75rem;
+    padding: 22px 24px;
   }
 
   .settings-divider {
     border: none;
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--border);
     margin: 0;
   }
 
   .section-title {
-    font-size: 1.0625rem;
+    font-family: var(--font-sans);
+    font-size: 11px;
     font-weight: 600;
-    margin-bottom: 0.75rem;
-    color: var(--color-text-heading);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 12px;
   }
 
   .section-desc {
-    font-size: 0.875rem;
-    margin-bottom: 1.25rem;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: -4px 0 16px;
   }
 
   .inline-settings {
@@ -1508,18 +1587,7 @@
     align-items: flex-start;
   }
 
-  .section-label {
-    margin: 2rem 0 0.875rem;
-  }
-  .section-label h2 {
-    font-size: 1.0625rem;
-    font-weight: 600;
-  }
-  .section-label p {
-    font-size: 0.9375rem;
-    margin-top: 0.125rem;
-  }
-
+  /* ── Day input grid ─────────────────────────────────────────────────────── */
   .day-grid {
     display: flex;
     gap: 0.5rem;
@@ -1551,19 +1619,21 @@
   }
 
   .total-col {
-    border-left: 1px solid var(--gray-200);
+    border-left: 1px solid var(--border);
     padding-left: 0.75rem;
     margin-left: 0.25rem;
   }
 
   .weekly-total {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--color-brand);
-    font-family: var(--font-mono);
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    font-weight: 400;
+    color: var(--brand-light);
     line-height: 2.1;
   }
 
+  /* ── Form helpers ───────────────────────────────────────────────────────── */
   .extra-row {
     display: flex;
     gap: 2rem;
@@ -1581,11 +1651,13 @@
     max-width: 100px;
   }
   .input-suffix {
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
     white-space: nowrap;
   }
   .form-hint {
     font-size: 0.8125rem;
+    color: var(--text-muted);
     margin-top: 0.25rem;
   }
 
@@ -1601,7 +1673,7 @@
   .toggle-cb {
     width: 16px;
     height: 16px;
-    accent-color: var(--color-brand);
+    accent-color: var(--brand);
   }
 
   .carryover-row {
@@ -1610,8 +1682,11 @@
     gap: 0.5rem;
     flex-wrap: wrap;
   }
+  .carryover-suffix {
+    font-size: 0.875rem;
+  }
 
-  /* Toggle switch */
+  /* Toggle row (text + switch) */
   .toggle-row {
     display: flex;
     align-items: center;
@@ -1626,9 +1701,10 @@
   .toggle-row-label {
     font-size: 1rem;
     font-weight: 500;
-    color: var(--color-text);
+    color: var(--text);
   }
 
+  /* iOS-style switch */
   .switch {
     position: relative;
     display: inline-block;
@@ -1647,9 +1723,9 @@
     position: absolute;
     cursor: pointer;
     inset: 0;
-    background-color: var(--gray-300);
+    background-color: var(--border-strong);
     border-radius: 26px;
-    transition: background-color 0.2s;
+    transition: background-color 0.2s var(--ease-out);
   }
 
   .switch-slider::before {
@@ -1659,19 +1735,21 @@
     width: 20px;
     left: 3px;
     bottom: 3px;
-    background-color: #fff;
+    background-color: var(--bg-card);
     border-radius: 50%;
-    transition: transform 0.2s;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s var(--ease-out);
+    box-shadow: var(--shadow-sm);
   }
 
   .switch input:checked + .switch-slider {
-    background-color: var(--color-brand);
+    background-color: var(--brand);
   }
 
   .switch input:checked + .switch-slider::before {
     transform: translateX(22px);
   }
+
+  /* Carry-over inputs */
   .co-day-input {
     width: 64px;
     text-align: center;
@@ -1680,146 +1758,130 @@
     width: 140px;
   }
 
+  /* ── Action card (save bar) ────────────────────────────────────────────── */
+  .action-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .apply-existing-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .apply-existing-hint {
+    margin: 0.25rem 0 0 1.5rem;
+  }
+
   .form-actions {
     display: flex;
     align-items: center;
     gap: 1rem;
-    margin-top: 1.25rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--gray-200);
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
   }
 
   .saved-hint {
-    color: var(--color-green, #16a34a);
+    color: var(--good);
     font-weight: 500;
     font-size: 0.9375rem;
   }
 
+  /* ── Misc utilities (page-scoped) ──────────────────────────────────────── */
   .text-center {
     text-align: center;
   }
   .btn-sm {
-    padding: 0.25rem 0.625rem;
-    font-size: 0.8125rem;
+    padding: 6px 12px;
+    font-size: 12.5px;
   }
 
-  /* Modal */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: flex;
+  .break-start-group {
+    margin-top: 16px;
+  }
+  .break-start-input {
+    max-width: 140px;
+  }
+
+  .spaced-top-xs {
+    margin-top: 8px;
+  }
+  .spaced-top-sm {
+    margin-top: 12px;
+  }
+  .spaced-top-md {
+    margin-top: 16px;
+  }
+
+  /* ── Chips (replace legacy badge-blue / badge-gray) ───────────────────── */
+  .chip-brand {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    z-index: 200;
-    padding: 1rem;
-    backdrop-filter: blur(2px);
-  }
-
-  .modal-card {
-    width: 100%;
-    max-width: 580px;
-    max-height: 90vh;
-    overflow-y: auto;
-    padding: 0;
-    overflow-x: hidden;
-    animation: modal-in 0.18s ease;
-  }
-
-  @keyframes modal-in {
-    from {
-      opacity: 0;
-      transform: translateY(12px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 1.25rem 1.5rem 1rem;
-    border-bottom: 1px solid var(--gray-200);
-    position: sticky;
-    top: 0;
-    background: #fff;
-    z-index: 1;
-  }
-
-  .modal-header h2 {
-    font-size: 1.0625rem;
+    padding: 2px 10px;
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
     font-weight: 600;
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  .chip-muted {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 10px;
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
+    font-weight: 600;
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+  }
+
+  /* ── Modal body content helpers (Modal primitive owns chrome) ──────── */
+  .modal-form-group {
     margin: 0;
   }
 
-  .btn-icon {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    font-size: 1rem;
-    color: var(--color-text-muted);
+  .modal-select-md {
+    max-width: 240px;
+  }
+  .modal-select-lg {
+    max-width: 280px;
+  }
+  .modal-input-sm {
+    max-width: 180px;
   }
 
-  .modal-body {
-    padding: 1.25rem 1.5rem;
+  .modal-help {
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    margin: 0 0 4px;
+  }
+  .modal-help-strong {
+    margin-bottom: 14px;
+  }
+
+  .modal-alert {
+    margin-bottom: 4px;
   }
 
   .modal-section-heading {
-    font-size: 0.9375rem;
+    font-family: var(--font-sans);
+    font-size: 11px;
     font-weight: 600;
-    color: var(--color-text-heading);
-    margin-bottom: 0.5rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 4px;
   }
 
   .modal-divider {
     border: none;
-    border-top: 1px solid var(--color-border-subtle);
-    margin: 1.5rem 0 1rem;
+    border-top: 1px solid var(--border);
+    margin: 12px 0 4px;
   }
 
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.625rem;
-    padding: 1rem 1.5rem;
-    border-top: 1px solid var(--gray-200);
-    background: var(--gray-50, #f9fafb);
-    position: sticky;
-    bottom: 0;
-  }
-
-  .alert {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: var(--radius-md);
-    font-size: 0.875rem;
-  }
-  .alert-error {
-    background: #fef2f2;
-    color: #991b1b;
-    border: 1px solid #fecaca;
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.2rem 0.6rem;
-    border-radius: 9999px;
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-  .badge-gray {
-    background: #f3f4f6;
-    color: #6b7280;
-  }
-
+  /* ── Weekday chips (modal) ─────────────────────────────────────────────── */
   .weekday-chips {
     display: flex;
     gap: 0.375rem;
@@ -1835,27 +1897,39 @@
     min-width: 2.5rem;
     height: 2rem;
     padding: 0 0.625rem;
-    border-radius: 999px;
+    border-radius: var(--r-pill);
     font-size: 0.8125rem;
     font-weight: 600;
     cursor: pointer;
     transition:
-      background 0.15s,
-      color 0.15s,
-      border-color 0.15s;
-    border: 1.5px solid var(--color-border);
+      background 0.15s var(--ease-out),
+      color 0.15s var(--ease-out),
+      border-color 0.15s var(--ease-out);
+    border: 1.5px solid var(--border);
     background: transparent;
-    color: var(--color-text-muted);
+    color: var(--text-muted);
   }
 
   .wd-chip--active {
-    background: var(--color-brand);
-    border-color: var(--color-brand);
-    color: #fff;
+    background: var(--brand);
+    border-color: var(--brand);
+    color: var(--text-on-brand);
   }
 
   .wd-chip:hover:not(.wd-chip--active) {
-    border-color: var(--color-brand);
-    color: var(--color-brand);
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+
+  @media (max-width: 720px) {
+    .page {
+      padding: 20px 16px 60px;
+    }
+    .inline-settings {
+      gap: 1.25rem;
+    }
+    .kpi-row {
+      gap: 18px;
+    }
   }
 </style>

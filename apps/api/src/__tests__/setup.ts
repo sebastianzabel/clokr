@@ -7,6 +7,13 @@
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+// Re-export Prisma.JsonValue to keep it nameable in the inferred return type of
+// seedTestData(). Adding `uiPreferences Json?` to User caused TS2883 because the
+// inferred return type implicitly references JsonValue without a local binding.
+import { Prisma } from "@clokr/db";
+
+// Keep JsonValue reachable from this module's public types (intentional no-op type alias)
+export type _SeedJsonValue = Prisma.JsonValue;
 
 let app: FastifyInstance;
 

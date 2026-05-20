@@ -469,6 +469,28 @@ describe("Reports API", () => {
       expect(res.headers["content-type"]).toContain("application/pdf");
       expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
     });
+
+    // EMP-06: employees may download their OWN monthly PDF (self-employee check).
+    it("allows EMPLOYEE to download their OWN monthly PDF", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${data.employee.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+    });
+
+    it("forbids EMPLOYEE from downloading another employee's monthly PDF", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${data.adminEmployee.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe("Kein Zugriff");
+    });
   });
 
   // ── GET /api/v1/dashboard/today-attendance (RPT-03) ──────────────────────
