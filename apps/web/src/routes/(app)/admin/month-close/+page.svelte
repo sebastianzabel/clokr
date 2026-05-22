@@ -1,11 +1,9 @@
 <script lang="ts">
   import { api } from "$api/client";
-  import Pagination from "$components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import ToolPage from "$lib/components/admin/ToolPage.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
 
   interface MissingEmployee {
     employeeName: string;
@@ -101,15 +99,8 @@
     return monthStatuses;
   });
 
-  // Pagination for month status list
-  let maPage = $state(1);
-  let maPageSize = $state(10);
-  let pagedMonths = $derived(filteredMonths.slice((maPage - 1) * maPageSize, maPage * maPageSize));
-
-  $effect(() => {
-    const _len = filteredMonths.length;
-    maPage = 1;
-  });
+  // No pagination: a year has at most 12 months, all should be visible at once.
+  const pagedMonths = $derived(filteredMonths);
 
   // Summary counts
   let closedMonthCount = $derived(monthStatuses.filter((ms) => ms.status === "closed").length);
@@ -126,14 +117,6 @@
     }
     return null;
   });
-
-  // 4-step stepper definitions (Prüfen → Korrigieren → Bestätigen → Sperren)
-  const STEPS = [
-    { label: "Prüfen", hint: "Vollständigkeit prüfen" },
-    { label: "Korrigieren", hint: "Fehlende Einträge nachholen" },
-    { label: "Bestätigen", hint: "Salden bestätigen" },
-    { label: "Sperren", hint: "Monat isLocked=true setzen" },
-  ];
 
   // Active step derived from the currently expanded month, or the first actionable one.
   // 0=Prüfen, 1=Korrigieren, 2=Bestätigen, 3=Sperren
@@ -447,58 +430,18 @@
   loadYearStatus();
 </script>
 
-<svelte:head><title>Monatsabschluss - Clokr</title></svelte:head>
+<svelte:head><title>Monatsabschluss – Clokr</title></svelte:head>
 
-<div class="page">
-  <div class="ma-page">
-    <PageHead
-      eyebrow="Administration"
-      title={`Monatsabschluss ${selectedYear}`}
-      accent={String(selectedYear)}
-      sub="Audit-proof monatlicher Abschluss: prüfen, Salden berechnen, bestätigen, sperren (isLocked=true). Nach dem Abschluss sind alle Einträge des Monats unveränderlich — Korrekturen nur per Stornobuchung."
-    />
-
-    <!-- 4-step visual stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) -->
-    <Card animate class="stepper-card">
-      <CardHeader title="Ablauf" sub="Vier Schritte zum Monatsabschluss" />
-      <ol class="stepper">
-        {#each STEPS as step, i (i)}
-          <li class="step" class:active={i === activeStepIndex} class:done={i < activeStepIndex}>
-            <div class="step-row">
-              <span class="step-circle" aria-hidden="true">
-                {#if i < activeStepIndex}
-                  <svg viewBox="0 0 16 16" width="14" height="14"
-                    ><path
-                      d="M3 8l3 3 7-7"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      fill="none"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    /></svg
-                  >
-                {:else}
-                  {i + 1}
-                {/if}
-              </span>
-              <div class="step-text">
-                <div class="step-eyebrow serif-eyebrow">Schritt {i + 1}</div>
-                <div class="step-label">{step.label}</div>
-                <div class="step-hint">{step.hint}</div>
-              </div>
-            </div>
-            {#if i < STEPS.length - 1}
-              <span class="step-connector" class:done={i < activeStepIndex} aria-hidden="true"
-              ></span>
-            {/if}
-          </li>
-        {/each}
-      </ol>
-    </Card>
-
-    <!-- Year + Filter controls inside a v1.5 card -->
-    <Card animate class="controls-card">
-      <CardHeader title="Filter" sub="Jahr und Status wählen" />
+<ToolPage
+  eyebrow="Compliance"
+  title="Monatsabschluss"
+  sub="Monat prüfen, korrigieren und sperren"
+  steps={["Prüfen", "Korrigieren", "Bestätigen", "Sperren"]}
+  currentStep={activeStepIndex}
+  animate
+>
+  {#snippet form()}
+    <Section title="Filter" sub="Jahr und Status wählen">
       <div class="ma-controls">
         <div class="control-row">
           <label class="control-group">
@@ -536,7 +479,7 @@
           </div>
         {/if}
       </div>
-    </Card>
+    </Section>
 
     {#if error}
       <div class="callout error" role="alert">
@@ -550,36 +493,31 @@
     {/if}
 
     {#if closing}
-      <Card animate class="progress-card">
-        <CardHeader
-          title="Abschluss läuft"
-          sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
-        />
+      <Section
+        title="Abschluss läuft"
+        sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
+      >
         <div class="progress-bar-track">
           <div
             class="progress-bar-fill"
             style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
           ></div>
         </div>
-      </Card>
+      </Section>
     {/if}
 
     {#if loading}
-      <Card animate class="loading-placeholder">
-        <div class="loading-spacer"></div>
-      </Card>
+      <div class="loading-spacer"></div>
     {:else if loaded}
       {#if monthStatuses.length === 0}
-        <Card animate>
+        <Section>
           <p class="text-muted">Keine Daten verfügbar.</p>
-        </Card>
+        </Section>
       {:else}
-        <Card animate class="list-card">
-          <CardHeader
-            title={`Monate ${selectedYear}`}
-            sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
-          />
-
+        <Section
+          title={`Monate ${selectedYear}`}
+          sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
+        >
           <div class="table-wrapper">
             <table class="table">
               <thead>
@@ -746,172 +684,40 @@
               </tbody>
             </table>
           </div>
-          <div class="list-foot">
-            <Pagination
-              total={filteredMonths.length}
-              bind:page={maPage}
-              bind:pageSize={maPageSize}
-            />
-          </div>
-        </Card>
+        </Section>
       {/if}
     {:else}
-      <Card animate>
-        <p class="text-muted">Lade Jahresstatus...</p>
-      </Card>
+      <p class="text-muted">Lade Jahresstatus...</p>
     {/if}
-  </div>
+  {/snippet}
+</ToolPage>
 
-  <!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
-  <Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
-    <div class="callout warn" role="alert">
-      <div>
-        <b>Diese Aktion ist nicht rückgängig.</b>
-        <p>
-          Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono"
-            >isLocked=true</span
-          >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
-          Revisionssicherheit).
-        </p>
-      </div>
+<!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
+<Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
+  <div class="callout warn" role="alert">
+    <div>
+      <b>Diese Aktion ist nicht rückgängig.</b>
+      <p>
+        Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono">isLocked=true</span
+        >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
+        Revisionssicherheit).
+      </p>
     </div>
-    <p class="modal-note">
-      Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
-    </p>
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button
-      >
-      <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
-        {#if closing}<Spinner />{/if}
-        Endgültig sperren
-      </button>
-    {/snippet}
-  </Modal>
-</div>
+  </div>
+  <p class="modal-note">
+    Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
+  </p>
+  {#snippet footer()}
+    <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button>
+    <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
+      {#if closing}<Spinner />{/if}
+      Endgültig sperren
+    </button>
+  {/snippet}
+</Modal>
 
 <style>
-  .ma-page {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  /* ─── Stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) ─── */
-  .stepper {
-    list-style: none;
-    margin: 0;
-    padding: 4px 0 4px;
-    display: flex;
-    align-items: flex-start;
-    gap: 0;
-  }
-
-  .step {
-    flex: 1;
-    display: flex;
-    align-items: stretch;
-    position: relative;
-    min-width: 0;
-  }
-
-  .step-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    flex: 1;
-    min-width: 0;
-    position: relative;
-    z-index: 1;
-  }
-
-  .step-circle {
-    flex-shrink: 0;
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    background: var(--bg-subtle);
-    color: var(--text-faint);
-    font-family: var(--font-sans);
-    font-weight: 600;
-    font-size: 13px;
-    border: 1px solid var(--border);
-    transition:
-      background 180ms var(--ease, ease),
-      color 180ms var(--ease, ease),
-      border-color 180ms var(--ease, ease),
-      border-width 180ms var(--ease, ease);
-  }
-
-  .step.active .step-circle {
-    background: var(--brand);
-    color: var(--text-on-brand);
-    border: 3px solid var(--brand-soft);
-  }
-
-  .step.done .step-circle {
-    background: var(--good);
-    color: var(--text-on-brand);
-    border-color: var(--good);
-  }
-
-  .step-text {
-    min-width: 0;
-    flex: 1;
-  }
-
-  .step-eyebrow {
-    font-size: 11px;
-    line-height: 1;
-    margin-bottom: 2px;
-  }
-
-  .step-label {
-    font-family: var(--font-sans);
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-    margin-top: 2px;
-  }
-
-  .step:not(.active):not(.done) .step-label {
-    color: var(--text-muted);
-  }
-
-  .step-hint {
-    font-family: var(--font-sans);
-    font-size: 11.5px;
-    color: var(--text-muted);
-    margin-top: 2px;
-  }
-
-  .step-connector {
-    position: absolute;
-    left: 42px;
-    right: -4px;
-    top: 15px;
-    height: 2px;
-    background: var(--border);
-    border-radius: var(--r-pill);
-    z-index: 0;
-  }
-
-  .step-connector.done {
-    background: var(--brand);
-  }
-
-  @media (max-width: 720px) {
-    .stepper {
-      flex-direction: column;
-      gap: 12px;
-    }
-    .step-connector {
-      display: none;
-    }
-  }
-
-  /* ─── Controls card ─────────────────────────────────── */
+  /* ─── Controls ──────────────────────────────────────── */
   .ma-controls {
     display: flex;
     flex-direction: column;
@@ -963,7 +769,7 @@
     outline: none;
   }
 
-  /* ─── Progress card ──────────────────────────────────── */
+  /* ─── Progress ──────────────────────────────────────── */
   .progress-bar-track {
     height: 0.5rem;
     background: var(--bg-subtle);
@@ -978,26 +784,13 @@
     transition: width 0.3s ease;
   }
 
-  /* ─── List card / table ─────────────────────────────── */
-  /* list-card: kill default card padding so the table fills the card; use
-     :global() because the .card section is rendered by the Card primitive. */
-  :global(.list-card) {
-    padding: 0;
-  }
-
-  /* CardHeader (also from primitive) needs an inset edge for list-card layout. */
-  :global(.list-card .card-hd) {
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-  }
-
+  /* ─── List / table ──────────────────────────────────── */
   .loading-spacer {
     height: 200px;
   }
 
   .list-foot {
-    padding: 8px 16px 16px;
+    padding: 8px 0 0;
   }
 
   .table-wrapper {

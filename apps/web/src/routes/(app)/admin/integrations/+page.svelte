@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import Pagination from "$lib/components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import SectionStack from "$lib/components/admin/SectionStack.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import {
@@ -241,20 +240,16 @@
   }
 </script>
 
-<svelte:head><title>WiFi-Präsenz – Clokr</title></svelte:head>
+<svelte:head><title>Integrationen – Clokr</title></svelte:head>
 
-<section class="page">
-  <PageHead
-    eyebrow="Administration"
-    title="WiFi-Präsenz"
-    accent="Präsenz"
-    sub="WiFi-Quellen verwalten, Geräte Mitarbeitern zuweisen und Opt-Ins überblicken."
-  />
-
+<SectionStack
+  eyebrow="System"
+  title="Integrationen"
+  sub="WiFi-Präsenz und externe Dienste"
+  animate
+>
   <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────── -->
-  <Card animate>
-    <CardHeader title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten" />
-
+  <Section title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten">
     {#if showNewKey}
       <div class="alert alert-success new-key-alert" role="status" aria-live="polite">
         <div>
@@ -351,12 +346,10 @@
         Noch keine Presence-Quellen. Erstellen Sie einen Schlüssel für Ihren ersten Adapter.
       </p>
     {/if}
-  </Card>
+  </Section>
 
   <!-- ── Block 2: WiFi-Geräteliste ────────────────────────────────────── -->
-  <Card animate>
-    <CardHeader title="WiFi-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen" />
-
+  <Section title="WiFi-Geräteliste" sub="Verbundene Geräte und ihre Zuweisungen">
     <div class="devices-toolbar">
       <div class="devices-toolbar-left">
         {#if sources.filter((s) => !s.revokedAt).length > 1}
@@ -460,15 +453,10 @@
         Klicken Sie auf "Liste aktualisieren", um die verbundenen Geräte zu laden.
       </p>
     {/if}
-  </Card>
+  </Section>
 
   <!-- ── Block 3: Opt-in-Übersicht ─────────────────────────────────────── -->
-  <Card animate>
-    <CardHeader
-      title="Opt-In-Übersicht"
-      sub="Welche Mitarbeiter haben WiFi-Präsenzerkennung aktiviert"
-    />
-
+  <Section title="Opt-In-Übersicht" sub="Welche Mitarbeiter haben WiFi-Präsenzerkennung aktiviert">
     {#if optInLoading}
       <div class="skeleton skeleton-text optin-skel"></div>
     {:else if optedIn.length > 0}
@@ -516,8 +504,8 @@
     {:else}
       <p class="text-muted empty-msg">Kein Mitarbeiter hat WiFi-Präsenzerkennung aktiviert.</p>
     {/if}
-  </Card>
-</section>
+  </Section>
+</SectionStack>
 
 <!-- ── Bestätigungs-Dialoge ──────────────────────────────────────────────── -->
 <ConfirmDialog
@@ -597,8 +585,6 @@
 {/if}
 
 <style>
-  /* .page wrapper is global (app.css) — no per-page padding/max-width. */
-
   /* ── Block 1: Presence-Quellen ───────────────────────────────────── */
   .new-key-alert {
     margin-bottom: var(--s-4);

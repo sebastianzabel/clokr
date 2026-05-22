@@ -5,7 +5,7 @@
   // (role="dialog"; alertdialog is reserved for destructive confirms).
 
   import Modal from "$components/ui/Modal.svelte";
-  import AvailabilityStatusPill from "./AvailabilityStatusPill.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
 
   type Status = "AVAILABLE" | "UNAVAILABLE" | "PREFERRED";
 
@@ -28,6 +28,12 @@
 
   let { open = $bindable(), mode, initial, onsave, oncancel }: Props = $props();
 
+  const STATUS_OPTIONS = [
+    { value: "AVAILABLE", label: "Verfügbar", glyph: "✓" },
+    { value: "UNAVAILABLE", label: "Nicht verfügbar", glyph: "✕" },
+    { value: "PREFERRED", label: "Bevorzugt", glyph: "★" },
+  ];
+
   // German weekday labels (verbatim per 46-UI-SPEC).
   const WEEKDAYS = [
     { value: 1, label: "Montag" },
@@ -48,7 +54,7 @@
   // a parent can reuse the same modal instance for multiple edit targets.
   let dayOfWeek = $state<number>(1);
   let date = $state<string>(todayISO());
-  let status = $state<Status>("AVAILABLE");
+  let status = $state<string>("AVAILABLE");
   let note = $state<string>("");
   let validFrom = $state<string>(todayISO());
   let validUntil = $state<string>("");
@@ -58,7 +64,7 @@
     if (open) {
       dayOfWeek = initial?.dayOfWeek ?? 1;
       date = initial?.date ?? todayISO();
-      status = initial?.status ?? "AVAILABLE";
+      status = (initial?.status as string) ?? "AVAILABLE";
       note = initial?.note ?? "";
       validFrom = initial?.validFrom ?? todayISO();
       validUntil = initial?.validUntil ?? "";
@@ -73,7 +79,7 @@
       : "",
   );
 
-  const canSave = $derived(!rangeError && status !== undefined);
+  const canSave = $derived(!rangeError && !!status);
 
   function handleSave(e: Event) {
     e.preventDefault();
@@ -81,7 +87,7 @@
     const entry: AvailabilityEntryDraft = {
       dayOfWeek: mode === "recurring" ? dayOfWeek : null,
       date: mode === "oneoff" ? date : null,
-      status,
+      status: status as Status,
       note: note.trim() ? note.trim() : null,
       validFrom,
       validUntil: validUntil ? validUntil : null,
@@ -117,51 +123,22 @@
 
     <div class="form-group">
       <span class="form-label" id="av-edit-status-label">Status</span>
-      <div
-        class="av-pill-group"
-        role="radiogroup"
-        aria-labelledby="av-edit-status-label"
-        aria-label="Status"
-      >
-        <AvailabilityStatusPill
-          status="AVAILABLE"
-          as="button"
-          selected={status === "AVAILABLE"}
-          onclick={() => (status = "AVAILABLE")}
-        />
-        <AvailabilityStatusPill
-          status="UNAVAILABLE"
-          as="button"
-          selected={status === "UNAVAILABLE"}
-          onclick={() => (status = "UNAVAILABLE")}
-        />
-        <AvailabilityStatusPill
-          status="PREFERRED"
-          as="button"
-          selected={status === "PREFERRED"}
-          onclick={() => (status = "PREFERRED")}
-        />
-      </div>
+      <SegmentedControl
+        options={STATUS_OPTIONS}
+        bind:value={status}
+        name="av-edit-status"
+        ariaLabel="Status"
+      />
     </div>
 
     <div class="form-row">
       <div class="form-group">
         <label class="form-label" for="av-edit-valid-from">Gültig ab (optional)</label>
-        <input
-          id="av-edit-valid-from"
-          class="form-input"
-          type="date"
-          bind:value={validFrom}
-        />
+        <input id="av-edit-valid-from" class="form-input" type="date" bind:value={validFrom} />
       </div>
       <div class="form-group">
         <label class="form-label" for="av-edit-valid-until">Gültig bis (optional)</label>
-        <input
-          id="av-edit-valid-until"
-          class="form-input"
-          type="date"
-          bind:value={validUntil}
-        />
+        <input id="av-edit-valid-until" class="form-input" type="date" bind:value={validUntil} />
         {#if rangeError}
           <span class="form-error" role="alert" aria-live="polite">{rangeError}</span>
         {/if}
@@ -170,12 +147,7 @@
 
     <div class="form-group">
       <label class="form-label" for="av-edit-note">Notiz</label>
-      <textarea
-        id="av-edit-note"
-        class="form-input"
-        maxlength="200"
-        rows="3"
-        bind:value={note}
+      <textarea id="av-edit-note" class="form-input" maxlength="200" rows="3" bind:value={note}
       ></textarea>
       <span class="form-hint">Optionale Notiz (max. 200 Zeichen)</span>
     </div>
@@ -191,13 +163,13 @@
   .av-edit-form {
     display: flex;
     flex-direction: column;
-    gap: var(--s-4);
+    gap: var(--s-3);
   }
 
   .form-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: var(--s-3);
+    gap: var(--s-2);
   }
 
   @media (max-width: 480px) {
@@ -206,16 +178,10 @@
     }
   }
 
-  .av-pill-group {
-    display: flex;
-    gap: var(--s-2);
-    flex-wrap: wrap;
-  }
-
   .modal-actions {
     display: flex;
     justify-content: flex-end;
     gap: var(--s-2);
-    margin-top: var(--s-2);
+    margin-top: var(--s-3);
   }
 </style>

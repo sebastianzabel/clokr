@@ -12,7 +12,13 @@
   let { currentPath }: Props = $props();
 
   type NavItem = { href: string; label: string; icon: string };
-  type NavSection = { label: string; items: NavItem[] };
+  // NavSection is a top-level sidebar section (e.g. "Mein Bereich", "Team") or
+  // an admin sub-group (e.g. "PERSONAL", "PLANUNG"). The `isAdminGroup` flag
+  // drives which label class to render.
+  type NavSection = { label: string; items: NavItem[]; isAdminGroup?: boolean };
+  // NavGroup represents one of the 5 uppercase-labeled admin sub-groups defined
+  // in docs/ADMIN_STRUCTURE.md §1.
+  type NavGroup = { label: string; items: NavItem[] };
 
   // German labels match docs/design/reference/i18n.js DE entries verbatim.
   // Routes map to nearest existing screens; new routes may land in Phase 30-32.
@@ -33,20 +39,49 @@
     { href: "/reports", label: "Berichte", icon: "chart" },
   ];
 
-  const adminNav: NavItem[] = [
-    { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-    { href: "/admin/vacation", label: "Urlaub & Zeiten", icon: "umbrella" },
-    { href: "/admin/special-leave", label: "Sonderurlaub", icon: "star" },
-    { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
-    { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
-    { href: "/admin/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-    { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
-    { href: "/admin/audit", label: "Compliance & Audit", icon: "shield" },
-    { href: "/admin/wifi-presence", label: "WiFi-Präsenz", icon: "wifi" },
-    { href: "/admin/system", label: "System", icon: "settings" },
-    { href: "/admin/themes", label: "Themes & Branding", icon: "palette" },
-    { href: "/admin/import", label: "CSV Import", icon: "upload" },
-    { href: "/admin/export", label: "DATEV Export", icon: "download" },
+  // 5-group admin nav per docs/ADMIN_STRUCTURE.md §1 (Phase 51 Regulatorium).
+  // Labels are UPPERCASE visual-only section headers — never clickable.
+  // SYSTEM group entries use Phase-52 labels: Allgemein / Branding & Themes / Integrationen.
+  const adminNav: NavGroup[] = [
+    {
+      label: "PERSONAL",
+      items: [
+        { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
+        // Sonderurlaubs-Typen merged into /admin/vacation as the "Sonderurlaub" tab.
+        // The old route still resolves and redirects (apps/web/src/routes/(app)/admin/special-leave).
+        { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+        { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
+      ],
+    },
+    {
+      label: "PLANUNG",
+      items: [
+        { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
+        { href: "/admin/availability", label: "Verfügbarkeit", icon: "calendar-check" },
+      ],
+    },
+    {
+      label: "COMPLIANCE",
+      items: [
+        { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
+        { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
+      ],
+    },
+    {
+      label: "DATEN",
+      items: [
+        { href: "/admin/import", label: "CSV Import", icon: "upload" },
+        { href: "/admin/export", label: "DATEV Export", icon: "download" },
+      ],
+    },
+    {
+      label: "SYSTEM",
+      items: [
+        { href: "/admin/system", label: "Allgemein", icon: "settings" },
+        { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
+        { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
+      ],
+    },
   ];
 
   // Section visibility is gated by the authenticated user's role.
@@ -69,7 +104,14 @@
       out.push({ label: "Team", items: managerNav });
     }
     if (role === "ADMIN") {
-      out.push({ label: "Administration", items: filterAvailability(adminNav) });
+      // Expand each NavGroup into its own NavSection (isAdminGroup: true) so the
+      // render loop can apply the correct label class for the 5 admin sub-groups.
+      for (const group of adminNav) {
+        const filtered = filterAvailability(group.items);
+        if (filtered.length > 0) {
+          out.push({ label: group.label, items: filtered, isAdminGroup: true });
+        }
+      }
     }
     return out;
   });
@@ -103,7 +145,11 @@
 
   <div class="sidebar-scroll">
     {#each sections as section (section.label)}
-      <div class="sidebar-section-label" translate="no">{section.label}</div>
+      {#if section.isAdminGroup}
+        <div class="nav-section-label" aria-hidden="true" translate="no">{section.label}</div>
+      {:else}
+        <div class="sidebar-section-label" translate="no">{section.label}</div>
+      {/if}
       <nav class="sidebar-nav" aria-label={section.label}>
         {#each section.items as item (item.href)}
           {@const active = isActive(item.href, currentPath)}
@@ -227,6 +273,18 @@
     text-transform: uppercase;
     color: var(--text-faint);
     font-weight: 600;
+  }
+
+  /* Admin sub-group labels (PERSONAL, PLANUNG, COMPLIANCE, DATEN, SYSTEM).
+     Smaller + slightly indented to nest visually within the admin section. */
+  .nav-section-label {
+    font-size: 0.6875rem; /* ~11px */
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    padding: var(--s-4) var(--s-3) var(--s-1) 20px;
+    user-select: none;
   }
 
   .sidebar-nav {

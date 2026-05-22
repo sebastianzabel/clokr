@@ -1,15 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
   import Pagination from "$components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import SectionStack from "$lib/components/admin/SectionStack.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import EmptyState from "$components/ui/EmptyState.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+
+  // ── Tabs (Phase 58: split log from config) ─────────────────────────────────
+  const TABS = [
+    { id: "log", label: "Audit-Trail" },
+    { id: "config", label: "Aufbewahrung & DSGVO" },
+  ];
+  let activeTab = $state<string>("log");
 
   interface AuditLog {
     id: string;
@@ -37,7 +44,7 @@
   let logs: AuditLog[] = $state([]);
   let total = $state(0);
   let loading = $state(false);
-  let error = $state("");
+  let loadError = $state("");
 
   let filterAction = $state("");
   let filterEntity = $state("");
@@ -59,7 +66,7 @@
 
   async function loadLogs() {
     loading = true;
-    error = "";
+    loadError = "";
     try {
       const params = new URLSearchParams({
         page: String(page),
@@ -71,7 +78,7 @@
       logs = res.logs;
       total = res.total;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Laden";
+      loadError = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
       loading = false;
     }
@@ -121,11 +128,6 @@
     return format(new Date(iso), "dd.MM.yyyy HH:mm:ss", { locale: de });
   }
 
-  let expandedId = $state<string | null>(null);
-
-  // Tighten "has detail" check: API types old/newValue as `unknown`; the
-  // underlying JSON column can return `null`, `undefined`, or an empty
-  // object — only render the toggle / detail pane when there is real content.
   function hasDetail(v: unknown): boolean {
     if (v == null) return false;
     if (typeof v === "object" && Object.keys(v as Record<string, unknown>).length === 0)
@@ -133,43 +135,44 @@
     return true;
   }
 
-  function onPageKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape" && expandedId !== null) {
-      expandedId = null;
+  function navigateToEntry(id: string) {
+    void goto(`/admin/audit/${id}`);
+  }
+
+  function onRowKeydown(e: KeyboardEvent, id: string) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      void goto(`/admin/audit/${id}`);
     }
   }
 </script>
 
-<svelte:window onkeydown={onPageKeydown} />
-
 <svelte:head>
-  <title>Compliance & Audit – Clokr</title>
+  <title>Audit & Log – Clokr</title>
 </svelte:head>
 
-<section class="page">
-  <PageHead
-    eyebrow="Administration"
-    title="Compliance & Audit"
-    accent="Audit"
-    sub="Audit-sicher · konfigurierbare Aufbewahrung (§ 147 AO, 10 Jahre Standard) · GoBD- und DSGVO-konform."
-  />
+<SectionStack
+  eyebrow="Compliance"
+  title="Audit & Log"
+  sub="Audit-Trail, Aufbewahrung und DSGVO"
+  tabs={TABS}
+  bind:activeTab
+  animate
+>
+  {#snippet tabContent(currentTab)}
+    {#if currentTab === "log"}
+      <!-- ── Audit-Trail ───────────────────────────────────────── -->
+      <Section title="Audit-Trail" sub="Manipulationssicheres Protokoll aller Aktionen">
+        {#snippet actions()}
+          <span class="chip">
+            <span class="dot"></span>
+            {total.toLocaleString("de-DE")} Einträge
+          </span>
+        {/snippet}
 
-  {#if error}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-  {/if}
-
-  <div class="grid grid-12">
-    <!-- ── Left: Audit-Trail Timeline ─────────────────────────── -->
-    <div class="col-7">
-      <Card animate class="audit-card" style="--card-idx: 0;">
-        <CardHeader title="Audit-Trail" sub="Manipulationssicheres Protokoll aller Aktionen">
-          {#snippet actions()}
-            <span class="chip">
-              <span class="dot"></span>
-              {total.toLocaleString("de-DE")} Einträge
-            </span>
-          {/snippet}
-        </CardHeader>
+        {#if loadError}
+          <div class="alert alert-error" role="alert"><span>⚠</span><span>{loadError}</span></div>
+        {/if}
 
         <div class="audit-filter-bar">
           <select
@@ -211,7 +214,16 @@
         {:else}
           <ul class="audit-timeline" aria-label="Audit-Einträge">
             {#each logs as log (log.id)}
-              <li class="audit-row" class:is-expanded={expandedId === log.id}>
+              <li
+                class="audit-row"
+                role="button"
+                tabindex="0"
+                aria-label="Audit-Eintrag {log.action} {log.entity} vom {fmtDate(
+                  log.createdAt,
+                )} öffnen"
+                onclick={() => navigateToEntry(log.id)}
+                onkeydown={(e) => onRowKeydown(e, log.id)}
+              >
                 <div class="audit-row-main">
                   <span class="audit-time">{fmtDate(log.createdAt)}</span>
                   <span class="audit-actor">
@@ -228,41 +240,11 @@
                   </span>
                   <span class="audit-ip">{log.ipAddress ?? "—"}</span>
                   {#if hasDetail(log.oldValue) || hasDetail(log.newValue)}
-                    <button
-                      id={`audit-toggle-${log.id}`}
-                      class="btn btn-ghost xs audit-toggle"
-                      onclick={() => (expandedId = expandedId === log.id ? null : log.id)}
-                      aria-controls={`audit-detail-${log.id}`}
-                      aria-expanded={expandedId === log.id}
-                      aria-label={expandedId === log.id ? "Details ausblenden" : "Details anzeigen"}
-                    >
-                      {expandedId === log.id ? "▲" : "▼"}
-                    </button>
+                    <span class="audit-has-detail" aria-label="Hat Details">↗</span>
                   {:else}
                     <span class="audit-toggle-spacer"></span>
                   {/if}
                 </div>
-                {#if expandedId === log.id}
-                  <div
-                    id={`audit-detail-${log.id}`}
-                    role="region"
-                    aria-labelledby={`audit-toggle-${log.id}`}
-                    class="audit-detail"
-                  >
-                    {#if hasDetail(log.oldValue)}
-                      <div class="audit-detail-block">
-                        <p class="audit-detail-label">Vorher</p>
-                        <pre class="audit-detail-pre">{JSON.stringify(log.oldValue, null, 2)}</pre>
-                      </div>
-                    {/if}
-                    {#if hasDetail(log.newValue)}
-                      <div class="audit-detail-block">
-                        <p class="audit-detail-label">Nachher</p>
-                        <pre class="audit-detail-pre">{JSON.stringify(log.newValue, null, 2)}</pre>
-                      </div>
-                    {/if}
-                  </div>
-                {/if}
               </li>
             {/each}
           </ul>
@@ -271,14 +253,22 @@
             <Pagination {total} bind:page bind:pageSize onChange={() => loadLogs()} />
           </div>
         {/if}
-      </Card>
-    </div>
+      </Section>
+    {:else if currentTab === "config"}
+      <!-- ── Aufbewahrung ──────────────────────────────────────── -->
+      <Section title="Aufbewahrung" sub="Standard: 10 Jahre (GoBD, § 147 AO)">
+        {#snippet footer()}
+          <span class="audit-spacer"></span>
+          <button
+            class="btn btn-primary sm"
+            onclick={saveRetention}
+            disabled={retentionSaving || retentionLoading}
+          >
+            {#if retentionSaving}<Spinner />{/if}
+            Speichern
+          </button>
+        {/snippet}
 
-    <!-- ── Right: Retention / 2FA / DSGVO ─────────────────────── -->
-    <div class="col-5 right-stack">
-      <!-- Aufbewahrung -->
-      <Card animate style="--card-idx: 1;">
-        <CardHeader title="Aufbewahrung" sub="Standard: 10 Jahre (GoBD, § 147 AO)" />
         <label class="audit-field">
           <span class="audit-field-label">Aufbewahrungsfrist</span>
           <select class="form-input" bind:value={retentionYears} disabled={retentionLoading}>
@@ -293,35 +283,16 @@
             kürzere Fristen nur, wenn keine Buchungsbelege betroffen sind.
           </span>
         </label>
-        <div class="card-foot">
-          <span class="audit-spacer"></span>
-          <button
-            class="btn btn-primary sm"
-            onclick={saveRetention}
-            disabled={retentionSaving || retentionLoading}
-          >
-            {#if retentionSaving}<Spinner />{/if}
-            Speichern
-          </button>
-        </div>
-      </Card>
+      </Section>
 
-      <!-- 2FA (display-only — wiring deferred to a later milestone) -->
-      <Card animate>
-        <CardHeader title="2FA" sub="Optionale E-Mail-OTP">
-          {#snippet actions()}
-            <span class="chip"><span class="dot"></span>Inaktiv</span>
-          {/snippet}
-        </CardHeader>
-        <p class="audit-card-body-text">
-          E-Mail-OTP für Manager- und Admin-Rollen folgt in einem späteren Milestone. Code gültig 5
-          Minuten.
-        </p>
-      </Card>
+      <!--
+        2FA toggle lives on /admin/system#sicherheit (single source of truth).
+        It used to also appear here as a placeholder card, but a duplicate
+        "Inaktiv" stub with no working control was just confusing.
+      -->
 
-      <!-- DSGVO-Werkzeuge -->
-      <Card animate>
-        <CardHeader title="DSGVO-Werkzeuge" sub="Datenexport · Anonymisierung · Löschauftrag" />
+      <!-- ── DSGVO-Werkzeuge ───────────────────────────────────── -->
+      <Section title="DSGVO-Werkzeuge" sub="Datenexport · Anonymisierung · Löschauftrag">
         <div class="audit-dsgvo-actions">
           <a class="btn btn-outline audit-dsgvo-btn" href="/admin/employees">
             Datenexport pro Mitarbeiter:in
@@ -330,26 +301,13 @@
             Anonymisierung verwalten
           </a>
         </div>
-      </Card>
-    </div>
-  </div>
-</section>
+      </Section>
+    {/if}
+  {/snippet}
+</SectionStack>
 
 <style>
-  .right-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  /* ── Audit card (timeline container) ── */
-  :global(.audit-card) {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  /* ── Filter bar inside the audit card ── */
+  /* ── Filter bar ── */
   .audit-filter-bar {
     display: flex;
     align-items: center;
@@ -357,6 +315,7 @@
     flex-wrap: wrap;
     padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
+    margin-bottom: 6px;
   }
 
   .audit-filter-bar select {
@@ -371,8 +330,6 @@
     margin-left: auto;
   }
 
-  /* Phase 39 (UI-15) — multiple 160px selects + count overflow at 390px.
-     Drop selects to full-width and let the count claim its own row. */
   @media (max-width: 480px) {
     .audit-filter-bar select {
       flex: 1 1 100%;
@@ -398,18 +355,25 @@
   .audit-row {
     border-bottom: 1px solid var(--border);
     padding: 10px 0;
+    cursor: pointer;
     transition: background-color 160ms var(--ease);
+    border-radius: var(--r-sm);
   }
 
   .audit-row:last-child {
     border-bottom: none;
   }
 
-  .audit-row.is-expanded {
+  .audit-row:hover,
+  .audit-row:focus-visible {
     background: var(--bg-subtle);
-    border-radius: var(--r-sm);
     padding-left: 8px;
     padding-right: 8px;
+    outline: none;
+  }
+
+  .audit-row:focus-visible {
+    box-shadow: 0 0 0 2px var(--brand);
   }
 
   .audit-row-main {
@@ -459,10 +423,12 @@
     white-space: nowrap;
   }
 
-  .audit-toggle {
-    padding: 2px 8px;
-    font-size: 11px;
-    min-height: 0;
+  .audit-has-detail {
+    font-size: 13px;
+    color: var(--brand);
+    width: 28px;
+    display: inline-block;
+    text-align: center;
   }
 
   .audit-toggle-spacer {
@@ -470,40 +436,7 @@
     display: inline-block;
   }
 
-  /* ── Expanded detail block ── */
-  .audit-detail {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    padding: 12px 0 4px;
-  }
-
-  .audit-detail-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-muted);
-    margin: 0 0 6px;
-  }
-
-  .audit-detail-pre {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 10px 12px;
-    margin: 0;
-    overflow-x: auto;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-    color: var(--text);
-    max-height: 220px;
-  }
-
-  /* ── Empty / skeleton state ── */
+  /* ── Skeleton state ── */
   .audit-skeleton {
     padding: 20px 0;
   }
@@ -517,31 +450,11 @@
     width: 80%;
   }
 
-  .audit-empty {
-    padding: 36px 16px;
-    text-align: center;
-    color: var(--text-muted);
-  }
-
-  .audit-empty-title {
-    font-family: var(--font-serif);
-    font-size: 18px;
-    font-weight: 400;
-    color: var(--text);
-    margin: 0 0 6px;
-  }
-
-  .audit-empty-sub {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 0;
-  }
-
   .audit-pagination {
     margin-top: 8px;
   }
 
-  /* ── Right-rail field controls (retention card) ── */
+  /* ── Retention field controls ── */
   .audit-field {
     display: flex;
     flex-direction: column;
@@ -567,7 +480,7 @@
     flex: 1 1 auto;
   }
 
-  .audit-card-body-text {
+  .audit-body-text {
     font-size: 13px;
     color: var(--text-muted);
     margin: 4px 0 0;
@@ -585,7 +498,7 @@
     justify-content: flex-start;
   }
 
-  /* ── Responsive: collapse the dense timeline row on narrow screens ── */
+  /* ── Responsive ── */
   @media (max-width: 720px) {
     .audit-row-main {
       grid-template-columns: 1fr auto;
@@ -598,9 +511,6 @@
     .audit-hash,
     .audit-ip {
       grid-column: 1 / -1;
-    }
-    .audit-detail {
-      grid-template-columns: 1fr;
     }
   }
 </style>

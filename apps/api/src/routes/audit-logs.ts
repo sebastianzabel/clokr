@@ -10,6 +10,10 @@ const querySchema = z.object({
   userId: z.string().uuid().optional(),
 });
 
+const idParamSchema = z.object({
+  id: z.string().min(1),
+});
+
 export async function auditLogRoutes(app: FastifyInstance) {
   // GET /audit-logs — ADMIN only, paginated, tenant-scoped
   app.get(
@@ -44,6 +48,31 @@ export async function auditLogRoutes(app: FastifyInstance) {
       ]);
 
       return { logs, total, page: parseInt(page), limit: take };
+    }
+  );
+
+  // GET /audit-logs/:id — ADMIN only, single entry, tenant-scoped
+  app.get(
+    "/:id",
+    { preHandler: requireRole("ADMIN") },
+    async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+
+      const log = await app.prisma.auditLog.findFirst({
+        where: {
+          id,
+          user: { employee: { tenantId: req.user.tenantId } },
+        },
+        include: {
+          user: { select: { email: true } },
+        },
+      });
+
+      if (!log) {
+        return reply.code(404).send({ error: "Audit-Eintrag nicht gefunden" });
+      }
+
+      return log;
     }
   );
 }

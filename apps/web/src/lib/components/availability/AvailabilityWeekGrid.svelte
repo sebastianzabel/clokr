@@ -9,7 +9,7 @@
   // class instead. See app.css for the canonical calendar styles.
 
   import Modal from "$components/ui/Modal.svelte";
-  import AvailabilityStatusPill from "./AvailabilityStatusPill.svelte";
+  import SegmentedControl from "$lib/components/ui/SegmentedControl.svelte";
   import AvailabilityEditModal, {
     type AvailabilityEntryDraft,
   } from "./AvailabilityEditModal.svelte";
@@ -138,6 +138,12 @@
     if (status === "PREFERRED") return "var(--brand)";
     return "transparent";
   }
+
+  const STATUS_OPTIONS = [
+    { value: "AVAILABLE", label: "Verfügbar", glyph: "✓" },
+    { value: "UNAVAILABLE", label: "Nicht verfügbar", glyph: "✕" },
+    { value: "PREFERRED", label: "Bevorzugt", glyph: "★" },
+  ];
 </script>
 
 {#if entries.length === 0}
@@ -147,36 +153,18 @@
 <div class="av-recurring-rows">
   {#each WEEK as day (day.dow)}
     {@const entry = entryFor(day.dow)}
-    <div
-      class="av-recurring-row"
-      style="border-left-color: {borderColor(entry?.status)};"
-    >
+    <div class="av-recurring-row" style="border-left-color: {borderColor(entry?.status)};">
       <span class="av-dow" aria-label={day.long}>{day.short}</span>
 
-      <div
-        class="av-pill-group"
-        role="radiogroup"
-        aria-label="Status für {day.long}"
-      >
-        <AvailabilityStatusPill
-          status="AVAILABLE"
-          as="button"
-          selected={entry?.status === "AVAILABLE"}
-          onclick={() => setStatus(day.dow, "AVAILABLE")}
-        />
-        <AvailabilityStatusPill
-          status="UNAVAILABLE"
-          as="button"
-          selected={entry?.status === "UNAVAILABLE"}
-          onclick={() => setStatus(day.dow, "UNAVAILABLE")}
-        />
-        <AvailabilityStatusPill
-          status="PREFERRED"
-          as="button"
-          selected={entry?.status === "PREFERRED"}
-          onclick={() => setStatus(day.dow, "PREFERRED")}
-        />
-      </div>
+      <SegmentedControl
+        options={STATUS_OPTIONS}
+        value={entry?.status ?? ""}
+        name="av-status-{day.dow}"
+        ariaLabel="Status für {day.long}"
+        size="sm"
+        {disabled}
+        onchange={(v) => setStatus(day.dow, v as Status)}
+      />
 
       <div class="av-actions">
         <button
@@ -212,7 +200,10 @@
 {#if confirmOpen}
   <div role="alertdialog" aria-modal="true" aria-label="Eintrag entfernen?">
     <Modal bind:open={confirmOpen} title="Eintrag entfernen?">
-      <p>Dieser Verfügbarkeits-Eintrag wird dauerhaft gelöscht. Vorhandene Schichten bleiben unverändert.</p>
+      <p>
+        Dieser Verfügbarkeits-Eintrag wird dauerhaft gelöscht. Vorhandene Schichten bleiben
+        unverändert.
+      </p>
       <div class="modal-actions">
         <button type="button" class="btn btn-secondary" onclick={cancelRemove}>Abbrechen</button>
         <button type="button" class="btn btn-danger" onclick={doRemove}>Entfernen</button>
@@ -231,7 +222,7 @@
   .av-recurring-rows {
     display: flex;
     flex-direction: column;
-    gap: var(--s-2);
+    gap: var(--s-1);
   }
 
   .av-recurring-row {
@@ -256,12 +247,6 @@
     color: var(--text);
   }
 
-  .av-pill-group {
-    display: flex;
-    gap: var(--s-2);
-    flex-wrap: wrap;
-  }
-
   .av-actions {
     display: flex;
     gap: var(--s-1);
@@ -275,20 +260,20 @@
     margin-top: var(--s-4);
   }
 
-  /* Mobile: stack pills vertically (UI-SPEC §Mobile Behavior) */
+  /* Mobile: stack control vertically (UI-SPEC §Mobile Behavior) */
   @media (max-width: 480px) {
     .av-recurring-row {
       grid-template-columns: 40px 1fr;
       grid-template-areas:
-        "dow pills"
+        "dow control"
         "dow actions";
     }
     .av-dow {
       grid-area: dow;
       align-self: start;
     }
-    .av-pill-group {
-      grid-area: pills;
+    :global(.av-recurring-row .seg-control) {
+      grid-area: control;
     }
     .av-actions {
       grid-area: actions;

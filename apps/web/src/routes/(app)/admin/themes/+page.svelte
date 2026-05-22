@@ -2,9 +2,8 @@
   import { theme, themes, type Theme } from "$stores/theme";
   import { mode, type Mode } from "$stores/mode";
   import { skin, type Skin } from "$stores/skin";
-  import PageHead from "$components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import SectionStack from "$lib/components/admin/SectionStack.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import LanguageToggle from "$components/ui/LanguageToggle.svelte";
   import DensityToggle from "$components/ui/DensityToggle.svelte";
 
@@ -76,20 +75,17 @@
 </script>
 
 <svelte:head>
-  <title>Themes & Branding – Clokr</title>
+  <title>Branding & Themes – Clokr</title>
 </svelte:head>
 
-<section class="page">
-  <PageHead
-    eyebrow="Administration"
-    title="Themes & Branding"
-    accent="Branding"
-    sub="Wähle Theme, Modus und Dichte. Spracheinstellung folgt in v1.6."
-  />
-
+<SectionStack
+  eyebrow="System"
+  title="Branding & Themes"
+  sub="Erscheinungsbild für alle Mitarbeitenden"
+  animate
+>
   <!-- Theme picker (editorial) -->
-  <Card>
-    <CardHeader title="Theme" sub="Markenfarbe und Charakter" />
+  <Section title="Theme" sub="Markenfarbe und Charakter">
     <div class="theme-grid grid grid-3" role="group" aria-label="Theme auswählen">
       {#each themes as t (t.id)}
         <button
@@ -116,14 +112,13 @@
         </button>
       {/each}
     </div>
-  </Card>
+  </Section>
 
   <!-- Modern presets — skin × mode × theme combos -->
-  <Card>
-    <CardHeader
-      title="Modern Skin"
-      sub="Glasmorphismus mit Inter Tight und Neon-Akzenten — überschreibt Theme + Modus."
-    />
+  <Section
+    title="Modern Skin"
+    sub="Glasmorphismus mit Inter Tight und Neon-Akzenten — überschreibt Theme + Modus."
+  >
     <div class="theme-grid grid grid-3" role="group" aria-label="Modern Preset auswählen">
       {#each modernPresets as p (p.id)}
         <button
@@ -153,11 +148,10 @@
         </button>
       {/each}
     </div>
-  </Card>
+  </Section>
 
   <!-- Mode picker -->
-  <Card>
-    <CardHeader title="Modus" sub="Hell oder dunkel — unabhängig vom Theme" />
+  <Section title="Modus" sub="Hell oder dunkel — unabhängig vom Theme">
     <div class="seg" role="group" aria-label="Modus auswählen">
       <button
         type="button"
@@ -178,24 +172,20 @@
         Dunkel
       </button>
     </div>
-  </Card>
+  </Section>
 
   <!-- Density picker -->
-  <Card>
-    <CardHeader title="Dichte" sub="Padding und Zeilenhöhe" />
+  <Section title="Dichte" sub="Padding und Zeilenhöhe">
     <DensityToggle />
-  </Card>
+  </Section>
 
   <!-- Language picker (stub) -->
-  <Card>
-    <CardHeader title="Sprache" sub="UI-Sprache (Englisch folgt in v1.6)" />
+  <Section title="Sprache" sub="UI-Sprache (Englisch folgt in v1.6)">
     <LanguageToggle variant="segmented" />
-  </Card>
-</section>
+  </Section>
+</SectionStack>
 
 <style>
-  /* .page wrapper is global (app.css) — no per-page padding/max-width. */
-
   /* Theme picker */
   .theme-grid {
     display: grid;

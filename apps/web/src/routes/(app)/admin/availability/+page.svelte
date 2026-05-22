@@ -1,100 +1,36 @@
 <script lang="ts">
-  // Phase 46 — Admin per-employee availability page.
+  // Phase 55 — Admin availability list page.
+  // Shows all employees as clickable rows linking to /admin/availability/[employeeId].
   // ADMIN + MANAGER only (server enforces 403; client redirects EMPLOYEE to /availability).
-  //
-  // Differences vs MA page:
-  // - Employee selector above content (instead of view-tabs).
-  // - Both Wochenraster AND Einmaltermine rendered side-by-side (no tabs).
-  // - Info banner explaining derived absences are read-only.
-  // - PUT target: /api/v1/employees/{id}/availability.
 
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import AvailabilityWeekGrid, {
-    type RecurringEntry,
-  } from "$lib/components/availability/AvailabilityWeekGrid.svelte";
-  import AvailabilityOneOffList, {
-    type OneOffEntry,
-  } from "$lib/components/availability/AvailabilityOneOffList.svelte";
-
-  type Status = "AVAILABLE" | "UNAVAILABLE" | "PREFERRED";
+  import ListDetail from "$lib/components/admin/ListDetail.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
 
   interface Employee {
     id: string;
     firstName: string;
     lastName: string;
-  }
-
-  interface ApiAvailabilityEntry {
-    id: string;
-    employeeId: string;
-    dayOfWeek: number | null;
-    date: string | null;
-    status: Status;
-    note: string | null;
-    validFrom: string;
-    validUntil: string | null;
-    createdAt: string;
-    updatedAt: string;
-    createdBy: string | null;
-  }
-
-  interface AvailabilityListResponse {
-    entries: ApiAvailabilityEntry[];
-  }
-
-  function todayISO(): string {
-    return new Date().toISOString().slice(0, 10);
+    employeeNumber?: string;
   }
 
   let employees = $state<Employee[]>([]);
-  let selectedEmployeeId = $state<string>("");
-  let recurringEntries = $state<RecurringEntry[]>([]);
-  let oneOffEntries = $state<OneOffEntry[]>([]);
   let loading = $state(true);
-  let loadingEntries = $state(false);
-  let saving = $state(false);
-  let lastSnapshot = $state("");
+  let search = $state("");
 
-  const currentSnapshot = $derived(JSON.stringify({ r: recurringEntries, o: oneOffEntries }));
-
-  const dirty = $derived(
-    !!selectedEmployeeId && !loadingEntries && currentSnapshot !== lastSnapshot,
+  const filtered = $derived(
+    search.trim()
+      ? employees.filter(
+          (e) =>
+            `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.trim().toLowerCase()) ||
+            (e.employeeNumber ?? "").toLowerCase().includes(search.trim().toLowerCase()),
+        )
+      : employees,
   );
-
-  function applyEntries(api_entries: ApiAvailabilityEntry[]): void {
-    const recurring: RecurringEntry[] = [];
-    const oneoff: OneOffEntry[] = [];
-    for (const e of api_entries) {
-      if (e.dayOfWeek != null) {
-        recurring.push({
-          id: e.id,
-          dayOfWeek: e.dayOfWeek,
-          status: e.status,
-          note: e.note,
-          validFrom: e.validFrom?.slice(0, 10) ?? todayISO(),
-          validUntil: e.validUntil ? e.validUntil.slice(0, 10) : null,
-        });
-      } else if (e.date != null) {
-        oneoff.push({
-          id: e.id,
-          date: e.date.slice(0, 10),
-          status: e.status,
-          note: e.note,
-          validFrom: e.validFrom?.slice(0, 10) ?? todayISO(),
-          validUntil: e.validUntil ? e.validUntil.slice(0, 10) : null,
-        });
-      }
-    }
-    recurringEntries = recurring;
-    oneOffEntries = oneoff;
-    lastSnapshot = JSON.stringify({ r: recurringEntries, o: oneOffEntries });
-  }
 
   async function loadEmployees(): Promise<void> {
     try {
@@ -109,70 +45,6 @@
     }
   }
 
-  async function loadEntriesFor(empId: string): Promise<void> {
-    if (!empId) {
-      recurringEntries = [];
-      oneOffEntries = [];
-      lastSnapshot = "";
-      return;
-    }
-    loadingEntries = true;
-    try {
-      const res = await api.get<AvailabilityListResponse>(`/employees/${empId}/availability`);
-      applyEntries(res.entries ?? []);
-    } catch (err) {
-      const msg =
-        err instanceof ApiError ? err.message : "Verfügbarkeit konnte nicht geladen werden.";
-      toasts.error(msg);
-    } finally {
-      loadingEntries = false;
-    }
-  }
-
-  // Reload entries whenever the employee selection changes.
-  $effect(() => {
-    void loadEntriesFor(selectedEmployeeId);
-  });
-
-  function buildPayload() {
-    const recurring = recurringEntries.map((e) => ({
-      dayOfWeek: e.dayOfWeek,
-      date: null,
-      status: e.status,
-      note: e.note ?? null,
-      validFrom: e.validFrom ?? todayISO(),
-      validUntil: e.validUntil ?? null,
-    }));
-    const oneoff = oneOffEntries.map((e) => ({
-      dayOfWeek: null,
-      date: e.date,
-      status: e.status,
-      note: e.note ?? null,
-      validFrom: e.validFrom ?? todayISO(),
-      validUntil: e.validUntil ?? null,
-    }));
-    return { entries: [...recurring, ...oneoff] };
-  }
-
-  async function save(): Promise<void> {
-    if (saving || !selectedEmployeeId) return;
-    saving = true;
-    try {
-      const res = await api.put<AvailabilityListResponse>(
-        `/employees/${selectedEmployeeId}/availability`,
-        buildPayload(),
-      );
-      applyEntries(res.entries ?? []);
-      toasts.success("Verfügbarkeit gespeichert.");
-    } catch (err) {
-      const fallback = "Die Verfügbarkeit konnte nicht gespeichert werden. Bitte erneut versuchen.";
-      const msg = err instanceof ApiError && err.status < 500 ? err.message : fallback;
-      toasts.error(msg);
-    } finally {
-      saving = false;
-    }
-  }
-
   onMount(() => {
     // Client-side UX redirect — server still enforces 403.
     const role = $authStore.user?.role;
@@ -184,84 +56,133 @@
   });
 </script>
 
-<PageHead
-  eyebrow="Administration"
-  title="Verfügbarkeit verwalten"
-  accent="Verfügbarkeit"
-  sub="Wann können Mitarbeiter arbeiten? Urlaub und Abwesenheit werden automatisch berücksichtigt."
+<ListDetail
+  view="list"
+  eyebrow="Planung"
+  title="Verfügbarkeit"
+  sub="Wer kann wann arbeiten?"
+  animate
 >
-  {#snippet actions()}
-    <button
-      class="btn btn-primary btn-sm"
-      disabled={!dirty || !selectedEmployeeId || saving}
-      onclick={save}
-    >
-      {saving ? "Speichert…" : "Speichern"}
-    </button>
-  {/snippet}
-</PageHead>
-
-<section class="page">
-  <div class="employee-selector card-animate">
-    <label class="form-label" for="emp-select">Mitarbeiter</label>
-    <select id="emp-select" class="form-input" bind:value={selectedEmployeeId} disabled={loading}>
-      <option value="">Mitarbeiter auswählen…</option>
-      {#each employees as e (e.id)}
-        <option value={e.id}>{e.firstName} {e.lastName}</option>
-      {/each}
-    </select>
-  </div>
-
-  {#if selectedEmployeeId}
-    <div class="alert alert-info" role="alert">
-      <span aria-hidden="true">ℹ</span>
-      <span
-        >Urlaub und Abwesenheit werden automatisch als „nicht verfügbar" angezeigt — bitte direkt in
-        der jeweiligen Quelle bearbeiten.</span
-      >
-    </div>
-
-    <Card animate class="card-animate">
-      <h2 class="av-section-title">Wochenraster</h2>
-      <AvailabilityWeekGrid bind:entries={recurringEntries} disabled={loadingEntries} />
-    </Card>
-
-    <Card animate class="card-animate">
-      <h2 class="av-section-title">Einmaltermine</h2>
-      <AvailabilityOneOffList bind:entries={oneOffEntries} disabled={loadingEntries} />
-    </Card>
-  {:else}
-    <Card animate class="card-animate">
-      <div class="av-empty-state">
-        <h3 class="av-empty-title">Mitarbeiter auswählen</h3>
-        <p class="av-empty-body">
-          Wähle oben einen Mitarbeiter, um dessen Verfügbarkeit anzuzeigen oder zu bearbeiten.
-        </p>
+  {#snippet list()}
+    <Section title="Mitarbeiter" sub="Wähle einen Mitarbeiter, um seine Verfügbarkeit zu bearbeiten.">
+      <div class="av-list-toolbar">
+        <input
+          type="search"
+          class="form-input av-search"
+          placeholder="Suchen…"
+          bind:value={search}
+          aria-label="Mitarbeiter suchen"
+        />
       </div>
-    </Card>
-  {/if}
-</section>
+
+      {#if loading}
+        <div class="av-empty-state">
+          <p class="av-empty-body">Lade Mitarbeiter…</p>
+        </div>
+      {:else if filtered.length === 0}
+        <div class="av-empty-state">
+          <h3 class="av-empty-title">Keine Mitarbeiter gefunden</h3>
+          <p class="av-empty-body">Passe die Suche an oder lege neue Mitarbeiter an.</p>
+        </div>
+      {:else}
+        <table class="av-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Personalnummer</th>
+              <th scope="col" aria-label="Aktion"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each filtered as emp (emp.id)}
+              <tr
+                class="av-row"
+                role="button"
+                tabindex="0"
+                onclick={() => goto(`/admin/availability/${emp.id}`)}
+                onkeydown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void goto(`/admin/availability/${emp.id}`);
+                  }
+                }}
+              >
+                <td class="av-cell av-cell--name">{emp.firstName} {emp.lastName}</td>
+                <td class="av-cell av-cell--number">{emp.employeeNumber ?? "—"}</td>
+                <td class="av-cell av-cell--arrow" aria-hidden="true">›</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      {/if}
+    </Section>
+  {/snippet}
+</ListDetail>
 
 <style>
-  .employee-selector {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    padding: var(--s-3) var(--s-4);
-    display: flex;
-    flex-direction: column;
-    gap: var(--s-1);
-    max-width: 480px;
+  .av-list-toolbar {
+    padding: 0 0 var(--s-3);
   }
 
-  .av-section-title {
+  .av-search {
+    max-width: 320px;
+    width: 100%;
+  }
+
+  .av-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .av-table thead th {
     font-family: var(--font-sans);
     font-size: 11px;
     font-weight: 600;
-    letter-spacing: 0.08em;
     text-transform: uppercase;
+    letter-spacing: 0.08em;
     color: var(--text-muted);
-    margin: 0 0 var(--s-3);
+    padding: var(--s-2) var(--s-3);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .av-row {
+    cursor: pointer;
+    transition: background 0.1s ease;
+  }
+
+  .av-row:hover {
+    background: var(--bg-subtle);
+  }
+
+  .av-row:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: -2px;
+  }
+
+  .av-cell {
+    padding: var(--s-3);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.9375rem;
+  }
+
+  .av-cell--name {
+    font-weight: 500;
+  }
+
+  .av-cell--number {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+  }
+
+  .av-cell--arrow {
+    width: 32px;
+    text-align: right;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    line-height: 1;
   }
 
   .av-empty-state {

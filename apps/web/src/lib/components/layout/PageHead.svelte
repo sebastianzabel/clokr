@@ -154,4 +154,25 @@
       justify-content: flex-start;
     }
   }
+
+  /* Modern skin layer override — Svelte scoping hashes only the local
+     `.eyebrow` token, so the `:global(...)` parent attribute selector
+     survives in the compiled CSS at higher specificity than the
+     editorial default above. This colocates the modern-skin pill recipe
+     with the component instead of relying on a global app.css rule that
+     loses the specificity race against the scoped editorial default. */
+  :global([data-skin="modern"]) .eyebrow {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: var(--r-pill);
+    background: var(--brand-soft);
+    color: var(--brand);
+    font-family: var(--font-sans);
+    font-style: normal;
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
 </style>

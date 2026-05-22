@@ -1,15 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { authStore } from "$stores/auth";
   import { api } from "$api/client";
-  import { toasts } from "$stores/toast";
   import Pagination from "$components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import ListDetail from "$lib/components/admin/ListDetail.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import {
     type EmployeeClassification,
     CLASSIFICATION_OPTIONS,
@@ -58,7 +57,9 @@
   let cEmployeeNumber = $state("");
   let cHireDate = $state(new Date().toISOString().split("T")[0]);
   let cRole: Role = $state("EMPLOYEE");
-  let cScheduleType = $state<"FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED">("FIXED_SCHEDULE");
+  let cScheduleType = $state<"FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED">(
+    "FIXED_SCHEDULE",
+  );
   let cWeeklyHours = $state(40);
   let cMonthlyHours = $state<number | null>(null);
   let cUsePassword = $state(false);
@@ -75,22 +76,6 @@
   let cCoverageWeight = $state(1.0);
   let cRequiresSupervision = $state(false);
 
-  // Edit modal
-  let editOpen = $state(false);
-  let editingEmployee: Employee | null = $state(null);
-  let editSaving = $state(false);
-  let editError = $state("");
-  let eFirstName = $state("");
-  let eLastName = $state("");
-  let eEmployeeNumber = $state("");
-  let eRole: Role = $state("EMPLOYEE");
-  let eNfcCardId = $state("");
-  let eExitDate = $state("");
-  // Personalstruktur (Phase 41)
-  let eClassification: EmployeeClassification = $state("VOLLZEIT");
-  let eCoverageWeight = $state(1.0);
-  let eRequiresSupervision = $state(false);
-
   // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
   // Reactive: re-evaluate when classification or the field itself changes.
   let cCoverageOverridden = $derived(
@@ -99,44 +84,18 @@
   let cSupervisionOverridden = $derived(
     isOverridden(cClassification, "requiresSupervision", cRequiresSupervision),
   );
-  let eCoverageOverridden = $derived(
-    isOverridden(eClassification, "coverageWeight", eCoverageWeight),
-  );
-  let eSupervisionOverridden = $derived(
-    isOverridden(eClassification, "requiresSupervision", eRequiresSupervision),
-  );
 
   function onCreateClassificationChange() {
     const def = applyDefaults(cClassification);
     cCoverageWeight = def.coverageWeight;
     cRequiresSupervision = def.requiresSupervision;
   }
-  function onEditClassificationChange() {
-    const def = applyDefaults(eClassification);
-    eCoverageWeight = def.coverageWeight;
-    eRequiresSupervision = def.requiresSupervision;
+  function resetCoverage() {
+    cCoverageWeight = applyDefaults(cClassification).coverageWeight;
   }
-  function resetCoverage(which: "c" | "e") {
-    if (which === "c") cCoverageWeight = applyDefaults(cClassification).coverageWeight;
-    else eCoverageWeight = applyDefaults(eClassification).coverageWeight;
+  function resetSupervision() {
+    cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
   }
-  function resetSupervision(which: "c" | "e") {
-    if (which === "c") cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
-    else eRequiresSupervision = applyDefaults(eClassification).requiresSupervision;
-  }
-
-  // Anonymize confirm (step 1)
-  let anonOpen = $state(false);
-  let anonymizingEmployee: Employee | null = $state(null);
-  let anonymizing = $state(false);
-
-  // Hard-delete confirm (step 2 — only for already-anonymized employees)
-  let hardDelOpen = $state(false);
-  let hardDeletingEmployee: Employee | null = $state(null);
-  let hardDeleting = $state(false);
-  let hardDeleteError = $state("");
-  let hardDeleteRetentionExpiresAt = $state<string | null>(null);
-  let hardDeleteForce = $state(false);
 
   let isAdmin = $derived($authStore.user?.role === "ADMIN");
 
@@ -322,73 +281,6 @@
     }
   }
 
-  function openEdit(emp: Employee) {
-    editingEmployee = emp;
-    eFirstName = emp.firstName;
-    eLastName = emp.lastName;
-    eEmployeeNumber = emp.employeeNumber;
-    eRole = emp.user.role;
-    eNfcCardId = emp.nfcCardId ?? "";
-    eExitDate = emp.exitDate ? emp.exitDate.split("T")[0] : "";
-    // Personalstruktur (Phase 41) — coverageWeight may be string (Prisma Decimal JSON) or number
-    eClassification = emp.classification ?? "VOLLZEIT";
-    eCoverageWeight =
-      emp.coverageWeight !== undefined && emp.coverageWeight !== null
-        ? Number(emp.coverageWeight)
-        : applyDefaults(eClassification).coverageWeight;
-    eRequiresSupervision =
-      emp.requiresSupervision ?? applyDefaults(eClassification).requiresSupervision;
-    editError = "";
-    editOpen = true;
-  }
-
-  async function saveEdit() {
-    if (!editingEmployee) return;
-    editSaving = true;
-    editError = "";
-    try {
-      const res = await api.patch<Employee & { proRataWarning?: { message: string } }>(
-        `/employees/${editingEmployee.id}`,
-        {
-          firstName: eFirstName,
-          lastName: eLastName,
-          employeeNumber: eEmployeeNumber,
-          role: eRole,
-          nfcCardId: eNfcCardId || null,
-          exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
-          // Personalstruktur (Phase 41)
-          classification: eClassification,
-          coverageWeight: eCoverageWeight,
-          requiresSupervision: eRequiresSupervision,
-        },
-      );
-      employees = employees.map((e) =>
-        e.id === editingEmployee!.id
-          ? {
-              ...e,
-              firstName: eFirstName,
-              lastName: eLastName,
-              employeeNumber: eEmployeeNumber,
-              nfcCardId: eNfcCardId || null,
-              exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
-              classification: eClassification,
-              coverageWeight: eCoverageWeight,
-              requiresSupervision: eRequiresSupervision,
-              user: { ...e.user, role: eRole },
-            }
-          : e,
-      );
-      editOpen = false;
-      if (res.proRataWarning) {
-        toasts.warning(res.proRataWarning.message, 8000);
-      }
-    } catch (e: unknown) {
-      editError = e instanceof Error ? e.message : "Fehler beim Speichern";
-    } finally {
-      editSaving = false;
-    }
-  }
-
   async function resendInvitation(emp: Employee) {
     try {
       await api.post(`/employees/${emp.id}/resend-invitation`, {});
@@ -436,61 +328,6 @@
     }
   }
 
-  function confirmAnonymize(emp: Employee) {
-    anonymizingEmployee = emp;
-    anonOpen = true;
-  }
-
-  async function doAnonymize() {
-    if (!anonymizingEmployee) return;
-    anonymizing = true;
-    try {
-      await api.delete(`/employees/${anonymizingEmployee.id}`);
-      anonOpen = false;
-      anonymizingEmployee = null;
-      // Refresh to show anonymized state
-      await loadEmployees();
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : "Fehler beim Anonymisieren");
-    } finally {
-      anonymizing = false;
-    }
-  }
-
-  function confirmHardDelete(emp: Employee) {
-    hardDeletingEmployee = emp;
-    hardDeleteError = "";
-    hardDeleteRetentionExpiresAt = null;
-    hardDeleteForce = false;
-    hardDelOpen = true;
-  }
-
-  async function doHardDelete() {
-    if (!hardDeletingEmployee) return;
-    hardDeleting = true;
-    hardDeleteError = "";
-    try {
-      const body = hardDeleteForce ? { forceDelete: true } : undefined;
-      await api.delete(`/employees/${hardDeletingEmployee.id}/hard-delete`, body);
-      employees = employees.filter((e) => e.id !== hardDeletingEmployee!.id);
-      hardDelOpen = false;
-      hardDeletingEmployee = null;
-      hardDeleteRetentionExpiresAt = null;
-      hardDeleteForce = false;
-    } catch (e: unknown) {
-      if (e instanceof Error) {
-        hardDeleteError = e.message;
-        // Extract retentionExpiresAt from API error response data if present
-        const apiData = (e as { data?: { retentionExpiresAt?: string } }).data;
-        hardDeleteRetentionExpiresAt = apiData?.retentionExpiresAt ?? null;
-      } else {
-        hardDeleteError = "Fehler beim endgültigen Löschen";
-      }
-    } finally {
-      hardDeleting = false;
-    }
-  }
-
   function scheduleLabel(type: string | null | undefined): string {
     switch (type) {
       case "FIXED_SCHEDULE":
@@ -530,188 +367,185 @@
 </script>
 
 <svelte:head>
-  <title>Mitarbeiter – Clokr</title>
+  <title>Mitarbeitende – Clokr</title>
 </svelte:head>
 
-<div class="page">
-  <PageHead
-    eyebrow="Administration"
-    title="Mitarbeitende"
-    accent="Mitarbeitende"
-    sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
-  >
-    {#snippet actions()}
-      {#if isAdmin}
-        <button class="btn btn-primary" onclick={openCreate}>+ Mitarbeiter anlegen</button>
-      {/if}
-    {/snippet}
-  </PageHead>
+<ListDetail
+  view="list"
+  eyebrow="Personal"
+  title="Mitarbeitende"
+  sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
+>
+  {#snippet actions()}
+    {#if isAdmin}
+      <button class="btn btn-primary" onclick={openCreate}>+ Mitarbeiter anlegen</button>
+    {/if}
+  {/snippet}
 
-  {#if loading}
-    <div class="loading">Laden…</div>
-  {:else if error}
-    <div class="callout error">{error}</div>
-  {:else if employees.length === 0}
-    <div class="empty-state">
-      <p>Noch keine Mitarbeiter angelegt.</p>
-      {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button>{/if}
-    </div>
-  {:else}
-    <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
-    <Card animate class="kpi-card">
-      <CardHeader title="Übersicht" sub="Belegschaft auf einen Blick" />
-      <div class="kpi-row">
-        <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
-        <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
-        <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
-        <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+  {#snippet list()}
+    {#if loading}
+      <div class="loading">Laden…</div>
+    {:else if error}
+      <div class="callout error">{error}</div>
+    {:else if employees.length === 0}
+      <div class="empty-state">
+        <p>Noch keine Mitarbeiter angelegt.</p>
+        {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
+          >{/if}
       </div>
-    </Card>
+    {:else}
+      <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
+      <Section title="Übersicht" sub="Belegschaft auf einen Blick">
+        <div class="kpi-row">
+          <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
+          <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
+          <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
+          <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+        </div>
+      </Section>
 
-    <Card animate class="table-card">
-      <CardHeader title="Personenverzeichnis" sub="Filter · Rollenwechsel · Einladungen" />
-      <div class="table-toolbar">
-        <input
-          type="search"
-          class="input filter-search"
-          placeholder="Person suchen…"
-          bind:value={filterSearch}
-          aria-label="Mitarbeiter suchen"
-        />
-        <select
-          class="select filter-select"
-          bind:value={filterRole}
-          aria-label="Nach Rolle filtern"
-        >
-          <option value="">Alle Rollen</option>
-          <option value="ADMIN">Administrator</option>
-          <option value="MANAGER">Manager</option>
-          <option value="EMPLOYEE">Mitarbeiter</option>
-        </select>
-        <select
-          class="select filter-select"
-          bind:value={filterStatus}
-          aria-label="Nach Status filtern"
-        >
-          <option value="">Alle Status</option>
-          <option value="active">Aktiv</option>
-          <option value="pending">Einladung ausstehend</option>
-          <option value="expired">Einladung abgelaufen</option>
-          <option value="inactive">Inaktiv</option>
-        </select>
-        <label class="filter-checkbox">
-          <input type="checkbox" bind:checked={showAnonymized} />
-          Anonymisierte anzeigen
-        </label>
-        <span class="spacer"></span>
-        <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
-      </div>
+      <Section title="Personenverzeichnis" sub="Filter · Rollenwechsel · Einladungen">
+        <div class="table-toolbar">
+          <input
+            type="search"
+            class="input filter-search"
+            placeholder="Person suchen…"
+            bind:value={filterSearch}
+            aria-label="Mitarbeiter suchen"
+          />
+          <select
+            class="select filter-select"
+            bind:value={filterRole}
+            aria-label="Nach Rolle filtern"
+          >
+            <option value="">Alle Rollen</option>
+            <option value="ADMIN">Administrator</option>
+            <option value="MANAGER">Manager</option>
+            <option value="EMPLOYEE">Mitarbeiter</option>
+          </select>
+          <select
+            class="select filter-select"
+            bind:value={filterStatus}
+            aria-label="Nach Status filtern"
+          >
+            <option value="">Alle Status</option>
+            <option value="active">Aktiv</option>
+            <option value="pending">Einladung ausstehend</option>
+            <option value="expired">Einladung abgelaufen</option>
+            <option value="inactive">Inaktiv</option>
+          </select>
+          <label class="filter-checkbox">
+            <input type="checkbox" bind:checked={showAnonymized} />
+            Anonymisierte anzeigen
+          </label>
+          <span class="spacer"></span>
+          <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
+        </div>
 
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Nr.</th>
-              <th>Name</th>
-              <th>E-Mail</th>
-              <th>Rolle</th>
-              <th>Eintritt</th>
-              <th>Arbeitszeitmodell</th>
-              <th>Status</th>
-              <th>Letzter Login</th>
-              {#if isAdmin}<th>Aktionen</th>{/if}
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedEmployees as emp (emp.id)}
-              <tr class:row-inactive={!emp.user.isActive}>
-                <td class="col-number num">{emp.employeeNumber}</td>
-                <td class="col-name">
-                  <strong>{emp.lastName}, {emp.firstName}</strong>
-                </td>
-                <td class="col-email">{emp.user.email}</td>
-                <td>
-                  <span class={roleChipClass(emp.user.role)}>
-                    <span class="dot"></span>{roleLabel(emp.user.role)}
-                  </span>
-                </td>
-                <td class="col-date"
-                  >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}</td
-                >
-                <td class="col-schedule">
-                  <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
-                </td>
-                <td>
-                  <span class={statusClass(emp)}>
-                    <span class="dot"></span>{statusLabel(emp)}
-                  </span>
-                </td>
-                <td class="col-login">
-                  {emp.user.lastLoginAt
-                    ? new Date(emp.user.lastLoginAt).toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                      })
-                    : "—"}
-                </td>
-                {#if isAdmin}
-                  <td class="col-actions">
-                    <div class="action-group">
-                      {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
-                        <button
-                          class="btn btn-ghost btn-sm"
-                          onclick={() => resendInvitation(emp)}
-                          title="Einladung erneut senden"
-                        >
-                          Einladen
-                        </button>
-                      {/if}
-                      <button class="btn btn-ghost btn-sm" onclick={() => openEdit(emp)}
-                        >Bearbeiten</button
-                      >
-                      {#if emp.user.isActive}
-                        <button class="btn btn-ghost btn-sm" onclick={() => askDeactivate(emp)}
-                          >Deaktivieren</button
-                        >
-                      {:else}
-                        <button class="btn btn-ghost btn-sm" onclick={() => askReactivate(emp)}
-                          >Reaktivieren</button
-                        >
-                      {/if}
-                      {#if isAnonymized(emp)}
-                        <button
-                          class="btn btn-danger btn-sm"
-                          onclick={() => confirmHardDelete(emp)}
-                          title="Endgültig löschen (nur nach Ablauf der Aufbewahrungsfrist)"
-                        >
-                          Endgültig löschen
-                        </button>
-                      {:else}
-                        <button class="btn btn-danger btn-sm" onclick={() => confirmAnonymize(emp)}>
-                          Anonymisieren
-                        </button>
-                      {/if}
-                    </div>
-                  </td>
-                {/if}
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Nr.</th>
+                <th>Name</th>
+                <th>E-Mail</th>
+                <th>Rolle</th>
+                <th>Eintritt</th>
+                <th>Arbeitszeitmodell</th>
+                <th>Status</th>
+                <th>Letzter Login</th>
+                {#if isAdmin}<th>Aktionen</th>{/if}
               </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        total={filteredEmployees.length}
-        bind:page={empPage}
-        bind:pageSize={empPageSize}
-      />
-    </Card>
-  {/if}
-</div>
+            </thead>
+            <tbody>
+              {#each pagedEmployees as emp (emp.id)}
+                <tr
+                  class:row-inactive={!emp.user.isActive}
+                  class="row-clickable"
+                  onclick={() => goto(`/admin/employees/${emp.id}`)}
+                  role="row"
+                >
+                  <td class="col-number num">{emp.employeeNumber}</td>
+                  <td class="col-name">
+                    <a
+                      href="/admin/employees/{emp.id}"
+                      class="row-link"
+                      onclick={(e) => e.stopPropagation()}
+                    >
+                      <strong>{emp.lastName}, {emp.firstName}</strong>
+                    </a>
+                  </td>
+                  <td class="col-email">{emp.user.email}</td>
+                  <td>
+                    <span class={roleChipClass(emp.user.role)}>
+                      <span class="dot"></span>{roleLabel(emp.user.role)}
+                    </span>
+                  </td>
+                  <td class="col-date"
+                    >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                    })}</td
+                  >
+                  <td class="col-schedule">
+                    <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
+                  </td>
+                  <td>
+                    <span class={statusClass(emp)}>
+                      <span class="dot"></span>{statusLabel(emp)}
+                    </span>
+                  </td>
+                  <td class="col-login">
+                    {emp.user.lastLoginAt
+                      ? new Date(emp.user.lastLoginAt).toLocaleDateString("de-DE", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                        })
+                      : "—"}
+                  </td>
+                  {#if isAdmin}
+                    <td class="col-actions" onclick={(e) => e.stopPropagation()} role="cell">
+                      <div class="action-group">
+                        {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
+                          <button
+                            class="btn btn-ghost btn-sm"
+                            onclick={() => resendInvitation(emp)}
+                            title="Einladung erneut senden"
+                          >
+                            Einladen
+                          </button>
+                        {/if}
+                        <a href="/admin/employees/{emp.id}" class="btn btn-ghost btn-sm">
+                          Bearbeiten
+                        </a>
+                        {#if emp.user.isActive}
+                          <button class="btn btn-ghost btn-sm" onclick={() => askDeactivate(emp)}
+                            >Deaktivieren</button
+                          >
+                        {:else}
+                          <button class="btn btn-ghost btn-sm" onclick={() => askReactivate(emp)}
+                            >Reaktivieren</button
+                          >
+                        {/if}
+                      </div>
+                    </td>
+                  {/if}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        <Pagination
+          total={filteredEmployees.length}
+          bind:page={empPage}
+          bind:pageSize={empPageSize}
+        />
+      </Section>
+    {/if}
+  {/snippet}
+</ListDetail>
 
 <!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
 <Modal bind:open={createOpen} eyebrow="Mitarbeiter einladen" title="Person einladen">
@@ -783,7 +617,7 @@
         {#if cCoverageOverridden}
           <div class="override-row">
             <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage("c")}
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage()}
               >Auf Standard zurück</button
             >
           </div>
@@ -797,7 +631,7 @@
         {#if cSupervisionOverridden}
           <div class="override-row">
             <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision("c")}
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision()}
               >Auf Standard zurück</button
             >
           </div>
@@ -870,26 +704,12 @@
         </div>
         <div class="form-group">
           <label class="form-label" for="c-core-end">Kernzeitende</label>
-          <input
-            id="c-core-end"
-            type="time"
-            bind:value={cCoreEnd}
-            class="input"
-            placeholder="—"
-          />
+          <input id="c-core-end" type="time" bind:value={cCoreEnd} class="input" placeholder="—" />
         </div>
         <div class="form-group form-group--full">
           <label class="form-label">Kerntage</label>
           <div class="weekday-chips" role="group" aria-label="Kerntage">
-            {#each [
-              { value: 1, label: "Mo" },
-              { value: 2, label: "Di" },
-              { value: 3, label: "Mi" },
-              { value: 4, label: "Do" },
-              { value: 5, label: "Fr" },
-              { value: 6, label: "Sa" },
-              { value: 0, label: "So" }
-            ] as day (day.value)}
+            {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
               <button
                 type="button"
                 class="wd-chip"
@@ -949,202 +769,6 @@
   {/snippet}
 </Modal>
 
-<!-- ── Bearbeiten Modal ───────────────────────────────────────────────────── -->
-{#if editingEmployee}
-  <Modal bind:open={editOpen} eyebrow="Stammdaten" title="Mitarbeiter bearbeiten">
-    {#if editError}
-      <div class="callout error">{editError}</div>
-    {/if}
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label" for="e-firstname">Vorname</label>
-        <input id="e-firstname" type="text" bind:value={eFirstName} class="input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="e-lastname">Nachname</label>
-        <input id="e-lastname" type="text" bind:value={eLastName} class="input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="e-empno">Mitarbeiter-Nr.</label>
-        <input id="e-empno" type="text" bind:value={eEmployeeNumber} class="input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="e-role">Rolle</label>
-        <select id="e-role" bind:value={eRole} class="select">
-          <option value="EMPLOYEE">Mitarbeiter</option>
-          <option value="MANAGER">Manager</option>
-          <option value="ADMIN">Administrator</option>
-        </select>
-      </div>
-      <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Personalstruktur</h4>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="e-classification">Personalkategorie</label>
-        <select
-          id="e-classification"
-          bind:value={eClassification}
-          onchange={onEditClassificationChange}
-          class="select"
-        >
-          {#each CLASSIFICATION_OPTIONS as opt (opt)}
-            <option value={opt}>{CLASSIFICATION_LABELS[opt]}</option>
-          {/each}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="e-coverage">Schicht-Gewicht</label>
-        <input
-          id="e-coverage"
-          type="number"
-          bind:value={eCoverageWeight}
-          class="input"
-          min="0"
-          max="9.99"
-          step="0.05"
-        />
-        {#if eCoverageOverridden}
-          <div class="override-row">
-            <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage("e")}
-              >Auf Standard zurück</button
-            >
-          </div>
-        {/if}
-      </div>
-      <div class="form-group form-group--full">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={eRequiresSupervision} />
-          Aufsichtspflichtig
-        </label>
-        {#if eSupervisionOverridden}
-          <div class="override-row">
-            <span class="chip chip-warn">Manuell überschrieben</span>
-            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision("e")}
-              >Auf Standard zurück</button
-            >
-          </div>
-        {/if}
-      </div>
-      <div class="form-group form-group--full form-subhead">
-        <h4 class="form-subhead-title">Weitere Stammdaten</h4>
-      </div>
-      <div class="form-group form-group--full">
-        <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
-        <input id="e-exitdate" type="date" bind:value={eExitDate} class="input" />
-        <p class="hint">
-          Bei gesetztem Datum wird der Jahresurlaub anteilig berechnet (<span translate="no"
-            >§ 5 Abs. 2 BUrlG</span
-          >).
-        </p>
-      </div>
-      <div class="form-group form-group--full">
-        <label class="form-label" for="e-nfc">NFC-Karten-ID</label>
-        <input
-          id="e-nfc"
-          type="text"
-          bind:value={eNfcCardId}
-          class="input"
-          placeholder="z.B. NFC-A1B2C3D4"
-        />
-        <p class="hint">Optional. Ermöglicht Stempeln per NFC-Karte.</p>
-      </div>
-    </div>
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={() => (editOpen = false)}>Abbrechen</button>
-      <button class="btn btn-primary" onclick={saveEdit} disabled={editSaving}>
-        {editSaving ? "Speichern…" : "Speichern"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
-
-<!-- ── Anonymisieren Bestätigung (Schritt 1) ─────────────────────────────── -->
-{#if anonymizingEmployee}
-  <Modal bind:open={anonOpen} eyebrow="DSGVO Art. 17" title="Mitarbeiter anonymisieren">
-    <p>
-      Möchten Sie <strong>{anonymizingEmployee.firstName} {anonymizingEmployee.lastName}</strong>
-      wirklich anonymisieren?
-    </p>
-    <div class="callout">
-      Persönliche Daten (Name, E-Mail, Notizen) werden gemäß <span translate="no">DSGVO</span>
-      gelöscht. Zeiteinträge, Urlaubsanträge und Salden bleiben aus rechtlichen Gründen für die Aufbewahrungsfrist
-      (10 Jahre nach <span translate="no">§ 147 AO</span>) erhalten. Erst danach kann der Datensatz
-      endgültig gelöscht werden.
-    </div>
-    {#snippet footer()}
-      <button
-        class="btn btn-ghost"
-        onclick={() => {
-          anonOpen = false;
-          anonymizingEmployee = null;
-        }}>Abbrechen</button
-      >
-      <button class="btn btn-danger" onclick={doAnonymize} disabled={anonymizing}>
-        {anonymizing ? "Anonymisieren…" : "Anonymisieren"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
-
-<!-- ── Endgültig löschen Bestätigung (Schritt 2) ────────────────────────── -->
-{#if hardDeletingEmployee}
-  <Modal bind:open={hardDelOpen} eyebrow="Endgültige Löschung" title="Datensatz löschen">
-    {#if hardDeleteError && !hardDeleteRetentionExpiresAt}
-      <div class="callout error">{hardDeleteError}</div>
-    {/if}
-    {#if hardDeleteRetentionExpiresAt}
-      <div class="callout">
-        <b>Aufbewahrungsfrist noch nicht abgelaufen.</b>
-        Die gesetzliche Aufbewahrungsfrist (<span translate="no">§ 147 AO</span>, 10 Jahre) läuft ab
-        am:
-        <strong
-          >{new Date(hardDeleteRetentionExpiresAt).toLocaleDateString("de-DE", {
-            day: "2-digit",
-            month: "2-digit",
-            year: "numeric",
-          })}</strong
-        >.
-      </div>
-      <label class="force-delete-checkbox">
-        <input type="checkbox" bind:checked={hardDeleteForce} />
-        Ich bestätige, dass ich diese Aufbewahrungsfrist kenne und den Datensatz trotzdem unwiderruflich
-        löschen möchte (z. B. Testdaten). Diese Aktion wird im Audit-Log protokolliert.
-      </label>
-    {/if}
-    <p>
-      Den anonymisierten Datensatz von <strong>{hardDeletingEmployee.employeeNumber}</strong> endgültig
-      und unwiderruflich löschen?
-    </p>
-    <p class="hint danger-hint">
-      Diese Aktion entfernt alle verbleibenden Daten dauerhaft (<span translate="no">DSGVO</span>
-      Art. 17). Sie ist nur nach Ablauf der gesetzlichen Aufbewahrungsfrist (<span translate="no"
-        >§ 147 AO</span
-      >, 10 Jahre) möglich.
-    </p>
-    {#snippet footer()}
-      <button
-        class="btn btn-ghost"
-        onclick={() => {
-          hardDelOpen = false;
-          hardDeletingEmployee = null;
-          hardDeleteError = "";
-          hardDeleteRetentionExpiresAt = null;
-          hardDeleteForce = false;
-        }}>Abbrechen</button
-      >
-      <button
-        class="btn btn-danger"
-        onclick={doHardDelete}
-        disabled={hardDeleting || (hardDeleteRetentionExpiresAt !== null && !hardDeleteForce)}
-      >
-        {hardDeleting ? "Löschen…" : "Endgültig löschen"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
-
 <!-- ── Bestätigung: Aktivierungsstatus ändern ─────────────────────────────── -->
 {#if activationConfirm.emp}
   <ConfirmDialog
@@ -1162,10 +786,6 @@
 {/if}
 
 <style>
-  .page {
-    /* max-width inherited from .app-main */
-  }
-
   .loading {
     padding: 48px;
     text-align: center;
@@ -1182,10 +802,7 @@
     gap: 16px;
   }
 
-  /* ── KPI card (v1.5) ────────────────────────────────────────────────── */
-  :global(.kpi-card) {
-    margin-bottom: 18px;
-  }
+  /* ── KPI cluster ────────────────────────────────────────────────────── */
   .kpi-row {
     display: flex;
     align-items: flex-end;
@@ -1194,12 +811,7 @@
     margin-top: 4px;
   }
 
-  /* Table card */
-  :global(.table-card) {
-    padding: 0;
-    margin-bottom: 18px;
-  }
-
+  /* Table section */
   .table-toolbar {
     display: flex;
     gap: 10px;
@@ -1286,6 +898,19 @@
     opacity: 0.6;
   }
 
+  .row-clickable {
+    cursor: pointer;
+  }
+
+  .row-link {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .row-link:hover {
+    color: var(--brand);
+  }
+
   .num {
     font-variant-numeric: tabular-nums;
   }
@@ -1356,28 +981,9 @@
     color: var(--text-muted);
     margin: 4px 0 0;
   }
-  .danger-hint {
-    color: var(--bad);
-  }
   .text-muted {
     color: var(--text-muted);
     font-weight: 400;
-  }
-
-  .force-delete-checkbox {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    font-size: 13.5px;
-    color: var(--text);
-    cursor: pointer;
-    margin: 8px 0 4px;
-    line-height: 1.45;
-  }
-  .force-delete-checkbox input[type="checkbox"] {
-    flex-shrink: 0;
-    margin-top: 2px;
-    cursor: pointer;
   }
 
   /* ── Personalstruktur (Phase 41) — subhead + override row ─────────────── */

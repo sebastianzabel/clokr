@@ -74,6 +74,22 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /api/v1/special-leave/rules/:id
+  app.get("/rules/:id", {
+    schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const tenantId = req.user.tenantId;
+
+      const rule = await app.prisma.specialLeaveRule.findFirst({
+        where: { id, tenantId },
+      });
+      if (!rule) return reply.code(404).send({ error: "Regel nicht gefunden" });
+      return rule;
+    },
+  });
+
   // POST /api/v1/special-leave/rules — custom rule (admin only)
   app.post("/rules", {
     schema: { tags: ["Sonderurlaub"], security: [{ bearerAuth: [] }] },

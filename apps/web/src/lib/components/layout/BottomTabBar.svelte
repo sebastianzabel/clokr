@@ -40,17 +40,19 @@
     { href: "/settings", label: "Mein Profil", icon: "settings" },
   ];
 
+  // adminMore: flat list for mobile (12 entries). Group restructure deferred to ADMIN-MIG-14
+  // (v2 backlog) — mobile users see the same flat list as today.
   const adminMore: NavItem[] = [
     { href: "/admin/employees", label: "Mitarbeitende", icon: "users" },
-    { href: "/admin/vacation", label: "Urlaub & Zeiten", icon: "umbrella" },
-    { href: "/admin/special-leave", label: "Sonderurlaub", icon: "star" },
+    { href: "/admin/vacation", label: "Urlaubsverwaltung", icon: "umbrella" },
+    { href: "/admin/special-leave", label: "Sonderurlaubs-Typen", icon: "star" },
     { href: "/admin/shutdowns", label: "Betriebsurlaub", icon: "calendar" },
     { href: "/admin/shifts", label: "Schichtplan", icon: "grid" },
     { href: "/admin/month-close", label: "Monatsabschluss", icon: "lock" },
-    { href: "/admin/audit", label: "Compliance & Audit", icon: "shield" },
-    { href: "/admin/wifi-presence", label: "WiFi-Präsenz", icon: "wifi" },
-    { href: "/admin/system", label: "System", icon: "settings" },
-    { href: "/admin/themes", label: "Themes & Branding", icon: "palette" },
+    { href: "/admin/audit", label: "Audit & Log", icon: "shield" },
+    { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
+    { href: "/admin/system", label: "Allgemein", icon: "settings" },
+    { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
     { href: "/admin/import", label: "CSV Import", icon: "upload" },
     { href: "/admin/export", label: "DATEV Export", icon: "download" },
   ];

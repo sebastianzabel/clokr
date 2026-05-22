@@ -3,10 +3,10 @@
   import { api } from "$api/client";
   import { format } from "date-fns";
   import { de } from "date-fns/locale";
+  import { goto } from "$app/navigation";
   import Pagination from "$components/ui/Pagination.svelte";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import ListDetail from "$lib/components/admin/ListDetail.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
 
@@ -44,12 +44,11 @@
   let sdPageSize = $state(10);
   let pagedShutdowns = $derived(shutdowns.slice((sdPage - 1) * sdPageSize, sdPage * sdPageSize));
   let loading = $state(true);
-  let error = $state("");
+  let errorMsg = $state("");
 
   // Formular für neuen Betriebsurlaub
-  let showForm = $state(false);
+  let showCreate = $state(false);
   let saving = $state(false);
-  let editId = $state<string | null>(null);
   let formName = $state("");
   let formStart = $state("");
   let formEnd = $state("");
@@ -77,11 +76,11 @@
   // ── Lade-Funktionen ───────────────────────────────────────────────────────
   async function loadShutdowns() {
     loading = true;
-    error = "";
+    errorMsg = "";
     try {
       shutdowns = await api.get(`/company-shutdowns?year=${filterYear}`);
     } catch {
-      error = "Fehler beim Laden";
+      errorMsg = "Fehler beim Laden";
     } finally {
       loading = false;
     }
@@ -101,35 +100,22 @@
     loadEmployees();
   });
 
-  // ── Formular ──────────────────────────────────────────────────────────────
+  // ── Create Formular ───────────────────────────────────────────────────────
   function openCreate() {
-    editId = null;
     formName = "";
     formStart = "";
     formEnd = "";
     formDeducts = true;
     formNotes = "";
     formError = "";
-    showForm = true;
+    showCreate = true;
   }
 
-  function openEdit(s: CompanyShutdown) {
-    editId = s.id;
-    formName = s.name;
-    formStart = s.startDate.slice(0, 10);
-    formEnd = s.endDate.slice(0, 10);
-    formDeducts = s.deductsFromVacation;
-    formNotes = s.notes ?? "";
-    formError = "";
-    showForm = true;
+  function closeCreate() {
+    showCreate = false;
   }
 
-  function closeForm() {
-    showForm = false;
-    editId = null;
-  }
-
-  async function saveShutdown() {
+  async function saveNew() {
     if (!formName.trim() || !formStart || !formEnd) {
       formError = "Name, Start- und Enddatum sind Pflichtfelder.";
       return;
@@ -141,20 +127,15 @@
     saving = true;
     formError = "";
     try {
-      const body = {
+      const created = await api.post<CompanyShutdown>("/company-shutdowns", {
         name: formName.trim(),
         startDate: formStart,
         endDate: formEnd,
         deductsFromVacation: formDeducts,
         notes: formNotes || undefined,
-      };
-      if (editId) {
-        await api.patch(`/company-shutdowns/${editId}`, body);
-      } else {
-        await api.post("/company-shutdowns", body);
-      }
-      closeForm();
-      await loadShutdowns();
+      });
+      closeCreate();
+      goto(`/admin/shutdowns/${created.id}`);
     } catch {
       formError = "Speichern fehlgeschlagen.";
     } finally {
@@ -241,13 +222,12 @@
   const years = [currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map(String);
 </script>
 
-<div class="page">
-<!-- ── Header (v1.5 PageHead) ─────────────────────────────────────────────── -->
-<PageHead
-  eyebrow="Administration"
+<ListDetail
+  eyebrow="Personal"
   title="Betriebsurlaub"
-  accent="Betriebsurlaub"
-  sub="Schließzeiten verwalten und Ausnahmen festlegen."
+  sub="Verwaltung von Betriebsurlaubs-Perioden"
+  animate
+  view="list"
 >
   {#snippet actions()}
     <select class="form-input year-filter" bind:value={filterYear} onchange={loadShutdowns}>
@@ -255,94 +235,113 @@
         <option value={y}>{y}</option>
       {/each}
     </select>
-    <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Neu</button>
+    <button class="btn btn-primary btn-sm" onclick={openCreate}>+ Betriebsurlaub</button>
   {/snippet}
-</PageHead>
 
-<!-- ── Fehler ─────────────────────────────────────────────────────────────── -->
-{#if error}
-  <div class="alert alert-error">{error}</div>
-{/if}
+  {#snippet list()}
+    {#if errorMsg}
+      <div class="alert alert-error">{errorMsg}</div>
+    {/if}
 
-<!-- ── Inhalt ─────────────────────────────────────────────────────────────── -->
-{#if loading}
-  <Card animate class="loading-card"><span class="sr-only">Wird geladen…</span></Card>
-{:else if shutdowns.length === 0}
-  <Card animate class="empty-state">
-    <span class="empty-icon">🏢</span>
-    <h3>Keine Betriebsurlaube</h3>
-    <p class="empty-state__text text-muted">Keine Betriebsurlaube für {filterYear} angelegt.</p>
-    <button class="btn btn-primary" onclick={openCreate}>Ersten anlegen</button>
-  </Card>
-{:else}
-  <Card animate class="shutdown-card-wrap">
-    <CardHeader title={`Schließzeiten ${filterYear}`} sub="Übersicht aller geplanten Betriebsurlaube" />
-    <div class="shutdown-list">
-      {#each pagedShutdowns as s (s.id)}
-        <div class="shutdown-card">
-          <div class="shutdown-card__main">
-            <div class="shutdown-card__info">
-              <span class="shutdown-card__name">{s.name}</span>
-              <span class="shutdown-card__dates">
-                {fmtDate(s.startDate)} – {fmtDate(s.endDate)}
-                <span class="badge badge-neutral">{calcDays(s.startDate, s.endDate)} Tage</span>
-              </span>
-              {#if s.notes}
-                <span class="shutdown-card__notes">{s.notes}</span>
-              {/if}
-              <div class="shutdown-card__meta">
-                {#if s.deductsFromVacation}
-                  <span class="badge badge-warning">Zieht vom Urlaubskonto ab</span>
-                {:else}
-                  <span class="badge badge-neutral">Kein Urlaubsabzug</span>
-                {/if}
-                {#if s.exceptions.length > 0}
-                  <span class="badge badge-info"
-                    >{s.exceptions.length} Ausnahme{s.exceptions.length !== 1 ? "n" : ""}</span
-                  >
-                {/if}
-              </div>
-            </div>
-            <div class="shutdown-card__actions">
-              <button class="btn btn-ghost btn-sm" onclick={() => openExceptions(s.id)}>
-                Ausnahmen
-              </button>
-              <button class="btn btn-ghost btn-sm" onclick={() => openEdit(s)}>Bearbeiten</button>
-              <button
-                class="btn btn-ghost btn-sm btn-danger"
-                onclick={() => askDeleteShutdown(s.id, s.name)}
-              >
-                Löschen
-              </button>
-            </div>
-          </div>
-
-          <!-- Ausnahmen inline anzeigen -->
-          {#if s.exceptions.length > 0}
-            <div class="exception-list">
-              <span class="exception-list__label">Ausnahmen:</span>
-              {#each s.exceptions as ex (ex.id)}
-                <span class="exception-chip">
-                  {ex.employee.firstName}
-                  {ex.employee.lastName}
-                  {#if ex.reason}<span class="exception-chip__reason">({ex.reason})</span>{/if}
-                </span>
-              {/each}
-            </div>
-          {/if}
+    {#if loading}
+      <Section>
+        <span class="sr-only">Wird geladen…</span>
+        <div class="loading-placeholder"></div>
+      </Section>
+    {:else if shutdowns.length === 0}
+      <Section>
+        <div class="empty-state">
+          <span class="empty-icon">🏢</span>
+          <h3>Keine Betriebsurlaube</h3>
+          <p class="text-muted">Keine Betriebsurlaube für {filterYear} angelegt.</p>
+          <button class="btn btn-primary" onclick={openCreate}>Erste Periode anlegen</button>
         </div>
-      {/each}
-    </div>
-  </Card>
-  <Pagination total={shutdowns.length} bind:page={sdPage} bind:pageSize={sdPageSize} />
-{/if}
+      </Section>
+    {:else}
+      <Section
+        title={`Schließzeiten ${filterYear}`}
+        sub="Übersicht aller geplanten Betriebsurlaube"
+      >
+        <div class="shutdown-list">
+          {#each pagedShutdowns as s (s.id)}
+            <div
+              class="shutdown-row"
+              role="button"
+              tabindex="0"
+              onclick={() => goto(`/admin/shutdowns/${s.id}`)}
+              onkeydown={(e) => e.key === "Enter" && goto(`/admin/shutdowns/${s.id}`)}
+            >
+              <div class="shutdown-row__info">
+                <span class="shutdown-row__name">{s.name}</span>
+                <span class="shutdown-row__dates">
+                  {fmtDate(s.startDate)} – {fmtDate(s.endDate)}
+                  <span class="badge badge-neutral">{calcDays(s.startDate, s.endDate)} Tage</span>
+                </span>
+                {#if s.notes}
+                  <span class="shutdown-row__notes">{s.notes}</span>
+                {/if}
+                <div class="shutdown-row__meta">
+                  {#if s.deductsFromVacation}
+                    <span class="badge badge-warning">Zieht vom Urlaubskonto ab</span>
+                  {:else}
+                    <span class="badge badge-neutral">Kein Urlaubsabzug</span>
+                  {/if}
+                  {#if s.exceptions.length > 0}
+                    <span class="badge badge-info">
+                      {s.exceptions.length} Ausnahme{s.exceptions.length !== 1 ? "n" : ""}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+              <div class="shutdown-row__actions">
+                <button
+                  class="btn btn-ghost btn-sm"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    openExceptions(s.id);
+                  }}
+                >
+                  Ausnahmen
+                </button>
+                <button
+                  class="btn btn-ghost btn-sm btn-danger"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    askDeleteShutdown(s.id, s.name);
+                  }}
+                >
+                  Löschen
+                </button>
+              </div>
 
-<!-- ── Modal: Betriebsurlaub anlegen / bearbeiten ─────────────────────────── -->
-<Modal
-  bind:open={showForm}
-  eyebrow={editId ? "Betriebsurlaub bearbeiten" : "Betriebsurlaub anlegen"}
-  title="Schließzeit"
->
+              <!-- Ausnahmen inline anzeigen -->
+              {#if s.exceptions.length > 0}
+                <div class="exception-list">
+                  <span class="exception-list__label">Ausnahmen:</span>
+                  {#each s.exceptions as ex (ex.id)}
+                    <span class="exception-chip">
+                      {ex.employee.firstName}
+                      {ex.employee.lastName}
+                      {#if ex.reason}<span class="exception-chip__reason">({ex.reason})</span>{/if}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        {#if shutdowns.length > sdPageSize}
+          <div class="pagination-wrap">
+            <Pagination total={shutdowns.length} bind:page={sdPage} bind:pageSize={sdPageSize} />
+          </div>
+        {/if}
+      </Section>
+    {/if}
+  {/snippet}
+</ListDetail>
+
+<!-- ── Modal: Betriebsurlaub anlegen ──────────────────────────────────────── -->
+<Modal bind:open={showCreate} eyebrow="Betriebsurlaub anlegen" title="Schließzeit">
   {#if formError}
     <div class="alert alert-error">{formError}</div>
   {/if}
@@ -387,8 +386,8 @@
     ></textarea>
   </div>
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={closeForm}>Abbrechen</button>
-    <button class="btn btn-primary" onclick={saveShutdown} disabled={saving}>
+    <button class="btn btn-ghost" onclick={closeCreate}>Abbrechen</button>
+    <button class="btn btn-primary" onclick={saveNew} disabled={saving}>
       {saving ? "Speichern …" : "Speichern"}
     </button>
   {/snippet}
@@ -484,7 +483,6 @@
     {/snippet}
   </Modal>
 {/if}
-</div>
 
 <style>
   .year-filter {
@@ -492,12 +490,8 @@
     min-width: 90px;
   }
 
-  /* ── Shutdown wrap card (v1.5) ── */
-  :global(.shutdown-card-wrap) {
-    padding: var(--pad-card);
-  }
-  :global(.loading-card) {
-    height: 220px;
+  .loading-placeholder {
+    height: 180px;
   }
 
   .shutdown-list {
@@ -506,55 +500,61 @@
     gap: 0.75rem;
   }
 
-  .shutdown-card {
+  .shutdown-row {
     background: var(--bg-subtle);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
     padding: 1rem 1.25rem;
-  }
-
-  .shutdown-card__main {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
     flex-wrap: wrap;
+    cursor: pointer;
+    transition: border-color 120ms var(--ease);
   }
 
-  .shutdown-card__info {
+  .shutdown-row:hover {
+    border-color: var(--brand);
+  }
+
+  .shutdown-row__info {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
+    flex: 1;
+    min-width: 0;
   }
 
-  .shutdown-card__name {
+  .shutdown-row__name {
     font-weight: 600;
     color: var(--text);
     font-size: 1rem;
   }
 
-  .shutdown-card__dates {
+  .shutdown-row__dates {
     font-size: 0.875rem;
     color: var(--text-muted);
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    flex-wrap: wrap;
   }
 
-  .shutdown-card__notes {
+  .shutdown-row__notes {
     font-size: 0.8125rem;
     color: var(--text-muted);
     font-style: italic;
   }
 
-  .shutdown-card__meta {
+  .shutdown-row__meta {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
     margin-top: 0.25rem;
   }
 
-  .shutdown-card__actions {
+  .shutdown-row__actions {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
@@ -567,8 +567,9 @@
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;
-    margin-top: 0.75rem;
+    width: 100%;
     padding-top: 0.75rem;
+    margin-top: 0.25rem;
     border-top: 1px solid var(--border);
   }
 
@@ -593,7 +594,7 @@
   }
 
   /* ── Empty state ── */
-  :global(.empty-state) {
+  .empty-state {
     text-align: center;
     padding: 3rem 1rem;
     color: var(--text-muted);
@@ -605,8 +606,8 @@
     display: block;
   }
 
-  .empty-state__text {
-    margin-bottom: 1rem;
+  .pagination-wrap {
+    margin-top: 1rem;
   }
 
   /* ── Badges ── */
@@ -623,11 +624,13 @@
     color: var(--text-muted);
     border: 1px solid var(--border);
   }
+
   .badge-warning {
     background: var(--warn-soft, var(--bg-subtle));
     color: var(--warn);
     border: 1px solid var(--warn);
   }
+
   .badge-info {
     background: var(--brand-soft);
     color: var(--brand);

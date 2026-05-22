@@ -63,10 +63,13 @@ function listFiles(scope, ext = ".svelte") {
 const violations = [];
 
 // ── CHECK 1: page-head-required ────────────────────────────────────────────
-// Every (app)/+page.svelte must contain `<PageHead`. +layout.svelte is exempt.
-// Redirect stubs (script body is only an onMount(() => goto(...)) call with no
-// template markup) are exempt — they never render a head.
+// Every (app)/+page.svelte must render a page head. A page satisfies the rule
+// by either using <PageHead> directly OR by using one of the admin templates
+// that render <PageHead> internally (ListDetail, SectionStack, ToolPage).
+// +layout.svelte is exempt. Redirect stubs (script body is only an
+// onMount(() => goto(...)) call with no template markup) are exempt.
 const REDIRECT_STUB_RE = /onMount\(\s*\(\s*\)\s*=>\s*goto\(/;
+const HEAD_PROVIDER_RE = /<(?:PageHead|ListDetail|SectionStack|ToolPage)\b/;
 function isRedirectStub(content) {
   const tplPart = content.replace(/<script[\s\S]*?<\/script>/g, "").trim();
   return tplPart === "" && REDIRECT_STUB_RE.test(content);
@@ -75,11 +78,11 @@ for (const file of listFiles(APP_ROUTES)) {
   if (!file.endsWith("+page.svelte")) continue;
   const content = readFileSync(file, "utf8");
   if (isRedirectStub(content)) continue;
-  if (!content.includes("<PageHead")) {
+  if (!HEAD_PROVIDER_RE.test(content)) {
     violations.push({
       rule: "page-head-required",
       file,
-      msg: "Every (app)/ page must use <PageHead>",
+      msg: "Every (app)/ page must render a head via <PageHead>, <ListDetail>, <SectionStack>, or <ToolPage>",
     });
   }
 }

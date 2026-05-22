@@ -1,8 +1,7 @@
 <script lang="ts">
   import { api } from "$api/client";
-  import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
-  import CardHeader from "$components/ui/CardHeader.svelte";
+  import ToolPage from "$lib/components/admin/ToolPage.svelte";
+  import Section from "$lib/components/admin/Section.svelte";
 
   type ImportMode = "employees" | "time-entries";
 
@@ -23,8 +22,8 @@
   let mode: ImportMode = $state("employees");
   let csvText = $state("");
   let loading = $state(false);
-  let error = $state("");
-  let result: ImportResponse | null = $state(null);
+  let importError = $state("");
+  let importResponse: ImportResponse | null = $state(null);
   let preview: Record<string, string>[] = $state([]);
   let showPreview = $state(false);
 
@@ -37,6 +36,8 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 1001;02.03.2024;09:00;17:00;45;Meeting-Tag`;
 
   let exampleText = $derived(mode === "employees" ? exampleEmployees : exampleTimeEntries);
+
+  const importStep = $derived(importResponse ? 2 : showPreview ? 1 : 0);
 
   function parseCsvLocal(text: string): Record<string, string>[] {
     const lines = text.trim().split(/\r?\n/);
@@ -57,15 +58,15 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
   }
 
   function handlePreview() {
-    error = "";
-    result = null;
+    importError = "";
+    importResponse = null;
     if (!csvText.trim()) {
-      error = "Bitte CSV-Daten eingeben oder eine Datei hochladen.";
+      importError = "Bitte CSV-Daten eingeben oder eine Datei hochladen.";
       return;
     }
     const rows = parseCsvLocal(csvText);
     if (rows.length === 0) {
-      error = "Keine Datenzeilen gefunden. Mindestens Header + 1 Zeile erforderlich.";
+      importError = "Keine Datenzeilen gefunden. Mindestens Header + 1 Zeile erforderlich.";
       return;
     }
     preview = rows;
@@ -73,15 +74,15 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
   }
 
   async function handleImport() {
-    error = "";
-    result = null;
+    importError = "";
+    importResponse = null;
     loading = true;
     try {
       const res = await api.post<ImportResponse>(`/imports/${mode}`, { csv: csvText });
-      result = res;
+      importResponse = res;
       showPreview = false;
     } catch (e: unknown) {
-      error = e instanceof Error ? e.message : "Fehler beim Import";
+      importError = e instanceof Error ? e.message : "Fehler beim Import";
     } finally {
       loading = false;
     }
@@ -95,8 +96,8 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     reader.onload = () => {
       csvText = reader.result as string;
       showPreview = false;
-      result = null;
-      error = "";
+      importResponse = null;
+      importError = "";
     };
     reader.readAsText(file);
   }
@@ -105,8 +106,8 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
     csvText = "";
     preview = [];
     showPreview = false;
-    result = null;
-    error = "";
+    importResponse = null;
+    importError = "";
   }
 
   function switchMode(newMode: ImportMode) {
@@ -119,173 +120,179 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
   <title>CSV Import – Clokr</title>
 </svelte:head>
 
-<div class="page">
-<PageHead
-  eyebrow="Administration"
+<ToolPage
+  eyebrow="Daten"
   title="CSV Import"
-  accent="Import"
-  sub="Mitarbeiter oder Zeiteinträge per CSV importieren — Vorschau prüfen, dann übernehmen. Jeder Import wird im Audit-Log protokolliert."
-/>
-
-<!-- Mode Toggle -->
-<div class="view-tabs mode-tabs">
-  <button
-    class="view-tab"
-    class:view-tab--active={mode === "employees"}
-    onclick={() => switchMode("employees")}
-  >
-    Mitarbeiter
-  </button>
-  <button
-    class="view-tab"
-    class:view-tab--active={mode === "time-entries"}
-    onclick={() => switchMode("time-entries")}
-  >
-    Zeiteinträge
-  </button>
-</div>
-
-{#if error}
-  <div class="alert alert-error error-banner" role="alert">
-    <span>&#x26A0;</span><span>{error}</span>
-  </div>
-{/if}
-
-<!-- CSV Input -->
-<Card animate class="csv-card">
-  <CardHeader title="CSV-Daten" sub="Datei laden oder Inhalt einfügen">
-    {#snippet actions()}
-      <label class="btn btn-ghost sm file-label">
-        Datei laden
-        <input
-          type="file"
-          accept=".csv,.txt"
-          onchange={handleFileUpload}
-          class="file-input-hidden"
-        />
-      </label>
-      {#if csvText}
-        <button class="btn btn-ghost sm" onclick={reset}>Leeren</button>
-      {/if}
-    {/snippet}
-  </CardHeader>
-
-  <div class="form-group">
-    <label for="csv-input" class="form-label">CSV-Inhalt</label>
-    <textarea
-      id="csv-input"
-      class="form-input csv-textarea"
-      bind:value={csvText}
-      placeholder="CSV hier einfügen oder Datei hochladen..."
-      rows="10"
-    ></textarea>
-  </div>
-
-  <details class="example-hint">
-    <summary class="example-summary"> Beispielformat anzeigen </summary>
-    <pre class="example-pre">{exampleText}</pre>
-  </details>
-
-  <div class="card-foot">
-    <span class="foot-meta">
-      {csvText.trim() ? "Bereit für Vorschau oder Import." : "Noch keine Daten geladen."}
-    </span>
-    <span class="spacer"></span>
-    <button class="btn btn-outline sm" onclick={handlePreview} disabled={!csvText.trim() || loading}>
-      Vorschau
-    </button>
-    <button class="btn btn-primary sm" onclick={handleImport} disabled={!csvText.trim() || loading}>
-      {#if loading}
-        Importiere…
-      {:else}
-        Importieren
-      {/if}
-    </button>
-  </div>
-</Card>
-
-<!-- Preview Table -->
-{#if showPreview && preview.length > 0}
-  <Card animate class="preview-card">
-    <CardHeader
-      title="Vorschau"
-      sub={`${preview.length} Zeile${preview.length === 1 ? "" : "n"} erkannt`}
-    />
-    <div class="table-wrapper">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            {#each Object.keys(preview[0]) as col (col)}
-              <th>{col}</th>
-            {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each preview as row, i (i)}
-            <tr>
-              <td class="row-num">{i + 1}</td>
-              {#each Object.values(row) as val, j (j)}
-                <td class="cell-data">{val}</td>
-              {/each}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
-  </Card>
-{/if}
-
-<!-- Results -->
-{#if result}
-  <Card animate>
-    <CardHeader title="Import-Ergebnis" sub="Zeilenweise Auswertung" />
-
-    <div class="result-summary">
-      <span class="badge badge-gray">{result.total} Gesamt</span>
-      <span class="badge badge-green">{result.imported} Importiert</span>
-      {#if result.errors > 0}
-        <span class="badge badge-red">{result.errors} Fehler</span>
-      {/if}
+  sub="Mitarbeiter und Zeiteinträge importieren"
+  steps={["Datei wählen", "Vorschau", "Übernehmen"]}
+  currentStep={importStep}
+  animate
+>
+  {#snippet form()}
+    <!-- Mode Toggle -->
+    <div class="view-tabs mode-tabs">
+      <button
+        class="view-tab"
+        class:view-tab--active={mode === "employees"}
+        onclick={() => switchMode("employees")}
+      >
+        Mitarbeiter
+      </button>
+      <button
+        class="view-tab"
+        class:view-tab--active={mode === "time-entries"}
+        onclick={() => switchMode("time-entries")}
+      >
+        Zeiteinträge
+      </button>
     </div>
 
-    {#if result.details.length > 0}
-      <div class="table-wrapper result-table">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Zeile</th>
-              <th>Status</th>
-              {#if mode === "employees"}
-                <th>E-Mail</th>
-              {/if}
-              <th>Details</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each result.details as detail (detail.row)}
-              <tr>
-                <td class="cell-data">{detail.row}</td>
-                <td>
-                  <span class="badge {detail.status === 'ok' ? 'badge-green' : 'badge-red'}">
-                    {detail.status === "ok" ? "OK" : "Fehler"}
-                  </span>
-                </td>
-                {#if mode === "employees"}
-                  <td class="cell-data">{detail.email ?? "–"}</td>
-                {/if}
-                <td class="cell-detail">
-                  {detail.error ?? "–"}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+    {#if importError}
+      <div class="alert alert-error error-banner" role="alert">
+        <span>&#x26A0;</span><span>{importError}</span>
       </div>
     {/if}
-  </Card>
-{/if}
-</div>
+
+    <!-- CSV Input -->
+    <Section title="CSV-Daten" sub="Datei laden oder Inhalt einfügen">
+      {#snippet actions()}
+        <label class="btn btn-ghost sm file-label">
+          Datei laden
+          <input
+            type="file"
+            accept=".csv,.txt"
+            onchange={handleFileUpload}
+            class="file-input-hidden"
+          />
+        </label>
+        {#if csvText}
+          <button class="btn btn-ghost sm" onclick={reset}>Leeren</button>
+        {/if}
+      {/snippet}
+
+      <div class="form-group">
+        <label for="csv-input" class="form-label">CSV-Inhalt</label>
+        <textarea
+          id="csv-input"
+          class="form-input csv-textarea"
+          bind:value={csvText}
+          placeholder="CSV hier einfügen oder Datei hochladen..."
+          rows="10"
+        ></textarea>
+      </div>
+
+      <details class="example-hint">
+        <summary class="example-summary"> Beispielformat anzeigen </summary>
+        <pre class="example-pre">{exampleText}</pre>
+      </details>
+
+      {#snippet footer()}
+        <span class="foot-meta">
+          {csvText.trim() ? "Bereit für Vorschau oder Import." : "Noch keine Daten geladen."}
+        </span>
+        <span class="spacer"></span>
+        <button
+          class="btn btn-outline sm"
+          onclick={handlePreview}
+          disabled={!csvText.trim() || loading}
+        >
+          Vorschau
+        </button>
+        <button
+          class="btn btn-primary sm"
+          onclick={handleImport}
+          disabled={!csvText.trim() || loading}
+        >
+          {#if loading}
+            Importiere…
+          {:else}
+            Importieren
+          {/if}
+        </button>
+      {/snippet}
+    </Section>
+
+    <!-- Preview Table -->
+    {#if showPreview && preview.length > 0}
+      <Section
+        title="Vorschau"
+        sub={`${preview.length} Zeile${preview.length === 1 ? "" : "n"} erkannt`}
+      >
+        <div class="table-wrapper">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                {#each Object.keys(preview[0]) as col (col)}
+                  <th>{col}</th>
+                {/each}
+              </tr>
+            </thead>
+            <tbody>
+              {#each preview as row, i (i)}
+                <tr>
+                  <td class="row-num">{i + 1}</td>
+                  {#each Object.values(row) as val, j (j)}
+                    <td class="cell-data">{val}</td>
+                  {/each}
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+    {/if}
+  {/snippet}
+
+  {#snippet result()}
+    {#if importResponse}
+      <Section title="Import-Ergebnis" sub="Zeilenweise Auswertung">
+        <div class="result-summary">
+          <span class="badge badge-gray">{importResponse.total} Gesamt</span>
+          <span class="badge badge-green">{importResponse.imported} Importiert</span>
+          {#if importResponse.errors > 0}
+            <span class="badge badge-red">{importResponse.errors} Fehler</span>
+          {/if}
+        </div>
+
+        {#if importResponse.details.length > 0}
+          <div class="table-wrapper result-table">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Zeile</th>
+                  <th>Status</th>
+                  {#if mode === "employees"}
+                    <th>E-Mail</th>
+                  {/if}
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each importResponse.details as detail (detail.row)}
+                  <tr>
+                    <td class="cell-data">{detail.row}</td>
+                    <td>
+                      <span class="badge {detail.status === 'ok' ? 'badge-green' : 'badge-red'}">
+                        {detail.status === "ok" ? "OK" : "Fehler"}
+                      </span>
+                    </td>
+                    {#if mode === "employees"}
+                      <td class="cell-data">{detail.email ?? "–"}</td>
+                    {/if}
+                    <td class="cell-detail">
+                      {detail.error ?? "–"}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </Section>
+    {/if}
+  {/snippet}
+</ToolPage>
 
 <style>
   .mode-tabs {
@@ -294,14 +301,6 @@ anna@firma.de;Anna;Schmidt;1002;15.03.2024;MANAGER;38.5;`;
 
   .error-banner {
     margin-bottom: 1rem;
-  }
-
-  :global(.csv-card) {
-    margin-bottom: 1.25rem;
-  }
-
-  :global(.preview-card) {
-    margin-bottom: 1.5rem;
   }
 
   .file-label {
