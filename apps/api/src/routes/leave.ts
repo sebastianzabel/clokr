@@ -166,7 +166,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const days = calculateWorkDays(start, end, body.halfDay, holidays);
+      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
+      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
 
       // Überschneidung mit eigenem Antrag prüfen
       const overlap = await app.prisma.leaveRequest.findFirst({
@@ -256,7 +257,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
         // Split days across years if cross-year
         const split = isCrossYear
-          ? splitDaysAcrossYears(start, end, body.halfDay, holidays)
+          ? splitDaysAcrossYears(start, end, body.halfDay, workDays, holidays)
           : { year1Days: days, year2Days: 0, year1, year2 };
 
         // § 5 Abs. 2 BUrlG: fetch exit date once so both year-1 and year-2 blocks can use it.
@@ -809,6 +810,96 @@ export async function leaveRoutes(app: FastifyInstance) {
             "Failed to update overtime account after leave approval",
           ),
         );
+
+        // Phase 43-04: reverse-hook — when a leave is APPROVED, mark any
+        // existing shifts for this employee on overlapping dates as
+        // conflictsWithLeave=true (audit-proof: never silent-delete shifts).
+        // Best-effort: never roll back the approval if marking fails.
+        try {
+          const conflictingShifts = await app.prisma.shift.findMany({
+            where: {
+              employeeId: existing.employeeId,
+              date: { gte: existing.startDate, lte: existing.endDate },
+              conflictsWithLeave: false,
+            },
+            select: { id: true, date: true, startTime: true, endTime: true, label: true },
+          });
+
+          if (conflictingShifts.length > 0) {
+            await app.prisma.shift.updateMany({
+              where: { id: { in: conflictingShifts.map((s) => s.id) } },
+              data: { conflictsWithLeave: true },
+            });
+
+            for (const s of conflictingShifts) {
+              await app
+                .audit({
+                  userId: req.user.sub,
+                  action: "SHIFT_MARKED_CONFLICTING",
+                  entity: "Shift",
+                  entityId: s.id,
+                  newValue: {
+                    leaveRequestId: existing.id,
+                    leaveStart: existing.startDate.toISOString().slice(0, 10),
+                    leaveEnd: existing.endDate.toISOString().slice(0, 10),
+                    shiftDate: s.date.toISOString().slice(0, 10),
+                    shiftLabel: s.label,
+                  },
+                  request: { ip: req.ip, headers: req.headers as Record<string, string> },
+                })
+                .catch((err) =>
+                  app.log.warn({ err, shiftId: s.id }, "Failed to audit SHIFT_MARKED_CONFLICTING"),
+                );
+            }
+
+            // Notify managers — find all MANAGER + ADMIN users in the tenant
+            try {
+              const empName = await app.prisma.employee.findUnique({
+                where: { id: existing.employeeId },
+                select: { firstName: true, lastName: true, tenantId: true },
+              });
+              if (empName) {
+                const managers = await app.prisma.user.findMany({
+                  where: {
+                    isActive: true,
+                    role: { in: ["MANAGER", "ADMIN"] },
+                    employee: { tenantId: empName.tenantId },
+                  },
+                  select: { id: true },
+                });
+                const dStart = existing.startDate.toLocaleDateString("de-DE");
+                const dEnd = existing.endDate.toLocaleDateString("de-DE");
+                for (const mgr of managers) {
+                  await app
+                    .notify({
+                      userId: mgr.id,
+                      type: "SHIFT_LEAVE_CONFLICT",
+                      title: `Schicht-Konflikt: ${empName.firstName} ${empName.lastName}`,
+                      message: `Genehmigter Urlaub vom ${dStart} bis ${dEnd} überschneidet sich mit ${conflictingShifts.length} Schicht(en). Bitte überprüfen Sie /shifts.`,
+                      link: "/shifts",
+                      tenantId: empName.tenantId,
+                      relatedType: "LeaveRequest",
+                      relatedId: existing.id,
+                    })
+                    .catch((err) =>
+                      app.log.warn(
+                        { err, managerId: mgr.id },
+                        "Failed to notify manager of SHIFT_LEAVE_CONFLICT",
+                      ),
+                    );
+                }
+              }
+            } catch (err) {
+              app.log.warn({ err }, "SHIFT_LEAVE_CONFLICT manager-notify pass failed");
+            }
+          }
+        } catch (err) {
+          // Reverse-hook is best-effort — never undo the approval on failure
+          app.log.error(
+            { err, leaveRequestId: existing.id },
+            "Phase 43-04 reverse-hook (mark-conflicting shifts) failed",
+          );
+        }
       }
 
       // ── Pro-rata Urlaubswarnung bei Genehmigung (nur VACATION, nur bei exitDate) ──
@@ -926,7 +1017,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const days = calculateWorkDays(start, end, body.halfDay, holidays);
+      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
+      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
 
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
@@ -1158,10 +1250,11 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
+      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
 
       const [hours, days] = await Promise.all([
         getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
-        Promise.resolve(calculateWorkDays(start, end, isHalf, holidays)),
+        Promise.resolve(calculateWorkDays(start, end, isHalf, workDays, holidays)),
       ]);
 
       return { hours: +hours.toFixed(2), days };
@@ -1535,8 +1628,9 @@ async function deductVacationDays(
   const isCrossYear = year1 !== year2;
 
   if (isCrossYear) {
-    // Split days across years
-    const split = splitDaysAcrossYears(startDate, endDate, false, holidays);
+    // Split days across years — using the employee's own workDays
+    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
+    const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
 
     // Deduct from year 1
     if (split.year1Days > 0) {
@@ -1602,22 +1696,78 @@ async function getHolidayMap(
   return map;
 }
 
+/**
+ * Phase 49.5: workDays-aware Urlaubsverbrauch.
+ * `workDays` ist Pflichtargument — Caller MUSS den WorkSchedule des MA laden
+ * und workDays übergeben (oder den Tenant-Default als Fallback).
+ */
 function calculateWorkDays(
   start: Date,
   end: Date,
   halfDay: boolean,
+  workDays: number[],
   holidays: Set<string> = new Set(),
 ): number {
   if (halfDay) return 0.5;
+  const workDaySet = new Set(workDays);
   let days = 0;
   const cur = new Date(start);
   while (cur <= end) {
     const dow = cur.getDay();
     const ds = cur.toISOString().split("T")[0];
-    if (dow !== 0 && dow !== 6 && !holidays.has(ds)) days++;
+    if (workDaySet.has(dow) && !holidays.has(ds)) days++;
     cur.setDate(cur.getDate() + 1);
   }
   return days;
+}
+
+/**
+ * Lädt das aktuell gültige workDays-Set für einen Mitarbeiter.
+ *
+ * Reihenfolge:
+ * 1. Für FIXED_SCHEDULE: aus per-Tag-Soll abgeleitet (Stunden > 0 = Arbeitstag).
+ *    Das erlaubt individuelle Verteilung wie Frisör Di-Sa ohne separate UI.
+ * 2. Sonst: WorkSchedule.workDays (Pro-MA-Override aus /admin/vacation).
+ * 3. Sonst: TenantConfig.defaultWorkDays.
+ * 4. Sonst: Mo-Fr.
+ */
+async function resolveWorkDays(
+  prisma: FastifyInstance["prisma"],
+  employeeId: string,
+  tenantId: string,
+): Promise<number[]> {
+  const [ws, cfg] = await Promise.all([
+    prisma.workSchedule.findFirst({
+      where: { employeeId },
+      orderBy: { validFrom: "desc" },
+    }),
+    prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  if (ws) {
+    // FIXED_SCHEDULE: per-Tag-Soll ist die präziseste Quelle (Frisör Di-Sa wird hier sichtbar)
+    if (ws.type === "FIXED_SCHEDULE") {
+      const fields: Array<[number, number]> = [
+        [0, Number(ws.sundayHours)],
+        [1, Number(ws.mondayHours)],
+        [2, Number(ws.tuesdayHours)],
+        [3, Number(ws.wednesdayHours)],
+        [4, Number(ws.thursdayHours)],
+        [5, Number(ws.fridayHours)],
+        [6, Number(ws.saturdayHours)],
+      ];
+      const derived = fields
+        .filter(([, h]) => h > 0)
+        .map(([d]) => d)
+        .sort((a, b) => a - b);
+      if (derived.length > 0) return derived;
+    }
+    if (ws.workDays && ws.workDays.length > 0) return ws.workDays;
+  }
+  if (cfg?.defaultWorkDays && cfg.defaultWorkDays.length > 0) return cfg.defaultWorkDays;
+  return [1, 2, 3, 4, 5];
 }
 
 /**
@@ -1625,6 +1775,23 @@ function calculateWorkDays(
  * basierend auf dem individuellen WorkSchedule des Mitarbeiters (oder den
  * globalen Tenant-Defaults falls kein individueller Plan vorhanden).
  * Halbe Tage = halbe Stunden des ersten Arbeitstages.
+ *
+ * KNOWN GAP — SHIFT_BASED schedules (deferred from Phase 49.5):
+ * For SHIFT_BASED employees this returns the wrong number because it reads
+ * the per-Tag-Soll fields (mondayHours…sundayHours) on the WorkSchedule,
+ * which are not authoritative for SHIFT_BASED — their real hours live in
+ * the `Shift` table. OVERTIME_COMP saldo deductions are therefore inaccurate
+ * for shift-based users.
+ *
+ * The correct fix is to detect `schedule.scheduleType === "SHIFT_BASED"` and
+ * branch to `prisma.shift.findMany({ where: { employeeId, date: { gte: start, lte: end } } })`,
+ * summing each shift's `(endTime - startTime - breakMinutes)` in hours.
+ *
+ * Acceptance trigger: only implement once UAT reports a concrete OVERTIME_COMP
+ * saldo mismatch for a SHIFT_BASED employee. See the v1.6 milestone audit
+ * (`.planning/milestones/v1.6-MILESTONE-AUDIT.md`) tech_debt entry for
+ * `49.5-arbeitstage-woche-config` and the phase SUMMARY's "Known Stubs"
+ * section for the original deferral rationale.
  */
 async function getScheduledHours(
   prisma: FastifyInstance["prisma"],

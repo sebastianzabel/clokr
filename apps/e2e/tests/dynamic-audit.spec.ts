@@ -16,7 +16,7 @@ const ALL_PAGES = [
   { name: "Admin Sonderurlaub", url: "/admin/special-leave" },
   { name: "Admin Betriebsurlaub", url: "/admin/shutdowns" },
   { name: "Admin Schichtplan", url: "/admin/shifts" },
-  { name: "Admin Monatsabschluss", url: "/admin/monatsabschluss" },
+  { name: "Admin Monatsabschluss", url: "/admin/month-close" },
   { name: "Admin System", url: "/admin/system" },
   { name: "Admin Import", url: "/admin/import" },
   { name: "Admin Audit", url: "/admin/audit" },
@@ -127,9 +127,7 @@ test.describe("Dynamic UI Audit", () => {
     // Filter known acceptable errors:
     // - 404 for avatar images (no avatar uploaded in test environment)
     // - 429 Too Many Requests (test navigates 15 pages rapidly; rate limiter is expected to trigger)
-    const realErrors = apiErrors.filter(
-      (e) => !e.includes("/avatars/") && !e.startsWith("429 "),
-    );
+    const realErrors = apiErrors.filter((e) => !e.includes("/avatars/") && !e.startsWith("429 "));
 
     if (realErrors.length > 0) {
       console.log("\n🌐 API Errors:");

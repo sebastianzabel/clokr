@@ -1506,6 +1506,17 @@ textarea.form-input {
   gap: var(--s-6);
 }
 
+/* Phase 39 (UI-15) — canonical horizontal-scroll container for wide tables.
+   Wrap any data table that exceeds the viewport in <div class="table-scroll">
+   so mobile (<480px) users can swipe to see the overflow. The internal
+   contents preserve their natural min-width; the scroll-shadow is delegated
+   to the browser. iOS momentum scroll is enabled. */
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* v1.5 canonical calendar cell — ALL calendar views inherit this recipe.
    Reference page: /time-entries. Per-page scoped overrides for .cal-cell /
    .cal-grid are forbidden (see CLAUDE.md UI Consistency Rules). */
@@ -2902,4 +2913,127 @@ button.approval-row:disabled {
   font-family: var(--font-sans);
   font-style: normal;
   font-weight: 600;
+}
+
+/* Phase 46 — Availability pill (used in recurring grid + one-off list + /shifts derived view) */
+.av-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  padding: 4px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  background: var(--bg-card);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  min-height: 24px;
+  line-height: 1;
+}
+.av-pill--available {
+  color: var(--good);
+  background: var(--good-soft);
+  border-color: var(--good);
+}
+.av-pill--unavailable {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+.av-pill--preferred {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+.av-pill--default {
+  color: var(--text-muted);
+}
+
+/* Phase 46 — extend existing .sp-avail-badge family for two new derived statuses on /shifts */
+.sp-avail-badge--unavailable {
+  color: var(--bad);
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+.sp-avail-badge--preferred {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+
+/* ── Phase 47: Drag & Drop modifiers ─────────────────────────────────────── */
+
+/* Drop target: empty shift-cell highlighted while a template is being dragged
+   over the grid. Applied on the cell wrapper via class:sp-cell--drop-target. */
+.sp-cell--drop-target {
+  outline: 2px dashed var(--brand);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--brand) 8%, transparent);
+  transition: background 0.12s var(--ease);
+}
+
+.sp-cell--drop-hover {
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+}
+
+/* Template chip dragging state — emitted by use:dndzone via .item picked */
+.sp-tpl-chip {
+  cursor: grab;
+  touch-action: none; /* prevents browser scroll-on-touch from killing the drag */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sp-tpl-chip:active {
+  cursor: grabbing;
+}
+.sp-tpl-chip--dragging {
+  opacity: 0.55;
+}
+/* Invisible spacer rendered for svelte-dnd-action's shadow-placeholder items
+   mid-drag — keeps children.length aligned with items.length without
+   showing a "ghost card" of unknown template. */
+.sp-tpl-chip--shadow {
+  visibility: hidden;
+}
+
+/* Phase 47 — drag-source ghost rendered by svelte-dnd-action when an item is
+   being dragged. The library applies its own .dnd-action-dragged-el class on
+   the cloned ghost element; we just normalize its appearance.
+   This rule lives in the global app.css, so no :global() wrapper is needed. */
+.dnd-action-dragged-el {
+  box-shadow: var(--shadow-md);
+  border-radius: var(--r-md);
+}
+
+/* svelte-dnd-action clones the dragged element into document.body. The clone
+   inherits .card-animate, which triggers the card-enter keyframe (transform:
+   translateY → translate(0)). That keyframe's transform fights with the
+   library's inline transform used to position the ghost, causing the drag to
+   "snap back" within milliseconds. Disable the entrance animation on the clone
+   and on any chip currently being dragged. */
+.dnd-action-dragged-el,
+.dnd-action-dragged-el.card-animate,
+.sp-tpl-chip.dnd-action-dragged-el,
+.sp-shift-pill.dnd-action-dragged-el {
+  animation: none !important;
+}
+
+/* Phase 47-02 — shift-pill drag source state.
+   The shift pill is a button so it must stay clickable for the Modal-edit
+   path. svelte-dnd-action distinguishes click-vs-drag via a pointer-movement
+   threshold (default ~5px), so single clicks still fire onclick. */
+.sp-shift-pill {
+  touch-action: none; /* Tablet drag: prevent browser scroll-on-touch */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.sp-shift-pill--dragging {
+  opacity: 0.55;
+}
+
+/* When the target cell currently shows a shift, it cannot accept drops.
+   Marked visually distinct from .sp-cell--drop-target so users see "no drop". */
+.sp-cell--drop-blocked {
+  cursor: not-allowed;
 }

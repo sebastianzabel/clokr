@@ -3,9 +3,11 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { authStore } from "$stores/auth";
+  import { tenantFeatures } from "$stores/tenant-features";
   import { clientLogger } from "$lib/utils/logger";
   import Sidebar from "$lib/components/layout/Sidebar.svelte";
   import Topbar from "$lib/components/layout/Topbar.svelte";
+  import BottomTabBar from "$lib/components/layout/BottomTabBar.svelte";
   import CommandPalette from "$lib/components/ui/CommandPalette.svelte";
 
   interface Props {
@@ -29,7 +31,7 @@
     "/team/leave": "Team-Anträge",
     "/team/time-entries": "Team-Zeiten",
     "/admin/employees": "Mitarbeitende",
-    "/admin/monatsabschluss": "Monatsabschluss",
+    "/admin/month-close": "Monatsabschluss",
     "/admin/audit": "Compliance & Audit",
     "/admin/themes": "Themes & Branding",
     "/admin/import": "CSV Import",
@@ -85,6 +87,11 @@
     // Install client error logging
     clientLogger.install();
 
+    // Hydrate tenant feature flags once per (app) session. Used by Sidebar +
+    // BottomTabBar + admin pages to conditionally render feature-gated nav.
+    // Fire-and-forget — UI shouldn't block on this; store fails open.
+    void tenantFeatures.fetch();
+
     // Start inactivity timer
     resetInactivityTimer();
     for (const evt of ACTIVITY_EVENTS) {
@@ -112,6 +119,7 @@
         {@render children?.()}
       </div>
     </main>
+    <BottomTabBar {currentPath} />
   </div>
   <CommandPalette />
 {/if}
@@ -169,8 +177,12 @@
         "main";
     }
 
+    /* Bottom-tab-bar clearance: BottomTabBar is fixed and ~62px tall (incl.
+       gap + safe-area). 80px padding keeps the last card / form fully visible
+       above the bar. The bar itself adds env(safe-area-inset-bottom) so a
+       gesture-nav iPhone doesn't double-stack the inset. */
     .main {
-      padding: 16px 16px 32px;
+      padding: 16px 16px 80px;
     }
   }
 </style>

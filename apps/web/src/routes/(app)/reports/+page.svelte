@@ -198,6 +198,46 @@
     overtimePage = 1;
   });
 
+  // ── Verfall-Warnungen state (Phase 44 — BUrlG § 7 Hinweispflicht) ─────────
+
+  type CarryoverRow = {
+    entitlementId: string;
+    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
+    leaveType: { id: string; name: string };
+    year: number;
+    carriedOverDays: number;
+    deadline: string; // ISO
+    daysUntilDeadline: number;
+    lastWarningSentAt: string | null;
+  };
+
+  type CarryoverAtRisk = {
+    horizonDays: number;
+    summary: { employeesAtRisk: number; totalDaysAtRisk: number; warnedLast30: number };
+    rows: CarryoverRow[];
+  };
+
+  let carryover: CarryoverAtRisk | null = $state(null);
+  let carryoverLoading = $state(false);
+  let carryoverError = $state("");
+  let carryoverHorizon = $state(60);
+  let carryoverWarnBusy = $state<Record<string, boolean>>({});
+  let carryoverRowMsg = $state<Record<string, string>>({});
+
+  let carryoverPage = $state(1);
+  let carryoverPageSize = $state(10);
+  let pagedCarryoverRows = $derived(
+    (carryover?.rows ?? []).slice(
+      (carryoverPage - 1) * carryoverPageSize,
+      carryoverPage * carryoverPageSize,
+    ),
+  );
+
+  $effect(() => {
+    const _len = carryover?.rows.length ?? 0;
+    carryoverPage = 1;
+  });
+
   // ── Urlaubsübersicht state (RPT-02) ──────────────────────────────────────
 
   let leaveOverview: LeaveOverviewRow[] | null = $state(null);
@@ -334,7 +374,14 @@
       void loadTodayAttendance();
       void loadOvertimeOverview();
       void loadLeaveOverview();
+      void loadCarryoverAtRisk();
     }
+  });
+
+  // Refresh when horizon changes (independent of selectedMonth/selectedYear)
+  $effect(() => {
+    const _h = carryoverHorizon;
+    if (isManager) void loadCarryoverAtRisk();
   });
 
   // ── onMount ────────────────────────────────────────────────────────────────
@@ -447,6 +494,65 @@
     } finally {
       overtimeLoading = false;
     }
+  }
+
+  async function loadCarryoverAtRisk() {
+    if (!isManager) return;
+    carryoverLoading = true;
+    carryoverError = "";
+    try {
+      carryover = await api.get<CarryoverAtRisk>(
+        `/reports/carryover-at-risk?days=${carryoverHorizon}`,
+      );
+    } catch (e: unknown) {
+      carryoverError = e instanceof Error ? e.message : "Fehler beim Laden der Verfall-Warnungen";
+      carryover = null;
+    } finally {
+      carryoverLoading = false;
+    }
+  }
+
+  async function sendCarryoverWarning(row: CarryoverRow) {
+    carryoverWarnBusy = { ...carryoverWarnBusy, [row.entitlementId]: true };
+    carryoverRowMsg = { ...carryoverRowMsg, [row.entitlementId]: "" };
+    try {
+      const res = await api.post<{ ok: boolean; warned: number; skippedDedup: number }>(
+        "/reports/carryover-warn",
+        { entitlementId: row.entitlementId },
+      );
+      if (res.warned > 0) {
+        carryoverRowMsg = {
+          ...carryoverRowMsg,
+          [row.entitlementId]: "Hinweis gesendet",
+        };
+        // Refresh to pick up new lastWarningSentAt
+        void loadCarryoverAtRisk();
+      } else {
+        carryoverRowMsg = {
+          ...carryoverRowMsg,
+          [row.entitlementId]: "Bereits gewarnt (kein neuer Schwellwert erreicht)",
+        };
+      }
+    } catch (e: unknown) {
+      carryoverRowMsg = {
+        ...carryoverRowMsg,
+        [row.entitlementId]: e instanceof Error ? e.message : "Hinweis fehlgeschlagen",
+      };
+    } finally {
+      carryoverWarnBusy = { ...carryoverWarnBusy, [row.entitlementId]: false };
+    }
+  }
+
+  function formatDeDate(iso: string): string {
+    const d = new Date(iso);
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}.${mm}.${d.getFullYear()}`;
+  }
+
+  function formatLastWarning(iso: string | null): string {
+    if (!iso) return "—";
+    return formatDeDate(iso);
   }
 
   async function loadLeaveOverview() {
@@ -748,11 +854,7 @@
         label="Saldo"
         value={fmtHoursSigned(kpiTotalBalanceMin)}
         unit="h"
-        deltaTone={kpiTotalBalanceMin > 0
-          ? "good"
-          : kpiTotalBalanceMin < 0
-            ? "bad"
-            : "neutral"}
+        deltaTone={kpiTotalBalanceMin > 0 ? "good" : kpiTotalBalanceMin < 0 ? "bad" : "neutral"}
       />
     </Card>
   </div>
@@ -926,84 +1028,86 @@
     {:else if empClosesError}
       <div class="emp-closes-error" role="alert">{empClosesError}</div>
     {:else}
-      <table class="emp-closes-table">
-        <thead>
-          <tr>
-            <th>Monat</th>
-            <th class="num">Soll</th>
-            <th class="num">Ist</th>
-            <th class="num">Diff</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {#if empMonthlyCloses.length === 0}
+      <div class="table-scroll">
+        <table class="emp-closes-table">
+          <thead>
             <tr>
-              <td colspan="6" class="emp-closes-empty">Noch keine abgeschlossenen Monate</td>
+              <th>Monat</th>
+              <th class="num">Soll</th>
+              <th class="num">Ist</th>
+              <th class="num">Diff</th>
+              <th>Status</th>
+              <th></th>
             </tr>
-          {:else}
-            {#each empMonthlyCloses as row (`${row.year}-${row.month}`)}
+          </thead>
+          <tbody>
+            {#if empMonthlyCloses.length === 0}
               <tr>
-                <td><b class="emp-month-label">{row.label}</b></td>
-                <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
-                <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
-                <td
-                  class="num"
-                  class:diff-good={row.balanceMinutes > 0}
-                  class:diff-bad={row.balanceMinutes < 0}
-                  class:diff-zero={row.balanceMinutes === 0}
-                >
-                  {row.balanceMinutes > 0 ? "+" : ""}{fmtMinutesAsHrs(row.balanceMinutes)}
-                </td>
-                <td>
-                  {#if row.isLocked}
-                    <span class="chip chip-good">
+                <td colspan="6" class="emp-closes-empty">Noch keine abgeschlossenen Monate</td>
+              </tr>
+            {:else}
+              {#each empMonthlyCloses as row (`${row.year}-${row.month}`)}
+                <tr>
+                  <td><b class="emp-month-label">{row.label}</b></td>
+                  <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
+                  <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
+                  <td
+                    class="num"
+                    class:diff-good={row.balanceMinutes > 0}
+                    class:diff-bad={row.balanceMinutes < 0}
+                    class:diff-zero={row.balanceMinutes === 0}
+                  >
+                    {row.balanceMinutes > 0 ? "+" : ""}{fmtMinutesAsHrs(row.balanceMinutes)}
+                  </td>
+                  <td>
+                    {#if row.isLocked}
+                      <span class="chip chip-good">
+                        <svg
+                          width="11"
+                          height="11"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          aria-hidden="true"
+                        >
+                          <rect x="3" y="11" width="18" height="11" rx="2" />
+                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        </svg>
+                        Gesperrt
+                      </span>
+                    {:else}
+                      <span class="chip chip-warn"><span class="dot"></span> Offen</span>
+                    {/if}
+                  </td>
+                  <td class="emp-pdf-cell">
+                    <button
+                      type="button"
+                      class="btn btn-ghost xs"
+                      onclick={() => downloadEmployeeMonthlyPdf(row.year, row.month, row.label)}
+                    >
                       <svg
-                        width="11"
-                        height="11"
+                        width="13"
+                        height="13"
                         viewBox="0 0 24 24"
                         fill="none"
                         stroke="currentColor"
                         stroke-width="2"
                         aria-hidden="true"
                       >
-                        <rect x="3" y="11" width="18" height="11" rx="2" />
-                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
                       </svg>
-                      Gesperrt
-                    </span>
-                  {:else}
-                    <span class="chip chip-warn"><span class="dot"></span> Offen</span>
-                  {/if}
-                </td>
-                <td class="emp-pdf-cell">
-                  <button
-                    type="button"
-                    class="btn btn-ghost xs"
-                    onclick={() => downloadEmployeeMonthlyPdf(row.year, row.month, row.label)}
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      aria-hidden="true"
-                    >
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                      <polyline points="7 10 12 15 17 10" />
-                      <line x1="12" y1="15" x2="12" y2="3" />
-                    </svg>
-                    PDF
-                  </button>
-                </td>
-              </tr>
-            {/each}
-          {/if}
-        </tbody>
-      </table>
+                      PDF
+                    </button>
+                  </td>
+                </tr>
+              {/each}
+            {/if}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </Card>
 {/if}
@@ -1095,8 +1199,107 @@
       {/if}
     </Card>
 
-    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+    <!-- Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht / EuGH C-684/16) -->
     <Card animate class="widget-card" style="--card-idx: 2;">
+      <CardHeader title="Verfall-Warnungen" sub="Resturlaub mit auslaufender Frist (§ 7 BUrlG)">
+        {#snippet actions()}
+          <label class="carryover-horizon-label" for="carryover-horizon">
+            Horizont
+            <select id="carryover-horizon" class="period-select" bind:value={carryoverHorizon}>
+              <option value={30}>30 Tage</option>
+              <option value={60}>60 Tage</option>
+              <option value={90}>90 Tage</option>
+              <option value={180}>180 Tage</option>
+            </select>
+          </label>
+        {/snippet}
+      </CardHeader>
+
+      {#if carryoverLoading}
+        <p class="section-placeholder">Lade Verfall-Warnungen…</p>
+      {:else if carryoverError}
+        <p class="section-error">{carryoverError}</p>
+      {:else if carryover}
+        <div class="carryover-summary">
+          <div class="summary-chip">
+            <span class="label">Betroffene MA</span>
+            <span class="value">{carryover.summary.employeesAtRisk}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Tage im Risiko</span>
+            <span class="value">{formatDays(carryover.summary.totalDaysAtRisk)}</span>
+          </div>
+          <div class="summary-chip">
+            <span class="label">Hinweise (30 T.)</span>
+            <span class="value">{carryover.summary.warnedLast30}</span>
+          </div>
+        </div>
+
+        {#if carryover.rows.length === 0}
+          <p class="section-placeholder">
+            Kein Resturlaub mit Verfall in den nächsten {carryover.horizonDays} Tagen.
+          </p>
+        {:else}
+          <div class="carryover-callout">
+            Hinweispflicht: Mitarbeiter müssen gemäß EuGH C-684/16 ausdrücklich auf verfallenden
+            Urlaub hingewiesen werden. Ohne dokumentierten Hinweis verfällt der Urlaub <strong
+              >nicht</strong
+            >.
+          </div>
+          <div class="table-wrap">
+            <table class="carryover-table">
+              <thead>
+                <tr>
+                  <th>Mitarbeiter</th>
+                  <th>Nr.</th>
+                  <th class="numeric">Anspruch (T.)</th>
+                  <th>Verfällt am</th>
+                  <th class="numeric">Verbleibend</th>
+                  <th>Letzter Hinweis</th>
+                  <th class="actions-col">Aktion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each pagedCarryoverRows as row (row.entitlementId)}
+                  <tr>
+                    <td>{row.employee.firstName} {row.employee.lastName}</td>
+                    <td>{row.employee.employeeNumber}</td>
+                    <td class="numeric">{formatDays(row.carriedOverDays)}</td>
+                    <td>{formatDeDate(row.deadline)}</td>
+                    <td class="numeric">
+                      <span class={row.daysUntilDeadline <= 14 ? "danger" : ""}>
+                        {row.daysUntilDeadline} T.
+                      </span>
+                    </td>
+                    <td>{formatLastWarning(row.lastWarningSentAt)}</td>
+                    <td class="row-actions">
+                      <button
+                        class="btn-ghost btn-warn-now"
+                        disabled={carryoverWarnBusy[row.entitlementId]}
+                        onclick={() => sendCarryoverWarning(row)}
+                      >
+                        {carryoverWarnBusy[row.entitlementId] ? "Senden…" : "Hinweis jetzt senden"}
+                      </button>
+                      {#if carryoverRowMsg[row.entitlementId]}
+                        <span class="row-msg">{carryoverRowMsg[row.entitlementId]}</span>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            total={carryover.rows.length}
+            bind:page={carryoverPage}
+            bind:pageSize={carryoverPageSize}
+          />
+        {/if}
+      {/if}
+    </Card>
+
+    <!-- Überstunden-Übersicht (RPT-01 + SALDO-03) -->
+    <Card animate class="widget-card" style="--card-idx: 3;">
       <CardHeader title="Überstunden-Übersicht" sub="Saldo & Verlauf je Mitarbeiter" />
 
       {#if overtimeLoading}
@@ -1175,7 +1378,7 @@
     </Card>
 
     <!-- Urlaubsübersicht (RPT-02) -->
-    <Card animate class="widget-card" style="--card-idx: 3;">
+    <Card animate class="widget-card" style="--card-idx: 4;">
       <CardHeader title="Urlaubsübersicht" sub="Ansprüche, Genommen, Rest" />
 
       {#if leaveOverviewLoading}
@@ -1497,6 +1700,84 @@
   .status-scheduled,
   .status-none {
     background: var(--bg-subtle);
+    color: var(--text-muted);
+  }
+
+  /* Verfall-Warnungen (Phase 44 — BUrlG § 7 Hinweispflicht) */
+
+  .carryover-summary {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  @media (max-width: 560px) {
+    .carryover-summary {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .carryover-callout {
+    background: var(--brand-soft);
+    border: 1px solid var(--brand);
+    border-radius: var(--r-md);
+    color: var(--text);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .carryover-horizon-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .carryover-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+  }
+
+  .carryover-table th,
+  .carryover-table td {
+    padding: 0.625rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .carryover-table th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.8125rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .carryover-table td.numeric,
+  .carryover-table th.numeric {
+    text-align: right;
+    font-family: var(--font-mono);
+  }
+
+  .carryover-table .danger {
+    color: var(--bad);
+    font-weight: 700;
+  }
+
+  .btn-warn-now {
+    font-size: 0.8125rem;
+    padding: 0.375rem 0.75rem;
+  }
+
+  .row-msg {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
   }
 

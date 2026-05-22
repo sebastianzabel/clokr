@@ -16,13 +16,14 @@ test.describe("UI Audit — Visual & Layout Checks", () => {
     }
   });
 
-  test("sidebar user box is clickable and leads to profile", async ({ page }) => {
+  test("sidebar foot user-info is visible (desktop)", async ({ page }) => {
+    // Sidebar.svelte renders the user block as `.sidebar-foot` in v1.5 — the
+    // legacy `.sidebar-user` class was removed during the Phase 30 refresh.
+    // The foot block is not itself clickable; access to the profile happens
+    // via the Topbar avatar dropdown instead (see admin-settings-flow.spec).
     await page.goto("/dashboard");
-    const userBox = page.locator(".sidebar-user");
-    await expect(userBox).toBeVisible();
-    await userBox.click();
-    await page.waitForURL("**/settings");
-    await expect(page).toHaveURL(/settings/);
+    const foot = page.locator(".sidebar-foot");
+    await expect(foot).toBeVisible();
   });
 
   test("dashboard loads with summary cards", async ({ page }) => {
@@ -99,12 +100,15 @@ test.describe("UI Audit — Mobile Responsive", () => {
     await expect(page.getByRole("button", { name: /anmelden/i })).toBeVisible();
   });
 
-  test("mobile header visible after login", async ({ page }) => {
+  test("mobile shell visible after login (UI-15 Bottom-Tab Bar + Topbar)", async ({ page }) => {
     await loginAsAdmin(page);
     await page.goto("/dashboard");
     await screenshotPage(page, "dashboard-mobile");
 
-    // Mobile header should be visible, sidebar hidden
-    await expect(page.locator(".mobile-header").or(page.locator("header"))).toBeVisible();
+    // v1.5 mobile shell: the desktop Sidebar hides below 960px, but the
+    // Topbar persists for the persona switch + bell + avatar. The new
+    // BottomTabBar (Phase 39, UI-15) provides primary nav.
+    await expect(page.locator("header.topbar")).toBeVisible();
+    await expect(page.locator(".bottom-tab-bar")).toBeVisible();
   });
 });

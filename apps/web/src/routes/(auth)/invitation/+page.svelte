@@ -21,11 +21,16 @@
 
   onMount(async () => {
     token = page.url.searchParams.get("token") ?? "";
-    if (!token) { pageState = "invalid"; return; }
+    if (!token) {
+      pageState = "invalid";
+      return;
+    }
     try {
       const p = await api.get<typeof pwPolicy>("/auth/password-policy");
       pwPolicy = p;
-    } catch { /* use defaults */ }
+    } catch {
+      /* use defaults */
+    }
   });
 
   async function handleSubmit() {

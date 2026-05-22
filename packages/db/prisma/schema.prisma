@@ -12,12 +12,12 @@ datasource db {
 // ─────────────────────────────────────────────
 
 model Tenant {
-  id           String   @id @default(uuid())
+  id           String       @id @default(uuid())
   name         String
-  slug         String   @unique
+  slug         String       @unique
   federalState FederalState @default(NIEDERSACHSEN)
-  createdAt    DateTime @default(now()) @db.Timestamptz
-  updatedAt    DateTime @updatedAt    @db.Timestamptz
+  createdAt    DateTime     @default(now()) @db.Timestamptz
+  updatedAt    DateTime     @updatedAt @db.Timestamptz
 
   employees         Employee[]
   leaveTypes        LeaveType[]
@@ -25,6 +25,7 @@ model Tenant {
   config            TenantConfig?
   companyShutdowns  CompanyShutdown[]
   shiftTemplates    ShiftTemplate[]
+  coverageRules     CoverageRule[]
   terminalApiKeys   TerminalApiKey[]
   apiKeys           ApiKey[]
   specialLeaveRules SpecialLeaveRule[]
@@ -37,120 +38,144 @@ model Tenant {
 // ─────────────────────────────────────────────
 
 model TenantConfig {
-  id                   String   @id @default(uuid())
-  tenantId             String   @unique
+  id                         String  @id @default(uuid())
+  tenantId                   String  @unique
   // Standard-Wochenstunden (Vorlage für neue Mitarbeiter)
-  defaultWeeklyHours   Decimal  @db.Decimal(5, 2)  @default(40)
-  defaultMondayHours   Decimal  @db.Decimal(4, 2)  @default(8)
-  defaultTuesdayHours  Decimal  @db.Decimal(4, 2)  @default(8)
-  defaultWednesdayHours Decimal @db.Decimal(4, 2)  @default(8)
-  defaultThursdayHours Decimal  @db.Decimal(4, 2)  @default(8)
-  defaultFridayHours   Decimal  @db.Decimal(4, 2)  @default(8)
-  defaultSaturdayHours Decimal  @db.Decimal(4, 2)  @default(0)
-  defaultSundayHours   Decimal  @db.Decimal(4, 2)  @default(0)
+  defaultWeeklyHours         Decimal @default(40) @db.Decimal(5, 2)
+  defaultMondayHours         Decimal @default(8) @db.Decimal(4, 2)
+  defaultTuesdayHours        Decimal @default(8) @db.Decimal(4, 2)
+  defaultWednesdayHours      Decimal @default(8) @db.Decimal(4, 2)
+  defaultThursdayHours       Decimal @default(8) @db.Decimal(4, 2)
+  defaultFridayHours         Decimal @default(8) @db.Decimal(4, 2)
+  defaultSaturdayHours       Decimal @default(0) @db.Decimal(4, 2)
+  defaultSundayHours         Decimal @default(0) @db.Decimal(4, 2)
   // Überstunden
-  overtimeThreshold    Decimal  @db.Decimal(5, 2)  @default(60)
-  allowOvertimePayout  Boolean  @default(false)
+  overtimeThreshold          Decimal @default(60) @db.Decimal(5, 2)
+  allowOvertimePayout        Boolean @default(false)
   // Urlaubsanspruch (Basis 5-Tage-Woche)
-  defaultVacationDays  Decimal  @db.Decimal(5, 2)  @default(30)
+  defaultVacationDays        Decimal @default(30) @db.Decimal(5, 2)
   // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
-  carryOverDeadlineDay   Int    @default(31)
-  carryOverDeadlineMonth Int    @default(3)
+  carryOverDeadlineDay       Int     @default(31)
+  carryOverDeadlineMonth     Int     @default(3)
   // E-Mail / SMTP
-  smtpHost      String?
-  smtpPort      Int?
-  smtpUser      String?
-  smtpPassword  String?
-  smtpFromEmail String?
-  smtpFromName  String?
-  smtpSecure    Boolean  @default(false)
+  smtpHost                   String?
+  smtpPort                   Int?
+  smtpUser                   String?
+  smtpPassword               String?
+  smtpFromEmail              String?
+  smtpFromName               String?
+  smtpSecure                 Boolean @default(false)
   // Sicherheit
-  twoFaEnabled           Boolean  @default(false)
+  twoFaEnabled               Boolean @default(false)
   // Passwort-Richtlinie (BSI TR-02102-1)
-  passwordMinLength      Int      @default(12)
-  passwordRequireUpper   Boolean  @default(true)
-  passwordRequireLower   Boolean  @default(true)
-  passwordRequireDigit   Boolean  @default(true)
-  passwordRequireSpecial Boolean  @default(true)
+  passwordMinLength          Int     @default(12)
+  passwordRequireUpper       Boolean @default(true)
+  passwordRequireLower       Boolean @default(true)
+  passwordRequireDigit       Boolean @default(true)
+  passwordRequireSpecial     Boolean @default(true)
   // Session-Management
-  sessionTimeoutMinutes  Int     @default(60)    // Inaktivitäts-Timeout (0 = deaktiviert)
-  refreshTokenDays       Int     @default(7)     // Refresh Token Laufzeit in Tagen
-  rememberMeEnabled      Boolean @default(true)  // "Angemeldet bleiben" Checkbox
-  rememberMeDays         Int     @default(30)    // Refresh Token bei "Remember me"
-  maxSessionsPerUser     Int     @default(0)     // Max gleichzeitige Sessions (0 = unbegrenzt)
+  sessionTimeoutMinutes      Int     @default(60) // Inaktivitäts-Timeout (0 = deaktiviert)
+  refreshTokenDays           Int     @default(7) // Refresh Token Laufzeit in Tagen
+  rememberMeEnabled          Boolean @default(true) // "Angemeldet bleiben" Checkbox
+  rememberMeDays             Int     @default(30) // Refresh Token bei "Remember me"
+  maxSessionsPerUser         Int     @default(0) // Max gleichzeitige Sessions (0 = unbegrenzt)
   // Zeitzone (IANA)
-  timezone      String   @default("Europe/Berlin")
+  timezone                   String  @default("Europe/Berlin")
   // Phorest-Integration
-  phorestBusinessId String?
-  phorestBranchId   String?
-  phorestUsername   String?
-  phorestPassword   String?
-  phorestBaseUrl    String?  @default("https://api.phorest.com/third-party-api-server")
-  phorestAutoSync   Boolean  @default(false)
-  phorestSyncCron   String   @default("0 3 * * *") // Default: täglich 03:00
+  phorestBusinessId          String?
+  phorestBranchId            String?
+  phorestUsername            String?
+  phorestPassword            String?
+  phorestBaseUrl             String? @default("https://api.phorest.com/third-party-api-server")
+  phorestAutoSync            Boolean @default(false)
+  phorestSyncCron            String  @default("0 3 * * *") // Default: täglich 03:00
   // Compliance
-  arbzgEnabled           Boolean @default(true)  // ArbZG-Verstöße anzeigen
+  arbzgEnabled               Boolean @default(true) // ArbZG-Verstöße anzeigen
+  // Verfügbarkeits-System (Phase 47.3) — when false, EmployeeAvailability is ignored by the resolver,
+  // auto-gen/copy-week do NOT skip UNAVAILABLE, and GET/PUT availability endpoints return 410 Gone.
+  // Data preserved (rows remain), feature toggleable at any time.
+  availabilityEnabled        Boolean @default(true)
   // Heiligabend / Silvester: NORMAL | HALF_DAY | FULL_DAY_OFF
-  christmasEveRule       String  @default("NORMAL")
-  newYearsEveRule        String  @default("NORMAL")
-  holidayRulesValidFromYear Int?  // Rules apply from this year onwards (null = current year when saved)
+  christmasEveRule           String  @default("NORMAL")
+  newYearsEveRule            String  @default("NORMAL")
+  holidayRulesValidFromYear  Int? // Rules apply from this year onwards (null = current year when saved)
   // Abwesenheits-Konfiguration
-  vacationLeadTimeDays   Int     @default(0)    // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
-  vacationMaxAdvanceMonths Int   @default(0)    // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
-  halfDayAllowed         Boolean @default(true) // Halbe Tage erlaubt
-  sickSelfReport         Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
-  sickNoteRequiredAfterDays Int  @default(3)    // AU-Pflicht nach X Krankheitstagen
+  vacationLeadTimeDays       Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
+  vacationMaxAdvanceMonths   Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
+  halfDayAllowed             Boolean @default(true) // Halbe Tage erlaubt
+  sickSelfReport             Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
+  sickNoteRequiredAfterDays  Int     @default(3) // AU-Pflicht nach X Krankheitstagen
   // Teilzeit-Urlaub
-  autoCalcPartTimeVacation Boolean @default(true) // Automatische Pro-Rata Berechnung
-  fullTimeWorkDaysPerWeek  Int    @default(5)     // Referenz für Vollzeit (5 oder 6)
+  autoCalcPartTimeVacation   Boolean @default(true) // Automatische Pro-Rata Berechnung
+  fullTimeWorkDaysPerWeek    Int     @default(5) // Referenz für Vollzeit (5 oder 6)
+  // Phase 49.4 — Tenant-Default Arbeitstage/Woche, unabhängig vom AZ-Modell.
+  // Quelle der Wahrheit für Urlaubsverbrauch und Pro-Rata-Berechnung.
+  // Format: Array aus Wochentag-Nummern (0=So, 1=Mo, …, 6=Sa). Default: Mo-Fr.
+  defaultWorkDays            Int[]   @default([1, 2, 3, 4, 5])
   // Carry-Over / Mindesturlaub (§ 3 + § 7 BUrlG)
-  enforceMinVacation       Boolean @default(true) // Warn when statutory minimum not taken
-  carryOverRequiresReason  Boolean @default(true) // Carry-over beyond allowed needs documented reason
-  vacationReminderStartMonth Int   @default(10)   // Month to start vacation expiry reminders (1-12)
+  enforceMinVacation         Boolean @default(true) // Warn when statutory minimum not taken
+  carryOverRequiresReason    Boolean @default(true) // Carry-over beyond allowed needs documented reason
+  vacationReminderStartMonth Int     @default(10) // Month to start vacation expiry reminders (1-12)
+  // BUrlG § 7 Hinweispflicht (EuGH C-684/16) — threshold-based carry-over warnings
+  carryoverWarningEnabled    Boolean @default(true) // Master switch for daily warning cron
+  carryoverWarningThresholds Int[]   @default([60, 30, 14, 7]) // Days before deadline at which to issue a warning
 
   // E-Mail-Benachrichtigungen
-  emailNotificationsEnabled  Boolean @default(false) // Master switch
-  emailOnLeaveRequest        Boolean @default(true)  // Neuer Urlaubsantrag
-  emailOnLeaveDecision       Boolean @default(true)  // Urlaub genehmigt/abgelehnt
-  emailOnOvertimeWarning     Boolean @default(false) // Überstunden-Schwellwert
-  emailOnMissingEntries      Boolean @default(false) // Fehlende Zeiteinträge
-  emailOnClockOutReminder    Boolean @default(false) // Vergessene Stempelung
-  emailOnMonthClose          Boolean @default(true)  // Monatsabschluss
+  emailNotificationsEnabled      Boolean  @default(false) // Master switch
+  emailOnLeaveRequest            Boolean  @default(true) // Neuer Urlaubsantrag
+  emailOnLeaveDecision           Boolean  @default(true) // Urlaub genehmigt/abgelehnt
+  emailOnOvertimeWarning         Boolean  @default(false) // Überstunden-Schwellwert
+  emailOnMissingEntries          Boolean  @default(false) // Fehlende Zeiteinträge
+  emailOnClockOutReminder        Boolean  @default(false) // Vergessene Stempelung
+  emailOnMonthClose              Boolean  @default(true) // Monatsabschluss
   // Automatische Erinnerungen
-  reminderPendingLeaveHours    Int     @default(48)   // Manager erinnern nach X Stunden ohne Reaktion
-  reminderUpcomingAbsenceDays  Int     @default(3)    // MA erinnern X Tage vor Abwesenheit
-  reminderPendingLeaveEnabled  Boolean @default(true)
-  reminderUpcomingAbsenceEnabled Boolean @default(true)
+  reminderPendingLeaveHours      Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
+  reminderUpcomingAbsenceDays    Int      @default(3) // MA erinnern X Tage vor Abwesenheit
+  reminderPendingLeaveEnabled    Boolean  @default(true)
+  reminderUpcomingAbsenceEnabled Boolean  @default(true)
   // Benachrichtigungen
-  clockOutReminderHours  Int @default(10)  // Stunden nach denen an offene Stempelung erinnert wird
-  missingEntriesDays     Int @default(7)   // Tage ohne Einträge bevor erinnert wird
-  autoDeleteOpenHours    Int @default(14)  // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
+  clockOutReminderHours          Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
+  missingEntriesDays             Int      @default(7) // Tage ohne Einträge bevor erinnert wird
+  autoDeleteOpenHours            Int      @default(14) // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
   // Pausen-Slots
-  autoBreakEnabled       Boolean @default(false)
-  defaultBreakStart      String? @db.VarChar(5)  // e.g. "12:00"
+  autoBreakEnabled               Boolean  @default(false)
+  defaultBreakStart              String?  @db.VarChar(5) // e.g. "12:00"
   // Überstunden-Jahresübertrag
-  overtimeCarryOverMode  String  @default("FULL") // FULL | CAPPED | RESET
-  overtimeCarryOverCap   Int?    // Max. Übertrag in Minuten (nur bei CAPPED)
+  overtimeCarryOverMode          String   @default("FULL") // FULL | CAPPED | RESET
+  overtimeCarryOverCap           Int? // Max. Übertrag in Minuten (nur bei CAPPED)
   // Max. Minusstunden (null = unbegrenzt, Wert in Minuten)
-  maxNegativeBalanceMinutes Int?
+  maxNegativeBalanceMinutes      Int?
   // Account-Lockout
-  loginMaxAttempts       Int     @default(5)     // Fehlversuche bis Sperre
-  loginLockoutMinutes    Int     @default(15)    // Sperrzeit in Minuten
+  loginMaxAttempts               Int      @default(5) // Fehlversuche bis Sperre
+  loginLockoutMinutes            Int      @default(15) // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
-  dataRetentionYears     Int     @default(10)
+  dataRetentionYears             Int      @default(10)
   // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll
-  monthlyHoursHolidayDeduction Boolean @default(false)
+  monthlyHoursHolidayDeduction   Boolean  @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
-  datevNormalstundenNr Int @default(100)
-  datevUrlaubNr        Int @default(300)
-  datevKrankNr         Int @default(200)
-  datevSonderurlaubNr  Int @default(302)
+  datevNormalstundenNr           Int      @default(100)
+  datevUrlaubNr                  Int      @default(300)
+  datevKrankNr                   Int      @default(200)
+  datevSonderurlaubNr            Int      @default(302)
+  // FLEXTIME Kernarbeitszeit-Defaults (Phase 49.2) — pre-fill suggestion for new FLEXTIME employees
+  defaultCoreStart               String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreEnd                 String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreDays                Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
-  wifiPresenceWindowMinutes Int @default(15)  // Shift-window gate: ±N minutes around shift start/end
-  createdAt            DateTime @default(now()) @db.Timestamptz
-  updatedAt            DateTime @updatedAt      @db.Timestamptz
+  wifiPresenceWindowMinutes      Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
+  // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
+  // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
+  // Default: Mo-Sa 08:00-20:00, So closed
+  storeHours                     Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
+  // Phase 47.5 — How tightly to bind shifts to store hours.
+  //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
+  //   STRICT:             shift time must be within [open, close]
+  //   OFF:                no store-hours check
+  shiftStoreHoursMode            String   @default("DAY_ONLY")
+  createdAt                      DateTime @default(now()) @db.Timestamptz
+  updatedAt                      DateTime @updatedAt @db.Timestamptz
 
-  tenant               Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 // ─────────────────────────────────────────────
@@ -158,19 +183,19 @@ model TenantConfig {
 // ─────────────────────────────────────────────
 
 model User {
-  id           String     @id @default(uuid())
-  email        String     @unique
-  passwordHash String
-  role         Role       @default(EMPLOYEE)
-  isActive             Boolean    @default(true)
-  emailNotifications   Boolean    @default(true) // Per-user email opt-out
-  failedLoginAttempts  Int        @default(0)
-  lockedUntil          DateTime?  @db.Timestamptz
-  uiPreferences        Json?      @db.JsonB
-  lastFailedLoginAt    DateTime?  @db.Timestamptz
-  lastLoginAt          DateTime?  @db.Timestamptz
-  createdAt    DateTime   @default(now()) @db.Timestamptz
-  updatedAt    DateTime   @updatedAt      @db.Timestamptz
+  id                  String    @id @default(uuid())
+  email               String    @unique
+  passwordHash        String
+  role                Role      @default(EMPLOYEE)
+  isActive            Boolean   @default(true)
+  emailNotifications  Boolean   @default(true) // Per-user email opt-out
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime? @db.Timestamptz
+  uiPreferences       Json?     @db.JsonB
+  lastFailedLoginAt   DateTime? @db.Timestamptz
+  lastLoginAt         DateTime? @db.Timestamptz
+  createdAt           DateTime  @default(now()) @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @db.Timestamptz
 
   employee      Employee?
   refreshTokens RefreshToken[]
@@ -180,37 +205,37 @@ model User {
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
-  token     String   @unique
+  id        String    @id @default(uuid())
+  token     String    @unique
   userId    String
   expiresAt DateTime  @db.Timestamptz
   createdAt DateTime  @default(now()) @db.Timestamptz
   revokedAt DateTime? @db.Timestamptz
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model OtpToken {
   id        String    @id @default(uuid())
   userId    String
-  code      String                          // 6-stellig, bcrypt-gehasht
-  expiresAt DateTime  @db.Timestamptz      // now + 10 min
+  code      String // 6-stellig, bcrypt-gehasht
+  expiresAt DateTime  @db.Timestamptz // now + 10 min
   usedAt    DateTime? @db.Timestamptz
   createdAt DateTime  @default(now()) @db.Timestamptz
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Invitation {
-  id          String    @id @default(uuid())
-  token       String    @unique
-  employeeId  String
-  email       String
-  expiresAt   DateTime  @db.Timestamptz
-  acceptedAt  DateTime? @db.Timestamptz
-  createdAt   DateTime  @default(now()) @db.Timestamptz
+  id         String    @id @default(uuid())
+  token      String    @unique
+  employeeId String
+  email      String
+  expiresAt  DateTime  @db.Timestamptz
+  acceptedAt DateTime? @db.Timestamptz
+  createdAt  DateTime  @default(now()) @db.Timestamptz
 
-  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 }
 
 // ─────────────────────────────────────────────
@@ -218,36 +243,42 @@ model Invitation {
 // ─────────────────────────────────────────────
 
 model Employee {
-  id               String   @id @default(uuid())
-  tenantId         String
-  userId           String   @unique
-  employeeNumber   String
-  firstName        String
-  lastName         String
-  nfcCardId        String?  @unique  // NFC Karten-ID
-  wifiMacs              String[]   @default([])         // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
-  wifiPresenceEnabled   Boolean    @default(false)       // GDPR opt-in required — false until employee explicitly opts in
-  wifiOptInAt           DateTime?  @db.Timestamptz      // timestamp when employee opted in (null = not opted in)
-  avatarPath       String?            // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
-  hireDate         DateTime @db.Timestamptz
-  exitDate         DateTime? @db.Timestamptz
-  createdAt        DateTime @default(now()) @db.Timestamptz
-  updatedAt        DateTime @updatedAt      @db.Timestamptz
+  id                  String                 @id @default(uuid())
+  tenantId            String
+  userId              String                 @unique
+  employeeNumber      String
+  firstName           String
+  lastName            String
+  nfcCardId           String?                @unique // NFC Karten-ID
+  wifiMacs            String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt         DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  avatarPath          String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
+  // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
+  classification      EmployeeClassification @default(VOLLZEIT)
+  coverageWeight      Decimal                @default(1.00) @db.Decimal(3, 2)
+  requiresSupervision Boolean                @default(false)
+  hireDate            DateTime               @db.Timestamptz
+  exitDate            DateTime?              @db.Timestamptz
+  createdAt           DateTime               @default(now()) @db.Timestamptz
+  updatedAt           DateTime               @updatedAt @db.Timestamptz
 
-  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workSchedules    WorkSchedule[]
-  overtimeAccount  OvertimeAccount?
-  saldoSnapshots   SaldoSnapshot[]
-  timeEntries      TimeEntry[]
-  leaveEntitlements LeaveEntitlement[]
-  leaveRequests    LeaveRequest[]
-  absences              Absence[]
-  overtimePlans         OvertimePlan[]
-  invitations           Invitation[]
-  shutdownExceptions    CompanyShutdownException[]
-  shifts                Shift[]
-  presenceDevices       PresenceDevice[]
+  tenant             Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workSchedules      WorkSchedule[]
+  overtimeAccount    OvertimeAccount?
+  saldoSnapshots     SaldoSnapshot[]
+  timeEntries        TimeEntry[]
+  leaveEntitlements  LeaveEntitlement[]
+  leaveRequests      LeaveRequest[]
+  absences           Absence[]
+  overtimePlans      OvertimePlan[]
+  invitations        Invitation[]
+  shutdownExceptions CompanyShutdownException[]
+  shifts             Shift[]
+  shiftPatterns      EmployeeShiftPattern[]
+  availabilities     EmployeeAvailability[]
+  presenceDevices    PresenceDevice[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -259,27 +290,37 @@ model Employee {
 // ─────────────────────────────────────────────
 
 model WorkSchedule {
-  id                    String       @id @default(uuid())
-  employeeId            String
-  type                  ScheduleType @default(FIXED_WEEKLY)
-  weeklyHours           Decimal      @db.Decimal(5, 2)  // z.B. 40.00
-  monthlyHours          Decimal?     @db.Decimal(5, 2)  // z.B. 15.00 für Minijobber
-  mondayHours           Decimal  @db.Decimal(4, 2)  @default(8)
-  tuesdayHours          Decimal  @db.Decimal(4, 2)  @default(8)
-  wednesdayHours        Decimal  @db.Decimal(4, 2)  @default(8)
-  thursdayHours         Decimal  @db.Decimal(4, 2)  @default(8)
-  fridayHours           Decimal  @db.Decimal(4, 2)  @default(8)
-  saturdayHours         Decimal  @db.Decimal(4, 2)  @default(0)
-  sundayHours           Decimal  @db.Decimal(4, 2)  @default(0)
-  overtimeThreshold     Decimal  @db.Decimal(5, 2)  @default(60)  // Alert ab X Stunden
-  allowOvertimePayout   Boolean  @default(false)
-  overtimeMode          String   @default("CARRY_FORWARD")  // "CARRY_FORWARD" | "TRACK_ONLY"
+  id                        String       @id @default(uuid())
+  employeeId                String
+  type                      ScheduleType @default(FIXED_SCHEDULE)
+  weeklyHours               Decimal?     @db.Decimal(5, 2) // null erlaubt; SHIFT_BASED + FLEXTIME nutzen es als Wochen-Soll, FIXED_SCHEDULE als Σ aus per-day, MONTHLY_HOURS null
+  monthlyHours              Decimal?     @db.Decimal(5, 2) // z.B. 15.00 für Minijobber
+  mondayHours               Decimal      @default(8) @db.Decimal(4, 2)
+  tuesdayHours              Decimal      @default(8) @db.Decimal(4, 2)
+  wednesdayHours            Decimal      @default(8) @db.Decimal(4, 2)
+  thursdayHours             Decimal      @default(8) @db.Decimal(4, 2)
+  fridayHours               Decimal      @default(8) @db.Decimal(4, 2)
+  saturdayHours             Decimal      @default(0) @db.Decimal(4, 2)
+  sundayHours               Decimal      @default(0) @db.Decimal(4, 2)
+  // Phase 49.4 — Arbeitstage/Woche, unabhängig vom AZ-Modell.
+  // Quelle der Wahrheit für Urlaubsverbrauch (calculateWorkDays) und
+  // Pro-Rata-Berechnung (countWorkDaysPerWeek). Befüllt aus TenantConfig.defaultWorkDays
+  // beim Anlegen neuer Mitarbeiter; pro MA überschreibbar via /admin/vacation.
+  // Format: Array aus Wochentag-Nummern (0=So, 1=Mo, …, 6=Sa). Default: Mo-Fr.
+  workDays                  Int[]        @default([1, 2, 3, 4, 5])
+  // Phase 49.1 — FLEXTIME Kernarbeitszeit (optional; UI metadata only — does not affect calcExpectedMinutesTz)
+  coreStart                 String? // HH:MM, FLEXTIME only
+  coreEnd                   String? // HH:MM, FLEXTIME only
+  coreDays                  Int[]        @default([]) // 0=Sun..6=Sat day-of-week, FLEXTIME only
+  overtimeThreshold         Decimal      @default(60) @db.Decimal(5, 2) // Alert ab X Stunden
+  allowOvertimePayout       Boolean      @default(false)
+  overtimeMode              String       @default("CARRY_FORWARD") // "CARRY_FORWARD" | "TRACK_ONLY"
   maxNegativeBalanceMinutes Int? // Pro-MA Override (null = Tenant-Default)
-  validFrom             DateTime @db.Timestamptz
-  createdAt             DateTime @default(now()) @db.Timestamptz
-  updatedAt             DateTime @updatedAt      @db.Timestamptz
+  validFrom                 DateTime     @db.Timestamptz
+  createdAt                 DateTime     @default(now()) @db.Timestamptz
+  updatedAt                 DateTime     @updatedAt @db.Timestamptz
 
-  employee              Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId, validFrom])
 }
@@ -289,39 +330,39 @@ model WorkSchedule {
 // ─────────────────────────────────────────────
 
 model TimeEntry {
-  id           String          @id @default(uuid())
-  employeeId   String
-  date         DateTime        @db.Date
-  startTime    DateTime        @db.Timestamptz
-  endTime      DateTime?       @db.Timestamptz
-  breakMinutes Int             @default(0)
-  type         TimeEntryType   @default(WORK)
-  source       TimeEntrySource @default(MANUAL)
-  note         String?
-  isLocked     Boolean         @default(false)  // nach Monatsabschluss gesperrt
-  lockedAt     DateTime?       @db.Timestamptz
-  isInvalid    Boolean         @default(false) // automatisch invalidiert (z.B. kein Ausstempeln)
-  invalidReason String?                        // Grund der Invalidierung
-  deletedAt    DateTime?       @db.Timestamptz // soft delete
-  createdAt    DateTime        @default(now()) @db.Timestamptz
-  updatedAt    DateTime        @updatedAt      @db.Timestamptz
-  createdBy    String?         // userId wer es angelegt hat
+  id            String          @id @default(uuid())
+  employeeId    String
+  date          DateTime        @db.Date
+  startTime     DateTime        @db.Timestamptz
+  endTime       DateTime?       @db.Timestamptz
+  breakMinutes  Int             @default(0)
+  type          TimeEntryType   @default(WORK)
+  source        TimeEntrySource @default(MANUAL)
+  note          String?
+  isLocked      Boolean         @default(false) // nach Monatsabschluss gesperrt
+  lockedAt      DateTime?       @db.Timestamptz
+  isInvalid     Boolean         @default(false) // automatisch invalidiert (z.B. kein Ausstempeln)
+  invalidReason String? // Grund der Invalidierung
+  deletedAt     DateTime?       @db.Timestamptz // soft delete
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+  updatedAt     DateTime        @updatedAt @db.Timestamptz
+  createdBy     String? // userId wer es angelegt hat
 
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  breaks       Break[]
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  breaks   Break[]
 
   @@index([employeeId, date])
   @@index([date])
 }
 
 model Break {
-  id          String    @id @default(uuid())
+  id          String   @id @default(uuid())
   timeEntryId String
-  startTime   DateTime  @db.Timestamptz
-  endTime     DateTime  @db.Timestamptz
-  createdAt   DateTime  @default(now()) @db.Timestamptz
+  startTime   DateTime @db.Timestamptz
+  endTime     DateTime @db.Timestamptz
+  createdAt   DateTime @default(now()) @db.Timestamptz
 
-  timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  timeEntry TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
 
   @@index([timeEntryId])
 }
@@ -331,20 +372,20 @@ model Break {
 // ─────────────────────────────────────────────
 
 model SaldoSnapshot {
-  id              String             @id @default(uuid())
+  id              String          @id @default(uuid())
   employeeId      String
   periodType      SaldoPeriodType
-  periodStart     DateTime           @db.Date
-  periodEnd       DateTime           @db.Date
-  workedMinutes   Int                // Ist-Arbeitszeit im Zeitraum
-  expectedMinutes Int                // Soll-Arbeitszeit im Zeitraum
-  balanceMinutes  Int                // Differenz (worked - expected)
-  carryOver       Int                // Kumulierter Übertrag bis periodEnd
-  closedAt        DateTime           @db.Timestamptz
-  closedBy        String?            // userId wer abgeschlossen hat (null = SYSTEM)
+  periodStart     DateTime        @db.Date
+  periodEnd       DateTime        @db.Date
+  workedMinutes   Int // Ist-Arbeitszeit im Zeitraum
+  expectedMinutes Int // Soll-Arbeitszeit im Zeitraum
+  balanceMinutes  Int // Differenz (worked - expected)
+  carryOver       Int // Kumulierter Übertrag bis periodEnd
+  closedAt        DateTime        @db.Timestamptz
+  closedBy        String? // userId wer abgeschlossen hat (null = SYSTEM)
   note            String?
 
-  employee        Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, periodType, periodStart])
   @@index([employeeId])
@@ -363,39 +404,39 @@ enum SaldoPeriodType {
 model OvertimeAccount {
   id           String   @id @default(uuid())
   employeeId   String   @unique
-  balanceHours Decimal  @db.Decimal(7, 2) @default(0)  // aktueller Saldo
+  balanceHours Decimal  @default(0) @db.Decimal(7, 2) // aktueller Saldo
   updatedAt    DateTime @updatedAt @db.Timestamptz
 
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee     Employee              @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   transactions OvertimeTransaction[]
 }
 
 model OvertimeTransaction {
-  id                String              @id @default(uuid())
+  id                String                  @id @default(uuid())
   overtimeAccountId String
-  hours             Decimal             @db.Decimal(7, 2)  // positiv = Überstunden, negativ = Abbau
+  hours             Decimal                 @db.Decimal(7, 2) // positiv = Überstunden, negativ = Abbau
   type              OvertimeTransactionType
   description       String?
-  referenceMonth    String?             // "2024-03" für Monatsabschluss
-  createdAt         DateTime            @default(now()) @db.Timestamptz
+  referenceMonth    String? // "2024-03" für Monatsabschluss
+  createdAt         DateTime                @default(now()) @db.Timestamptz
   createdBy         String?
 
-  overtimeAccount   OvertimeAccount     @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
+  overtimeAccount OvertimeAccount @relation(fields: [overtimeAccountId], references: [id], onDelete: Cascade)
 
   @@index([overtimeAccountId])
 }
 
 model OvertimePlan {
-  id           String           @id @default(uuid())
-  employeeId   String
-  hoursToReduce Decimal         @db.Decimal(7, 2)
-  deadline     DateTime         @db.Timestamptz
-  status       OvertimePlanStatus @default(ACTIVE)
-  note         String?
-  createdAt    DateTime         @default(now()) @db.Timestamptz
-  createdBy    String
+  id            String             @id @default(uuid())
+  employeeId    String
+  hoursToReduce Decimal            @db.Decimal(7, 2)
+  deadline      DateTime           @db.Timestamptz
+  status        OvertimePlanStatus @default(ACTIVE)
+  note          String?
+  createdAt     DateTime           @default(now()) @db.Timestamptz
+  createdBy     String
 
-  employee     Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@index([employeeId])
 }
@@ -407,16 +448,16 @@ model OvertimePlan {
 model LeaveType {
   id               String   @id @default(uuid())
   tenantId         String
-  name             String   // "Urlaub", "Sonderurlaub", etc.
+  name             String // "Urlaub", "Sonderurlaub", etc.
   isPaid           Boolean  @default(true)
   requiresApproval Boolean  @default(true)
   color            String   @default("#3B82F6")
-  allowHalfDay     Boolean  @default(true)   // Can this type be requested as half-day?
-  maxDaysPerYear   Int?                       // Optional annual limit per employee
-  leadTimeDays     Int?                       // Per-type override for lead time (null = use global)
+  allowHalfDay     Boolean  @default(true) // Can this type be requested as half-day?
+  maxDaysPerYear   Int? // Optional annual limit per employee
+  leadTimeDays     Int? // Per-type override for lead time (null = use global)
   createdAt        DateTime @default(now()) @db.Timestamptz
 
-  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant       Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   entitlements LeaveEntitlement[]
   requests     LeaveRequest[]
 
@@ -425,22 +466,22 @@ model LeaveType {
 }
 
 model LeaveEntitlement {
-  id                String   @id @default(uuid())
+  id                String    @id @default(uuid())
   employeeId        String
   leaveTypeId       String
   year              Int
-  totalDays         Decimal  @db.Decimal(5, 2)
-  usedDays          Decimal  @db.Decimal(5, 2) @default(0)
-  carriedOverDays   Decimal  @db.Decimal(5, 2) @default(0)  // Resturlaub Vorjahr
+  totalDays         Decimal   @db.Decimal(5, 2)
+  usedDays          Decimal   @default(0) @db.Decimal(5, 2)
+  carriedOverDays   Decimal   @default(0) @db.Decimal(5, 2) // Resturlaub Vorjahr
   carryOverDeadline DateTime? @db.Timestamptz // bis wann Resturlaub genommen werden muss
-  carryOverReason   String?   // ILLNESS | OPERATIONAL | OTHER (null = automatic)
-  carryOverNote     String?   // Freitext-Begründung für Übertrag
-  isAutoCalculated  Boolean  @default(false)  // Was this entitlement auto-calculated for part-time?
-  createdAt         DateTime @default(now()) @db.Timestamptz
-  updatedAt         DateTime @updatedAt      @db.Timestamptz
+  carryOverReason   String? // ILLNESS | OPERATIONAL | OTHER (null = automatic)
+  carryOverNote     String? // Freitext-Begründung für Übertrag
+  isAutoCalculated  Boolean   @default(false) // Was this entitlement auto-calculated for part-time?
+  createdAt         DateTime  @default(now()) @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @db.Timestamptz
 
-  employee          Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  leaveType         LeaveType  @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
+  employee  Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id], onDelete: Cascade)
 
   @@unique([employeeId, leaveTypeId, year])
   @@index([employeeId])
@@ -450,16 +491,16 @@ model LeaveEntitlement {
 model SpecialLeaveRule {
   id            String   @id @default(uuid())
   tenantId      String
-  name          String   // e.g. "Hochzeit", "Geburt eines Kindes"
-  reason        String?  // Description / display text
-  defaultDays   Decimal  @db.Decimal(4, 2) @default(1) // Default entitlement days
+  name          String // e.g. "Hochzeit", "Geburt eines Kindes"
+  reason        String? // Description / display text
+  defaultDays   Decimal  @default(1) @db.Decimal(4, 2) // Default entitlement days
   isStatutory   Boolean  @default(false) // § 616 BGB (cannot be deleted, only deactivated)
   requiresProof Boolean  @default(false)
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now()) @db.Timestamptz
-  updatedAt     DateTime @updatedAt      @db.Timestamptz
+  updatedAt     DateTime @updatedAt @db.Timestamptz
 
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   leaveRequests LeaveRequest[]
 
   @@unique([tenantId, name])
@@ -467,30 +508,30 @@ model SpecialLeaveRule {
 }
 
 model LeaveRequest {
-  id           String             @id @default(uuid())
-  employeeId   String
-  leaveTypeId  String
-  specialLeaveRuleId String?     // For SPECIAL type: which rule applies
-  startDate    DateTime           @db.Date
-  endDate      DateTime           @db.Date
-  days         Decimal            @db.Decimal(5, 2)
-  halfDay      Boolean            @default(false)
-  status       LeaveRequestStatus @default(PENDING)
-  note         String?
-  reviewedBy   String?
-  reviewedAt   DateTime?          @db.Timestamptz
-  reviewNote   String?
+  id                 String             @id @default(uuid())
+  employeeId         String
+  leaveTypeId        String
+  specialLeaveRuleId String? // For SPECIAL type: which rule applies
+  startDate          DateTime           @db.Date
+  endDate            DateTime           @db.Date
+  days               Decimal            @db.Decimal(5, 2)
+  halfDay            Boolean            @default(false)
+  status             LeaveRequestStatus @default(PENDING)
+  note               String?
+  reviewedBy         String?
+  reviewedAt         DateTime?          @db.Timestamptz
+  reviewNote         String?
   // Attest (nur für SICK / SICK_CHILD)
-  attestPresent    Boolean   @default(false)
-  attestValidFrom  DateTime? @db.Date
-  attestValidTo    DateTime? @db.Date
-  deletedAt    DateTime?          @db.Timestamptz // soft delete
-  createdAt    DateTime           @default(now()) @db.Timestamptz
-  updatedAt    DateTime           @updatedAt      @db.Timestamptz
+  attestPresent      Boolean            @default(false)
+  attestValidFrom    DateTime?          @db.Date
+  attestValidTo      DateTime?          @db.Date
+  deletedAt          DateTime?          @db.Timestamptz // soft delete
+  createdAt          DateTime           @default(now()) @db.Timestamptz
+  updatedAt          DateTime           @updatedAt @db.Timestamptz
 
-  employee         Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  leaveType        LeaveType          @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
-  specialLeaveRule SpecialLeaveRule?  @relation(fields: [specialLeaveRuleId], references: [id])
+  employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveType        LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  specialLeaveRule SpecialLeaveRule? @relation(fields: [specialLeaveRuleId], references: [id])
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -502,19 +543,19 @@ model LeaveRequest {
 // ─────────────────────────────────────────────
 
 model Absence {
-  id           String       @id @default(uuid())
+  id           String      @id @default(uuid())
   employeeId   String
   type         AbsenceType
-  startDate    DateTime     @db.Date
-  endDate      DateTime     @db.Date
-  days         Decimal      @db.Decimal(5, 2)
+  startDate    DateTime    @db.Date
+  endDate      DateTime    @db.Date
+  days         Decimal     @db.Decimal(5, 2)
   note         String?
-  documentPath String?      // Pfad zur AU-Bescheinigung (MinIO)
-  deletedAt    DateTime?    @db.Timestamptz // soft delete
-  createdAt    DateTime     @default(now()) @db.Timestamptz
+  documentPath String? // Pfad zur AU-Bescheinigung (MinIO)
+  deletedAt    DateTime?   @db.Timestamptz // soft delete
+  createdAt    DateTime    @default(now()) @db.Timestamptz
   createdBy    String
 
-  employee     Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
   @@index([employeeId])
 }
@@ -531,7 +572,7 @@ model PublicHoliday {
   federalState FederalState
   year         Int
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, date])
   @@index([tenantId, year])
@@ -542,19 +583,19 @@ model PublicHoliday {
 // ─────────────────────────────────────────────
 
 model AuditLog {
-  id         String   @id @default(uuid())
-  userId     String?
-  action     String   // CREATE, UPDATE, DELETE, LOGIN, EXPORT
-  entity     String   // "TimeEntry", "LeaveRequest", etc.
-  entityId   String?
-  oldValue   Json?
-  newValue   Json?
-  ipAddress  String?
-  userAgent  String?
-  purgeable  Boolean  @default(false)   // DSGVO Art. 5(1)(e): presence-only events (no stamp created) auto-purge after 90 days
-  createdAt  DateTime @default(now()) @db.Timestamptz
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT
+  entity    String // "TimeEntry", "LeaveRequest", etc.
+  entityId  String?
+  oldValue  Json?
+  newValue  Json?
+  ipAddress String?
+  userAgent String?
+  purgeable Boolean  @default(false) // DSGVO Art. 5(1)(e): presence-only events (no stamp created) auto-purge after 90 days
+  createdAt DateTime @default(now()) @db.Timestamptz
 
-  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([entity, entityId])
   @@index([userId])
@@ -575,6 +616,7 @@ model TerminalApiKey {
   revokedAt  DateTime?
   createdAt  DateTime  @default(now())
   tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
@@ -583,21 +625,21 @@ model TerminalApiKey {
 // ─────────────────────────────────────────────
 
 model PresenceSource {
-  id          String    @id @default(uuid())
-  tenantId    String
-  name        String                            // Human-readable label (e.g. "Büro FritzBox")
-  keyHash     String    @unique                 // SHA-256 of the raw clk_ key (never stored in plaintext)
-  keyPrefix   String                            // First 8 chars of raw key for UI display (e.g. "clk_ab12")
-  adapterUrl    String?                           // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
-  adapterSecret String?                           // Bearer token the API sends to the adapter's /devices endpoint (CR-02)
-  isActive    Boolean   @default(true)          // Admin can disable without deleting (PATCH endpoint)
-  lastUsedAt  DateTime? @db.Timestamptz         // Updated on every successful webhook auth (adapter health signal)
-  revokedAt   DateTime? @db.Timestamptz         // Soft-revoke; null = active
-  createdAt   DateTime  @default(now()) @db.Timestamptz
-  updatedAt   DateTime  @updatedAt @db.Timestamptz
-  deletedAt   DateTime? @db.Timestamptz         // Soft-delete (audit-proof: never hard-delete)
+  id            String    @id @default(uuid())
+  tenantId      String
+  name          String // Human-readable label (e.g. "Büro FritzBox")
+  keyHash       String    @unique // SHA-256 of the raw clk_ key (never stored in plaintext)
+  keyPrefix     String // First 8 chars of raw key for UI display (e.g. "clk_ab12")
+  adapterUrl    String? // URL of the FritzBox adapter's /devices endpoint (proxied by admin UI)
+  adapterSecret String? // Bearer token the API sends to the adapter's /devices endpoint (CR-02)
+  isActive      Boolean   @default(true) // Admin can disable without deleting (PATCH endpoint)
+  lastUsedAt    DateTime? @db.Timestamptz // Updated on every successful webhook auth (adapter health signal)
+  revokedAt     DateTime? @db.Timestamptz // Soft-revoke; null = active
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+  deletedAt     DateTime? @db.Timestamptz // Soft-delete (audit-proof: never hard-delete)
 
-  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([keyHash])
@@ -608,18 +650,18 @@ model PresenceSource {
 // ─────────────────────────────────────────────
 
 model PresenceDevice {
-  id            String    @id @default(uuid())
+  id            String   @id @default(uuid())
   tenantId      String
   employeeId    String
-  mac           String                            // Normalized lowercase colon-separated: "aa:bb:cc:dd:ee:ff"
-  label         String?                           // Optional human-readable label (e.g. "iPhone the operator", "Tablet")
-  addedByUserId String?                           // userId of the person who created the mapping (null = system)
-  addedAt       DateTime  @default(now()) @db.Timestamptz
+  mac           String // Normalized lowercase colon-separated: "aa:bb:cc:dd:ee:ff"
+  label         String? // Optional human-readable label (e.g. "iPhone the operator", "Tablet")
+  addedByUserId String? // userId of the person who created the mapping (null = system)
+  addedAt       DateTime @default(now()) @db.Timestamptz
 
-  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
-  @@unique([tenantId, mac])   // One MAC maps to exactly one employee per tenant
+  @@unique([tenantId, mac]) // One MAC maps to exactly one employee per tenant
   @@index([tenantId])
   @@index([employeeId])
 }
@@ -629,15 +671,16 @@ model ApiKey {
   tenantId   String
   name       String
   keyHash    String    @unique
-  keyPrefix  String    // e.g. "clk_abc1" (shown in UI)
-  scopes     String[]  // e.g. ["read:employees", "read:time-entries", "read:reports"]
+  keyPrefix  String // e.g. "clk_abc1" (shown in UI)
+  scopes     String[] // e.g. ["read:employees", "read:time-entries", "read:reports"]
   expiresAt  DateTime? @db.Timestamptz
   lastUsedAt DateTime? @db.Timestamptz
   revokedAt  DateTime? @db.Timestamptz
-  createdBy  String    // userId who created this key
+  createdBy  String // userId who created this key
   createdAt  DateTime  @default(now()) @db.Timestamptz
 
-  tenant     Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
   @@index([tenantId])
 }
 
@@ -685,10 +728,10 @@ enum TimeEntrySource {
 }
 
 enum OvertimeTransactionType {
-  ACCRUAL       // Überstunden angesammelt (Monatsabschluss)
-  REDUCTION     // Abbau (Freizeit genommen)
-  PAYOUT        // Ausbezahlt
-  CORRECTION    // Manuelle Korrektur
+  ACCRUAL // Überstunden angesammelt (Monatsabschluss)
+  REDUCTION // Abbau (Freizeit genommen)
+  PAYOUT // Ausbezahlt
+  CORRECTION // Manuelle Korrektur
 }
 
 enum OvertimePlanStatus {
@@ -706,18 +749,32 @@ enum LeaveRequestStatus {
 }
 
 enum AbsenceType {
-  SICK              // Krankheit
-  SICK_CHILD        // Kindkrank
-  SPECIAL_LEAVE     // Sonderurlaub
-  UNPAID_LEAVE      // Unbezahlter Urlaub
-  MATERNITY         // Mutterschutz
-  PARENTAL          // Elternzeit
+  SICK // Krankheit
+  SICK_CHILD // Kindkrank
+  SPECIAL_LEAVE // Sonderurlaub
+  UNPAID_LEAVE // Unbezahlter Urlaub
+  MATERNITY // Mutterschutz
+  PARENTAL // Elternzeit
   OTHER
 }
 
 enum ScheduleType {
-  FIXED_WEEKLY      // Feste Wochentage (z.B. Mo-Fr 8h)
-  MONTHLY_HOURS     // Monatsstunden-Budget (z.B. 15h/Monat für Minijobber)
+  FIXED_SCHEDULE // Fester Stundenplan (was FIXED_WEEKLY) — per-day Decimal hours configured
+  FLEXTIME // Gleitzeit — Wochenstundensoll, freie Tagesverteilung; optional Kernarbeitszeit
+  MONTHLY_HOURS // Monatsstunden-Budget (z.B. 15h/Monat für Minijobber)
+  SHIFT_BASED // Schichtplan ist führend, weeklyHours als Wochen-Soll-Target (Phase 45)
+}
+
+// Personalstruktur-Kategorie (Phase 41) — used by Coverage-Gewicht & Aufsichtspflicht logic
+// in v1.6 Schicht-Phasen and v1.7+ classification-based workflows.
+enum EmployeeClassification {
+  VOLLZEIT
+  TEILZEIT
+  MINIJOB
+  AZUBI
+  AUSHILFE
+  WERKSTUDENT
+  PRAKTIKANT
 }
 
 // ─────────────────────────────────────────────
@@ -727,16 +784,16 @@ enum ScheduleType {
 model CompanyShutdown {
   id                  String   @id @default(uuid())
   tenantId            String
-  name                String                         // z.B. "Weihnachtsschließung 2025"
+  name                String // z.B. "Weihnachtsschließung 2025"
   startDate           DateTime @db.Date
   endDate             DateTime @db.Date
-  deductsFromVacation Boolean  @default(true)        // zieht vom Urlaubskonto ab
+  deductsFromVacation Boolean  @default(true) // zieht vom Urlaubskonto ab
   notes               String?
   createdAt           DateTime @default(now()) @db.Timestamptz
-  updatedAt           DateTime @updatedAt      @db.Timestamptz
+  updatedAt           DateTime @updatedAt @db.Timestamptz
 
-  tenant              Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  exceptions          CompanyShutdownException[]
+  tenant     Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  exceptions CompanyShutdownException[]
 
   @@index([tenantId])
   @@index([tenantId, startDate])
@@ -744,14 +801,14 @@ model CompanyShutdown {
 
 /// Mitarbeiter, die vom Betriebsurlaub AUSGENOMMEN sind
 model CompanyShutdownException {
-  id           String   @id @default(uuid())
-  shutdownId   String
-  employeeId   String
-  reason       String?
-  createdAt    DateTime @default(now()) @db.Timestamptz
+  id         String   @id @default(uuid())
+  shutdownId String
+  employeeId String
+  reason     String?
+  createdAt  DateTime @default(now()) @db.Timestamptz
 
-  shutdown     CompanyShutdown @relation(fields: [shutdownId], references: [id], onDelete: Cascade)
-  employee     Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  shutdown CompanyShutdown @relation(fields: [shutdownId], references: [id], onDelete: Cascade)
+  employee Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
 
   @@unique([shutdownId, employeeId])
 }
@@ -764,14 +821,14 @@ model Notification {
   id          String    @id @default(uuid())
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type        String    // LEAVE_REQUEST, LEAVE_APPROVED, LEAVE_REJECTED, OVERTIME_WARNING, MISSING_ENTRY, CLOCK_OUT_REMINDER, MONTH_CLOSED, ACCOUNT_LOCKED
+  type        String // LEAVE_REQUEST, LEAVE_APPROVED, LEAVE_REJECTED, OVERTIME_WARNING, MISSING_ENTRY, CLOCK_OUT_REMINDER, MONTH_CLOSED, ACCOUNT_LOCKED
   title       String
   message     String
-  link        String?   // e.g. "/leave" or "/admin/vacation"
+  link        String? // e.g. "/leave" or "/admin/vacation"
   read        Boolean   @default(false)
   dismissedAt DateTime? @db.Timestamptz // null = visible; set = soft-dismissed (Revisionssicherheit: row kept)
-  relatedType String?   // e.g. "LeaveRequest", "TimeEntry" — loose reference, no FK
-  relatedId   String?   // id of the related entity (used by dismissByRelated helper)
+  relatedType String? // e.g. "LeaveRequest", "TimeEntry" — loose reference, no FK
+  relatedId   String? // id of the related entity (used by dismissByRelated helper)
   createdAt   DateTime  @default(now()) @db.Timestamptz
 
   @@index([userId, read])
@@ -789,31 +846,109 @@ model ShiftTemplate {
   id        String   @id @default(uuid())
   tenantId  String
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  name      String   // e.g. "Frühschicht", "Spätschicht", "Nachtschicht"
-  startTime String   // "06:00"
-  endTime   String   // "14:00"
+  name      String // e.g. "Frühschicht", "Spätschicht", "Nachtschicht"
+  startTime String // "06:00"
+  endTime   String // "14:00"
   color     String   @default("#3B82F6")
   createdAt DateTime @default(now()) @db.Timestamptz
 
-  shifts    Shift[]
+  shifts        Shift[]
+  coverageRules CoverageRule[]
+  shiftPatterns EmployeeShiftPattern[]
 
   @@index([tenantId])
 }
 
+// Phase 42 — Bedarfsregeln pro Vorlage × Wochentag.
+// Most-specific match wins when computing coverage:
+//   (templateId set AND dayOfWeek set) > (templateId null AND dayOfWeek set) >
+//   (templateId set AND dayOfWeek=-1) > (templateId null AND dayOfWeek=-1)
+// Default (no rule): minStaff=2.0, requiresNonSupervised=false.
+model CoverageRule {
+  id                    String         @id @default(uuid())
+  tenantId              String
+  tenant                Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId            String?
+  template              ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  dayOfWeek             Int // 0=Mo..6=So; -1 = "all days"
+  minStaff              Decimal        @default(2) @db.Decimal(4, 2)
+  requiresNonSupervised Boolean        @default(false)
+  createdAt             DateTime       @default(now()) @db.Timestamptz
+  updatedAt             DateTime       @updatedAt @db.Timestamptz
+
+  @@index([tenantId])
+  @@index([templateId])
+}
+
 model Shift {
-  id           String         @id @default(uuid())
-  employeeId   String
-  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  templateId   String?
-  template     ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  date         DateTime       @db.Date
-  startTime    String         // "06:00"
-  endTime      String         // "14:00"
-  label        String?        // Custom label or template name
-  note         String?
-  createdAt    DateTime       @default(now()) @db.Timestamptz
-  createdBy    String?
+  id                 String         @id @default(uuid())
+  employeeId         String
+  employee           Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  templateId         String?
+  template           ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  date               DateTime       @db.Date
+  startTime          String // "06:00"
+  endTime            String // "14:00"
+  label              String? // Custom label or template name
+  note               String?
+  // Phase 43: marked TRUE by reverse-hook when a LeaveRequest is approved
+  // that overlaps this shift's date. Audit-proof: shift is flagged, never silent-deleted.
+  conflictsWithLeave Boolean        @default(false)
+  createdAt          DateTime       @default(now()) @db.Timestamptz
+  createdBy          String?
 
   @@index([employeeId, date])
   @@index([date])
+}
+
+// Phase 43 — Recurring weekly shift assignments per employee.
+// One row per (employee, dayOfWeek, validFrom): the active pattern is the one
+// whose validFrom <= date AND (validUntil IS NULL OR validUntil >= date) AND isActive.
+// templateId NULL = "leave the day open" (e.g. day off). With templateId = use this
+// template on this weekday. POST /shifts/generate-week reads these and produces shifts.
+model EmployeeShiftPattern {
+  id         String         @id @default(uuid())
+  employeeId String
+  employee   Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int // 0=Mo..6=So
+  templateId String?
+  template   ShiftTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  validFrom  DateTime       @db.Date
+  validUntil DateTime?      @db.Date // null = open-ended
+  isActive   Boolean        @default(true)
+  createdAt  DateTime       @default(now()) @db.Timestamptz
+  updatedAt  DateTime       @updatedAt @db.Timestamptz
+
+  @@unique([employeeId, dayOfWeek, validFrom])
+  @@index([employeeId])
+}
+
+// Phase 46 — Employee availability declaration (recurring weekly OR one-off date).
+// Resolution priority on GET /shifts/week: APPROVED LeaveRequest > non-deleted Absence >
+// date-specific EmployeeAvailability > dayOfWeek-recurring EmployeeAvailability > AVAILABLE.
+// XOR: EXACTLY ONE of dayOfWeek / date must be set (enforced in Zod app-layer).
+// No deletedAt — operational future-intent data; audit-log records DELETE.
+model EmployeeAvailability {
+  id         String             @id @default(uuid())
+  employeeId String
+  employee   Employee           @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int? // 0=Mo..6=So; null for one-off date entries
+  date       DateTime?          @db.Date // null for recurring; set for one-off
+  status     AvailabilityStatus
+  note       String?            @db.VarChar(200)
+  validFrom  DateTime           @db.Date
+  validUntil DateTime?          @db.Date // null = open-ended
+  createdAt  DateTime           @default(now()) @db.Timestamptz
+  updatedAt  DateTime           @updatedAt @db.Timestamptz
+  createdBy  String?
+
+  @@index([employeeId])
+  @@index([employeeId, dayOfWeek])
+  @@index([employeeId, date])
+}
+
+enum AvailabilityStatus {
+  AVAILABLE
+  UNAVAILABLE
+  PREFERRED
 }

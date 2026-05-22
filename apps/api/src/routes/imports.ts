@@ -14,7 +14,7 @@ const employeeRowSchema = z.object({
   hireDate: z.string(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
   weeklyHours: z.coerce.number().positive().default(40),
-  scheduleType: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  scheduleType: z.enum(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS"]).default("FIXED_SCHEDULE"),
   monthlyHours: z.coerce.number().min(0).max(999).optional(),
   password: z.string().min(8).optional(),
 });
@@ -88,7 +88,7 @@ export async function importRoutes(app: FastifyInstance) {
             role: raw.role || raw.Rolle || "EMPLOYEE",
             weeklyHours: raw.weeklyHours || raw.wochenstunden || raw.Wochenstunden || "40",
             scheduleType:
-              raw.schedule_type || raw.scheduleType || raw.modell || raw.Modell || "FIXED_WEEKLY",
+              raw.schedule_type || raw.scheduleType || raw.modell || raw.Modell || "FIXED_SCHEDULE",
             monthlyHours:
               raw.monthly_hours ||
               raw.monthlyHours ||

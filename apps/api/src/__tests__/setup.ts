@@ -218,6 +218,8 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   const userIds = employees.map((e) => e.userId);
 
   await prisma.notification.deleteMany({ where: { userId: { in: userIds } } });
+  await prisma.employeeAvailability.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.employeeShiftPattern.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
@@ -237,6 +239,7 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.leaveType.deleteMany({ where: { tenantId } });
   await prisma.publicHoliday.deleteMany({ where: { tenantId } });
+  await prisma.coverageRule.deleteMany({ where: { tenantId } });
   await prisma.shiftTemplate.deleteMany({ where: { tenantId } });
   await prisma.companyShutdown.deleteMany({ where: { tenantId } });
   await prisma.terminalApiKey.deleteMany({ where: { tenantId } });

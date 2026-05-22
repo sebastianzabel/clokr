@@ -36,7 +36,7 @@ export async function checkArbZG(
     },
   });
   const tz = await getTenantTimezone(prisma, employee.tenantId);
-  const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_WEEKLY";
+  const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_SCHEDULE";
 
   const dateStr = dateStrInTz(changedDate, tz);
 

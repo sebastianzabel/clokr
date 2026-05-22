@@ -33,7 +33,7 @@
   }
 
   interface WorkSchedule {
-    type?: "FIXED_WEEKLY" | "MONTHLY_HOURS";
+    type?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
     monthlyHours?: number | null;
     mondayHours: string | number;
     tuesdayHours: string | number;
@@ -897,7 +897,7 @@
     // For MONTHLY_HOURS with a monthly target: compare worked against the full month budget
     // (totalMonthExpected), not the partial daily accrual (totalExpected). Using totalExpected
     // would only count workdays up to today × dailySollMin (e.g. 8 × 45min = 6h instead of 15h).
-    // For FIXED_WEEKLY and no-target MONTHLY_HOURS: keep the up-to-today accrual.
+    // For FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
     hasMonthlyTarget ? totalWorked - totalMonthExpected : totalWorked - totalExpected,
   );
   // Check if there are entries for today

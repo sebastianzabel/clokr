@@ -1,21 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { api } from "$api/client";
-  import Pagination from "$components/ui/Pagination.svelte";
+  import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import Modal from "$components/ui/Modal.svelte";
 
-  // ── Typen ─────────────────────────────────────────────────────────────────
-  interface Employee {
-    id: string;
-    firstName: string;
-    lastName: string;
-    employeeNumber: string;
-  }
-
+  // ── Types ───────────────────────────────────────────────────
   interface ShiftTemplate {
     id: string;
     name: string;
@@ -24,378 +19,120 @@
     color: string;
   }
 
-  interface Shift {
+  interface CoverageRule {
     id: string;
-    employeeId: string;
     templateId: string | null;
-    date: string;
-    startTime: string;
-    endTime: string;
-    label: string | null;
-    note: string | null;
-    employee: { id: string; firstName: string; lastName: string; employeeNumber: string };
-    template: { name: string; color: string } | null;
+    dayOfWeek: number; // -1 = all days, 0..6 = Mo..So
+    minStaff: number | string; // Decimal arrives as string from Prisma
+    requiresNonSupervised: boolean;
   }
 
-  interface WeekData {
-    weekDays: string[];
-    employees: Employee[];
-    shifts: Shift[];
+  interface StoreHourEntry {
+    day: number; // 0..6 Mo..So
+    open: string;
+    close: string;
+    closed?: boolean;
   }
 
-  // ── Default-Farbe aus Token ──────────────────────────────────────────────
-  // `<input type="color">` benötigt einen literalen Hex-Wert; daher lesen wir
-  // den Token-Wert beim Mount aus den computed styles. Kein Inline-Hex-Fallback —
-  // wenn der Token nicht aufgelöst werden kann (z. B. SSR), bleibt der Wert leer
-  // und der Browser zeigt die Default-Farbe des color-Inputs.
-  function resolveShiftToken(name: string, fallback = ""): string {
-    if (typeof window === "undefined") return fallback;
-    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return v || fallback;
+  // Phase 48 — Pattern editor types
+  interface PatternEmployee {
+    id: string;
+    firstName: string;
+    lastName: string;
+    workSchedules?: Array<{
+      type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
+      weeklyHours: number | string | null;
+    }>;
   }
-
-  // ── State ─────────────────────────────────────────────────────────────────
-  let weekDays: string[] = $state([]);
-  let employees: Employee[] = $state([]);
-  let shifts: Shift[] = $state([]);
-  let templates: ShiftTemplate[] = $state([]);
-
-  // Pagination for template management list
-  let tplPage = $state(1);
-  let tplPageSize = $state(10);
-  let pagedTemplates = $derived(
-    templates.slice((tplPage - 1) * tplPageSize, tplPage * tplPageSize),
-  );
-  let loading = $state(true);
-  let error = $state("");
-  let timeEntries: Array<{
+  interface PatternRow {
     employeeId: string;
-    date: string;
-    startTime: string;
-    endTime: string | null;
-    breakMinutes: number;
-  }> = $state([]);
+    dayOfWeek: number; // 0..6
+    templateId: string | null;
+  }
+  interface ShiftWeekResponse {
+    employees: PatternEmployee[];
+  }
 
-  // Current week reference date (Monday)
-  let currentDate = $state(getMondayOfWeek(new Date()));
+  const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+  const DAY_NAMES_LONG = [
+    "Montag",
+    "Dienstag",
+    "Mittwoch",
+    "Donnerstag",
+    "Freitag",
+    "Samstag",
+    "Sonntag",
+  ];
 
-  // Modal state
-  let showModal = $state(false);
-  let modalEmployeeId = $state("");
-  let modalDate = $state("");
-  let modalTemplateId = $state("");
-  let modalStartTime = $state("08:00");
-  let modalEndTime = $state("16:00");
-  let modalLabel = $state("");
-  let modalNote = $state("");
-  let modalError = $state("");
+  // ── Role gate ───────────────────────────────────────────────
+  let gated = $state(false);
+
+  onMount(() => {
+    const role = $authStore.user?.role;
+    if (role !== "ADMIN") {
+      gated = true;
+      if (role === "MANAGER") {
+        goto("/shifts");
+      } else {
+        goto("/dashboard");
+      }
+      return;
+    }
+    void loadAll();
+  });
+
+  // ── State ───────────────────────────────────────────────────
+  let templates: ShiftTemplate[] = $state([]);
+  let coverageRules: CoverageRule[] = $state([]);
+  let storeHours: StoreHourEntry[] = $state([]);
+  let shiftStoreHoursMode: "STRICT" | "DAY_ONLY" | "OFF" = $state("DAY_ONLY");
+  let loading = $state(true);
   let saving = $state(false);
+  let error = $state("");
 
-  // Edit state
-  let editingShiftId: string | null = $state(null);
-
-  // Quick-assign mode
-  let quickMode = $state(false);
-  let quickTemplateId = $state("");
-
-  // Template management
-  let showTemplatePanel = $state(false);
+  // Template editor
+  let tplModalOpen = $state(false);
   let tplName = $state("");
   let tplStart = $state("06:00");
   let tplEnd = $state("14:00");
-  // Default-Farbe wird beim Mount aus var(--shift-violet) gelesen.
-  // Leerer Initialwert vermeidet Inline-Hex; `<input type=color>` zeigt
-  // Schwarz an, bis onMount() den Token-Wert befüllt (geschieht synchron
-  // beim ersten Render, da Pagination etc. ohnehin client-only laden).
   let tplColor = $state("");
   let tplError = $state("");
-  let tplSaving = $state(false);
+  let editingTplId: string | null = $state(null);
 
-  // Bestätigungs-Dialoge
-  let shiftDeleteConfirm = $state<{ open: boolean; id: string | null; closeAfter: boolean }>({
-    open: false,
-    id: null,
-    closeAfter: false,
-  });
-  let templateDeleteConfirm = $state<{ open: boolean; id: string | null; name: string }>({
+  // Coverage rule editor
+  let ruleModalOpen = $state(false);
+  let ruleEditingId: string | null = $state(null);
+  let ruleTemplateId = $state(""); // "" = all templates
+  let ruleDayOfWeek = $state<number>(-1);
+  let ruleMinStaff = $state<number>(2);
+  let ruleRequiresNonSupervised = $state(false);
+  let ruleError = $state("");
+
+  // Delete confirmations
+  let tplDeleteConfirm = $state<{ open: boolean; id: string | null; name: string }>({
     open: false,
     id: null,
     name: "",
   });
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const DAY_NAMES = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-
-  const quickTemplate = $derived(
-    quickTemplateId ? templates.find((t) => t.id === quickTemplateId) : null,
-  );
-
-  const weekLabel = $derived(() => {
-    if (weekDays.length < 7) return "";
-    const start = formatDateShort(weekDays[0]);
-    const end = formatDateShort(weekDays[6]);
-    return `${start} – ${end}`;
+  let ruleDeleteConfirm = $state<{ open: boolean; id: string | null }>({
+    open: false,
+    id: null,
   });
 
-  // ── Hilfsfunktionen ─────────────────────────────────────────────────────
-  function getMondayOfWeek(d: Date): string {
-    const date = new Date(d);
-    const dow = date.getDay();
-    const offset = dow === 0 ? -6 : 1 - dow;
-    date.setDate(date.getDate() + offset);
-    return date.toISOString().split("T")[0];
-  }
+  // Store hours save state
+  let storeHoursSaving = $state(false);
+  let storeHoursMsg = $state("");
 
-  function formatDateShort(dateStr: string): string {
-    const d = new Date(dateStr + "T00:00:00");
-    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
-  }
+  // Phase 48 — Pattern editor state
+  let shiftEmployees: PatternEmployee[] = $state([]);
+  // matrix[employeeId][0..6] = templateId | null
+  let patternMatrix: Record<string, Array<string | null>> = $state({});
+  // mirror of initial server state for dirty detection
+  let patternMatrixInitial: Record<string, Array<string | null>> = $state({});
+  let patternsSaving = $state(false);
+  let patternsMsg = $state("");
 
-  function formatDateFull(dateStr: string): string {
-    const d = new Date(dateStr + "T00:00:00");
-    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
-  }
-
-  function isTodayIso(iso: string): boolean {
-    const today = new Date();
-    const t = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    return iso.slice(0, 10) === t;
-  }
-
-  function getShiftsForCell(employeeId: string, date: string): Shift[] {
-    return shifts.filter((s) => s.employeeId === employeeId && s.date.startsWith(date));
-  }
-
-  function getActualHours(employeeId: string, date: string): number | null {
-    const entries = timeEntries.filter(
-      (e) => e.employeeId === employeeId && (e.date as string).startsWith(date) && e.endTime,
-    );
-    if (entries.length === 0) return null;
-    return entries.reduce((sum, e) => {
-      const start = new Date(e.startTime).getTime();
-      const end = new Date(e.endTime!).getTime();
-      return sum + (end - start) / 3600000 - (e.breakMinutes ?? 0) / 60;
-    }, 0);
-  }
-
-  function shiftLabel(s: Shift): string {
-    return s.label ?? `${s.startTime.slice(0, 5)}–${s.endTime.slice(0, 5)}`;
-  }
-
-  // ── Lade-Funktionen ───────────────────────────────────────────────────────
-  async function loadWeek() {
-    loading = true;
-    error = "";
-    try {
-      const data = await api.get<WeekData>(`/shifts/week?date=${currentDate}`);
-      weekDays = data.weekDays;
-      employees = data.employees;
-      shifts = data.shifts;
-
-      // Also load time entries for the same week
-      try {
-        const from = weekDays[0];
-        const to = weekDays[6];
-        timeEntries = await api.get<typeof timeEntries>(`/time-entries?from=${from}&to=${to}`);
-      } catch (err) {
-        console.error("Failed to load time entries for shift view:", err);
-      }
-    } catch {
-      error = "Fehler beim Laden der Schichtdaten.";
-    } finally {
-      loading = false;
-    }
-  }
-
-  async function loadTemplates() {
-    try {
-      templates = await api.get<ShiftTemplate[]>("/shifts/templates");
-    } catch (err) {
-      console.error("Failed to load shift templates:", err);
-    }
-  }
-
-  onMount(() => {
-    // Initialer Farbwert aus Token (Schicht-Palette, theme-unabhängig).
-    tplColor = resolveShiftToken("--shift-violet");
-    loadWeek();
-    loadTemplates();
-  });
-
-  // ── Wochennavigation ──────────────────────────────────────────────────────
-  function prevWeek() {
-    const d = new Date(currentDate + "T00:00:00");
-    d.setDate(d.getDate() - 7);
-    currentDate = d.toISOString().split("T")[0];
-    loadWeek();
-  }
-
-  function nextWeek() {
-    const d = new Date(currentDate + "T00:00:00");
-    d.setDate(d.getDate() + 7);
-    currentDate = d.toISOString().split("T")[0];
-    loadWeek();
-  }
-
-  function goToday() {
-    currentDate = getMondayOfWeek(new Date());
-    loadWeek();
-  }
-
-  // ── Zelle klicken ─────────────────────────────────────────────────────────
-  async function onCellClick(employeeId: string, date: string) {
-    if (quickMode && quickTemplate) {
-      // Quick-assign: sofort erstellen
-      try {
-        const shift = await api.post<Shift>("/shifts", {
-          employeeId,
-          templateId: quickTemplate.id,
-          date,
-          startTime: quickTemplate.startTime,
-          endTime: quickTemplate.endTime,
-        });
-        shifts = [...shifts, shift];
-      } catch {
-        alert("Schicht konnte nicht erstellt werden.");
-      }
-      return;
-    }
-    // Normaler Modus: Modal öffnen
-    editingShiftId = null;
-    modalEmployeeId = employeeId;
-    modalDate = date;
-    modalTemplateId = "";
-    modalStartTime = "08:00";
-    modalEndTime = "16:00";
-    modalLabel = "";
-    modalNote = "";
-    modalError = "";
-    showModal = true;
-  }
-
-  function onTemplateSelect() {
-    const tpl = templates.find((t) => t.id === modalTemplateId);
-    if (tpl) {
-      modalStartTime = tpl.startTime;
-      modalEndTime = tpl.endTime;
-      modalLabel = tpl.name;
-    }
-  }
-
-  async function saveShift() {
-    if (!modalStartTime || !modalEndTime) {
-      modalError = "Start- und Endzeit sind Pflichtfelder.";
-      return;
-    }
-    saving = true;
-    modalError = "";
-    try {
-      if (editingShiftId) {
-        // Update existing
-        const updated = await api.put<Shift>(`/shifts/${editingShiftId}`, {
-          templateId: modalTemplateId || undefined,
-          startTime: modalStartTime,
-          endTime: modalEndTime,
-          label: modalLabel || undefined,
-          note: modalNote || undefined,
-        });
-        shifts = shifts.map((s) => (s.id === editingShiftId ? updated : s));
-      } else {
-        // Create new
-        const shift = await api.post<Shift>("/shifts", {
-          employeeId: modalEmployeeId,
-          templateId: modalTemplateId || undefined,
-          date: modalDate,
-          startTime: modalStartTime,
-          endTime: modalEndTime,
-          label: modalLabel || undefined,
-          note: modalNote || undefined,
-        });
-        shifts = [...shifts, shift];
-      }
-      showModal = false;
-      editingShiftId = null;
-    } catch {
-      modalError = "Speichern fehlgeschlagen.";
-    } finally {
-      saving = false;
-    }
-  }
-
-  function askDeleteShift(shiftId: string, closeAfter = false) {
-    shiftDeleteConfirm = { open: true, id: shiftId, closeAfter };
-  }
-
-  async function confirmDeleteShift() {
-    const id = shiftDeleteConfirm.id;
-    if (!id) return;
-    try {
-      await api.delete(`/shifts/${id}`);
-      shifts = shifts.filter((s) => s.id !== id);
-      if (shiftDeleteConfirm.closeAfter) {
-        showModal = false;
-        editingShiftId = null;
-      }
-    } catch {
-      alert("Löschen fehlgeschlagen.");
-    }
-  }
-
-  function openEditShift(shift: Shift) {
-    editingShiftId = shift.id;
-    modalEmployeeId = shift.employeeId;
-    modalDate = shift.date.split("T")[0];
-    modalTemplateId = shift.templateId ?? "";
-    modalStartTime = shift.startTime;
-    modalEndTime = shift.endTime;
-    modalLabel = shift.label ?? "";
-    modalNote = shift.note ?? "";
-    modalError = "";
-    showModal = true;
-  }
-
-  // ── Template-Verwaltung ───────────────────────────────────────────────────
-  async function createTemplate() {
-    if (!tplName.trim() || !tplStart || !tplEnd) {
-      tplError = "Name, Start- und Endzeit sind Pflichtfelder.";
-      return;
-    }
-    tplSaving = true;
-    tplError = "";
-    try {
-      await api.post("/shifts/templates", {
-        name: tplName.trim(),
-        startTime: tplStart,
-        endTime: tplEnd,
-        color: tplColor,
-      });
-      tplName = "";
-      tplStart = "06:00";
-      tplEnd = "14:00";
-      tplColor = resolveShiftToken("--shift-violet");
-      await loadTemplates();
-    } catch {
-      tplError = "Erstellen fehlgeschlagen.";
-    } finally {
-      tplSaving = false;
-    }
-  }
-
-  function askDeleteTemplate(id: string, name: string) {
-    templateDeleteConfirm = { open: true, id, name };
-  }
-
-  async function confirmDeleteTemplate() {
-    if (!templateDeleteConfirm.id) return;
-    try {
-      await api.delete(`/shifts/templates/${templateDeleteConfirm.id}`);
-      await loadTemplates();
-    } catch {
-      alert("Löschen fehlgeschlagen.");
-    }
-  }
-
-  // Schnellauswahl-Palette (theme-unabhängige Schichtfarben aus tokens.css)
+  // Palette for shift template colors (theme-independent)
   const SHIFT_PALETTE = [
     { token: "--shift-violet", label: "Violett" },
     { token: "--shift-blue", label: "Blau" },
@@ -405,564 +142,843 @@
     { token: "--shift-slate", label: "Schiefer" },
   ];
 
+  function resolveShiftToken(name: string, fallback = ""): string {
+    if (typeof window === "undefined") return fallback;
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
   function pickPaletteColor(token: string) {
     tplColor = resolveShiftToken(token, tplColor);
   }
 
-  // Modal employee name
-  const modalEmployeeName = $derived(() => {
-    const emp = employees.find((e) => e.id === modalEmployeeId);
-    return emp ? `${emp.firstName} ${emp.lastName}` : "";
-  });
+  // ── Load all config ─────────────────────────────────────────
+  async function loadAll() {
+    if (gated) return;
+    loading = true;
+    error = "";
+    try {
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const [tpls, rules, work, week, patterns] = await Promise.all([
+        api.get<ShiftTemplate[]>("/shifts/templates"),
+        api.get<CoverageRule[]>("/shifts/coverage-rules"),
+        api.get<{
+          storeHours?: StoreHourEntry[];
+          shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
+        }>("/settings/work"),
+        api.get<ShiftWeekResponse>(`/shifts/week?date=${todayIso}`),
+        api.get<PatternRow[]>("/shift-patterns/tenant"),
+      ]);
+      templates = tpls;
+      coverageRules = rules;
+      storeHours = normalizeStoreHours(work.storeHours);
+      shiftStoreHoursMode = work.shiftStoreHoursMode ?? "DAY_ONLY";
+
+      // Phase 48 — Build pattern matrix from SHIFT_BASED employees + tenant patterns
+      shiftEmployees = (week.employees ?? [])
+        .filter((e) => e.workSchedules?.[0]?.type === "SHIFT_BASED")
+        .sort((a, b) =>
+          `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`, "de"),
+        );
+      const matrix: Record<string, Array<string | null>> = {};
+      for (const emp of shiftEmployees) matrix[emp.id] = Array(7).fill(null);
+      for (const p of patterns) {
+        if (matrix[p.employeeId] && p.dayOfWeek >= 0 && p.dayOfWeek <= 6) {
+          matrix[p.employeeId][p.dayOfWeek] = p.templateId;
+        }
+      }
+      patternMatrix = matrix;
+      patternMatrixInitial = JSON.parse(JSON.stringify(matrix));
+    } catch (e) {
+      console.error(e);
+      error = "Fehler beim Laden der Konfiguration.";
+    } finally {
+      loading = false;
+    }
+  }
+
+  // Phase 48 — Pattern editor helpers
+  function employeeFullName(e: PatternEmployee): string {
+    return `${e.lastName}, ${e.firstName}`;
+  }
+  function isCellDirty(empId: string, dow: number): boolean {
+    return (patternMatrix[empId]?.[dow] ?? null) !== (patternMatrixInitial[empId]?.[dow] ?? null);
+  }
+  function isRowDirty(empId: string): boolean {
+    return [0, 1, 2, 3, 4, 5, 6].some((d) => isCellDirty(empId, d));
+  }
+  const dirtyEmployeeCount = $derived(
+    shiftEmployees.filter((e) => isRowDirty(e.id)).length,
+  );
+  // Soll-Hint per Wochentag column: average weekly hours / 5 for Mo–Fr only.
+  // Returns null for Sa/So (most stores closed) and when no clean signal is available.
+  function sollHintForDow(dow: number): string | null {
+    if (dow > 4) return null;
+    if (shiftEmployees.length === 0) return null;
+    const hrs = shiftEmployees
+      .map((e) => Number(e.workSchedules?.[0]?.weeklyHours ?? NaN))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (hrs.length === 0) return null;
+    const avg = hrs.reduce((s, n) => s + n, 0) / hrs.length;
+    const perDay = avg / 5;
+    return `Ø ${perDay.toFixed(1)}h`;
+  }
+
+  async function saveBulkPatterns() {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const dirtyEmps = shiftEmployees.filter((e) => isRowDirty(e.id));
+    if (dirtyEmps.length === 0) return;
+    patternsSaving = true;
+    patternsMsg = "";
+    const results = await Promise.allSettled(
+      dirtyEmps.map((emp) => {
+        const patterns = [0, 1, 2, 3, 4, 5, 6].map((dow) => ({
+          dayOfWeek: dow,
+          templateId: patternMatrix[emp.id]?.[dow] ?? null,
+          validFrom: todayIso,
+        }));
+        return api.put(`/employees/${emp.id}/shift-patterns`, { patterns });
+      }),
+    );
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    const fail = results.length - ok;
+    if (fail === 0) {
+      toasts.success(`Schicht-Muster gespeichert (${ok} MA).`);
+      patternMatrixInitial = JSON.parse(JSON.stringify(patternMatrix));
+    } else if (ok === 0) {
+      toasts.error(`Speichern fehlgeschlagen für alle ${fail} MA.`);
+    } else {
+      toasts.error(`Teilweise gespeichert: ${ok} OK, ${fail} Fehler. Bitte erneut versuchen.`);
+    }
+    patternsSaving = false;
+    patternsMsg = fail === 0 ? "Gespeichert." : `${fail} Fehler.`;
+    setTimeout(() => (patternsMsg = ""), 3000);
+  }
+
+  function normalizeStoreHours(raw: StoreHourEntry[] | undefined): StoreHourEntry[] {
+    const fallback: StoreHourEntry[] = [
+      { day: 0, open: "08:00", close: "20:00" },
+      { day: 1, open: "08:00", close: "20:00" },
+      { day: 2, open: "08:00", close: "20:00" },
+      { day: 3, open: "08:00", close: "20:00" },
+      { day: 4, open: "08:00", close: "20:00" },
+      { day: 5, open: "08:00", close: "20:00" },
+      { day: 6, open: "08:00", close: "20:00", closed: true },
+    ];
+    if (!raw || !Array.isArray(raw) || raw.length !== 7) return fallback;
+    return [...raw].sort((a, b) => a.day - b.day);
+  }
+
+  // ── Templates ───────────────────────────────────────────────
+  function openCreateTemplate() {
+    editingTplId = null;
+    tplName = "";
+    tplStart = "06:00";
+    tplEnd = "14:00";
+    tplColor = resolveShiftToken("--shift-violet");
+    tplError = "";
+    tplModalOpen = true;
+  }
+
+  function openEditTemplate(tpl: ShiftTemplate) {
+    editingTplId = tpl.id;
+    tplName = tpl.name;
+    tplStart = tpl.startTime;
+    tplEnd = tpl.endTime;
+    tplColor = tpl.color;
+    tplError = "";
+    tplModalOpen = true;
+  }
+
+  async function saveTemplate() {
+    if (!tplName.trim() || !tplStart || !tplEnd) {
+      tplError = "Name, Start- und Endzeit sind Pflichtfelder.";
+      return;
+    }
+    saving = true;
+    tplError = "";
+    try {
+      const payload = {
+        name: tplName.trim(),
+        startTime: tplStart,
+        endTime: tplEnd,
+        color: tplColor,
+      };
+      if (editingTplId) {
+        await api.put(`/shifts/templates/${editingTplId}`, payload);
+        toasts.success("Vorlage aktualisiert.");
+      } else {
+        await api.post("/shifts/templates", payload);
+        toasts.success("Vorlage erstellt.");
+      }
+      tplModalOpen = false;
+      editingTplId = null;
+      await loadAll();
+    } catch (e) {
+      tplError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      saving = false;
+    }
+  }
+
+  function askDeleteTemplate(id: string, name: string) {
+    tplDeleteConfirm = { open: true, id, name };
+  }
+
+  async function confirmDeleteTemplate() {
+    if (!tplDeleteConfirm.id) return;
+    try {
+      await api.delete(`/shifts/templates/${tplDeleteConfirm.id}`);
+      await loadAll();
+      toasts.success("Vorlage gelöscht.");
+    } catch (e) {
+      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+    }
+  }
+
+  // ── Coverage Rules ──────────────────────────────────────────
+  function openCreateRule() {
+    ruleEditingId = null;
+    ruleTemplateId = "";
+    ruleDayOfWeek = -1;
+    ruleMinStaff = 2;
+    ruleRequiresNonSupervised = false;
+    ruleError = "";
+    ruleModalOpen = true;
+  }
+
+  function openEditRule(rule: CoverageRule) {
+    ruleEditingId = rule.id;
+    ruleTemplateId = rule.templateId ?? "";
+    ruleDayOfWeek = rule.dayOfWeek;
+    ruleMinStaff = Number(rule.minStaff);
+    ruleRequiresNonSupervised = rule.requiresNonSupervised;
+    ruleError = "";
+    ruleModalOpen = true;
+  }
+
+  async function saveRule() {
+    if (ruleMinStaff < 0) {
+      ruleError = "Min. Schicht-Gewicht muss >= 0 sein.";
+      return;
+    }
+    saving = true;
+    ruleError = "";
+    try {
+      const payload = {
+        templateId: ruleTemplateId || null,
+        dayOfWeek: ruleDayOfWeek,
+        minStaff: ruleMinStaff,
+        requiresNonSupervised: ruleRequiresNonSupervised,
+      };
+      if (ruleEditingId) {
+        await api.put(`/shifts/coverage-rules/${ruleEditingId}`, payload);
+      } else {
+        await api.post("/shifts/coverage-rules", payload);
+      }
+      ruleModalOpen = false;
+      await loadAll();
+      toasts.success(ruleEditingId ? "Bedarfsregel aktualisiert." : "Bedarfsregel erstellt.");
+    } catch (e) {
+      ruleError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      saving = false;
+    }
+  }
+
+  function askDeleteRule(id: string) {
+    ruleDeleteConfirm = { open: true, id };
+  }
+
+  async function confirmDeleteRule() {
+    if (!ruleDeleteConfirm.id) return;
+    try {
+      await api.delete(`/shifts/coverage-rules/${ruleDeleteConfirm.id}`);
+      await loadAll();
+      toasts.success("Bedarfsregel gelöscht.");
+    } catch (e) {
+      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+    }
+  }
+
+  function ruleTemplateName(rule: CoverageRule): string {
+    if (!rule.templateId) return "Alle Vorlagen";
+    return templates.find((t) => t.id === rule.templateId)?.name ?? "Unbekannte Vorlage";
+  }
+
+  function ruleDayLabel(rule: CoverageRule): string {
+    if (rule.dayOfWeek === -1) return "Alle Tage";
+    return DAY_NAMES_LONG[rule.dayOfWeek] ?? "—";
+  }
+
+  // ── Store hours ─────────────────────────────────────────────
+  async function saveStoreHours() {
+    storeHoursSaving = true;
+    storeHoursMsg = "";
+    try {
+      await api.put("/settings/work", { storeHours, shiftStoreHoursMode });
+      storeHoursMsg = "Gespeichert.";
+      toasts.success("Ladenöffnungszeiten aktualisiert.");
+    } catch (e) {
+      storeHoursMsg = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+      toasts.error(storeHoursMsg);
+    } finally {
+      storeHoursSaving = false;
+      setTimeout(() => (storeHoursMsg = ""), 2500);
+    }
+  }
 </script>
 
 <svelte:head>
-  <title>Schichtplan – Clokr</title>
+  <title>Schicht-Konfiguration – Clokr</title>
 </svelte:head>
 
 <div class="page">
   <PageHead
     eyebrow="Administration"
-    title="Schichtplan"
+    title="Schicht-Konfiguration"
     accent="Schicht"
-    sub="Wochenansicht der Schichtplanung — Vorlagen verwalten und Schichten zuweisen."
+    sub="Vorlagen, Bedarfsregeln und Ladenöffnungszeiten pflegen. Schichten zuweisen erfolgt in der Schichtplanung."
   />
 
-  <!-- ── Action toolbar ──────────────────────────────────────────────────────── -->
-  <div class="toolbar card-animate">
-    <button
-      type="button"
-      class="btn btn-outline sm"
-      onclick={() => (showTemplatePanel = !showTemplatePanel)}
-    >
-      Vorlagen {showTemplatePanel ? "schließen" : "verwalten"}
-    </button>
-    <button
-      type="button"
-      class="btn sm"
-      class:btn-primary={quickMode}
-      class:btn-outline={!quickMode}
-      onclick={() => (quickMode = !quickMode)}
-    >
-      Schnellzuweisung {quickMode ? "an" : "aus"}
-    </button>
-  </div>
-
-  <!-- ── Quick-assign bar ──────────────────────────────────────────────────── -->
-  {#if quickMode}
-    <Card animate class="quick-bar">
-      <CardHeader title="Schnellzuweisung" sub="Vorlage wählen und freie Zellen anklicken" />
-      <div class="quick-bar__templates">
-        {#each templates as tpl (tpl.id)}
-          <button
-            type="button"
-            class="template-chip"
-            class:template-chip--active={quickTemplateId === tpl.id}
-            style:--chip-color={tpl.color}
-            onclick={() => (quickTemplateId = tpl.id)}
-          >
-            {tpl.name} ({tpl.startTime}–{tpl.endTime})
-          </button>
-        {/each}
-        {#if templates.length === 0}
-          <span class="muted">Keine Vorlagen vorhanden. Erstellen Sie zuerst eine Vorlage.</span>
-        {/if}
-      </div>
-      {#if quickTemplate}
-        <p class="quick-bar__hint">Klicken Sie auf leere Zellen, um die Schicht zuzuweisen.</p>
-      {/if}
-    </Card>
-  {/if}
-
-  <!-- ── Template-Verwaltung ───────────────────────────────────────────────── -->
-  {#if showTemplatePanel}
-    <Card animate class="template-panel">
-      <CardHeader title="Schichtvorlagen" sub="Wiederkehrende Schichtmuster pflegen" />
-
-      {#if templates.length > 0}
-        <div class="template-list">
-          {#each pagedTemplates as tpl (tpl.id)}
-            <div class="template-item">
-              <span class="template-item__color" style:background={tpl.color} aria-hidden="true"
-              ></span>
-              <span class="template-item__name">{tpl.name}</span>
-              <span class="template-item__times">{tpl.startTime} – {tpl.endTime}</span>
-              <button
-                type="button"
-                class="btn btn-ghost sm"
-                onclick={() => askDeleteTemplate(tpl.id, tpl.name)}
-              >
-                Löschen
-              </button>
-            </div>
-          {/each}
-        </div>
-        <Pagination total={templates.length} bind:page={tplPage} bind:pageSize={tplPageSize} />
-      {:else}
-        <p class="muted">Noch keine Vorlagen vorhanden.</p>
-      {/if}
-
-      <div class="template-form">
-        <div class="serif-eyebrow template-form__eyebrow">Neue Vorlage</div>
-        {#if tplError}
-          <div class="callout error" role="alert">{tplError}</div>
-        {/if}
-        <div class="form-row">
-          <div class="form-group">
-            <label class="form-label" for="tpl-name">Name</label>
-            <input
-              id="tpl-name"
-              class="form-input"
-              type="text"
-              bind:value={tplName}
-              placeholder="z.B. Frühschicht"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="tpl-start">Start</label>
-            <input id="tpl-start" class="form-input" type="time" bind:value={tplStart} />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="tpl-end">Ende</label>
-            <input id="tpl-end" class="form-input" type="time" bind:value={tplEnd} />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="tpl-color">Farbe</label>
-            <input
-              id="tpl-color"
-              class="form-input form-input--color"
-              type="color"
-              bind:value={tplColor}
-            />
-          </div>
-        </div>
-        <div class="palette-row" role="group" aria-label="Schichtfarbe wählen">
-          {#each SHIFT_PALETTE as p (p.token)}
-            <button
-              type="button"
-              class="palette-swatch"
-              style:background="var({p.token})"
-              title={p.label}
-              aria-label={p.label}
-              onclick={() => pickPaletteColor(p.token)}
-            ></button>
-          {/each}
-        </div>
-        <button
-          type="button"
-          class="btn btn-primary sm"
-          onclick={createTemplate}
-          disabled={tplSaving}
-        >
-          {tplSaving ? "Erstellen …" : "Vorlage erstellen"}
-        </button>
-      </div>
-    </Card>
-  {/if}
-
-  <!-- ── Fehler ─────────────────────────────────────────────────────────────── -->
   {#if error}
     <div class="callout error card-animate" role="alert">{error}</div>
   {/if}
 
-  <!-- ── Grid card ─────────────────────────────────────────────────────────── -->
-  <div class="card card-animate week-card">
-    <div class="week-header">
-      <div class="serif-eyebrow week-label">
-        Woche {weekLabel()}
-      </div>
-      <div class="spacer"></div>
-      <button type="button" class="btn btn-ghost sm" onclick={prevWeek} aria-label="Vorherige Woche"
-        >‹</button
-      >
-      <button type="button" class="btn btn-ghost sm" onclick={goToday}>Heute</button>
-      <button type="button" class="btn btn-ghost sm" onclick={nextWeek} aria-label="Nächste Woche"
-        >›</button
-      >
-    </div>
+  {#if loading}
+    <div class="callout info card-animate">Lade Konfiguration …</div>
+  {:else}
+    <!-- ── Templates section ────────────────────────────────────── -->
+    <Card animate>
+      <CardHeader title="Schichtvorlagen" sub="Wiederkehrende Schichtmuster definieren" />
 
-    <div class="week-body">
-      {#if loading}
-        <div class="state-msg">Lade Woche …</div>
-      {:else if employees.length === 0}
-        <div class="state-msg">Keine Mitarbeiter vorhanden.</div>
+      {#if templates.length === 0}
+        <p class="cfg-muted">Noch keine Vorlagen vorhanden.</p>
       {:else}
-        {#if templates.length === 0}
-          <div class="callout brand template-hint">
-            <span class="ico" aria-hidden="true">ⓘ</span>
-            <div>
-              Erstellen Sie zuerst eine Schichtvorlage über den Button <b>Vorlagen verwalten</b>, um
-              Schichten zuweisen zu können.
-            </div>
+        <div class="cfg-table">
+          <div class="cfg-row cfg-row--head">
+            <div>Farbe</div>
+            <div>Name</div>
+            <div>Zeitraum</div>
+            <div class="cfg-row__actions">Aktionen</div>
           </div>
-        {/if}
-
-        <div class="shift-grid">
-          <div class="head">Person</div>
-          {#each weekDays as day, i (day)}
-            <div class="head" class:today-col={isTodayIso(day)}>
-              <div>{DAY_NAMES[i]}</div>
-              <div class="head-date">{formatDateShort(day)}</div>
-            </div>
-          {/each}
-
-          {#each employees as emp (emp.id)}
-            <div class="who-cell">
-              <div class="name">{emp.lastName}, {emp.firstName}</div>
-              <div class="role">{emp.employeeNumber}</div>
-            </div>
-            {#each weekDays as day (day)}
-              {@const cellShifts = getShiftsForCell(emp.id, day)}
-              {@const actual = getActualHours(emp.id, day)}
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <div
-                class="shift-cell"
-                class:off={cellShifts.length === 0}
-                class:assignable={cellShifts.length === 0}
-                onclick={() => {
-                  if (cellShifts.length === 0) onCellClick(emp.id, day);
-                }}
-                onkeydown={(e) => {
-                  if ((e.key === "Enter" || e.key === " ") && cellShifts.length === 0)
-                    onCellClick(emp.id, day);
-                }}
-                role={cellShifts.length === 0 ? "button" : undefined}
-                tabindex={cellShifts.length === 0 ? 0 : undefined}
-              >
-                {#if cellShifts.length > 0}
-                  <div class="shift-stack">
-                    {#each cellShifts as shift (shift.id)}
-                      <button
-                        type="button"
-                        class="shift-pill"
-                        onclick={(e: MouseEvent) => {
-                          e.stopPropagation();
-                          openEditShift(shift);
-                        }}
-                        title="Klicken zum Bearbeiten"
-                      >
-                        {shiftLabel(shift)}
-                      </button>
-                    {/each}
-                    {#if actual !== null}
-                      <span class="cell-actual">IST: {actual.toFixed(1)}h</span>
-                    {/if}
-                  </div>
-                {:else if actual !== null && actual > 0}
-                  <span class="cell-actual unplanned">{actual.toFixed(1)}h ungeplant</span>
-                {:else}
-                  frei
-                {/if}
+          {#each templates as tpl (tpl.id)}
+            <div class="cfg-row">
+              <div>
+                <span class="cfg-swatch" style:background={tpl.color} aria-hidden="true"></span>
               </div>
-            {/each}
+              <div class="cfg-cell-name">{tpl.name}</div>
+              <div class="cfg-cell-num">{tpl.startTime} – {tpl.endTime}</div>
+              <div class="cfg-row__actions">
+                <button type="button" class="btn btn-ghost sm" onclick={() => openEditTemplate(tpl)}>
+                  Bearbeiten
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost sm"
+                  onclick={() => askDeleteTemplate(tpl.id, tpl.name)}
+                >
+                  Löschen
+                </button>
+              </div>
+            </div>
           {/each}
         </div>
       {/if}
-    </div>
-  </div>
 
-  <!-- ── Modal: Schicht erstellen ──────────────────────────────────────────── -->
+      <div class="cfg-actions">
+        <button type="button" class="btn btn-primary sm" onclick={openCreateTemplate}>
+          Neue Vorlage
+        </button>
+      </div>
+    </Card>
+
+    <!-- ── Coverage Rules section ───────────────────────────────── -->
+    <Card animate>
+      <CardHeader
+        title="Bedarfsregeln"
+        sub="Mindest-Schicht-Gewicht je Vorlage und Wochentag. Spezifischste Regel gewinnt; Default = 2.0 wenn keine Regel."
+      />
+
+      {#if coverageRules.length === 0}
+        <p class="cfg-muted">Noch keine Bedarfsregeln vorhanden. Default = 2.0 Schicht-Gewicht.</p>
+      {:else}
+        <div class="cfg-table">
+          <div class="cfg-row cfg-row--head cfg-row--rules">
+            <div>Vorlage</div>
+            <div>Wochentag</div>
+            <div>Min. Schicht-Gewicht</div>
+            <div>Aufsicht erforderlich</div>
+            <div class="cfg-row__actions">Aktionen</div>
+          </div>
+          {#each coverageRules as rule (rule.id)}
+            <div class="cfg-row cfg-row--rules">
+              <div class="cfg-cell-name">{ruleTemplateName(rule)}</div>
+              <div>{ruleDayLabel(rule)}</div>
+              <div class="cfg-cell-num">{Number(rule.minStaff).toFixed(2)}</div>
+              <div>{rule.requiresNonSupervised ? "Ja" : "Nein"}</div>
+              <div class="cfg-row__actions">
+                <button type="button" class="btn btn-ghost sm" onclick={() => openEditRule(rule)}>
+                  Bearbeiten
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-ghost sm"
+                  onclick={() => askDeleteRule(rule.id)}
+                >
+                  Löschen
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="cfg-actions">
+        <button type="button" class="btn btn-primary sm" onclick={openCreateRule}>
+          Neue Bedarfsregel
+        </button>
+      </div>
+    </Card>
+
+    <!-- ── Store hours section ──────────────────────────────────── -->
+    <Card animate>
+      <CardHeader
+        title="Ladenöffnungszeiten"
+        sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
+      />
+
+      <div class="cfg-table cfg-hours-table">
+        <div class="cfg-row cfg-row--head cfg-row--hours">
+          <div>Wochentag</div>
+          <div>Geschlossen</div>
+          <div>Öffnung</div>
+          <div>Schließung</div>
+        </div>
+        {#each storeHours as h, idx (h.day)}
+          <div class="cfg-row cfg-row--hours">
+            <div class="cfg-cell-name">{DAY_NAMES_LONG[h.day]}</div>
+            <div>
+              <input
+                id="hours-closed-{idx}"
+                type="checkbox"
+                checked={h.closed ?? false}
+                onchange={(e) =>
+                  (storeHours[idx] = {
+                    ...h,
+                    closed: (e.currentTarget as HTMLInputElement).checked,
+                  })}
+              />
+            </div>
+            <div>
+              <input
+                class="form-input"
+                type="time"
+                value={h.open}
+                disabled={h.closed ?? false}
+                onchange={(e) =>
+                  (storeHours[idx] = {
+                    ...h,
+                    open: (e.currentTarget as HTMLInputElement).value,
+                  })}
+              />
+            </div>
+            <div>
+              <input
+                class="form-input"
+                type="time"
+                value={h.close}
+                disabled={h.closed ?? false}
+                onchange={(e) =>
+                  (storeHours[idx] = {
+                    ...h,
+                    close: (e.currentTarget as HTMLInputElement).value,
+                  })}
+              />
+            </div>
+          </div>
+        {/each}
+      </div>
+
+      <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
+      <div class="cfg-mode-options">
+        <label class="cfg-mode-option">
+          <input
+            type="radio"
+            name="shiftStoreHoursMode"
+            value="DAY_ONLY"
+            checked={shiftStoreHoursMode === "DAY_ONLY"}
+            onchange={() => (shiftStoreHoursMode = "DAY_ONLY")}
+          />
+          <span>
+            <strong>Nur geschlossene Tage blockieren</strong> (Standard) — Schichten dürfen vor
+            Öffnung beginnen / nach Schließung enden (Vor- &amp; Nachbereitung). An geschlossenen
+            Tagen ist keine Schicht möglich.
+          </span>
+        </label>
+        <label class="cfg-mode-option">
+          <input
+            type="radio"
+            name="shiftStoreHoursMode"
+            value="STRICT"
+            checked={shiftStoreHoursMode === "STRICT"}
+            onchange={() => (shiftStoreHoursMode = "STRICT")}
+          />
+          <span>
+            <strong>Strikt</strong> — Schichten müssen vollständig in den Öffnungszeiten liegen.
+          </span>
+        </label>
+        <label class="cfg-mode-option">
+          <input
+            type="radio"
+            name="shiftStoreHoursMode"
+            value="OFF"
+            checked={shiftStoreHoursMode === "OFF"}
+            onchange={() => (shiftStoreHoursMode = "OFF")}
+          />
+          <span>
+            <strong>Deaktiviert</strong> — keine Bindung an Öffnungszeiten.
+          </span>
+        </label>
+      </div>
+
+      <div class="cfg-actions">
+        <button
+          type="button"
+          class="btn btn-primary sm"
+          onclick={saveStoreHours}
+          disabled={storeHoursSaving}
+        >
+          {storeHoursSaving ? "Speichern …" : "Öffnungszeiten speichern"}
+        </button>
+        {#if storeHoursMsg}
+          <span class="cfg-muted cfg-msg">{storeHoursMsg}</span>
+        {/if}
+      </div>
+    </Card>
+
+    <!-- ── Pattern-Editor section (Phase 48) ─────────────────────── -->
+    <Card animate>
+      <CardHeader
+        title="Schicht-Muster (Wochenrhythmus)"
+        sub={'Wiederkehrendes Wochenmuster pro Mitarbeiter. Nur Mitarbeiter mit Arbeitszeitmodell „Schichtplan ist führend“ (SHIFT_BASED) erscheinen hier. Änderungen werden erst beim Klick auf „Muster speichern“ übernommen.'}
+      />
+
+      {#if shiftEmployees.length === 0}
+        <div class="callout info">
+          Keine SHIFT_BASED-Mitarbeiter konfiguriert. Wechsle das Arbeitszeitmodell unter
+          <a href="/admin/vacation">Personalstruktur</a> zu „Schichtplan ist führend“, damit
+          Mitarbeiter hier erscheinen.
+        </div>
+      {:else}
+        <div class="pat-table">
+          <div class="pat-row pat-row--head">
+            <div>Mitarbeiter</div>
+            {#each DAY_NAMES as dn, dow (dow)}
+              <div class="pat-col-head">
+                <span class="pat-dow">{dn}</span>
+                {#if sollHintForDow(dow)}
+                  <span class="pat-soll">{sollHintForDow(dow)}</span>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          {#each shiftEmployees as emp (emp.id)}
+            <div class="pat-row" class:pat-row--dirty={isRowDirty(emp.id)}>
+              <div class="cfg-cell-name">{employeeFullName(emp)}</div>
+              {#each [0, 1, 2, 3, 4, 5, 6] as dow (dow)}
+                <div class="pat-cell" class:pat-cell--dirty={isCellDirty(emp.id, dow)}>
+                  <select
+                    class="form-input pat-select"
+                    value={patternMatrix[emp.id]?.[dow] ?? ""}
+                    onchange={(e) => {
+                      const v = (e.currentTarget as HTMLSelectElement).value;
+                      const row = patternMatrix[emp.id] ?? Array(7).fill(null);
+                      row[dow] = v === "" ? null : v;
+                      patternMatrix = { ...patternMatrix, [emp.id]: row };
+                    }}
+                    aria-label="{employeeFullName(emp)} {DAY_NAMES_LONG[dow]}"
+                  >
+                    <option value="">—</option>
+                    {#each templates as tpl (tpl.id)}
+                      <option value={tpl.id}>{tpl.name}</option>
+                    {/each}
+                  </select>
+                </div>
+              {/each}
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="cfg-actions">
+        <button
+          type="button"
+          class="btn btn-primary sm"
+          onclick={saveBulkPatterns}
+          disabled={patternsSaving || dirtyEmployeeCount === 0}
+        >
+          {patternsSaving
+            ? "Speichern …"
+            : `Muster speichern${dirtyEmployeeCount > 0 ? ` (${dirtyEmployeeCount})` : ""}`}
+        </button>
+        {#if patternsMsg}
+          <span class="cfg-muted cfg-msg">{patternsMsg}</span>
+        {/if}
+      </div>
+    </Card>
+  {/if}
+
+  <!-- ── Modal: Template ───────────────────────────────────────── -->
   <Modal
-    bind:open={showModal}
-    eyebrow="Schichtplanung"
-    title={editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}
+    bind:open={tplModalOpen}
+    eyebrow="Schicht-Konfiguration"
+    title={editingTplId ? "Vorlage bearbeiten" : "Neue Vorlage"}
   >
-    <p class="modal-context">
-      <strong>{modalEmployeeName()}</strong> am {formatDateFull(modalDate)}
-    </p>
-    {#if modalError}
-      <div class="callout error" role="alert">{modalError}</div>
+    {#if tplError}
+      <div class="callout error" role="alert">{tplError}</div>
     {/if}
     <div class="form-group">
-      <label class="form-label" for="shift-tpl">Vorlage (optional)</label>
-      <select
-        id="shift-tpl"
-        class="form-input"
-        bind:value={modalTemplateId}
-        onchange={onTemplateSelect}
-      >
-        <option value="">– Benutzerdefiniert –</option>
-        {#each templates as tpl (tpl.id)}
-          <option value={tpl.id}>{tpl.name} ({tpl.startTime}–{tpl.endTime})</option>
-        {/each}
-      </select>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <label class="form-label" for="shift-start">Startzeit *</label>
-        <input id="shift-start" class="form-input" type="time" bind:value={modalStartTime} />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="shift-end">Endzeit *</label>
-        <input id="shift-end" class="form-input" type="time" bind:value={modalEndTime} />
-      </div>
-    </div>
-    <div class="form-group">
-      <label class="form-label" for="shift-label">Bezeichnung (optional)</label>
+      <label class="form-label" for="tpl-name">Name *</label>
       <input
-        id="shift-label"
+        id="tpl-name"
         class="form-input"
         type="text"
-        bind:value={modalLabel}
+        bind:value={tplName}
         placeholder="z.B. Frühschicht"
       />
     </div>
-    <div class="form-group">
-      <label class="form-label" for="shift-note">Notiz (optional)</label>
-      <textarea
-        id="shift-note"
-        class="form-input"
-        rows="2"
-        bind:value={modalNote}
-        placeholder="Zusätzliche Informationen…"
-      ></textarea>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="tpl-start">Startzeit *</label>
+        <input id="tpl-start" class="form-input" type="time" bind:value={tplStart} />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="tpl-end">Endzeit *</label>
+        <input id="tpl-end" class="form-input" type="time" bind:value={tplEnd} />
+      </div>
     </div>
-    {#snippet footer()}
-      {#if editingShiftId}
+    <div class="form-group">
+      <label class="form-label" for="tpl-color">Farbe</label>
+      <input
+        id="tpl-color"
+        class="form-input form-input--color"
+        type="color"
+        bind:value={tplColor}
+      />
+    </div>
+    <div class="cfg-palette" role="group" aria-label="Schichtfarbe wählen">
+      {#each SHIFT_PALETTE as p (p.token)}
         <button
           type="button"
-          class="btn btn-danger sm"
-          onclick={() => askDeleteShift(editingShiftId!, true)}
-        >
-          Löschen
-        </button>
-      {/if}
+          class="cfg-swatch-btn"
+          style:background="var({p.token})"
+          title={p.label}
+          aria-label={p.label}
+          onclick={() => pickPaletteColor(p.token)}
+        ></button>
+      {/each}
+    </div>
+    {#snippet footer()}
       <div class="spacer"></div>
-      <button type="button" class="btn btn-outline sm" onclick={() => (showModal = false)}
+      <button type="button" class="btn btn-outline sm" onclick={() => (tplModalOpen = false)}
         >Abbrechen</button
       >
-      <button type="button" class="btn btn-primary sm" onclick={saveShift} disabled={saving}>
+      <button type="button" class="btn btn-primary sm" onclick={saveTemplate} disabled={saving}>
         {saving ? "Speichern …" : "Speichern"}
       </button>
     {/snippet}
   </Modal>
 
-  <!-- ── Bestätigungs-Dialoge ──────────────────────────────────────────────── -->
-  <ConfirmDialog
-    bind:open={shiftDeleteConfirm.open}
-    title="Schicht löschen?"
-    description="Diese Schicht und alle Zuweisungen werden gelöscht."
-    confirmLabel="Löschen"
-    danger
-    onConfirm={confirmDeleteShift}
-  />
+  <!-- ── Modal: Coverage Rule ──────────────────────────────────── -->
+  <Modal
+    bind:open={ruleModalOpen}
+    eyebrow="Schicht-Konfiguration"
+    title={ruleEditingId ? "Bedarfsregel bearbeiten" : "Neue Bedarfsregel"}
+  >
+    {#if ruleError}
+      <div class="callout error" role="alert">{ruleError}</div>
+    {/if}
+    <p class="cfg-help">
+      Die spezifischste Regel gewinnt: (Vorlage + Wochentag) &gt; (Alle Vorlagen + Wochentag) &gt;
+      (Vorlage + Alle Tage) &gt; (Alle Vorlagen + Alle Tage). Default ist 2.0 Schicht-Gewicht.
+    </p>
+    <div class="form-group">
+      <label class="form-label" for="rule-tpl">Vorlage</label>
+      <select id="rule-tpl" class="form-input" bind:value={ruleTemplateId}>
+        <option value="">Alle Vorlagen</option>
+        {#each templates as tpl (tpl.id)}
+          <option value={tpl.id}>{tpl.name}</option>
+        {/each}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="rule-dow">Wochentag</label>
+      <select id="rule-dow" class="form-input" bind:value={ruleDayOfWeek}>
+        <option value={-1}>Alle Tage</option>
+        {#each DAY_NAMES_LONG as name, i (i)}
+          <option value={i}>{name}</option>
+        {/each}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="rule-min">Min. Schicht-Gewicht *</label>
+      <input
+        id="rule-min"
+        class="form-input"
+        type="number"
+        step="0.25"
+        min="0"
+        max="99"
+        bind:value={ruleMinStaff}
+      />
+      <span class="cfg-muted cfg-hint">
+        Summe der coverageWeight-Werte (z.B. Azubi 0.5 + Vollzeit 1.0 = 1.5).
+      </span>
+    </div>
+    <div class="form-group">
+      <label class="cfg-checkbox-label">
+        <input type="checkbox" bind:checked={ruleRequiresNonSupervised} />
+        Aufsicht erforderlich (mindestens 1 nicht-aufsichtspflichtiger Mitarbeiter)
+      </label>
+    </div>
+    {#snippet footer()}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-outline sm" onclick={() => (ruleModalOpen = false)}
+        >Abbrechen</button
+      >
+      <button type="button" class="btn btn-primary sm" onclick={saveRule} disabled={saving}>
+        {saving ? "Speichern …" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
 
+  <!-- ── Confirmations ─────────────────────────────────────────── -->
   <ConfirmDialog
-    bind:open={templateDeleteConfirm.open}
+    bind:open={tplDeleteConfirm.open}
     title="Vorlage löschen?"
-    description={`Die Vorlage „${templateDeleteConfirm.name}" wird dauerhaft entfernt.`}
+    description={`Die Vorlage „${tplDeleteConfirm.name}" wird dauerhaft entfernt.`}
     confirmLabel="Löschen"
     danger
     onConfirm={confirmDeleteTemplate}
   />
+
+  <ConfirmDialog
+    bind:open={ruleDeleteConfirm.open}
+    title="Bedarfsregel löschen?"
+    description="Die Bedarfsregel wird dauerhaft entfernt. Falls keine andere passende Regel existiert, gilt der Default (2.0)."
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDeleteRule}
+  />
 </div>
 
 <style>
-  /* ── Action toolbar ── */
-  .toolbar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-bottom: 18px;
-  }
-
-  /* ── Quick-assign card ── */
-  .quick-bar {
-    margin-bottom: 18px;
-  }
-  .quick-bar__templates {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    margin-top: 12px;
-  }
-  .quick-bar__hint {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 12px 0 0;
-  }
-
-  .template-chip {
-    padding: 4px 12px;
-    border-radius: var(--r-pill);
-    font-size: 12.5px;
-    font-weight: 500;
-    border: 2px solid var(--chip-color);
-    background: transparent;
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.12s var(--ease);
-  }
-  .template-chip:hover {
-    background: color-mix(in srgb, var(--chip-color) 15%, transparent);
-  }
-  .template-chip--active {
-    background: var(--chip-color);
-    color: var(--text-on-brand);
-  }
-
-  /* ── Template panel ── */
-  .template-panel {
-    margin-bottom: 18px;
-  }
-  .template-list {
+  .cfg-table {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    margin: 14px 0 12px;
+    gap: 4px;
+    margin: 14px 0;
   }
-  .template-item {
-    display: flex;
+  .cfg-row {
+    display: grid;
+    grid-template-columns: 60px 1fr 1fr 200px;
     align-items: center;
     gap: 12px;
-    padding: 8px 0;
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .cfg-row--rules {
+    grid-template-columns: 1.5fr 1.2fr 1.2fr 1.5fr 180px;
+  }
+  .cfg-row--hours {
+    grid-template-columns: 1.5fr 0.8fr 1fr 1fr;
+  }
+  .cfg-row--head {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
     border-bottom: 1px solid var(--border);
   }
-  .template-item:last-child {
+  .cfg-row:last-child {
     border-bottom: none;
   }
-  .template-item__color {
-    width: 16px;
-    height: 16px;
-    border-radius: var(--r-sm);
-    flex-shrink: 0;
+  .cfg-row__actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
   }
-  .template-item__name {
-    font-weight: 500;
-    font-size: 14px;
+  .cfg-cell-name {
+    font-weight: 600;
     color: var(--text);
   }
-  .template-item__times {
-    font-size: 12.5px;
-    color: var(--text-muted);
-    margin-right: auto;
+  .cfg-cell-num {
     font-variant-numeric: tabular-nums;
+    font-family: var(--font-mono);
   }
-
-  .template-form {
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
+  .cfg-swatch {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+  }
+  .cfg-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
     margin-top: 12px;
   }
-  .template-form__eyebrow {
-    font-size: 13px;
-    margin-bottom: 10px;
+  .cfg-muted {
+    color: var(--text-muted);
+    font-size: 13.5px;
   }
-  .palette-row {
+  .cfg-msg {
+    font-style: italic;
+  }
+  .cfg-help {
+    background: var(--bg-subtle);
+    border-radius: var(--r-md);
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin: 0 0 12px;
+  }
+  .cfg-hint {
+    display: block;
+    margin-top: 4px;
+    font-size: 12.5px;
+  }
+  .cfg-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .cfg-palette {
     display: flex;
     gap: 8px;
-    margin: 4px 0 14px;
+    margin: 8px 0 12px;
     flex-wrap: wrap;
   }
-  .palette-swatch {
+  .cfg-swatch-btn {
     width: 24px;
     height: 24px;
     border-radius: var(--r-sm);
     border: 1px solid var(--border);
     cursor: pointer;
     padding: 0;
-    transition:
-      transform 0.12s var(--ease),
-      box-shadow 0.12s var(--ease);
   }
-  .palette-swatch:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-sm);
-  }
-
-  /* ── Week card ── */
-  .week-card {
-    padding: 0;
-    overflow: hidden;
-  }
-  .week-header {
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 14px;
-  }
-  .week-header .spacer {
-    flex: 1;
-  }
-  .week-label {
-    font-size: 15px;
-  }
-  .week-body {
-    padding: 18px;
-  }
-  .state-msg {
-    padding: 40px;
-    text-align: center;
-    color: var(--text-muted);
-  }
-  .head-date {
-    font-weight: 700;
-    font-size: 14px;
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--text);
-    margin-top: 2px;
-  }
-
-  /* ── Shift cell content (assignable / stack) ── */
-  /* `.shift-cell` and `.shift-cell.off` come from the global app.css recipe.
-     We only add interactive states + the inner stack here. */
-  :global(.shift-cell.assignable) {
-    cursor: pointer;
-    transition: background 0.12s var(--ease);
-    position: relative;
-  }
-  :global(.shift-cell.assignable:hover) {
-    background: var(--bg-subtle);
-  }
-  .shift-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    width: 100%;
-    align-items: center;
-  }
-  .cell-actual {
-    display: block;
-    text-align: center;
-    font-size: 11px;
-    color: var(--text-muted);
-    font-style: italic;
-    font-variant-numeric: tabular-nums;
-  }
-  .cell-actual.unplanned {
-    color: var(--warn);
-    font-style: normal;
-  }
-
-  /* Shift pill rendered as a button — reset native button chrome */
-  :global(.shift-cell .shift-pill) {
-    border: none;
-    cursor: pointer;
-    transition: opacity 0.12s var(--ease);
-  }
-  :global(.shift-cell .shift-pill:hover) {
-    opacity: 0.78;
-  }
-
-  /* ── Template hint callout spacing ── */
-  .template-hint {
-    margin-bottom: 14px;
-  }
-
-  /* ── Modal context line ── */
-  .modal-context {
-    font-size: 14px;
-    color: var(--text);
-    margin: 0;
-  }
-
-  /* ── Form layout ── */
   .form-group {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    margin-bottom: 10px;
   }
   .form-row {
     display: flex;
@@ -978,8 +994,115 @@
     cursor: pointer;
   }
 
-  .muted {
+  @media (max-width: 720px) {
+    .cfg-row,
+    .cfg-row--rules,
+    .cfg-row--hours {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .cfg-row__actions {
+      justify-content: flex-start;
+    }
+  }
+  /* Phase 47.5 — Mode radio block */
+  .cfg-section-title {
+    margin: 24px 0 8px;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    color: var(--text);
+  }
+  .cfg-mode-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .cfg-mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--bg-card);
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: var(--text);
+    transition: border-color 0.12s var(--ease);
+  }
+  .cfg-mode-option:hover {
+    border-color: var(--brand);
+  }
+  .cfg-mode-option input {
+    margin-top: 2px;
+  }
+  .cfg-mode-option strong {
+    color: var(--text);
+  }
+
+  /* Phase 48 — Pattern-Editor table */
+  .pat-table {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 14px 0;
+  }
+  .pat-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 1.4fr) repeat(7, minmax(110px, 1fr));
+    gap: 8px;
+    align-items: center;
+    padding: 6px 4px;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .pat-row:last-child {
+    border-bottom: none;
+  }
+  .pat-row--head {
+    font-size: 12.5px;
+    font-weight: 600;
     color: var(--text-muted);
-    font-size: 13.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .pat-row--dirty {
+    background: var(--brand-soft);
+    border-radius: var(--r-sm);
+  }
+  .pat-col-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .pat-dow {
+    color: var(--text-muted);
+  }
+  .pat-soll {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .pat-cell {
+    min-width: 0;
+  }
+  .pat-cell--dirty .pat-select {
+    border-color: var(--brand);
+    box-shadow: 0 0 0 1px var(--brand);
+  }
+  .pat-select {
+    width: 100%;
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+  @media (max-width: 900px) {
+    .pat-row {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
   }
 </style>

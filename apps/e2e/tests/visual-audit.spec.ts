@@ -102,7 +102,7 @@ test.describe("Visual Audit — Full Page Review", () => {
   });
 
   test("11 — Admin Monatsabschluss", async ({ page }) => {
-    await page.goto("/admin/monatsabschluss");
+    await page.goto("/admin/month-close");
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(1000);
     await screenshotPage(page, "audit-11-admin-monatsabschluss");

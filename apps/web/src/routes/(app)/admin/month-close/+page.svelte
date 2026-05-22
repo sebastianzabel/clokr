@@ -450,331 +450,343 @@
 <svelte:head><title>Monatsabschluss - Clokr</title></svelte:head>
 
 <div class="page">
-<div class="ma-page">
-  <PageHead
-    eyebrow="Administration"
-    title={`Monatsabschluss ${selectedYear}`}
-    accent={String(selectedYear)}
-    sub="Audit-proof monatlicher Abschluss: prüfen, Salden berechnen, bestätigen, sperren (isLocked=true). Nach dem Abschluss sind alle Einträge des Monats unveränderlich — Korrekturen nur per Stornobuchung."
-  />
+  <div class="ma-page">
+    <PageHead
+      eyebrow="Administration"
+      title={`Monatsabschluss ${selectedYear}`}
+      accent={String(selectedYear)}
+      sub="Audit-proof monatlicher Abschluss: prüfen, Salden berechnen, bestätigen, sperren (isLocked=true). Nach dem Abschluss sind alle Einträge des Monats unveränderlich — Korrekturen nur per Stornobuchung."
+    />
 
-  <!-- 4-step visual stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) -->
-  <Card animate class="stepper-card">
-    <CardHeader title="Ablauf" sub="Vier Schritte zum Monatsabschluss" />
-    <ol class="stepper">
-      {#each STEPS as step, i (i)}
-        <li class="step" class:active={i === activeStepIndex} class:done={i < activeStepIndex}>
-          <div class="step-row">
-            <span class="step-circle" aria-hidden="true">
-              {#if i < activeStepIndex}
-                <svg viewBox="0 0 16 16" width="14" height="14"
-                  ><path
-                    d="M3 8l3 3 7-7"
-                    stroke="currentColor"
-                    stroke-width="2.5"
-                    fill="none"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  /></svg
-                >
-              {:else}
-                {i + 1}
-              {/if}
-            </span>
-            <div class="step-text">
-              <div class="step-eyebrow serif-eyebrow">Schritt {i + 1}</div>
-              <div class="step-label">{step.label}</div>
-              <div class="step-hint">{step.hint}</div>
+    <!-- 4-step visual stepper (v1.5 — circles + 2px rules, brand-soft halo on active, green on done) -->
+    <Card animate class="stepper-card">
+      <CardHeader title="Ablauf" sub="Vier Schritte zum Monatsabschluss" />
+      <ol class="stepper">
+        {#each STEPS as step, i (i)}
+          <li class="step" class:active={i === activeStepIndex} class:done={i < activeStepIndex}>
+            <div class="step-row">
+              <span class="step-circle" aria-hidden="true">
+                {#if i < activeStepIndex}
+                  <svg viewBox="0 0 16 16" width="14" height="14"
+                    ><path
+                      d="M3 8l3 3 7-7"
+                      stroke="currentColor"
+                      stroke-width="2.5"
+                      fill="none"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    /></svg
+                  >
+                {:else}
+                  {i + 1}
+                {/if}
+              </span>
+              <div class="step-text">
+                <div class="step-eyebrow serif-eyebrow">Schritt {i + 1}</div>
+                <div class="step-label">{step.label}</div>
+                <div class="step-hint">{step.hint}</div>
+              </div>
+            </div>
+            {#if i < STEPS.length - 1}
+              <span class="step-connector" class:done={i < activeStepIndex} aria-hidden="true"
+              ></span>
+            {/if}
+          </li>
+        {/each}
+      </ol>
+    </Card>
+
+    <!-- Year + Filter controls inside a v1.5 card -->
+    <Card animate class="controls-card">
+      <CardHeader title="Filter" sub="Jahr und Status wählen" />
+      <div class="ma-controls">
+        <div class="control-row">
+          <label class="control-group">
+            <span class="control-label">Jahr</span>
+            <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
+              {#each years as y (y)}
+                <option value={y}>{y}</option>
+              {/each}
+            </select>
+          </label>
+
+          <label class="control-group">
+            <span class="control-label">Filter</span>
+            <select class="form-select" bind:value={statusFilter}>
+              {#each filterOptions as opt (opt.value)}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          </label>
+
+          <div class="control-group control-action">
+            <span class="control-label">&nbsp;</span>
+            <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
+              {loading ? "Wird geladen..." : "Aktualisieren"}
+            </button>
+          </div>
+        </div>
+
+        {#if autoCloseHint && loaded}
+          <div class="callout brand">
+            <div>
+              <b>Automatischer Abschluss:</b>
+              <p>{autoCloseHint}</p>
             </div>
           </div>
-          {#if i < STEPS.length - 1}
-            <span class="step-connector" class:done={i < activeStepIndex} aria-hidden="true"></span>
-          {/if}
-        </li>
-      {/each}
-    </ol>
-  </Card>
-
-  <!-- Year + Filter controls inside a v1.5 card -->
-  <Card animate class="controls-card">
-    <CardHeader title="Filter" sub="Jahr und Status wählen" />
-    <div class="ma-controls">
-      <div class="control-row">
-        <label class="control-group">
-          <span class="control-label">Jahr</span>
-          <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
-            {#each years as y (y)}
-              <option value={y}>{y}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label class="control-group">
-          <span class="control-label">Filter</span>
-          <select class="form-select" bind:value={statusFilter}>
-            {#each filterOptions as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        </label>
-
-        <div class="control-group control-action">
-          <span class="control-label">&nbsp;</span>
-          <button class="btn btn-primary" onclick={loadYearStatus} disabled={loading}>
-            {loading ? "Wird geladen..." : "Aktualisieren"}
-          </button>
-        </div>
-      </div>
-
-      {#if autoCloseHint && loaded}
-        <div class="callout brand">
-          <div>
-            <b>Automatischer Abschluss:</b>
-            <p>{autoCloseHint}</p>
-          </div>
-        </div>
-      {/if}
-    </div>
-  </Card>
-
-  {#if error}
-    <div class="callout error" role="alert">
-      <div><p>{error}</p></div>
-    </div>
-  {/if}
-  {#if success}
-    <div class="callout brand" role="status">
-      <div><p>{success}</p></div>
-    </div>
-  {/if}
-
-  {#if closing}
-    <Card animate class="progress-card">
-      <CardHeader
-        title="Abschluss läuft"
-        sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
-      />
-      <div class="progress-bar-track">
-        <div
-          class="progress-bar-fill"
-          style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
-        ></div>
+        {/if}
       </div>
     </Card>
-  {/if}
 
-  {#if loading}
-    <Card animate class="loading-placeholder">
-      <div class="loading-spacer"></div>
-    </Card>
-  {:else if loaded}
-    {#if monthStatuses.length === 0}
-      <Card animate>
-        <p class="text-muted">Keine Daten verfügbar.</p>
-      </Card>
-    {:else}
-      <Card animate class="list-card">
+    {#if error}
+      <div class="callout error" role="alert">
+        <div><p>{error}</p></div>
+      </div>
+    {/if}
+    {#if success}
+      <div class="callout brand" role="status">
+        <div><p>{success}</p></div>
+      </div>
+    {/if}
+
+    {#if closing}
+      <Card animate class="progress-card">
         <CardHeader
-          title={`Monate ${selectedYear}`}
-          sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
+          title="Abschluss läuft"
+          sub={`${closingProgress} von ${closingTotal} Mitarbeitern verarbeitet`}
         />
-
-        <div class="table-wrapper">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Monat</th>
-                <th>Status</th>
-                <th>Grund</th>
-                <th class="text-right">Aktion</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedMonths as ms (ms.month)}
-                <tr
-                  class="month-row"
-                  class:row-closed={ms.status === "closed"}
-                  class:row-future={ms.status === "future" || ms.status === "no_data"}
-                  class:row-blocked={ms.status === "blocked"}
-                  class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
-                  onclick={() => {
-                    if (ms.status !== "future" && ms.status !== "no_data")
-                      toggleMonthDetail(ms.month);
-                  }}
-                >
-                  <td class="month-name">
-                    <span class="month-expand-icon">
-                      {#if expandedMonth === ms.month}
-                        &#9660;
-                      {:else if ms.status !== "future" && ms.status !== "no_data"}
-                        &#9654;
-                      {/if}
-                    </span>
-                    {ms.name}
-                    {selectedYear}
-                  </td>
-                  <td>
-                    <span class={statusChipClass(ms.status)}>
-                      <span class="dot"></span>
-                      {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
-                    </span>
-                  </td>
-                  <td class="reason-cell">
-                    <span class="reason-text">{reasonText(ms)}</span>
-                  </td>
-                  <td class="text-right">
-                    {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
-                      <button
-                        class="btn btn-primary btn-sm"
-                        disabled={closing}
-                        onclick={(e: MouseEvent) => {
-                          e.stopPropagation();
-                          openConfirmCloseMonth(ms.month);
-                        }}
-                      >
-                        Abschließen
-                      </button>
-                    {:else}
-                      <span class="text-muted text-sm">&mdash;</span>
-                    {/if}
-                  </td>
-                </tr>
-                {#if expandedMonth === ms.month}
-                  <tr class="detail-row">
-                    <td colspan="4">
-                      {#if ms.status === "ready"}
-                        <div class="detail-callout-wrapper">
-                          <div class="callout warn">
-                            <div>
-                              <b>Achtung: Endgültiger Abschluss.</b>
-                              <p>
-                                Mit dem Abschluss werden alle Zeiteinträge dieses Monats gesperrt
-                                (isLocked=true) und das Audit-Log fortgeschrieben. Änderungen sind
-                                danach nur noch durch Storno-Buchungen möglich (CLAUDE.md
-                                Audit-Proof / Revisionssicherheit).
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      {/if}
-                      {#if detailLoading}
-                        <div class="detail-loading">Lade Details...</div>
-                      {:else if detailEmployees.length === 0}
-                        <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
-                      {:else}
-                        <div class="detail-table-wrapper">
-                          <table class="detail-table">
-                            <thead>
-                              <tr>
-                                <th>Name</th>
-                                <th>Personalnummer</th>
-                                <th>Status</th>
-                                <th>Fehlende Tage</th>
-                                <th></th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {#each detailEmployees as emp (emp.employeeId)}
-                                <tr class:detail-row-closed={emp.status === "closed"}>
-                                  <td class="employee-name">{emp.employeeName}</td>
-                                  <td class="font-mono">{emp.employeeNumber}</td>
-                                  <td>
-                                    {#if emp.status === "closed"}
-                                      <span class="chip chip-good">
-                                        <span class="dot"></span>
-                                        Abgeschlossen
-                                      </span>
-                                    {:else if emp.status === "ready"}
-                                      <span class="chip chip-brand">
-                                        <span class="dot"></span>
-                                        Bereit
-                                      </span>
-                                    {:else}
-                                      <span class="chip">
-                                        <span class="dot"></span>
-                                        Fehlend
-                                      </span>
-                                    {/if}
-                                  </td>
-                                  <td class="missing-dates">
-                                    {#if emp.missingDates && emp.missingDates.length > 0}
-                                      <span class="dates-text"
-                                        >{formatMissingDates(emp.missingDates)}</span
-                                      >
-                                      <span class="dates-count">({emp.missingDates.length})</span>
-                                    {:else}
-                                      <span class="text-muted">-</span>
-                                    {/if}
-                                  </td>
-                                  <td class="text-right">
-                                    {#if emp.status === "ready"}
-                                      <button
-                                        class="btn btn-primary btn-sm"
-                                        disabled={closingEmployee === emp.employeeId || closing}
-                                        onclick={() =>
-                                          openConfirmCloseEmployee(emp.employeeId, expandedMonth!)}
-                                      >
-                                        {closingEmployee === emp.employeeId ? "..." : "Abschließen"}
-                                      </button>
-                                    {:else if emp.status === "closed"}
-                                      <button
-                                        class="btn btn-outline btn-sm"
-                                        disabled={unlocking === emp.employeeId}
-                                        onclick={() =>
-                                          unlockEmployee(emp.employeeId, expandedMonth!)}
-                                      >
-                                        {unlocking === emp.employeeId ? "..." : "Entsperren"}
-                                      </button>
-                                    {/if}
-                                  </td>
-                                </tr>
-                              {/each}
-                            </tbody>
-                          </table>
-                        </div>
-                      {/if}
-                    </td>
-                  </tr>
-                {/if}
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <div class="list-foot">
-          <Pagination total={filteredMonths.length} bind:page={maPage} bind:pageSize={maPageSize} />
+        <div class="progress-bar-track">
+          <div
+            class="progress-bar-fill"
+            style="width: {closingTotal > 0 ? (closingProgress / closingTotal) * 100 : 0}%"
+          ></div>
         </div>
       </Card>
     {/if}
-  {:else}
-    <Card animate>
-      <p class="text-muted">Lade Jahresstatus...</p>
-    </Card>
-  {/if}
-</div>
 
-<!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
-<Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
-  <div class="callout warn" role="alert">
-    <div>
-      <b>Diese Aktion ist nicht rückgängig.</b>
-      <p>
-        Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono">isLocked=true</span
-        >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
-        Revisionssicherheit).
-      </p>
-    </div>
+    {#if loading}
+      <Card animate class="loading-placeholder">
+        <div class="loading-spacer"></div>
+      </Card>
+    {:else if loaded}
+      {#if monthStatuses.length === 0}
+        <Card animate>
+          <p class="text-muted">Keine Daten verfügbar.</p>
+        </Card>
+      {:else}
+        <Card animate class="list-card">
+          <CardHeader
+            title={`Monate ${selectedYear}`}
+            sub={`${closedMonthCount} abgeschlossen · ${openMonthCount} offen · ${monthStatuses.length} gesamt`}
+          />
+
+          <div class="table-wrapper">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Monat</th>
+                  <th>Status</th>
+                  <th>Grund</th>
+                  <th class="text-right">Aktion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each pagedMonths as ms (ms.month)}
+                  <tr
+                    class="month-row"
+                    class:row-closed={ms.status === "closed"}
+                    class:row-future={ms.status === "future" || ms.status === "no_data"}
+                    class:row-blocked={ms.status === "blocked"}
+                    class:row-clickable={ms.status !== "future" && ms.status !== "no_data"}
+                    onclick={() => {
+                      if (ms.status !== "future" && ms.status !== "no_data")
+                        toggleMonthDetail(ms.month);
+                    }}
+                  >
+                    <td class="month-name">
+                      <span class="month-expand-icon">
+                        {#if expandedMonth === ms.month}
+                          &#9660;
+                        {:else if ms.status !== "future" && ms.status !== "no_data"}
+                          &#9654;
+                        {/if}
+                      </span>
+                      {ms.name}
+                      {selectedYear}
+                    </td>
+                    <td>
+                      <span class={statusChipClass(ms.status)}>
+                        <span class="dot"></span>
+                        {statusLabel(ms.status)} ({ms.closedCount}/{ms.totalCount})
+                      </span>
+                    </td>
+                    <td class="reason-cell">
+                      <span class="reason-text">{reasonText(ms)}</span>
+                    </td>
+                    <td class="text-right">
+                      {#if (ms.status === "ready" || ms.status === "partial" || ms.status === "open") && ms.month === firstActionableMonth}
+                        <button
+                          class="btn btn-primary btn-sm"
+                          disabled={closing}
+                          onclick={(e: MouseEvent) => {
+                            e.stopPropagation();
+                            openConfirmCloseMonth(ms.month);
+                          }}
+                        >
+                          Abschließen
+                        </button>
+                      {:else}
+                        <span class="text-muted text-sm">&mdash;</span>
+                      {/if}
+                    </td>
+                  </tr>
+                  {#if expandedMonth === ms.month}
+                    <tr class="detail-row">
+                      <td colspan="4">
+                        {#if ms.status === "ready"}
+                          <div class="detail-callout-wrapper">
+                            <div class="callout warn">
+                              <div>
+                                <b>Achtung: Endgültiger Abschluss.</b>
+                                <p>
+                                  Mit dem Abschluss werden alle Zeiteinträge dieses Monats gesperrt
+                                  (isLocked=true) und das Audit-Log fortgeschrieben. Änderungen sind
+                                  danach nur noch durch Storno-Buchungen möglich (CLAUDE.md
+                                  Audit-Proof / Revisionssicherheit).
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        {/if}
+                        {#if detailLoading}
+                          <div class="detail-loading">Lade Details...</div>
+                        {:else if detailEmployees.length === 0}
+                          <div class="detail-empty">Keine Mitarbeiter gefunden.</div>
+                        {:else}
+                          <div class="detail-table-wrapper">
+                            <table class="detail-table">
+                              <thead>
+                                <tr>
+                                  <th>Name</th>
+                                  <th>Personalnummer</th>
+                                  <th>Status</th>
+                                  <th>Fehlende Tage</th>
+                                  <th></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {#each detailEmployees as emp (emp.employeeId)}
+                                  <tr class:detail-row-closed={emp.status === "closed"}>
+                                    <td class="employee-name">{emp.employeeName}</td>
+                                    <td class="font-mono">{emp.employeeNumber}</td>
+                                    <td>
+                                      {#if emp.status === "closed"}
+                                        <span class="chip chip-good">
+                                          <span class="dot"></span>
+                                          Abgeschlossen
+                                        </span>
+                                      {:else if emp.status === "ready"}
+                                        <span class="chip chip-brand">
+                                          <span class="dot"></span>
+                                          Bereit
+                                        </span>
+                                      {:else}
+                                        <span class="chip">
+                                          <span class="dot"></span>
+                                          Fehlend
+                                        </span>
+                                      {/if}
+                                    </td>
+                                    <td class="missing-dates">
+                                      {#if emp.missingDates && emp.missingDates.length > 0}
+                                        <span class="dates-text"
+                                          >{formatMissingDates(emp.missingDates)}</span
+                                        >
+                                        <span class="dates-count">({emp.missingDates.length})</span>
+                                      {:else}
+                                        <span class="text-muted">-</span>
+                                      {/if}
+                                    </td>
+                                    <td class="text-right">
+                                      {#if emp.status === "ready"}
+                                        <button
+                                          class="btn btn-primary btn-sm"
+                                          disabled={closingEmployee === emp.employeeId || closing}
+                                          onclick={() =>
+                                            openConfirmCloseEmployee(
+                                              emp.employeeId,
+                                              expandedMonth!,
+                                            )}
+                                        >
+                                          {closingEmployee === emp.employeeId
+                                            ? "..."
+                                            : "Abschließen"}
+                                        </button>
+                                      {:else if emp.status === "closed"}
+                                        <button
+                                          class="btn btn-outline btn-sm"
+                                          disabled={unlocking === emp.employeeId}
+                                          onclick={() =>
+                                            unlockEmployee(emp.employeeId, expandedMonth!)}
+                                        >
+                                          {unlocking === emp.employeeId ? "..." : "Entsperren"}
+                                        </button>
+                                      {/if}
+                                    </td>
+                                  </tr>
+                                {/each}
+                              </tbody>
+                            </table>
+                          </div>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/if}
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <div class="list-foot">
+            <Pagination
+              total={filteredMonths.length}
+              bind:page={maPage}
+              bind:pageSize={maPageSize}
+            />
+          </div>
+        </Card>
+      {/if}
+    {:else}
+      <Card animate>
+        <p class="text-muted">Lade Jahresstatus...</p>
+      </Card>
+    {/if}
   </div>
-  <p class="modal-note">
-    Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
-  </p>
-  {#snippet footer()}
-    <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button>
-    <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
-      {#if closing}<Spinner />{/if}
-      Endgültig sperren
-    </button>
-  {/snippet}
-</Modal>
+
+  <!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
+  <Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
+    <div class="callout warn" role="alert">
+      <div>
+        <b>Diese Aktion ist nicht rückgängig.</b>
+        <p>
+          Alle Zeiteinträge dieses Monats werden gesperrt (<span class="font-mono"
+            >isLocked=true</span
+          >). Korrekturen sind danach nur noch durch Storno-Buchungen möglich (Audit-Proof /
+          Revisionssicherheit).
+        </p>
+      </div>
+    </div>
+    <p class="modal-note">
+      Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
+    </p>
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button
+      >
+      <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
+        {#if closing}<Spinner />{/if}
+        Endgültig sperren
+      </button>
+    {/snippet}
+  </Modal>
 </div>
 
 <style>

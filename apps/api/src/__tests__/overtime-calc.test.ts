@@ -485,11 +485,11 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     afterAll(async () => {
-      // Restore original FIXED_WEEKLY schedule so later tests are not affected
+      // Restore original FIXED_SCHEDULE schedule so later tests are not affected
       await app.prisma.workSchedule.updateMany({
         where: { employeeId: data.employee.id },
         data: {
-          type: "FIXED_WEEKLY",
+          type: "FIXED_SCHEDULE",
           weeklyHours: 40,
           monthlyHours: null,
           overtimeMode: "CARRY_FORWARD",
@@ -503,10 +503,10 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     it("CARRY_FORWARD employee has non-zero balanceHours after working overtime (regression guard)", async () => {
-      // Confirm baseline: FIXED_WEEKLY + CARRY_FORWARD schedule (already set in seedTestData)
+      // Confirm baseline: FIXED_SCHEDULE + CARRY_FORWARD schedule (already set in seedTestData)
       await app.prisma.workSchedule.updateMany({
         where: { employeeId: data.employee.id },
-        data: { type: "FIXED_WEEKLY", weeklyHours: 40, monthlyHours: null, overtimeMode: "CARRY_FORWARD" },
+        data: { type: "FIXED_SCHEDULE", weeklyHours: 40, monthlyHours: null, overtimeMode: "CARRY_FORWARD" },
       });
 
       // Create 10h entry for a past weekday (Monday 7 days ago)

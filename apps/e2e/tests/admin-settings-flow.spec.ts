@@ -135,7 +135,10 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.waitForLoadState("networkidle");
 
     // Click create button
-    await page.getByText(/Mitarbeiter anlegen/i).first().click();
+    await page
+      .getByText(/Mitarbeiter anlegen/i)
+      .first()
+      .click();
     await page.waitForTimeout(300);
 
     // Assert modal opens
@@ -159,7 +162,10 @@ test.describe("Admin Settings — Complete Flow", () => {
     await expect(passwordInput).toBeVisible();
     await passwordInput.fill("Test1234!Pass#5");
 
-    await modal.getByRole("button", { name: /anlegen|erstellen|Mitarbeiter anlegen/i }).first().click();
+    await modal
+      .getByRole("button", { name: /anlegen|erstellen|Mitarbeiter anlegen/i })
+      .first()
+      .click();
 
     // Wait for the modal to close (success) or for an error message (e.g. rate limit, duplicate).
     // The POST /employees call can be slow in the test environment because all browser requests
@@ -168,7 +174,9 @@ test.describe("Admin Settings — Complete Flow", () => {
     await expect(modal).not.toBeVisible({ timeout: 30_000 });
 
     // Table displays names as "Lastname, Firstname" — assert email appears (unique)
-    await expect(page.getByText(`e2e-${uniqueSuffix}@test.de`).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(`e2e-${uniqueSuffix}@test.de`).first()).toBeVisible({
+      timeout: 10_000,
+    });
 
     await screenshotPage(page, "flow-admin-employee-created");
   });
@@ -181,7 +189,7 @@ test.describe("Admin Settings — Complete Flow", () => {
     // which prevents networkidle from ever being reached after the first poll cycle.
 
     // Step 1: Navigate to monatsabschluss page
-    await page.goto("/admin/monatsabschluss", { waitUntil: "domcontentloaded" });
+    await page.goto("/admin/month-close", { waitUntil: "domcontentloaded" });
     // Wait for content to confirm the page and its initial API call completed
     await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible({ timeout: 10_000 });
@@ -220,7 +228,7 @@ test.describe("Admin Settings — Complete Flow", () => {
       }
 
       // Reload the page to reflect the newly seeded data
-      await page.goto("/admin/monatsabschluss", { waitUntil: "domcontentloaded" });
+      await page.goto("/admin/month-close", { waitUntil: "domcontentloaded" });
       await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible({ timeout: 10_000 });
       await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible({ timeout: 10_000 });
     }
@@ -308,7 +316,7 @@ test.describe("Admin Settings — Complete Flow", () => {
   });
 
   test("admin monatsabschluss — view months", async ({ page }) => {
-    await page.goto("/admin/monatsabschluss");
+    await page.goto("/admin/month-close");
     await page.waitForLoadState("networkidle");
 
     await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible();

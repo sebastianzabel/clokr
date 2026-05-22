@@ -371,6 +371,21 @@
     margin-left: auto;
   }
 
+  /* Phase 39 (UI-15) — multiple 160px selects + count overflow at 390px.
+     Drop selects to full-width and let the count claim its own row. */
+  @media (max-width: 480px) {
+    .audit-filter-bar select {
+      flex: 1 1 100%;
+      min-width: 0;
+      width: 100%;
+    }
+    .audit-filter-count {
+      flex: 1 1 100%;
+      margin-left: 0;
+      text-align: left;
+    }
+  }
+
   /* ── Timeline list ── */
   .audit-timeline {
     list-style: none;

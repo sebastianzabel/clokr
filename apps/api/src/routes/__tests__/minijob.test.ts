@@ -147,7 +147,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
         url: `/api/v1/settings/work/${data.employee.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          type: "FIXED_WEEKLY",
+          type: "FIXED_SCHEDULE",
           weeklyHours: 40,
           monthlyHours: null,
           mondayHours: 8,
@@ -232,9 +232,9 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(result).toBe(0);
     });
 
-    it("FIXED_WEEKLY uses day-of-week logic", () => {
+    it("FIXED_SCHEDULE uses day-of-week logic", () => {
       const schedule = {
-        type: "FIXED_WEEKLY",
+        type: "FIXED_SCHEDULE",
         weeklyHours: 40,
         mondayHours: 8,
         tuesdayHours: 8,
@@ -255,9 +255,9 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       expect(result).toBe(2400);
     });
 
-    it("FIXED_WEEKLY excludes weekends", () => {
+    it("FIXED_SCHEDULE excludes weekends", () => {
       const schedule = {
-        type: "FIXED_WEEKLY",
+        type: "FIXED_SCHEDULE",
         weeklyHours: 40,
         mondayHours: 8,
         tuesdayHours: 8,
@@ -529,13 +529,13 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
       // Pure tracking: balanceHours reflects worked hours only (no soll to deduct against)
       expect(isFinite(Number(body.balanceHours))).toBe(true);
 
-      // Cleanup: revert schedule to FIXED_WEEKLY, disable toggle, soft-delete entries
+      // Cleanup: revert schedule to FIXED_SCHEDULE, disable toggle, soft-delete entries
       await app.inject({
         method: "PUT",
         url: `/api/v1/settings/work/${data.employee.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          type: "FIXED_WEEKLY",
+          type: "FIXED_SCHEDULE",
           weeklyHours: 40,
           monthlyHours: null,
           mondayHours: 8,

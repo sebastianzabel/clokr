@@ -16,6 +16,17 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+// Personalstruktur (Phase 41) — keep enum in sync with prisma EmployeeClassification
+const employeeClassificationSchema = z.enum([
+  "VOLLZEIT",
+  "TEILZEIT",
+  "MINIJOB",
+  "AZUBI",
+  "AUSHILFE",
+  "WERKSTUDENT",
+  "PRAKTIKANT",
+]);
+
 const createEmployeeSchema = z.object({
   email: z.string().email(),
   firstName: z.string().min(1),
@@ -23,11 +34,31 @@ const createEmployeeSchema = z.object({
   employeeNumber: z.string().min(1),
   hireDate: z.string().datetime(),
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).default("EMPLOYEE"),
-  weeklyHours: z.number().min(0).max(60).default(0),
-  scheduleType: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
+  weeklyHours: z.number().min(0).max(60).nullable().optional().default(0),
+  scheduleType: z
+    .enum(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS", "SHIFT_BASED"])
+    .default("SHIFT_BASED"),
   monthlyHours: z.number().min(0).max(999).nullable().optional(),
   nfcCardId: z.string().optional(),
   password: z.string().min(8).optional(),
+  // Personalstruktur (Phase 41)
+  classification: employeeClassificationSchema.optional(),
+  coverageWeight: z.number().min(0).max(9.99).optional(),
+  requiresSupervision: z.boolean().optional(),
+  // Phase 49.2 — FLEXTIME Kernarbeitszeit (optional; only applied when scheduleType=FLEXTIME)
+  coreStart: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+    .nullable()
+    .optional(),
+  coreEnd: z
+    .string()
+    .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+    .nullable()
+    .optional(),
+  coreDays: z.array(z.number().int().min(0).max(6)).optional(),
+  // Phase 49.5 — Arbeitstage/Woche (optional; fällt auf TenantConfig.defaultWorkDays zurück)
+  workDays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -40,6 +71,10 @@ const updateEmployeeSchema = z.object({
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
   nfcCardId: z.string().nullable().optional(),
   exitDate: z.string().datetime().nullable().optional(),
+  // Personalstruktur (Phase 41)
+  classification: employeeClassificationSchema.optional(),
+  coverageWeight: z.number().min(0).max(9.99).optional(),
+  requiresSupervision: z.boolean().optional(),
 });
 
 function deriveInvitationStatus(
@@ -137,6 +172,19 @@ export async function employeeRoutes(app: FastifyInstance) {
         ? await bcrypt.hash(body.password!, 12)
         : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
+      // Phase 49.5 — Arbeitstage: Body-Override > Tenant-Default > Mo-Fr
+      const tenantConfigForDefaults = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { defaultWorkDays: true },
+      });
+      const resolvedWorkDays =
+        body.workDays && body.workDays.length > 0
+          ? body.workDays
+          : tenantConfigForDefaults?.defaultWorkDays &&
+              tenantConfigForDefaults.defaultWorkDays.length > 0
+            ? tenantConfigForDefaults.defaultWorkDays
+            : [1, 2, 3, 4, 5];
+
       const { employee, invitationToken } = await app.prisma.$transaction(
         async (tx: Prisma.TransactionClient) => {
           const user = await tx.user.create({
@@ -157,6 +205,12 @@ export async function employeeRoutes(app: FastifyInstance) {
               employeeNumber: body.employeeNumber,
               hireDate: new Date(body.hireDate),
               nfcCardId: body.nfcCardId,
+              // Personalstruktur (Phase 41) — schema defaults apply if omitted
+              ...(body.classification !== undefined ? { classification: body.classification } : {}),
+              ...(body.coverageWeight !== undefined ? { coverageWeight: body.coverageWeight } : {}),
+              ...(body.requiresSupervision !== undefined
+                ? { requiresSupervision: body.requiresSupervision }
+                : {}),
             },
           });
 
@@ -164,8 +218,15 @@ export async function employeeRoutes(app: FastifyInstance) {
             data: {
               employeeId: emp.id,
               type: body.scheduleType,
-              weeklyHours: body.weeklyHours,
+              // For SHIFT_BASED: default to 40h if caller omits weeklyHours (null/0/undefined)
+              weeklyHours:
+                body.scheduleType === "SHIFT_BASED" ? body.weeklyHours || 40 : body.weeklyHours,
               monthlyHours: body.monthlyHours ?? null,
+              // Phase 49.2 — FLEXTIME Kernarbeitszeit (only persisted when FLEXTIME)
+              coreStart: body.scheduleType === "FLEXTIME" ? (body.coreStart ?? null) : null,
+              coreEnd: body.scheduleType === "FLEXTIME" ? (body.coreEnd ?? null) : null,
+              coreDays: body.scheduleType === "FLEXTIME" ? (body.coreDays ?? []) : [],
+              workDays: resolvedWorkDays,
               validFrom: new Date(body.hireDate),
             },
           });
@@ -197,7 +258,13 @@ export async function employeeRoutes(app: FastifyInstance) {
         action: "CREATE",
         entity: "Employee",
         entityId: employee.id,
-        newValue: { ...employee, email: body.email, directPassword },
+        newValue: {
+          ...employee,
+          email: body.email,
+          directPassword,
+          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+          coverageWeight: employee.coverageWeight.toString(),
+        },
       });
 
       // Einladungsmail nur senden wenn kein direktes Passwort
@@ -263,6 +330,12 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (body.exitDate !== undefined) {
         updates.exitDate = body.exitDate === null ? null : new Date(body.exitDate);
       }
+      // Personalstruktur (Phase 41)
+      if (body.classification !== undefined) updates.classification = body.classification;
+      if (body.coverageWeight !== undefined) updates.coverageWeight = body.coverageWeight;
+      if (body.requiresSupervision !== undefined) {
+        updates.requiresSupervision = body.requiresSupervision;
+      }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
 
@@ -313,11 +386,18 @@ export async function employeeRoutes(app: FastifyInstance) {
         action: "UPDATE",
         entity: "Employee",
         entityId: id,
-        oldValue: { ...employee, exitDate: employee.exitDate?.toISOString() ?? null },
+        oldValue: {
+          ...employee,
+          exitDate: employee.exitDate?.toISOString() ?? null,
+          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+          coverageWeight: employee.coverageWeight.toString(),
+        },
         newValue: {
           ...updated,
           role: body.role,
           exitDate: updated.exitDate?.toISOString() ?? null,
+          // Personalstruktur (Phase 41) — Decimal → string for stable JSON
+          coverageWeight: updated.coverageWeight.toString(),
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

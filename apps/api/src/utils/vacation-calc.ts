@@ -2,6 +2,11 @@
  * Pro-rata vacation calculation for part-time employees.
  * Formula (BUrlG): (employee work days/week ÷ full-time days/week) × base vacation days
  * Result rounded to nearest 0.5 (German standard).
+ *
+ * Phase 49.5: `workDays` ist die Quelle der Wahrheit für "an welchen Tagen
+ * arbeitet diese Person?" — unabhängig vom AZ-Modell. Per-Tag-Soll-Felder
+ * (mondayHours…) bleiben für FIXED_SCHEDULE Saldo-Berechnung relevant, sind
+ * aber nicht mehr Grundlage für Urlaubs-Tagezählung.
  */
 
 export interface ScheduleForCalc {
@@ -12,10 +17,16 @@ export interface ScheduleForCalc {
   fridayHours: number;
   saturdayHours: number;
   sundayHours: number;
+  workDays?: number[]; // 0=So, 1=Mo, …, 6=Sa. Falls vorhanden, Quelle der Wahrheit.
 }
 
-/** Count how many days per week an employee actually works (hours > 0). */
+/** Count how many days per week an employee actually works. */
 export function countWorkDaysPerWeek(schedule: ScheduleForCalc): number {
+  // Phase 49.5: workDays ist primär. Falls nicht gesetzt, falle zurück auf
+  // "Tag mit Stunden > 0" (Legacy-Verhalten für ältere Datensätze).
+  if (Array.isArray(schedule.workDays) && schedule.workDays.length > 0) {
+    return schedule.workDays.length;
+  }
   const days = [
     schedule.mondayHours,
     schedule.tuesdayHours,
@@ -61,12 +72,16 @@ export function calculateStatutoryMinimum(workDaysPerWeek: number): number {
 
 /**
  * Calculate how many work days fall in each year for a cross-year date range.
- * Only counts Mon-Fri (or configured work days) and excludes holidays.
+ * Uses the supplied `workDays` set (0-6, So=0, Mo=1, …, Sa=6) to determine
+ * which weekdays count. Excludes holidays.
+ *
+ * Phase 49.5: `workDays` ist Pflicht-Argument — kein Fallback auf Mo-Fr.
  */
 export function splitDaysAcrossYears(
   startDate: Date,
   endDate: Date,
   halfDay: boolean,
+  workDays: number[],
   holidays: Set<string>,
 ): { year1Days: number; year2Days: number; year1: number; year2: number } {
   const year1 = startDate.getFullYear();
@@ -75,7 +90,7 @@ export function splitDaysAcrossYears(
   if (year1 === year2) {
     // No split needed
     return {
-      year1Days: countWorkDaysInRange(startDate, endDate, halfDay, holidays),
+      year1Days: countWorkDaysInRange(startDate, endDate, halfDay, workDays, holidays),
       year2Days: 0,
       year1,
       year2,
@@ -86,8 +101,8 @@ export function splitDaysAcrossYears(
   const year1End = new Date(year1, 11, 31); // Dec 31
   const year2Start = new Date(year2, 0, 1); // Jan 1
 
-  const year1Days = countWorkDaysInRange(startDate, year1End, false, holidays);
-  const year2Days = countWorkDaysInRange(year2Start, endDate, false, holidays);
+  const year1Days = countWorkDaysInRange(startDate, year1End, false, workDays, holidays);
+  const year2Days = countWorkDaysInRange(year2Start, endDate, false, workDays, holidays);
 
   // If halfDay: apply to the shorter portion
   if (halfDay) {
@@ -143,13 +158,23 @@ export function calculateProRataVacation(baseDays: number, year: number, exitDat
   return Math.ceil(raw * 2) / 2;
 }
 
-/** Count work days (Mon-Fri, excluding holidays) in a date range. */
-function countWorkDaysInRange(
+/**
+ * Count work days in a date range, using the supplied `workDays` set
+ * (0-6, So=0, Mo=1, …, Sa=6) and excluding holidays.
+ *
+ * Phase 49.5: jetzt exportiert + workDays Pflicht. Quelle der Wahrheit für
+ * Urlaubs-Tageabzug ist die WorkSchedule.workDays-Konfiguration des MA,
+ * NICHT mehr die hartcodierte Mo-Fr-Annahme.
+ */
+export function countWorkDaysInRange(
   start: Date,
   end: Date,
   halfDay: boolean,
+  workDays: number[],
   holidays: Set<string>,
 ): number {
+  if (halfDay) return 0.5;
+  const workDaySet = new Set(workDays);
   let count = 0;
   const current = new Date(start);
   current.setHours(0, 0, 0, 0);
@@ -159,11 +184,11 @@ function countWorkDaysInRange(
   while (current <= endDate) {
     const dow = current.getDay();
     const dateStr = current.toISOString().split("T")[0];
-    if (dow !== 0 && dow !== 6 && !holidays.has(dateStr)) {
+    if (workDaySet.has(dow) && !holidays.has(dateStr)) {
       count++;
     }
     current.setDate(current.getDate() + 1);
   }
 
-  return halfDay ? Math.max(0, count - 0.5) : count;
+  return count;
 }

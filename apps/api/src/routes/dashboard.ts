@@ -30,6 +30,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
           week: { workedHours: 0, targetHours: 0 },
           overtime: { balanceHours: 0 },
           vacation: { remaining: 0, total: 0, used: 0 },
+          periodType: "week" as const,
+          scheduleType: null,
         });
       }
       const tenantId = req.user.tenantId;
@@ -76,7 +78,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // ── Diese Woche / Dieser Monat: gearbeitete Stunden ──────────────
 
       // For MONTHLY_HOURS: fetch hours worked this month (monthStart..today).
-      // For FIXED_WEEKLY: fetch hours worked this week (weekStart..weekEnd).
+      // For FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: fetch hours worked this week (weekStart..weekEnd).
       let workedQueryStart: Date;
       let workedQueryEnd: Date;
       let monthStart: Date | null = null;
@@ -114,7 +116,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         }
       }
 
-      // Keep weekMinutes for backwards-compat (used as week.workedHours for FIXED_WEEKLY)
+      // Keep weekMinutes for backwards-compat (used as week.workedHours for FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED)
       const weekMinutes = isMonthlyHoursSchedule ? 0 : periodWorkedMinutes;
 
       // ── Soll-Stunden ──────────────────────────────────────────────────
@@ -173,7 +175,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           }
         }
       } else {
-        // FIXED_WEEKLY: sum scheduled hours from week start up to today (inclusive).
+        // FIXED_SCHEDULE / FLEXTIME / SHIFT_BASED: sum scheduled hours from week start up to today (inclusive).
         // clampedEnd = today limits to hours that "should have been worked by now".
         const personalStartYear = new Date(weekStart).getFullYear();
         const personalEndYear = new Date(weekEnd).getFullYear();
@@ -219,6 +221,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // For MONTHLY_HOURS employees the dashboard widget shows a monthly view instead of weekly.
         // periodType tells the frontend which widget to render.
         periodType: isMonthlyHoursSchedule ? "month" : "week",
+        // Phase 49.1 — expose schedule type so frontend can branch widgets per model.
+        // Returns null when no schedule exists (transient state for freshly created employees);
+        // frontend treats null as "no daily/weekly target to display".
+        scheduleType: (schedule.type ?? null) as
+          | "FIXED_SCHEDULE"
+          | "FLEXTIME"
+          | "MONTHLY_HOURS"
+          | "SHIFT_BASED"
+          | null,
         month: isMonthlyHoursSchedule
           ? {
               workedHours: round(periodWorkedMinutes / 60),
@@ -705,6 +716,33 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: { employeeId, deletedAt: null, type: "WORK", date: { gte: start, lte: end } },
       });
 
+      // Phase 49.4: leave + absence overlay for the user week-view
+      const myWeekLeaves = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          startDate: { lte: end },
+          endDate: { gte: start },
+        },
+        select: { startDate: true, endDate: true, leaveType: { select: { name: true } } },
+      });
+      const myWeekAbsences = await app.prisma.absence.findMany({
+        where: {
+          employeeId,
+          deletedAt: null,
+          startDate: { lte: end },
+          endDate: { gte: start },
+        },
+        select: { startDate: true, endDate: true, type: true },
+      });
+      // Phase 49.4 (fix): own shifts for this week so SHIFT_BASED users see the planned shift
+      // time on scheduled days instead of a generic "Geplant" label.
+      const myWeekShifts = await app.prisma.shift.findMany({
+        where: { employeeId, date: { gte: start, lte: end } },
+        include: { template: { select: { name: true, color: true } } },
+      });
+      const scheduleType = (schedule as { type?: string } | null)?.type ?? null;
+
       const days = weekDays.map((dateStr: string) => {
         const dayEntries = entries.filter((e) => dateStrInTz(e.date, tz) === dateStr);
         const workedMin = dayEntries.reduce((sum: number, e) => {
@@ -725,13 +763,37 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const hasEntry = dayEntries.length > 0;
         const isClockedIn = dayEntries.some((e) => !e.endTime);
         const isPast = new Date(dateStr) < todayInTz(tz);
+        const isWeekend = dow === 0 || dow === 6;
+
+        const leave = myWeekLeaves.find(
+          (lr) =>
+            dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr,
+        );
+        const absence = myWeekAbsences.find(
+          (a) => dateStrInTz(a.startDate, tz) <= dateStr && dateStrInTz(a.endDate, tz) >= dateStr,
+        );
+        const dayShifts = myWeekShifts.filter((s) => dateStrInTz(s.date, tz) === dateStr);
+        const shift =
+          dayShifts.length > 0
+            ? {
+                startTime: dayShifts[0].startTime,
+                endTime: dayShifts[0].endTime,
+                label: dayShifts[0].label ?? dayShifts[0].template?.name ?? null,
+                color: dayShifts[0].template?.color ?? null,
+              }
+            : null;
+        const hasShift = shift !== null;
 
         let status = "none";
         if (isClockedIn) status = "clocked_in";
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
-        else if (holidayName) status = "holiday";
-        else if (isPast && isWorkday) status = "missing";
-        else if (isWorkday) status = "scheduled";
+        else if (leave) status = "leave";
+        else if (absence) {
+          status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
+        } else if (holidayName) status = "holiday";
+        else if (isWeekend && !hasShift) status = "weekend";
+        else if (isPast && (isWorkday || hasShift)) status = "missing";
+        else if (isWorkday || hasShift) status = "scheduled";
 
         return {
           date: dateStr,
@@ -739,11 +801,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
           expectedHours: round(expectedMin / 60),
           status,
           isWorkday,
+          isWeekend,
           holidayName,
+          leaveType: leave?.leaveType.name ?? null,
+          absenceType: absence?.type ?? null,
+          shift,
         };
       });
 
-      return { weekDays, days };
+      return { weekDays, scheduleType, days };
     },
   });
 

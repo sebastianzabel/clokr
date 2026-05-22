@@ -30,6 +30,7 @@
     autoDeleteOpenHours: number;
     // Optional extended fields returned by /settings/work
     arbzgEnabled?: boolean;
+    availabilityEnabled?: boolean;
     autoBreakEnabled?: boolean;
     defaultBreakStart?: string;
     christmasEveRule?: string;
@@ -46,24 +47,30 @@
     enforceMinVacation?: boolean;
     carryOverRequiresReason?: boolean;
     vacationReminderStartMonth?: number;
+    carryoverWarningEnabled?: boolean;
+    carryoverWarningThresholds?: number[];
     reminderPendingLeaveEnabled?: boolean;
     reminderPendingLeaveHours?: number;
     reminderUpcomingAbsenceEnabled?: boolean;
     reminderUpcomingAbsenceDays?: number;
+    // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
+    defaultCoreStart?: string | null;
+    defaultCoreEnd?: string | null;
+    defaultCoreDays?: number[];
   }
 
   interface WorkSchedule {
-    type: "FIXED_WEEKLY" | "MONTHLY_HOURS";
-    weeklyHours: number;
-    monthlyHours: number | null;
-    mondayHours: number;
-    tuesdayHours: number;
-    wednesdayHours: number;
-    thursdayHours: number;
-    fridayHours: number;
-    saturdayHours: number;
-    sundayHours: number;
-    overtimeThreshold: number;
+    type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
+    weeklyHours: number | string | null;
+    monthlyHours: number | string | null;
+    mondayHours: number | string;
+    tuesdayHours: number | string;
+    wednesdayHours: number | string;
+    thursdayHours: number | string;
+    fridayHours: number | string;
+    saturdayHours: number | string;
+    sundayHours: number | string;
+    overtimeThreshold: number | string;
     allowOvertimePayout: boolean;
     validFrom: string;
     overtimeMode?: "CARRY_FORWARD" | "TRACK_ONLY";
@@ -124,6 +131,7 @@
   let gCarryOverDay = $state(31);
   let gCarryOverMonth = $state(3);
   let gArbzgEnabled = $state(true);
+  // Phase 49.4: Verfügbarkeits-System toggle moved to /admin/system (Features card).
   let gAutoBreak = $state(false);
   let gDefaultBreakStart = $state("12:00");
   let gApplyToExisting = $state(false);
@@ -154,6 +162,14 @@
   let enforceMinVacation = $state(true);
   let carryOverRequiresReason = $state(true);
   let vacationReminderStartMonth = $state(10);
+  // BUrlG § 7 Hinweispflicht (Phase 44)
+  let carryoverWarningEnabled = $state(true);
+  let carryoverWarningThresholdsText = $state("60, 30, 14, 7");
+
+  // Phase 49.2 — tenant-level FLEXTIME core defaults (for pre-fill on type change)
+  let tenantDefaultCoreStart = $state("");
+  let tenantDefaultCoreEnd = $state("");
+  let tenantDefaultCoreDays = $state<number[]>([]);
 
   let gMaxDay = $derived(MONTH_MAX_DAYS[gCarryOverMonth - 1] ?? 31);
   run(() => {
@@ -173,8 +189,15 @@
   // Mitarbeiter-Modal — Modal primitive owns Escape/backdrop/focus-trap.
   let empModal: EmployeeRow | null = $state(null);
   let empModalOpen = $state(false);
-  let eType: "FIXED_WEEKLY" | "MONTHLY_HOURS" = $state("FIXED_WEEKLY");
+  let eType: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED" =
+    $state("FIXED_SCHEDULE");
+  let eWeeklyHours: number = $state(40);
   let eMonthlyHours: number = $state(0);
+  let eCoreStart = $state<string>("");
+  let eCoreEnd = $state<string>("");
+  let eCoreDays = $state<number[]>([]);
+  // Phase 49.5 — Arbeitstage/Woche pro MA (unabhängig vom AZ-Modell)
+  let eWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
   let eMon = $state(8),
     eTue = $state(8),
     eWed = $state(8),
@@ -202,6 +225,26 @@
   let eVacCarried = $state(0);
   let eVacDeadline = $state("");
   let eVacLoading = $state(false);
+
+  // Phase 49.3 — Orphan-Shift modal state
+  interface OrphanShiftPreview {
+    date: string;
+    startTime: string;
+    endTime: string;
+  }
+  let orphanModalOpen = $state(false);
+  let orphanPendingCount = $state(0);
+  let orphanPreview = $state<OrphanShiftPreview[]>([]);
+  // The schedule type label for the dialog hint
+  let orphanNewTypeLabel = $derived(
+    eType === "FIXED_SCHEDULE"
+      ? "Fester Stundenplan"
+      : eType === "FLEXTIME"
+        ? "Gleitzeit"
+        : eType === "MONTHLY_HOURS"
+          ? "Monatsstunden"
+          : eType,
+  );
 
   let gWeekly = $derived(gMon + gTue + gWed + gThu + gFri + gSat + gSun);
   let eWeekly = $derived(eMon + eTue + eWed + eThu + eFri + eSat + eSun);
@@ -256,10 +299,17 @@
       enforceMinVacation = cfg.enforceMinVacation ?? true;
       carryOverRequiresReason = cfg.carryOverRequiresReason ?? true;
       vacationReminderStartMonth = cfg.vacationReminderStartMonth ?? 10;
+      carryoverWarningEnabled = cfg.carryoverWarningEnabled ?? true;
+      const thresholds = cfg.carryoverWarningThresholds ?? [60, 30, 14, 7];
+      carryoverWarningThresholdsText = thresholds.join(", ");
       reminderPendingEnabled = cfg.reminderPendingLeaveEnabled ?? true;
       reminderPendingHours = cfg.reminderPendingLeaveHours ?? 48;
       reminderUpcomingEnabled = cfg.reminderUpcomingAbsenceEnabled ?? true;
       reminderUpcomingDays = cfg.reminderUpcomingAbsenceDays ?? 3;
+      // Phase 49.2 — store tenant core defaults for pre-fill on FLEXTIME selection
+      tenantDefaultCoreStart = cfg.defaultCoreStart ?? "";
+      tenantDefaultCoreEnd = cfg.defaultCoreEnd ?? "";
+      tenantDefaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
 
       employees = await api.get<EmployeeRow[]>("/settings/employees");
     } catch (e: unknown) {
@@ -268,6 +318,20 @@
       loading = false;
     }
   });
+
+  function parseThresholdsInput(text: string): number[] {
+    // "60, 30, 14, 7" → [60, 30, 14, 7]. Filter out invalid entries, dedupe, sort desc.
+    const tokens = text
+      .split(/[,;\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    const seen = new Set<number>();
+    for (const tok of tokens) {
+      const n = parseInt(tok, 10);
+      if (Number.isFinite(n) && n >= 1 && n <= 365) seen.add(n);
+    }
+    return Array.from(seen).sort((a, b) => b - a);
+  }
 
   async function saveGlobal() {
     gSaving = true;
@@ -308,6 +372,8 @@
         enforceMinVacation,
         carryOverRequiresReason,
         vacationReminderStartMonth,
+        carryoverWarningEnabled,
+        carryoverWarningThresholds: parseThresholdsInput(carryoverWarningThresholdsText),
         reminderPendingLeaveHours: reminderPendingHours,
         reminderUpcomingAbsenceDays: reminderUpcomingDays,
         reminderPendingLeaveEnabled: reminderPendingEnabled,
@@ -317,6 +383,7 @@
       await api.put("/settings/security", {
         maxNegativeBalanceMinutes: maxNegEnabled ? Math.round(maxNegHours * 60) : null,
       });
+      // Phase 49.4: availabilityEnabled toggle moved to /admin/system Features card.
       // Reset nach Speichern
       gApplyToExisting = false;
       gSaved = true;
@@ -332,8 +399,17 @@
     empModal = emp;
     empModalOpen = true;
     const s = emp.workSchedule;
-    eType = s?.type ?? "FIXED_WEEKLY";
+    eType = s?.type ?? "FIXED_SCHEDULE";
+    eWeeklyHours = s ? Number(s.weeklyHours ?? 40) : 40;
     eMonthlyHours = s?.monthlyHours ? Number(s.monthlyHours) : 0;
+    eCoreStart = (s as any)?.coreStart ?? "";
+    eCoreEnd = (s as any)?.coreEnd ?? "";
+    eCoreDays = Array.isArray((s as any)?.coreDays) ? [...(s as any).coreDays] : [];
+    // Phase 49.5 — Arbeitstage/Woche
+    eWorkDays =
+      Array.isArray((s as any)?.workDays) && (s as any).workDays.length > 0
+        ? [...(s as any).workDays]
+        : [1, 2, 3, 4, 5];
     eMon = s ? Number(s.mondayHours) : gMon;
     eTue = s ? Number(s.tuesdayHours) : gTue;
     eWed = s ? Number(s.wednesdayHours) : gWed;
@@ -389,27 +465,59 @@
     empModal = null;
   }
 
-  async function saveEmployee() {
+  // Shared payload builder — keeps saveEmployee and orphan-confirm in sync
+  function buildSchedulePayload(extra?: {
+    keepOrphanShifts?: boolean;
+    cancelOrphanShifts?: boolean;
+  }) {
+    return {
+      type: eType,
+      weeklyHours:
+        eType === "SHIFT_BASED" || eType === "FLEXTIME"
+          ? eWeeklyHours
+          : eType === "FIXED_SCHEDULE"
+            ? eWeekly
+            : null,
+      monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
+      // Kernarbeitszeit only for FLEXTIME — cleared otherwise so DB removes stale data
+      coreStart: eType === "FLEXTIME" ? eCoreStart || null : null,
+      coreEnd: eType === "FLEXTIME" ? eCoreEnd || null : null,
+      coreDays: eType === "FLEXTIME" ? eCoreDays : [],
+      mondayHours: eType === "FIXED_SCHEDULE" ? eMon : eMonWd ? 1 : 0,
+      tuesdayHours: eType === "FIXED_SCHEDULE" ? eTue : eTueWd ? 1 : 0,
+      wednesdayHours: eType === "FIXED_SCHEDULE" ? eWed : eWedWd ? 1 : 0,
+      thursdayHours: eType === "FIXED_SCHEDULE" ? eThu : eThuWd ? 1 : 0,
+      fridayHours: eType === "FIXED_SCHEDULE" ? eFri : eFriWd ? 1 : 0,
+      saturdayHours: eType === "FIXED_SCHEDULE" ? eSat : eSatWd ? 1 : 0,
+      sundayHours: eType === "FIXED_SCHEDULE" ? eSun : eSunWd ? 1 : 0,
+      overtimeThreshold: eThreshold,
+      allowOvertimePayout: ePayout,
+      overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
+      // Phase 49.5 — Arbeitstage/Woche
+      workDays: eWorkDays,
+      validFrom: eValidFrom,
+      ...extra,
+    };
+  }
+
+  function toggleEmpWorkDay(dow: number) {
+    eWorkDays = eWorkDays.includes(dow)
+      ? eWorkDays.filter((d) => d !== dow)
+      : [...eWorkDays, dow].sort((a, b) => a - b);
+  }
+
+  async function doSaveEmployee(extra?: {
+    keepOrphanShifts?: boolean;
+    cancelOrphanShifts?: boolean;
+  }) {
     if (!empModal) return;
     eSaving = true;
     eError = "";
     try {
-      const updated = await api.put<WorkSchedule>(`/settings/work/${empModal.id}`, {
-        type: eType,
-        weeklyHours: eType === "FIXED_WEEKLY" ? eWeekly : 0,
-        monthlyHours: eType === "MONTHLY_HOURS" ? eMonthlyHours : null,
-        mondayHours: eType === "FIXED_WEEKLY" ? eMon : eMonWd ? 1 : 0,
-        tuesdayHours: eType === "FIXED_WEEKLY" ? eTue : eTueWd ? 1 : 0,
-        wednesdayHours: eType === "FIXED_WEEKLY" ? eWed : eWedWd ? 1 : 0,
-        thursdayHours: eType === "FIXED_WEEKLY" ? eThu : eThuWd ? 1 : 0,
-        fridayHours: eType === "FIXED_WEEKLY" ? eFri : eFriWd ? 1 : 0,
-        saturdayHours: eType === "FIXED_WEEKLY" ? eSat : eSatWd ? 1 : 0,
-        sundayHours: eType === "FIXED_WEEKLY" ? eSun : eSunWd ? 1 : 0,
-        overtimeThreshold: eThreshold,
-        allowOvertimePayout: ePayout,
-        overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
-        validFrom: eValidFrom,
-      });
+      const updated = await api.put<WorkSchedule>(
+        `/settings/work/${empModal.id}`,
+        buildSchedulePayload(extra),
+      );
 
       // Always persist vacation entitlement so admins can set carriedOverDays
       // even when "Urlaubstage gesamt" was left empty (the placeholder hint
@@ -426,9 +534,60 @@
       );
       closeEmpModal();
     } catch (e: unknown) {
-      eError = e instanceof Error ? e.message : "Fehler";
+      // Phase 49.3 — intercept 409 ORPHAN_SHIFTS_PENDING and open the orphan modal
+      if (
+        (e as { status?: number })?.status === 409 &&
+        (e as { data?: { code?: string } })?.data?.code === "ORPHAN_SHIFTS_PENDING"
+      ) {
+        const payload = (
+          e as { data?: { pendingShifts?: number; shiftPreview?: OrphanShiftPreview[] } }
+        )?.data;
+        orphanPendingCount = payload?.pendingShifts ?? 0;
+        orphanPreview = payload?.shiftPreview ?? [];
+        orphanModalOpen = true;
+        // Do NOT set eError — the orphan modal handles the UX
+      } else {
+        eError = e instanceof Error ? e.message : "Fehler";
+      }
     } finally {
       eSaving = false;
+    }
+  }
+
+  async function saveEmployee() {
+    return doSaveEmployee();
+  }
+
+  async function orphanKeep() {
+    orphanModalOpen = false;
+    await doSaveEmployee({ keepOrphanShifts: true });
+  }
+
+  async function orphanCancel() {
+    orphanModalOpen = false;
+    await doSaveEmployee({ cancelOrphanShifts: true });
+  }
+
+  function orphanAbort() {
+    orphanModalOpen = false;
+    // Revert type picker back to SHIFT_BASED so the user knows the change was not applied
+    eType = "SHIFT_BASED";
+  }
+
+  // Phase 49.2 — pre-fill Kernarbeitszeit from tenant defaults when FLEXTIME is selected
+  // and all 3 employee core fields are still empty (one-shot, user can override afterwards).
+  function onScheduleTypeChange(newType: typeof eType) {
+    eType = newType;
+    if (
+      newType === "FLEXTIME" &&
+      !eCoreStart &&
+      !eCoreEnd &&
+      eCoreDays.length === 0 &&
+      (tenantDefaultCoreStart || tenantDefaultCoreEnd || tenantDefaultCoreDays.length > 0)
+    ) {
+      eCoreStart = tenantDefaultCoreStart;
+      eCoreEnd = tenantDefaultCoreEnd;
+      eCoreDays = [...tenantDefaultCoreDays];
     }
   }
 
@@ -997,6 +1156,33 @@
             </p>
           </div>
         </div>
+
+        <hr class="settings-divider spaced-top-sm" />
+
+        <h4 class="carryover-subtitle">Hinweispflicht — Verfall-Warnungen</h4>
+        <label class="form-label toggle-label">
+          <input type="checkbox" bind:checked={carryoverWarningEnabled} />
+          Hinweise automatisch versenden (täglich um 06:00)
+        </label>
+        <div class="inline-settings spaced-top-sm">
+          <div class="form-group">
+            <label class="form-label" for="carryover-thresholds">
+              Schwellwerte (Tage vor Verfall)
+            </label>
+            <input
+              id="carryover-thresholds"
+              type="text"
+              class="form-input"
+              placeholder="60, 30, 14, 7"
+              bind:value={carryoverWarningThresholdsText}
+              disabled={!carryoverWarningEnabled}
+            />
+            <p class="form-hint">
+              Komma-separierte Liste (Tage 1–365). Jede Schwelle löst genau einen Hinweis aus.
+              Beispiel: <code>60, 30, 14, 7</code> warnt 60, 30, 14 und 7 Tage vor Verfall.
+            </p>
+          </div>
+        </div>
       </div>
 
       <hr class="settings-divider" />
@@ -1126,7 +1312,17 @@
                 <tr>
                   <td class="text-muted font-mono">{emp.employeeNumber}</td>
                   <td class="font-medium">{emp.firstName} {emp.lastName}</td>
-                  {#if s?.type === "MONTHLY_HOURS"}
+                  {#if s?.type === "SHIFT_BASED"}
+                    <td colspan="7" class="font-mono text-center sched-shift-cell">
+                      <span class="chip-brand">{Number(s.weeklyHours ?? 0).toFixed(1)} h/Woche</span
+                      >&nbsp;<span class="chip-muted">Schichtplan</span>
+                    </td>
+                  {:else if s?.type === "FLEXTIME"}
+                    <td colspan="7" class="font-mono text-center sched-shift-cell">
+                      <span class="chip-brand">{Number(s.weeklyHours ?? 0).toFixed(1)} h/Woche</span
+                      >&nbsp;<span class="chip-muted">Gleitzeit</span>
+                    </td>
+                  {:else if s?.type === "MONTHLY_HOURS"}
                     <td class="font-mono text-center" colspan="7">
                       <span class="chip-brand">{Number(s.monthlyHours).toFixed(1)} h/Monat</span>
                     </td>
@@ -1155,10 +1351,12 @@
                   {/if}
                   <td class="font-mono text-center font-medium">
                     {#if s}
-                      {#if s.type === "MONTHLY_HOURS"}
+                      {#if s.type === "SHIFT_BASED" || s.type === "FLEXTIME"}
+                        {Number(s.weeklyHours ?? 0).toFixed(1)}&thinsp;h
+                      {:else if s.type === "MONTHLY_HOURS"}
                         {Number(s.monthlyHours).toFixed(1)}&thinsp;h/Mo
                       {:else}
-                        {Number(s.weeklyHours).toFixed(1)}&thinsp;h
+                        {Number(s.weeklyHours ?? 0).toFixed(1)}&thinsp;h
                       {/if}
                     {:else}
                       <span class="chip-muted">Global</span>
@@ -1199,95 +1397,24 @@
     <h3 class="modal-section-heading">Arbeitszeit</h3>
 
     <div class="form-group modal-form-group">
-      <label class="form-label" for="e-type">Arbeitszeitmodell</label>
-      <select id="e-type" bind:value={eType} class="form-input modal-select-md">
-        <option value="FIXED_WEEKLY">Feste Wochentage</option>
-        <option value="MONTHLY_HOURS">Monatsstunden</option>
-      </select>
+      <label class="form-label">Arbeitszeitmodell</label>
+      <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
+        {#each [{ value: "FIXED_SCHEDULE", label: "Fester Stundenplan", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h. Tägliches Soll wird im Kalender als +/- angezeigt." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden (Minijob)", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Schichtplan", tooltip: "Schichtplan ist führend. Wochenstunden als Soll-Target; Tagesplan kommt aus dem Dienstplan." }] as seg (seg.value)}
+          <button
+            type="button"
+            class="stp-btn"
+            class:stp-btn--active={eType === seg.value}
+            aria-pressed={eType === seg.value}
+            title={seg.tooltip}
+            onclick={() => {
+              onScheduleTypeChange(seg.value as typeof eType);
+            }}>{seg.label}</button
+          >
+        {/each}
+      </div>
     </div>
 
-    {#if eType === "MONTHLY_HOURS"}
-      <div class="form-group modal-form-group">
-        <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
-        <div class="input-suffix-wrap">
-          <input
-            id="e-monthly-hours"
-            type="number"
-            min="0"
-            max="744"
-            step="0.5"
-            bind:value={eMonthlyHours}
-            class="form-input threshold-input"
-          />
-          <span class="input-suffix">Stunden</span>
-        </div>
-        <p class="form-hint">Keine festen Wochentage – Soll wird monatlich berechnet.</p>
-      </div>
-
-      <div class="form-group modal-form-group">
-        <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
-        <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input modal-select-lg">
-          <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
-          <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
-        </select>
-        <p class="form-hint">
-          Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden
-          dokumentiert, Saldo bleibt bei 0.
-        </p>
-      </div>
-
-      <div class="form-group modal-form-group">
-        <span class="form-label">Feste Arbeitstage</span>
-        <div class="weekday-chips">
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eMonWd}
-            onclick={() => (eMonWd = !eMonWd)}>Mo</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eTueWd}
-            onclick={() => (eTueWd = !eTueWd)}>Di</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eWedWd}
-            onclick={() => (eWedWd = !eWedWd)}>Mi</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eThuWd}
-            onclick={() => (eThuWd = !eThuWd)}>Do</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eFriWd}
-            onclick={() => (eFriWd = !eFriWd)}>Fr</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eSatWd}
-            onclick={() => (eSatWd = !eSatWd)}>Sa</button
-          >
-          <button
-            type="button"
-            class="wd-chip"
-            class:wd-chip--active={eSunWd}
-            onclick={() => (eSunWd = !eSunWd)}>So</button
-          >
-        </div>
-        <p class="form-hint">
-          Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide;
-          Arbeitstage im Monat).
-        </p>
-      </div>
-    {:else}
+    {#if eType === "FIXED_SCHEDULE"}
       <p class="modal-help">Wochenstunden werden automatisch aus den Tagen summiert.</p>
 
       <div class="day-grid">
@@ -1380,7 +1507,206 @@
           <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
         </div>
       </div>
+    {:else if eType === "FLEXTIME"}
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-weekly-flex">Wochenstunden-Soll</label>
+        <div class="input-suffix-wrap">
+          <input
+            id="e-weekly-flex"
+            type="number"
+            min="0"
+            max="60"
+            step="0.25"
+            bind:value={eWeeklyHours}
+          />
+          <span class="input-suffix">h/Woche</span>
+        </div>
+        <p class="form-hint">
+          Gleitzeit — Soll wird wöchentlich als Gesamtstunden erfasst. Freie Verteilung über die
+          Tage.
+        </p>
+      </div>
+
+      <h3 class="modal-section-heading">Kernarbeitszeit (optional)</h3>
+      <p class="form-hint">
+        Zeitfenster, in dem alle Mitarbeiter anwesend sein müssen. Leer lassen für reine Gleitzeit
+        ohne Kernzeit.
+      </p>
+
+      <div class="form-row">
+        <div class="form-group modal-form-group">
+          <label class="form-label" for="e-core-start">Kernzeitbeginn</label>
+          <input
+            id="e-core-start"
+            type="time"
+            bind:value={eCoreStart}
+            placeholder="—"
+            class="form-input modal-input-sm"
+          />
+        </div>
+        <div class="form-group modal-form-group">
+          <label class="form-label" for="e-core-end">Kernzeitende</label>
+          <input
+            id="e-core-end"
+            type="time"
+            bind:value={eCoreEnd}
+            placeholder="—"
+            class="form-input modal-input-sm"
+          />
+        </div>
+      </div>
+
+      <div class="form-group modal-form-group">
+        <label class="form-label">Kerntage</label>
+        <div class="weekday-chips" role="group" aria-label="Kerntage">
+          {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+            <button
+              type="button"
+              class="wd-chip"
+              class:wd-chip--active={eCoreDays.includes(day.value)}
+              onclick={() => {
+                if (eCoreDays.includes(day.value)) {
+                  eCoreDays = eCoreDays.filter((d) => d !== day.value);
+                } else {
+                  eCoreDays = [...eCoreDays, day.value];
+                }
+              }}>{day.label}</button
+            >
+          {/each}
+        </div>
+      </div>
+    {:else if eType === "MONTHLY_HOURS"}
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-monthly-hours">Stunden/Monat</label>
+        <div class="input-suffix-wrap">
+          <input
+            id="e-monthly-hours"
+            type="number"
+            min="0"
+            max="744"
+            step="0.5"
+            bind:value={eMonthlyHours}
+            class="form-input threshold-input"
+          />
+          <span class="input-suffix">Stunden</span>
+        </div>
+        <p class="form-hint">Keine festen Wochentage – Soll wird monatlich berechnet.</p>
+      </div>
+
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-overtime-mode">Überstunden-Modus</label>
+        <select id="e-overtime-mode" bind:value={eOvertimeMode} class="form-input modal-select-lg">
+          <option value="CARRY_FORWARD">Übertragen (CARRY_FORWARD)</option>
+          <option value="TRACK_ONLY">Nur erfassen (TRACK_ONLY)</option>
+        </select>
+        <p class="form-hint">
+          Übertragen: Überstunden werden im Saldo angesammelt. Nur erfassen: Stunden werden
+          dokumentiert, Saldo bleibt bei 0.
+        </p>
+      </div>
+
+      <div class="form-group modal-form-group">
+        <span class="form-label">Feste Arbeitstage</span>
+        <div class="weekday-chips">
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eMonWd}
+            onclick={() => (eMonWd = !eMonWd)}>Mo</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eTueWd}
+            onclick={() => (eTueWd = !eTueWd)}>Di</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eWedWd}
+            onclick={() => (eWedWd = !eWedWd)}>Mi</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eThuWd}
+            onclick={() => (eThuWd = !eThuWd)}>Do</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eFriWd}
+            onclick={() => (eFriWd = !eFriWd)}>Fr</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eSatWd}
+            onclick={() => (eSatWd = !eSatWd)}>Sa</button
+          >
+          <button
+            type="button"
+            class="wd-chip"
+            class:wd-chip--active={eSunWd}
+            onclick={() => (eSunWd = !eSunWd)}>So</button
+          >
+        </div>
+        <p class="form-hint">
+          Wenn konfiguriert, wird ein tägliches Soll im Kalender angezeigt (Budget &divide;
+          Arbeitstage im Monat).
+        </p>
+      </div>
+    {:else}
+      <!-- SHIFT_BASED: weekly hours only -->
+      <div class="form-group modal-form-group">
+        <label class="form-label" for="e-weekly-hours">Wochenstunden-Soll</label>
+        <div class="input-suffix-wrap">
+          <input
+            id="e-weekly-hours"
+            type="number"
+            min="1"
+            max="168"
+            step="0.5"
+            class="form-input threshold-input"
+            aria-required="true"
+            bind:value={eWeeklyHours}
+          />
+          <span class="input-suffix">Stunden</span>
+        </div>
+        <p class="form-hint">
+          Schichtplan ist führend — Soll wird wöchentlich als Gesamtstunden erfasst.
+        </p>
+      </div>
     {/if}
+
+    <!-- Phase 49.5 — Arbeitstage/Woche (unabhängig vom AZ-Modell) -->
+    <div class="form-group modal-form-group" style="margin-top: 1rem;">
+      <label class="form-label" for="e-workdays">Arbeitstage/Woche</label>
+      <div class="input-suffix-wrap" style="max-width: 240px;">
+        <input
+          id="e-workdays"
+          type="number"
+          min="1"
+          max="7"
+          step="1"
+          class="form-input threshold-input"
+          value={eWorkDays.length}
+          oninput={(ev) => {
+            const n = Math.max(1, Math.min(7, Number((ev.target as HTMLInputElement).value) || 0));
+            // Mo-Fr-first canonical mapping: 5→[1..5], 6→[1..6] (Sa), 7→[1..6,0] (Sa+So)
+            const canonical = [1, 2, 3, 4, 5, 6, 0];
+            eWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
+          }}
+        />
+        <span class="input-suffix">Tage</span>
+      </div>
+      <p class="form-hint">
+        Anzahl Arbeitstage pro Woche — unabhängig vom AZ-Modell. Quelle für Urlaubsverbrauch und
+        Pro-Rata-Urlaubsberechnung. Default-Reihenfolge Mo, Di, Mi, Do, Fr, Sa, So. Bei einer
+        individuellen Verteilung (z.B. Di–Sa) lege die Stunden pro Tag im FIXED_SCHEDULE-Tagesplan
+        fest — die per-Tag-Soll-Felder überschreiben dieses Default.
+      </p>
+    </div>
 
     <div class="extra-row spaced-top-md">
       <div class="form-group">
@@ -1486,8 +1812,67 @@
   </Modal>
 {/if}
 
+<!-- ── Phase 49.3 — Orphan-Schichten-Modal ──────────────────────────────────── -->
+{#if orphanModalOpen}
+  <Modal
+    bind:open={orphanModalOpen}
+    eyebrow="Schichtplan-Wechsel"
+    title="Geplante Schichten vorhanden"
+  >
+    <p class="orphan-intro">
+      Beim Wechsel von <strong>Schichtplan</strong> auf <strong>{orphanNewTypeLabel}</strong>
+      {orphanPendingCount === 1
+        ? "ist 1 geplante Schicht"
+        : `sind ${orphanPendingCount} geplante Schichten`}
+      noch in der Datenbank. Diese werden im Mitarbeiter-Dashboard versteckt, sobald der Wechsel aktiv
+      ist.
+    </p>
+
+    {#if orphanPreview.length > 0}
+      <ul class="orphan-list">
+        {#each orphanPreview as s (s.date)}
+          <li class="orphan-item">
+            <span class="orphan-date">{s.date}</span>
+            <span class="orphan-time">{s.startTime} – {s.endTime}</span>
+          </li>
+        {/each}
+        {#if orphanPendingCount > orphanPreview.length}
+          <li class="orphan-more">… und {orphanPendingCount - orphanPreview.length} weitere</li>
+        {/if}
+      </ul>
+    {/if}
+
+    <p class="orphan-question">Was soll mit den zukünftigen Schichten passieren?</p>
+
+    {#snippet footer()}
+      <div class="orphan-footer">
+        <button class="btn btn-ghost" onclick={orphanAbort} disabled={eSaving}> Abbrechen </button>
+        <button class="btn btn-secondary" onclick={orphanKeep} disabled={eSaving}>
+          {eSaving ? "Speichern…" : "Behalten"}
+        </button>
+        <div class="orphan-cancel-group">
+          <p class="orphan-warn">
+            Diese Aktion ist unwiderruflich. Vergangene Schichten bleiben unangetastet.
+          </p>
+          <button class="btn btn-danger" onclick={orphanCancel} disabled={eSaving}>
+            {eSaving ? "Speichern…" : "Stornieren"}
+          </button>
+        </div>
+      </div>
+    {/snippet}
+  </Modal>
+{/if}
+
 <style>
   /* .page wrapper is global (app.css) — no per-page padding/max-width override. */
+
+  /* ── Carry-over warning sub-section (Phase 44) ─────────────────────────── */
+  .carryover-subtitle {
+    margin: 12px 0 8px;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text);
+  }
 
   /* ── KPI card ───────────────────────────────────────────────────────────── */
   :global(.kpi-card .card-hd) {
@@ -1639,6 +2024,14 @@
     gap: 2rem;
     flex-wrap: wrap;
     align-items: flex-start;
+  }
+
+  .form-row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    margin-bottom: var(--s-3);
   }
 
   .input-suffix-wrap {
@@ -1931,5 +2324,154 @@
     .kpi-row {
       gap: 18px;
     }
+  }
+
+  /* ── 4-segment ScheduleType picker ─────────────────────────────────────── */
+  .schedule-type-picker {
+    display: inline-flex;
+    gap: 0;
+    width: fit-content;
+    border: 1.5px solid var(--border);
+    border-radius: var(--r-pill);
+    overflow: hidden;
+    margin-bottom: var(--s-3);
+  }
+  .schedule-type-picker .stp-btn {
+    height: 32px;
+    padding: 0 12px;
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition:
+      background 0.15s var(--ease-out),
+      color 0.15s var(--ease-out);
+  }
+  .schedule-type-picker .stp-btn:not(:last-child) {
+    border-right: 1px solid var(--border);
+  }
+  .schedule-type-picker .stp-btn:hover:not(.stp-btn--active) {
+    background: var(--brand-soft);
+    color: var(--brand);
+  }
+  .schedule-type-picker .stp-btn--active {
+    background: var(--brand);
+    color: var(--text-on-brand);
+  }
+  .schedule-type-picker .stp-btn:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  @media (max-width: 480px) {
+    .schedule-type-picker {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+  }
+
+  /* ── SHIFT_BASED table cell ─────────────────────────────────────────────── */
+  .sched-shift-cell {
+    padding: var(--s-2) var(--s-3);
+  }
+
+  /* ── Phase 49.3 — Orphan-Schichten-Modal ─────────────────────────────────── */
+  .orphan-intro {
+    font-size: 0.9375rem;
+    color: var(--text);
+    margin: 0 0 var(--s-4);
+    line-height: 1.55;
+  }
+
+  .orphan-list {
+    list-style: none;
+    margin: 0 0 var(--s-4);
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+
+  .orphan-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    padding: var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.875rem;
+  }
+
+  .orphan-item:last-child {
+    border-bottom: none;
+  }
+
+  .orphan-date {
+    font-family: var(--font-mono);
+    color: var(--text);
+    font-weight: 600;
+    min-width: 90px;
+  }
+
+  .orphan-time {
+    color: var(--text-muted);
+  }
+
+  .orphan-more {
+    padding: var(--s-2) var(--s-4);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .orphan-question {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+  }
+
+  .orphan-footer {
+    display: flex;
+    align-items: flex-end;
+    gap: var(--s-3);
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .orphan-cancel-group {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--s-1);
+    margin-left: auto;
+  }
+
+  .orphan-warn {
+    font-size: 0.75rem;
+    color: var(--bad);
+    margin: 0;
+    text-align: right;
+  }
+
+  .btn-danger {
+    background: var(--bad);
+    color: #fff;
+    border: none;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    opacity: 0.88;
+  }
+
+  .btn-secondary {
+    background: var(--bg-subtle);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: var(--border);
   }
 </style>

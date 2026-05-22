@@ -21,6 +21,7 @@ import { mailerPlugin } from "./plugins/mailer";
 import { notifyPlugin } from "./plugins/notify";
 import { schedulerPlugin } from "./plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
+import { carryoverWarningPlugin } from "./plugins/carryover-warning";
 import { dataRetentionPlugin } from "./plugins/data-retention";
 import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
 import { storagePlugin } from "./plugins/storage";
@@ -32,6 +33,8 @@ import { activityRoutes } from "./routes/activity";
 import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./routes/dashboard";
 import { shiftRoutes } from "./routes/shifts";
+import { shiftPatternRoutes, shiftPatternTenantRoutes } from "./routes/shift-patterns";
+import { availabilityRoutes } from "./routes/availability";
 import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
@@ -214,6 +217,7 @@ export async function buildApp() {
   await app.register(notifyPlugin);
   await app.register(schedulerPlugin);
   await app.register(attendanceCheckerPlugin);
+  await app.register(carryoverWarningPlugin);
   await app.register(dataRetentionPlugin);
   await app.register(autoCloseMonthPlugin);
   await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
@@ -235,6 +239,15 @@ export async function buildApp() {
   await app.register(dashboardRoutes, { prefix: "/api/v1/dashboard" });
   await app.register(notificationRoutes, { prefix: "/api/v1/notifications" });
   await app.register(shiftRoutes, { prefix: "/api/v1/shifts" });
+  // Phase 43 — recurring shift patterns live under the employees namespace
+  // (GET/PUT /api/v1/employees/:id/shift-patterns)
+  await app.register(shiftPatternRoutes, { prefix: "/api/v1/employees" });
+  // Phase 48 — tenant-wide bulk read for the pattern-editor matrix UI
+  // (GET /api/v1/shift-patterns/tenant)
+  await app.register(shiftPatternTenantRoutes, { prefix: "/api/v1/shift-patterns" });
+  // Phase 46 — employee availability declarations live under the employees namespace
+  // (GET/PUT /api/v1/employees/:id/availability)
+  await app.register(availabilityRoutes, { prefix: "/api/v1/employees" });
   await app.register(integrationRoutes, { prefix: "/api/v1/integrations" });
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });

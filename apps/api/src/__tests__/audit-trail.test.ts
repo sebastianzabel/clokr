@@ -166,7 +166,7 @@ describe("Audit Trail Completeness", () => {
           hireDate: new Date("2025-01-01").toISOString(),
           role: "EMPLOYEE",
           weeklyHours: 40,
-          scheduleType: "FIXED_WEEKLY",
+          scheduleType: "FIXED_SCHEDULE",
         },
       });
 

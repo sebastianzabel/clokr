@@ -37,7 +37,7 @@ describe("Work Schedule Versioning", () => {
         url: `/api/v1/settings/work/${data.employee.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          type: "FIXED_WEEKLY",
+          type: "FIXED_SCHEDULE",
           weeklyHours: 35,
           mondayHours: 7,
           tuesdayHours: 7,
@@ -74,7 +74,7 @@ describe("Work Schedule Versioning", () => {
         url: `/api/v1/settings/work/${data.employee.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          type: "FIXED_WEEKLY",
+          type: "FIXED_SCHEDULE",
           weeklyHours: 36,
           mondayHours: 7.2,
           tuesdayHours: 7.2,
@@ -133,6 +133,150 @@ describe("Work Schedule Versioning", () => {
         expect(new Date(body[i - 1].validFrom).getTime()).toBeGreaterThanOrEqual(
           new Date(body[i].validFrom).getTime(),
         );
+      }
+    });
+  });
+
+  describe("SHIFT_BASED schedule type", () => {
+    it("PUT /settings/work/:id accepts type=SHIFT_BASED with weeklyHours=40", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "SHIFT_BASED",
+          weeklyHours: 40,
+          monthlyHours: null,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          overtimeMode: "CARRY_FORWARD",
+          validFrom: new Date().toISOString().split("T")[0],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.type).toBe("SHIFT_BASED");
+      expect(Number(body.weeklyHours)).toBe(40);
+    });
+
+    it("PUT /settings/work/:id accepts type=MONTHLY_HOURS with weeklyHours=null (regression for nullable change)", async () => {
+      // Regression coverage: Plan 02 Task 1 sends `weeklyHours: null` from the frontend
+      // for MONTHLY_HOURS employees. Before the nullable change, this would fail with
+      // a Zod 400 "Expected number, received null".
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "MONTHLY_HOURS",
+          weeklyHours: null,
+          monthlyHours: 15,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          overtimeMode: "CARRY_FORWARD",
+          validFrom: new Date(Date.now() - 1000).toISOString().split("T")[0],
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.type).toBe("MONTHLY_HOURS");
+      expect(body.weeklyHours).toBeNull();
+    });
+
+    it("PUT /settings/work/:id rejects type=SHIFT_BASED with weeklyHours=0", async () => {
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/settings/work/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          type: "SHIFT_BASED",
+          weeklyHours: 0,
+          monthlyHours: null,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          overtimeThreshold: 60,
+          allowOvertimePayout: false,
+          overtimeMode: "CARRY_FORWARD",
+          validFrom: new Date().toISOString().split("T")[0],
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toMatch(/Wochenstunden-Soll/);
+    });
+
+    it("POST /employees with no scheduleType defaults to SHIFT_BASED + weeklyHours=40", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          firstName: "Test",
+          lastName: "ShiftBased",
+          email: `shiftbased-${Date.now()}@example.com`,
+          employeeNumber: `EMP-SB-${Date.now()}`,
+          hireDate: new Date().toISOString(),
+          // no scheduleType — should default to SHIFT_BASED
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      // Re-fetch the new employee's schedule
+      const schedRes = await app.inject({
+        method: "GET",
+        url: `/api/v1/settings/work/${body.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      const sched = JSON.parse(schedRes.body);
+      expect(sched.type).toBe("SHIFT_BASED");
+      expect(Number(sched.weeklyHours)).toBe(40);
+    });
+
+    it("GET /shifts/week includes workSchedules[0] per employee", async () => {
+      const today = new Date();
+      const dow = today.getUTCDay();
+      const mondayOffset = dow === 0 ? -6 : 1 - dow;
+      const monday = new Date(today);
+      monday.setUTCDate(today.getUTCDate() + mondayOffset);
+      const isoMonday = monday.toISOString().split("T")[0];
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/week?date=${isoMonday}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(Array.isArray(body.employees)).toBe(true);
+      for (const emp of body.employees) {
+        expect("workSchedules" in emp).toBe(true);
+        expect(Array.isArray(emp.workSchedules)).toBe(true);
+      }
+      // At least one employee should have a schedule (seed data)
+      const withSched = body.employees.find(
+        (e: { workSchedules: unknown[] }) => e.workSchedules.length > 0,
+      );
+      if (withSched) {
+        expect(withSched.workSchedules[0]).toHaveProperty("type");
+        expect(withSched.workSchedules[0]).toHaveProperty("weeklyHours");
       }
     });
   });

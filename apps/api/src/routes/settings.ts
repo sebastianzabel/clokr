@@ -7,70 +7,133 @@ import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
-const tenantConfigSchema = z.object({
-  tenantName: z.string().min(1).max(200).optional(),
-  applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
-  defaultWeeklyHours: z.number().min(1).max(60).optional(),
-  defaultMondayHours: z.number().min(0).max(24).optional(),
-  defaultTuesdayHours: z.number().min(0).max(24).optional(),
-  defaultWednesdayHours: z.number().min(0).max(24).optional(),
-  defaultThursdayHours: z.number().min(0).max(24).optional(),
-  defaultFridayHours: z.number().min(0).max(24).optional(),
-  defaultSaturdayHours: z.number().min(0).max(24).optional(),
-  defaultSundayHours: z.number().min(0).max(24).optional(),
-  overtimeThreshold: z.number().min(1).max(500).optional(),
-  allowOvertimePayout: z.boolean().optional(),
-  federalState: z
-    .string()
-    .refine((s) => VALID_FEDERAL_STATES.includes(s))
-    .optional(),
-  carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
-  carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
-  defaultVacationDays: z.number().min(0.5).max(365).multipleOf(0.5).optional(),
-  timezone: z.string().min(1).max(100).optional(),
-  arbzgEnabled: z.boolean().optional(),
-  clockOutReminderHours: z.number().int().min(1).max(48).optional(),
-  missingEntriesDays: z.number().int().min(1).max(90).optional(),
-  autoDeleteOpenHours: z.number().int().min(0).max(168).optional(), // legacy name: actually invalidates, not deletes
-  autoBreakEnabled: z.boolean().optional(),
-  defaultBreakStart: z
-    .string()
-    .regex(/^\d{2}:\d{2}$/)
-    .nullable()
-    .optional(),
-  // Heiligabend/Silvester
-  christmasEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
-  newYearsEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
-  holidayRulesValidFromYear: z.number().int().min(2020).max(2100).optional(),
-  // Leave config
-  vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
-  vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
-  halfDayAllowed: z.boolean().optional(),
-  sickSelfReport: z.boolean().optional(),
-  sickNoteRequiredAfterDays: z.number().int().min(1).max(30).optional(),
-  // Part-time vacation
-  autoCalcPartTimeVacation: z.boolean().optional(),
-  fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
-  // Carry-over / statutory minimum
-  enforceMinVacation: z.boolean().optional(),
-  carryOverRequiresReason: z.boolean().optional(),
-  vacationReminderStartMonth: z.number().int().min(1).max(12).optional(),
-  // Data retention (Phase 31 — ADM-03)
-  // Minimum 2 years (§ 16 Abs. 2 ArbZG), default 10 years (§ 147 AO / § 257 HGB)
-  dataRetentionYears: z.number().int().min(2).max(10).optional(),
-  // Reminders
-  reminderPendingLeaveHours: z.number().int().min(1).max(720).optional(),
-  reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
-  reminderPendingLeaveEnabled: z.boolean().optional(),
-  reminderUpcomingAbsenceEnabled: z.boolean().optional(),
-  // DATEV Lohnartennummern (Phase 4 — DATEV-03)
-  datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
-  datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
-  datevKrankNr: z.number().int().min(1).max(9999).optional(),
-  datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
-  // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
-  monthlyHoursHolidayDeduction: z.boolean().optional(),
-});
+const tenantConfigSchema = z
+  .object({
+    tenantName: z.string().min(1).max(200).optional(),
+    applyToExisting: z.boolean().optional(), // Auf bestehende MA ohne manuelle Änderung anwenden
+    defaultWeeklyHours: z.number().min(1).max(60).optional(),
+    defaultMondayHours: z.number().min(0).max(24).optional(),
+    defaultTuesdayHours: z.number().min(0).max(24).optional(),
+    defaultWednesdayHours: z.number().min(0).max(24).optional(),
+    defaultThursdayHours: z.number().min(0).max(24).optional(),
+    defaultFridayHours: z.number().min(0).max(24).optional(),
+    defaultSaturdayHours: z.number().min(0).max(24).optional(),
+    defaultSundayHours: z.number().min(0).max(24).optional(),
+    overtimeThreshold: z.number().min(1).max(500).optional(),
+    allowOvertimePayout: z.boolean().optional(),
+    federalState: z
+      .string()
+      .refine((s) => VALID_FEDERAL_STATES.includes(s))
+      .optional(),
+    carryOverDeadlineDay: z.number().int().min(1).max(31).optional(),
+    carryOverDeadlineMonth: z.number().int().min(1).max(12).optional(),
+    defaultVacationDays: z.number().min(0.5).max(365).multipleOf(0.5).optional(),
+    timezone: z.string().min(1).max(100).optional(),
+    arbzgEnabled: z.boolean().optional(),
+    // Phase 47.3 — Verfügbarkeits-System toggle (default true, feature-on)
+    availabilityEnabled: z.boolean().optional(),
+    clockOutReminderHours: z.number().int().min(1).max(48).optional(),
+    missingEntriesDays: z.number().int().min(1).max(90).optional(),
+    autoDeleteOpenHours: z.number().int().min(0).max(168).optional(), // legacy name: actually invalidates, not deletes
+    autoBreakEnabled: z.boolean().optional(),
+    defaultBreakStart: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/)
+      .nullable()
+      .optional(),
+    // Heiligabend/Silvester
+    christmasEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
+    newYearsEveRule: z.enum(["NORMAL", "HALF_DAY", "FULL_DAY_OFF"]).optional(),
+    holidayRulesValidFromYear: z.number().int().min(2020).max(2100).optional(),
+    // Leave config
+    vacationLeadTimeDays: z.number().int().min(0).max(365).optional(),
+    vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
+    halfDayAllowed: z.boolean().optional(),
+    sickSelfReport: z.boolean().optional(),
+    sickNoteRequiredAfterDays: z.number().int().min(1).max(30).optional(),
+    // Part-time vacation
+    autoCalcPartTimeVacation: z.boolean().optional(),
+    fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
+    // Carry-over / statutory minimum
+    enforceMinVacation: z.boolean().optional(),
+    carryOverRequiresReason: z.boolean().optional(),
+    vacationReminderStartMonth: z.number().int().min(1).max(12).optional(),
+    // BUrlG § 7 Hinweispflicht (EuGH C-684/16) — threshold-based warnings
+    carryoverWarningEnabled: z.boolean().optional(),
+    carryoverWarningThresholds: z.array(z.number().int().min(1).max(365)).max(10).optional(),
+    // Data retention (Phase 31 — ADM-03)
+    // Minimum 2 years (§ 16 Abs. 2 ArbZG), default 10 years (§ 147 AO / § 257 HGB)
+    dataRetentionYears: z.number().int().min(2).max(10).optional(),
+    // Reminders
+    reminderPendingLeaveHours: z.number().int().min(1).max(720).optional(),
+    reminderUpcomingAbsenceDays: z.number().int().min(1).max(30).optional(),
+    reminderPendingLeaveEnabled: z.boolean().optional(),
+    reminderUpcomingAbsenceEnabled: z.boolean().optional(),
+    // DATEV Lohnartennummern (Phase 4 — DATEV-03)
+    datevNormalstundenNr: z.number().int().min(1).max(9999).optional(),
+    datevUrlaubNr: z.number().int().min(1).max(9999).optional(),
+    datevKrankNr: z.number().int().min(1).max(9999).optional(),
+    datevSonderurlaubNr: z.number().int().min(1).max(9999).optional(),
+    // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+    monthlyHoursHolidayDeduction: z.boolean().optional(),
+    // Ladenöffnungszeiten (Phase 42) — 7 entries Mo-So
+    storeHours: z
+      .array(
+        z.object({
+          day: z.number().int().min(0).max(6),
+          open: z.string().regex(/^\d{2}:\d{2}$/),
+          close: z.string().regex(/^\d{2}:\d{2}$/),
+          closed: z.boolean().optional(),
+        }),
+      )
+      .length(7)
+      .optional(),
+    // Phase 47.5 — STRICT / DAY_ONLY / OFF
+    shiftStoreHoursMode: z.enum(["STRICT", "DAY_ONLY", "OFF"]).optional(),
+    // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults (tenant-level pre-fill suggestion)
+    defaultCoreStart: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+      .nullable()
+      .optional(),
+    defaultCoreEnd: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+      .nullable()
+      .optional(),
+    defaultCoreDays: z.array(z.number().int().min(0).max(6)).optional(),
+    // Phase 49.5 — Standard-Arbeitstage Mo-So (Tenant-Default)
+    defaultWorkDays: z
+      .array(z.number().int().min(0).max(6))
+      .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
+      .max(7)
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Half-null guard: defaultCoreStart and defaultCoreEnd must be set together or both absent
+    if (
+      (data.defaultCoreStart && !data.defaultCoreEnd) ||
+      (!data.defaultCoreStart && data.defaultCoreEnd)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultCoreEnd"],
+        message: "Kernzeitbeginn und Kernzeitende müssen gemeinsam gesetzt oder beide leer sein",
+      });
+    }
+    // Both present: coreEnd must be strictly after coreStart (HH:MM string comparison)
+    if (
+      data.defaultCoreStart &&
+      data.defaultCoreEnd &&
+      data.defaultCoreEnd <= data.defaultCoreStart
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["defaultCoreEnd"],
+        message: "Kernzeitende muss nach Kernzeitbeginn liegen",
+      });
+    }
+  });
 
 const vacationEntitlementSchema = z.object({
   year: z.number().int().min(2000).max(2100),
@@ -79,26 +142,91 @@ const vacationEntitlementSchema = z.object({
   carryOverDeadline: z.string().nullable().optional(), // ISO date string or null
 });
 
-const employeeScheduleSchema = z.object({
-  type: z.enum(["FIXED_WEEKLY", "MONTHLY_HOURS"]).default("FIXED_WEEKLY"),
-  weeklyHours: z.number().min(0).max(60).default(40),
-  monthlyHours: z.number().min(0).max(999).nullable().optional(),
-  mondayHours: z.number().min(0).max(24).default(8),
-  tuesdayHours: z.number().min(0).max(24).default(8),
-  wednesdayHours: z.number().min(0).max(24).default(8),
-  thursdayHours: z.number().min(0).max(24).default(8),
-  fridayHours: z.number().min(0).max(24).default(8),
-  saturdayHours: z.number().min(0).max(24).default(0),
-  sundayHours: z.number().min(0).max(24).default(0),
-  overtimeThreshold: z.number().min(0).max(500).default(60),
-  allowOvertimePayout: z.boolean().default(false),
-  overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
-  maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
-  validFrom: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/)
-    .optional(),
-});
+export const employeeScheduleSchema = z
+  .object({
+    type: z
+      .enum(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS", "SHIFT_BASED"])
+      .default("FIXED_SCHEDULE"),
+    weeklyHours: z.number().min(0).max(60).nullable().optional().default(40),
+    monthlyHours: z.number().min(0).max(999).nullable().optional(),
+    mondayHours: z.number().min(0).max(24).default(8),
+    tuesdayHours: z.number().min(0).max(24).default(8),
+    wednesdayHours: z.number().min(0).max(24).default(8),
+    thursdayHours: z.number().min(0).max(24).default(8),
+    fridayHours: z.number().min(0).max(24).default(8),
+    saturdayHours: z.number().min(0).max(24).default(0),
+    sundayHours: z.number().min(0).max(24).default(0),
+    overtimeThreshold: z.number().min(0).max(500).default(60),
+    allowOvertimePayout: z.boolean().default(false),
+    overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
+    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+    // Phase 49.1 — FLEXTIME Kernarbeitszeit (all optional; UI metadata only)
+    coreStart: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+      .nullable()
+      .optional(),
+    coreEnd: z
+      .string()
+      .regex(/^\d{2}:\d{2}$/, "Format HH:MM erwartet")
+      .nullable()
+      .optional(),
+    coreDays: z.array(z.number().int().min(0).max(6)).optional().default([]),
+    // Phase 49.5 — Arbeitstage/Woche (unabhängig vom AZ-Modell)
+    workDays: z
+      .array(z.number().int().min(0).max(6))
+      .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
+      .max(7)
+      .optional(),
+    validFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
+    // Phase 49.3 — Orphan-Shift-Lifecycle: when switching away from SHIFT_BASED,
+    // caller must explicitly choose what to do with future shifts.
+    // Exactly one (or neither) of these flags may be true.
+    keepOrphanShifts: z.boolean().optional(),
+    cancelOrphanShifts: z.boolean().optional(),
+  })
+  .superRefine((data, ctx) => {
+    // SHIFT_BASED and FLEXTIME both require weeklyHours > 0 (weekly-target models)
+    if (
+      (data.type === "SHIFT_BASED" || data.type === "FLEXTIME") &&
+      (!data.weeklyHours || data.weeklyHours <= 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["weeklyHours"],
+        message: "Wochenstunden-Soll muss größer als 0 sein",
+      });
+    }
+    // FLEXTIME Kernarbeitszeit cross-field: must be set together or both empty.
+    // Half-null case (only one provided) is invalid — would leave a dangling Kernzeit.
+    if ((data.coreStart && !data.coreEnd) || (!data.coreStart && data.coreEnd)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["coreEnd"],
+        message: "Kernzeitbeginn und Kernzeitende müssen gemeinsam gesetzt oder beide leer sein",
+      });
+    }
+    // Both present: coreEnd must be strictly greater than coreStart
+    // (string comparison works for HH:MM)
+    if (data.coreStart && data.coreEnd && data.coreEnd <= data.coreStart) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["coreEnd"],
+        message: "Kernzeitende muss nach Kernzeitbeginn liegen",
+      });
+    }
+    // Phase 49.3 — keepOrphanShifts and cancelOrphanShifts are mutually exclusive
+    if (data.keepOrphanShifts && data.cancelOrphanShifts) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cancelOrphanShifts"],
+        message: "keepOrphanShifts und cancelOrphanShifts schließen sich gegenseitig aus",
+      });
+    }
+  });
 
 export async function settingsRoutes(app: FastifyInstance) {
   // GET /api/v1/settings/work  — globale Vorgaben
@@ -128,6 +256,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         carryOverDeadlineMonth: 3,
         defaultVacationDays: 30,
         arbzgEnabled: true,
+        availabilityEnabled: true,
         clockOutReminderHours: 10,
         missingEntriesDays: 7,
         autoDeleteOpenHours: 14,
@@ -156,6 +285,23 @@ export async function settingsRoutes(app: FastifyInstance) {
         datevSonderurlaubNr: 302,
         monthlyHoursHolidayDeduction: false,
         dataRetentionYears: 10,
+        carryoverWarningEnabled: true,
+        carryoverWarningThresholds: [60, 30, 14, 7],
+        storeHours: [
+          { day: 0, open: "08:00", close: "20:00" },
+          { day: 1, open: "08:00", close: "20:00" },
+          { day: 2, open: "08:00", close: "20:00" },
+          { day: 3, open: "08:00", close: "20:00" },
+          { day: 4, open: "08:00", close: "20:00" },
+          { day: 5, open: "08:00", close: "20:00" },
+          { day: 6, open: "08:00", close: "20:00", closed: true },
+        ],
+        shiftStoreHoursMode: "DAY_ONLY",
+        defaultCoreStart: null,
+        defaultCoreEnd: null,
+        defaultCoreDays: [],
+        // Phase 49.5 — Tenant-Default Arbeitstage (Mo-Fr)
+        defaultWorkDays: [1, 2, 3, 4, 5],
       };
 
       return {
@@ -213,7 +359,7 @@ export async function settingsRoutes(app: FastifyInstance) {
             const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
-                type: "FIXED_WEEKLY",
+                type: "FIXED_SCHEDULE",
                 weeklyHours: configBody.defaultWeeklyHours ?? 40,
                 mondayHours: configBody.defaultMondayHours ?? 8,
                 tuesdayHours: configBody.defaultTuesdayHours ?? 8,
@@ -236,12 +382,12 @@ export async function settingsRoutes(app: FastifyInstance) {
               request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
             appliedCount++;
-          } else if (current.type === "FIXED_WEEKLY") {
-            // Nur FIXED_WEEKLY MA updaten (nicht Minijobber)
+          } else if (current.type === "FIXED_SCHEDULE") {
+            // Nur FIXED_SCHEDULE MA updaten (nicht Minijobber)
             const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
-                type: "FIXED_WEEKLY",
+                type: "FIXED_SCHEDULE",
                 weeklyHours: configBody.defaultWeeklyHours ?? Number(current.weeklyHours),
                 mondayHours: configBody.defaultMondayHours ?? Number(current.mondayHours),
                 tuesdayHours: configBody.defaultTuesdayHours ?? Number(current.tuesdayHours),
@@ -317,6 +463,140 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       const validFrom = new Date(body.validFrom ?? new Date().toISOString().split("T")[0]);
 
+      // ── Phase 49.3 — Orphan-Shift-Lifecycle detection ──────────────────────
+      // When switching FROM SHIFT_BASED to any other type, check for future shifts.
+      // Past shifts (date < today) are immutable (Phase 47.2) and are never touched.
+      if (body.type !== "SHIFT_BASED") {
+        // Resolve the current (prior) effective schedule for this employee
+        const priorSchedule = await app.prisma.workSchedule.findFirst({
+          where: { employeeId, validFrom: { lte: new Date() } },
+          orderBy: { validFrom: "desc" },
+          select: { type: true },
+        });
+
+        if (priorSchedule?.type === "SHIFT_BASED") {
+          // Build today's ISO date string for "future shifts" threshold.
+          // We compare date (YYYY-MM-DD) string directly — no timezone conversion
+          // needed because Shift.date is stored as @db.Date (calendar date, not instant).
+          const now = new Date();
+          const todayIso =
+            `${now.getFullYear()}-` +
+            `${String(now.getMonth() + 1).padStart(2, "0")}-` +
+            `${String(now.getDate()).padStart(2, "0")}`;
+
+          // Count future shifts (today and beyond are "future" for this check)
+          const futureShifts = await app.prisma.shift.findMany({
+            where: {
+              employeeId,
+              date: { gte: new Date(todayIso) },
+            },
+            orderBy: { date: "asc" },
+            select: { id: true, date: true, startTime: true, endTime: true },
+          });
+
+          if (futureShifts.length > 0 && !body.keepOrphanShifts && !body.cancelOrphanShifts) {
+            // Neither flag set — ask the client what to do
+            return reply.code(409).send({
+              error: "Pending shifts",
+              code: "ORPHAN_SHIFTS_PENDING",
+              pendingShifts: futureShifts.length,
+              shiftPreview: futureShifts.slice(0, 3).map((s) => ({
+                date: s.date.toISOString().split("T")[0],
+                startTime: s.startTime,
+                endTime: s.endTime,
+              })),
+            });
+          }
+
+          if (body.cancelOrphanShifts && futureShifts.length > 0) {
+            // cancelOrphanShifts: hard-delete all future shifts + audit each one,
+            // then write the WorkSchedule change — all in one $transaction.
+            const futureShiftIds = futureShifts.map((s) => s.id);
+            const scheduleData = {
+              type: body.type,
+              weeklyHours: body.weeklyHours,
+              monthlyHours: body.monthlyHours ?? null,
+              mondayHours: body.mondayHours,
+              tuesdayHours: body.tuesdayHours,
+              wednesdayHours: body.wednesdayHours,
+              thursdayHours: body.thursdayHours,
+              fridayHours: body.fridayHours,
+              saturdayHours: body.saturdayHours,
+              sundayHours: body.sundayHours,
+              overtimeThreshold: body.overtimeThreshold,
+              allowOvertimePayout: body.allowOvertimePayout,
+              overtimeMode: body.overtimeMode,
+              coreStart: body.coreStart ?? null,
+              coreEnd: body.coreEnd ?? null,
+              coreDays: body.coreDays ?? [],
+              // Phase 49.5 — optional workDays override
+              ...(body.workDays ? { workDays: body.workDays } : {}),
+              validFrom,
+            };
+
+            const existingForDate = await app.prisma.workSchedule.findFirst({
+              where: { employeeId, validFrom },
+            });
+
+            // $transaction returns the created/updated schedule via Promise.
+            const schedule = await app.prisma.$transaction(async (tx) => {
+              // 1. Delete all future shifts
+              await tx.shift.deleteMany({ where: { id: { in: futureShiftIds } } });
+
+              // 2. Write the WorkSchedule change and return it so the transaction
+              //    result is the schedule (TypeScript can narrow the type)
+              if (existingForDate) {
+                return tx.workSchedule.update({
+                  where: { id: existingForDate.id },
+                  data: scheduleData,
+                });
+              } else {
+                return tx.workSchedule.create({
+                  data: { employeeId, ...scheduleData },
+                });
+              }
+            });
+
+            // 3. Audit each deleted shift (outside $transaction so failures don't
+            //    roll back the schedule change; audit is best-effort but typed)
+            for (const shift of futureShifts) {
+              await app.audit({
+                userId: req.user.sub,
+                action: "DELETE",
+                entity: "Shift",
+                entityId: shift.id,
+                oldValue: { ...shift, note: "SHIFT_CANCELLED_SCHEDULE_TYPE_CHANGE" },
+                newValue: null,
+                request: { ip: req.ip, headers: req.headers as Record<string, string> },
+              });
+            }
+
+            await app.audit({
+              userId: req.user.sub,
+              action: "UPDATE",
+              entity: "WorkSchedule",
+              entityId: schedule.id,
+              oldValue: existingForDate,
+              newValue: schedule,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+
+            if (validFrom < new Date()) {
+              await recalculateSnapshots(app, employeeId, validFrom).catch((err) =>
+                app.log.error(
+                  { err, employeeId },
+                  "Failed to recalculate snapshots after schedule change",
+                ),
+              );
+            }
+
+            return schedule;
+          }
+          // keepOrphanShifts: true → fall through to normal write below (no shift changes)
+        }
+      }
+      // ── end Phase 49.3 ────────────────────────────────────────────────────
+
       const scheduleData = {
         type: body.type,
         weeklyHours: body.weeklyHours,
@@ -331,6 +611,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
         overtimeMode: body.overtimeMode,
+        coreStart: body.coreStart ?? null,
+        coreEnd: body.coreEnd ?? null,
+        coreDays: body.coreDays ?? [],
+        // Phase 49.5 — optional workDays override
+        ...(body.workDays ? { workDays: body.workDays } : {}),
         validFrom,
       };
 

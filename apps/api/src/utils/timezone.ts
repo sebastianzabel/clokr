@@ -160,6 +160,27 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
 ): number {
+  // SHIFT_BASED: Schichtplan ist führend. weeklyHours is the flat weekly target;
+  // expected minutes are proportional to calendar days in [from, to] / 7.
+  // Leave/Holiday/Absence days are excluded by the caller in time-entries.ts
+  // (the caller passes a range that already excludes non-working periods).
+  if (String(schedule.type ?? "") === "SHIFT_BASED") {
+    const wh = Number(schedule.weeklyHours ?? 0);
+    if (wh <= 0) return 0; // no target configured
+    const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
+    return Math.round((wh * 60 * rangeDays) / 7);
+  }
+
+  // FLEXTIME: Gleitzeit — Wochenstundensoll, freie Tagesverteilung. Same formula as SHIFT_BASED:
+  // proportional to calendar days in [from, to] / 7. coreStart/coreEnd/coreDays are UI-only metadata
+  // and do NOT affect the saldo calculation (per Phase 49.1 CONTEXT.md locked decision).
+  if (String(schedule.type ?? "") === "FLEXTIME") {
+    const wh = Number(schedule.weeklyHours ?? 0);
+    if (wh <= 0) return 0;
+    const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
+    return Math.round((wh * 60 * rangeDays) / 7);
+  }
+
   // Minijobber / flexible monthly hours: prorate monthly budget by working-day fraction
   if (String(schedule.type ?? "") === "MONTHLY_HOURS") {
     const mh = Number(schedule.monthlyHours ?? 0);

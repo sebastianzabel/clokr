@@ -88,7 +88,7 @@ export const mailerPlugin = fp(async (app) => {
     const cfg = await getSmtpConfig(tenantId);
     if (!cfg) throw new Error("SMTP nicht konfiguriert");
 
-    const link = `${appUrl}/einladung?token=${token}`;
+    const link = `${appUrl}/invitation?token=${token}`;
     const transporter = createTransporter(cfg);
 
     await transporter.sendMail({

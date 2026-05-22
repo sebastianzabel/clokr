@@ -973,11 +973,11 @@ describe("ArbZG Compliance Checks", () => {
       expect(warnings.some((w) => w.code === "BREAK_TOO_SHORT")).toBe(true);
     });
 
-    it("FIXED_WEEKLY employee still gets MAX_DAILY_AVG_EXCEEDED at >8h/day average", async () => {
-      // The regular data.employee is FIXED_WEEKLY — verify the guard doesn't break FIXED_WEEKLY
+    it("FIXED_SCHEDULE employee still gets MAX_DAILY_AVG_EXCEEDED at >8h/day average", async () => {
+      // The regular data.employee is FIXED_SCHEDULE — verify the guard doesn't break FIXED_SCHEDULE
       // Use the avgEmployee from the rolling average describe block — it already has the right setup
       // Instead, just verify the existing 24-week tests still pass indirectly via this sanity check:
-      // Create entries for data.employee (FIXED_WEEKLY) to confirm the guard doesn't suppress
+      // Create entries for data.employee (FIXED_SCHEDULE) to confirm the guard doesn't suppress
       await app.prisma.timeEntry.deleteMany({
         where: {
           employeeId: data.employee.id,

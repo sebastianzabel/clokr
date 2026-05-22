@@ -10,6 +10,13 @@
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import {
+    type EmployeeClassification,
+    CLASSIFICATION_OPTIONS,
+    CLASSIFICATION_LABELS,
+    applyDefaults,
+    isOverridden,
+  } from "$lib/employee-classification";
 
   type InvitationStatus = "ACCEPTED" | "PENDING" | "EXPIRED" | "NONE";
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -22,6 +29,10 @@
     hireDate: string;
     exitDate: string | null;
     nfcCardId: string | null;
+    // Personalstruktur (Phase 41) — coverageWeight is Decimal serialized as string by Prisma JSON
+    classification: EmployeeClassification;
+    coverageWeight: string | number;
+    requiresSupervision: boolean;
     user: {
       email: string;
       role: Role;
@@ -29,6 +40,7 @@
       lastLoginAt: string | null;
     };
     invitationStatus: InvitationStatus;
+    workSchedule: { type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED" } | null;
   }
 
   let employees: Employee[] = $state([]);
@@ -46,11 +58,22 @@
   let cEmployeeNumber = $state("");
   let cHireDate = $state(new Date().toISOString().split("T")[0]);
   let cRole: Role = $state("EMPLOYEE");
-  let cScheduleType = $state<"FIXED_WEEKLY" | "MONTHLY_HOURS">("FIXED_WEEKLY");
+  let cScheduleType = $state<"FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED">("FIXED_SCHEDULE");
   let cWeeklyHours = $state(40);
   let cMonthlyHours = $state<number | null>(null);
   let cUsePassword = $state(false);
   let cPassword = $state("");
+  // Phase 49.2 — FLEXTIME Kernarbeitszeit fields + tenant defaults for pre-fill
+  let cCoreStart = $state("");
+  let cCoreEnd = $state("");
+  let cCoreDays = $state<number[]>([]);
+  let tenantDefaultCoreStart = $state("");
+  let tenantDefaultCoreEnd = $state("");
+  let tenantDefaultCoreDays = $state<number[]>([]);
+  // Personalstruktur (Phase 41)
+  let cClassification: EmployeeClassification = $state("VOLLZEIT");
+  let cCoverageWeight = $state(1.0);
+  let cRequiresSupervision = $state(false);
 
   // Edit modal
   let editOpen = $state(false);
@@ -63,6 +86,44 @@
   let eRole: Role = $state("EMPLOYEE");
   let eNfcCardId = $state("");
   let eExitDate = $state("");
+  // Personalstruktur (Phase 41)
+  let eClassification: EmployeeClassification = $state("VOLLZEIT");
+  let eCoverageWeight = $state(1.0);
+  let eRequiresSupervision = $state(false);
+
+  // ── Personalstruktur override badges (Phase 41 DD-03) ────────────────────
+  // Reactive: re-evaluate when classification or the field itself changes.
+  let cCoverageOverridden = $derived(
+    isOverridden(cClassification, "coverageWeight", cCoverageWeight),
+  );
+  let cSupervisionOverridden = $derived(
+    isOverridden(cClassification, "requiresSupervision", cRequiresSupervision),
+  );
+  let eCoverageOverridden = $derived(
+    isOverridden(eClassification, "coverageWeight", eCoverageWeight),
+  );
+  let eSupervisionOverridden = $derived(
+    isOverridden(eClassification, "requiresSupervision", eRequiresSupervision),
+  );
+
+  function onCreateClassificationChange() {
+    const def = applyDefaults(cClassification);
+    cCoverageWeight = def.coverageWeight;
+    cRequiresSupervision = def.requiresSupervision;
+  }
+  function onEditClassificationChange() {
+    const def = applyDefaults(eClassification);
+    eCoverageWeight = def.coverageWeight;
+    eRequiresSupervision = def.requiresSupervision;
+  }
+  function resetCoverage(which: "c" | "e") {
+    if (which === "c") cCoverageWeight = applyDefaults(cClassification).coverageWeight;
+    else eCoverageWeight = applyDefaults(eClassification).coverageWeight;
+  }
+  function resetSupervision(which: "c" | "e") {
+    if (which === "c") cRequiresSupervision = applyDefaults(cClassification).requiresSupervision;
+    else eRequiresSupervision = applyDefaults(eClassification).requiresSupervision;
+  }
 
   // Anonymize confirm (step 1)
   let anonOpen = $state(false);
@@ -143,7 +204,22 @@
     empPage = 1;
   });
 
-  onMount(loadEmployees);
+  onMount(async () => {
+    await loadEmployees();
+    // Phase 49.2 — load tenant FLEXTIME core defaults for pre-fill in create modal
+    try {
+      const cfg = await api.get<{
+        defaultCoreStart?: string | null;
+        defaultCoreEnd?: string | null;
+        defaultCoreDays?: number[];
+      }>("/settings/work");
+      tenantDefaultCoreStart = cfg.defaultCoreStart ?? "";
+      tenantDefaultCoreEnd = cfg.defaultCoreEnd ?? "";
+      tenantDefaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
+    } catch {
+      // non-critical — pre-fill just won't happen if this fails
+    }
+  });
 
   async function loadEmployees() {
     loading = true;
@@ -164,14 +240,41 @@
     cEmployeeNumber = "";
     cHireDate = new Date().toISOString().split("T")[0];
     cRole = "EMPLOYEE";
-    cScheduleType = "FIXED_WEEKLY";
+    cScheduleType = "FIXED_SCHEDULE";
     cWeeklyHours = 40;
     cMonthlyHours = null;
     cUsePassword = false;
     cPassword = "";
+    // Phase 49.2 — reset core fields (no pre-fill here; pre-fill happens on FLEXTIME selection)
+    cCoreStart = "";
+    cCoreEnd = "";
+    cCoreDays = [];
+    // Personalstruktur defaults
+    cClassification = "VOLLZEIT";
+    const def = applyDefaults(cClassification);
+    cCoverageWeight = def.coverageWeight;
+    cRequiresSupervision = def.requiresSupervision;
     createError = "";
     createEmailError = "";
     createOpen = true;
+  }
+
+  // Phase 49.2 — pre-fill Kernarbeitszeit when FLEXTIME is selected and fields are empty
+  function onCreateScheduleTypeChange(
+    newType: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED",
+  ) {
+    cScheduleType = newType;
+    if (
+      newType === "FLEXTIME" &&
+      !cCoreStart &&
+      !cCoreEnd &&
+      cCoreDays.length === 0 &&
+      (tenantDefaultCoreStart || tenantDefaultCoreEnd || tenantDefaultCoreDays.length > 0)
+    ) {
+      cCoreStart = tenantDefaultCoreStart;
+      cCoreEnd = tenantDefaultCoreEnd;
+      cCoreDays = [...tenantDefaultCoreDays];
+    }
   }
 
   async function createEmployee() {
@@ -187,8 +290,21 @@
         hireDate: new Date(cHireDate).toISOString(),
         role: cRole,
         scheduleType: cScheduleType,
-        weeklyHours: cScheduleType === "FIXED_WEEKLY" ? cWeeklyHours : 0,
+        weeklyHours:
+          cScheduleType === "FIXED_SCHEDULE" ||
+          cScheduleType === "FLEXTIME" ||
+          cScheduleType === "SHIFT_BASED"
+            ? cWeeklyHours
+            : 0,
         monthlyHours: cScheduleType === "MONTHLY_HOURS" ? cMonthlyHours : null,
+        // Phase 49.2 — FLEXTIME Kernarbeitszeit
+        coreStart: cScheduleType === "FLEXTIME" ? cCoreStart || null : null,
+        coreEnd: cScheduleType === "FLEXTIME" ? cCoreEnd || null : null,
+        coreDays: cScheduleType === "FLEXTIME" ? cCoreDays : [],
+        // Personalstruktur (Phase 41)
+        classification: cClassification,
+        coverageWeight: cCoverageWeight,
+        requiresSupervision: cRequiresSupervision,
       };
       if (cUsePassword && cPassword) payload.password = cPassword;
       const res = await api.post<Employee & { emailError?: string }>("/employees", payload);
@@ -214,6 +330,14 @@
     eRole = emp.user.role;
     eNfcCardId = emp.nfcCardId ?? "";
     eExitDate = emp.exitDate ? emp.exitDate.split("T")[0] : "";
+    // Personalstruktur (Phase 41) — coverageWeight may be string (Prisma Decimal JSON) or number
+    eClassification = emp.classification ?? "VOLLZEIT";
+    eCoverageWeight =
+      emp.coverageWeight !== undefined && emp.coverageWeight !== null
+        ? Number(emp.coverageWeight)
+        : applyDefaults(eClassification).coverageWeight;
+    eRequiresSupervision =
+      emp.requiresSupervision ?? applyDefaults(eClassification).requiresSupervision;
     editError = "";
     editOpen = true;
   }
@@ -232,6 +356,10 @@
           role: eRole,
           nfcCardId: eNfcCardId || null,
           exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
+          // Personalstruktur (Phase 41)
+          classification: eClassification,
+          coverageWeight: eCoverageWeight,
+          requiresSupervision: eRequiresSupervision,
         },
       );
       employees = employees.map((e) =>
@@ -243,6 +371,9 @@
               employeeNumber: eEmployeeNumber,
               nfcCardId: eNfcCardId || null,
               exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
+              classification: eClassification,
+              coverageWeight: eCoverageWeight,
+              requiresSupervision: eRequiresSupervision,
               user: { ...e.user, role: eRole },
             }
           : e,
@@ -360,6 +491,21 @@
     }
   }
 
+  function scheduleLabel(type: string | null | undefined): string {
+    switch (type) {
+      case "FIXED_SCHEDULE":
+        return "Fester Stundenplan";
+      case "FLEXTIME":
+        return "Gleitzeit";
+      case "MONTHLY_HOURS":
+        return "Monatsstunden (Minijob)";
+      case "SHIFT_BASED":
+        return "Schichtplan";
+      default:
+        return "—";
+    }
+  }
+
   function roleLabel(role: Role): string {
     return role === "ADMIN" ? "Administrator" : role === "MANAGER" ? "Manager" : "Mitarbeiter";
   }
@@ -470,6 +616,7 @@
               <th>E-Mail</th>
               <th>Rolle</th>
               <th>Eintritt</th>
+              <th>Arbeitszeitmodell</th>
               <th>Status</th>
               <th>Letzter Login</th>
               {#if isAdmin}<th>Aktionen</th>{/if}
@@ -495,6 +642,9 @@
                     year: "numeric",
                   })}</td
                 >
+                <td class="col-schedule">
+                  <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
+                </td>
                 <td>
                   <span class={statusClass(emp)}>
                     <span class="dot"></span>{statusLabel(emp)}
@@ -602,14 +752,78 @@
           <option value="ADMIN">Administrator</option>
         </select>
       </div>
+      <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Personalstruktur</h4>
+      </div>
       <div class="form-group">
-        <label class="form-label" for="c-schedule-type">Arbeitszeitmodell</label>
-        <select id="c-schedule-type" bind:value={cScheduleType} class="select">
-          <option value="FIXED_WEEKLY">Feste Wochenstunden</option>
-          <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
+        <label class="form-label" for="c-classification">Personalkategorie</label>
+        <select
+          id="c-classification"
+          bind:value={cClassification}
+          onchange={onCreateClassificationChange}
+          class="select"
+        >
+          {#each CLASSIFICATION_OPTIONS as opt (opt)}
+            <option value={opt}>{CLASSIFICATION_LABELS[opt]}</option>
+          {/each}
         </select>
       </div>
-      {#if cScheduleType === "FIXED_WEEKLY"}
+      <div class="form-group">
+        <label class="form-label" for="c-coverage">Schicht-Gewicht</label>
+        <input
+          id="c-coverage"
+          type="number"
+          bind:value={cCoverageWeight}
+          class="input"
+          min="0"
+          max="9.99"
+          step="0.05"
+        />
+        {#if cCoverageOverridden}
+          <div class="override-row">
+            <span class="chip chip-warn">Manuell überschrieben</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage("c")}
+              >Auf Standard zurück</button
+            >
+          </div>
+        {/if}
+      </div>
+      <div class="form-group form-group--full">
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={cRequiresSupervision} />
+          Aufsichtspflichtig
+        </label>
+        {#if cSupervisionOverridden}
+          <div class="override-row">
+            <span class="chip chip-warn">Manuell überschrieben</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision("c")}
+              >Auf Standard zurück</button
+            >
+          </div>
+        {/if}
+      </div>
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Arbeitszeitmodell</h4>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="c-schedule-type">Arbeitszeitmodell</label>
+        <select
+          id="c-schedule-type"
+          value={cScheduleType}
+          onchange={(e) =>
+            onCreateScheduleTypeChange(
+              (e.currentTarget as HTMLSelectElement).value as typeof cScheduleType,
+            )}
+          class="select"
+        >
+          <option value="FIXED_SCHEDULE">Fester Stundenplan</option>
+          <option value="FLEXTIME">Gleitzeit</option>
+          <option value="MONTHLY_HOURS">Monatsstunden (Minijob)</option>
+          <option value="SHIFT_BASED">Schichtplan</option>
+        </select>
+      </div>
+      {#if cScheduleType === "FIXED_SCHEDULE" || cScheduleType === "FLEXTIME" || cScheduleType === "SHIFT_BASED"}
         <div class="form-group">
           <label class="form-label" for="c-hours">Wochenstunden</label>
           <input
@@ -637,6 +851,60 @@
             step="0.5"
             placeholder="z.B. 15 — leer = nur Tracking"
           />
+        </div>
+      {/if}
+
+      {#if cScheduleType === "FLEXTIME"}
+        <div class="form-group form-group--full form-subhead">
+          <h4 class="form-subhead-title">Kernarbeitszeit (optional)</h4>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="c-core-start">Kernzeitbeginn</label>
+          <input
+            id="c-core-start"
+            type="time"
+            bind:value={cCoreStart}
+            class="input"
+            placeholder="—"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="c-core-end">Kernzeitende</label>
+          <input
+            id="c-core-end"
+            type="time"
+            bind:value={cCoreEnd}
+            class="input"
+            placeholder="—"
+          />
+        </div>
+        <div class="form-group form-group--full">
+          <label class="form-label">Kerntage</label>
+          <div class="weekday-chips" role="group" aria-label="Kerntage">
+            {#each [
+              { value: 1, label: "Mo" },
+              { value: 2, label: "Di" },
+              { value: 3, label: "Mi" },
+              { value: 4, label: "Do" },
+              { value: 5, label: "Fr" },
+              { value: 6, label: "Sa" },
+              { value: 0, label: "So" }
+            ] as day (day.value)}
+              <button
+                type="button"
+                class="wd-chip"
+                class:wd-chip--active={cCoreDays.includes(day.value)}
+                onclick={() => {
+                  if (cCoreDays.includes(day.value)) {
+                    cCoreDays = cCoreDays.filter((d) => d !== day.value);
+                  } else {
+                    cCoreDays = [...cCoreDays, day.value];
+                  }
+                }}>{day.label}</button
+              >
+            {/each}
+          </div>
+          <p class="hint">Leer lassen für reine Gleitzeit ohne Kernzeit.</p>
         </div>
       {/if}
       <div class="form-group form-group--full">
@@ -707,6 +975,60 @@
           <option value="MANAGER">Manager</option>
           <option value="ADMIN">Administrator</option>
         </select>
+      </div>
+      <!-- ── Personalstruktur (Phase 41) ────────────────────────────────── -->
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Personalstruktur</h4>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="e-classification">Personalkategorie</label>
+        <select
+          id="e-classification"
+          bind:value={eClassification}
+          onchange={onEditClassificationChange}
+          class="select"
+        >
+          {#each CLASSIFICATION_OPTIONS as opt (opt)}
+            <option value={opt}>{CLASSIFICATION_LABELS[opt]}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="e-coverage">Schicht-Gewicht</label>
+        <input
+          id="e-coverage"
+          type="number"
+          bind:value={eCoverageWeight}
+          class="input"
+          min="0"
+          max="9.99"
+          step="0.05"
+        />
+        {#if eCoverageOverridden}
+          <div class="override-row">
+            <span class="chip chip-warn">Manuell überschrieben</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetCoverage("e")}
+              >Auf Standard zurück</button
+            >
+          </div>
+        {/if}
+      </div>
+      <div class="form-group form-group--full">
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={eRequiresSupervision} />
+          Aufsichtspflichtig
+        </label>
+        {#if eSupervisionOverridden}
+          <div class="override-row">
+            <span class="chip chip-warn">Manuell überschrieben</span>
+            <button type="button" class="btn btn-ghost btn-sm" onclick={() => resetSupervision("e")}
+              >Auf Standard zurück</button
+            >
+          </div>
+        {/if}
+      </div>
+      <div class="form-group form-group--full form-subhead">
+        <h4 class="form-subhead-title">Weitere Stammdaten</h4>
       </div>
       <div class="form-group form-group--full">
         <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
@@ -920,6 +1242,17 @@
     -webkit-overflow-scrolling: touch;
   }
 
+  /* Phase 39 (UI-15) — 390px viewport: the search input + role select have
+     min-widths that overflow on narrow phones. Drop both to 100% so they
+     stack cleanly below the count/checkbox row. */
+  @media (max-width: 480px) {
+    .filter-search,
+    .filter-select {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+  }
+
   .table {
     width: 100%;
     border-collapse: collapse;
@@ -1045,5 +1378,67 @@
     flex-shrink: 0;
     margin-top: 2px;
     cursor: pointer;
+  }
+
+  /* ── Personalstruktur (Phase 41) — subhead + override row ─────────────── */
+  .form-subhead {
+    margin-top: 6px;
+    border-top: 1px solid var(--border);
+    padding-top: 14px;
+  }
+  .form-subhead-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  .override-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+  }
+
+  /* ── Weekday chips (Phase 49.2 — FLEXTIME Kernarbeitszeit) ─────────────── */
+  .weekday-chips {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+
+  .wd-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    height: 2rem;
+    padding: 0 0.625rem;
+    border-radius: var(--r-pill);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    border: 1.5px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .wd-chip--active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+
+  .wd-chip:hover:not(.wd-chip--active) {
+    border-color: var(--brand);
+    color: var(--brand);
   }
 </style>

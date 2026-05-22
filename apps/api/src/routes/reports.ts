@@ -639,6 +639,150 @@ export async function reportRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /api/v1/reports/carryover-at-risk?days=60
+  //
+  // Returns entitlements whose carry-over deadline falls within the next
+  // ?days days (default 60) AND that still have non-zero carried-over days.
+  // Used by the /reports "Verfall-Warnungen" widget so managers see at-risk
+  // employees before the EuGH C-684/16 deadline triggers.
+  app.get("/carryover-at-risk", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const { days } = req.query as { days?: string };
+      const horizon = Math.max(1, Math.min(365, parseInt(days ?? "60", 10) || 60));
+
+      const now = new Date();
+      const cutoff = new Date(now.getTime() + horizon * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      const entitlements = await app.prisma.leaveEntitlement.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId, exitDate: null },
+          carriedOverDays: { gt: 0 },
+          carryOverDeadline: { gt: now, lte: cutoff },
+        },
+        include: {
+          employee: {
+            select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+          },
+          leaveType: { select: { id: true, name: true } },
+        },
+      });
+
+      // Look up the most recent CARRYOVER_WARNED audit log per entitlement,
+      // so the UI can show "Letzter Hinweis" without N+1 queries.
+      const entitlementIds = entitlements.map((e) => e.id);
+      const recentWarnings = entitlementIds.length
+        ? await app.prisma.auditLog.findMany({
+            where: {
+              action: "CARRYOVER_WARNED",
+              entity: "LeaveEntitlement",
+              entityId: { in: entitlementIds },
+            },
+            orderBy: { createdAt: "desc" },
+            select: { entityId: true, createdAt: true },
+          })
+        : [];
+
+      const lastWarningMap = new Map<string, Date>();
+      for (const w of recentWarnings) {
+        if (w.entityId && !lastWarningMap.has(w.entityId)) {
+          lastWarningMap.set(w.entityId, w.createdAt);
+        }
+      }
+
+      // Count of warnings sent in the last 30 days (KPI)
+      const warnedLast30 = await app.prisma.auditLog.count({
+        where: {
+          action: "CARRYOVER_WARNED",
+          entity: "LeaveEntitlement",
+          entityId: { in: entitlementIds },
+          createdAt: { gte: thirtyDaysAgo },
+        },
+      });
+
+      const rows = entitlements
+        .map((e) => {
+          const deadline = e.carryOverDeadline as Date;
+          const daysUntilDeadline = Math.ceil(
+            (deadline.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
+          );
+          return {
+            entitlementId: e.id,
+            employee: e.employee,
+            leaveType: e.leaveType,
+            year: e.year,
+            carriedOverDays: Number(e.carriedOverDays),
+            deadline: deadline.toISOString(),
+            daysUntilDeadline,
+            lastWarningSentAt: lastWarningMap.get(e.id)?.toISOString() ?? null,
+          };
+        })
+        .sort((a, b) => a.daysUntilDeadline - b.daysUntilDeadline);
+
+      const totalDaysAtRisk = rows.reduce((sum, r) => sum + r.carriedOverDays, 0);
+
+      return {
+        horizonDays: horizon,
+        summary: {
+          employeesAtRisk: rows.length,
+          totalDaysAtRisk,
+          warnedLast30,
+        },
+        rows,
+      };
+    },
+  });
+
+  // POST /api/v1/reports/carryover-warn
+  //
+  // Manual trigger for BUrlG § 7 Hinweispflicht. Same logic as the daily
+  // cron — including AuditLog dedup, audit-before-action ordering, employee
+  // notification, and manager CC — but scoped to a single entitlement.
+  app.post("/carryover-warn", {
+    schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { entitlementId } = (req.body ?? {}) as { entitlementId?: string };
+      if (!entitlementId) {
+        return reply.code(400).send({ error: "entitlementId fehlt" });
+      }
+
+      // Tenant scope check
+      const ent = await app.prisma.leaveEntitlement.findUnique({
+        where: { id: entitlementId },
+        include: { employee: { select: { tenantId: true } } },
+      });
+      if (!ent || ent.employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Anspruch nicht gefunden" });
+      }
+
+      const { runCarryoverWarningOnce } = await import("../plugins/carryover-warning");
+      const result = await runCarryoverWarningOnce(app, { onlyEntitlementId: entitlementId });
+
+      // Audit the manual trigger separately so we can distinguish operator
+      // action from the cron-driven warnings in the audit log.
+      await app.audit({
+        userId: req.user.sub,
+        action: "CARRYOVER_WARN_TRIGGERED",
+        entity: "LeaveEntitlement",
+        entityId: entitlementId,
+        newValue: {
+          source: "manual",
+          ...result,
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return {
+        ok: true,
+        warned: result.warned,
+        skippedDedup: result.skippedDedup,
+      };
+    },
+  });
+
   // GET /api/v1/reports/datev?year=&month=  – DATEV LODAS Export
   app.get("/datev", {
     schema: { tags: ["Reporting"], security: [{ bearerAuth: [] }] },

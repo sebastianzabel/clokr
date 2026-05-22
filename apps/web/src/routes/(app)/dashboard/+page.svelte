@@ -26,6 +26,9 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
+  import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
+  import Icon from "$lib/components/Icon.svelte";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -64,6 +67,8 @@
     today: { workedHours: number; entries: number };
     week: { workedHours: number; targetHours: number };
     periodType?: "week" | "month";
+    // Phase 49.1 — schedule type for per-model widget branching
+    scheduleType?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
     month?: { workedHours: number; targetHours: number };
     overtime: { balanceHours: number };
     vacation: { remaining: number; total: number; used: number };
@@ -122,16 +127,10 @@
   let myNextLeave: { startDate: string; endDate: string; days: number; type: string } | null =
     $state(null);
 
-  // My Week widget
-  interface MyWeekDay {
-    date: string;
-    workedHours: number;
-    expectedHours: number;
-    status: string;
-    isWorkday: boolean;
-    holidayName: string | null;
-  }
-  let myWeekDays: MyWeekDay[] = $state([]);
+  // Phase 49.4: MyWeekView (non-SHIFT_BASED) and MyShiftsWeek (SHIFT_BASED) each
+  // fetch their own data. shiftFallback flips to true when MyShiftsWeek reports 410,
+  // so a SHIFT_BASED-flagged employee with no actual shifts still gets the hours view.
+  let shiftFallback = $state(false);
 
   // Open items widget
   let openItems: {
@@ -260,27 +259,34 @@
         console.error("Failed to load dashboard stats:", statsResult.reason);
       }
 
-      // Load today's shift
-      try {
-        const shiftData = await api.get<{
-          weekDays: string[];
-          shifts: Array<{
-            date: string;
-            startTime: string;
-            endTime: string;
-            label: string | null;
-            template: { name: string; color: string } | null;
-          }>;
-        }>(`/shifts/week?date=${today}`);
-        const myShifts = shiftData.shifts.filter((s) => s.date.startsWith(today));
-        todayShift = myShifts.length > 0 ? myShifts[0] : null;
-      } catch (err) {
-        console.error("Failed to load today's shift:", err);
+      // Load today's shift — only for SHIFT_BASED employees. Other schedule types
+      // (FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS) may still have shift records in
+      // the DB from a previous schedule type (audit-proof: we don't delete shifts on
+      // schedule-type change), but those records are not relevant to the current model
+      // and should not surface in the employee's own dashboard.
+      if (stats?.scheduleType === "SHIFT_BASED") {
+        try {
+          const shiftData = await api.get<{
+            weekDays: string[];
+            shifts: Array<{
+              date: string;
+              startTime: string;
+              endTime: string;
+              label: string | null;
+              template: { name: string; color: string } | null;
+            }>;
+          }>(`/shifts/week?date=${today}`);
+          const myShifts = shiftData.shifts.filter((s) => s.date.startsWith(today));
+          todayShift = myShifts.length > 0 ? myShifts[0] : null;
+        } catch (err) {
+          console.error("Failed to load today's shift:", err);
+          todayShift = null;
+        }
+      } else {
         todayShift = null;
       }
 
-      // My Week + Open Items (all users)
-      await loadMyWeek();
+      // Phase 49.4: MyWeekView / MyShiftsWeek each fetch their own data — no prefetch here.
       try {
         openItems = await api.get<typeof openItems>("/dashboard/open-items");
       } catch {
@@ -348,18 +354,6 @@
       }
     } catch (err) {
       console.error("Failed to poll clock status:", err);
-    }
-  }
-
-  async function loadMyWeek() {
-    try {
-      const dateParam = format(new Date(), "yyyy-MM-dd");
-      const weekData = await api.get<{ weekDays: string[]; days: MyWeekDay[] }>(
-        `/dashboard/my-week?date=${dateParam}`,
-      );
-      myWeekDays = weekData.days;
-    } catch {
-      /* ignore */
     }
   }
 
@@ -869,87 +863,194 @@
     accent={capitalizedName}
   />
 
-  <!-- Timer + Side Stack Row (EMP-01 / EMP-02 grid-12 layout) -->
-  <div class="grid grid-12 dashboard-hero-row">
-    <!-- Timer Card Hero (EMP-01) -->
-    <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-      <div class="timer-hd">
-        <div>
-          <div class="timer-hd-title">
-            {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+  <!-- Phase 49.4 (rearrange): two-column stack — LEFT (Timer → Heutiger Eintrag → Aktivität),
+       RIGHT (KPI-pair → MyShifts/MyWeekView → Offene Vorgänge). Eliminates row-bound gaps
+       where Timer-Card and Aktivität were short while MyShiftsWeek on the right was tall. -->
+  <div class="dashboard-stacks">
+    <!-- LEFT column (col-7) -->
+    <div class="dashboard-stack dashboard-stack--left">
+      <!-- Timer Card Hero (EMP-01) -->
+      <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
+        <div class="timer-hd">
+          <div>
+            <div class="timer-hd-title">
+              {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+            </div>
+            <div class="timer-status">
+              {#if clockedIn && clockStart}
+                <span class="live-dot" aria-hidden="true"></span>
+                <span>gestartet um {format(clockStart, "HH:mm")}</span>
+              {:else}
+                <span class="timer-status-idle">Bereit zum Einstempeln</span>
+              {/if}
+            </div>
           </div>
-          <div class="timer-status">
-            {#if clockedIn && clockStart}
-              <span class="live-dot" aria-hidden="true"></span>
-              <span>gestartet um {format(clockStart, "HH:mm")}</span>
-            {:else}
-              <span class="timer-status-idle">Bereit zum Einstempeln</span>
-            {/if}
+          <div class="timer-hd-right">
+            <div class="timer-hd-title timer-hd-date">
+              {format(currentTime, "EEEE, d. MMMM", { locale: de })}
+            </div>
+            <div class="timer-now">
+              {format(currentTime, "HH:mm")}
+            </div>
           </div>
         </div>
-        <div class="timer-hd-right">
-          <div class="timer-hd-title timer-hd-date">
-            {format(currentTime, "EEEE, d. MMMM", { locale: de })}
-          </div>
-          <div class="timer-now">
-            {format(currentTime, "HH:mm")}
-          </div>
-        </div>
-      </div>
 
-      <div class="clock timer-display">
-        {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
-      </div>
-      <div class="timer-sub">
-        {clockedIn
-          ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
-          : "Bereit für deinen Tag"}
-      </div>
-
-      <div class="timer-progress">
-        <div class="timer-progress-track">
-          <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
+        <div class="clock timer-display">
+          {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
         </div>
-        <div class="timer-progress-labels">
-          <span>{fmtHours(workedHoursLive)} gearbeitet</span>
-          <span>Tagesziel 8:00</span>
-        </div>
-      </div>
+        {#if stats?.scheduleType === "FIXED_SCHEDULE"}
+          <div class="timer-sub">
+            {clockedIn
+              ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
+              : "Bereit für deinen Tag"}
+          </div>
 
-      <div class="card-foot timer-foot">
-        <button
-          onclick={handleClock}
-          disabled={clockLoading}
-          class="btn btn-primary timer-cta-primary"
-          type="button"
-        >
-          {#if clockLoading}<span class="btn-spinner"></span>{/if}
-          {clockedIn ? "Ausstempeln" : "Einstempeln"}
-        </button>
-        {#if clockedIn}
-          <button
-            type="button"
-            class="btn btn-ghost timer-cta-ghost"
-            disabled={clockLoading}
-            title="Pausen werden im Eintrag-Editor verwaltet"
-          >
-            Pause starten
-          </button>
+          <div class="timer-progress">
+            <div class="timer-progress-track">
+              <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
+            </div>
+            <div class="timer-progress-labels">
+              <span>{fmtHours(workedHoursLive)} gearbeitet</span>
+              <span>Tagesziel 8:00</span>
+            </div>
+          </div>
+        {:else}
+          <div class="timer-sub">
+            {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
+          </div>
         {/if}
-      </div>
 
-      {#if todayShift}
-        <div class="timer-shift">
-          <span class="timer-shift-label">
-            {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
-          </span>
+        <div class="card-foot timer-foot">
+          <button
+            onclick={handleClock}
+            disabled={clockLoading}
+            class="btn btn-primary timer-cta-primary"
+            type="button"
+          >
+            {#if clockLoading}<span class="btn-spinner"></span>{/if}
+            {clockedIn ? "Ausstempeln" : "Einstempeln"}
+          </button>
+          {#if clockedIn}
+            <button
+              type="button"
+              class="btn btn-ghost timer-cta-ghost"
+              disabled={clockLoading}
+              title="Pausen werden im Eintrag-Editor verwaltet"
+            >
+              Pause starten
+            </button>
+          {/if}
         </div>
-      {/if}
-    </Card>
-    <!-- /timer-card -->
 
-    <!-- Side stack (EMP-02): KPI pair + Wochenbilanz chart -->
-    <div class="col-5 dashboard-side-stack">
+        {#if todayShift}
+          <div class="timer-shift">
+            <span class="timer-shift-label">
+              {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
+            </span>
+          </div>
+        {/if}
+      </Card>
+      <!-- /timer-card -->
+
+      <!-- Heutiger Eintrag (moved into left stack — Phase 49.4 rearrange) -->
+      <Card animate class="today-entry-card" style="--card-idx: 3;">
+        <CardHeader
+          title="Heutiger Eintrag"
+          sub={format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
+        >
+          {#snippet actions()}
+            <a
+              href="/time-entries?view=list&date={format(currentTime, 'yyyy-MM-dd')}"
+              class="btn btn-ghost btn-sm today-entry-edit"
+              aria-label="Heutigen Eintrag bearbeiten"
+            >
+              ✎ Bearbeiten
+            </a>
+          {/snippet}
+        </CardHeader>
+
+        <div class="today-stats">
+          <div class="today-stat">
+            <div class="today-stat-label">Start</div>
+            <div class="today-stat-value">{entryStartHHMM}</div>
+          </div>
+          <div class="today-stat">
+            <div class="today-stat-label">Ende</div>
+            <div class="today-stat-value">{entryEndHHMM}</div>
+          </div>
+          <div class="today-stat">
+            <div class="today-stat-label">Pausen</div>
+            <div class="today-stat-value">{entryBreakLabel}</div>
+          </div>
+          <div class="today-stat">
+            <div class="today-stat-label">Netto</div>
+            <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
+          </div>
+        </div>
+
+        <div class="today-timeline">
+          <div class="today-timeline-track"></div>
+          <div class="today-timeline-fill" style="width: {entryProgressPct}%;"></div>
+          <div class="today-timeline-marks">
+            {#each ["07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00"] as h (h)}
+              <span class="today-timeline-mark">{h}</span>
+            {/each}
+          </div>
+        </div>
+
+        <div class="callout brand today-arbzg">
+          <span class="ico" aria-hidden="true">ℹ️</span>
+          <div>
+            <b>{arbzgCallout.title}</b>
+            <span> {arbzgCallout.body}</span>
+          </div>
+        </div>
+      </Card>
+      <!-- /today-entry-card -->
+
+      <!-- Aktivität (moved into left stack — Phase 49.4 rearrange) -->
+      <Card animate class="activity-card" style="--card-idx: 4;">
+        <CardHeader title="Aktivität" sub="Letzte Ereignisse" />
+
+        <div class="activity-list">
+          {#if activityItems.length === 0}
+            <div class="activity-empty">Keine Ereignisse in der letzten Zeit.</div>
+          {:else}
+            {#each activityItems as item, i (item.id)}
+              <div class="activity-row" class:activity-row--last={i === activityItems.length - 1}>
+                <div class="activity-icon" aria-hidden="true">
+                  {#if item.icon === "check"}
+                    ✓
+                  {:else if item.icon === "x"}
+                    ✕
+                  {:else if item.icon === "clock"}
+                    ⏱
+                  {:else if item.icon === "inbox"}
+                    ✉
+                  {:else if item.icon === "edit"}
+                    ✎
+                  {:else if item.icon === "lock"}
+                    🔒
+                  {:else}
+                    •
+                  {/if}
+                </div>
+                <div class="activity-text">
+                  <b class="activity-who">{item.who}</b>
+                  <span class="activity-what"> {item.what}</span>
+                </div>
+                <div class="activity-when">{relativeTime(item.when)}</div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </Card>
+      <!-- /activity-card -->
+    </div>
+    <!-- /dashboard-stack--left -->
+
+    <!-- RIGHT column (col-5) -->
+    <div class="dashboard-stack dashboard-stack--right">
       <!-- KPI pair -->
       <Card animate class="kpi-pair" style="--card-idx: 1;">
         {#if stats}
@@ -973,261 +1074,130 @@
                 ? "good"
                 : "warn"}
           />
+          {#if stats.scheduleType === "FLEXTIME"}
+            {@const weekDiff = stats.week.workedHours - stats.week.targetHours}
+            <KPIStat
+              label="Diese Woche Soll"
+              value={fmtHours(stats.week.workedHours)}
+              unit={`/ ${fmtHours(stats.week.targetHours)}`}
+              delta={weekDiff === 0
+                ? "ausgeglichen"
+                : weekDiff > 0
+                  ? `↗ +${fmtHours(weekDiff)}`
+                  : `↘ ${fmtHours(weekDiff)}`}
+              deltaTone={weekDiff === 0 ? "neutral" : weekDiff > 0 ? "good" : "warn"}
+            />
+          {/if}
         {:else}
           <KPIStat label="Urlaubstage" value="–" />
           <KPIStat label="Überstundenkonto" value="–" />
         {/if}
       </Card>
 
-      <!-- Weekly bar chart -->
-      <Card animate class="weekly-card" style="--card-idx: 2;">
-        <CardHeader title="Wochenbilanz" sub="Diese Woche">
-          {#snippet actions()}
-            <div class="weekly-total-wrap">
-              <div class="weekly-total">
-                {stats?.week ? fmtHours(stats.week.workedHours) : "–"}
-              </div>
-              <div class="weekly-total-target">
-                / {stats?.week ? stats.week.targetHours : 40}:00 h
-              </div>
-            </div>
-          {/snippet}
-        </CardHeader>
-        <div class="weekly-chart">
-          {#each myWeekDays.slice(0, 5) as d, i (i)}
-            {@const today = isToday(d.date)}
-            {@const maxBar = 11}
-            {@const h = Math.min(maxBar, d.workedHours)}
-            <div class="weekly-bar-col">
-              <div class="weekly-bar-track">
-                <div
-                  class="weekly-bar-fill"
-                  class:weekly-bar-today={today}
-                  style="height: {(h / maxBar) * 100}%;"
-                ></div>
-                {#if d.expectedHours > 0}
-                  <div
-                    class="weekly-bar-target"
-                    style="bottom: {(d.expectedHours / maxBar) * 100}%;"
-                  ></div>
-                {/if}
-              </div>
-              <div class="weekly-bar-label" class:weekly-bar-label-today={today}>
-                {dayLabel(d.date)}
-              </div>
-            </div>
-          {/each}
-        </div>
-      </Card>
+      <!-- Phase 49.4 — Weekly view: MyShiftsWeek for SHIFT_BASED, MyWeekView for everyone else -->
+      {#if stats?.scheduleType === "SHIFT_BASED" && !shiftFallback}
+        <MyShiftsWeek
+          onFallback={() => {
+            shiftFallback = true;
+          }}
+        />
+      {:else}
+        <MyWeekView />
+      {/if}
+
+      <!-- Offene Vorgänge (moved into right stack — Phase 49.4 rearrange) -->
+      {#if openItems}
+        <Card animate class="open-items" style="--card-idx: 6;">
+          <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
+            {#snippet actions()}
+              <a href="/leave?view=approvals" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
+            {/snippet}
+          </CardHeader>
+          <div class="open-items-list">
+            {#if openItems.total === 0}
+              <p class="oi-empty">Keine offenen Vorgänge</p>
+            {:else}
+              {#if openItems.missingDays.length > 0}
+                <div class="oi-group">
+                  <div class="oi-group-header">
+                    <span class="oi-dot oi-dot--warn"></span>
+                    <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
+                  </div>
+                  {#each openItems.missingDays as missDate (missDate)}
+                    {@const d = new Date(missDate + "T12:00:00")}
+                    {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
+                    <a href="/time-entries?view=list&date={missDate}" class="oi-item">
+                      <span
+                        >{dayName}. {d.toLocaleDateString("de-DE", {
+                          day: "2-digit",
+                          month: "2-digit",
+                        })}</span
+                      >
+                      <span class="oi-link">Nachtragen →</span>
+                    </a>
+                  {/each}
+                </div>
+              {/if}
+              {#if openItems.pendingRequests > 0}
+                <a href="/leave?view=requests" class="oi-row">
+                  <span class="oi-dot oi-dot--pending"></span>
+                  <span
+                    >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
+                      ? "r Antrag"
+                      : " Anträge"}</span
+                  >
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if openItems.invalidEntries > 0}
+                <a href="/time-entries" class="oi-row">
+                  <span class="oi-dot oi-dot--fix"></span>
+                  <span>{openItems.invalidEntries} zu korrigieren</span>
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if openItems.pendingApprovals > 0}
+                <a href="/leave?view=approvals" class="oi-row">
+                  <span class="oi-dot oi-dot--approval"></span>
+                  <span
+                    >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
+                      ? "r Antrag"
+                      : " Anträge"}</span
+                  >
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+            {/if}
+          </div>
+        </Card>
+      {/if}
     </div>
+    <!-- /dashboard-stack--right -->
   </div>
-  <!-- /grid grid-12 dashboard-hero-row -->
+  <!-- /dashboard-stacks -->
 
-  <!-- Row 2: Heutiger Eintrag (col-7) + Aktivität (col-5) -->
-  <div class="grid grid-12 dashboard-row-2">
-    <!-- Heutiger Eintrag (col-7) -->
-    <Card animate class="col-7 today-entry-card" style="--card-idx: 3;">
-      <CardHeader
-        title="Heutiger Eintrag"
-        sub={format(currentTime, "EEEE, d. MMMM yyyy", { locale: de })}
-      >
-        {#snippet actions()}
-          <a
-            href="/time-entries?view=list&date={format(currentTime, 'yyyy-MM-dd')}"
-            class="btn btn-ghost btn-sm today-entry-edit"
-            aria-label="Heutigen Eintrag bearbeiten"
-          >
-            ✎ Bearbeiten
-          </a>
-        {/snippet}
-      </CardHeader>
-
-      <div class="today-stats">
-        <div class="today-stat">
-          <div class="today-stat-label">Start</div>
-          <div class="today-stat-value">{entryStartHHMM}</div>
-        </div>
-        <div class="today-stat">
-          <div class="today-stat-label">Ende</div>
-          <div class="today-stat-value">{entryEndHHMM}</div>
-        </div>
-        <div class="today-stat">
-          <div class="today-stat-label">Pausen</div>
-          <div class="today-stat-value">{entryBreakLabel}</div>
-        </div>
-        <div class="today-stat">
-          <div class="today-stat-label">Netto</div>
-          <div class="today-stat-value today-stat-accent">{entryNetLabel}</div>
-        </div>
-      </div>
-
-      <!-- Timeline -->
-      <div class="today-timeline">
-        <div class="today-timeline-track"></div>
-        <div class="today-timeline-fill" style="width: {entryProgressPct}%;"></div>
-        <div class="today-timeline-marks">
-          {#each ["07:00", "09:00", "11:00", "13:00", "15:00", "17:00", "19:00"] as h (h)}
-            <span class="today-timeline-mark">{h}</span>
-          {/each}
-        </div>
-      </div>
-
-      <div class="callout brand today-arbzg">
-        <span class="ico" aria-hidden="true">ℹ️</span>
-        <div>
-          <b>{arbzgCallout.title}</b>
-          <span> {arbzgCallout.body}</span>
-        </div>
-      </div>
-    </Card>
-    <!-- /today-entry-card -->
-
-    <!-- Aktivität (col-5) -->
-    <Card animate class="col-5 activity-card" style="--card-idx: 4;">
-      <CardHeader title="Aktivität" sub="Letzte Ereignisse" />
-
-      <div class="activity-list">
-        {#if activityItems.length === 0}
-          <div class="activity-empty">Keine Ereignisse in der letzten Zeit.</div>
-        {:else}
-          {#each activityItems as item, i (item.id)}
-            <div class="activity-row" class:activity-row--last={i === activityItems.length - 1}>
-              <div class="activity-icon" aria-hidden="true">
-                {#if item.icon === "check"}
-                  ✓
-                {:else if item.icon === "x"}
-                  ✕
-                {:else if item.icon === "clock"}
-                  ⏱
-                {:else if item.icon === "inbox"}
-                  ✉
-                {:else if item.icon === "edit"}
-                  ✎
-                {:else if item.icon === "lock"}
-                  🔒
-                {:else}
-                  •
-                {/if}
-              </div>
-              <div class="activity-text">
-                <b class="activity-who">{item.who}</b>
-                <span class="activity-what"> {item.what}</span>
-              </div>
-              <div class="activity-when">{relativeTime(item.when)}</div>
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </Card>
-    <!-- /activity-card -->
-  </div>
-  <!-- /grid grid-12 dashboard-row-2 -->
-
-  <!-- Info Bar: Schicht / Nächster Urlaub -->
-  {#if todayShift || myNextLeave}
+  <!-- Phase 49.4 — Nächster Urlaub (Schicht-Pille entfernt: Info ist bereits in Timer-Card sichtbar) -->
+  {#if myNextLeave}
     <div class="info-bar card-animate" style="--card-idx: 5;">
-      {#if todayShift}
-        <div class="info-bar-item">
-          <span class="info-bar-icon">📋</span>
-          <span
-            >Heute: <strong>{todayShift.startTime}–{todayShift.endTime}</strong>{todayShift.label
-              ? ` (${todayShift.label})`
-              : ""}</span
+      <div class="info-bar-item">
+        <span class="info-bar-icon"><Icon name="umbrella" size={16} /></span>
+        <span
+          >Nächster {myNextLeave.type}:
+          <strong
+            >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
+              day: "2-digit",
+              month: "2-digit",
+            })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
+              day: "2-digit",
+              month: "2-digit",
+            })}</strong
           >
-        </div>
-      {/if}
-      {#if myNextLeave}
-        <div class="info-bar-item">
-          <span class="info-bar-icon">🌴</span>
-          <span
-            >Nächster {myNextLeave.type}:
-            <strong
-              >{new Date(myNextLeave.startDate).toLocaleDateString("de-DE", {
-                day: "2-digit",
-                month: "2-digit",
-              })}–{new Date(myNextLeave.endDate).toLocaleDateString("de-DE", {
-                day: "2-digit",
-                month: "2-digit",
-              })}</strong
-            >
-            ({myNextLeave.days}
-            {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
-          >
-        </div>
-      {/if}
+          ({myNextLeave.days}
+          {myNextLeave.days === 1 ? "Tag" : "Tage"})</span
+        >
+      </div>
     </div>
   {/if}
-
-  <!-- Open Items Widget — side by side on desktop -->
-  <div class="widgets-row">
-    <!-- Open Items Widget -->
-    {#if openItems}
-      <Card animate class="open-items" style="--card-idx: 6;">
-        <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
-          {#snippet actions()}
-            <a href="/leave?view=approvals" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
-          {/snippet}
-        </CardHeader>
-        <div class="open-items-list">
-          {#if openItems.total === 0}
-            <p class="oi-empty">Keine offenen Vorgänge</p>
-          {:else}
-            {#if openItems.missingDays.length > 0}
-              <div class="oi-group">
-                <div class="oi-group-header">
-                  <span class="oi-dot oi-dot--warn"></span>
-                  <span>{openItems.missingDays.length} fehlende Zeiteinträge</span>
-                </div>
-                {#each openItems.missingDays as missDate (missDate)}
-                  {@const d = new Date(missDate + "T12:00:00")}
-                  {@const dayName = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][d.getDay()]}
-                  <a href="/time-entries?view=list&date={missDate}" class="oi-item">
-                    <span
-                      >{dayName}. {d.toLocaleDateString("de-DE", {
-                        day: "2-digit",
-                        month: "2-digit",
-                      })}</span
-                    >
-                    <span class="oi-link">Nachtragen →</span>
-                  </a>
-                {/each}
-              </div>
-            {/if}
-            {#if openItems.pendingRequests > 0}
-              <a href="/leave?view=requests" class="oi-row">
-                <span class="oi-dot oi-dot--pending"></span>
-                <span
-                  >{openItems.pendingRequests} offene{openItems.pendingRequests === 1
-                    ? "r Antrag"
-                    : " Anträge"}</span
-                >
-                <span class="oi-link">→</span>
-              </a>
-            {/if}
-            {#if openItems.invalidEntries > 0}
-              <a href="/time-entries" class="oi-row">
-                <span class="oi-dot oi-dot--fix"></span>
-                <span>{openItems.invalidEntries} zu korrigieren</span>
-                <span class="oi-link">→</span>
-              </a>
-            {/if}
-            {#if openItems.pendingApprovals > 0}
-              <a href="/leave?view=approvals" class="oi-row">
-                <span class="oi-dot oi-dot--approval"></span>
-                <span
-                  >{openItems.pendingApprovals} zu genehmigende{openItems.pendingApprovals === 1
-                    ? "r Antrag"
-                    : " Anträge"}</span
-                >
-                <span class="oi-link">→</span>
-              </a>
-            {/if}
-          {/if}
-        </div>
-      </Card>
-    {/if}
-  </div>
-  <!-- /widgets-row -->
 
   <!-- ═══ Team-Bereich (nur Manager/Admin) ═══ -->
   <!-- Single role gate: employees never see team charts, upcoming leaves, or team-week table -->
@@ -1368,27 +1338,31 @@
                           </span>
                         {/if}
                       {:else if day.status === "clocked_in"}
-                        <span class="cell-badge cell-badge--active" title="Eingestempelt"> ● </span>
+                        <span class="cell-badge cell-badge--active" title="Eingestempelt">
+                          <Icon name="circle-fill" size={14} />
+                        </span>
                       {:else if day.status === "absent"}
                         <span
                           class="cell-badge cell-badge--absent"
                           title={day.reason ?? "Abwesend"}
                         >
                           {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
-                            🤒
+                            <Icon name="medical" size={14} title={day.reason ?? "Krank"} />
                           {:else if day.reason === "Mutterschutz"}
-                            🤰
+                            <Icon name="heart" size={14} title="Mutterschutz" />
                           {:else if day.reason === "Elternzeit"}
-                            👶
+                            <Icon name="users" size={14} title="Elternzeit" />
                           {:else}
-                            🌴
+                            <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
                           {/if}
                         </span>
                       {:else if day.status === "holiday"}
                         <span
                           class="cell-badge cell-badge--holiday"
-                          title={day.reason ?? "Feiertag"}>☀️</span
+                          title={day.reason ?? "Feiertag"}
                         >
+                          <Icon name="sun" size={14} title={day.reason ?? "Feiertag"} />
+                        </span>
                       {:else if day.status === "missing"}
                         <span
                           class="cell-badge cell-badge--missing"
@@ -1396,7 +1370,7 @@
                             ? day.shift.startTime + '–' + day.shift.endTime
                             : 'Arbeitstag'}"
                         >
-                          ⚠️
+                          <Icon name="alert" size={14} title="Fehlt" />
                         </span>
                       {:else if day.status === "scheduled"}
                         <span
@@ -1430,30 +1404,35 @@
         </div>
 
         <div class="legend">
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--present">5.0</span> Anwesend</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--active">●</span> Eingestempelt</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--absent">🌴</span> Urlaub</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--absent">🤒</span> Krank</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--missing">⚠️</span> Fehlt</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--holiday">🎉</span> Feiertag</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--scheduled">9–17</span> Geplant</span
-          >
-          <span class="legend-item"
-            ><span class="cell-badge cell-badge--none">–</span> Keine Daten</span
-          >
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--present">5.0</span> Anwesend
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--active"><Icon name="circle-fill" size={12} /></span>
+            Eingestempelt
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--absent"><Icon name="umbrella" size={12} /></span>
+            Urlaub
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
+            Krank
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
+            Fehlt
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--holiday"><Icon name="sun" size={12} /></span>
+            Feiertag
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--none">–</span> Keine Daten
+          </span>
         </div>
       </Card>
     {/if}
@@ -1476,15 +1455,28 @@
 
   /* Phase 29: legacy .clock-card rules removed — see .timer-card in app.css */
 
-  /* ── Dashboard hero row (Phase 29) ── */
-  .dashboard-hero-row {
+  /* ── Phase 49.4 rearrange — two-column stack layout ───────────────────────
+     LEFT column flows independently (Timer → Heutiger Eintrag → Aktivität),
+     RIGHT column flows independently (KPI-pair → MyShifts/MyWeekView → Offene
+     Vorgänge). Each column packs widgets top-down with no row-bound gaps. */
+  .dashboard-stacks {
     margin-top: 32px;
     margin-bottom: 1.5rem;
+    display: grid;
+    grid-template-columns: 7fr 5fr;
+    gap: 1.5rem;
+    align-items: start;
   }
-
-  /* ── Row 2: Heutiger Eintrag + Aktivität (handoff: employee.jsx:204-284) ── */
-  .dashboard-row-2 {
-    margin-bottom: 1.5rem;
+  .dashboard-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    min-width: 0;
+  }
+  @media (max-width: 900px) {
+    .dashboard-stacks {
+      grid-template-columns: 1fr;
+    }
   }
 
   :global(.today-entry-card),
@@ -1654,12 +1646,8 @@
     }
   }
 
-  /* ── Side stack (Phase 29, EMP-02): KPI pair + Wochenbilanz ── */
-  .dashboard-side-stack {
-    display: grid;
-    grid-template-rows: auto auto;
-    gap: 18px;
-  }
+  /* Phase 49.4: .dashboard-side-stack replaced by .dashboard-stack--right */
+
   :global(.kpi-pair) {
     display: grid;
     grid-template-columns: 1fr 1fr;

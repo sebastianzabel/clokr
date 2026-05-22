@@ -1,10 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { api } from "$api/client";
+  import { api, ApiError } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
+  import Modal from "$components/ui/Modal.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import { dndzone, type DndEvent } from "svelte-dnd-action";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface Employee {
@@ -12,21 +16,52 @@
     firstName: string;
     lastName: string;
     employeeNumber?: string;
-    role?: string;
+    classification?: string;
+    coverageWeight?: number | string;
+    requiresSupervision?: boolean;
+    workSchedules?: Array<{
+      type: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
+      weeklyHours: number | string | null;
+    }>;
   }
   interface Shift {
     id: string;
     employeeId: string;
-    date: string; // ISO YYYY-MM-DD (possibly full datetime)
-    startTime: string; // "HH:MM" or "HH:MM:SS"
+    templateId: string | null;
+    date: string;
+    startTime: string;
     endTime: string;
     label: string | null;
+    note: string | null;
+    conflictsWithLeave?: boolean;
     template?: { name: string; color: string } | null;
   }
+  interface AvailabilityEntry {
+    employeeId: string;
+    date: string;
+    availability:
+      | "available"
+      | "vacation"
+      | "sick"
+      | "special"
+      | "other"
+      | "unavailable"
+      | "preferred";
+  }
+  interface CoverageEntry {
+    date: string;
+    effectiveStaff: number;
+    minStaff: number;
+    hasSupervisor: boolean;
+    unsupervisedAzubis: number;
+    coverageStatus: "ok" | "under" | "supervision-missing";
+  }
   interface WeekData {
-    weekDays: string[]; // 7 ISO dates Mon..Sun
+    weekDays: string[];
     employees: Employee[];
     shifts: Shift[];
+    availability: AvailabilityEntry[];
+    coverage: CoverageEntry[];
   }
   interface Template {
     id: string;
@@ -37,12 +72,10 @@
   }
 
   const DOW = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
-  // Coverage threshold (per handoff: at least 2 staff on any working day)
-  const MIN_COVERAGE = 2;
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function mondayOfWeek(d: Date): Date {
-    const dow = d.getDay(); // Sun=0, Mon=1, ..., Sat=6
+    const dow = d.getDay();
     const offset = dow === 0 ? -6 : 1 - dow;
     const m = new Date(d);
     m.setDate(m.getDate() + offset);
@@ -61,9 +94,286 @@
   let cursorMonday = $state(mondayOfWeek(new Date()));
   let week: WeekData | null = $state(null);
   let templates: Template[] = $state([]);
+  // Phase 47.5 — Set of weekday indices (0=Mo..6=So) marked as closed in storeHours.
+  let closedDays = $state<Set<number>>(new Set());
   let loading = $state(true);
   let error = $state("");
   let gated = $state(false);
+
+  // Modal state
+  let modalOpen = $state(false);
+  let modalEmployeeId = $state("");
+  let modalDate = $state("");
+  let modalTemplateId = $state("");
+  let modalStartTime = $state("08:00");
+  let modalEndTime = $state("16:00");
+  let modalLabel = $state("");
+  let modalNote = $state("");
+  let modalError = $state("");
+  let saving = $state(false);
+  let editingShiftId: string | null = $state(null);
+
+  // ── Phase 47 — Drag & Drop sources/targets ────────────────────────────────
+  // Each draggable Template-Chip lives in the strip dndzone keyed by its id.
+  // svelte-dnd-action requires items to have a stable `id` field.
+  // Phase 47-02 — discriminated union: template-chip (creates shift) or
+  // shift-pill (moves shift between cells). `kind` is the discriminator;
+  // `onCellFinalize` dispatches on it to route to POST /shifts (create) or
+  // PUT /shifts/:id (move).
+  type TemplateDragItem = { id: string; kind: "template"; templateId: string };
+  type ShiftDragItem = {
+    id: string;
+    kind: "shift";
+    shiftId: string;
+    originEmployeeId: string;
+    originIso: string;
+  };
+  type DragItem = TemplateDragItem | ShiftDragItem;
+  type DropTargetKey = string; // `${employeeId}::${iso}`
+
+  // The strip's dndzone item array — TemplateDragItems plus svelte-dnd-action's
+  // transient shadow-placeholder objects mid-drag. Typed as DragItem[] so the
+  // shadow (which the library adds during drag-out to preserve children.length)
+  // can live in the array without being filtered out.
+  let dndTemplates: DragItem[] = $state([]);
+
+  // Per-cell dndzone item array — empty by default. When the chip is dragged
+  // onto a target cell, svelte-dnd-action moves the item into that zone's
+  // array; we detect the new arrival in onCellFinalize, fire the API call,
+  // and reset.
+  let dndCells = $state<Record<DropTargetKey, DragItem[]>>({});
+
+  // Track the in-flight drop so the UI shows a saving state on the affected cell.
+  let dropPending: DropTargetKey | null = $state(null);
+
+  const FLIP_MS = 120; // dndzone animation duration
+
+  // Delete confirmation
+  let shiftDeleteConfirm = $state<{ open: boolean; id: string | null; closeAfter: boolean }>({
+    open: false,
+    id: null,
+    closeAfter: false,
+  });
+
+  // Phase 43-03 — Force-override confirmation when the API responds 409 with
+  // SHIFT_CONFLICT_LEAVE / SHIFT_CONFLICT_ABSENCE.
+  let conflictConfirm = $state<{
+    open: boolean;
+    message: string;
+    code: string;
+  }>({ open: false, message: "", code: "" });
+
+  // Phase 43-02 — Woche generieren preview + commit
+  interface GenerateDiff {
+    weekStart: string;
+    create: Array<{
+      id?: string;
+      employeeId: string;
+      date: string;
+      templateId?: string;
+      startTime: string;
+      endTime: string;
+      label?: string;
+    }>;
+    skip: Array<{
+      employeeId: string;
+      date: string;
+      reason:
+        | "leave"
+        | "absence"
+        | "existing"
+        | "no-pattern"
+        | "open-day"
+        | "availability-unavailable";
+    }>;
+    committed: boolean;
+  }
+  let generateOpen = $state(false);
+  let generateDiff: GenerateDiff | null = $state(null);
+  let generating = $state(false);
+  let generateError = $state("");
+
+  // Phase 43-05 — Letzte Woche kopieren (primary action)
+  interface CopyDiff {
+    sourceWeekStart: string;
+    targetWeekStart: string;
+    create: Array<{
+      id?: string;
+      employeeId: string;
+      date: string;
+      templateId?: string | null;
+      startTime: string;
+      endTime: string;
+      label?: string | null;
+    }>;
+    skip: Array<{
+      employeeId: string;
+      date: string;
+      reason: "leave" | "absence" | "existing" | "availability-unavailable";
+    }>;
+    committed: boolean;
+  }
+  let copyOpen = $state(false);
+  let copyDiff: CopyDiff | null = $state(null);
+  let copying = $state(false);
+  let copyError = $state("");
+  // Default source week = target week minus 7 days. Bound to the date input
+  // and re-derived whenever the user navigates to a different target week.
+  let copySourceWeekStart = $state("");
+
+  function empName(id: string): string {
+    if (!week) return id;
+    const e = week.employees.find((x) => x.id === id);
+    return e ? `${e.firstName} ${e.lastName}` : id;
+  }
+
+  function skipReasonLabel(r: GenerateDiff["skip"][number]["reason"]): string {
+    switch (r) {
+      case "leave":
+        return "Urlaub";
+      case "absence":
+        return "Abwesenheit";
+      case "existing":
+        return "Schicht existiert";
+      case "open-day":
+        return "Frei nach Muster";
+      case "availability-unavailable":
+        return "Nicht verfügbar";
+      case "no-pattern":
+      default:
+        return "Kein Muster";
+    }
+  }
+
+  async function openGenerate() {
+    generateError = "";
+    generateDiff = null;
+    generating = true;
+    generateOpen = true;
+    try {
+      const weekStart = ymd(cursorMonday);
+      const diff = await api.post<GenerateDiff>("/shifts/generate-week", {
+        weekStart,
+        commit: false,
+      });
+      generateDiff = diff;
+    } catch (e) {
+      generateError = e instanceof Error ? e.message : "Vorschau fehlgeschlagen.";
+    } finally {
+      generating = false;
+    }
+  }
+
+  async function commitGenerate() {
+    if (!generateDiff) return;
+    generating = true;
+    generateError = "";
+    try {
+      const weekStart = ymd(cursorMonday);
+      const result = await api.post<GenerateDiff>("/shifts/generate-week", {
+        weekStart,
+        commit: true,
+      });
+      toasts.success(`${result.create.length} Schicht(en) erstellt.`);
+      generateOpen = false;
+      generateDiff = null;
+      await load();
+    } catch (e) {
+      generateError = e instanceof Error ? e.message : "Generierung fehlgeschlagen.";
+    } finally {
+      generating = false;
+    }
+  }
+
+  // ── Phase 43-05 — Letzte Woche kopieren ───────────────────────────────────
+  function copySkipReasonLabel(r: CopyDiff["skip"][number]["reason"]): string {
+    switch (r) {
+      case "leave":
+        return "Übersprungen — Urlaub";
+      case "absence":
+        return "Übersprungen — Krankheit";
+      case "existing":
+        return "Übersprungen — Schicht existiert bereits";
+      case "availability-unavailable":
+        return "Übersprungen — nicht verfügbar";
+      default:
+        return "Übersprungen";
+    }
+  }
+
+  // Default source = current target week minus 7 days
+  function defaultSourceWeekStart(): string {
+    const d = new Date(cursorMonday);
+    d.setDate(d.getDate() - 7);
+    return ymd(d);
+  }
+
+  async function openCopy() {
+    copyError = "";
+    copyDiff = null;
+    copySourceWeekStart = defaultSourceWeekStart();
+    copyOpen = true;
+    await refreshCopyPreview();
+  }
+
+  // Align any selected date back to the Monday of that week so the input is
+  // forgiving (user can pick any day-of-week, we round down to Monday).
+  function mondayOf(iso: string): string {
+    const [y, m, d] = iso.split("-").map(Number);
+    const dt = new Date(y, m - 1, d);
+    return ymd(mondayOfWeek(dt));
+  }
+
+  async function refreshCopyPreview() {
+    if (!copySourceWeekStart) {
+      copyError = "Bitte eine Quellwoche wählen.";
+      return;
+    }
+    const sourceWeekStart = mondayOf(copySourceWeekStart);
+    const targetWeekStart = ymd(cursorMonday);
+    if (sourceWeekStart === targetWeekStart) {
+      copyError = "Quell- und Zielwoche sind identisch.";
+      copyDiff = null;
+      return;
+    }
+    copying = true;
+    copyError = "";
+    try {
+      const diff = await api.post<CopyDiff>("/shifts/copy-week", {
+        sourceWeekStart,
+        targetWeekStart,
+        commit: false,
+      });
+      copyDiff = diff;
+    } catch (e) {
+      copyError = e instanceof Error ? e.message : "Vorschau fehlgeschlagen.";
+    } finally {
+      copying = false;
+    }
+  }
+
+  async function commitCopy() {
+    if (!copyDiff) return;
+    copying = true;
+    copyError = "";
+    try {
+      const sourceWeekStart = mondayOf(copySourceWeekStart);
+      const targetWeekStart = ymd(cursorMonday);
+      const result = await api.post<CopyDiff>("/shifts/copy-week", {
+        sourceWeekStart,
+        targetWeekStart,
+        commit: true,
+      });
+      toasts.success(`${result.create.length} Schicht(en) kopiert.`);
+      copyOpen = false;
+      copyDiff = null;
+      await load();
+    } catch (e) {
+      copyError = e instanceof Error ? e.message : "Kopieren fehlgeschlagen.";
+    } finally {
+      copying = false;
+    }
+  }
 
   // ── Role gate ──────────────────────────────────────────────────────────────
   onMount(() => {
@@ -80,15 +390,36 @@
   async function load() {
     if (gated) return;
     loading = true;
+    // Phase 47 — clear leftover per-cell drop state when navigating weeks.
+    dndCells = {};
     error = "";
     try {
       const date = ymd(cursorMonday);
-      const [w, t] = await Promise.all([
+      const [w, t, work] = await Promise.all([
         api.get<WeekData>(`/shifts/week?date=${date}`),
         api.get<Template[]>("/shifts/templates"),
+        api.get<{ storeHours?: Array<{ day: number; closed?: boolean }> }>(
+          "/settings/work",
+        ),
       ]);
       week = w;
       templates = t;
+      // Phase 47.5 — closed-day set used by grid to dim cells visually.
+      closedDays = new Set(
+        (work.storeHours ?? [])
+          .filter((s) => s.closed === true)
+          .map((s) => s.day),
+      );
+      // Phase 47 — seed one TemplateDragItem per visible template (top 3).
+      // Important: slice here, NOT in the each-block. svelte-dnd-action maps
+      // items[i] to children[i] positionally; if .slice(0, 3) lived in {#each}
+      // the dragged-out item would be cut from the rendered list mid-drag and
+      // the chip would unmount, cancelling the drag.
+      dndTemplates = t.slice(0, 3).map((tpl) => ({
+        id: `tpl-${tpl.id}`,
+        kind: "template" as const,
+        templateId: tpl.id,
+      }));
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -96,13 +427,11 @@
     }
   }
 
-  // Re-fetch when cursor changes (after initial mount + role-gate)
   let mounted = $state(false);
   onMount(() => {
     mounted = true;
   });
   $effect(() => {
-    // Touch cursorMonday so $effect tracks it
     void cursorMonday;
     if (mounted && !gated) void load();
   });
@@ -133,33 +462,346 @@
     return map;
   });
 
-  // Coverage = count of shifts per day; flag non-Sunday days below MIN_COVERAGE
-  const coveragePerDay = $derived.by(() => {
-    if (!week) return [] as { date: string; count: number; under: boolean }[];
-    const out: { date: string; count: number; under: boolean }[] = [];
-    for (const d of week.weekDays) {
-      const day = d.slice(0, 10);
-      const dow = new Date(day).getDay();
-      const isClosed = dow === 0; // Sunday closed in salon scenarios
-      const count = week.shifts.filter((s) => s.date.slice(0, 10) === day).length;
-      out.push({ date: day, count, under: !isClosed && count < MIN_COVERAGE });
+  const availabilityByEmpDate = $derived.by(() => {
+    const map = new Map<string, AvailabilityEntry["availability"]>();
+    if (!week) return map;
+    for (const a of week.availability) {
+      map.set(`${a.employeeId}::${a.date.slice(0, 10)}`, a.availability);
+    }
+    return map;
+  });
+
+  const coverageByDate = $derived.by(() => {
+    const map = new Map<string, CoverageEntry>();
+    if (!week) return map;
+    for (const c of week.coverage) {
+      map.set(c.date.slice(0, 10), c);
+    }
+    return map;
+  });
+
+  // Phase 47.1 — Only SHIFT_BASED employees appear in the grid.
+  // Server (POST/PUT /shifts) rejects assignments to FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS
+  // employees with 422 SHIFT_INVALID_EMPLOYEE_TYPE; this filter hides them so
+  // users don't try to drag onto rows that would just bounce.
+  const shiftEmployees = $derived.by(() => {
+    if (!week) return [];
+    return week.employees.filter(
+      (e) => e.workSchedules?.[0]?.type === "SHIFT_BASED",
+    );
+  });
+
+  // ── Phase 45: SHIFT_BASED Soll-Row helpers ─────────────────────────────────
+  function parseHHMM(s: string): { h: number; m: number } {
+    const [h, m] = s.split(":").map(Number);
+    return { h: h || 0, m: m || 0 };
+  }
+
+  function shiftHours(start: string, end: string): number {
+    const a = parseHHMM(start);
+    const b = parseHHMM(end);
+    let dur = (b.h * 60 + b.m - (a.h * 60 + a.m)) / 60;
+    if (dur < 0) dur += 24; // cross-midnight shift (e.g. 22:00–06:00)
+    return Math.max(0, dur);
+  }
+
+  // ArbZG § 4 mandatory break deduction:
+  //   work >6h  → 30 min break
+  //   work >9h  → 45 min break
+  // Returns net hours (gross minus mandatory break).
+  function shiftNetHours(start: string, end: string): number {
+    const gross = shiftHours(start, end);
+    if (gross > 9) return gross - 0.75;
+    if (gross > 6) return gross - 0.5;
+    return gross;
+  }
+
+  function diffClass(diff: number): "ok" | "warn" | "bad" {
+    const abs = Math.abs(diff);
+    if (abs <= 0.5) return "ok";
+    if (abs <= 1) return "warn";
+    return "bad";
+  }
+
+  function formatHours(n: number): string {
+    return n.toFixed(1).replace(/\.0$/, "");
+  }
+
+  // Map<employeeId, { assignedH, weeklyH, diff, klass }> for the visible week.
+  const sollRowByEmp = $derived.by(() => {
+    const out = new Map<
+      string,
+      {
+        assignedH: number;
+        weeklyH: number;
+        diff: number;
+        klass: "ok" | "warn" | "bad";
+      }
+    >();
+    if (!week) return out;
+    for (const emp of week.employees) {
+      const sched = emp.workSchedules?.[0];
+      if (!sched || sched.type !== "SHIFT_BASED") continue;
+      const wh = Number(sched.weeklyHours ?? 0);
+      if (wh <= 0) continue;
+      const empShifts = week.shifts.filter((s) => s.employeeId === emp.id);
+      const assignedH = empShifts.reduce((sum, s) => sum + shiftNetHours(s.startTime, s.endTime), 0);
+      const diff = assignedH - wh;
+      out.set(emp.id, {
+        assignedH,
+        weeklyH: wh,
+        diff,
+        klass: diffClass(diff),
+      });
     }
     return out;
   });
 
-  const underStaffedDays = $derived(coveragePerDay.filter((c) => c.under));
-  const totalShifts = $derived(week?.shifts.length ?? 0);
+  // ── Phase 47 — DnD handlers ───────────────────────────────────────────────
+  // Restore the strip from the canonical `templates` array. Used after a drop
+  // (whether the chip landed on a cell or was dropped outside) so the chip
+  // always reappears in the strip.
+  function restoreTemplatesStrip() {
+    dndTemplates = templates.slice(0, 3).map((tpl) => ({
+      id: `tpl-${tpl.id}`,
+      kind: "template" as const,
+      templateId: tpl.id,
+    }));
+  }
 
-  const avgHoursPerEmployee = $derived.by(() => {
-    if (!week || week.employees.length === 0) return 0;
-    let totalMin = 0;
-    for (const s of week.shifts) {
-      const [sh, sm] = s.startTime.split(":").map(Number);
-      const [eh, em] = s.endTime.split(":").map(Number);
-      totalMin += eh * 60 + em - (sh * 60 + sm);
+  // Strip dndzone handlers — we don't reorder templates within the strip; we
+  // only act as a drag source. `consider` MUST mirror e.detail.items verbatim
+  // (including svelte-dnd-action's shadow placeholder during drag-out) so the
+  // rendered children.length stays in sync with items.length — mismatch
+  // cancels the drag immediately. `finalize` restores the canonical list.
+  function onTemplateConsider(e: CustomEvent<DndEvent<DragItem>>) {
+    dndTemplates = e.detail.items;
+  }
+  function onTemplateFinalize(_e: CustomEvent<DndEvent<DragItem>>) {
+    restoreTemplatesStrip();
+  }
+
+  // Per-cell drop target handlers. `key` is `${employeeId}::${iso}`.
+  function onCellConsider(key: DropTargetKey, e: CustomEvent<DndEvent<DragItem>>) {
+    dndCells = { ...dndCells, [key]: e.detail.items };
+  }
+  async function onCellFinalize(
+    employeeId: string,
+    iso: string,
+    e: CustomEvent<DndEvent<DragItem>>,
+  ) {
+    const key: DropTargetKey = `${employeeId}::${iso}`;
+    const items = e.detail.items;
+    // Reset this cell's empty-target zone state regardless of outcome.
+    dndCells = { ...dndCells, [key]: [] };
+    // Only the case where exactly one item arrived = a chip/pill was dropped here.
+    if (items.length !== 1) return;
+    const item = items[0];
+
+    if (item.kind === "template") {
+      // Restore the template chip in the strip immediately so the UI stays
+      // consistent while the POST is in flight.
+      restoreTemplatesStrip();
+
+      const tpl = templates.find((t) => t.id === item.templateId);
+      if (!tpl) {
+        toasts.error("Vorlage nicht gefunden.");
+        return;
+      }
+
+      dropPending = key;
+      try {
+        await api.post<Shift>("/shifts", {
+          employeeId,
+          templateId: tpl.id,
+          date: iso,
+          startTime: tpl.startTime,
+          endTime: tpl.endTime,
+          label: tpl.name,
+        });
+        toasts.success(`Schicht zugewiesen: ${tpl.name}`);
+        await load();
+      } catch (err) {
+        // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
+        if (err instanceof ApiError && err.status === 422) {
+          const data = err.data as { message?: string; code?: string } | undefined;
+          if (data?.code === "ARBZG_VIOLATION_DAILY_MAX") {
+            toasts.error(
+              data?.message ??
+                "Schicht überschreitet die zulässige Tageshöchstarbeitszeit (§ 3 ArbZG: 10 Stunden).",
+            );
+          } else {
+            toasts.error(err instanceof Error ? err.message : "Schicht-Zuweisung fehlgeschlagen.");
+          }
+        } else if (err instanceof ApiError && err.status === 409) {
+          // Existing 409 conflict path (SHIFT_CONFLICT_LEAVE / SHIFT_CONFLICT_ABSENCE /
+          // SHIFT_CONFLICT_UNAVAILABILITY) and § 5 ArbZG (ARBZG_VIOLATION_REST_PERIOD):
+          // surface as toast. Drag is the fast-path; users must use the Modal
+          // click-flow to force-override (mirrors UNAVAILABILITY drag UX).
+          const data = err.data as { message?: string; code?: string } | undefined;
+          if (data?.code === "ARBZG_VIOLATION_REST_PERIOD") {
+            toasts.error(
+              data?.message ??
+                'Verstoß gegen § 5 ArbZG (Ruhezeit). Über Klick + „Trotzdem zuweisen" zuweisen.',
+            );
+          } else if (data?.code === "SHIFT_CONFLICT_UNAVAILABILITY") {
+            toasts.error(
+              data?.message ??
+                'Mitarbeiter ist am gewählten Tag nicht verfügbar. Über Klick + „Trotzdem zuweisen" zuweisen.',
+            );
+          } else if (data?.code === "SHIFT_OUTSIDE_STORE_HOURS") {
+            toasts.error(
+              data?.message ??
+                'Schicht liegt außerhalb der Öffnungszeiten. Über Klick + „Trotzdem zuweisen" zuweisen.',
+            );
+          } else {
+            toasts.error(
+              data?.message ??
+                "Schicht-Konflikt — Mitarbeiter hat Urlaub oder Abwesenheit am gewählten Tag.",
+            );
+          }
+        } else {
+          toasts.error(err instanceof Error ? err.message : "Schicht-Zuweisung fehlgeschlagen.");
+        }
+      } finally {
+        dropPending = null;
+      }
+    } else if (item.kind === "shift") {
+      // Phase 47-02 — dispatch the move via PUT /shifts/:id
+      await handleShiftMove(item, employeeId, iso);
     }
-    return Math.round((totalMin / 60 / week.employees.length) * 10) / 10;
+  }
+
+  // ── Phase 47-02 — Shift-move (drag existing pill to another cell) ─────────
+  // The empty target cell's onCellFinalize routes ShiftDragItems here. We
+  // verify the target is still unoccupied (defense in depth: client check
+  // matches server's 409), call PUT /shifts/:id with the new employeeId +
+  // date, and reload the week. On 409 (leave/absence conflict) we surface a
+  // German toast and load() to revert the visual position.
+  async function handleShiftMove(item: ShiftDragItem, newEmployeeId: string, newIso: string) {
+    // Same cell — cancelled drag, just resync.
+    if (item.originEmployeeId === newEmployeeId && item.originIso === newIso) {
+      await load();
+      return;
+    }
+    // Target cell already occupied? Reject client-side (server would also
+    // accept since the unique constraint is (employeeId, date) — server-side
+    // would 409 on the DB write, but failing fast here avoids the round-trip
+    // and gives a clearer message.
+    const targetKey: DropTargetKey = `${newEmployeeId}::${newIso}`;
+    if (shiftsByEmpDate.get(targetKey)) {
+      toasts.error("Zielzelle ist bereits belegt — Schicht nicht verschoben.");
+      await load(); // restore visual position
+      return;
+    }
+    dropPending = targetKey;
+    try {
+      await api.put<Shift>(`/shifts/${item.shiftId}`, {
+        employeeId: newEmployeeId,
+        date: newIso,
+      });
+      toasts.success("Schicht verschoben.");
+      await load();
+    } catch (err) {
+      // Phase 47.4-02 — § 3 ArbZG hard-block (422). Drag never auto-forces; toast only.
+      if (err instanceof ApiError && err.status === 422) {
+        const data = err.data as { message?: string; code?: string } | undefined;
+        if (data?.code === "ARBZG_VIOLATION_DAILY_MAX") {
+          toasts.error(
+            data?.message ??
+              "Schicht überschreitet die zulässige Tageshöchstarbeitszeit (§ 3 ArbZG: 10 Stunden).",
+          );
+        } else {
+          toasts.error(err instanceof Error ? err.message : "Verschieben fehlgeschlagen.");
+        }
+      } else if (err instanceof ApiError && err.status === 409) {
+        const data = err.data as { message?: string; code?: string } | undefined;
+        if (data?.code === "ARBZG_VIOLATION_REST_PERIOD") {
+          toasts.error(
+            data?.message ??
+              'Verstoß gegen § 5 ArbZG (Ruhezeit) am Zieltag. Über Klick + „Trotzdem zuweisen" zuweisen.',
+          );
+        } else if (data?.code === "SHIFT_CONFLICT_UNAVAILABILITY") {
+          toasts.error(
+            data?.message ??
+              'Mitarbeiter ist am Zieltag nicht verfügbar. Über Klick + „Trotzdem zuweisen" zuweisen.',
+          );
+        } else if (data?.code === "SHIFT_OUTSIDE_STORE_HOURS") {
+          toasts.error(
+            data?.message ??
+              'Zielzeit liegt außerhalb der Öffnungszeiten. Über Klick + „Trotzdem zuweisen" zuweisen.',
+          );
+        } else {
+          toasts.error(
+            data?.message ?? "Schicht-Konflikt — Mitarbeiter hat Urlaub am Zieltag.",
+          );
+        }
+      } else {
+        toasts.error(err instanceof Error ? err.message : "Verschieben fehlgeschlagen.");
+      }
+      await load(); // revert visual position
+    } finally {
+      dropPending = null;
+    }
+  }
+
+  // Phase 47-02 — per-occupied-cell drag-source state. The grid's occupied
+  // cells each get their own dndzone whose `items` array is exactly one
+  // ShiftDragItem. We derive the "ground truth" from `week.shifts` and keep a
+  // mutable copy that svelte-dnd-action mutates on consider/finalize.
+  const shiftDragItems = $derived.by(() => {
+    const map = new Map<string, ShiftDragItem[]>();
+    if (!week) return map;
+    for (const s of week.shifts) {
+      const iso = s.date.slice(0, 10);
+      const key = `${s.employeeId}::${iso}`;
+      map.set(key, [
+        {
+          id: `shift-${s.id}`,
+          kind: "shift" as const,
+          shiftId: s.id,
+          originEmployeeId: s.employeeId,
+          originIso: iso,
+        },
+      ]);
+    }
+    return map;
   });
+
+  // Mutable per-cell state — svelte-dnd-action mutates the array on
+  // consider/finalize so we keep a Record<key, items[]> alongside the derived
+  // "ground truth".
+  let dndShiftCells = $state<Record<DropTargetKey, ShiftDragItem[]>>({});
+
+  // Sync mutable state from derived whenever the week's shifts change. This
+  // runs after every successful load() and restores cells after cancelled drags.
+  $effect(() => {
+    const next: Record<DropTargetKey, ShiftDragItem[]> = {};
+    for (const [k, v] of shiftDragItems) next[k] = v;
+    dndShiftCells = next;
+  });
+
+  function shiftCellItems(key: DropTargetKey): ShiftDragItem[] {
+    return dndShiftCells[key] ?? [];
+  }
+
+  function onShiftCellConsider(key: DropTargetKey, e: CustomEvent<DndEvent<DragItem>>) {
+    // Filter so only ShiftDragItems live in the source cell's zone.
+    const next = e.detail.items.filter((i): i is ShiftDragItem => i.kind === "shift");
+    dndShiftCells = { ...dndShiftCells, [key]: next };
+  }
+  function onShiftCellFinalize(key: DropTargetKey, e: CustomEvent<DndEvent<DragItem>>) {
+    // After a successful move, load() re-syncs via $effect on shiftDragItems.
+    // After a cancel, also re-sync to restore the source pill.
+    const next = e.detail.items.filter((i): i is ShiftDragItem => i.kind === "shift");
+    dndShiftCells = { ...dndShiftCells, [key]: next };
+  }
+
+  // Per-cell items accessor — ensures the dndzone `items` reference is stable
+  // when the key hasn't been touched yet (`dndCells[key]` would be undefined).
+  function cellItems(key: DropTargetKey): DragItem[] {
+    return dndCells[key] ?? [];
+  }
 
   // ── Formatters ─────────────────────────────────────────────────────────────
   function fmtRange(): string {
@@ -178,158 +820,769 @@
     const today = ymd(new Date());
     return iso.slice(0, 10) === today;
   }
+  // Phase 47.2 — Schichten in der Vergangenheit sind nicht änderbar
+  function isPastDay(iso: string): boolean {
+    return iso.slice(0, 10) < ymd(new Date());
+  }
+  // Phase 47.5 — Closed-day check: dow from iso, then lookup in closedDays set.
+  function isClosedDay(iso: string): boolean {
+    const d = new Date(iso.slice(0, 10) + "T00:00:00Z");
+    const jsDow = d.getUTCDay();
+    const dow = jsDow === 0 ? 6 : jsDow - 1;
+    return closedDays.has(dow);
+  }
   function shiftLabel(s: Shift): string {
     const start = s.startTime.slice(0, 5);
     const end = s.endTime.slice(0, 5);
     return `${start}–${end}`;
   }
-  function fmtCoverageDate(iso: string): string {
-    const d = new Date(iso);
-    return `${DOW[(d.getDay() + 6) % 7]}, ${d.getDate()}.${d.getMonth() + 1}.`;
+
+  // Availability label (DE) + emoji
+  function availLabel(a: AvailabilityEntry["availability"]): string {
+    switch (a) {
+      case "vacation":
+        return "🏖 Urlaub";
+      case "sick":
+        return "🤒 Krank";
+      case "special":
+        return "📌 Sonder";
+      case "other":
+        return "⚪ Abwesend";
+      case "unavailable":
+        return "✕ Nicht verfügbar";
+      case "preferred":
+        return "★ Bevorzugt";
+      default:
+        return "";
+    }
   }
-  function fmtUnderStaffed(days: { date: string; count: number }[]): string {
-    return days.map((c) => `${fmtCoverageDate(c.date)} (${c.count}/${MIN_COVERAGE})`).join(", ");
+
+  // Phase 46 — explicit class mapping for derived availability badges.
+  // Inline interpolation (`sp-avail-badge--{av}`) would also work, but spelling
+  // out the class names here makes the lint:tokens/lint:ui-classes audit
+  // trail obvious and matches the global recipes in app.css.
+  function availClass(a: AvailabilityEntry["availability"]): string {
+    switch (a) {
+      case "vacation":
+        return "sp-avail-badge sp-avail-badge--vacation";
+      case "sick":
+        return "sp-avail-badge sp-avail-badge--sick";
+      case "special":
+        return "sp-avail-badge sp-avail-badge--special";
+      case "other":
+        return "sp-avail-badge sp-avail-badge--other";
+      case "unavailable":
+        return "sp-avail-badge sp-avail-badge--unavailable";
+      case "preferred":
+        return "sp-avail-badge sp-avail-badge--preferred";
+      default:
+        return "";
+    }
   }
+
+  // Coverage tooltip text
+  function coverageTooltip(c: CoverageEntry | undefined): string {
+    if (!c) return "";
+    const parts: string[] = [];
+    parts.push(`Σ Schicht-Gewicht: ${c.effectiveStaff.toFixed(2)} von ${c.minStaff.toFixed(2)}`);
+    if (c.unsupervisedAzubis > 0 && !c.hasSupervisor) {
+      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA ohne Aufsicht`);
+    } else if (c.unsupervisedAzubis > 0) {
+      parts.push(`${c.unsupervisedAzubis} aufsichtspflichtige(r) MA, Aufsicht vorhanden`);
+    }
+    if (c.coverageStatus === "under") parts.push("⚠ Unterbesetzt");
+    if (c.coverageStatus === "supervision-missing") parts.push("⚠ Aufsicht fehlt");
+    return parts.join("\n");
+  }
+
+  // ── Modal handlers ─────────────────────────────────────────────────────────
+  function onCellClick(employeeId: string, date: string) {
+    editingShiftId = null;
+    modalEmployeeId = employeeId;
+    modalDate = date;
+    modalTemplateId = "";
+    modalStartTime = "08:00";
+    modalEndTime = "16:00";
+    modalLabel = "";
+    modalNote = "";
+    modalError = "";
+    modalOpen = true;
+  }
+
+  function openEditShift(shift: Shift) {
+    editingShiftId = shift.id;
+    modalEmployeeId = shift.employeeId;
+    modalDate = shift.date.split("T")[0];
+    modalTemplateId = shift.templateId ?? "";
+    modalStartTime = shift.startTime;
+    modalEndTime = shift.endTime;
+    modalLabel = shift.label ?? "";
+    modalNote = shift.note ?? "";
+    modalError = "";
+    modalOpen = true;
+  }
+
+  function onTemplateSelect() {
+    const tpl = templates.find((t) => t.id === modalTemplateId);
+    if (tpl) {
+      modalStartTime = tpl.startTime;
+      modalEndTime = tpl.endTime;
+      modalLabel = tpl.name;
+    }
+  }
+
+  // Persist the modal as a shift. `force` adds ?force=true so the API will write
+  // an SHIFT_FORCED_OVER_LEAVE audit entry alongside the regular CREATE/UPDATE.
+  async function saveShift(force = false) {
+    if (!modalStartTime || !modalEndTime) {
+      modalError = "Start- und Endzeit sind Pflichtfelder.";
+      return;
+    }
+    saving = true;
+    modalError = "";
+    try {
+      const qs = force ? "?force=true" : "";
+      if (editingShiftId) {
+        await api.put<Shift>(`/shifts/${editingShiftId}${qs}`, {
+          templateId: modalTemplateId || undefined,
+          startTime: modalStartTime,
+          endTime: modalEndTime,
+          label: modalLabel || undefined,
+          note: modalNote || undefined,
+        });
+        toasts.success(force ? "Schicht trotz Konflikt aktualisiert." : "Schicht aktualisiert.");
+      } else {
+        await api.post<Shift>(`/shifts${qs}`, {
+          employeeId: modalEmployeeId,
+          templateId: modalTemplateId || undefined,
+          date: modalDate,
+          startTime: modalStartTime,
+          endTime: modalEndTime,
+          label: modalLabel || undefined,
+          note: modalNote || undefined,
+        });
+        toasts.success(force ? "Schicht trotz Konflikt zugewiesen." : "Schicht zugewiesen.");
+      }
+      modalOpen = false;
+      editingShiftId = null;
+      conflictConfirm = { open: false, message: "", code: "" };
+      await load();
+    } catch (e) {
+      // Phase 47.4-02 — § 3 ArbZG (Tageshöchstarbeitszeit) is HARD-BLOCKED.
+      // 422 ARBZG_VIOLATION_DAILY_MAX → toast only, never opens conflictConfirm,
+      // no force-override path exists for this code.
+      if (e instanceof ApiError && e.status === 422) {
+        const data = e.data as { code?: string; message?: string } | undefined;
+        if (data?.code === "ARBZG_VIOLATION_DAILY_MAX") {
+          toasts.error(
+            data?.message ??
+              "Schicht überschreitet die zulässige Tageshöchstarbeitszeit (§ 3 ArbZG: 10 Stunden).",
+          );
+          saving = false;
+          return;
+        }
+      }
+      // 409 with code SHIFT_CONFLICT_LEAVE/ABSENCE/UNAVAILABILITY or
+      // ARBZG_VIOLATION_REST_PERIOD (§ 5) → ask for force-override confirmation.
+      if (e instanceof ApiError && e.status === 409) {
+        const data = e.data as { code?: string; message?: string } | undefined;
+        if (
+          data?.code === "SHIFT_CONFLICT_LEAVE" ||
+          data?.code === "SHIFT_CONFLICT_ABSENCE" ||
+          data?.code === "SHIFT_CONFLICT_UNAVAILABILITY" ||
+          data?.code === "ARBZG_VIOLATION_REST_PERIOD" ||
+          data?.code === "SHIFT_OUTSIDE_STORE_HOURS"
+        ) {
+          conflictConfirm = {
+            open: true,
+            message: data.message ?? "Konflikt am gewählten Tag.",
+            code: data.code,
+          };
+          saving = false;
+          return;
+        }
+      }
+      modalError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function confirmForceSave() {
+    conflictConfirm = { open: false, message: conflictConfirm.message, code: conflictConfirm.code };
+    await saveShift(true);
+  }
+
+  function askDeleteShift(id: string, closeAfter = false) {
+    shiftDeleteConfirm = { open: true, id, closeAfter };
+  }
+
+  async function confirmDeleteShift() {
+    const id = shiftDeleteConfirm.id;
+    if (!id) return;
+    try {
+      await api.delete(`/shifts/${id}`);
+      toasts.success("Schicht gelöscht.");
+      if (shiftDeleteConfirm.closeAfter) {
+        modalOpen = false;
+        editingShiftId = null;
+      }
+      await load();
+    } catch (e) {
+      toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
+    }
+  }
+
+  // Modal employee name
+  const modalEmployeeName = $derived.by(() => {
+    if (!week) return "";
+    const emp = week.employees.find((e) => e.id === modalEmployeeId);
+    return emp ? `${emp.firstName} ${emp.lastName}` : "";
+  });
 </script>
 
-<PageHead
-  eyebrow="Team"
-  title="Schichtplanung"
-  accent="Schicht"
-  sub="Wöchentliche Schichten zuweisen — mit Vorlagen für wiederkehrende Muster."
-/>
+<svelte:head>
+  <title>Schichtplanung – Clokr</title>
+</svelte:head>
 
-{#if error}
-  <div class="callout error card-animate" role="alert">{error}</div>
-{/if}
+<div class="page">
+  <PageHead
+    eyebrow="Team"
+    title="Schichtplanung"
+    accent="Schicht"
+    sub="Wöchentliche Schichten zuweisen — mit Verfügbarkeit und Coverage-Heatmap. Vorlagen und Bedarfsregeln pflegt die Administration."
+  />
 
-<!-- Template strip (top 3 templates) -->
-{#if templates.length > 0}
-  <div class="grid grid-3 template-strip">
-    {#each templates.slice(0, 3) as tpl (tpl.id)}
-      <Card animate>
-        <div class="tpl-row">
-          <div class="tpl-text">
-            <div class="serif-eyebrow tpl-eyebrow">Vorlage</div>
-            <div class="tpl-name">{tpl.name}</div>
-            <div class="tpl-time">
-              {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
+  {#if error}
+    <div class="callout error card-animate" role="alert">{error}</div>
+  {/if}
+
+  <!-- Template strip (top 3 templates) — Phase 47: draggable chips via use:dndzone -->
+  {#if templates.length > 0}
+    <div
+      class="grid grid-3 sp-template-strip"
+      use:dndzone={{
+        items: dndTemplates,
+        flipDurationMs: FLIP_MS,
+        dropFromOthersDisabled: true,
+        type: "shift-template",
+      }}
+      onconsider={onTemplateConsider}
+      onfinalize={onTemplateFinalize}
+    >
+      {#each dndTemplates as item (item.id)}
+        {@const tpl =
+          item.kind === "template"
+            ? templates.find((t) => t.id === item.templateId)
+            : undefined}
+        <!--
+          ALWAYS render a chip div for every item so children.length stays
+          equal to items.length — svelte-dnd-action requires a 1:1 mapping
+          between items[] and direct children. Shadow placeholders (mid-drag)
+          may not resolve to a Template; render an invisible spacer for them.
+        -->
+        <div
+          class="card sp-tpl-row sp-tpl-chip"
+          class:sp-tpl-chip--shadow={!tpl}
+          data-template-id={tpl?.id ?? ""}
+        >
+          {#if tpl}
+            <div class="sp-tpl-text">
+              <div class="serif-eyebrow sp-tpl-eyebrow">Vorlage</div>
+              <div class="sp-tpl-name">{tpl.name}</div>
+              <div class="sp-tpl-time">
+                {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
+              </div>
             </div>
-          </div>
+          {/if}
         </div>
-      </Card>
-    {/each}
-  </div>
-{/if}
-
-<!-- Week nav + grid card -->
-<Card animate class="week-card">
-  <div class="week-header">
-    <div class="serif-eyebrow week-label">
-      Woche {fmtRange()}
+      {/each}
     </div>
-    <div class="spacer"></div>
-    <button type="button" class="btn btn-ghost sm" aria-label="Vorherige Woche" onclick={prevWeek}
-      >‹</button
-    >
-    <button type="button" class="btn btn-ghost sm" onclick={goToToday}>Heute</button>
-    <button type="button" class="btn btn-ghost sm" aria-label="Nächste Woche" onclick={nextWeek}
-      >›</button
-    >
-  </div>
+  {/if}
 
-  <div class="week-body">
-    {#if loading}
-      <div class="state-msg">Lade Woche…</div>
-    {:else if !week}
-      <div class="state-msg">Keine Daten</div>
-    {:else}
-      <div class="shift-grid">
-        <div class="head">Person</div>
-        {#each week.weekDays as d, i (d)}
-          <div class="head" class:today-col={isToday(d)}>
-            <div>{DOW[i]}</div>
-            <div class="head-date">
-              {fmtDayHeader(d)}
+  <!-- Week nav + grid card -->
+  <Card animate class="week-card">
+    <div class="week-header">
+      <div class="serif-eyebrow week-label">
+        Woche {fmtRange()}
+      </div>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost sm" aria-label="Vorherige Woche" onclick={prevWeek}
+        >‹</button
+      >
+      <button type="button" class="btn btn-ghost sm" onclick={goToToday}>Heute</button>
+      <button type="button" class="btn btn-ghost sm" aria-label="Nächste Woche" onclick={nextWeek}
+        >›</button
+      >
+      <!-- Phase 43-05: "Letzte Woche kopieren" is now the primary action;
+           "Aus Mustern generieren" stays as a secondary/ghost button for tenants
+           that have EmployeeShiftPattern rows configured. -->
+      <button type="button" class="btn btn-primary sm" onclick={openCopy}>
+        Letzte Woche kopieren
+      </button>
+      <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
+        Aus Mustern generieren
+      </button>
+    </div>
+
+    <div class="week-body">
+      {#if loading}
+        <div class="state-msg">Lade Woche…</div>
+      {:else if !week}
+        <div class="state-msg">Keine Daten</div>
+      {:else if shiftEmployees.length === 0}
+        <div class="callout info card-animate sp-empty-shift-roster" role="status">
+          <strong>Keine Mitarbeiter im Schichtsystem.</strong>
+          <p class="sp-empty-sub">
+            Um hier Schichten zu planen, weise mindestens einem Mitarbeiter den
+            Schichtplan-Modus (SHIFT_BASED) zu. Wechsle das Arbeitszeitmodell in
+            <a href="/admin/vacation">Administration → Personal &amp; Urlaub</a>.
+          </p>
+        </div>
+      {:else}
+        <div class="shift-grid">
+          <div class="head">Person</div>
+          {#each week.weekDays as d, i (d)}
+            <div class="head" class:today-col={isToday(d)}>
+              <div>{DOW[i]}</div>
+              <div class="head-date">
+                {fmtDayHeader(d)}
+              </div>
             </div>
-          </div>
-        {/each}
+          {/each}
 
-        {#each week.employees as u (u.id)}
-          <div class="who-cell">
-            <div class="name">{u.firstName} {u.lastName}</div>
-            {#if u.role}<div class="role">{u.role}</div>{/if}
-          </div>
-          {#each week.weekDays as d (d)}
-            {@const s = shiftsByEmpDate.get(`${u.id}::${d.slice(0, 10)}`)}
-            <div class="shift-cell" class:off={!s}>
+          {#each shiftEmployees as u (u.id)}
+            <div class="who-cell">
+              <div class="name">{u.firstName} {u.lastName}</div>
+              {#if u.classification}
+                <div class="role">{u.classification.toLowerCase()}</div>
+              {/if}
+            </div>
+            {#each week.weekDays as d (d)}
+              {@const iso = d.slice(0, 10)}
+              {@const s = shiftsByEmpDate.get(`${u.id}::${iso}`)}
+              {@const av = availabilityByEmpDate.get(`${u.id}::${iso}`) ?? "available"}
+              {@const cellKey = `${u.id}::${iso}`}
               {#if s}
-                <div class="shift-pill">{shiftLabel(s)}</div>
+                <!-- Occupied cell: drag-source for the shift pill, NOT a drop-target.
+                     Drops onto occupied cells are rejected client-side via
+                     handleShiftMove (mirrors server's uniqueness constraint).
+                     Phase 47.2 — past dates are read-only: dragDisabled + tooltip. -->
+                <div
+                  class="shift-cell sp-cell sp-cell--drop-blocked"
+                  class:sp-cell--unavailable={av !== "available"}
+                  class:sp-cell--past={isPastDay(iso)}
+                  use:dndzone={{
+                    items: shiftCellItems(cellKey),
+                    flipDurationMs: FLIP_MS,
+                    type: "shift-template",
+                    dropFromOthersDisabled: true,
+                    dragDisabled: isPastDay(iso),
+                  }}
+                  onconsider={(e) => onShiftCellConsider(cellKey, e)}
+                  onfinalize={(e) => onShiftCellFinalize(cellKey, e)}
+                >
+                  {#each shiftCellItems(cellKey) as item (item.id)}
+                    <button
+                      type="button"
+                      class="shift-pill sp-shift-pill"
+                      class:sp-shift-pill--conflict={s.conflictsWithLeave}
+                      data-shift-drag-id={item.id}
+                      onclick={() => openEditShift(s)}
+                      title={isPastDay(iso)
+                        ? "Schicht in der Vergangenheit (nur lesen)"
+                        : s.conflictsWithLeave
+                          ? "⚠ Konflikt mit Urlaub — bitte überprüfen oder entfernen"
+                          : "Klicken zum Bearbeiten, ziehen zum Verschieben"}
+                    >
+                      {#if s.conflictsWithLeave}
+                        <span aria-hidden="true">⚠ </span>
+                      {/if}
+                      {shiftLabel(s)}
+                    </button>
+                  {/each}
+                </div>
+              {:else if isClosedDay(iso)}
+                <!-- Phase 47.5 — Closed-day cell: visually marked, no drop-target. -->
+                <div
+                  class="shift-cell sp-cell sp-cell--closed"
+                  title="Geschäft an diesem Tag geschlossen"
+                >
+                  <span class="sp-closed-label">geschlossen</span>
+                </div>
+              {:else if av !== "available"}
+                <div class="shift-cell sp-cell sp-cell--unavailable">
+                  <span class={availClass(av)}>{availLabel(av)}</span>
+                </div>
+              {:else if isPastDay(iso)}
+                <!-- Phase 47.2 — Past day, empty: no drag-target, no assign. -->
+                <div class="shift-cell sp-cell off sp-cell--past" title="Vergangenheit – nicht änderbar">
+                  <span class="sp-past-dash" aria-hidden="true">—</span>
+                </div>
               {:else}
-                frei
+                <!-- Empty available cell: drop-target only, NOT a drag-source. -->
+                <div
+                  class="shift-cell sp-cell off sp-cell--drop-target"
+                  class:sp-cell--drop-hover={cellItems(cellKey).length === 1}
+                  use:dndzone={{
+                    items: cellItems(cellKey),
+                    flipDurationMs: FLIP_MS,
+                    type: "shift-template",
+                    dragDisabled: true,
+                    dropTargetStyle: {},
+                  }}
+                  onconsider={(e) => onCellConsider(cellKey, e)}
+                  onfinalize={(e) => onCellFinalize(u.id, iso, e)}
+                >
+                  <button
+                    type="button"
+                    class="sp-cell-empty"
+                    onclick={() => onCellClick(u.id, iso)}
+                    aria-label="Schicht zuweisen"
+                    disabled={dropPending === cellKey}
+                  >
+                    {dropPending === cellKey ? "speichere …" : "frei"}
+                  </button>
+                  {#each cellItems(cellKey) as item (item.id)}
+                    <!-- Hidden placeholder while drag is hovering; svelte-dnd-action
+                         renders the actual ghost in the document body via
+                         .dnd-action-dragged-el. -->
+                    <span style="display: none" data-dropped-id={item.id}></span>
+                  {/each}
+                </div>
+              {/if}
+            {/each}
+            {#if sollRowByEmp.has(u.id)}
+              {@const sr = sollRowByEmp.get(u.id)!}
+              <div
+                class="sp-soll-label"
+                aria-label="Soll-Korrelation für {u.firstName} {u.lastName}"
+              >
+                <div class="sp-soll-sublabel">↳ Soll-Korrelation</div>
+              </div>
+              <div
+                class="sp-soll-cell sp-soll-cell--{sr.klass}"
+                title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h geplant, Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
+              >
+                <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
+                <span class="sp-soll-soll">/ Soll {formatHours(sr.weeklyH)}h</span>
+                <span class="sp-soll-diff">
+                  {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
+                </span>
+              </div>
+            {/if}
+          {/each}
+
+          <!-- Coverage heatmap row -->
+          <div class="sp-coverage-label">Coverage</div>
+          {#each week.weekDays as d (d)}
+            {@const iso = d.slice(0, 10)}
+            {@const c = coverageByDate.get(iso)}
+            <div
+              class="sp-coverage-cell"
+              class:sp-coverage-cell--ok={c?.coverageStatus === "ok"}
+              class:sp-coverage-cell--under={c?.coverageStatus === "under"}
+              class:sp-coverage-cell--supervision={c?.coverageStatus === "supervision-missing"}
+              title={coverageTooltip(c)}
+            >
+              {#if c}
+                <div class="sp-coverage-num">
+                  {c.effectiveStaff.toFixed(2)} / {c.minStaff.toFixed(2)}
+                </div>
+                {#if c.coverageStatus === "supervision-missing"}
+                  <span class="sp-coverage-warn" aria-label="Aufsicht fehlt">⚠ Aufsicht</span>
+                {:else if c.coverageStatus === "under"}
+                  <span class="sp-coverage-warn" aria-label="Unterbesetzt">⚠ Bedarf</span>
+                {:else}
+                  <span class="sp-coverage-ok">OK</span>
+                {/if}
+              {:else}
+                <span class="sp-coverage-num">—</span>
               {/if}
             </div>
           {/each}
-        {/each}
-      </div>
+        </div>
 
-      <!-- Coverage callouts -->
-      {#if underStaffedDays.length > 0}
-        <div class="callout coverage-warn" role="status">
-          <span class="ico" aria-hidden="true">⚠</span>
-          <div>
-            <b>Unterbesetzt:</b>
-            {fmtUnderStaffed(underStaffedDays)}
-            — bitte zusätzliche Schichten zuweisen.
-          </div>
+        <p class="sp-legend">
+          Coverage = Σ Schicht-Gewicht der verfügbaren zugewiesenen MA. Default Min = 2.0 (oder
+          Bedarfsregel aus Schicht-Konfiguration).
+        </p>
+      {/if}
+    </div>
+  </Card>
+
+  <!-- Modal: assign / edit shift -->
+  <Modal
+    bind:open={modalOpen}
+    eyebrow="Schichtplanung"
+    title={editingShiftId ? "Schicht bearbeiten" : "Schicht zuweisen"}
+  >
+    <p class="sp-modal-context">
+      <strong>{modalEmployeeName}</strong> am {modalDate}
+    </p>
+    {#if modalError}
+      <div class="callout error" role="alert">{modalError}</div>
+    {/if}
+    <div class="form-group">
+      <label class="form-label" for="shift-tpl">Vorlage (optional)</label>
+      <select
+        id="shift-tpl"
+        class="form-input"
+        bind:value={modalTemplateId}
+        onchange={onTemplateSelect}
+      >
+        <option value="">– Benutzerdefiniert –</option>
+        {#each templates as tpl (tpl.id)}
+          <option value={tpl.id}>{tpl.name} ({tpl.startTime}–{tpl.endTime})</option>
+        {/each}
+      </select>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label" for="shift-start">Startzeit *</label>
+        <input id="shift-start" class="form-input" type="time" bind:value={modalStartTime} />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="shift-end">Endzeit *</label>
+        <input id="shift-end" class="form-input" type="time" bind:value={modalEndTime} />
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="shift-label">Bezeichnung (optional)</label>
+      <input
+        id="shift-label"
+        class="form-input"
+        type="text"
+        bind:value={modalLabel}
+        placeholder="z.B. Frühschicht"
+      />
+    </div>
+    <div class="form-group">
+      <label class="form-label" for="shift-note">Notiz (optional)</label>
+      <textarea
+        id="shift-note"
+        class="form-input"
+        rows="2"
+        bind:value={modalNote}
+        placeholder="Zusätzliche Informationen…"
+      ></textarea>
+    </div>
+    {#snippet footer()}
+      {#if editingShiftId}
+        <button
+          type="button"
+          class="btn btn-danger sm"
+          onclick={() => askDeleteShift(editingShiftId!, true)}
+        >
+          Löschen
+        </button>
+      {/if}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-outline sm" onclick={() => (modalOpen = false)}
+        >Abbrechen</button
+      >
+      <button
+        type="button"
+        class="btn btn-primary sm"
+        onclick={() => saveShift(false)}
+        disabled={saving}
+      >
+        {saving ? "Speichern …" : "Speichern"}
+      </button>
+    {/snippet}
+  </Modal>
+
+  <ConfirmDialog
+    bind:open={shiftDeleteConfirm.open}
+    title="Schicht löschen?"
+    description="Diese Schicht wird dauerhaft entfernt."
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDeleteShift}
+  />
+
+  <!-- Phase 43-03: force-override dialog when API returns 409 SHIFT_CONFLICT_* -->
+  <ConfirmDialog
+    bind:open={conflictConfirm.open}
+    title="Schicht trotz Urlaub/Abwesenheit zuweisen?"
+    description={`${conflictConfirm.message} Aktion wird protokolliert.`}
+    confirmLabel="Trotzdem zuweisen"
+    danger
+    onConfirm={confirmForceSave}
+  />
+
+  <!-- Phase 43-02: generate-week diff-preview modal -->
+  <Modal bind:open={generateOpen} eyebrow="Schichtplanung" title="Woche generieren">
+    {#if generating && !generateDiff}
+      <div class="state-msg">Vorschau wird erstellt …</div>
+    {:else if generateError}
+      <div class="callout error" role="alert">{generateError}</div>
+    {:else if generateDiff}
+      <p class="sp-gen-intro">
+        Vorschau für Woche ab <strong>{generateDiff.weekStart}</strong>. Es werden
+        <strong>{generateDiff.create.length}</strong>
+        Schicht(en) erstellt; <strong>{generateDiff.skip.length}</strong> Eintrag/Einträge werden übersprungen.
+      </p>
+
+      {#if generateDiff.create.length > 0}
+        <h3 class="sp-gen-h">Zu erstellen ({generateDiff.create.length})</h3>
+        <div class="sp-gen-list">
+          {#each generateDiff.create as c (`${c.employeeId}::${c.date}`)}
+            <div class="sp-gen-row">
+              <span class="sp-gen-emp">{empName(c.employeeId)}</span>
+              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
+              {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
+            </div>
+          {/each}
         </div>
       {/if}
 
-      <div class="callout brand coverage-summary">
-        <span class="ico" aria-hidden="true">ⓘ</span>
-        <div>
-          <b>Abdeckung dieser Woche:</b>
-          {week.employees.length} Personen · {totalShifts} Schichten · {avgHoursPerEmployee} Std. Ø pro
-          Person.
+      {#if generateDiff.skip.length > 0}
+        <h3 class="sp-gen-h">Übersprungen ({generateDiff.skip.length})</h3>
+        <div class="sp-gen-list sp-gen-list--skip">
+          {#each generateDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
+            <div class="sp-gen-row">
+              <span class="sp-gen-emp">{empName(s.employeeId)}</span>
+              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-reason sp-gen-reason--{s.reason}"
+                >{skipReasonLabel(s.reason)}</span
+              >
+            </div>
+          {/each}
         </div>
-      </div>
+      {/if}
     {/if}
-  </div>
-</Card>
+    {#snippet footer()}
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-outline sm" onclick={() => (generateOpen = false)}
+        >Abbrechen</button
+      >
+      <button
+        type="button"
+        class="btn btn-primary sm"
+        disabled={!generateDiff || generating || generateDiff.create.length === 0}
+        onclick={commitGenerate}
+      >
+        {generating ? "Erstelle …" : `${generateDiff?.create.length ?? 0} Schicht(en) erstellen`}
+      </button>
+    {/snippet}
+  </Modal>
+
+  <!-- Phase 43-05: copy-week diff-preview modal (primary "Letzte Woche kopieren") -->
+  <Modal bind:open={copyOpen} eyebrow="Schichtplanung" title="Woche kopieren">
+    <p class="sp-gen-intro">
+      Schichten von der ausgewählten Quellwoche werden in die aktuell angezeigte Woche kopiert.
+      Mitarbeiter mit Urlaub, Krankheit oder bestehenden Schichten werden übersprungen.
+    </p>
+
+    <div class="form-row sp-copy-pickers">
+      <div class="form-group">
+        <label class="form-label" for="copy-source">Quellwoche (Montag)</label>
+        <input
+          id="copy-source"
+          class="form-input"
+          type="date"
+          bind:value={copySourceWeekStart}
+          onchange={refreshCopyPreview}
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="copy-target">Zielwoche</label>
+        <input id="copy-target" class="form-input" type="text" value={ymd(cursorMonday)} readonly />
+      </div>
+    </div>
+
+    {#if copying && !copyDiff}
+      <div class="state-msg">Vorschau wird erstellt …</div>
+    {:else if copyError}
+      <div class="callout error" role="alert">{copyError}</div>
+    {:else if copyDiff}
+      <p class="sp-gen-intro">
+        Quelle: <strong>{copyDiff.sourceWeekStart}</strong> → Ziel:
+        <strong>{copyDiff.targetWeekStart}</strong>.
+        <strong>{copyDiff.create.length}</strong> Schicht(en) werden erstellt;
+        <strong>{copyDiff.skip.length}</strong> Eintrag/Einträge werden übersprungen.
+      </p>
+
+      {#if copyDiff.create.length > 0}
+        <h3 class="sp-gen-h">Werden erstellt ({copyDiff.create.length})</h3>
+        <div class="sp-gen-list">
+          {#each copyDiff.create as c (`${c.employeeId}::${c.date}`)}
+            <div class="sp-gen-row">
+              <span class="sp-gen-emp">{empName(c.employeeId)}</span>
+              <span class="sp-gen-date">{c.date}</span>
+              <span class="sp-gen-time">{c.startTime}–{c.endTime}</span>
+              {#if c.label}<span class="sp-gen-label">{c.label}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if copyDiff.skip.length > 0}
+        <h3 class="sp-gen-h">Übersprungen ({copyDiff.skip.length})</h3>
+        <div class="sp-gen-list sp-gen-list--skip">
+          {#each copyDiff.skip as s (`${s.employeeId}::${s.date}::${s.reason}`)}
+            <div class="sp-gen-row">
+              <span class="sp-gen-emp">{empName(s.employeeId)}</span>
+              <span class="sp-gen-date">{s.date}</span>
+              <span class="sp-gen-reason sp-gen-reason--{s.reason}"
+                >{copySkipReasonLabel(s.reason)}</span
+              >
+            </div>
+          {/each}
+        </div>
+      {/if}
+    {/if}
+    {#snippet footer()}
+      <button type="button" class="btn btn-outline sm" onclick={refreshCopyPreview}>
+        Vorschau
+      </button>
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-outline sm" onclick={() => (copyOpen = false)}
+        >Abbrechen</button
+      >
+      <button
+        type="button"
+        class="btn btn-primary sm"
+        disabled={!copyDiff || copying || copyDiff.create.length === 0}
+        onclick={commitCopy}
+      >
+        {copying ? "Übernehme …" : `Übernehmen (${copyDiff?.create.length ?? 0})`}
+      </button>
+    {/snippet}
+  </Modal>
+</div>
 
 <style>
-  .template-strip {
+  .sp-template-strip {
     margin-bottom: 18px;
   }
-  .tpl-row {
+  .sp-tpl-row {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
     gap: 12px;
   }
-  .tpl-text {
+  .sp-tpl-text {
     min-width: 0;
   }
-  .tpl-eyebrow {
+  .sp-tpl-eyebrow {
     font-size: 13px;
   }
-  .tpl-name {
+  .sp-tpl-name {
     font-family: var(--font-serif);
     font-size: 20px;
     font-weight: 400;
     margin-top: 4px;
     color: var(--text);
   }
-  .tpl-time {
+  .sp-tpl-time {
     font-size: 12.5px;
     color: var(--text-muted);
     margin-top: 4px;
   }
 
-  .week-card {
-    padding: 0;
-    overflow: hidden;
-  }
   .week-header {
     padding: 14px 18px;
     border-bottom: 1px solid var(--border);
@@ -359,8 +1612,360 @@
     color: var(--text);
     margin-top: 2px;
   }
-  .coverage-warn,
-  .coverage-summary {
-    margin-top: 18px;
+
+  /* Per-cell availability dimming + badges */
+  .sp-cell--unavailable {
+    background: var(--bg-subtle);
+    opacity: 0.85;
+  }
+  .sp-avail-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: var(--r-pill);
+    font-size: 11.5px;
+    font-weight: 500;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .sp-avail-badge--vacation {
+    color: var(--brand);
+    border-color: var(--brand-soft);
+  }
+  .sp-avail-badge--sick {
+    color: var(--bad);
+    border-color: var(--bad);
+  }
+  .sp-avail-badge--special {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  .sp-avail-badge--other {
+    color: var(--text-muted);
+  }
+
+  /* Empty-cell button (renders as text "frei" but is keyboard-focusable) */
+  .sp-cell-empty {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 13px;
+    padding: 6px 10px;
+    width: 100%;
+    height: 100%;
+    border-radius: var(--r-sm);
+  }
+  .sp-cell-empty:hover {
+    background: var(--bg-subtle);
+    color: var(--text);
+  }
+
+  .sp-shift-pill {
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.12s var(--ease);
+  }
+  .sp-shift-pill:hover {
+    opacity: 0.78;
+  }
+  /* Phase 43-04: shift marked conflictsWithLeave by the reverse-hook */
+  .sp-shift-pill--conflict {
+    outline: 2px solid var(--bad);
+    outline-offset: -2px;
+    background: color-mix(in srgb, var(--bad) 18%, transparent);
+    color: var(--text);
+    font-weight: 700;
+  }
+
+  /* Coverage heatmap row */
+  .sp-coverage-label {
+    grid-column: 1;
+    font-weight: 600;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    padding: 12px 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-top: 2px solid var(--border);
+  }
+  .sp-coverage-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 10px 6px;
+    border-radius: var(--r-sm);
+    border-top: 2px solid var(--border);
+    text-align: center;
+    font-size: 12px;
+  }
+  .sp-coverage-cell--ok {
+    background: color-mix(in srgb, var(--good) 12%, transparent);
+    color: var(--good);
+  }
+  .sp-coverage-cell--under,
+  .sp-coverage-cell--supervision {
+    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    color: var(--bad);
+  }
+  .sp-coverage-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+  }
+  .sp-coverage-warn {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .sp-coverage-ok {
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .sp-legend {
+    margin: 12px 0 0;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .sp-modal-context {
+    font-size: 14px;
+    color: var(--text);
+    margin: 0 0 12px;
+  }
+
+  /* Phase 43-02 — Generate-week diff preview */
+  .sp-gen-intro {
+    font-size: 14px;
+    color: var(--text);
+    margin: 0 0 16px;
+  }
+  .sp-gen-h {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin: 16px 0 8px;
+  }
+  .sp-gen-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    padding: 8px;
+    background: var(--bg-subtle);
+  }
+  .sp-gen-list--skip {
+    background: transparent;
+  }
+  .sp-gen-row {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr auto;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+    padding: 4px 6px;
+    border-radius: var(--r-sm);
+  }
+  .sp-gen-row:hover {
+    background: var(--bg-card);
+  }
+  .sp-gen-emp {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .sp-gen-date {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .sp-gen-time {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--text);
+  }
+  .sp-gen-label {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .sp-gen-reason {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: var(--r-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  .sp-gen-reason--leave {
+    color: var(--bad);
+    border-color: var(--bad);
+  }
+  .sp-gen-reason--absence {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  .sp-gen-reason--existing {
+    color: var(--text-muted);
+  }
+  .sp-gen-reason--open-day {
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .sp-gen-reason--availability-unavailable {
+    color: var(--bad);
+    border-color: var(--bad);
+  }
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .form-row {
+    display: flex;
+    gap: 12px;
+  }
+  .form-row .form-group {
+    flex: 1;
+  }
+  /* Phase 43-05 — copy-week source + target pickers above the diff preview */
+  .sp-copy-pickers {
+    margin-bottom: 12px;
+  }
+
+  /* Phase 45: SHIFT_BASED Soll-Row */
+  .sp-soll-label {
+    padding: 8px 8px 12px;
+    border-top: 2px solid var(--border-strong);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .sp-soll-label .name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .sp-soll-sublabel {
+    margin-top: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-faint);
+  }
+  .sp-soll-cell {
+    grid-column: 2 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px 16px;
+    border-radius: var(--r-sm);
+    border-top: 2px solid var(--border-strong);
+    font-size: 13px;
+  }
+  .sp-soll-num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  .sp-soll-soll {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .sp-soll-diff {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  .sp-soll-cell--ok {
+    background: color-mix(in srgb, var(--good) 12%, transparent);
+    color: var(--good);
+  }
+  .sp-soll-cell--warn {
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    color: var(--warn);
+  }
+  .sp-soll-cell--bad {
+    background: color-mix(in srgb, var(--bad) 14%, transparent);
+    color: var(--bad);
+  }
+  @media (max-width: 640px) {
+    .sp-soll-label,
+    .sp-soll-cell {
+      display: none;
+    }
+  }
+
+  /* Phase 47.5 — Closed-day cells: striped background + label */
+  .sp-cell--closed {
+    background: repeating-linear-gradient(
+      45deg,
+      var(--bg-subtle),
+      var(--bg-subtle) 6px,
+      transparent 6px,
+      transparent 12px
+    );
+    cursor: not-allowed;
+  }
+  .sp-cell--closed .sp-closed-label {
+    display: block;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    font-style: italic;
+    user-select: none;
+  }
+
+  /* Phase 47.2 — Past day cells: visually dimmed, not interactive */
+  .sp-cell--past {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .sp-cell--past .sp-past-dash {
+    display: block;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    user-select: none;
+  }
+  .sp-cell--past .sp-shift-pill {
+    cursor: default;
+  }
+
+  /* Phase 47.1 — Empty roster callout when no SHIFT_BASED employees */
+  .sp-empty-shift-roster {
+    padding: 24px;
+    text-align: center;
+  }
+  .sp-empty-shift-roster strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .sp-empty-sub {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+  .sp-empty-sub a {
+    color: var(--brand);
+    text-decoration: underline;
   }
 </style>

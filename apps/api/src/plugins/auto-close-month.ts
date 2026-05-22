@@ -507,7 +507,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             type: "MONTH_CLOSE_BLOCKED",
             title: `Monatsabschluss ${monthName} nicht möglich`,
             message: `Fehlende Zeiteinträge:\n${lines.join("\n")}`,
-            link: "/admin/monatsabschluss",
+            link: "/admin/month-close",
           });
         }
 

@@ -8,7 +8,7 @@
   import MonthBar from "$components/ui/MonthBar.svelte";
   import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
   import Modal from "$components/ui/Modal.svelte";
-  import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
+  import { format, startOfMonth, endOfMonth, addMonths, subMonths, startOfWeek, endOfWeek } from "date-fns";
   import { de } from "date-fns/locale";
 
   interface Break {
@@ -33,7 +33,7 @@
   }
 
   interface WorkSchedule {
-    type?: "FIXED_WEEKLY" | "MONTHLY_HOURS";
+    type?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
     monthlyHours?: number | null;
     mondayHours: string | number;
     tuesdayHours: string | number;
@@ -222,7 +222,9 @@
         holidays,
         absences,
         hireDate,
-        schedule?.type === "MONTHLY_HOURS",
+        schedule?.type === "MONTHLY_HOURS" ||
+          schedule?.type === "FLEXTIME" ||
+          schedule?.type === "SHIFT_BASED",
       );
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -841,6 +843,12 @@
 
   // ── Reaktive Ableitungen ───────────────────────────────────────────────────
   let isMonthlyHours = $derived(schedule?.type === "MONTHLY_HOURS");
+  // Phase 49.1 — schedule types without a fixed daily target: per-day +/- diff is meaningless
+  let isNoDailyTarget = $derived(
+    schedule?.type === "MONTHLY_HOURS" ||
+      schedule?.type === "FLEXTIME" ||
+      schedule?.type === "SHIFT_BASED",
+  );
   let monthlyTarget = $derived(
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
@@ -855,7 +863,7 @@
     // For MONTHLY_HOURS with a monthly target: compare worked against the full month budget
     // (totalMonthExpected), not the partial daily accrual (totalExpected). Using totalExpected
     // would only count workdays up to today × dailySollMin (e.g. 8 × 45min = 6h instead of 15h).
-    // For FIXED_WEEKLY and no-target MONTHLY_HOURS: keep the up-to-today accrual.
+    // For FIXED_SCHEDULE and no-target MONTHLY_HOURS: keep the up-to-today accrual.
     hasMonthlyTarget ? totalWorked - totalMonthExpected : totalWorked - totalExpected,
   );
   // Check if there are entries for today
@@ -891,6 +899,31 @@
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
+  // Phase 49.1 — FLEXTIME weekly diff: sum this week's worked vs expected
+  let weekWorkedMin = $derived.by((): number => {
+    const weekStart = format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    const weekEnd = format(endOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    return entries
+      .filter((e) => {
+        if (!e.endTime || e.isInvalid) return false;
+        const d = (e.date ?? e.startTime).split("T")[0];
+        return d >= weekStart && d <= weekEnd;
+      })
+      .reduce(
+        (s, e) =>
+          s +
+          Math.floor((new Date(e.endTime!).getTime() - new Date(e.startTime).getTime()) / 60000) -
+          (e.breakMinutes ?? 0),
+        0,
+      );
+  });
+  let weekExpectedMin = $derived.by((): number => {
+    const weekStart = format(startOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    const weekEnd = format(endOfWeek(today, { weekStartsOn: 1 }), "yyyy-MM-dd");
+    return calendarDays
+      .filter((d) => d.dateStr >= weekStart && d.dateStr <= weekEnd && !d.isFuture)
+      .reduce((s, d) => s + d.expectedMin, 0);
+  });
   // Stat tiles for the MonthBar primitive — empty until a schedule loads.
   let monthBarStats: MonthBarStat[] = $derived.by(() => {
     if (!schedule) return [];
@@ -903,6 +936,16 @@
       });
     }
     stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
+    // Phase 49.1 — FLEXTIME: show this week's worked vs expected diff in the bar
+    if (schedule.type === "FLEXTIME" && weekExpectedMin > 0) {
+      const weekDiff = weekWorkedMin - weekExpectedMin;
+      stats.push({
+        label: "Woche Saldo",
+        value: fmtBalance(weekDiff),
+        unit: "h",
+        tone: balTone(weekDiff),
+      });
+    }
     if (isMonthlyHours && !hasMonthlyTarget) {
       stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
     } else {
@@ -1104,11 +1147,11 @@
                 </span>
               {/if}
               <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-              {#if day.expectedMin > 0 && !isMonthlyHours}
+              {#if day.expectedMin > 0 && !isNoDailyTarget}
                 {@const b = day.workedMin - day.expectedMin}
                 <span class="day-bal {balClass(b)}">{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span>
               {/if}
-            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isMonthlyHours}
+            {:else if day.isCurrentMonth && day.expectedMin > 0 && !day.isFuture && !isNoDailyTarget}
               <span class="day-missing">−{fmtMin(day.expectedMin)}&thinsp;h</span>
             {/if}
           </button>

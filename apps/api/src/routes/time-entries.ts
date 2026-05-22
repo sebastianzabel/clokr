@@ -1471,7 +1471,7 @@ export async function getEffectiveSchedule(
     : null;
 
   return {
-    type: "FIXED_WEEKLY" as const,
+    type: "FIXED_SCHEDULE" as const,
     weeklyHours: tenantConfig?.defaultWeeklyHours ?? 40,
     monthlyHours: null,
     mondayHours: tenantConfig?.defaultMondayHours ?? 8,

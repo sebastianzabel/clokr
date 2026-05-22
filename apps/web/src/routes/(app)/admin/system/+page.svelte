@@ -6,6 +6,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import Spinner from "$components/ui/Spinner.svelte";
+  import { tenantFeatures } from "$stores/tenant-features";
 
   interface TenantConfig {
     tenantName?: string;
@@ -31,6 +32,14 @@
     datevSonderurlaubNr?: number;
     // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll (Phase 15)
     monthlyHoursHolidayDeduction?: boolean;
+    // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
+    defaultCoreStart?: string | null;
+    defaultCoreEnd?: string | null;
+    defaultCoreDays?: number[];
+    // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
+    availabilityEnabled?: boolean;
+    // Phase 49.5 — Standard-Arbeitstage (0=So..6=Sa)
+    defaultWorkDays?: number[];
   }
 
   interface SecurityConfig {
@@ -99,6 +108,24 @@
   let monthlyHoursHolidayDeduction = $state(false);
   let holidayDeductionSaving = $state(false);
   let datevError = $state("");
+
+  // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
+  let availabilityEnabled = $state(true);
+  let availabilitySaving = $state(false);
+
+  // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
+  let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
+  let workDaysSaving = $state(false);
+  let workDaysSaved = $state(false);
+  let workDaysError = $state("");
+
+  // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
+  let defaultCoreStart = $state("");
+  let defaultCoreEnd = $state("");
+  let defaultCoreDays = $state<number[]>([]);
+  let coreDefaultsSaving = $state(false);
+  let coreDefaultsSaved = $state(false);
+  let coreDefaultsError = $state("");
 
   let smtpHost = $state("");
   let smtpPort = $state(587);
@@ -282,6 +309,17 @@
       datevKrankNr = cfg.datevKrankNr ?? 200;
       datevSonderurlaubNr = cfg.datevSonderurlaubNr ?? 302;
       monthlyHoursHolidayDeduction = cfg.monthlyHoursHolidayDeduction ?? false;
+      // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
+      availabilityEnabled = cfg.availabilityEnabled ?? true;
+      // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
+      defaultCoreStart = cfg.defaultCoreStart ?? "";
+      defaultCoreEnd = cfg.defaultCoreEnd ?? "";
+      defaultCoreDays = Array.isArray(cfg.defaultCoreDays) ? [...cfg.defaultCoreDays] : [];
+      // Phase 49.5 — Standard-Arbeitstage
+      defaultWorkDays =
+        Array.isArray(cfg.defaultWorkDays) && cfg.defaultWorkDays.length > 0
+          ? [...cfg.defaultWorkDays]
+          : [1, 2, 3, 4, 5];
 
       try {
         const smtp = await api.get<{
@@ -439,6 +477,78 @@
       // revert on error — state unchanged because we did not assign yet
     } finally {
       holidayDeductionSaving = false;
+    }
+  }
+
+  // Phase 47.3 / 49.4 — Tenant Feature-Toggle: Verfügbarkeits-System
+  async function saveAvailabilityEnabled() {
+    if (!_gOtherFields) return;
+    availabilitySaving = true;
+    const newValue = !availabilityEnabled;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        availabilityEnabled: newValue,
+      });
+      availabilityEnabled = newValue;
+      tenantFeatures.applyLocal(newValue); // propagate to Sidebar + BottomTabBar
+    } catch {
+      // revert: state unchanged
+    } finally {
+      availabilitySaving = false;
+    }
+  }
+
+  // Phase 49.5 — Standard-Arbeitstage speichern
+  function toggleDefaultWorkDay(dow: number) {
+    defaultWorkDays = defaultWorkDays.includes(dow)
+      ? defaultWorkDays.filter((d) => d !== dow)
+      : [...defaultWorkDays, dow].sort((a, b) => a - b);
+  }
+
+  async function saveDefaultWorkDays() {
+    if (!_gOtherFields) return;
+    workDaysError = "";
+    workDaysSaved = false;
+    if (defaultWorkDays.length === 0) {
+      workDaysError = "Mindestens ein Arbeitstag muss aktiv sein.";
+      return;
+    }
+    workDaysSaving = true;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        defaultWorkDays,
+      });
+      workDaysSaved = true;
+      setTimeout(() => (workDaysSaved = false), 3000);
+    } catch (e) {
+      workDaysError = e instanceof Error ? e.message : "Fehler beim Speichern";
+    } finally {
+      workDaysSaving = false;
+    }
+  }
+
+  async function saveCoreDefaults() {
+    coreDefaultsSaving = true;
+    coreDefaultsError = "";
+    coreDefaultsSaved = false;
+    try {
+      await api.put("/settings/work", {
+        defaultCoreStart: defaultCoreStart || null,
+        defaultCoreEnd: defaultCoreEnd || null,
+        defaultCoreDays,
+      });
+      coreDefaultsSaved = true;
+      setTimeout(() => (coreDefaultsSaved = false), 3000);
+    } catch (e: unknown) {
+      coreDefaultsError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      coreDefaultsSaving = false;
     }
   }
 
@@ -772,6 +882,84 @@
       </div>
     </Card>
 
+    <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader title="Features" sub="Tenant-weite Feature-Toggles" />
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <span class="toggle-row-label">Verfügbarkeits-System aktiviert</span>
+          <p class="form-hint text-muted">
+            {#if availabilityEnabled}
+              Mitarbeiter pflegen ihre Verfügbarkeit selbst (Sidebar &amp; BottomTab zeigen
+              „Verfügbarkeit"). Auto-Generierung &amp; Woche-Kopieren respektieren „Nicht
+              verfügbar"; Manager können bei UNAVAILABLE per ConfirmDialog überschreiben (mit
+              Audit-Eintrag).
+            {:else}
+              Deaktiviert. „Verfügbarkeit"-Navigation ist ausgeblendet, Resolver &amp; Auto-Gen
+              ignorieren EmployeeAvailability-Markierungen. Bereits angelegte Verfügbarkeits-Daten
+              bleiben in der DB erhalten.
+            {/if}
+          </p>
+        </div>
+        <label class="switch">
+          <input
+            type="checkbox"
+            aria-label="Verfügbarkeits-System aktivieren"
+            checked={availabilityEnabled}
+            onchange={saveAvailabilityEnabled}
+            disabled={availabilitySaving}
+          />
+          <span class="switch-slider"></span>
+        </label>
+      </div>
+
+      <!-- Phase 49.5 — Standard-Arbeitstage/Woche (Anzahl) -->
+      <div class="workdays-section">
+        <div class="toggle-info" style="margin-bottom: 0.5rem;">
+          <span class="toggle-row-label">Standard-Arbeitstage pro Woche</span>
+          <p class="form-hint text-muted">
+            Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom AZ-Modell — wird
+            für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet. Default-Reihenfolge Mo–Fr (Mo–Sa
+            bei 6, Mo–So bei 7). Pro MA überschreibbar unter
+            <a href="/admin/vacation">Urlaub &amp; Zeiten</a>.
+          </p>
+        </div>
+        <div class="workdays-row" style="align-items: center;">
+          <input
+            type="number"
+            min="1"
+            max="7"
+            step="1"
+            class="form-input"
+            style="max-width: 6rem;"
+            aria-label="Anzahl Arbeitstage pro Woche"
+            value={defaultWorkDays.length}
+            oninput={(ev) => {
+              const n = Math.max(
+                1,
+                Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
+              );
+              const canonical = [1, 2, 3, 4, 5, 6, 0];
+              defaultWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
+            }}
+          />
+          <span class="form-hint" style="margin: 0;">Tage</span>
+        </div>
+        <div class="workdays-actions">
+          <button
+            class="btn btn-primary btn-sm"
+            onclick={saveDefaultWorkDays}
+            disabled={workDaysSaving || defaultWorkDays.length === 0}
+          >
+            {#if workDaysSaving}<Spinner />{/if}
+            Speichern
+          </button>
+          {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+          {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
+        </div>
+      </div>
+    </Card>
+
     <!-- ── Arbeitszeit ──────────────────────────────────────────────────── -->
     <Card animate class="sys-card">
       <CardHeader title="Arbeitszeit" sub="Monatsstunden & Feiertagsabzug" />
@@ -793,6 +981,75 @@
           />
           <span class="switch-slider"></span>
         </label>
+      </div>
+    </Card>
+
+    <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->
+    <Card animate class="sys-card">
+      <CardHeader
+        title="Kernarbeitszeit-Defaults (Gleitzeit)"
+        sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
+      />
+      {#if coreDefaultsError}
+        <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+          <span>⚠</span><span>{coreDefaultsError}</span>
+        </div>
+      {/if}
+      <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+        Standard-Kernarbeitszeit für neue Gleitzeit-Mitarbeiter. Beim Anlegen wird vorbelegt, kann
+        pro Mitarbeiter überschrieben werden.
+      </p>
+      <div class="core-defaults-row">
+        <div class="form-group">
+          <label class="form-label" for="def-core-start">Kernzeitbeginn</label>
+          <input
+            id="def-core-start"
+            type="time"
+            bind:value={defaultCoreStart}
+            class="form-input modal-input-sm"
+            placeholder="—"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="def-core-end">Kernzeitende</label>
+          <input
+            id="def-core-end"
+            type="time"
+            bind:value={defaultCoreEnd}
+            class="form-input modal-input-sm"
+            placeholder="—"
+          />
+        </div>
+      </div>
+      <div class="form-group" style="margin-top: 0.75rem;">
+        <label class="form-label">Standard-Kernzeit-Tage</label>
+        <div class="weekday-chips" role="group" aria-label="Standard-Kerntage">
+          {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+            <button
+              type="button"
+              class="wd-chip"
+              class:wd-chip--active={defaultCoreDays.includes(day.value)}
+              onclick={() => {
+                if (defaultCoreDays.includes(day.value)) {
+                  defaultCoreDays = defaultCoreDays.filter((d) => d !== day.value);
+                } else {
+                  defaultCoreDays = [...defaultCoreDays, day.value];
+                }
+              }}>{day.label}</button
+            >
+          {/each}
+        </div>
+        <p class="form-hint text-muted">
+          Leer lassen für keine Tenant-Defaults (Gleitzeit-MA starten ohne Kernzeit-Vorauswahl).
+        </p>
+      </div>
+      <div class="settings-actions">
+        <button class="btn btn-primary" onclick={saveCoreDefaults} disabled={coreDefaultsSaving}>
+          {coreDefaultsSaving ? "Speichern…" : "Speichern"}
+        </button>
+        {#if coreDefaultsSaved}
+          <span class="saved-hint">✓ Gespeichert</span>
+        {/if}
       </div>
     </Card>
 
@@ -1691,6 +1948,13 @@
     min-width: 200px;
   }
 
+  .core-defaults-row {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
   .toggle-row {
     display: flex;
     align-items: center;
@@ -1824,6 +2088,99 @@
     color: var(--good);
     font-weight: 500;
     font-size: 0.9375rem;
+  }
+  .error-hint {
+    color: var(--bad);
+    font-size: 0.9375rem;
+  }
+
+  /* Phase 49.5 — Standard-Arbeitstage UI */
+  .workdays-section {
+    border-top: 1px solid var(--border);
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+  .workdays-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  .workday-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 48px;
+    padding: 0.4rem 0.65rem;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease;
+  }
+  .workday-chip:hover {
+    border-color: var(--brand);
+  }
+  .workday-chip--active {
+    background: var(--brand-soft);
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+  .workday-chip input {
+    display: none;
+  }
+  .workdays-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  /* Weekday chip selector (shared between vacation modal and core-defaults section) */
+  .weekday-chips {
+    display: flex;
+    gap: 0.375rem;
+    flex-wrap: wrap;
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+
+  .wd-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+    height: 2rem;
+    padding: 0 0.625rem;
+    border-radius: var(--r-pill);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s;
+    border: 1.5px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .wd-chip--active {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+
+  .wd-chip:hover:not(.wd-chip--active) {
+    border-color: var(--brand);
+    color: var(--brand);
+  }
+
+  .modal-input-sm {
+    max-width: 180px;
   }
 
   .federal-state-select {

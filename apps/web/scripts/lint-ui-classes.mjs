@@ -37,7 +37,20 @@ import { readFileSync, existsSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { resolve, relative } from "node:path";
 
-const repoRoot = execSync("git rev-parse --show-toplevel").toString().trim();
+// Resolve repo root: git rev-parse --show-toplevel can return a subdirectory
+// when running inside a git worktree with GIT_DIR set (e.g. during pre-commit hooks).
+// Workaround: walk up from this script's location to find the actual repo root
+// (the directory that contains apps/web/).
+const repoRoot = (() => {
+  // import.meta.dirname is available in Node 21+; fall back to URL parsing
+  const scriptDir = import.meta.dirname ?? resolve(new URL(import.meta.url).pathname, "..");
+  let dir = scriptDir;
+  for (let i = 0; i < 10 && dir !== "/"; i++) {
+    if (existsSync(resolve(dir, "apps", "web"))) return dir;
+    dir = resolve(dir, "..");
+  }
+  return execSync("git rev-parse --show-toplevel").toString().trim();
+})();
 
 const SCOPES = [
   "apps/web/src/lib/components/ui",

@@ -103,7 +103,7 @@ describe("weekRangeUtc", () => {
 describe("iterateDaysInTz", () => {
   it("calls callback for each day in range", () => {
     const from = new Date("2026-03-23T00:00:00Z"); // Monday
-    const to = new Date("2026-03-25T23:59:59Z");   // Wednesday
+    const to = new Date("2026-03-25T23:59:59Z"); // Wednesday
     const dows: number[] = [];
     iterateDaysInTz(from, to, "UTC", (dow) => dows.push(dow));
     expect(dows).toEqual([1, 2, 3]); // Mon, Tue, Wed
@@ -130,23 +130,139 @@ describe("calcExpectedMinutesTz", () => {
 
   it("calculates full work week (Mon–Fri)", () => {
     const from = new Date("2026-03-23T00:00:00Z"); // Monday
-    const to = new Date("2026-03-29T23:59:59Z");   // Sunday
+    const to = new Date("2026-03-29T23:59:59Z"); // Sunday
     const minutes = calcExpectedMinutesTz(schedule, from, to, "UTC");
     expect(minutes).toBe(5 * 8 * 60); // 5 work days × 8h × 60min
   });
 
   it("calculates partial week", () => {
     const from = new Date("2026-03-23T00:00:00Z"); // Monday
-    const to = new Date("2026-03-25T23:59:59Z");   // Wednesday
+    const to = new Date("2026-03-25T23:59:59Z"); // Wednesday
     const minutes = calcExpectedMinutesTz(schedule, from, to, "UTC");
     expect(minutes).toBe(3 * 8 * 60); // 3 days
   });
 
   it("returns 0 for weekend only", () => {
     const from = new Date("2026-03-28T00:00:00Z"); // Saturday
-    const to = new Date("2026-03-29T23:59:59Z");   // Sunday
+    const to = new Date("2026-03-29T23:59:59Z"); // Sunday
     const minutes = calcExpectedMinutesTz(schedule, from, to, "UTC");
     expect(minutes).toBe(0);
+  });
+});
+
+describe("calcExpectedMinutesTz — SHIFT_BASED", () => {
+  const tz = "Europe/Berlin";
+
+  it("returns weeklyHours × 60 for a full 7-day week", () => {
+    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z"); // Mo
+    const to = new Date("2026-01-11T23:59:59Z"); // So
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  });
+
+  it("scales proportionally for 14-day range (2 weeks)", () => {
+    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-18T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(4800);
+  });
+
+  it("scales proportionally for a 3-day partial range", () => {
+    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-07T23:59:59Z");
+    // 40 × 60 × 3 / 7 = 1028.57 → 1029
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(1029);
+  });
+
+  it("returns 0 when weeklyHours is null", () => {
+    const sched = { type: "SHIFT_BASED", weeklyHours: null };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
+  });
+
+  it("returns 0 when weeklyHours is 0", () => {
+    const sched = { type: "SHIFT_BASED", weeklyHours: 0 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
+  });
+
+  it("ignores per-day hours for SHIFT_BASED (only weeklyHours matters)", () => {
+    // mondayHours..sundayHours present but type=SHIFT_BASED → ignored
+    const sched = {
+      type: "SHIFT_BASED",
+      weeklyHours: 40,
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+      saturdayHours: 0,
+      sundayHours: 0,
+    };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  });
+});
+
+describe("calcExpectedMinutesTz — FLEXTIME", () => {
+  const tz = "Europe/Berlin";
+
+  it("40h FLEXTIME over 7 days (Mon-Sun, Europe/Berlin) returns 2400 minutes", () => {
+    const sched = { type: "FLEXTIME", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z"); // Monday
+    const to = new Date("2026-01-11T23:59:59Z"); // Sunday
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  });
+
+  it("40h FLEXTIME over 14 days returns 4800 minutes", () => {
+    const sched = { type: "FLEXTIME", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-18T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(4800);
+  });
+
+  it("40h FLEXTIME over 3 days returns 1029 minutes (Math.round(40*60*3/7))", () => {
+    const sched = { type: "FLEXTIME", weeklyHours: 40 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-07T23:59:59Z");
+    // 40 × 60 × 3 / 7 = 1028.57 → 1029
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(1029);
+  });
+
+  it("FLEXTIME with weeklyHours=null returns 0", () => {
+    const sched = { type: "FLEXTIME", weeklyHours: null };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
+  });
+
+  it("FLEXTIME with weeklyHours=0 returns 0", () => {
+    const sched = { type: "FLEXTIME", weeklyHours: 0 };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
+  });
+
+  it("FLEXTIME ignores per-day hours (only weeklyHours matters)", () => {
+    // mondayHours..sundayHours present but type=FLEXTIME → ignored; should still return 2400 for 7 days
+    const sched = {
+      type: "FLEXTIME",
+      weeklyHours: 40,
+      mondayHours: 10,
+      tuesdayHours: 10,
+      wednesdayHours: 10,
+      thursdayHours: 10,
+      fridayHours: 10,
+      saturdayHours: 0,
+      sundayHours: 0,
+    };
+    const from = new Date("2026-01-05T00:00:00Z");
+    const to = new Date("2026-01-11T23:59:59Z");
+    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
   });
 });
 
@@ -162,11 +278,11 @@ describe("getDayHoursFromSchedule", () => {
   };
 
   it("returns correct hours for each day", () => {
-    expect(getDayHoursFromSchedule(schedule, 0)).toBe(0);    // Sunday
-    expect(getDayHoursFromSchedule(schedule, 1)).toBe(8);    // Monday
-    expect(getDayHoursFromSchedule(schedule, 2)).toBe(7.5);  // Tuesday
-    expect(getDayHoursFromSchedule(schedule, 5)).toBe(6);    // Friday
-    expect(getDayHoursFromSchedule(schedule, 6)).toBe(4);    // Saturday
+    expect(getDayHoursFromSchedule(schedule, 0)).toBe(0); // Sunday
+    expect(getDayHoursFromSchedule(schedule, 1)).toBe(8); // Monday
+    expect(getDayHoursFromSchedule(schedule, 2)).toBe(7.5); // Tuesday
+    expect(getDayHoursFromSchedule(schedule, 5)).toBe(6); // Friday
+    expect(getDayHoursFromSchedule(schedule, 6)).toBe(4); // Saturday
   });
 });
 

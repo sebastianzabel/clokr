@@ -344,6 +344,158 @@ describe("Employees API", () => {
     });
   });
 
+  // ── Personalstruktur (Phase 41) ─────────────────────────────────────────
+  describe("POST/PATCH Personalstruktur fields (Phase 41)", () => {
+    it("POST accepts classification + coverageWeight + requiresSupervision and persists them", async () => {
+      const puid = `ps-c-${Date.now().toString(36)}`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `${puid}@test.de`,
+          firstName: "Pers",
+          lastName: "Struktur",
+          employeeNumber: `PS-${puid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+          classification: "MINIJOB",
+          coverageWeight: 0.5,
+          requiresSupervision: false,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.classification).toBe("MINIJOB");
+      expect(Number(body.coverageWeight)).toBe(0.5);
+      expect(body.requiresSupervision).toBe(false);
+    });
+
+    it("POST without Personalstruktur fields falls back to schema defaults (VOLLZEIT / 1.00 / false)", async () => {
+      const puid = `ps-d-${Date.now().toString(36)}`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `${puid}@test.de`,
+          firstName: "Def",
+          lastName: "Vollzeit",
+          employeeNumber: `PSD-${puid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+      expect(body.classification).toBe("VOLLZEIT");
+      expect(Number(body.coverageWeight)).toBe(1.0);
+      expect(body.requiresSupervision).toBe(false);
+    });
+
+    it("PATCH updates Personalstruktur fields and the AuditLog records the change", async () => {
+      // Create a baseline employee
+      const puid = `ps-u-${Date.now().toString(36)}`;
+      const create = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `${puid}@test.de`,
+          firstName: "Patch",
+          lastName: "Test",
+          employeeNumber: `PSU-${puid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+        },
+      });
+      const { id } = JSON.parse(create.body);
+
+      // PATCH to AZUBI defaults
+      const patch = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          classification: "AZUBI",
+          coverageWeight: 0.0,
+          requiresSupervision: true,
+        },
+      });
+      expect(patch.statusCode).toBe(200);
+      const patched = JSON.parse(patch.body);
+      expect(patched.classification).toBe("AZUBI");
+      expect(Number(patched.coverageWeight)).toBe(0);
+      expect(patched.requiresSupervision).toBe(true);
+
+      // AuditLog entry must contain the new Personalstruktur values
+      const log = await app.prisma.auditLog.findFirst({
+        where: { entity: "Employee", entityId: id, action: "UPDATE" },
+        orderBy: { createdAt: "desc" },
+      });
+      expect(log).not.toBeNull();
+      const newVal = log!.newValue as Record<string, unknown>;
+      expect(newVal.classification).toBe("AZUBI");
+      // coverageWeight is stringified Decimal in the audit log
+      expect(String(newVal.coverageWeight)).toBe("0");
+      expect(newVal.requiresSupervision).toBe(true);
+
+      // oldValue must capture the prior (VOLLZEIT default) state
+      const oldVal = log!.oldValue as Record<string, unknown>;
+      expect(oldVal.classification).toBe("VOLLZEIT");
+      expect(String(oldVal.coverageWeight)).toBe("1");
+      expect(oldVal.requiresSupervision).toBe(false);
+    });
+
+    it("POST rejects an invalid classification (Zod enum guard)", async () => {
+      const puid = `ps-x-${Date.now().toString(36)}`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `${puid}@test.de`,
+          firstName: "Bad",
+          lastName: "Class",
+          employeeNumber: `PSX-${puid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+          classification: "BOGUS_VALUE",
+        },
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    });
+
+    it("POST rejects coverageWeight outside [0, 9.99]", async () => {
+      const puid = `ps-r-${Date.now().toString(36)}`;
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/employees",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          email: `${puid}@test.de`,
+          firstName: "Bad",
+          lastName: "Range",
+          employeeNumber: `PSR-${puid}`,
+          hireDate: new Date("2026-01-01").toISOString(),
+          role: "EMPLOYEE",
+          weeklyHours: 40,
+          password: "Test@1234567!",
+          coverageWeight: 99,
+        },
+      });
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    });
+  });
+
   it("COMPLIANCE: all SMTP passwords are encrypted", async () => {
     const configs = await app.prisma.tenantConfig.findMany({
       where: { smtpPassword: { not: null } },

@@ -31,7 +31,7 @@ test.describe("Core Flows", () => {
       "/admin/special-leave",
       "/admin/shutdowns",
       "/admin/system",
-      "/admin/monatsabschluss",
+      "/admin/month-close",
     ];
     for (const route of adminRoutes) {
       const response = await page.goto(route);

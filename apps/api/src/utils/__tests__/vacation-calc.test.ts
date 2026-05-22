@@ -174,11 +174,13 @@ describe("calculateProRataVacation", () => {
 
 describe("splitDaysAcrossYears", () => {
   const noHolidays = new Set<string>();
+  const MO_FR = [1, 2, 3, 4, 5];
+  const DI_SA = [2, 3, 4, 5, 6]; // Frisör: Di-Sa
 
   it("returns all days in year1 when same year", () => {
     const start = new Date("2026-03-02");
     const end = new Date("2026-03-06");
-    const result = splitDaysAcrossYears(start, end, false, noHolidays);
+    const result = splitDaysAcrossYears(start, end, false, MO_FR, noHolidays);
     expect(result.year1Days).toBe(5);
     expect(result.year2Days).toBe(0);
     expect(result.year1).toBe(2026);
@@ -189,7 +191,7 @@ describe("splitDaysAcrossYears", () => {
     // 2027: Jan 1 (Fri) = 1 work day, Jan 2 (Sat) = weekend
     const start = new Date("2026-12-29");
     const end = new Date("2027-01-02");
-    const result = splitDaysAcrossYears(start, end, false, noHolidays);
+    const result = splitDaysAcrossYears(start, end, false, MO_FR, noHolidays);
     expect(result.year1).toBe(2026);
     expect(result.year2).toBe(2027);
     expect(result.year1Days).toBe(3);
@@ -200,14 +202,41 @@ describe("splitDaysAcrossYears", () => {
     const holidays = new Set(["2027-01-01"]); // Neujahr
     const start = new Date("2026-12-29");
     const end = new Date("2027-01-02");
-    const result = splitDaysAcrossYears(start, end, false, holidays);
+    const result = splitDaysAcrossYears(start, end, false, MO_FR, holidays);
     expect(result.year2Days).toBe(1); // Only Jan 2
   });
 
   it("handles half-day correctly", () => {
+    // Phase 49.5: halfDay → year1Days = 0.5, year2Days = 0 (single-year halfDay request)
     const start = new Date("2026-06-01");
     const end = new Date("2026-06-03");
-    const result = splitDaysAcrossYears(start, end, true, noHolidays);
-    expect(result.year1Days).toBe(2.5); // 3 days - 0.5
+    const result = splitDaysAcrossYears(start, end, true, MO_FR, noHolidays);
+    expect(result.year1Days).toBe(0.5);
+  });
+
+  // Phase 49.5 — workDays-aware counting
+  it("Frisör (Di-Sa) Urlaub Mo-Sa zählt 5 Arbeitstage", () => {
+    // 2026-05-25 Mon → not in workDays
+    // 26 Tue, 27 Wed, 28 Thu, 29 Fri, 30 Sat → 5 days
+    const start = new Date("2026-05-25");
+    const end = new Date("2026-05-30");
+    const result = splitDaysAcrossYears(start, end, false, DI_SA, noHolidays);
+    expect(result.year1Days).toBe(5);
+  });
+
+  it("4-Tage-Woche (Mo-Do) Urlaub Mo-Fr zählt 4 Arbeitstage", () => {
+    const MO_DO = [1, 2, 3, 4];
+    const start = new Date("2026-05-04"); // Mon
+    const end = new Date("2026-05-08"); // Fri
+    const result = splitDaysAcrossYears(start, end, false, MO_DO, noHolidays);
+    expect(result.year1Days).toBe(4);
+  });
+
+  it("Sa-Schicht-MA: Urlaub nur Sa wird gezählt", () => {
+    const SAT_ONLY = [6];
+    const start = new Date("2026-05-04"); // Mon
+    const end = new Date("2026-05-09"); // Sat
+    const result = splitDaysAcrossYears(start, end, false, SAT_ONLY, noHolidays);
+    expect(result.year1Days).toBe(1); // Only Sat
   });
 });
