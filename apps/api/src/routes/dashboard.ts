@@ -861,10 +861,43 @@ export async function dashboardRoutes(app: FastifyInstance) {
           openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
         const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
 
+        // Approved leave + Absences in the 7-day window cover the day too
+        // (mirrors overtime.ts close-month/status logic — a day is only "missing"
+        // if no entry, no holiday, no leave, no absence covers it)
+        const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            status: "APPROVED",
+            startDate: { lte: today },
+            endDate: { gte: sevenDaysAgo },
+          },
+          select: { startDate: true, endDate: true },
+        });
+        const absencesInWindow = await app.prisma.absence.findMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            startDate: { lte: today },
+            endDate: { gte: sevenDaysAgo },
+          },
+          select: { startDate: true, endDate: true },
+        });
+        const coveredDates = new Set<string>();
+        for (const range of [...approvedLeaveInWindow, ...absencesInWindow]) {
+          const s = range.startDate < sevenDaysAgo ? sevenDaysAgo : range.startDate;
+          const e = range.endDate > today ? today : range.endDate;
+          const cur = new Date(s);
+          while (cur <= e) {
+            coveredDates.add(dateStrInTz(cur, tz));
+            cur.setDate(cur.getDate() + 1);
+          }
+        }
+
         const cursor = new Date(sevenDaysAgo);
         while (cursor < today) {
           const dateStr = dateStrInTz(cursor, tz);
-          if (openItemsHolidaySet.has(dateStr)) {
+          if (openItemsHolidaySet.has(dateStr) || coveredDates.has(dateStr)) {
             cursor.setDate(cursor.getDate() + 1);
             continue;
           }

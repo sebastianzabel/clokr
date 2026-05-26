@@ -25,9 +25,12 @@
   // EMPLOYEE: just the items NOT already in the 3 primary tabs.
   // MANAGER:  EMPLOYEE overflow + all team items.
   // ADMIN:    MANAGER overflow + all admin items.
+  // NOTE: "Berichte" intentionally NOT in employeeMore — the /reports page
+  // is reachable for EMPLOYEEs via direct URL (EMP-06 personal monthly closes),
+  // but per Sidebar IA Berichte is exposed in nav only to MANAGER+. Keep
+  // mobile + desktop in sync.
   const employeeMore: NavItem[] = [
     { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
-    { href: "/reports", label: "Berichte", icon: "chart" },
     { href: "/settings", label: "Mein Profil", icon: "settings" },
   ];
 
