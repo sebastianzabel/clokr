@@ -7,6 +7,7 @@ import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
+import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { updateOvertimeAccount } from "./time-entries";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
@@ -1427,14 +1428,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         include: { leaveType: true },
       });
 
-      // Alle LeaveType-IDs die zu VACATION gehören (inkl. Legacy "Jahresurlaub")
-      const vacationNames = [LEAVE_TYPE_DEFS.VACATION.name, ...(LEGACY_ALIASES.VACATION ?? [])];
-      const allVacTypeIds = (
-        await app.prisma.leaveType.findMany({
-          where: { tenantId, name: { in: vacationNames } },
-          select: { id: true },
-        })
-      ).map((t) => t.id);
+      // Vacation type meta — shared with selfHealUsedDays AND the pro-rata mapping below
+      const vacMeta = await loadVacationTypeMeta(app.prisma, tenantId);
+      const { vacationNames } = vacMeta;
 
       // Fetch exitDate for pro-rata effective entitlement computation (§ 5 Abs. 2 BUrlG)
       const empForEntitlement = await app.prisma.employee.findUnique({
@@ -1443,31 +1439,9 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
       const employeeExitDate = empForEntitlement?.exitDate ?? null;
 
-      // usedDays aus tatsächlich genehmigten Anträgen neu berechnen
-      for (const row of rows) {
-        const isVacation = vacationNames.includes(row.leaveType.name);
-        const typeIds = isVacation ? allVacTypeIds : [row.leaveTypeId];
-        const yearStart = new Date(`${row.year}-01-01T00:00:00Z`);
-        const yearEnd = new Date(`${row.year}-12-31T23:59:59Z`);
-        const approved = await app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            leaveTypeId: { in: typeIds },
-            status: "APPROVED",
-            startDate: { gte: yearStart },
-            endDate: { lte: yearEnd },
-          },
-        });
-        const actualUsed = approved.reduce((s, r) => s + Number(r.days), 0);
-        if (Number(row.usedDays) !== actualUsed) {
-          await app.prisma.leaveEntitlement.update({
-            where: { id: row.id },
-            data: { usedDays: actualUsed },
-          });
-          (row as unknown as { usedDays: number }).usedDays = actualUsed;
-        }
-      }
+      // Self-heal usedDays from Σ approved LeaveRequest.days.
+      // Same logic the report endpoint now uses — see apps/api/src/utils/leave-self-heal.ts.
+      await selfHealUsedDays(app.prisma, rows, vacMeta);
 
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
       return rows.map((r) => {

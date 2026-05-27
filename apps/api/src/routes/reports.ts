@@ -18,6 +18,7 @@ import {
   streamLeaveListPdf,
   streamVacationOverviewPdf,
 } from "../utils/pdf";
+import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -603,6 +604,12 @@ export async function reportRoutes(app: FastifyInstance) {
           leaveType: true,
         },
       });
+
+      // Self-heal usedDays from Σ approved LeaveRequest.days BEFORE we shape the response.
+      // Mirrors the heal that GET /entitlements/:employeeId has done since v1.4.
+      // Fixes the report-vs-leave-page divergence (a-tenant incident 2026-05-27).
+      const vacMeta = await loadVacationTypeMeta(app.prisma, req.user.tenantId);
+      await selfHealUsedDays(app.prisma, entitlements, vacMeta);
 
       // Bulk fetch PENDING leave requests for the same year + tenant (NO per-entitlement loop)
       const pending = await app.prisma.leaveRequest.findMany({
