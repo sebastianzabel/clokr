@@ -4,6 +4,11 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { FederalState } from "@clokr/db";
 import { encrypt } from "../utils/crypto";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
+import {
+  monthFirstRefinement,
+  MONTH_FIRST_ERROR,
+  snapToMonthFirstUtc,
+} from "../utils/month-first-date";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -181,6 +186,7 @@ export const employeeScheduleSchema = z
     validFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine(monthFirstRefinement, { message: MONTH_FIRST_ERROR })
       .optional(),
     // Phase 49.3 — Orphan-Shift-Lifecycle: when switching away from SHIFT_BASED,
     // caller must explicitly choose what to do with future shifts.
@@ -351,7 +357,10 @@ export async function settingsRoutes(app: FastifyInstance) {
           include: { workSchedules: { orderBy: { validFrom: "desc" }, take: 1 } },
         });
 
-        const now = new Date();
+        // Phase 60 (#220) — bulk apply MUST write month-1st validFrom so the contract
+        // change is unambiguous at the saldo engine. Snap once here, reuse in both
+        // branches below (employees-without-schedule + FIXED_SCHEDULE update).
+        const now = snapToMonthFirstUtc(new Date());
         for (const emp of employees) {
           const current = emp.workSchedules[0];
           if (!current) {
@@ -461,7 +470,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      const validFrom = new Date(body.validFrom ?? new Date().toISOString().split("T")[0]);
+      // Phase 60 (#220) — when caller omits validFrom we default to the 1st of the
+      // current UTC month, so the saldo engine sees an unambiguous month boundary.
+      // (When caller PROVIDES validFrom, the Zod refinement above already enforced it.)
+      const validFrom = body.validFrom ? new Date(body.validFrom) : snapToMonthFirstUtc(new Date());
 
       // ── Phase 49.3 — Orphan-Shift-Lifecycle detection ──────────────────────
       // When switching FROM SHIFT_BASED to any other type, check for future shifts.

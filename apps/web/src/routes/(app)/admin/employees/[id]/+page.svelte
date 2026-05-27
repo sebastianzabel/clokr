@@ -318,6 +318,19 @@
     eType = newType;
   }
 
+  // Phase 60 (#220) — WorkSchedule.validFrom MUST be the 1st of a calendar month.
+  // Snap the user's date pick to the 1st of its month on every change so the
+  // input box immediately reflects what the server will accept. The API enforces
+  // the same rule via Zod (apps/api/src/utils/month-first-date.ts).
+  function snapValidFromToMonthFirst() {
+    if (!eValidFrom) return; // empty input — leave alone
+    // eValidFrom is "YYYY-MM-DD" from <input type="date">. Rewrite the day part.
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(eValidFrom);
+    if (!m) return; // unexpected shape — leave alone, server-side Zod will reject
+    if (m[3] === "01") return; // already month-1st — idempotent no-op
+    eValidFrom = `${m[1]}-${m[2]}-01`;
+  }
+
   function buildSchedulePayload(extra?: {
     keepOrphanShifts?: boolean;
     cancelOrphanShifts?: boolean;
@@ -934,10 +947,17 @@
             </div>
           </div>
 
-          <!-- Valid From -->
+          <!-- Valid From — Phase 60 (#220) enforces month-1st snap -->
           <div class="form-group spaced-top-md">
             <label class="form-label" for="e-valid-from">Gültig ab</label>
-            <input id="e-valid-from" type="date" bind:value={eValidFrom} class="form-input" />
+            <input
+              id="e-valid-from"
+              type="date"
+              bind:value={eValidFrom}
+              onchange={snapValidFromToMonthFirst}
+              class="form-input"
+            />
+            <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
           </div>
         </Section>
 

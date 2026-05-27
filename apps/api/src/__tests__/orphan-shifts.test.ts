@@ -17,6 +17,13 @@ function isoDateOffset(days: number): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// Phase 60 (#220) — WorkSchedule.validFrom MUST be month-1st on schedule changes.
+// Use this for `validFrom` payloads — independent of today's date.
+function monthFirstIso(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
 describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
@@ -114,7 +121,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
       },
     });
 
@@ -138,7 +145,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
       },
     });
 
@@ -163,7 +170,10 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
 
     // Cleanup future shifts for next tests
     await app.prisma.shift.deleteMany({
-      where: { employeeId: shiftEmployee.id, date: { gte: new Date(isoDateOffset(0) + "T00:00:00Z") } },
+      where: {
+        employeeId: shiftEmployee.id,
+        date: { gte: new Date(isoDateOffset(0) + "T00:00:00Z") },
+      },
     });
   });
 
@@ -179,7 +189,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
         cancelOrphanShifts: true,
       },
     });
@@ -225,7 +235,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
         keepOrphanShifts: true,
       },
     });
@@ -270,7 +280,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FIXED_SCHEDULE",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
       },
     });
 
@@ -312,7 +322,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
       },
     });
 
@@ -343,7 +353,7 @@ describe("Orphan-Shift-Lifecycle (PUT /api/v1/settings/work/:employeeId)", () =>
       payload: {
         type: "FLEXTIME",
         weeklyHours: 40,
-        validFrom: isoDateOffset(0),
+        validFrom: monthFirstIso(),
         keepOrphanShifts: true,
         cancelOrphanShifts: true,
       },

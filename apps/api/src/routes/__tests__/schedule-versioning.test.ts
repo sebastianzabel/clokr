@@ -157,7 +157,8 @@ describe("Work Schedule Versioning", () => {
           overtimeThreshold: 60,
           allowOvertimePayout: false,
           overtimeMode: "CARRY_FORWARD",
-          validFrom: new Date().toISOString().split("T")[0],
+          // Phase 60 (#220) — WorkSchedule.validFrom MUST be month-1st on schedule changes.
+          validFrom: "2025-07-01",
         },
       });
       expect(res.statusCode).toBe(200);
@@ -188,7 +189,8 @@ describe("Work Schedule Versioning", () => {
           overtimeThreshold: 60,
           allowOvertimePayout: false,
           overtimeMode: "CARRY_FORWARD",
-          validFrom: new Date(Date.now() - 1000).toISOString().split("T")[0],
+          // Phase 60 (#220) — WorkSchedule.validFrom MUST be month-1st on schedule changes.
+          validFrom: "2025-08-01",
         },
       });
       expect(res.statusCode).toBe(200);
@@ -216,7 +218,9 @@ describe("Work Schedule Versioning", () => {
           overtimeThreshold: 60,
           allowOvertimePayout: false,
           overtimeMode: "CARRY_FORWARD",
-          validFrom: new Date().toISOString().split("T")[0],
+          // Phase 60 (#220) — pin to a month-1st so the rejection cleanly hits
+          // the weeklyHours=0 refinement, not the new validFrom refinement.
+          validFrom: "2025-09-01",
         },
       });
       expect(res.statusCode).toBe(400);
