@@ -7,6 +7,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 import { calculateProRataVacation } from "../utils/vacation-calc";
 import { normalizeMac } from "../utils/normalize-mac";
+import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -172,18 +173,31 @@ export async function employeeRoutes(app: FastifyInstance) {
         ? await bcrypt.hash(body.password!, 12)
         : await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12);
 
-      // Phase 49.5 — Arbeitstage: Body-Override > Tenant-Default > Mo-Fr
+      // Phase 49.5 — Arbeitstage: Body-Override > Tenant-Default > Mo-Fr.
+      // Phase 61 (v1.6.5) — also derive from per-day-hours when the body doesn't
+      // carry them. createEmployeeSchema does not accept per-day-hours today, so
+      // we synthesize the Prisma schema defaults (Mo-Fr=8, Sat/Sun=0). When a
+      // future schema extension adds these fields, the helper picks them up
+      // automatically. The tenant default still wins for callers who want a
+      // non-Mo-Fr default at hire-time.
       const tenantConfigForDefaults = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
         select: { defaultWorkDays: true },
       });
-      const resolvedWorkDays =
-        body.workDays && body.workDays.length > 0
-          ? body.workDays
-          : tenantConfigForDefaults?.defaultWorkDays &&
-              tenantConfigForDefaults.defaultWorkDays.length > 0
-            ? tenantConfigForDefaults.defaultWorkDays
-            : [1, 2, 3, 4, 5];
+      const perDayHoursForDerive: PerDayHours = {
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+      };
+      const resolvedWorkDays = normalizeWorkDays(
+        body.workDays,
+        perDayHoursForDerive,
+        tenantConfigForDefaults?.defaultWorkDays,
+      );
 
       const { employee, invitationToken } = await app.prisma.$transaction(
         async (tx: Prisma.TransactionClient) => {

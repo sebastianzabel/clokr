@@ -9,6 +9,7 @@ import {
   MONTH_FIRST_ERROR,
   snapToMonthFirstUtc,
 } from "../utils/month-first-date";
+import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -365,20 +366,34 @@ export async function settingsRoutes(app: FastifyInstance) {
           const current = emp.workSchedules[0];
           if (!current) {
             // MA ohne Schedule → neuen mit Defaults erstellen
+            // Phase 61 (v1.6.5) — workDays MUST be derived from the per-day-hours
+            // we're writing. Bulk-apply has no per-employee body, so we use the
+            // tenant defaults that are about to be persisted. tenantConfig
+            // defaultWorkDays acts as the fallback when defaults are all-zero.
+            const noScheduleHours: PerDayHours = {
+              mondayHours: configBody.defaultMondayHours ?? 8,
+              tuesdayHours: configBody.defaultTuesdayHours ?? 8,
+              wednesdayHours: configBody.defaultWednesdayHours ?? 8,
+              thursdayHours: configBody.defaultThursdayHours ?? 8,
+              fridayHours: configBody.defaultFridayHours ?? 8,
+              saturdayHours: configBody.defaultSaturdayHours ?? 0,
+              sundayHours: configBody.defaultSundayHours ?? 0,
+            };
             const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
                 type: "FIXED_SCHEDULE",
                 weeklyHours: configBody.defaultWeeklyHours ?? 40,
-                mondayHours: configBody.defaultMondayHours ?? 8,
-                tuesdayHours: configBody.defaultTuesdayHours ?? 8,
-                wednesdayHours: configBody.defaultWednesdayHours ?? 8,
-                thursdayHours: configBody.defaultThursdayHours ?? 8,
-                fridayHours: configBody.defaultFridayHours ?? 8,
-                saturdayHours: configBody.defaultSaturdayHours ?? 0,
-                sundayHours: configBody.defaultSundayHours ?? 0,
+                mondayHours: noScheduleHours.mondayHours as number,
+                tuesdayHours: noScheduleHours.tuesdayHours as number,
+                wednesdayHours: noScheduleHours.wednesdayHours as number,
+                thursdayHours: noScheduleHours.thursdayHours as number,
+                fridayHours: noScheduleHours.fridayHours as number,
+                saturdayHours: noScheduleHours.saturdayHours as number,
+                sundayHours: noScheduleHours.sundayHours as number,
                 overtimeThreshold: configBody.overtimeThreshold ?? 60,
                 allowOvertimePayout: configBody.allowOvertimePayout ?? false,
+                workDays: normalizeWorkDays(undefined, noScheduleHours, configBody.defaultWorkDays),
                 validFrom: now,
               },
             });
@@ -393,21 +408,33 @@ export async function settingsRoutes(app: FastifyInstance) {
             appliedCount++;
           } else if (current.type === "FIXED_SCHEDULE") {
             // Nur FIXED_SCHEDULE MA updaten (nicht Minijobber)
+            // Phase 61 (v1.6.5) — same as above: derive workDays from the
+            // per-day-hours that are actually being written for this employee.
+            const updateHours: PerDayHours = {
+              mondayHours: configBody.defaultMondayHours ?? Number(current.mondayHours),
+              tuesdayHours: configBody.defaultTuesdayHours ?? Number(current.tuesdayHours),
+              wednesdayHours: configBody.defaultWednesdayHours ?? Number(current.wednesdayHours),
+              thursdayHours: configBody.defaultThursdayHours ?? Number(current.thursdayHours),
+              fridayHours: configBody.defaultFridayHours ?? Number(current.fridayHours),
+              saturdayHours: configBody.defaultSaturdayHours ?? Number(current.saturdayHours),
+              sundayHours: configBody.defaultSundayHours ?? Number(current.sundayHours),
+            };
             const created = await app.prisma.workSchedule.create({
               data: {
                 employeeId: emp.id,
                 type: "FIXED_SCHEDULE",
                 weeklyHours: configBody.defaultWeeklyHours ?? Number(current.weeklyHours),
-                mondayHours: configBody.defaultMondayHours ?? Number(current.mondayHours),
-                tuesdayHours: configBody.defaultTuesdayHours ?? Number(current.tuesdayHours),
-                wednesdayHours: configBody.defaultWednesdayHours ?? Number(current.wednesdayHours),
-                thursdayHours: configBody.defaultThursdayHours ?? Number(current.thursdayHours),
-                fridayHours: configBody.defaultFridayHours ?? Number(current.fridayHours),
-                saturdayHours: configBody.defaultSaturdayHours ?? Number(current.saturdayHours),
-                sundayHours: configBody.defaultSundayHours ?? Number(current.sundayHours),
+                mondayHours: updateHours.mondayHours as number,
+                tuesdayHours: updateHours.tuesdayHours as number,
+                wednesdayHours: updateHours.wednesdayHours as number,
+                thursdayHours: updateHours.thursdayHours as number,
+                fridayHours: updateHours.fridayHours as number,
+                saturdayHours: updateHours.saturdayHours as number,
+                sundayHours: updateHours.sundayHours as number,
                 overtimeThreshold:
                   configBody.overtimeThreshold ?? Number(current.overtimeThreshold),
                 allowOvertimePayout: configBody.allowOvertimePayout ?? current.allowOvertimePayout,
+                workDays: normalizeWorkDays(undefined, updateHours, configBody.defaultWorkDays),
                 validFrom: now,
               },
             });
@@ -541,8 +568,11 @@ export async function settingsRoutes(app: FastifyInstance) {
               coreStart: body.coreStart ?? null,
               coreEnd: body.coreEnd ?? null,
               coreDays: body.coreDays ?? [],
-              // Phase 49.5 — optional workDays override
-              ...(body.workDays ? { workDays: body.workDays } : {}),
+              // Phase 61 (v1.6.5) — derive workDays from per-day-hours when the
+              // caller either omitted workDays or sent the literal Mo-Fr default
+              // alongside per-day-hours that disagree. Closes an employee's
+              // class of bug (mondayHours=0 but workDays=[1,2,3,4,5]).
+              workDays: normalizeWorkDays(body.workDays, body as PerDayHours),
               validFrom,
             };
 
@@ -626,8 +656,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         coreStart: body.coreStart ?? null,
         coreEnd: body.coreEnd ?? null,
         coreDays: body.coreDays ?? [],
-        // Phase 49.5 — optional workDays override
-        ...(body.workDays ? { workDays: body.workDays } : {}),
+        // Phase 61 (v1.6.5) — derive workDays from per-day-hours when the
+        // caller either omitted workDays or sent the literal Mo-Fr default
+        // alongside per-day-hours that disagree. Closes an employee's
+        // class of bug (mondayHours=0 but workDays=[1,2,3,4,5]).
+        workDays: normalizeWorkDays(body.workDays, body as PerDayHours),
         validFrom,
       };
 

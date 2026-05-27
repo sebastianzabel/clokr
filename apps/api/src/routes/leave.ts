@@ -8,6 +8,7 @@ import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
+import { calculateWorkDays } from "../utils/calculate-work-days";
 import { updateOvertimeAccount } from "./time-entries";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
@@ -1670,30 +1671,7 @@ async function getHolidayMap(
   return map;
 }
 
-/**
- * Phase 49.5: workDays-aware Urlaubsverbrauch.
- * `workDays` ist Pflichtargument — Caller MUSS den WorkSchedule des MA laden
- * und workDays übergeben (oder den Tenant-Default als Fallback).
- */
-function calculateWorkDays(
-  start: Date,
-  end: Date,
-  halfDay: boolean,
-  workDays: number[],
-  holidays: Set<string> = new Set(),
-): number {
-  if (halfDay) return 0.5;
-  const workDaySet = new Set(workDays);
-  let days = 0;
-  const cur = new Date(start);
-  while (cur <= end) {
-    const dow = cur.getDay();
-    const ds = cur.toISOString().split("T")[0];
-    if (workDaySet.has(dow) && !holidays.has(ds)) days++;
-    cur.setDate(cur.getDate() + 1);
-  }
-  return days;
-}
+// calculateWorkDays moved to ../utils/calculate-work-days (Phase 61).
 
 /**
  * Lädt das aktuell gültige workDays-Set für einen Mitarbeiter.
