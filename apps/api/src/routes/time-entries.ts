@@ -1425,9 +1425,25 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
   }, 0);
 
+  // Approved/recorded absences (Krank, Sonderurlaub, etc.) — abziehen wie Urlaub
+  const absences = await app.prisma.absence.findMany({
+    where: {
+      employeeId,
+      deletedAt: null, // required by soft-delete convention
+      startDate: { lte: effectiveEnd },
+      endDate: { gte: rangeStart },
+    },
+  });
+  const absenceMinutes = absences.reduce((sum, ab) => {
+    const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
+    const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+    if (absStart > absEnd) return sum;
+    return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
+  }, 0);
+
   // Saldo = Snapshot-CarryOver + offener Zeitraum
   const openPeriodBalance =
-    workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
+    workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes);
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
   // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)

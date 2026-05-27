@@ -853,7 +853,29 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }, 0);
       }
 
-      const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
+      // Subtract approved/recorded absences (Krank, Sonderurlaub, etc.)
+      const absences = await app.prisma.absence.findMany({
+        where: {
+          employeeId,
+          deletedAt: null, // required by soft-delete convention
+          startDate: { lte: monthEnd },
+          endDate: { gte: effectiveStart },
+        },
+      });
+      let absenceMinutes = 0;
+      if (!isPureTracking) {
+        absenceMinutes = absences.reduce((sum, ab) => {
+          const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+          const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+          if (absStart > absEnd) return sum;
+          return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
+        }, 0);
+      }
+
+      const netExpected = Math.max(
+        0,
+        expectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
+      );
       const balanceMinutes = Math.round(workedMinutes - netExpected);
 
       // Get previous month's carry-over
