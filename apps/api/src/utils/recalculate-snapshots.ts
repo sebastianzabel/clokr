@@ -102,74 +102,143 @@ export async function recalculateSnapshots(
       ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
       : null;
     const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
-    const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+    const scheduleType = String(schedule.type ?? "");
 
-    // Subtract holidays: merge computed Feiertage + DB-stored manual holidays (bugfix: was DB-only)
-    const snapStateCode = employee.tenant
-      ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
-      : "NI";
-    const snapYear = monthStart.getUTCFullYear();
-    const computedHolidays = getHolidays(snapYear, snapStateCode).filter(
-      (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
-    );
-    const computedDateSet = new Set(computedHolidays.map((h) => h.date));
-    const dbSnapHolidays = await app.prisma.publicHoliday.findMany({
-      where: {
-        tenant: { employees: { some: { id: employeeId } } },
-        date: { gte: effectiveStart, lte: monthEnd },
-      },
-    });
-    const allHolidays: { date: Date }[] = [
-      ...computedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
-      ...dbSnapHolidays
-        .filter((h) => !computedDateSet.has(dateStrInTz(h.date, tz)))
-        .map((h) => ({ date: h.date })),
-    ];
+    // ── Schedule-type-aware expected/holiday/leave ─────────────────────────────
+    // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days; holiday
+    // and leave subtractions stay at 0 (already excluded by the shift filter).
+    // Note: absenceMinutes is intentionally NOT introduced here — scope of this
+    // change mirrors the SHIFT_BASED branch only. Adding absence subtraction to
+    // recalc is a separate ticket (out of scope to keep 260527-dsy scope clean).
+    let expectedMinutes: number;
+    let holidayMinutes: number;
+    let leaveMinutes: number;
 
-    // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
-    const isMonthlyHoursDeduction =
-      String(schedule.type ?? "") === "MONTHLY_HOURS" &&
-      Number(schedule.monthlyHours ?? 0) > 0 &&
-      tenantConfig?.monthlyHoursHolidayDeduction === true;
+    if (scheduleType === "SHIFT_BASED") {
+      const shifts = await app.prisma.shift.findMany({
+        where: { employeeId, date: { gte: effectiveStart, lte: monthEnd } },
+        select: { date: true, startTime: true, endTime: true },
+      });
+      const approvedLeave = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          deletedAt: null, // required by soft-delete convention
+          status: "APPROVED",
+          startDate: { lte: monthEnd },
+          endDate: { gte: effectiveStart },
+        },
+      });
+      const absences = await app.prisma.absence.findMany({
+        where: {
+          employeeId,
+          deletedAt: null, // required by soft-delete convention
+          startDate: { lte: monthEnd },
+          endDate: { gte: effectiveStart },
+        },
+      });
 
-    let workingDaysInRange = 0;
-    if (isMonthlyHoursDeduction) {
-      const wdCur = new Date(effectiveStart);
-      while (wdCur <= monthEnd) {
-        const wdDow = getDayOfWeekInTz(wdCur, tz);
-        if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
-        wdCur.setDate(wdCur.getDate() + 1);
+      const coveredDates = new Set<string>();
+      const addRange = (s: Date, e: Date) => {
+        const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+        const end = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+        while (cur <= end) {
+          coveredDates.add(dateStrInTz(cur, tz));
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+      };
+      for (const lr of approvedLeave) {
+        const s = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+        const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+        if (s <= e) addRange(s, e);
       }
-    }
-    const dailySollMin =
-      isMonthlyHoursDeduction && workingDaysInRange > 0
-        ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
-        : 0;
+      for (const ab of absences) {
+        const s = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+        const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+        if (s <= e) addRange(s, e);
+      }
+      const hmToMin = (hm: string) => {
+        const [h, m] = hm.split(":").map(Number);
+        return (h ?? 0) * 60 + (m ?? 0);
+      };
+      let shiftMinutes = 0;
+      for (const sh of shifts) {
+        if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
+        const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+        if (dur > 0) shiftMinutes += dur;
+      }
+      expectedMinutes = shiftMinutes;
+      leaveMinutes = 0;
+      holidayMinutes = 0;
+    } else {
+      expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
-    const holidayMinutes = allHolidays.reduce((sum, h) => {
-      const dow = getDayOfWeekInTz(h.date, tz);
+      // Subtract holidays: merge computed Feiertage + DB-stored manual holidays (bugfix: was DB-only)
+      const snapStateCode = employee.tenant
+        ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
+        : "NI";
+      const snapYear = monthStart.getUTCFullYear();
+      const computedHolidays = getHolidays(snapYear, snapStateCode).filter(
+        (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
+      );
+      const computedDateSet = new Set(computedHolidays.map((h) => h.date));
+      const dbSnapHolidays = await app.prisma.publicHoliday.findMany({
+        where: {
+          tenant: { employees: { some: { id: employeeId } } },
+          date: { gte: effectiveStart, lte: monthEnd },
+        },
+      });
+      const allHolidays: { date: Date }[] = [
+        ...computedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
+        ...dbSnapHolidays
+          .filter((h) => !computedDateSet.has(dateStrInTz(h.date, tz)))
+          .map((h) => ({ date: h.date })),
+      ];
+
+      // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+      const isMonthlyHoursDeduction =
+        scheduleType === "MONTHLY_HOURS" &&
+        Number(schedule.monthlyHours ?? 0) > 0 &&
+        tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+      let workingDaysInRange = 0;
       if (isMonthlyHoursDeduction) {
-        return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+        const wdCur = new Date(effectiveStart);
+        while (wdCur <= monthEnd) {
+          const wdDow = getDayOfWeekInTz(wdCur, tz);
+          if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+          wdCur.setDate(wdCur.getDate() + 1);
+        }
       }
-      return sum + getDayHoursFromSchedule(schedule, dow) * 60;
-    }, 0);
+      const dailySollMin =
+        isMonthlyHoursDeduction && workingDaysInRange > 0
+          ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+          : 0;
 
-    // Subtract approved leave
-    const approvedLeave = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        status: "APPROVED",
-        startDate: { lte: monthEnd },
-        endDate: { gte: monthStart },
-      },
-    });
-    const leaveMinutes = approvedLeave.reduce((sum, lr) => {
-      const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-      const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-      if (leaveStart > leaveEnd) return sum;
-      return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
-    }, 0);
+      holidayMinutes = allHolidays.reduce((sum, h) => {
+        const dow = getDayOfWeekInTz(h.date, tz);
+        if (isMonthlyHoursDeduction) {
+          return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+        }
+        return sum + getDayHoursFromSchedule(schedule, dow) * 60;
+      }, 0);
+
+      // Subtract approved leave
+      const approvedLeave = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          deletedAt: null, // required by soft-delete convention
+          status: "APPROVED",
+          startDate: { lte: monthEnd },
+          endDate: { gte: monthStart },
+        },
+      });
+      leaveMinutes = approvedLeave.reduce((sum, lr) => {
+        const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+        const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+        if (leaveStart > leaveEnd) return sum;
+        return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+      }, 0);
+    }
 
     const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
     const balanceMinutes = Math.round(workedMinutes - netExpected);
