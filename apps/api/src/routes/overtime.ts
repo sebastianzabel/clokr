@@ -782,9 +782,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tenantConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: employee.tenantId },
       });
-      const isPureTracking =
-        scheduleType === "MONTHLY_HOURS" &&
-        (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
+      // Phase 58 (#192): the previous isPureTracking-only leave/absence guard has been
+      // superseded by a broader `scheduleType !== "MONTHLY_HOURS"` gate below. The
+      // declaration was removed because no other site in this file consults it.
 
       // ── Schedule-type-aware expected/holiday/leave/absence ─────────────────────
       // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days;
@@ -913,7 +913,10 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
         leaveMinutes = 0;
-        if (!isPureTracking) {
+        // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT
+        // apply. Broader gate than the pre-#192 isPureTracking guard (which only covered
+        // monthlyHours = 0); this extends the skip to all MONTHLY_HOURS schedules.
+        if (scheduleType !== "MONTHLY_HOURS") {
           leaveMinutes = approvedLeave.reduce((sum, lr) => {
             const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
             const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
@@ -932,7 +935,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
         absenceMinutes = 0;
-        if (!isPureTracking) {
+        if (scheduleType !== "MONTHLY_HOURS") {
           absenceMinutes = absences.reduce((sum, ab) => {
             const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
             const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;

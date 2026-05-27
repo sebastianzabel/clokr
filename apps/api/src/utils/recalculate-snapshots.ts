@@ -238,6 +238,14 @@ export async function recalculateSnapshots(
         if (leaveStart > leaveEnd) return sum;
         return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
       }, 0);
+
+      // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
+      // Note: this file does not currently subtract absences (v1.6.3 deliberately scoped
+      // absence-subtraction out of recalculateSnapshots). We preserve that decision —
+      // only leaveMinutes is gated here. (#192)
+      if (scheduleType === "MONTHLY_HOURS") {
+        leaveMinutes = 0;
+      }
     }
 
     const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);

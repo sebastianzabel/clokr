@@ -1559,6 +1559,12 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         absenceMinutes += calcExpectedMinutesTz(schedule, seg.start, seg.end, tz);
       }
     }
+
+    // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
+    // We still compute the per-month-segmented values above for parity with the default
+    // branch shape, then zero leave + absence so the flat monthly budget stays the Soll. (#192)
+    leaveMinutes = 0;
+    absenceMinutes = 0;
   } else {
     // ── Default: FIXED_WEEKLY / FLEXTIME / MONTHLY_HOURS single-month / pure-tracking ─
     expectedMinutes =
@@ -1596,6 +1602,13 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       if (absStart > absEnd) return sum;
       return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
     }, 0);
+
+    // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
+    // This covers MONTHLY_HOURS single-month + pure-tracking (monthlyHours = 0). (#192)
+    if (scheduleType === "MONTHLY_HOURS") {
+      leaveMinutes = 0;
+      absenceMinutes = 0;
+    }
   }
 
   // Saldo = Snapshot-CarryOver + offener Zeitraum
