@@ -746,14 +746,25 @@
     if (!breakStartedAt || !activeEntryId) return;
     const startedAt = breakStartedAt;
     const endedAt = new Date();
-    // Guard against zero-length breaks (double-click) — round up to 1min.
-    const effectiveEnd =
-      endedAt.getTime() - startedAt.getTime() < 60_000
-        ? new Date(startedAt.getTime() + 60_000)
-        : endedAt;
+    // Guard against zero-length breaks (double-click): ensure the Break record
+    // is at least 60s long by anchoring on endedAt and shifting the START into
+    // the PAST when needed. We must never shift the END into the future — the
+    // server rejects future-end timestamps ("Pausenende darf nicht in der
+    // Zukunft liegen") and the local "now" is already at or after the server's
+    // "now" once the request round-trips.
+    //
+    // The shifted start is also clamped to clockStart so the break never lies
+    // before the entry's startTime (server validates that too).
+    let effectiveStart = startedAt;
+    if (endedAt.getTime() - startedAt.getTime() < 60_000) {
+      effectiveStart = new Date(endedAt.getTime() - 60_000);
+      if (clockStart && effectiveStart < clockStart) {
+        effectiveStart = clockStart;
+      }
+    }
     const res = await api.post<{ breakMinutes: number }>(`/time-entries/${activeEntryId}/breaks`, {
-      startTime: startedAt.toISOString(),
-      endTime: effectiveEnd.toISOString(),
+      startTime: effectiveStart.toISOString(),
+      endTime: endedAt.toISOString(),
     });
     breakMinutes = res.breakMinutes;
     breakStartedAt = null;

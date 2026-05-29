@@ -760,13 +760,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Pause darf nicht vor dem Eintragsbeginn liegen" });
       }
       // For closed entries, the break must also lie within the entry. For still-open
-      // entries (no endTime yet) we only require breakEnd <= now.
+      // entries (no endTime yet) we only require breakEnd <= now. A small tolerance
+      // (5s) absorbs benign clock skew between the client (browser) and the API host
+      // — otherwise a server clock that runs a few seconds ahead would reject every
+      // "Pause beenden" click from a synchronously-correct client.
+      const FUTURE_TOLERANCE_MS = 5_000;
       const now = new Date();
       if (entry.endTime) {
         if (breakEnd > entry.endTime) {
           return reply.code(400).send({ error: "Pause darf nicht nach dem Eintragsende liegen" });
         }
-      } else if (breakEnd > now) {
+      } else if (breakEnd.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
         return reply.code(400).send({ error: "Pausenende darf nicht in der Zukunft liegen" });
       }
 
