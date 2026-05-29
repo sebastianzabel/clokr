@@ -707,6 +707,95 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     },
   });
 
+  // ── POST /api/v1/time-entries/:id/breaks ──────────────────────────────────
+  // Append a completed break (startTime + endTime) to an open or closed TimeEntry.
+  // Used by the dashboard Pause toggle: client tracks "break started at" locally
+  // (localStorage) and POSTs the closed segment when the user clicks "Pause beenden".
+  // Keeps Break records canonical (always closed segments) and avoids a schema
+  // migration to nullable endTime. The recorded break-minutes are added to the
+  // entry's existing breakMinutes total so live ArbZG warnings stay accurate.
+  const appendBreakSchema = z.object({
+    startTime: z.string().datetime(),
+    endTime: z.string().datetime(),
+  });
+  app.post("/:id/breaks", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = appendBreakSchema.parse(req.body);
+      const user = req.user;
+
+      const entry = await app.prisma.timeEntry.findFirst({
+        where: { id, deletedAt: null },
+        include: { employee: { select: { tenantId: true } } },
+      });
+      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Multi-tenancy: cross-tenant access is not allowed.
+      if (entry.employee.tenantId !== user.tenantId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Only the entry's owner or a manager/admin may append breaks.
+      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
+      if (!isManager && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Locked months are immutable (audit-proof, see CLAUDE.md).
+      if (entry.isLocked) {
+        return reply
+          .code(409)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      const breakStart = new Date(body.startTime);
+      const breakEnd = new Date(body.endTime);
+
+      if (!(breakStart < breakEnd)) {
+        return reply.code(400).send({ error: "Pausenende muss nach Pausenbeginn liegen" });
+      }
+      if (breakStart < entry.startTime) {
+        return reply.code(400).send({ error: "Pause darf nicht vor dem Eintragsbeginn liegen" });
+      }
+      // For closed entries, the break must also lie within the entry. For still-open
+      // entries (no endTime yet) we only require breakEnd <= now.
+      const now = new Date();
+      if (entry.endTime) {
+        if (breakEnd > entry.endTime) {
+          return reply.code(400).send({ error: "Pause darf nicht nach dem Eintragsende liegen" });
+        }
+      } else if (breakEnd > now) {
+        return reply.code(400).send({ error: "Pausenende darf nicht in der Zukunft liegen" });
+      }
+
+      const created = await app.prisma.break.create({
+        data: { timeEntryId: id, startTime: breakStart, endTime: breakEnd },
+      });
+
+      // Recompute breakMinutes from the union of all breaks on this entry so the
+      // summary stat stays consistent (multiple breaks per entry are allowed).
+      const allBreaks = await app.prisma.break.findMany({ where: { timeEntryId: id } });
+      const totalBreakMin = Math.round(calcBreakMinutes(allBreaks));
+      await app.prisma.timeEntry.update({
+        where: { id },
+        data: { breakMinutes: totalBreakMin },
+      });
+
+      await app.audit({
+        userId: user.sub,
+        action: "BREAK_APPEND",
+        entity: "Break",
+        entityId: created.id,
+        newValue: { timeEntryId: id, startTime: created.startTime, endTime: created.endTime },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return { success: true, break: created, breakMinutes: totalBreakMin };
+    },
+  });
+
   // GET /api/v1/time-entries  (eigene oder alle für Manager)
   app.get("/", {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },

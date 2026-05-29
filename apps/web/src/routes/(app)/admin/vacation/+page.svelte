@@ -14,7 +14,7 @@
   const TABS = [
     { id: "uebersicht", label: "Übersicht" },
     { id: "standards", label: "Standards" },
-    { id: "arbzg", label: "ArbZG & Pausen" },
+    { id: "arbzg", label: "ArbZG" },
     { id: "antraege", label: "Anträge & Krankheit" },
     { id: "erinnerungen", label: "Erinnerungen" },
     { id: "sonderurlaub", label: "Sonderurlaub" },
@@ -140,8 +140,7 @@
   let gCarryOverMonth = $state(3);
   let gArbzgEnabled = $state(true);
   // Phase 49.4: Verfügbarkeits-System toggle moved to /admin/system (Features card).
-  let gAutoBreak = $state(false);
-  let gDefaultBreakStart = $state("12:00");
+  // v1.6.5: autoBreakEnabled + defaultBreakStart moved to /admin/system → Arbeitszeit.
   let gApplyToExisting = $state(false);
   let gClockOutHours = $state(10);
   let gMissingDays = $state(7);
@@ -200,8 +199,7 @@
       gCarryOverDay = cfg.carryOverDeadlineDay ?? 31;
       gCarryOverMonth = cfg.carryOverDeadlineMonth ?? 3;
       gArbzgEnabled = cfg.arbzgEnabled ?? true;
-      gAutoBreak = cfg.autoBreakEnabled ?? false;
-      gDefaultBreakStart = cfg.defaultBreakStart ?? "12:00";
+      // v1.6.5: autoBreakEnabled + defaultBreakStart are managed on /admin/system → Arbeitszeit.
       gClockOutHours = cfg.clockOutReminderHours ?? 10;
       gMissingDays = cfg.missingEntriesDays ?? 7;
       gAutoInvalidateHours = cfg.autoDeleteOpenHours ?? 14;
@@ -273,8 +271,8 @@
         carryOverDeadlineMonth: gCarryOverMonth,
         defaultVacationDays: gVacationDays,
         arbzgEnabled: gArbzgEnabled,
-        autoBreakEnabled: gAutoBreak,
-        defaultBreakStart: gAutoBreak ? gDefaultBreakStart : null,
+        // v1.6.5: autoBreakEnabled + defaultBreakStart are owned by /admin/system →
+        // Arbeitszeit and intentionally not sent from this page to avoid clobbering.
         applyToExisting: gApplyToExisting,
         clockOutReminderHours: gClockOutHours,
         missingEntriesDays: gMissingDays,
@@ -617,11 +615,12 @@
         </div>
       </Section>
     {:else if currentTab === "arbzg"}
-      <!-- ── Tab: ArbZG & Pausen ────────────────────────────────────────── -->
-      <Section title="ArbZG — Compliance & Pausen" sub="Arbeitszeitgesetz und automatische Pausen">
+      <!-- ── Tab: ArbZG ─────────────────────────────────────────────────── -->
+      <Section
+        title="ArbZG — Compliance"
+        sub="Arbeitszeitgesetz — Höchstarbeitszeit & Pausenpflicht"
+      >
         <div class="settings-section">
-          <h3 class="section-inner-title">Compliance</h3>
-
           <div class="toggle-row">
             <div class="toggle-info">
               <span class="toggle-row-label">ArbZG-Verstöße anzeigen</span>
@@ -640,47 +639,10 @@
               <span class="switch-slider"></span>
             </label>
           </div>
-        </div>
-
-        <hr class="settings-divider" />
-
-        <div class="settings-section">
-          <h3 class="section-inner-title">Pausen</h3>
-          <p class="section-desc">
-            Automatische Pausenberechnung nach Arbeitszeitgesetz (<span translate="no"
-              >§ 4 ArbZG</span
-            >).
+          <p class="form-hint text-muted" style="margin-top: 1rem;">
+            Hinweis: Die Einstellung „Pausen automatisch abziehen" (§ 4 ArbZG) ist nach System →
+            Allgemein → Arbeitszeit umgezogen.
           </p>
-
-          <div class="toggle-row">
-            <div class="toggle-info">
-              <span class="toggle-row-label">Automatische Pausen</span>
-              <p class="form-hint">
-                Nach 6h werden 30 Min., nach 9h werden 45 Min. Pause automatisch eingetragen.
-              </p>
-            </div>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Automatische Pausen aktivieren"
-                bind:checked={gAutoBreak}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-
-          {#if gAutoBreak}
-            <div class="form-group break-start-group">
-              <label class="form-label" for="g-break-start">Standard-Pausenbeginn</label>
-              <input
-                id="g-break-start"
-                type="time"
-                bind:value={gDefaultBreakStart}
-                class="form-input break-start-input"
-              />
-              <p class="form-hint">Wird als Vorauswahl im Erfassungsformular verwendet.</p>
-            </div>
-          {/if}
         </div>
       </Section>
     {:else if currentTab === "erinnerungen"}
@@ -1513,14 +1475,6 @@
     color: var(--good);
     font-weight: 500;
     font-size: 0.9375rem;
-  }
-
-  .break-start-group {
-    margin-top: 16px;
-  }
-
-  .break-start-input {
-    max-width: 140px;
   }
 
   .spaced-top-xs {

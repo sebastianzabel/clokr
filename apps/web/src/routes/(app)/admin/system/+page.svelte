@@ -37,6 +37,9 @@
     carryOverDeadlineMonth: number;
     // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll (Phase 15)
     monthlyHoursHolidayDeduction?: boolean;
+    // ArbZG § 4 — Auto-Pausen (Pflege hier, nicht mehr auf /admin/vacation)
+    autoBreakEnabled?: boolean;
+    defaultBreakStart?: string | null;
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
     defaultCoreStart?: string | null;
     defaultCoreEnd?: string | null;
@@ -169,6 +172,13 @@
   // Phase 15: MONTHLY_HOURS holiday deduction toggle
   let monthlyHoursHolidayDeduction = $state(false);
   let holidayDeductionSaving = $state(false);
+
+  // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
+  let autoBreakEnabled = $state(false);
+  let defaultBreakStart = $state("12:00");
+  let autoBreakSaving = $state(false);
+  let autoBreakSaved = $state(false);
+  let autoBreakError = $state("");
 
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
@@ -366,6 +376,9 @@
         carryOverDeadlineMonth: cfg.carryOverDeadlineMonth,
       };
       monthlyHoursHolidayDeduction = cfg.monthlyHoursHolidayDeduction ?? false;
+      // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
+      autoBreakEnabled = cfg.autoBreakEnabled ?? false;
+      defaultBreakStart = cfg.defaultBreakStart ?? "12:00";
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
       availabilityEnabled = cfg.availabilityEnabled ?? true;
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
@@ -515,6 +528,60 @@
       // revert on error — state unchanged because we did not assign yet
     } finally {
       holidayDeductionSaving = false;
+    }
+  }
+
+  // ArbZG § 4 — Auto-Pausen-Toggle (moved from /admin/vacation in v1.6.5).
+  // When enabled, the time-entries pipeline deducts 30min (>6h) / 45min (>9h)
+  // breaks on clock-out (apps/api/src/routes/time-entries.ts:400,641,909).
+  async function toggleAutoBreak() {
+    if (!_gOtherFields) return;
+    autoBreakSaving = true;
+    autoBreakError = "";
+    autoBreakSaved = false;
+    const newValue = !autoBreakEnabled;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        autoBreakEnabled: newValue,
+        defaultBreakStart: newValue ? defaultBreakStart : null,
+      });
+      autoBreakEnabled = newValue;
+      autoBreakSaved = true;
+      setTimeout(() => (autoBreakSaved = false), 2500);
+    } catch (e: unknown) {
+      autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      autoBreakSaving = false;
+    }
+  }
+
+  async function saveDefaultBreakStart() {
+    if (!_gOtherFields) return;
+    if (!autoBreakEnabled) return; // No-op when toggle is off — field would be cleared anyway.
+    if (!/^\d{2}:\d{2}$/.test(defaultBreakStart)) {
+      autoBreakError = "Format HH:MM erwartet.";
+      return;
+    }
+    autoBreakSaving = true;
+    autoBreakError = "";
+    autoBreakSaved = false;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        autoBreakEnabled: true,
+        defaultBreakStart,
+      });
+      autoBreakSaved = true;
+      setTimeout(() => (autoBreakSaved = false), 2500);
+    } catch (e: unknown) {
+      autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      autoBreakSaving = false;
     }
   }
 
@@ -1127,6 +1194,56 @@
             <span class="switch-slider"></span>
           </label>
         </div>
+      </Section>
+
+      <!-- ── Automatische Pausen (§ 4 ArbZG) ──────────────────────────────── -->
+      <Section
+        title="Pausen automatisch abziehen"
+        sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
+      >
+        {#if autoBreakError}
+          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+            <span>⚠</span><span>{autoBreakError}</span>
+          </div>
+        {/if}
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <span class="toggle-row-label">Pausen automatisch abziehen</span>
+            <p class="form-hint text-muted">
+              Beim Ausstempeln wird die gesetzliche Pflichtpause automatisch als Pausen-Eintrag
+              angelegt und von der gestempelten Arbeitszeit abgezogen — 30 Min. ab 6h
+              Bruttoarbeitszeit, 45 Min. ab 9h. Wirkt auf neue Einträge ab Aktivierung.
+            </p>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              aria-label="Pausen automatisch abziehen"
+              checked={autoBreakEnabled}
+              onchange={toggleAutoBreak}
+              disabled={autoBreakSaving}
+            />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        {#if autoBreakEnabled}
+          <div class="form-group" style="margin-top: 1rem;">
+            <label class="form-label" for="sys-break-start">Standard-Pausenbeginn</label>
+            <input
+              id="sys-break-start"
+              type="time"
+              bind:value={defaultBreakStart}
+              onchange={saveDefaultBreakStart}
+              class="form-input modal-input-sm"
+              disabled={autoBreakSaving}
+            />
+            <p class="form-hint text-muted">
+              Vorgeschlagene Uhrzeit, ab der die automatische Pause gelegt wird. Liegt sie außerhalb
+              des gestempelten Zeitraums, fällt das System auf die Tagesmitte zurück.
+            </p>
+          </div>
+        {/if}
+        {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
       </Section>
 
       <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->

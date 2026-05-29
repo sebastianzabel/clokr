@@ -108,6 +108,16 @@
   let currentTime = $state(new Date());
   let clockStart: Date | null = $state(null);
 
+  // ── Open break (dashboard pause toggle) ──────────────────────────────────
+  // Open breaks are not persisted on the server (Break records are always
+  // closed segments — see CLAUDE.md "Break model"). We track the active
+  // break-start time in localStorage keyed by the active TimeEntry id so it
+  // survives page reloads. On "Pause beenden" we POST a complete Break
+  // segment (start + end) to /api/v1/time-entries/:id/breaks.
+  let breakStartedAt: Date | null = $state(null);
+  let breakLoading = $state(false);
+  const OPEN_BREAK_STORAGE_KEY = "clokr.dashboard.openBreak";
+
   let stats: DashboardStats | null = $state(null);
   let teamWeek: TeamWeek | null = $state(null);
   let teamPage = $state(1);
@@ -243,10 +253,15 @@
           clockedIn = true;
           activeEntryId = openEntry.id;
           clockStart = new Date(openEntry.startTime);
+          // Restore any in-progress break that was started in a previous page
+          // load (localStorage). Stale entries (different entryId) are cleared.
+          restoreOpenBreak();
         } else {
           clockedIn = false;
           activeEntryId = null;
           clockStart = null;
+          breakStartedAt = null;
+          clearStoredOpenBreak();
         }
       } else {
         console.error("Failed to load time entries:", entriesResult.reason);
@@ -344,13 +359,21 @@
       );
       const openEntry = entries.find((e) => !e.endTime);
       if (openEntry) {
+        const wasSameEntry = activeEntryId === openEntry.id;
         clockedIn = true;
         activeEntryId = openEntry.id;
         clockStart = new Date(openEntry.startTime);
+        // If the active entry changed underneath us (rare — e.g. clock-out
+        // happened in another tab), an in-memory open break is stale. Clear it.
+        if (!wasSameEntry) {
+          restoreOpenBreak();
+        }
       } else {
         clockedIn = false;
         activeEntryId = null;
         clockStart = null;
+        breakStartedAt = null;
+        clearStoredOpenBreak();
       }
     } catch (err) {
       console.error("Failed to poll clock status:", err);
@@ -669,17 +692,116 @@
         clockedIn = true;
         clockStart = new Date();
       } else if (activeEntryId) {
+        // If a break is open, close it first so the time gets recorded before
+        // we ask the server to clock out (otherwise the time would silently
+        // be lost when activeEntryId is cleared).
+        if (breakStartedAt) {
+          try {
+            await endOpenBreak();
+          } catch (err) {
+            toasts.error(err instanceof Error ? err.message : "Pause konnte nicht beendet werden");
+            return; // abort clock-out — user can retry
+          }
+        }
         await api.post(`/time-entries/${activeEntryId}/clock-out`, { breakMinutes });
         clockedIn = false;
         activeEntryId = null;
         clockStart = null;
         breakMinutes = 0;
+        clearStoredOpenBreak();
       }
       await loadData();
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
     } finally {
       clockLoading = false;
+    }
+  }
+
+  // ── Break toggle (Pause starten / Pause beenden) ─────────────────────────
+  // Toggle semantics: starting just records a local timestamp; ending POSTs
+  // the closed segment to the server. Disabled while not clocked in.
+  async function handleBreakToggle() {
+    if (!clockedIn || !activeEntryId || clockLoading) return;
+    breakLoading = true;
+    try {
+      if (breakStartedAt) {
+        await endOpenBreak();
+      } else {
+        startOpenBreak();
+      }
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Pause fehlgeschlagen");
+    } finally {
+      breakLoading = false;
+    }
+  }
+
+  function startOpenBreak() {
+    breakStartedAt = new Date();
+    persistOpenBreak();
+  }
+
+  async function endOpenBreak() {
+    if (!breakStartedAt || !activeEntryId) return;
+    const startedAt = breakStartedAt;
+    const endedAt = new Date();
+    // Guard against zero-length breaks (double-click) — round up to 1min.
+    const effectiveEnd =
+      endedAt.getTime() - startedAt.getTime() < 60_000
+        ? new Date(startedAt.getTime() + 60_000)
+        : endedAt;
+    const res = await api.post<{ breakMinutes: number }>(`/time-entries/${activeEntryId}/breaks`, {
+      startTime: startedAt.toISOString(),
+      endTime: effectiveEnd.toISOString(),
+    });
+    breakMinutes = res.breakMinutes;
+    breakStartedAt = null;
+    clearStoredOpenBreak();
+  }
+
+  function persistOpenBreak() {
+    if (typeof window === "undefined") return;
+    if (!activeEntryId || !breakStartedAt) return;
+    try {
+      localStorage.setItem(
+        OPEN_BREAK_STORAGE_KEY,
+        JSON.stringify({ entryId: activeEntryId, startedAt: breakStartedAt.toISOString() }),
+      );
+    } catch {
+      /* localStorage may be unavailable; ignore */
+    }
+  }
+
+  function clearStoredOpenBreak() {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(OPEN_BREAK_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function restoreOpenBreak() {
+    if (typeof window === "undefined") return;
+    if (!activeEntryId) return;
+    try {
+      const raw = localStorage.getItem(OPEN_BREAK_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { entryId: string; startedAt: string };
+      if (parsed.entryId !== activeEntryId) {
+        // Stale entry from a previous clock-in cycle.
+        clearStoredOpenBreak();
+        return;
+      }
+      const startedAt = new Date(parsed.startedAt);
+      if (Number.isNaN(startedAt.getTime())) {
+        clearStoredOpenBreak();
+        return;
+      }
+      breakStartedAt = startedAt;
+    } catch {
+      clearStoredOpenBreak();
     }
   }
 
@@ -934,10 +1056,15 @@
             <button
               type="button"
               class="btn btn-ghost timer-cta-ghost"
-              disabled={clockLoading}
-              title="Pausen werden im Eintrag-Editor verwaltet"
+              class:timer-cta-ghost--active={breakStartedAt}
+              disabled={clockLoading || breakLoading}
+              onclick={handleBreakToggle}
+              title={breakStartedAt
+                ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
+                : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
             >
-              Pause starten
+              {#if breakLoading}<span class="btn-spinner"></span>{/if}
+              {breakStartedAt ? "Pause beenden" : "Pause starten"}
             </button>
           {/if}
         </div>
@@ -1826,6 +1953,12 @@
   }
   :global(.timer-card-wrap .timer-cta-ghost:hover:not(:disabled)) {
     background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+  /* Open-break state: emphasises that clicking now ENDS the break. */
+  :global(.timer-card-wrap .timer-cta-ghost--active) {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.4);
     color: white;
   }
   :global(.timer-card-wrap .timer-shift) {
