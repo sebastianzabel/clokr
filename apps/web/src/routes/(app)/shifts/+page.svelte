@@ -398,24 +398,19 @@
       const [w, t, work] = await Promise.all([
         api.get<WeekData>(`/shifts/week?date=${date}`),
         api.get<Template[]>("/shifts/templates"),
-        api.get<{ storeHours?: Array<{ day: number; closed?: boolean }> }>(
-          "/settings/work",
-        ),
+        api.get<{ storeHours?: Array<{ day: number; closed?: boolean }> }>("/settings/work"),
       ]);
       week = w;
       templates = t;
       // Phase 47.5 — closed-day set used by grid to dim cells visually.
       closedDays = new Set(
-        (work.storeHours ?? [])
-          .filter((s) => s.closed === true)
-          .map((s) => s.day),
+        (work.storeHours ?? []).filter((s) => s.closed === true).map((s) => s.day),
       );
-      // Phase 47 — seed one TemplateDragItem per visible template (top 3).
-      // Important: slice here, NOT in the each-block. svelte-dnd-action maps
-      // items[i] to children[i] positionally; if .slice(0, 3) lived in {#each}
-      // the dragged-out item would be cut from the rendered list mid-drag and
-      // the chip would unmount, cancelling the drag.
-      dndTemplates = t.slice(0, 3).map((tpl) => ({
+      // Phase 47 — seed one TemplateDragItem per template. svelte-dnd-action
+      // maps items[i] to children[i] positionally, so the initial list and
+      // restoreTemplatesStrip() must both render the full canonical templates
+      // array — slicing here cancels drags for templates beyond the cut.
+      dndTemplates = t.map((tpl) => ({
         id: `tpl-${tpl.id}`,
         kind: "template" as const,
         templateId: tpl.id,
@@ -486,9 +481,7 @@
   // users don't try to drag onto rows that would just bounce.
   const shiftEmployees = $derived.by(() => {
     if (!week) return [];
-    return week.employees.filter(
-      (e) => e.workSchedules?.[0]?.type === "SHIFT_BASED",
-    );
+    return week.employees.filter((e) => e.workSchedules?.[0]?.type === "SHIFT_BASED");
   });
 
   // ── Phase 45: SHIFT_BASED Soll-Row helpers ─────────────────────────────────
@@ -545,7 +538,10 @@
       const wh = Number(sched.weeklyHours ?? 0);
       if (wh <= 0) continue;
       const empShifts = week.shifts.filter((s) => s.employeeId === emp.id);
-      const assignedH = empShifts.reduce((sum, s) => sum + shiftNetHours(s.startTime, s.endTime), 0);
+      const assignedH = empShifts.reduce(
+        (sum, s) => sum + shiftNetHours(s.startTime, s.endTime),
+        0,
+      );
       const diff = assignedH - wh;
       out.set(emp.id, {
         assignedH,
@@ -562,7 +558,7 @@
   // (whether the chip landed on a cell or was dropped outside) so the chip
   // always reappears in the strip.
   function restoreTemplatesStrip() {
-    dndTemplates = templates.slice(0, 3).map((tpl) => ({
+    dndTemplates = templates.map((tpl) => ({
       id: `tpl-${tpl.id}`,
       kind: "template" as const,
       templateId: tpl.id,
@@ -732,9 +728,7 @@
               'Zielzeit liegt außerhalb der Öffnungszeiten. Über Klick + „Trotzdem zuweisen" zuweisen.',
           );
         } else {
-          toasts.error(
-            data?.message ?? "Schicht-Konflikt — Mitarbeiter hat Urlaub am Zieltag.",
-          );
+          toasts.error(data?.message ?? "Schicht-Konflikt — Mitarbeiter hat Urlaub am Zieltag.");
         }
       } else {
         toasts.error(err instanceof Error ? err.message : "Verschieben fehlgeschlagen.");
@@ -1057,10 +1051,10 @@
     <div class="callout error card-animate" role="alert">{error}</div>
   {/if}
 
-  <!-- Template strip (top 3 templates) — Phase 47: draggable chips via use:dndzone -->
+  <!-- Template strip — Phase 47: draggable chips via use:dndzone, one chip per template -->
   {#if templates.length > 0}
     <div
-      class="grid grid-3 sp-template-strip"
+      class="sp-template-strip"
       use:dndzone={{
         items: dndTemplates,
         flipDurationMs: FLIP_MS,
@@ -1072,9 +1066,7 @@
     >
       {#each dndTemplates as item (item.id)}
         {@const tpl =
-          item.kind === "template"
-            ? templates.find((t) => t.id === item.templateId)
-            : undefined}
+          item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
         <!--
           ALWAYS render a chip div for every item so children.length stays
           equal to items.length — svelte-dnd-action requires a 1:1 mapping
@@ -1134,8 +1126,8 @@
         <div class="callout info card-animate sp-empty-shift-roster" role="status">
           <strong>Keine Mitarbeiter im Schichtsystem.</strong>
           <p class="sp-empty-sub">
-            Um hier Schichten zu planen, weise mindestens einem Mitarbeiter den
-            Schichtplan-Modus (SHIFT_BASED) zu. Wechsle das Arbeitszeitmodell in
+            Um hier Schichten zu planen, weise mindestens einem Mitarbeiter den Schichtplan-Modus
+            (SHIFT_BASED) zu. Wechsle das Arbeitszeitmodell in
             <a href="/admin/vacation">Administration → Personal &amp; Urlaub</a>.
           </p>
         </div>
@@ -1216,7 +1208,10 @@
                 </div>
               {:else if isPastDay(iso)}
                 <!-- Phase 47.2 — Past day, empty: no drag-target, no assign. -->
-                <div class="shift-cell sp-cell off sp-cell--past" title="Vergangenheit – nicht änderbar">
+                <div
+                  class="shift-cell sp-cell off sp-cell--past"
+                  title="Vergangenheit – nicht änderbar"
+                >
                   <span class="sp-past-dash" aria-hidden="true">—</span>
                 </div>
               {:else}
@@ -1262,7 +1257,11 @@
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
-                title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h geplant, Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
+                title="{u.firstName} {u.lastName}: Σ {formatHours(
+                  sr.assignedH,
+                )}h geplant, Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0
+                  ? '+'
+                  : ''}{formatHours(sr.diff)}h"
               >
                 <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
                 <span class="sp-soll-soll">/ Soll {formatHours(sr.weeklyH)}h</span>
@@ -1556,6 +1555,9 @@
 
 <style>
   .sp-template-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
     margin-bottom: 18px;
   }
   .sp-tpl-row {
