@@ -268,12 +268,12 @@ export const attendanceCheckerPlugin = fp(async (app) => {
 
           // Audit log
           await app.audit({
-            userId: "SYSTEM",
+            userId: undefined,
             action: "UPDATE",
             entity: "TimeEntry",
             entityId: entry.id,
             oldValue: { isInvalid: false },
-            newValue: { isInvalid: true, invalidReason: "Ausstempeln fehlt" },
+            newValue: { origin: "SYSTEM", isInvalid: true, invalidReason: "Ausstempeln fehlt" },
           });
 
           // Notify the employee

@@ -102,6 +102,8 @@ model TenantConfig {
   // Abwesenheits-Konfiguration
   vacationLeadTimeDays       Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
   vacationMaxAdvanceMonths   Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
+  // Phase 62 — Berufsschultag-Auto-Generator: rolling preview window (weeks ahead)
+  vocationalSchoolPreviewWeeks Int   @default(4) // Rolling window (weeks ahead) the cron generator pre-populates
   halfDayAllowed             Boolean @default(true) // Halbe Tage erlaubt
   sickSelfReport             Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
   sickNoteRequiredAfterDays  Int     @default(3) // AU-Pflicht nach X Krankheitstagen
@@ -277,6 +279,7 @@ model Employee {
   shutdownExceptions CompanyShutdownException[]
   shifts             Shift[]
   shiftPatterns      EmployeeShiftPattern[]
+  vocationalSchoolPatterns EmployeeVocationalSchoolPattern[]
   availabilities     EmployeeAvailability[]
   presenceDevices    PresenceDevice[]
 
@@ -756,6 +759,7 @@ enum AbsenceType {
   MATERNITY // Mutterschutz
   PARENTAL // Elternzeit
   OTHER
+  VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17)
 }
 
 enum ScheduleType {
@@ -921,6 +925,27 @@ model EmployeeShiftPattern {
 
   @@unique([employeeId, dayOfWeek, validFrom])
   @@index([employeeId])
+}
+
+// Phase 62 — Recurring vocational-school day pattern per employee.
+// Either dayOfWeek (regular weekday) OR blockWeeks (ISO weeks of a year) must be set.
+// Enforced application-side via Zod refine in routes/vocational-school-pattern.ts.
+// The auto-generator (plugins/vocational-school-generator.ts) reads these and produces
+// Absence rows of type VOCATIONAL_SCHOOL for the next TenantConfig.vocationalSchoolPreviewWeeks weeks.
+model EmployeeVocationalSchoolPattern {
+  id         String    @id @default(uuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dayOfWeek  Int? // 0=Mo..6=So for recurring weekday; null when only blockWeeks set
+  blockWeeks Int[] // ISO week numbers for block-school weeks; empty array when only dayOfWeek set
+  blockYear  Int? // Year context for blockWeeks (for annual uniqueness); null when only dayOfWeek set
+  validFrom  DateTime  @db.Date
+  validUntil DateTime? @db.Date // null = open-ended
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+  updatedAt  DateTime  @updatedAt @db.Timestamptz
+
+  @@index([employeeId, isActive])
 }
 
 // Phase 46 — Employee availability declaration (recurring weekly OR one-off date).

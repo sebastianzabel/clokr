@@ -101,10 +101,11 @@ export const dataRetentionPlugin = fp(async (app) => {
         );
 
         await app.audit({
-          userId: "SYSTEM",
+          userId: undefined,
           action: "ARCHIVE",
           entity: "DataRetention",
           newValue: {
+            origin: "SYSTEM",
             tenantId: tenant.id,
             cutoffDate: cutoffDate.toISOString(),
             retentionYears,

@@ -358,11 +358,12 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           });
 
           await app.audit({
-            userId: "SYSTEM",
+            userId: undefined,
             action: "CREATE",
             entity: "SaldoSnapshot",
             entityId: emp.id,
             newValue: {
+              origin: "SYSTEM",
               employeeId: emp.id,
               periodType: "MONTHLY",
               year: prevYear,
@@ -458,11 +459,12 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             });
 
             await app.audit({
-              userId: "SYSTEM",
+              userId: undefined,
               action: "CREATE",
               entity: "SaldoSnapshot",
               entityId: emp.id,
               newValue: {
+                origin: "SYSTEM",
                 employeeId: emp.id,
                 periodType: "YEARLY",
                 year: prevYear,

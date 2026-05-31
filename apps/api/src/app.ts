@@ -23,6 +23,7 @@ import { schedulerPlugin } from "./plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./plugins/carryover-warning";
 import { dataRetentionPlugin } from "./plugins/data-retention";
+import { vocationalSchoolGeneratorPlugin } from "./plugins/vocational-school-generator";
 import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
 import { storagePlugin } from "./plugins/storage";
 import multipart from "@fastify/multipart";
@@ -34,6 +35,8 @@ import { companyShutdownRoutes } from "./routes/company-shutdowns";
 import { dashboardRoutes } from "./routes/dashboard";
 import { shiftRoutes } from "./routes/shifts";
 import { shiftPatternRoutes, shiftPatternTenantRoutes } from "./routes/shift-patterns";
+import { vocationalSchoolPatternRoutes } from "./routes/vocational-school-pattern";
+import { vocationalSchoolRoutes } from "./routes/vocational-school";
 import { availabilityRoutes } from "./routes/availability";
 import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
@@ -219,6 +222,7 @@ export async function buildApp() {
   await app.register(attendanceCheckerPlugin);
   await app.register(carryoverWarningPlugin);
   await app.register(dataRetentionPlugin);
+  await app.register(vocationalSchoolGeneratorPlugin);
   await app.register(autoCloseMonthPlugin);
   await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
   await app.register(storagePlugin);
@@ -245,6 +249,9 @@ export async function buildApp() {
   // Phase 48 — tenant-wide bulk read for the pattern-editor matrix UI
   // (GET /api/v1/shift-patterns/tenant)
   await app.register(shiftPatternTenantRoutes, { prefix: "/api/v1/shift-patterns" });
+  // Phase 62 — Berufsschultag patterns live under the employees namespace
+  // (GET/PUT /api/v1/employees/:id/vocational-school-pattern)
+  await app.register(vocationalSchoolPatternRoutes, { prefix: "/api/v1/employees" });
   // Phase 46 — employee availability declarations live under the employees namespace
   // (GET/PUT /api/v1/employees/:id/availability)
   await app.register(availabilityRoutes, { prefix: "/api/v1/employees" });
@@ -252,6 +259,9 @@ export async function buildApp() {
   await app.register(importRoutes, { prefix: "/api/v1/imports" });
   await app.register(terminalRoutes, { prefix: "/api/v1/terminals" });
   await app.register(specialLeaveRoutes, { prefix: "/api/v1/special-leave" });
+  // Phase 62 — Berufsschultag manual trigger + preview
+  // (POST /api/v1/vocational-school/generate, GET /api/v1/vocational-school/preview)
+  await app.register(vocationalSchoolRoutes, { prefix: "/api/v1/vocational-school" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
