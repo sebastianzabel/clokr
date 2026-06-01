@@ -298,6 +298,7 @@ async function runOrPreview(
           data: {
             employeeId: employee.id,
             type: "VOCATIONAL_SCHOOL",
+            source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
             startDate: date,
             endDate: date,
             days: 1.0,

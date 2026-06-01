@@ -59,12 +59,22 @@
     classification?: EmployeeClassification;
     coverageWeight?: number | null;
     requiresSupervision?: boolean;
+    // Phase 64/65 — Pausendauer per-Employee overrides
+    birthDate?: string | null; // ISO date or null
+    breakOver6hOverride?: number | null; // null = use tenant default
+    breakOver9hOverride?: number | null;
     user?: {
       role: Role;
       email: string;
       isActive: boolean;
       lastLoginAt?: string | null;
     } | null;
+  }
+
+  // Phase 65 — Tenant defaults consumed for placeholder display (D-08)
+  interface TenantBreakConfig {
+    defaultBreakOver6h?: number;
+    defaultBreakOver9h?: number;
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
@@ -75,6 +85,8 @@
   let employee = $state<Employee | null>(null);
   let workSchedule = $state<WorkSchedule | null>(null);
   let vacationEntitlement = $state<VacationEntitlement | null>(null);
+  // Phase 65 — Tenant break-default config for placeholder display
+  let tenantBreakConfig = $state<TenantBreakConfig | null>(null);
 
   const employeeId = $derived($page.params.id);
 
@@ -82,12 +94,13 @@
     loading = true;
     loadError = "";
     try {
-      const [empRes, schedRes, vacRes] = await Promise.allSettled([
+      const [empRes, schedRes, vacRes, cfgRes] = await Promise.allSettled([
         api.get<Employee>(`/employees/${employeeId}`),
         api.get<WorkSchedule>(`/settings/work/${employeeId}`),
         api.get<VacationEntitlement>(
           `/settings/vacation/${employeeId}?year=${new Date().getFullYear()}`,
         ),
+        api.get<TenantBreakConfig>(`/settings/work`),
       ]);
 
       if (empRes.status === "rejected") {
@@ -97,6 +110,8 @@
       employee = empRes.value;
       workSchedule = schedRes.status === "fulfilled" ? schedRes.value : null;
       vacationEntitlement = vacRes.status === "fulfilled" ? vacRes.value : null;
+      // Phase 65 — tenant defaults for placeholder display (D-08)
+      tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
 
       // Initialise form fields from loaded data
       initFields();
@@ -138,6 +153,7 @@
   let eRole = $state<Role>("EMPLOYEE");
   let eNfcCardId = $state<string>("");
   let eExitDate = $state<string>("");
+  let eBirthDate = $state<string>(""); // Phase 65 — JArbSchG §9 needs DOB for AZUBI <18 check
   let eClassification = $state<EmployeeClassification>("VOLLZEIT");
   let eCoverageWeight = $state<number>(applyDefaults("VOLLZEIT").coverageWeight);
   let eRequiresSupervision = $state<boolean>(applyDefaults("VOLLZEIT").requiresSupervision);
@@ -145,12 +161,47 @@
   let stammdatenError = $state("");
   let stammdatenSaved = $state(false);
 
+  // Phase 65 — Per-employee Pausendauer override (BREAK-06)
+  // String state lets us distinguish "" (= null, use tenant) from typed integer values
+  let eBreakOver6hOverride = $state<string>("");
+  let eBreakOver9hOverride = $state<string>("");
+  let pausendauerSaving = $state(false);
+  let pausendauerError = $state("");
+  let pausendauerSaved = $state(false);
+
   let eCoverageOverridden = $derived(
     isOverridden(eClassification, "coverageWeight", eCoverageWeight),
   );
   let eSupervisionOverridden = $derived(
     isOverridden(eClassification, "requiresSupervision", eRequiresSupervision),
   );
+
+  /**
+   * Pure age-at-date helper (mirrors apps/api/src/utils/jarbschg.ts ageAtDate, no date-fns dep).
+   * Returns full years between birthDate and atDate. Returns NaN for invalid input.
+   */
+  function ageAtDate(birthDate: string | Date | null | undefined, atDate: Date): number {
+    if (!birthDate) return Number.NaN;
+    const b = birthDate instanceof Date ? birthDate : new Date(birthDate);
+    if (Number.isNaN(b.getTime())) return Number.NaN;
+    let age = atDate.getFullYear() - b.getFullYear();
+    const m = atDate.getMonth() - b.getMonth();
+    if (m < 0 || (m === 0 && atDate.getDate() < b.getDate())) {
+      age--;
+    }
+    return age;
+  }
+
+  // Phase 65 — JArbSchG §9 trigger: AZUBI + under 18 → 30/60 Min suggestion (BREAK-07, D-06)
+  // Read from local state (eBirthDate / eClassification) so the pill + suggestion update
+  // live as the admin edits Stammdaten — no need to save first.
+  let isAzubiUnder18 = $derived(
+    eClassification === "AZUBI" &&
+      Number.isFinite(ageAtDate(eBirthDate || null, new Date())) &&
+      ageAtDate(eBirthDate || null, new Date()) < 18,
+  );
+  let bothOverridesEmpty = $derived(eBreakOver6hOverride === "" && eBreakOver9hOverride === "");
+  let showAzubiSuggestionButton = $derived(isAzubiUnder18 && bothOverridesEmpty);
 
   function initFields() {
     if (!employee) return;
@@ -160,6 +211,7 @@
     eRole = employee.user?.role ?? "EMPLOYEE";
     eNfcCardId = employee.nfcCardId ?? "";
     eExitDate = employee.exitDate ? String(employee.exitDate).split("T")[0] : "";
+    eBirthDate = employee.birthDate ? String(employee.birthDate).split("T")[0] : "";
     eClassification = employee.classification ?? "VOLLZEIT";
     eCoverageWeight =
       employee.coverageWeight !== undefined && employee.coverageWeight !== null
@@ -168,6 +220,16 @@
     eRequiresSupervision =
       employee.requiresSupervision ??
       applyDefaults(employee.classification ?? "VOLLZEIT").requiresSupervision;
+
+    // Phase 65 — override fields ("" = null in PATCH body, fall back to tenant default)
+    eBreakOver6hOverride =
+      employee.breakOver6hOverride !== undefined && employee.breakOver6hOverride !== null
+        ? String(employee.breakOver6hOverride)
+        : "";
+    eBreakOver9hOverride =
+      employee.breakOver9hOverride !== undefined && employee.breakOver9hOverride !== null
+        ? String(employee.breakOver9hOverride)
+        : "";
 
     const sched = workSchedule;
     eType = sched?.type ?? "FIXED_SCHEDULE";
@@ -241,6 +303,7 @@
           role: eRole,
           nfcCardId: eNfcCardId || null,
           exitDate: eExitDate ? new Date(eExitDate).toISOString() : null,
+          birthDate: eBirthDate ? new Date(eBirthDate).toISOString() : null,
           classification: eClassification,
           coverageWeight: eCoverageWeight,
           requiresSupervision: eRequiresSupervision,
@@ -257,6 +320,49 @@
     } finally {
       stammdatenSaving = false;
     }
+  }
+
+  // Phase 65 — Persist per-employee Pausendauer override (BREAK-06)
+  async function savePausendauer() {
+    if (!employee) return;
+    pausendauerSaving = true;
+    pausendauerError = "";
+    pausendauerSaved = false;
+
+    // Empty string → null (clear override, fall back to tenant); typed → integer
+    const parse = (s: string): number | null => {
+      if (s.trim() === "") return null;
+      const n = Number.parseInt(s, 10);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    try {
+      const newOver6 = parse(eBreakOver6hOverride);
+      const newOver9 = parse(eBreakOver9hOverride);
+      await api.patch(`/employees/${employee.id}`, {
+        breakOver6hOverride: newOver6,
+        breakOver9hOverride: newOver9,
+      });
+      // Reflect persisted state so derived flags (suggestion button visibility) update
+      employee = {
+        ...employee,
+        breakOver6hOverride: newOver6,
+        breakOver9hOverride: newOver9,
+      };
+      pausendauerSaved = true;
+      setTimeout(() => (pausendauerSaved = false), 3000);
+    } catch (e: unknown) {
+      // Server returns one of 4 verbatim German messages (Phase 64 D-08) — surface as-is
+      pausendauerError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      pausendauerSaving = false;
+    }
+  }
+
+  // Phase 65 — One-click JArbSchG-Vorschlag (D-06)
+  function applyAzubiSuggestion() {
+    eBreakOver6hOverride = "30";
+    eBreakOver9hOverride = "60";
   }
 
   // ── Arbeitszeit state ──────────────────────────────────────────────────────
@@ -581,6 +687,14 @@
             <!-- Weitere Stammdaten -->
             <div class="form-group form-group--full form-subhead">
               <h4 class="form-subhead-title">Weitere Stammdaten</h4>
+            </div>
+            <div class="form-group form-group--full">
+              <label class="form-label" for="e-birthdate">Geburtsdatum (optional)</label>
+              <input id="e-birthdate" type="date" bind:value={eBirthDate} class="input" />
+              <p class="hint">
+                Für Azubis unter 18 Jahren werden bei der Pausendauer JArbSchG §9 Schutzregeln
+                vorgeschlagen (30 / 60 Min).
+              </p>
             </div>
             <div class="form-group form-group--full">
               <label class="form-label" for="e-exitdate">Austrittsdatum (optional)</label>
@@ -958,6 +1072,78 @@
               class="form-input"
             />
             <p class="form-hint">Wechsel werden zum 1. eines Monats wirksam.</p>
+          </div>
+        </Section>
+
+        <!-- Phase 65 — Pausendauer (Optional) per-Employee Override (BREAK-06, BREAK-07, D-04..D-07) -->
+        <Section
+          title="Pausendauer (Optional)"
+          sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+        >
+          {#snippet footer()}
+            <button class="btn btn-primary" onclick={savePausendauer} disabled={pausendauerSaving}>
+              {pausendauerSaving ? "Speichern…" : "Speichern"}
+            </button>
+            {#if pausendauerSaved}<span class="saved-hint">Gespeichert</span>{/if}
+          {/snippet}
+
+          {#if pausendauerError}
+            <div class="callout error">{pausendauerError}</div>
+          {/if}
+
+          {#if isAzubiUnder18}
+            <!-- JArbSchG §9 info pill (recommendation, not violation — uses .alert-info per app.css) -->
+            <div class="alert alert-info" role="status" style="margin-bottom: 1rem;">
+              <span>ℹ️</span><span>Azubi unter 18 — JArbSchG §9 Empfehlung</span>
+            </div>
+            {#if showAzubiSuggestionButton}
+              <div style="margin-bottom: 1rem;">
+                <button type="button" class="btn btn-secondary" onclick={applyAzubiSuggestion}
+                  >Azubi-Vorschlag übernehmen (30 / 60 Min)</button
+                >
+              </div>
+            {/if}
+          {/if}
+
+          <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+            Leer = Tenant-Standard nutzen ({tenantBreakConfig?.defaultBreakOver6h ??
+              30}/{tenantBreakConfig?.defaultBreakOver9h ?? 45} Min)
+          </p>
+
+          <div class="form-group">
+            <label class="form-label" for="emp-break-over6h">Pause &gt;6h (Min)</label>
+            <input
+              id="emp-break-over6h"
+              type="number"
+              min="30"
+              max="120"
+              step="1"
+              bind:value={eBreakOver6hOverride}
+              placeholder={isAzubiUnder18
+                ? "30 Min — JArbSchG-Empfehlung"
+                : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
+              class="form-input"
+              disabled={pausendauerSaving}
+            />
+            <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
+          </div>
+
+          <div class="form-group" style="margin-top: 1rem;">
+            <label class="form-label" for="emp-break-over9h">Pause &gt;9h (Min)</label>
+            <input
+              id="emp-break-over9h"
+              type="number"
+              min="45"
+              max="180"
+              step="1"
+              bind:value={eBreakOver9hOverride}
+              placeholder={isAzubiUnder18
+                ? "60 Min — JArbSchG-Empfehlung"
+                : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
+              class="form-input"
+              disabled={pausendauerSaving}
+            />
+            <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
           </div>
         </Section>
 

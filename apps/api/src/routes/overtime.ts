@@ -11,6 +11,7 @@ import {
   getDayHoursFromSchedule,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -786,6 +787,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // superseded by a broader `scheduleType !== "MONTHLY_HOURS"` gate below. The
       // declaration was removed because no other site in this file consults it.
 
+      // Phase 63 — Berufsschule (BS) doubling accumulator. Each branch (SHIFT_BASED,
+      // standard) sets this from VOCATIONAL_SCHOOL absences; we add to workedMinutes
+      // once at the end so both paths share a single integration point.
+      let workedMinutesBs = 0;
+
       // ── Schedule-type-aware expected/holiday/leave/absence ─────────────────────
       // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days;
       // holiday/leave/absence subtractions stay at 0 (already excluded).
@@ -818,6 +824,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
 
+        // Phase 63 — Berufsschule (BS) doubling for the SHIFT_BASED close-month path.
+        // Per D-01..D-04: a VOCATIONAL_SCHOOL Absence on a workday adds the same minutes
+        // to BOTH workedMinutes AND expectedMinutes (FIXED_SCHEDULE / SHIFT_BASED) so the
+        // balance stays neutral. Block-week cap (D-02 revised) is enforced inside
+        // getVocationalSchoolMinutesForDate. MONTHLY_HOURS (D-04) adds to worked only.
+        let bsWorkedMinutes = 0;
+        let bsExpectedMinutes = 0;
+        for (const ab of absences) {
+          if (ab.type !== "VOCATIONAL_SCHOOL") continue;
+          // VOCATIONAL_SCHOOL Absences from Phase 62 generator are single-day rows
+          // (startDate === endDate). Defensive fallback: iterate the date range.
+          const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+          const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+          const cur = new Date(start);
+          while (cur <= end) {
+            const bsMin = await getVocationalSchoolMinutesForDate(
+              app.prisma,
+              employeeId,
+              cur,
+              tenantConfig,
+            );
+            bsWorkedMinutes += bsMin;
+            // SHIFT_BASED behaves like FIXED_SCHEDULE for BS doubling — both Soll-bearing.
+            bsExpectedMinutes += bsMin;
+            cur.setUTCDate(cur.getUTCDate() + 1);
+          }
+        }
+
         const coveredDates = new Set<string>();
         const addRange = (s: Date, e: Date) => {
           const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
@@ -847,7 +881,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
           const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
           if (dur > 0) shiftMinutes += dur;
         }
-        expectedMinutes = shiftMinutes;
+        expectedMinutes = shiftMinutes + bsExpectedMinutes;
+        workedMinutesBs += bsWorkedMinutes;
         leaveMinutes = 0;
         absenceMinutes = 0;
         holidayMinutes = 0;
@@ -943,13 +978,53 @@ export async function overtimeRoutes(app: FastifyInstance) {
             return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
           }, 0);
         }
+
+        // Phase 63 — Berufsschule (BS) doubling for the standard close-month path.
+        // Per D-01..D-04 the BS day contributes the same minutes to BOTH workedMinutes
+        // AND expectedMinutes for FIXED_SCHEDULE / FLEXTIME (balance neutral).
+        // MONTHLY_HOURS (D-04) only adds to workedMinutes — the Phase 58 rule already
+        // skips absence-deduction from expected, so we mirror that with skip-on-expected.
+        // The absenceMinutes subtractor is left unchanged: BS days are normal absences
+        // that subtract the schedule's daily target; adding bsExpectedMinutes restores
+        // the same magnitude, achieving the D-01 net-zero on saldo.
+        let bsWorkedMinutes = 0;
+        let bsExpectedMinutes = 0;
+        for (const ab of absences) {
+          if (ab.type !== "VOCATIONAL_SCHOOL") continue;
+          const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+          const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+          const cur = new Date(start);
+          while (cur <= end) {
+            const bsMin = await getVocationalSchoolMinutesForDate(
+              app.prisma,
+              employeeId,
+              cur,
+              tenantConfig,
+            );
+            bsWorkedMinutes += bsMin;
+            if (scheduleType !== "MONTHLY_HOURS") {
+              bsExpectedMinutes += bsMin;
+            }
+            cur.setUTCDate(cur.getUTCDate() + 1);
+          }
+        }
+        expectedMinutes += bsExpectedMinutes;
+        // bsWorkedMinutes is added to workedMinutes below (post-branch) so both
+        // SHIFT_BASED and standard paths share a single accumulator update.
+        // Stash on a function-scoped binding via direct mutation of workedMinutesBs:
+        workedMinutesBs += bsWorkedMinutes;
       }
 
       const netExpected = Math.max(
         0,
         expectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
       );
-      const balanceMinutes = Math.round(workedMinutes - netExpected);
+      // Phase 63 — add BS-doubled minutes to worked (mirror of the +bsExpectedMinutes
+      // we applied inside each branch). Net effect on balance is 0 for FIXED_SCHEDULE
+      // (worked+=N, expected+=N — D-01) and "+ N to worked, 0 to expected" for
+      // MONTHLY_HOURS (D-04 — already absence-skipped on expected side).
+      const totalWorked = workedMinutes + workedMinutesBs;
+      const balanceMinutes = Math.round(totalWorked - netExpected);
 
       // Get previous month's carry-over
       const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
@@ -972,7 +1047,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             periodType: "MONTHLY",
             periodStart: monthStart,
             periodEnd: monthEnd,
-            workedMinutes: Math.round(workedMinutes),
+            workedMinutes: Math.round(totalWorked),
             expectedMinutes: Math.round(netExpected),
             balanceMinutes,
             carryOver: effectiveCarryOver,

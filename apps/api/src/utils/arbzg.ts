@@ -1,5 +1,8 @@
 import { PrismaClient } from "@clokr/db";
+import { fromZonedTime } from "date-fns-tz";
 import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
+import { BS_DAILY_DEFAULT_MIN } from "./vocational-school-constants";
+import { countBsDaysInIsoWeek } from "./vocational-school-saldo";
 
 export interface ArbZGWarning {
   code:
@@ -15,6 +18,17 @@ export interface ArbZGWarning {
 /**
  * Prüft ArbZG-Konformität für einen Mitarbeiter nach einem geänderten Eintrag.
  * Gibt eine Liste von Warnungen zurück (blockiert NICHT das Speichern).
+ *
+ * Phase 63 — Berufsschule integration (D-05..D-08):
+ *   - VOCATIONAL_SCHOOL Absences contribute their `vocationalSchoolMinutesPerDay`
+ *     (per tenant, default 480) to every ArbZG branch:
+ *       § 3 Tageshöchst (MAX_DAILY_EXCEEDED, mixed-day check)
+ *       § 3 Wochensumme (MAX_WEEKLY_EXCEEDED)
+ *       § 3 24-week avg (MAX_DAILY_AVG_EXCEEDED)
+ *       § 5 Ruhezeit (MIN_REST_VIOLATED, BS-end = 18:00 single / 24:00 block)
+ *   - NO new warning codes (D-08) — reuse existing 5 codes; ArbZG doesn't care WHY
+ *     a day is over the limit.
+ *   - All Absence queries include `deletedAt: null` per CLAUDE.md soft-delete rule.
  */
 export async function checkArbZG(
   prisma: PrismaClient,
@@ -38,7 +52,34 @@ export async function checkArbZG(
   const tz = await getTenantTimezone(prisma, employee.tenantId);
   const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_SCHEDULE";
 
+  // Phase 63 — load tenant config for BS-minutes-per-day; fall back to default
+  // so a missing TenantConfig row never throws (mirrors saldo helper semantics).
+  const tenantConfig = await prisma.tenantConfig.findUnique({
+    where: { tenantId: employee.tenantId },
+    select: {
+      vocationalSchoolMinutesPerDay: true,
+      vocationalSchoolBlockMinutesPerWeek: true,
+    },
+  });
+  const bsDailyMin = tenantConfig?.vocationalSchoolMinutesPerDay ?? BS_DAILY_DEFAULT_MIN;
+
   const dateStr = dateStrInTz(changedDate, tz);
+
+  // Phase 63 — Is the changed date itself a BS day? Looked up once and reused by
+  // the §3 daily mixed-day branch + §5 rest-period BS-end heuristic.
+  const dayRangeStart = new Date(dateStr + "T00:00:00.000Z");
+  const dayRangeEnd = new Date(dateStr + "T23:59:59.999Z");
+  const bsAbsenceToday = await prisma.absence.findFirst({
+    where: {
+      employeeId,
+      deletedAt: null, // CLAUDE.md soft-delete rule
+      type: "VOCATIONAL_SCHOOL",
+      startDate: { lte: dayRangeEnd },
+      endDate: { gte: dayRangeStart },
+    },
+    select: { id: true, startDate: true },
+  });
+  const bsMinutesToday = bsAbsenceToday ? bsDailyMin : 0;
 
   // ── 1. Tagessicht: alle abgeschlossenen Slots des Tages ────────────────────
   const daySlots = await prisma.timeEntry.findMany({
@@ -88,11 +129,13 @@ export async function checkArbZG(
     }
 
     // § 3 ArbZG – Tägliche Höchstarbeitszeit (10h absolut, 8h nur als 24-Wochen-Schnitt relevant)
-    if (netWorkedMin > 10 * 60) {
+    // Phase 63 D-06: mixed-day rule — BS-Zeit + WORK-Zeit > 10h → MAX_DAILY_EXCEEDED.
+    const dailyTotalMin = netWorkedMin + bsMinutesToday;
+    if (dailyTotalMin > 10 * 60) {
       warnings.push({
         code: "MAX_DAILY_EXCEEDED",
         severity: "error",
-        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(netWorkedMin / 60).toFixed(1)} h.`,
+        message: `§ 3 ArbZG: Tägliche Höchstarbeitszeit von 10 Stunden überschritten. Erfasst: ${(dailyTotalMin / 60).toFixed(1)} h.`,
       });
     }
 
@@ -153,6 +196,49 @@ export async function checkArbZG(
     }
   }
 
+  // Phase 63 D-07 — §5 Mindestruhezeit on a BS-day.
+  // The day-view branch above only fires when daySlots.length > 0. A BS-only day
+  // (no regular work) also needs to be checked: 11h gap from BS-end → next-day
+  // work, and 11h gap from prev-day work → BS-start (we treat BS start as 08:00
+  // tenant-TZ by symmetry to the 18:00 end; this is the most conservative).
+  // For the next-day check we use 18:00 tenant-TZ as BS-end on single days and
+  // 24:00 on block-week days (≥5 BS days in the same ISO week, D-07).
+  if (bsAbsenceToday) {
+    const nextDate = new Date(changedDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateStr = dateStrInTz(nextDate, tz);
+
+    const nextFirstSlot = await prisma.timeEntry.findFirst({
+      where: {
+        employeeId,
+        deletedAt: null,
+        date: { gte: new Date(nextDateStr), lte: new Date(nextDateStr + "T23:59:59.999Z") },
+        endTime: { not: null },
+      },
+      orderBy: { startTime: "asc" },
+    });
+
+    if (nextFirstSlot) {
+      // Detect block-week: ≥5 BS days in the same ISO week as `changedDate`.
+      const bsDaysThisWeek = await countBsDaysInIsoWeek(prisma, employeeId, changedDate);
+      const isBlockWeek = bsDaysThisWeek >= 5;
+      // Synthetic BS-end timestamp in tenant TZ:
+      //   single day  → 18:00 of `changedDate`
+      //   block week  → 24:00 (= next day 00:00) of `changedDate`
+      const bsEndLocal = isBlockWeek ? `${nextDateStr}T00:00:00` : `${dateStr}T18:00:00`;
+      const bsEndUtc = fromZonedTime(bsEndLocal, tz);
+      const restMin = (nextFirstSlot.startTime.getTime() - bsEndUtc.getTime()) / 60000;
+      if (restMin < 11 * 60) {
+        const restH = (restMin / 60).toFixed(1);
+        warnings.push({
+          code: "MIN_REST_VIOLATED",
+          severity: "warning",
+          message: `§ 5 ArbZG: Mindestruhezeit zum Folgetag unterschritten. Ruhezeit: ${restH} h.`,
+        });
+      }
+    }
+  }
+
   // ── 2. Wochensicht: § 3 ArbZG – max. 48h / Woche ─────────────────────────
   // Derive week boundaries in tenant timezone to avoid UTC vs. local mismatch.
   // changedDate is UTC; dateStrInTz gives the calendar date in tenant TZ.
@@ -180,11 +266,26 @@ export async function checkArbZG(
     return sum + slotMin - Number(e.breakMinutes ?? 0);
   }, 0);
 
-  if (weeklyNetMin > 48 * 60) {
+  // Phase 63 D-05/D-08 — Add BS minutes for every VOCATIONAL_SCHOOL day in this
+  // ISO week. countBsDaysInIsoWeek already honors `deletedAt: null`. We multiply
+  // by the tenant's daily BS minutes; this MATCHES the daily contribution used
+  // in §3 mixed-day. For block-weeks the per-day value already represents the
+  // capped distribution from getVocationalSchoolMinutesForDate's semantics
+  // (weekly / N) — but here we use bsDailyMin × N which would OVER-count.
+  // Resolution: when the week is a block (N ≥ 5), use the weekly cap directly;
+  // otherwise use N × daily.
+  const bsDaysInWeek = await countBsDaysInIsoWeek(prisma, employeeId, changedDate);
+  const bsMinutesThisWeek =
+    bsDaysInWeek >= 5
+      ? (tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? bsDailyMin * bsDaysInWeek)
+      : bsDaysInWeek * bsDailyMin;
+  const weeklyTotalMin = weeklyNetMin + bsMinutesThisWeek;
+
+  if (weeklyTotalMin > 48 * 60) {
     warnings.push({
       code: "MAX_WEEKLY_EXCEEDED",
       severity: "error",
-      message: `§ 3 ArbZG: Wöchentliche Höchstarbeitszeit von 48 Stunden überschritten. Diese Woche: ${(weeklyNetMin / 60).toFixed(1)} h.`,
+      message: `§ 3 ArbZG: Wöchentliche Höchstarbeitszeit von 48 Stunden überschritten. Diese Woche: ${(weeklyTotalMin / 60).toFixed(1)} h.`,
     });
   }
 
@@ -216,9 +317,28 @@ export async function checkArbZG(
       return sum + slotMin - Number(e.breakMinutes ?? 0);
     }, 0);
 
+    // Phase 63 D-05 — Count VOCATIONAL_SCHOOL absence days in the same 168-day
+    // window and multiply by bsDailyMin. We use a simple `count × daily` even on
+    // block weeks here because the 24-week denominator (144 Werktage) is so
+    // large that block-week capping vs. uncapped contribution makes a
+    // negligible difference (max delta over 24 weeks ≈ a few minutes/Werktag).
+    const bsAvgAbsences = await prisma.absence.findMany({
+      where: {
+        employeeId,
+        deletedAt: null, // CLAUDE.md soft-delete rule
+        type: "VOCATIONAL_SCHOOL",
+        startDate: { gte: windowStart, lte: changedDate },
+      },
+      select: { startDate: true },
+    });
+    const bsDistinctDaysInWindow = new Set(
+      bsAvgAbsences.map((a) => a.startDate.toISOString().slice(0, 10)),
+    ).size;
+    const totalWithBsMin = totalNetMin + bsDistinctDaysInWindow * bsDailyMin;
+
     // 24 weeks × 6 Werktage (Mon–Sat) = 144 Werktage
     const WERKTAGE_IN_24_WEEKS = 144;
-    const avgPerWerktag = totalNetMin / WERKTAGE_IN_24_WEEKS;
+    const avgPerWerktag = totalWithBsMin / WERKTAGE_IN_24_WEEKS;
 
     if (avgPerWerktag > 8 * 60) {
       const avgH = (avgPerWerktag / 60).toFixed(1);

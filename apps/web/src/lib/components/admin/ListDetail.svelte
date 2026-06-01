@@ -140,12 +140,7 @@
     {/if}
 
     {#if tabs && tabs.length > 0}
-      <div
-        class="view-tabs"
-        role="tablist"
-        aria-label={title}
-        onkeydown={handleKeydown}
-      >
+      <div class="view-tabs" role="tablist" aria-label={title} onkeydown={handleKeydown}>
         {#each tabs as tab (tab.id)}
           <button
             class="view-tab"
@@ -164,6 +159,7 @@
 
       {#if currentTab}
         <div
+          class="tab-panel"
           role="tabpanel"
           id="{id}-panel-{currentTab}"
           aria-labelledby="{id}-tab-{currentTab}"
@@ -172,7 +168,21 @@
         </div>
       {/if}
     {:else}
-      {@render tabContent?.(currentTab ?? "")}
+      <div class="tab-panel">
+        {@render tabContent?.(currentTab ?? "")}
+      </div>
     {/if}
   {/if}
 </div>
+
+<style>
+  /* v1.5 — Section-stacking container. Matches the global `.page` and
+     SectionStack `.tab-panel` recipes so Section cards inside any tab
+     (or non-tabbed detail body) have consistent vertical rhythm.
+     See CLAUDE.md "UI Consistency Rules" → Section stacking. */
+  .tab-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
+  }
+</style>

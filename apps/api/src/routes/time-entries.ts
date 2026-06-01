@@ -4,6 +4,9 @@ import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
+import { checkJArbSchG } from "../utils/jarbschg";
+import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
   todayInTz,
@@ -404,9 +407,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             if (entryForBreak?.startTime && entryForBreak?.endTime) {
               const workDurationMin =
                 (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 60000;
-              let autoBreakMin = 0;
-              if (workDurationMin > 9 * 60) autoBreakMin = 45;
-              else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+              // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+              // Local fetch of the two override fields keeps the line-247 employee load untouched.
+              const employeeBreakFields = await app.prisma.employee.findUnique({
+                where: { id: entryForBreak.employeeId },
+                select: { breakOver6hOverride: true, breakOver9hOverride: true },
+              });
+              const autoBreakMin = getEffectiveBreakDuration(
+                employeeBreakFields ?? { breakOver6hOverride: null, breakOver9hOverride: null },
+                tenantConfig,
+                workDurationMin,
+              );
 
               if (autoBreakMin > 0) {
                 let breakStartTime: Date;
@@ -640,9 +651,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
         if (tenantConfig?.autoBreakEnabled) {
           const workDurationMin = (now.getTime() - entry.startTime.getTime()) / 60000;
-          let autoBreakMin = 0;
-          if (workDurationMin > 9 * 60) autoBreakMin = 45;
-          else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+          // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+          // targetEmployee is loaded above without `select` → carries the two override fields.
+          const autoBreakMin = targetEmployee
+            ? getEffectiveBreakDuration(targetEmployee, tenantConfig, workDurationMin)
+            : 0;
 
           if (autoBreakMin > 0) {
             let breakStartTime: Date;
@@ -967,6 +980,31 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         finalBreakMinutes = Math.round(calcBreakMinutes(breakSlots));
       }
 
+      // Phase 63 D-09..D-13 — JArbSchG §9 pre-check.
+      // Runs AFTER the locked-month gate (so locked entries are never re-validated)
+      // and BEFORE any DB write (so a hard block leaves zero state change).
+      // Hard-block: AZUBI < 18 + BS day + planned > 225 min → HTTP 400.
+      // Soft-warn: AZUBI ≥ 18 + BS day + planned > 225 min → emits a warning that
+      // we append to the existing warnings response array (D-12).
+      const plannedNetMinPost =
+        newEnd != null
+          ? Math.max(
+              0,
+              Math.round((newEnd.getTime() - newStart.getTime()) / 60_000) -
+                (finalBreakMinutes ?? 0),
+            )
+          : 0;
+      const jarbSchgPost = await checkJArbSchG(app.prisma, {
+        employeeId,
+        date: new Date(body.date),
+        plannedNetWorkMin: plannedNetMinPost,
+      });
+      if (jarbSchgPost.blocked) {
+        return reply
+          .code(400)
+          .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPost.message });
+      }
+
       const entry = await app.prisma.timeEntry.create({
         data: {
           employeeId,
@@ -1001,9 +1039,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
         if (tenantConfig?.autoBreakEnabled) {
           const workDurationMin = (newEnd.getTime() - newStart.getTime()) / 60000;
-          let autoBreakMin = 0;
-          if (workDurationMin > 9 * 60) autoBreakMin = 45;
-          else if (workDurationMin > 6 * 60) autoBreakMin = 30;
+          // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
+          // targetEmployee is loaded earlier without `select` → carries the two override fields.
+          const autoBreakMin = targetEmployee
+            ? getEffectiveBreakDuration(targetEmployee, tenantConfig, workDurationMin)
+            : 0;
 
           if (autoBreakMin > 0) {
             // Determine break start time
@@ -1044,6 +1084,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       await updateOvertimeAccount(app, employeeId);
 
       const warnings = await checkArbZG(app.prisma, employeeId, new Date(body.date));
+
+      // Phase 63 D-12 — append JArbSchG soft-warn to the warnings array AND
+      // emit a JARBSCHG_SOFT_WARN audit-log row tied to the created entry.
+      if (jarbSchgPost.softWarn) {
+        warnings.push(jarbSchgPost.softWarn);
+        await app.audit({
+          userId: user.sub,
+          action: "JARBSCHG_SOFT_WARN",
+          entity: "TimeEntry",
+          entityId: entry.id,
+          oldValue: null,
+          newValue: { plannedNetWorkMin: plannedNetMinPost, bsDay: true },
+        });
+      }
 
       // Re-fetch entry with breaks for response
       const entryWithBreaks = await app.prisma.timeEntry.findUnique({
@@ -1159,6 +1213,40 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlap = await checkOverlap(app, existing.employeeId, updatedStart, updatedEnd, id);
       if (overlap) return reply.code(409).send({ error: overlap });
 
+      // Phase 63 D-09..D-13 — JArbSchG §9 pre-check for PUT.
+      // Runs AFTER existing.isLocked gate (D-13: locked-month immutability wins).
+      // Uses merged {existing, body} payload — body wins on overlapping fields.
+      // Hard-block: AZUBI < 18 + BS day + planned > 225 min → HTTP 400 BEFORE DB write.
+      const editBreakMinutes = body.breaks
+        ? Math.round(
+            calcBreakMinutes(
+              body.breaks.map((b) => ({
+                startTime: new Date(b.startTime),
+                endTime: new Date(b.endTime),
+              })),
+            ),
+          )
+        : (body.breakMinutes ?? existing.breakMinutes ?? 0);
+      const editDate = body.date ? new Date(body.date) : existing.date;
+      const plannedNetMinPut =
+        updatedEnd != null
+          ? Math.max(
+              0,
+              Math.round((updatedEnd.getTime() - updatedStart.getTime()) / 60_000) -
+                Number(editBreakMinutes ?? 0),
+            )
+          : 0;
+      const jarbSchgPut = await checkJArbSchG(app.prisma, {
+        employeeId: existing.employeeId,
+        date: editDate,
+        plannedNetWorkMin: plannedNetMinPut,
+      });
+      if (jarbSchgPut.blocked) {
+        return reply
+          .code(400)
+          .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPut.message });
+      }
+
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
       // Only set source to CORRECTION when a manager edits another employee's entry
       const isCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
@@ -1212,6 +1300,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       await updateOvertimeAccount(app, existing.employeeId);
 
       const warnings = await checkArbZG(app.prisma, existing.employeeId, existing.date);
+
+      // Phase 63 D-12 — append JArbSchG soft-warn + audit-log row.
+      if (jarbSchgPut.softWarn) {
+        warnings.push(jarbSchgPut.softWarn);
+        await app.audit({
+          userId: user.sub,
+          action: "JARBSCHG_SOFT_WARN",
+          entity: "TimeEntry",
+          entityId: id,
+          oldValue: null,
+          newValue: { plannedNetWorkMin: plannedNetMinPut, bsDay: true },
+        });
+      }
 
       await app.audit({
         userId: user.sub,
@@ -1704,9 +1805,50 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     }
   }
 
+  // Phase 63 — Berufsschule (BS) doubling for the LIVE saldo path.
+  // Mirrors the doubling in overtime.ts (close-month) and auto-close-month.ts
+  // (snapshot). Per D-01..D-04: VOCATIONAL_SCHOOL absences add the same minutes to
+  // BOTH workedMinutes AND expectedMinutes (FIXED_SCHEDULE / SHIFT_BASED) or to
+  // workedMinutes only (MONTHLY_HOURS, D-04). Live and snapshot must agree
+  // (RESEARCH Pitfall #2 — live/snapshot drift).
+  const bsAbsencesUpdate = await app.prisma.absence.findMany({
+    where: {
+      employeeId,
+      deletedAt: null, // CLAUDE.md soft-delete rule
+      type: "VOCATIONAL_SCHOOL",
+      startDate: { lte: effectiveEnd },
+      endDate: { gte: rangeStart },
+    },
+  });
+  let bsWorkedMinutes = 0;
+  let bsExpectedMinutes = 0;
+  for (const ab of bsAbsencesUpdate) {
+    const start = ab.startDate < rangeStart ? rangeStart : ab.startDate;
+    const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+    const cur = new Date(start);
+    while (cur <= end) {
+      const bsMin = await getVocationalSchoolMinutesForDate(
+        app.prisma,
+        employeeId,
+        cur,
+        tenantConfig,
+      );
+      bsWorkedMinutes += bsMin;
+      if (scheduleType !== "MONTHLY_HOURS") {
+        bsExpectedMinutes += bsMin;
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+  }
+
   // Saldo = Snapshot-CarryOver + offener Zeitraum
   const openPeriodBalance =
-    workedMinutes - Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes);
+    workedMinutes +
+    bsWorkedMinutes -
+    Math.max(
+      0,
+      expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
+    );
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
   // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)

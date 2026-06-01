@@ -38,89 +38,92 @@ model Tenant {
 // ─────────────────────────────────────────────
 
 model TenantConfig {
-  id                         String  @id @default(uuid())
-  tenantId                   String  @unique
+  id                                  String  @id @default(uuid())
+  tenantId                            String  @unique
   // Standard-Wochenstunden (Vorlage für neue Mitarbeiter)
-  defaultWeeklyHours         Decimal @default(40) @db.Decimal(5, 2)
-  defaultMondayHours         Decimal @default(8) @db.Decimal(4, 2)
-  defaultTuesdayHours        Decimal @default(8) @db.Decimal(4, 2)
-  defaultWednesdayHours      Decimal @default(8) @db.Decimal(4, 2)
-  defaultThursdayHours       Decimal @default(8) @db.Decimal(4, 2)
-  defaultFridayHours         Decimal @default(8) @db.Decimal(4, 2)
-  defaultSaturdayHours       Decimal @default(0) @db.Decimal(4, 2)
-  defaultSundayHours         Decimal @default(0) @db.Decimal(4, 2)
+  defaultWeeklyHours                  Decimal @default(40) @db.Decimal(5, 2)
+  defaultMondayHours                  Decimal @default(8) @db.Decimal(4, 2)
+  defaultTuesdayHours                 Decimal @default(8) @db.Decimal(4, 2)
+  defaultWednesdayHours               Decimal @default(8) @db.Decimal(4, 2)
+  defaultThursdayHours                Decimal @default(8) @db.Decimal(4, 2)
+  defaultFridayHours                  Decimal @default(8) @db.Decimal(4, 2)
+  defaultSaturdayHours                Decimal @default(0) @db.Decimal(4, 2)
+  defaultSundayHours                  Decimal @default(0) @db.Decimal(4, 2)
   // Überstunden
-  overtimeThreshold          Decimal @default(60) @db.Decimal(5, 2)
-  allowOvertimePayout        Boolean @default(false)
+  overtimeThreshold                   Decimal @default(60) @db.Decimal(5, 2)
+  allowOvertimePayout                 Boolean @default(false)
   // Urlaubsanspruch (Basis 5-Tage-Woche)
-  defaultVacationDays        Decimal @default(30) @db.Decimal(5, 2)
+  defaultVacationDays                 Decimal @default(30) @db.Decimal(5, 2)
   // Resturlaub-Verfall: Tag und Monat im Folgejahr (z.B. 31. März = day=31, month=3)
-  carryOverDeadlineDay       Int     @default(31)
-  carryOverDeadlineMonth     Int     @default(3)
+  carryOverDeadlineDay                Int     @default(31)
+  carryOverDeadlineMonth              Int     @default(3)
   // E-Mail / SMTP
-  smtpHost                   String?
-  smtpPort                   Int?
-  smtpUser                   String?
-  smtpPassword               String?
-  smtpFromEmail              String?
-  smtpFromName               String?
-  smtpSecure                 Boolean @default(false)
+  smtpHost                            String?
+  smtpPort                            Int?
+  smtpUser                            String?
+  smtpPassword                        String?
+  smtpFromEmail                       String?
+  smtpFromName                        String?
+  smtpSecure                          Boolean @default(false)
   // Sicherheit
-  twoFaEnabled               Boolean @default(false)
+  twoFaEnabled                        Boolean @default(false)
   // Passwort-Richtlinie (BSI TR-02102-1)
-  passwordMinLength          Int     @default(12)
-  passwordRequireUpper       Boolean @default(true)
-  passwordRequireLower       Boolean @default(true)
-  passwordRequireDigit       Boolean @default(true)
-  passwordRequireSpecial     Boolean @default(true)
+  passwordMinLength                   Int     @default(12)
+  passwordRequireUpper                Boolean @default(true)
+  passwordRequireLower                Boolean @default(true)
+  passwordRequireDigit                Boolean @default(true)
+  passwordRequireSpecial              Boolean @default(true)
   // Session-Management
-  sessionTimeoutMinutes      Int     @default(60) // Inaktivitäts-Timeout (0 = deaktiviert)
-  refreshTokenDays           Int     @default(7) // Refresh Token Laufzeit in Tagen
-  rememberMeEnabled          Boolean @default(true) // "Angemeldet bleiben" Checkbox
-  rememberMeDays             Int     @default(30) // Refresh Token bei "Remember me"
-  maxSessionsPerUser         Int     @default(0) // Max gleichzeitige Sessions (0 = unbegrenzt)
+  sessionTimeoutMinutes               Int     @default(60) // Inaktivitäts-Timeout (0 = deaktiviert)
+  refreshTokenDays                    Int     @default(7) // Refresh Token Laufzeit in Tagen
+  rememberMeEnabled                   Boolean @default(true) // "Angemeldet bleiben" Checkbox
+  rememberMeDays                      Int     @default(30) // Refresh Token bei "Remember me"
+  maxSessionsPerUser                  Int     @default(0) // Max gleichzeitige Sessions (0 = unbegrenzt)
   // Zeitzone (IANA)
-  timezone                   String  @default("Europe/Berlin")
+  timezone                            String  @default("Europe/Berlin")
   // Phorest-Integration
-  phorestBusinessId          String?
-  phorestBranchId            String?
-  phorestUsername            String?
-  phorestPassword            String?
-  phorestBaseUrl             String? @default("https://api.phorest.com/third-party-api-server")
-  phorestAutoSync            Boolean @default(false)
-  phorestSyncCron            String  @default("0 3 * * *") // Default: täglich 03:00
+  phorestBusinessId                   String?
+  phorestBranchId                     String?
+  phorestUsername                     String?
+  phorestPassword                     String?
+  phorestBaseUrl                      String? @default("https://api.phorest.com/third-party-api-server")
+  phorestAutoSync                     Boolean @default(false)
+  phorestSyncCron                     String  @default("0 3 * * *") // Default: täglich 03:00
   // Compliance
-  arbzgEnabled               Boolean @default(true) // ArbZG-Verstöße anzeigen
+  arbzgEnabled                        Boolean @default(true) // ArbZG-Verstöße anzeigen
   // Verfügbarkeits-System (Phase 47.3) — when false, EmployeeAvailability is ignored by the resolver,
   // auto-gen/copy-week do NOT skip UNAVAILABLE, and GET/PUT availability endpoints return 410 Gone.
   // Data preserved (rows remain), feature toggleable at any time.
-  availabilityEnabled        Boolean @default(true)
+  availabilityEnabled                 Boolean @default(true)
   // Heiligabend / Silvester: NORMAL | HALF_DAY | FULL_DAY_OFF
-  christmasEveRule           String  @default("NORMAL")
-  newYearsEveRule            String  @default("NORMAL")
-  holidayRulesValidFromYear  Int? // Rules apply from this year onwards (null = current year when saved)
+  christmasEveRule                    String  @default("NORMAL")
+  newYearsEveRule                     String  @default("NORMAL")
+  holidayRulesValidFromYear           Int? // Rules apply from this year onwards (null = current year when saved)
   // Abwesenheits-Konfiguration
-  vacationLeadTimeDays       Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
-  vacationMaxAdvanceMonths   Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
+  vacationLeadTimeDays                Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
+  vacationMaxAdvanceMonths            Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
   // Phase 62 — Berufsschultag-Auto-Generator: rolling preview window (weeks ahead)
-  vocationalSchoolPreviewWeeks Int   @default(4) // Rolling window (weeks ahead) the cron generator pre-populates
-  halfDayAllowed             Boolean @default(true) // Halbe Tage erlaubt
-  sickSelfReport             Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
-  sickNoteRequiredAfterDays  Int     @default(3) // AU-Pflicht nach X Krankheitstagen
+  vocationalSchoolPreviewWeeks        Int     @default(4) // Rolling window (weeks ahead) the cron generator pre-populates
+  // Phase 63 — Berufsschule Saldo/ArbZG (D-02): per-tenant configurable BS-day duration
+  vocationalSchoolMinutesPerDay       Int     @default(480) // Net Anrechnung per single BS-day (default 8h = 480 min, BERSCH-03)
+  vocationalSchoolBlockMinutesPerWeek Int     @default(2400) // Total Anrechnung per block-week (default 40h = 2400 min, BERSCH-04)
+  halfDayAllowed                      Boolean @default(true) // Halbe Tage erlaubt
+  sickSelfReport                      Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
+  sickNoteRequiredAfterDays           Int     @default(3) // AU-Pflicht nach X Krankheitstagen
   // Teilzeit-Urlaub
-  autoCalcPartTimeVacation   Boolean @default(true) // Automatische Pro-Rata Berechnung
-  fullTimeWorkDaysPerWeek    Int     @default(5) // Referenz für Vollzeit (5 oder 6)
+  autoCalcPartTimeVacation            Boolean @default(true) // Automatische Pro-Rata Berechnung
+  fullTimeWorkDaysPerWeek             Int     @default(5) // Referenz für Vollzeit (5 oder 6)
   // Phase 49.4 — Tenant-Default Arbeitstage/Woche, unabhängig vom AZ-Modell.
   // Quelle der Wahrheit für Urlaubsverbrauch und Pro-Rata-Berechnung.
   // Format: Array aus Wochentag-Nummern (0=So, 1=Mo, …, 6=Sa). Default: Mo-Fr.
-  defaultWorkDays            Int[]   @default([1, 2, 3, 4, 5])
+  defaultWorkDays                     Int[]   @default([1, 2, 3, 4, 5])
   // Carry-Over / Mindesturlaub (§ 3 + § 7 BUrlG)
-  enforceMinVacation         Boolean @default(true) // Warn when statutory minimum not taken
-  carryOverRequiresReason    Boolean @default(true) // Carry-over beyond allowed needs documented reason
-  vacationReminderStartMonth Int     @default(10) // Month to start vacation expiry reminders (1-12)
+  enforceMinVacation                  Boolean @default(true) // Warn when statutory minimum not taken
+  carryOverRequiresReason             Boolean @default(true) // Carry-over beyond allowed needs documented reason
+  vacationReminderStartMonth          Int     @default(10) // Month to start vacation expiry reminders (1-12)
   // BUrlG § 7 Hinweispflicht (EuGH C-684/16) — threshold-based carry-over warnings
-  carryoverWarningEnabled    Boolean @default(true) // Master switch for daily warning cron
-  carryoverWarningThresholds Int[]   @default([60, 30, 14, 7]) // Days before deadline at which to issue a warning
+  carryoverWarningEnabled             Boolean @default(true) // Master switch for daily warning cron
+  carryoverWarningThresholds          Int[]   @default([60, 30, 14, 7]) // Days before deadline at which to issue a warning
 
   // E-Mail-Benachrichtigungen
   emailNotificationsEnabled      Boolean  @default(false) // Master switch
@@ -142,6 +145,11 @@ model TenantConfig {
   // Pausen-Slots
   autoBreakEnabled               Boolean  @default(false)
   defaultBreakStart              String?  @db.VarChar(5) // e.g. "12:00"
+  // Phase 64 — Pausendauer (D-01, BREAK-01, BREAK-08): per-tenant default break durations.
+  // Defaults 30/45 match the previously hard-coded auto-break behavior — Migration neutral.
+  // ArbZG-Floor is HARD-CODED in apps/api/src/utils/break-constants.ts (NOT here) — these are defaults, not the legal minimum.
+  defaultBreakOver6h             Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
+  defaultBreakOver9h             Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
   // Überstunden-Jahresübertrag
   overtimeCarryOverMode          String   @default("FULL") // FULL | CAPPED | RESET
   overtimeCarryOverCap           Int? // Max. Übertrag in Minuten (nur bei CAPPED)
@@ -262,26 +270,33 @@ model Employee {
   requiresSupervision Boolean                @default(false)
   hireDate            DateTime               @db.Timestamptz
   exitDate            DateTime?              @db.Timestamptz
+  // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
+  // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
+  birthDate           DateTime?              @db.Date
+  // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
+  // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
+  breakOver6hOverride Int? // null = TenantConfig.defaultBreakOver6h verwenden
+  breakOver9hOverride Int? // null = TenantConfig.defaultBreakOver9h verwenden
   createdAt           DateTime               @default(now()) @db.Timestamptz
   updatedAt           DateTime               @updatedAt @db.Timestamptz
 
-  tenant             Tenant                     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  workSchedules      WorkSchedule[]
-  overtimeAccount    OvertimeAccount?
-  saldoSnapshots     SaldoSnapshot[]
-  timeEntries        TimeEntry[]
-  leaveEntitlements  LeaveEntitlement[]
-  leaveRequests      LeaveRequest[]
-  absences           Absence[]
-  overtimePlans      OvertimePlan[]
-  invitations        Invitation[]
-  shutdownExceptions CompanyShutdownException[]
-  shifts             Shift[]
-  shiftPatterns      EmployeeShiftPattern[]
+  tenant                   Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user                     User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workSchedules            WorkSchedule[]
+  overtimeAccount          OvertimeAccount?
+  saldoSnapshots           SaldoSnapshot[]
+  timeEntries              TimeEntry[]
+  leaveEntitlements        LeaveEntitlement[]
+  leaveRequests            LeaveRequest[]
+  absences                 Absence[]
+  overtimePlans            OvertimePlan[]
+  invitations              Invitation[]
+  shutdownExceptions       CompanyShutdownException[]
+  shifts                   Shift[]
+  shiftPatterns            EmployeeShiftPattern[]
   vocationalSchoolPatterns EmployeeVocationalSchoolPattern[]
-  availabilities     EmployeeAvailability[]
-  presenceDevices    PresenceDevice[]
+  availabilities           EmployeeAvailability[]
+  presenceDevices          PresenceDevice[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -546,20 +561,22 @@ model LeaveRequest {
 // ─────────────────────────────────────────────
 
 model Absence {
-  id           String      @id @default(uuid())
+  id           String        @id @default(uuid())
   employeeId   String
   type         AbsenceType
-  startDate    DateTime    @db.Date
-  endDate      DateTime    @db.Date
-  days         Decimal     @db.Decimal(5, 2)
+  source       AbsenceSource @default(MANUAL) // Phase 63 (D-22): PATTERN = auto-generated, MANUAL = human-created. Pre-v1.7 rows backfill to MANUAL (safe per RESEARCH A2).
+  startDate    DateTime      @db.Date
+  endDate      DateTime      @db.Date
+  days         Decimal       @db.Decimal(5, 2)
   note         String?
   documentPath String? // Pfad zur AU-Bescheinigung (MinIO)
-  deletedAt    DateTime?   @db.Timestamptz // soft delete
-  createdAt    DateTime    @default(now()) @db.Timestamptz
+  deletedAt    DateTime?     @db.Timestamptz // soft delete
+  createdAt    DateTime      @default(now()) @db.Timestamptz
   createdBy    String
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
+  @@unique([employeeId, startDate, type]) // Phase 63 (Pitfall #5): DB-level idempotency for D-23 manual-insert race
   @@index([employeeId])
 }
 
@@ -760,6 +777,14 @@ enum AbsenceType {
   PARENTAL // Elternzeit
   OTHER
   VOCATIONAL_SCHOOL // Berufsschule (BBiG § 15/§ 17)
+}
+
+// Phase 63 (D-22): origin of an Absence row.
+// PATTERN = auto-generated by the Phase 62 vocational-school cron (or future pattern engines).
+// MANUAL  = human-created (leave flow, admin UI, D-23 manual-insert endpoint, etc.).
+enum AbsenceSource {
+  PATTERN
+  MANUAL
 }
 
 enum ScheduleType {

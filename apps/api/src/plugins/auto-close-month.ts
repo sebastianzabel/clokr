@@ -9,6 +9,7 @@ import {
 } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 
 /**
  * Auto-Monatsabschluss: runs daily at 06:00 during the first 10 days of each month.
@@ -303,8 +304,48 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             }, 0);
           }
 
-          const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
-          const balanceMinutes = Math.round(workedMinutes - netExpected);
+          // Phase 63 — Berufsschule (BS) doubling for the auto-snapshot path.
+          // Per D-01..D-04: VOCATIONAL_SCHOOL absences contribute the same minutes to
+          // BOTH workedMinutes AND expectedMinutes for FIXED_SCHEDULE / SHIFT_BASED
+          // (balance neutral). MONTHLY_HOURS only adds to workedMinutes (D-04).
+          // Note: this snapshot path historically does not subtract general absences from
+          // expected (unlike close-month in overtime.ts) — but BS-doubling stays
+          // consistent across both paths so live + snapshot saldo agree (RESEARCH Pitfall #2).
+          const bsAbsences = await app.prisma.absence.findMany({
+            where: {
+              employeeId: emp.id,
+              deletedAt: null, // CLAUDE.md soft-delete rule
+              type: "VOCATIONAL_SCHOOL",
+              startDate: { lte: monthEnd },
+              endDate: { gte: effectiveStart },
+            },
+          });
+          let bsWorkedMinutes = 0;
+          let bsExpectedMinutes = 0;
+          const acmScheduleType = String(schedule.type ?? "");
+          for (const ab of bsAbsences) {
+            const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+            const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+            const cur = new Date(start);
+            while (cur <= end) {
+              const bsMin = await getVocationalSchoolMinutesForDate(
+                app.prisma,
+                emp.id,
+                cur,
+                tenant.config,
+              );
+              bsWorkedMinutes += bsMin;
+              if (acmScheduleType !== "MONTHLY_HOURS") {
+                bsExpectedMinutes += bsMin;
+              }
+              cur.setUTCDate(cur.getUTCDate() + 1);
+            }
+          }
+
+          const totalWorked = workedMinutes + bsWorkedMinutes;
+          const totalExpected = expectedMinutes + bsExpectedMinutes;
+          const netExpected = Math.max(0, totalExpected - holidayMinutes - leaveMinutes);
+          const balanceMinutes = Math.round(totalWorked - netExpected);
 
           // Note: if months are not contiguous (gap in snapshots), carryOver from the most recent
           // prior snapshot is used. This is intentional — incomplete months before hire are not snapshotted.
@@ -330,7 +371,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 periodType: "MONTHLY",
                 periodStart: monthStart,
                 periodEnd: monthEnd,
-                workedMinutes: Math.round(workedMinutes),
+                workedMinutes: Math.round(totalWorked),
                 expectedMinutes: Math.round(netExpected),
                 balanceMinutes,
                 carryOver: effectiveCarryOver,
@@ -368,7 +409,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               periodType: "MONTHLY",
               year: prevYear,
               month: prevMonth,
-              workedMinutes: Math.round(workedMinutes),
+              workedMinutes: Math.round(totalWorked),
               expectedMinutes: Math.round(netExpected),
               balanceMinutes,
               carryOver,
@@ -377,7 +418,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           });
 
           app.log.info(
-            `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${prevMonth}/${prevYear} abgeschlossen (${Math.round(workedMinutes / 60)}h Ist, ${Math.round(netExpected / 60)}h Soll)`,
+            `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${prevMonth}/${prevYear} abgeschlossen (${Math.round(totalWorked / 60)}h Ist, ${Math.round(netExpected / 60)}h Soll)`,
           );
         } catch (err) {
           app.log.error({ err, employeeId: emp.id }, "Auto-Monatsabschluss: Fehler beim Abschluss");

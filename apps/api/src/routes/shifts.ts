@@ -57,7 +57,18 @@ interface CoverageInfo {
 }
 
 // Availability classification per employee × day
-type Availability = "available" | "vacation" | "sick" | "special" | "other" | "unavailable" | "preferred";
+// Phase 63 D-20 — added "vocational_school" for VOCATIONAL_SCHOOL absences. Sits
+// between "special" (rank 4, tie) and "other" semantically; rank function below
+// places it at 4 alongside "special" so sick (6) and vacation (5) still win ties.
+type Availability =
+  | "available"
+  | "vacation"
+  | "sick"
+  | "special"
+  | "vocational_school"
+  | "other"
+  | "unavailable"
+  | "preferred";
 
 /**
  * Classify a leave-type name into one of our availability buckets.
@@ -81,6 +92,11 @@ function classifyAbsenceType(type: string): Availability {
       return "sick";
     case "SPECIAL_LEAVE":
       return "special";
+    // Phase 63 D-20 — VOCATIONAL_SCHOOL routes to its own bucket. Without this case
+    // it would fall through to "other" (rank 3), losing the lock-icon semantic in
+    // the shift planner and the dedicated badge in the frontend (Plan 05).
+    case "VOCATIONAL_SCHOOL":
+      return "vocational_school";
     case "MATERNITY":
     case "PARENTAL":
     case "UNPAID_LEAVE":
@@ -137,7 +153,10 @@ function pickRule(
 
 // Phase 43 — Conflict-check result shape used by write-path validation & generate-week
 type ConflictKind = "leave" | "absence";
-type ConflictType = "vacation" | "sick" | "special" | "other";
+// Phase 63 D-20 — "vocational_school" added so the absence-conflict path can carry
+// the BS type through to the API response without an unsafe cast. The frontend
+// already renders unknown bucket strings as "other" (no UI changes required here).
+type ConflictType = "vacation" | "sick" | "special" | "vocational_school" | "other";
 
 interface ShiftConflict {
   kind: ConflictKind;
@@ -228,9 +247,7 @@ function formatDateDe(iso: string): string {
  * Compares the shift date (YYYY-MM-DD) against today; returns a 422 payload
  * when the date is strictly before today. Today is OK (in-day correction).
  */
-function assertShiftNotPast(
-  iso: string,
-): { code: "SHIFT_PAST_IMMUTABLE"; message: string } | null {
+function assertShiftNotPast(iso: string): { code: "SHIFT_PAST_IMMUTABLE"; message: string } | null {
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   if (iso < todayIso) {
@@ -370,10 +387,7 @@ async function findUnavailability(
  *
  * No DB access — pure HH:MM math.
  */
-function assertArbZGDailyMax(
-  start: string,
-  end: string,
-): { violationHours: number } | null {
+function assertArbZGDailyMax(start: string, end: string): { violationHours: number } | null {
   const toMin = (s: string): number => {
     const [h, m] = s.split(":").map(Number);
     return h * 60 + m;
@@ -687,104 +701,105 @@ export async function shiftRoutes(app: FastifyInstance) {
       // merge passes are skipped (Leave + Absence still apply).
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
 
-      const [shifts, employees, leaveTypes, leaveRequests, absences, rulesRaw, availabilityRows] = await Promise.all([
-        app.prisma.shift.findMany({
-          where: {
-            employee: { tenantId },
-            date: { gte: monday, lte: sunday },
-          },
-          include: {
-            employee: {
-              select: {
-                id: true,
-                firstName: true,
-                lastName: true,
-                employeeNumber: true,
-                coverageWeight: true,
-                requiresSupervision: true,
-                classification: true,
+      const [shifts, employees, leaveTypes, leaveRequests, absences, rulesRaw, availabilityRows] =
+        await Promise.all([
+          app.prisma.shift.findMany({
+            where: {
+              employee: { tenantId },
+              date: { gte: monday, lte: sunday },
+            },
+            include: {
+              employee: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  employeeNumber: true,
+                  coverageWeight: true,
+                  requiresSupervision: true,
+                  classification: true,
+                },
+              },
+              template: { select: { name: true, color: true } },
+            },
+            orderBy: [{ date: "asc" }, { startTime: "asc" }],
+          }),
+          app.prisma.employee.findMany({
+            where: { tenantId },
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeNumber: true,
+              classification: true,
+              coverageWeight: true,
+              requiresSupervision: true,
+              workSchedules: {
+                where: { validFrom: { lte: new Date() } },
+                orderBy: { validFrom: "desc" as const },
+                take: 1,
+                select: { type: true, weeklyHours: true },
               },
             },
-            template: { select: { name: true, color: true } },
-          },
-          orderBy: [{ date: "asc" }, { startTime: "asc" }],
-        }),
-        app.prisma.employee.findMany({
-          where: { tenantId },
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeNumber: true,
-            classification: true,
-            coverageWeight: true,
-            requiresSupervision: true,
-            workSchedules: {
-              where: { validFrom: { lte: new Date() } },
-              orderBy: { validFrom: "desc" as const },
-              take: 1,
-              select: { type: true, weeklyHours: true },
+            orderBy: { lastName: "asc" },
+          }),
+          app.prisma.leaveType.findMany({
+            where: { tenantId },
+            select: { id: true, name: true },
+          }),
+          app.prisma.leaveRequest.findMany({
+            where: {
+              employee: { tenantId },
+              status: "APPROVED",
+              deletedAt: null,
+              startDate: { lte: sunday },
+              endDate: { gte: monday },
             },
-          },
-          orderBy: { lastName: "asc" },
-        }),
-        app.prisma.leaveType.findMany({
-          where: { tenantId },
-          select: { id: true, name: true },
-        }),
-        app.prisma.leaveRequest.findMany({
-          where: {
-            employee: { tenantId },
-            status: "APPROVED",
-            deletedAt: null,
-            startDate: { lte: sunday },
-            endDate: { gte: monday },
-          },
-          select: {
-            employeeId: true,
-            leaveTypeId: true,
-            startDate: true,
-            endDate: true,
-          },
-        }),
-        app.prisma.absence.findMany({
-          where: {
-            employee: { tenantId },
-            deletedAt: null,
-            startDate: { lte: sunday },
-            endDate: { gte: monday },
-          },
-          select: {
-            employeeId: true,
-            type: true,
-            startDate: true,
-            endDate: true,
-          },
-        }),
-        app.prisma.coverageRule.findMany({
-          where: { tenantId },
-          select: {
-            templateId: true,
-            dayOfWeek: true,
-            minStaff: true,
-            requiresNonSupervised: true,
-          },
-        }),
-        // Phase 46 — EmployeeAvailability rows that overlap this week.
-        // Tenant scope via Employee join. Validity overlap via validFrom <= sunday AND
-        // (validUntil IS NULL OR validUntil >= monday). dayOfWeek rows are always
-        // candidates; date rows must fall within [monday, sunday].
-        app.prisma.employeeAvailability.findMany({
-          where: {
-            employee: { tenantId },
-            AND: [
-              { validFrom: { lte: sunday } },
-              { OR: [{ validUntil: null }, { validUntil: { gte: monday } }] },
-            ],
-            OR: [{ dayOfWeek: { not: null } }, { date: { gte: monday, lte: sunday } }],
-          },
-        }),
-      ]);
+            select: {
+              employeeId: true,
+              leaveTypeId: true,
+              startDate: true,
+              endDate: true,
+            },
+          }),
+          app.prisma.absence.findMany({
+            where: {
+              employee: { tenantId },
+              deletedAt: null,
+              startDate: { lte: sunday },
+              endDate: { gte: monday },
+            },
+            select: {
+              employeeId: true,
+              type: true,
+              startDate: true,
+              endDate: true,
+            },
+          }),
+          app.prisma.coverageRule.findMany({
+            where: { tenantId },
+            select: {
+              templateId: true,
+              dayOfWeek: true,
+              minStaff: true,
+              requiresNonSupervised: true,
+            },
+          }),
+          // Phase 46 — EmployeeAvailability rows that overlap this week.
+          // Tenant scope via Employee join. Validity overlap via validFrom <= sunday AND
+          // (validUntil IS NULL OR validUntil >= monday). dayOfWeek rows are always
+          // candidates; date rows must fall within [monday, sunday].
+          app.prisma.employeeAvailability.findMany({
+            where: {
+              employee: { tenantId },
+              AND: [
+                { validFrom: { lte: sunday } },
+                { OR: [{ validUntil: null }, { validUntil: { gte: monday } }] },
+              ],
+              OR: [{ dayOfWeek: { not: null } }, { date: { gte: monday, lte: sunday } }],
+            },
+          }),
+        ]);
 
       // Phase 47.3 — Narrow availability rows to [] when the feature is disabled.
       // The query above always runs (cheap when there are no rows) but the merge
@@ -2198,13 +2213,25 @@ export async function shiftRoutes(app: FastifyInstance) {
 // rank BELOW any leave/absence source (vacation/sick/special/other) so leave wins ties.
 function rankAvailability(a: Availability): number {
   switch (a) {
-    case "sick":         return 6;
-    case "vacation":     return 5;
-    case "special":      return 4;
-    case "other":        return 3;
-    case "unavailable":  return 2;
-    case "preferred":    return 1;
+    case "sick":
+      return 6;
+    case "vacation":
+      return 5;
+    case "special":
+      return 4;
+    // Phase 63 D-20 + Open Question 5 — tie with "special" (rank 4). BS is a
+    // legally-required commitment but semantically closer to Sonderurlaub than to
+    // Urlaub/Krank; sick (6) and vacation (5) still beat it on multi-source days.
+    case "vocational_school":
+      return 4;
+    case "other":
+      return 3;
+    case "unavailable":
+      return 2;
+    case "preferred":
+      return 1;
     case "available":
-    default:             return 0;
+    default:
+      return 0;
   }
 }

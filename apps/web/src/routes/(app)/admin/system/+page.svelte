@@ -40,6 +40,9 @@
     // ArbZG § 4 — Auto-Pausen (Pflege hier, nicht mehr auf /admin/vacation)
     autoBreakEnabled?: boolean;
     defaultBreakStart?: string | null;
+    // Phase 64/65 — Konfigurierbare Pausendauer (ArbZG §4 Floor: 30/45 Min)
+    defaultBreakOver6h?: number;
+    defaultBreakOver9h?: number;
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
     defaultCoreStart?: string | null;
     defaultCoreEnd?: string | null;
@@ -179,6 +182,13 @@
   let autoBreakSaving = $state(false);
   let autoBreakSaved = $state(false);
   let autoBreakError = $state("");
+
+  // Phase 65 — Tenant-Default Pausendauer (BREAK-05)
+  let defaultBreakOver6h = $state(30);
+  let defaultBreakOver9h = $state(45);
+  let breakDefaultsSaving = $state(false);
+  let breakDefaultsSaved = $state(false);
+  let breakDefaultsError = $state("");
 
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
@@ -379,6 +389,9 @@
       // ArbZG § 4 — Auto-Pausen (moved from /admin/vacation in v1.6.5)
       autoBreakEnabled = cfg.autoBreakEnabled ?? false;
       defaultBreakStart = cfg.defaultBreakStart ?? "12:00";
+      // Phase 65 — Hydrate tenant break defaults (defaults match Phase 64 BREAK-08 = ArbZG floor)
+      defaultBreakOver6h = cfg.defaultBreakOver6h ?? 30;
+      defaultBreakOver9h = cfg.defaultBreakOver9h ?? 45;
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
       availabilityEnabled = cfg.availabilityEnabled ?? true;
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
@@ -582,6 +595,49 @@
       autoBreakError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       autoBreakSaving = false;
+    }
+  }
+
+  // Phase 65 — Persist Tenant-Default Pausendauer (BREAK-05, mirrors saveDefaultBreakStart pattern)
+  async function saveBreakDefaults() {
+    if (!_gOtherFields) return;
+    // Client-side native range check; server is authoritative (Phase 64 D-07)
+    if (
+      !Number.isFinite(defaultBreakOver6h) ||
+      defaultBreakOver6h < 30 ||
+      defaultBreakOver6h > 120
+    ) {
+      breakDefaultsError = "Pause >6h muss zwischen 30 und 120 Minuten liegen.";
+      return;
+    }
+    if (
+      !Number.isFinite(defaultBreakOver9h) ||
+      defaultBreakOver9h < 45 ||
+      defaultBreakOver9h > 180
+    ) {
+      breakDefaultsError = "Pause >9h muss zwischen 45 und 180 Minuten liegen.";
+      return;
+    }
+    breakDefaultsSaving = true;
+    breakDefaultsError = "";
+    breakDefaultsSaved = false;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        autoBreakEnabled,
+        defaultBreakStart: autoBreakEnabled ? defaultBreakStart : null,
+        defaultBreakOver6h: Math.trunc(defaultBreakOver6h),
+        defaultBreakOver9h: Math.trunc(defaultBreakOver9h),
+      });
+      breakDefaultsSaved = true;
+      setTimeout(() => (breakDefaultsSaved = false), 2500);
+    } catch (e: unknown) {
+      // Server message is German + user-friendly (Phase 64 D-07) — surface verbatim
+      breakDefaultsError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      breakDefaultsSaving = false;
     }
   }
 
@@ -1243,6 +1299,46 @@
             </p>
           </div>
         {/if}
+        <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
+             Always visible (not gated on autoBreakEnabled): admins should
+             be able to pre-configure the defaults so that turning Auto-Pause ON
+             later picks them up. Each input is independently saved on blur. -->
+        <div class="form-group" style="margin-top: 1rem;">
+          <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
+          <input
+            id="sys-break-over6h"
+            type="number"
+            min="30"
+            max="120"
+            step="1"
+            bind:value={defaultBreakOver6h}
+            onblur={saveBreakDefaults}
+            class="form-input modal-input-sm"
+            disabled={breakDefaultsSaving}
+          />
+          <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
+        </div>
+        <div class="form-group" style="margin-top: 1rem;">
+          <label class="form-label" for="sys-break-over9h">Pause &gt;9h (Min)</label>
+          <input
+            id="sys-break-over9h"
+            type="number"
+            min="45"
+            max="180"
+            step="1"
+            bind:value={defaultBreakOver9h}
+            onblur={saveBreakDefaults}
+            class="form-input modal-input-sm"
+            disabled={breakDefaultsSaving}
+          />
+          <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
+        </div>
+        {#if breakDefaultsError}
+          <div class="alert alert-error" role="alert" style="margin-top: 0.75rem;">
+            <span>⚠</span><span>{breakDefaultsError}</span>
+          </div>
+        {/if}
+        {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
         {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
       </Section>
 

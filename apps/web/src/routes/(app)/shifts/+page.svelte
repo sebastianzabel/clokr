@@ -44,6 +44,9 @@
       | "vacation"
       | "sick"
       | "special"
+      // Phase 63 D-20: VOCATIONAL_SCHOOL Absence → "vocational_school" bucket.
+      // Renders as a locked, non-droppable cell; drag-drop is rejected client-side.
+      | "vocational_school"
       | "other"
       | "unavailable"
       | "preferred";
@@ -128,7 +131,15 @@
     originEmployeeId: string;
     originIso: string;
   };
-  type DragItem = TemplateDragItem | ShiftDragItem;
+  // Phase 65 follow-up — Berufsschule pseudo-template: lives in the same strip
+  // as shift templates so admins drag a "Berufsschule"-chip onto an AZUBI cell
+  // to mark that day as a vocational-school day. Drop creates an Absence (not
+  // a Shift) via POST /vocational-school/manual-insert.
+  type VocationalSchoolDragItem = { id: string; kind: "vocational_school" };
+  type DragItem = TemplateDragItem | ShiftDragItem | VocationalSchoolDragItem;
+
+  // Stable strip id for the BS chip — must NOT collide with a template id
+  const VS_STRIP_ID = "vs-chip";
   type DropTargetKey = string; // `${employeeId}::${iso}`
 
   // The strip's dndzone item array — TemplateDragItems plus svelte-dnd-action's
@@ -154,6 +165,24 @@
     id: null,
     closeAfter: false,
   });
+
+  // 260601-g8l — BS-Tag removal confirmation. absenceId is resolved at click time
+  // via GET /vocational-school/upcoming (no client-side cache of absence ids), then
+  // a ConfirmDialog gates the DELETE call.
+  let vsRemoveConfirm = $state<{
+    open: boolean;
+    absenceId: string | null;
+    employeeId: string;
+    date: string;
+    employeeName: string;
+  }>({
+    open: false,
+    absenceId: null,
+    employeeId: "",
+    date: "",
+    employeeName: "",
+  });
+  let vsRemovePending = $state(false);
 
   // Phase 43-03 — Force-override confirmation when the API responds 409 with
   // SHIFT_CONFLICT_LEAVE / SHIFT_CONFLICT_ABSENCE.
@@ -221,10 +250,28 @@
   // and re-derived whenever the user navigates to a different target week.
   let copySourceWeekStart = $state("");
 
+  // Phase 65 follow-up — Berufsschultag insertion is now a drag-and-drop chip
+  // in the template strip (matches the shift-template UX). The old row-action
+  // "⋯" menu + modal flow was removed because dropping the chip on a cell is
+  // cell-centric and matches the rest of the planner. See onCellFinalize for
+  // the drop handler.
+
+  function isAzubi(emp: Employee): boolean {
+    return (emp.classification ?? "").toUpperCase() === "AZUBI";
+  }
+
   function empName(id: string): string {
     if (!week) return id;
     const e = week.employees.find((x) => x.id === id);
     return e ? `${e.firstName} ${e.lastName}` : id;
+  }
+
+  // 260601-g8l — German DD.MM.YYYY formatter for the BS-removal ConfirmDialog
+  // description. Avoids `Intl.DateTimeFormat` to stay deterministic regardless
+  // of the user's locale.
+  function formatDeDate(iso: string): string {
+    const [y, m, d] = iso.slice(0, 10).split("-");
+    return `${d}.${m}.${y}`;
   }
 
   function skipReasonLabel(r: GenerateDiff["skip"][number]["reason"]): string {
@@ -410,11 +457,15 @@
       // maps items[i] to children[i] positionally, so the initial list and
       // restoreTemplatesStrip() must both render the full canonical templates
       // array — slicing here cancels drags for templates beyond the cut.
-      dndTemplates = t.map((tpl) => ({
-        id: `tpl-${tpl.id}`,
-        kind: "template" as const,
-        templateId: tpl.id,
-      }));
+      dndTemplates = [
+        ...t.map((tpl) => ({
+          id: `tpl-${tpl.id}`,
+          kind: "template" as const,
+          templateId: tpl.id,
+        })),
+        // Phase 65 follow-up — Berufsschule chip always last in the strip
+        { id: VS_STRIP_ID, kind: "vocational_school" as const },
+      ];
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -558,11 +609,15 @@
   // (whether the chip landed on a cell or was dropped outside) so the chip
   // always reappears in the strip.
   function restoreTemplatesStrip() {
-    dndTemplates = templates.map((tpl) => ({
-      id: `tpl-${tpl.id}`,
-      kind: "template" as const,
-      templateId: tpl.id,
-    }));
+    dndTemplates = [
+      ...templates.map((tpl) => ({
+        id: `tpl-${tpl.id}`,
+        kind: "template" as const,
+        templateId: tpl.id,
+      })),
+      // Phase 65 follow-up — keep BS chip in the strip after a drop
+      { id: VS_STRIP_ID, kind: "vocational_school" as const },
+    ];
   }
 
   // Strip dndzone handlers — we don't reorder templates within the strip; we
@@ -593,6 +648,59 @@
     // Only the case where exactly one item arrived = a chip/pill was dropped here.
     if (items.length !== 1) return;
     const item = items[0];
+
+    // Phase 63 D-20: client-side guard — drops onto a vocational_school cell
+    // are rejected before any API call. Defense in depth: the server-side
+    // shift-conflict check (Plan 04 / D-20) would also reject the create with
+    // 409, but failing fast here gives an immediate, BS-specific German toast
+    // instead of the generic "Schicht-Konflikt" message. The unavailable-cell
+    // branch in the render usually means the cell isn't even a drop target,
+    // but template-chip drops can still target it via the shift-pill swap
+    // path — guard the handler itself.
+    const cellAvailability = availabilityByEmpDate.get(key);
+    if (cellAvailability === "vocational_school") {
+      restoreTemplatesStrip();
+      // Phase 65 follow-up: BS dropped onto an existing BS cell — already exists,
+      // surface the same 409 message we'd get from the server.
+      if (item.kind === "vocational_school") {
+        toasts.error("Berufsschultag existiert bereits für diesen Tag");
+      } else {
+        toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
+      }
+      return;
+    }
+
+    // Phase 65 follow-up — Berufsschule chip dropped onto an empty cell.
+    // Server enforces AZUBI gate + locked-month + uniqueness; client-side AZUBI
+    // pre-check gives a faster, more specific German toast.
+    if (item.kind === "vocational_school") {
+      restoreTemplatesStrip();
+      const emp = shiftEmployees.find((e) => e.id === employeeId);
+      if (!emp || !isAzubi(emp)) {
+        toasts.error("Berufsschultage sind nur für Auszubildende vorgesehen.");
+        return;
+      }
+      dropPending = key;
+      try {
+        await api.post("/vocational-school/manual-insert", {
+          employeeId,
+          date: iso,
+        });
+        toasts.success("Berufsschultag hinzugefügt");
+        await load();
+      } catch (err: unknown) {
+        const status = err instanceof ApiError ? err.status : 0;
+        const msg = err instanceof Error ? err.message : "Fehler beim Anlegen";
+        if (status === 403)
+          toasts.error("Monat ist abgeschlossen und kann nicht bearbeitet werden");
+        else if (status === 409) toasts.error("Berufsschultag existiert bereits für diesen Tag");
+        else if (status === 400) toasts.error(msg);
+        else toasts.error(msg);
+      } finally {
+        dropPending = null;
+      }
+      return;
+    }
 
     if (item.kind === "template") {
       // Restore the template chip in the strip immediately so the UI stays
@@ -840,6 +948,9 @@
         return "🤒 Krank";
       case "special":
         return "📌 Sonder";
+      // Phase 63 D-20: lock icon makes the "non-droppable" affordance obvious.
+      case "vocational_school":
+        return "🔒 Berufsschule";
       case "other":
         return "⚪ Abwesend";
       case "unavailable":
@@ -863,6 +974,9 @@
         return "sp-avail-badge sp-avail-badge--sick";
       case "special":
         return "sp-avail-badge sp-avail-badge--special";
+      // Phase 63 D-20: brand-tinted, lock-iconed badge (CSS below).
+      case "vocational_school":
+        return "sp-avail-badge sp-avail-badge--vocational-school";
       case "other":
         return "sp-avail-badge sp-avail-badge--other";
       case "unavailable":
@@ -901,6 +1015,59 @@
     modalNote = "";
     modalError = "";
     modalOpen = true;
+  }
+
+  // 260601-g8l — Role gate for the BS-removal click handler. Mirrored in the
+  // template so non-ADMIN/MANAGER users don't receive a misleading "Knopf"
+  // affordance (role="button" / tabindex / title are omitted).
+  const canRemoveVs = $derived(
+    $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
+  );
+
+  // 260601-g8l — Click on a vocational_school cell → resolve absenceId via
+  // /vocational-school/upcoming (the canonical read endpoint), then open the
+  // ConfirmDialog. The shifts /api/v1/shifts response does NOT carry absence ids,
+  // so this extra round-trip is unavoidable but cheap (the result set is a single
+  // day window).
+  async function onVocationalSchoolCellClick(employeeId: string, iso: string): Promise<void> {
+    if (!canRemoveVs) return; // defense-in-depth; the cell stays readable for EMPLOYEE
+    if (vsRemovePending) return; // avoid double-firing while a previous DELETE is in flight
+    try {
+      type UpcomingRow = {
+        id: string;
+        employeeId: string;
+        date: string;
+        source: "MANUAL" | "PATTERN";
+      };
+      const rows = await api.get<UpcomingRow[]>(
+        `/vocational-school/upcoming?from=${iso}&to=${iso}`,
+      );
+      const match = rows.find((r) => r.employeeId === employeeId && r.date === iso);
+      if (!match) {
+        toasts.error("Berufsschultag konnte nicht entfernt werden.");
+        return;
+      }
+      const emp = week?.employees.find((e) => e.id === employeeId);
+      vsRemoveConfirm = {
+        open: true,
+        absenceId: match.id,
+        employeeId,
+        date: iso,
+        employeeName: emp ? `${emp.firstName} ${emp.lastName}` : "",
+      };
+    } catch (e) {
+      toasts.error(e instanceof Error ? e.message : "Berufsschultag konnte nicht entfernt werden.");
+    }
+  }
+
+  // 260601-g8l — Enter/Space keyboard parity for the BS cell. Pulled out as a
+  // named function so the template stays readable and we avoid inline arrow
+  // closures that re-allocate on every render.
+  function onVocationalSchoolCellKeydown(e: KeyboardEvent, employeeId: string, iso: string): void {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      void onVocationalSchoolCellClick(employeeId, iso);
+    }
   }
 
   function openEditShift(shift: Shift) {
@@ -1027,6 +1194,43 @@
     }
   }
 
+  // 260601-g8l — Confirm handler for the BS-removal ConfirmDialog. Posts the
+  // DELETE, surfaces the standard 403 (locked-month) / 404 (cross-tenant or
+  // already-deleted) toasts, and refreshes the week on success.
+  async function confirmRemoveVocationalSchool(): Promise<void> {
+    const id = vsRemoveConfirm.absenceId;
+    if (!id) return;
+    vsRemovePending = true;
+    try {
+      await api.delete(`/vocational-school/${id}`);
+      toasts.success("Berufsschultag entfernt");
+      await load();
+    } catch (e) {
+      if (e instanceof ApiError) {
+        if (e.status === 403) {
+          toasts.error("Monat ist abgeschlossen — Berufsschultag kann nicht entfernt werden.");
+        } else if (e.status === 404) {
+          toasts.error("Berufsschultag konnte nicht entfernt werden.");
+        } else {
+          toasts.error(e.message || "Berufsschultag konnte nicht entfernt werden.");
+        }
+      } else {
+        toasts.error(
+          e instanceof Error ? e.message : "Berufsschultag konnte nicht entfernt werden.",
+        );
+      }
+    } finally {
+      vsRemovePending = false;
+      vsRemoveConfirm = {
+        open: false,
+        absenceId: null,
+        employeeId: "",
+        date: "",
+        employeeName: "",
+      };
+    }
+  }
+
   // Modal employee name
   const modalEmployeeName = $derived.by(() => {
     if (!week) return "";
@@ -1051,8 +1255,10 @@
     <div class="callout error card-animate" role="alert">{error}</div>
   {/if}
 
-  <!-- Template strip — Phase 47: draggable chips via use:dndzone, one chip per template -->
-  {#if templates.length > 0}
+  <!-- Template strip — Phase 47: draggable chips via use:dndzone, one chip per template.
+       Phase 65 follow-up: strip is shown whenever there are any draggable items in it
+       (templates OR the Berufsschule chip) so admins can drop BS even without shift templates. -->
+  {#if dndTemplates.length > 0}
     <div
       class="sp-template-strip"
       use:dndzone={{
@@ -1067,16 +1273,23 @@
       {#each dndTemplates as item (item.id)}
         {@const tpl =
           item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
+        {@const isVs = item.kind === "vocational_school"}
         <!--
           ALWAYS render a chip div for every item so children.length stays
           equal to items.length — svelte-dnd-action requires a 1:1 mapping
           between items[] and direct children. Shadow placeholders (mid-drag)
           may not resolve to a Template; render an invisible spacer for them.
+          Phase 65 follow-up: Berufsschule chip uses the same shell but
+          renders its own label + brand-soft accent.
         -->
         <div
           class="card sp-tpl-row sp-tpl-chip"
-          class:sp-tpl-chip--shadow={!tpl}
+          class:sp-tpl-chip--shadow={!tpl && !isVs}
+          class:sp-tpl-chip--vs={isVs}
           data-template-id={tpl?.id ?? ""}
+          title={isVs
+            ? "Auf eine Azubi-Zelle ziehen, um einen Berufsschultag anzulegen"
+            : undefined}
         >
           {#if tpl}
             <div class="sp-tpl-text">
@@ -1085,6 +1298,12 @@
               <div class="sp-tpl-time">
                 {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
               </div>
+            </div>
+          {:else if isVs}
+            <div class="sp-tpl-text">
+              <div class="serif-eyebrow sp-tpl-eyebrow">Sonder-Vorlage</div>
+              <div class="sp-tpl-name">🔒 Berufsschule</div>
+              <div class="sp-tpl-time">ganztägig · nur Azubi</div>
             </div>
           {/if}
         </div>
@@ -1145,10 +1364,14 @@
 
           {#each shiftEmployees as u (u.id)}
             <div class="who-cell">
-              <div class="name">{u.firstName} {u.lastName}</div>
-              {#if u.classification}
-                <div class="role">{u.classification.toLowerCase()}</div>
-              {/if}
+              <div class="who-cell-main">
+                <div class="name">{u.firstName} {u.lastName}</div>
+                {#if u.classification}
+                  <div class="role">{u.classification.toLowerCase()}</div>
+                {/if}
+              </div>
+              <!-- Phase 65 follow-up: Berufsschultag insertion lives in the
+                   template strip drag chip — no row-action menu needed. -->
             </div>
             {#each week.weekDays as d (d)}
               {@const iso = d.slice(0, 10)}
@@ -1203,9 +1426,31 @@
                   <span class="sp-closed-label">geschlossen</span>
                 </div>
               {:else if av !== "available"}
-                <div class="shift-cell sp-cell sp-cell--unavailable">
-                  <span class={availClass(av)}>{availLabel(av)}</span>
-                </div>
+                <!-- 260601-g8l: vocational_school cells are click-to-remove for
+                     ADMIN/MANAGER. For EMPLOYEE (and other availability buckets)
+                     the cell stays a plain non-interactive label — role="button"
+                     and tabindex are conditionally omitted so screen readers
+                     don't announce a misleading affordance. The dndzone wrapper
+                     is INTENTIONALLY not added here — drop-targeting was already
+                     rejected client-side in onCellFinalize (Phase 63 D-20), so
+                     keeping this branch as a passive cell preserves the existing
+                     drag-to-add semantics untouched. -->
+                {#if av === "vocational_school" && canRemoveVs}
+                  <div
+                    class="shift-cell sp-cell sp-cell--unavailable sp-cell--vs-removable"
+                    role="button"
+                    tabindex={0}
+                    title="Berufsschultag entfernen"
+                    onclick={() => onVocationalSchoolCellClick(u.id, iso)}
+                    onkeydown={(e) => onVocationalSchoolCellKeydown(e, u.id, iso)}
+                  >
+                    <span class={availClass(av)}>{availLabel(av)}</span>
+                  </div>
+                {:else}
+                  <div class="shift-cell sp-cell sp-cell--unavailable">
+                    <span class={availClass(av)}>{availLabel(av)}</span>
+                  </div>
+                {/if}
               {:else if isPastDay(iso)}
                 <!-- Phase 47.2 — Past day, empty: no drag-target, no assign. -->
                 <div
@@ -1400,6 +1645,19 @@
     onConfirm={confirmDeleteShift}
   />
 
+  <!-- 260601-g8l: BS-Tag removal confirmation dialog. The description is built
+       from the resolved employee name + DD.MM.YYYY date at the moment the user
+       clicks the cell, so the user sees exactly which BS-Tag they're about to
+       remove. -->
+  <ConfirmDialog
+    bind:open={vsRemoveConfirm.open}
+    title="Berufsschultag entfernen?"
+    description={`Berufsschultag für ${vsRemoveConfirm.employeeName} am ${formatDeDate(vsRemoveConfirm.date)} entfernen?`}
+    confirmLabel="Entfernen"
+    danger
+    onConfirm={confirmRemoveVocationalSchool}
+  />
+
   <!-- Phase 43-03: force-override dialog when API returns 409 SHIFT_CONFLICT_* -->
   <ConfirmDialog
     bind:open={conflictConfirm.open}
@@ -1584,6 +1842,17 @@
     color: var(--text-muted);
     margin-top: 4px;
   }
+  /* Phase 65 follow-up — Berufsschule chip uses a brand-soft accent so it's
+     visually distinct from regular shift templates but still part of the strip. */
+  .sp-tpl-chip--vs {
+    background: var(--brand-soft);
+    border-color: var(--brand);
+  }
+  .sp-tpl-chip--vs .sp-tpl-eyebrow,
+  .sp-tpl-chip--vs .sp-tpl-name,
+  .sp-tpl-chip--vs .sp-tpl-time {
+    color: var(--text);
+  }
 
   .week-header {
     padding: 14px 18px;
@@ -1644,6 +1913,37 @@
   }
   .sp-avail-badge--other {
     color: var(--text-muted);
+  }
+  /* Phase 63 D-20 — brand-tinted Berufsschule badge with lock icon. v1.5
+     tokens only; renders inside the existing .sp-cell--unavailable cell. */
+  .sp-avail-badge--vocational-school {
+    background: var(--brand-soft);
+    color: var(--brand);
+    border-color: var(--border);
+    font-weight: 600;
+  }
+
+  /* 260601-g8l — Click-to-remove affordance for BS-Tag cells (ADMIN/MANAGER).
+     Pointer cursor + focus-visible ring; the badge inside still uses the
+     brand-soft recipe above. Tokens-only, no hardcoded colors. */
+  .sp-cell--vs-removable {
+    cursor: pointer;
+  }
+  .sp-cell--vs-removable:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+  }
+
+  /* Phase 65 follow-up: who-cell layout simplified — the row-action menu
+     was removed when Berufsschultag insertion moved to the template strip
+     drag chip. The who-cell-main wrapper stays so name + role stack cleanly. */
+  .who-cell-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
   }
 
   /* Empty-cell button (renders as text "frei" but is keyboard-focusable) */

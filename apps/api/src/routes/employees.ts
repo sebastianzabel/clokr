@@ -8,6 +8,12 @@ import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 import { calculateProRataVacation } from "../utils/vacation-calc";
 import { normalizeMac } from "../utils/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
+import {
+  ARBZG_FLOOR_OVER_6H,
+  ARBZG_FLOOR_OVER_9H,
+  BREAK_MAX_OVER_6H,
+  BREAK_MAX_OVER_9H,
+} from "../utils/break-constants";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -60,6 +66,35 @@ const createEmployeeSchema = z.object({
   coreDays: z.array(z.number().int().min(0).max(6)).optional(),
   // Phase 49.5 — Arbeitstage/Woche (optional; fällt auf TenantConfig.defaultWorkDays zurück)
   workDays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+  // Phase 64 — Pausendauer Override (D-08, BREAK-02, BREAK-04):
+  // nullable Int — null clears override → fall back to TenantConfig defaults.
+  // Floor enforces ArbZG §4 Pflichtpause; cap is a sane upper bound.
+  breakOver6hOverride: z
+    .number()
+    .int()
+    .min(
+      ARBZG_FLOOR_OVER_6H,
+      "Pausendauer für Arbeitstage über 6 Stunden darf nicht unter 30 Minuten liegen (ArbZG §4 Pflichtpause).",
+    )
+    .max(
+      BREAK_MAX_OVER_6H,
+      "Pausendauer für Arbeitstage über 6 Stunden darf 120 Minuten nicht überschreiten.",
+    )
+    .nullable()
+    .optional(),
+  breakOver9hOverride: z
+    .number()
+    .int()
+    .min(
+      ARBZG_FLOOR_OVER_9H,
+      "Pausendauer für Arbeitstage über 9 Stunden darf nicht unter 45 Minuten liegen (ArbZG §4 Pflichtpause).",
+    )
+    .max(
+      BREAK_MAX_OVER_9H,
+      "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
+    )
+    .nullable()
+    .optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -72,10 +107,40 @@ const updateEmployeeSchema = z.object({
   role: z.enum(["ADMIN", "MANAGER", "EMPLOYEE"]).optional(),
   nfcCardId: z.string().nullable().optional(),
   exitDate: z.string().datetime().nullable().optional(),
+  // Phase 65 — Geburtsdatum (needed for JArbSchG §9 AZUBI <18 check + UI suggestion)
+  birthDate: z.string().datetime().nullable().optional(),
   // Personalstruktur (Phase 41)
   classification: employeeClassificationSchema.optional(),
   coverageWeight: z.number().min(0).max(9.99).optional(),
   requiresSupervision: z.boolean().optional(),
+  // Phase 64 — Pausendauer Override (D-08, BREAK-02, BREAK-04):
+  // nullable Int — null clears override → fall back to TenantConfig defaults.
+  breakOver6hOverride: z
+    .number()
+    .int()
+    .min(
+      ARBZG_FLOOR_OVER_6H,
+      "Pausendauer für Arbeitstage über 6 Stunden darf nicht unter 30 Minuten liegen (ArbZG §4 Pflichtpause).",
+    )
+    .max(
+      BREAK_MAX_OVER_6H,
+      "Pausendauer für Arbeitstage über 6 Stunden darf 120 Minuten nicht überschreiten.",
+    )
+    .nullable()
+    .optional(),
+  breakOver9hOverride: z
+    .number()
+    .int()
+    .min(
+      ARBZG_FLOOR_OVER_9H,
+      "Pausendauer für Arbeitstage über 9 Stunden darf nicht unter 45 Minuten liegen (ArbZG §4 Pflichtpause).",
+    )
+    .max(
+      BREAK_MAX_OVER_9H,
+      "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
+    )
+    .nullable()
+    .optional(),
 });
 
 function deriveInvitationStatus(
@@ -225,6 +290,10 @@ export async function employeeRoutes(app: FastifyInstance) {
               ...(body.requiresSupervision !== undefined
                 ? { requiresSupervision: body.requiresSupervision }
                 : {}),
+              // Phase 64 (D-08, BREAK-02): per-employee break override on create.
+              // undefined / omitted → null (fall back to tenant default).
+              breakOver6hOverride: body.breakOver6hOverride ?? null,
+              breakOver9hOverride: body.breakOver9hOverride ?? null,
             },
           });
 
@@ -344,11 +413,24 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (body.exitDate !== undefined) {
         updates.exitDate = body.exitDate === null ? null : new Date(body.exitDate);
       }
+      // Phase 65 — Geburtsdatum (JArbSchG §9 AZUBI <18 check)
+      if (body.birthDate !== undefined) {
+        updates.birthDate = body.birthDate === null ? null : new Date(body.birthDate);
+      }
       // Personalstruktur (Phase 41)
       if (body.classification !== undefined) updates.classification = body.classification;
       if (body.coverageWeight !== undefined) updates.coverageWeight = body.coverageWeight;
       if (body.requiresSupervision !== undefined) {
         updates.requiresSupervision = body.requiresSupervision;
+      }
+      // Phase 64 (D-08, BREAK-02): per-employee break override on update.
+      // body.breakOver*hOverride: undefined = no change, null = clear (fall back
+      // to tenant default), number = set explicit override (Zod validated).
+      if (body.breakOver6hOverride !== undefined) {
+        updates.breakOver6hOverride = body.breakOver6hOverride;
+      }
+      if (body.breakOver9hOverride !== undefined) {
+        updates.breakOver9hOverride = body.breakOver9hOverride;
       }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
@@ -415,6 +497,37 @@ export async function employeeRoutes(app: FastifyInstance) {
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      // Phase 64 (D-11): Dedicated audit row for break-override changes — emitted
+      // ONLY when the PATCH body actually changed at least one of the two fields.
+      // A no-op (body absent or identical value) does NOT emit.
+      const changedOver6h =
+        body.breakOver6hOverride !== undefined &&
+        body.breakOver6hOverride !== employee.breakOver6hOverride;
+      const changedOver9h =
+        body.breakOver9hOverride !== undefined &&
+        body.breakOver9hOverride !== employee.breakOver9hOverride;
+      if (changedOver6h || changedOver9h) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "EMPLOYEE_BREAK_OVERRIDE_CHANGED",
+          entity: "Employee",
+          entityId: id,
+          oldValue: {
+            breakOver6hOverride: employee.breakOver6hOverride,
+            breakOver9hOverride: employee.breakOver9hOverride,
+          },
+          newValue: {
+            breakOver6hOverride: changedOver6h
+              ? (body.breakOver6hOverride ?? null)
+              : employee.breakOver6hOverride,
+            breakOver9hOverride: changedOver9h
+              ? (body.breakOver9hOverride ?? null)
+              : employee.breakOver9hOverride,
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
 
       return reply.send({ ...updated, ...(proRataWarning ? { proRataWarning } : {}) });
     },

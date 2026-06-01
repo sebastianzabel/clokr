@@ -10,6 +10,12 @@ import {
   snapToMonthFirstUtc,
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
+import {
+  ARBZG_FLOOR_OVER_6H,
+  ARBZG_FLOOR_OVER_9H,
+  BREAK_MAX_OVER_6H,
+  BREAK_MAX_OVER_9H,
+} from "../utils/break-constants";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -113,6 +119,51 @@ const tenantConfigSchema = z
       .array(z.number().int().min(0).max(6))
       .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
       .max(7)
+      .optional(),
+    // Phase 63 D-02 / D-24 — per-tenant Berufsschule duration.
+    // Bounds: 240..600 daily (4h..10h, ArbZG-compatible); 1200..3000 weekly
+    // (20h..50h block-week cap). Values mirrored in
+    // apps/api/src/utils/vocational-school-constants.ts so a fail-open lookup
+    // matches schema @default(...) exactly.
+    vocationalSchoolMinutesPerDay: z
+      .number()
+      .int()
+      .min(240, "Berufsschul-Tagesdauer muss mindestens 240 Min (4h) sein")
+      .max(600, "Berufsschul-Tagesdauer darf höchstens 600 Min (10h) sein")
+      .optional(),
+    vocationalSchoolBlockMinutesPerWeek: z
+      .number()
+      .int()
+      .min(1200, "Berufsschul-Block pro Woche muss mindestens 1200 Min (20h) sein")
+      .max(3000, "Berufsschul-Block pro Woche darf höchstens 3000 Min (50h) sein")
+      .optional(),
+    // Phase 64 — Pausendauer (D-07, BREAK-04): per-tenant default auto-break duration.
+    // Floor enforces ArbZG §4 Pflichtpause (30/45 Min); cap is a sane upper bound
+    // (2h/3h). Defaults 30/45 in schema match the floors → no behavior change for
+    // tenants who never edit. Constants live in apps/api/src/utils/break-constants.ts.
+    defaultBreakOver6h: z
+      .number()
+      .int()
+      .min(
+        ARBZG_FLOOR_OVER_6H,
+        "Pausendauer für Arbeitstage über 6 Stunden darf nicht unter 30 Minuten liegen (ArbZG §4 Pflichtpause).",
+      )
+      .max(
+        BREAK_MAX_OVER_6H,
+        "Pausendauer für Arbeitstage über 6 Stunden darf 120 Minuten nicht überschreiten.",
+      )
+      .optional(),
+    defaultBreakOver9h: z
+      .number()
+      .int()
+      .min(
+        ARBZG_FLOOR_OVER_9H,
+        "Pausendauer für Arbeitstage über 9 Stunden darf nicht unter 45 Minuten liegen (ArbZG §4 Pflichtpause).",
+      )
+      .max(
+        BREAK_MAX_OVER_9H,
+        "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
+      )
       .optional(),
   })
   .superRefine((data, ctx) => {
@@ -309,12 +360,32 @@ export async function settingsRoutes(app: FastifyInstance) {
         defaultCoreDays: [],
         // Phase 49.5 — Tenant-Default Arbeitstage (Mo-Fr)
         defaultWorkDays: [1, 2, 3, 4, 5],
+        // Phase 63 D-02 / D-24 — Berufsschule defaults (mirror schema @default).
+        vocationalSchoolMinutesPerDay: 480,
+        vocationalSchoolBlockMinutesPerWeek: 2400,
+        // Phase 64 D-07 — Pausendauer defaults (mirror schema @default 30/45).
+        defaultBreakOver6h: 30,
+        defaultBreakOver9h: 45,
       };
 
       return {
         ...base,
         federalState: tenant?.federalState ?? "NIEDERSACHSEN",
         tenantName: tenant?.name ?? "",
+        // Phase 63 D-24 — fail-open defaults when config row has null/missing values.
+        // The spread above carries through when the column has a value; these ??-falls
+        // catch the "config row exists but column is null/undefined" path.
+        vocationalSchoolMinutesPerDay:
+          (base as { vocationalSchoolMinutesPerDay?: number | null })
+            .vocationalSchoolMinutesPerDay ?? 480,
+        vocationalSchoolBlockMinutesPerWeek:
+          (base as { vocationalSchoolBlockMinutesPerWeek?: number | null })
+            .vocationalSchoolBlockMinutesPerWeek ?? 2400,
+        // Phase 64 D-07 — fail-open break defaults (mirror schema @default 30/45).
+        defaultBreakOver6h:
+          (base as { defaultBreakOver6h?: number | null }).defaultBreakOver6h ?? 30,
+        defaultBreakOver9h:
+          (base as { defaultBreakOver9h?: number | null }).defaultBreakOver9h ?? 45,
       };
     },
   });
@@ -326,6 +397,14 @@ export async function settingsRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const body = tenantConfigSchema.parse(req.body);
       const tenantId = req.user.tenantId;
+
+      // Phase 64 (D-11): Snapshot pre-change break-default values so the
+      // dedicated BREAK_DEFAULT_CHANGED audit row below carries a stable
+      // before-image even if the upsert later mutates the row in place.
+      const previousConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+      });
 
       // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
       const { federalState, tenantName, applyToExisting, ...configBody } = body;
@@ -459,6 +538,37 @@ export async function settingsRoutes(app: FastifyInstance) {
         entityId: config.id,
         newValue: { ...body, appliedCount },
       });
+
+      // Phase 64 (D-11): Dedicated audit row for break-default changes — emitted
+      // ONLY when the PUT body actually changed at least one of the two fields.
+      // A no-op PUT (body field absent or identical to previous) does NOT emit.
+      const newOver6h = configBody.defaultBreakOver6h;
+      const newOver9h = configBody.defaultBreakOver9h;
+      const changedOver6h =
+        newOver6h !== undefined && newOver6h !== previousConfig?.defaultBreakOver6h;
+      const changedOver9h =
+        newOver9h !== undefined && newOver9h !== previousConfig?.defaultBreakOver9h;
+      if (changedOver6h || changedOver9h) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "BREAK_DEFAULT_CHANGED",
+          entity: "TenantConfig",
+          entityId: config.id,
+          oldValue: {
+            defaultBreakOver6h: previousConfig?.defaultBreakOver6h ?? null,
+            defaultBreakOver9h: previousConfig?.defaultBreakOver9h ?? null,
+          },
+          newValue: {
+            defaultBreakOver6h: changedOver6h
+              ? newOver6h
+              : (previousConfig?.defaultBreakOver6h ?? null),
+            defaultBreakOver9h: changedOver9h
+              ? newOver9h
+              : (previousConfig?.defaultBreakOver9h ?? null),
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
 
       return { ...config, federalState: federalState ?? undefined, appliedCount };
     },
