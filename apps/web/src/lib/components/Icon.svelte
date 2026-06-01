@@ -123,5 +123,10 @@
   {:else if name === "leaf"}
     <path d="M11 20A7 7 0 0 1 4 13c0-5 4-9 11-9h5a14 14 0 0 1-9 16z" />
     <path d="M2 22c3-3 6-6 9-9" />
+  {:else if name === "graduation-cap"}
+    <!-- v1.7.3: SVG replacement for legacy 🎓 emoji (Berufsschule). Lucide-style. -->
+    <path d="M22 10v6" />
+    <path d="M2 10l10-5 10 5-10 5z" />
+    <path d="M6 12v5c0 1.5 3 3 6 3s6-1.5 6-3v-5" />
   {/if}
 </svg>

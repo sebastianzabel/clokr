@@ -69,6 +69,10 @@
     // the Soll-Korrelation row so a BS day counts as worked toward the weekly
     // target (D-01..D-04). Map omits employees with 0 BS minutes (server-side).
     vocationalSchoolMinutesByEmp?: Record<string, number>;
+    // v1.7.3 — per-employee effective break minutes for the visible week.
+    // Computed server-side via getEffectiveBreakDuration, honors Employee
+    // Pausen-Override + tenant defaults. Used by the Soll-Korrelation row.
+    shiftBreakMinutesByEmp?: Record<string, number>;
   }
   interface Template {
     id: string;
@@ -553,16 +557,10 @@
     return Math.max(0, dur);
   }
 
-  // ArbZG § 4 mandatory break deduction:
-  //   work >6h  → 30 min break
-  //   work >9h  → 45 min break
-  // Returns net hours (gross minus mandatory break).
-  function shiftNetHours(start: string, end: string): number {
-    const gross = shiftHours(start, end);
-    if (gross > 9) return gross - 0.75;
-    if (gross > 6) return gross - 0.5;
-    return gross;
-  }
+  // v1.7.3 — `shiftNetHours()` removed in favor of the server-computed
+  // `week.shiftBreakMinutesByEmp` map which honors per-employee Pausen-Override
+  // (Employee.breakOver6hOverride/9hOverride) and tenant defaults. The legacy
+  // hardcoded 30/45-min deduction ignored those overrides (Phase 64 follow-up).
 
   function diffClass(diff: number): "ok" | "warn" | "bad" {
     const abs = Math.abs(diff);
@@ -594,13 +592,20 @@
     >();
     if (!week) return out;
     const bsMap = week.vocationalSchoolMinutesByEmp ?? {};
+    // v1.7.3 — server-computed effective break minutes per employee for the
+    // visible week. Honors Employee.breakOver6hOverride/9hOverride and
+    // TenantConfig.defaultBreakOver6h/9h. Replaces the legacy
+    // shiftNetHours() hardcoded 30/45-min deduction.
+    const breakMap = week.shiftBreakMinutesByEmp ?? {};
     for (const emp of week.employees) {
       const sched = emp.workSchedules?.[0];
       if (!sched || sched.type !== "SHIFT_BASED") continue;
       const wh = Number(sched.weeklyHours ?? 0);
       if (wh <= 0) continue;
       const empShifts = week.shifts.filter((s) => s.employeeId === emp.id);
-      const shiftH = empShifts.reduce((sum, s) => sum + shiftNetHours(s.startTime, s.endTime), 0);
+      const grossH = empShifts.reduce((sum, s) => sum + shiftHours(s.startTime, s.endTime), 0);
+      const breakH = (breakMap[emp.id] ?? 0) / 60;
+      const shiftH = Math.max(0, grossH - breakH);
       const bsH = (bsMap[emp.id] ?? 0) / 60;
       const assignedH = shiftH + bsH;
       const diff = assignedH - wh;

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+import { getEffectiveBreakDuration } from "../utils/break-effective";
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -735,6 +736,9 @@ export async function shiftRoutes(app: FastifyInstance) {
               classification: true,
               coverageWeight: true,
               requiresSupervision: true,
+              // v1.7.3: Pausen-Override needed for Soll-Korrelation net hours
+              breakOver6hOverride: true,
+              breakOver9hOverride: true,
               workSchedules: {
                 where: { validFrom: { lte: new Date() } },
                 orderBy: { validFrom: "desc" as const },
@@ -983,6 +987,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         select: {
           vocationalSchoolMinutesPerDay: true,
           vocationalSchoolBlockMinutesPerWeek: true,
+          // v1.7.3: needed for Soll-Korrelation break deduction
+          defaultBreakOver6h: true,
+          defaultBreakOver9h: true,
         },
       });
       const vocationalSchoolMinutesByEmp: Record<string, number> = {};
@@ -1005,6 +1012,34 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (total > 0) vocationalSchoolMinutesByEmp[emp.id] = total;
       }
 
+      // v1.7.3 — Soll-Korrelation must honor per-employee Pausen-Override.
+      // Previously the frontend used hardcoded 30/45 min, ignoring
+      // Employee.breakOver6hOverride / breakOver9hOverride and tenant defaults.
+      // Mirrors the Phase 64 break helper used by /time-entries.
+      const breakTenantCfg = {
+        defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
+        defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
+      };
+      const shiftBreakMinutesByEmp: Record<string, number> = {};
+      for (const s of shifts) {
+        const emp = empById.get(s.employeeId);
+        if (!emp) continue;
+        // gross duration in minutes from "HH:MM" range (no overnight shifts in scope)
+        const [sh, sm] = s.startTime.split(":").map(Number);
+        const [eh, em] = s.endTime.split(":").map(Number);
+        const grossMin = eh * 60 + em - (sh * 60 + sm);
+        if (grossMin <= 0) continue;
+        const brk = getEffectiveBreakDuration(
+          {
+            breakOver6hOverride: emp.breakOver6hOverride ?? null,
+            breakOver9hOverride: emp.breakOver9hOverride ?? null,
+          },
+          breakTenantCfg,
+          grossMin,
+        );
+        shiftBreakMinutesByEmp[s.employeeId] = (shiftBreakMinutesByEmp[s.employeeId] ?? 0) + brk;
+      }
+
       return {
         weekDays,
         employees,
@@ -1012,6 +1047,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         availability,
         coverage,
         vocationalSchoolMinutesByEmp,
+        shiftBreakMinutesByEmp,
       };
     },
   });

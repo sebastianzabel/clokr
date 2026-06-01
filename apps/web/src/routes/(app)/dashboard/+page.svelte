@@ -1492,9 +1492,7 @@
                           {:else if day.reason === "Elternzeit"}
                             <Icon name="users" size={14} title="Elternzeit" />
                           {:else if day.reason === "Berufsschule"}
-                            <span class="bs-emoji" aria-label="Berufsschule" title="Berufsschule"
-                              >🎓</span
-                            >
+                            <Icon name="graduation-cap" size={14} title="Berufsschule" />
                           {:else}
                             <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
                           {/if}
@@ -1564,7 +1562,7 @@
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--absent cell-badge--bs"
-              ><span class="bs-emoji">🎓</span></span
+              ><Icon name="graduation-cap" size={12} /></span
             >
             Berufsschule
           </span>

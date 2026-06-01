@@ -385,14 +385,34 @@ export async function dashboardRoutes(app: FastifyInstance) {
                 }
               : null;
 
-          // Check if this is a workday from the schedule
+          // Check if this is a workday from the schedule.
+          // v1.7.3: source of truth is `WorkSchedule.workDays` (Int[] of weekday indices),
+          // NOT just `{day}Hours > 0`. Legacy rows can diverge (Phase 61 audit), and
+          // SHIFT_BASED employees often keep default per-day hours but rely on the
+          // actual planned shift — for them, "workday" means a shift exists.
+          // Without this, the Wochenübersicht falsely reports "Fehlt" on a Monday
+          // when the employee's contract has Mo off (workDays=[2,3,4,5]).
           const empSchedule = allSchedules.find((s) => s.employeeId === emp.id);
           const dayDate = new Date(dayStr + "T12:00:00Z");
           const dow = getDayOfWeekInTz(dayDate, tz);
           const expectedHours = empSchedule
             ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
             : 0;
-          const isWorkday = expectedHours > 0;
+          const schedType =
+            empSchedule && "type" in empSchedule ? (empSchedule.type as string) : null;
+          const scheduleWorkDays = (
+            empSchedule && "workDays" in empSchedule
+              ? ((empSchedule as { workDays: number[] }).workDays ?? [])
+              : []
+          ) as number[];
+          // SHIFT_BASED: only the planned shift defines a workday.
+          // Otherwise: workDays array is the explicit source of truth.
+          const isWorkday =
+            schedType === "SHIFT_BASED"
+              ? shift !== null
+              : scheduleWorkDays.length > 0
+                ? scheduleWorkDays.includes(dow)
+                : expectedHours > 0;
 
           const todayStr = dateStrInTz(new Date(), tz);
           const isFuture = dayStr > todayStr;
@@ -559,7 +579,22 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const expectedHours = empSchedule
           ? getDayHoursFromSchedule(empSchedule as Record<string, unknown>, dow)
           : 0;
-        const isWorkday = expectedHours > 0;
+        // v1.7.3: workDays is the canonical source of truth (see /team-week).
+        const schedType =
+          empSchedule && "type" in empSchedule ? (empSchedule.type as string) : null;
+        const scheduleWorkDays = (
+          empSchedule && "workDays" in empSchedule
+            ? ((empSchedule as { workDays: number[] }).workDays ?? [])
+            : []
+        ) as number[];
+        // SHIFT_BASED: no shift fetched here → treat as never-workday (avoids false "Fehlt").
+        // Otherwise: workDays array is the explicit source of truth.
+        const isWorkday =
+          schedType === "SHIFT_BASED"
+            ? false
+            : scheduleWorkDays.length > 0
+              ? scheduleWorkDays.includes(dow)
+              : expectedHours > 0;
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
         const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
