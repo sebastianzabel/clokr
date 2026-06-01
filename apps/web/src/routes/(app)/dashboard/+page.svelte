@@ -1482,6 +1482,7 @@
                       {:else if day.status === "absent"}
                         <span
                           class="cell-badge cell-badge--absent"
+                          class:cell-badge--bs={day.reason === "Berufsschule"}
                           title={day.reason ?? "Abwesend"}
                         >
                           {#if day.reason === "Krankmeldung" || day.reason === "Kinderkrank"}
@@ -1490,6 +1491,10 @@
                             <Icon name="heart" size={14} title="Mutterschutz" />
                           {:else if day.reason === "Elternzeit"}
                             <Icon name="users" size={14} title="Elternzeit" />
+                          {:else if day.reason === "Berufsschule"}
+                            <span class="bs-emoji" aria-label="Berufsschule" title="Berufsschule"
+                              >🎓</span
+                            >
                           {:else}
                             <Icon name="umbrella" size={14} title={day.reason ?? "Urlaub"} />
                           {/if}
@@ -1526,7 +1531,7 @@
                           {/if}
                         </span>
                       {:else}
-                        <span class="cell-badge cell-badge--none">–</span>
+                        <span class="cell-badge cell-badge--none" title="Frei">–</span>
                       {/if}
                     </td>
                   {/each}
@@ -1556,6 +1561,12 @@
           <span class="legend-item">
             <span class="cell-badge cell-badge--absent"><Icon name="medical" size={12} /></span>
             Krank
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--absent cell-badge--bs"
+              ><span class="bs-emoji">🎓</span></span
+            >
+            Berufsschule
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--missing"><Icon name="alert" size={12} /></span>
@@ -2468,6 +2479,20 @@
     color: var(--brand);
     border: 1px solid var(--brand-soft);
     font-size: 0.875rem;
+  }
+
+  /* Berufsschule day — distinct from generic absence so the 🎓 emoji reads as
+     "operationally planned school day" rather than "leave/sick". Slightly
+     lighter surface + neutral border to differentiate from vacation. */
+  .cell-badge--bs {
+    background: var(--bg-subtle);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+
+  .bs-emoji {
+    font-size: 0.875rem;
+    line-height: 1;
   }
 
   .cell-badge--missing {

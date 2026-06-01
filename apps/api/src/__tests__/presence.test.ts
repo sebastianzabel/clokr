@@ -140,6 +140,22 @@ describe("resolvePresenceState", () => {
     expect(result).toEqual({ status: "absent", reason: "Krankmeldung" });
   });
 
+  // Phase 63 follow-up — VOCATIONAL_SCHOOL must surface as the human-readable
+  // "Berufsschule" label so the dashboard team-week widget can render the 🎓
+  // icon branch (instead of the generic umbrella fallback).
+  it("VOCATIONAL_SCHOOL absence → absent with 'Berufsschule' label", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: null,
+      absence: { type: "VOCATIONAL_SCHOOL" },
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    expect(result).toEqual({ status: "absent", reason: "Berufsschule" });
+  });
+
   it("holiday → holiday with holiday name (after absence, before scheduled/missing)", () => {
     const result = resolvePresenceState({
       entries: [],

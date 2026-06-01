@@ -51,19 +51,6 @@
     status: Status;
   }
 
-  // Phase 63 (D-14..D-17, D-22): read-only BS-day row in the Inbox.
-  // GET /vocational-school/upcoming returns these — manager-scope, next 14 days.
-  // No approval flow: the day is legally mandated (BBiG §15), so the row only
-  // shows the date + a lock icon. `source` drives the "(Vorlage)" / "(manuell)"
-  // suffix on the badge.
-  interface VocationalSchoolUpcoming {
-    id: string;
-    employeeId: string;
-    employee: { firstName: string; lastName: string; employeeNumber?: string };
-    date: string; // YYYY-MM-DD
-    source: "PATTERN" | "MANUAL";
-  }
-
   type TabKey = "open" | "approved" | "rejected" | "all";
 
   const TYPE_LABELS: Record<TypeCode, string> = {
@@ -85,9 +72,6 @@
 
   // ── State ────────────────────────────────────────────────────────────────
   let requests: LeaveRequest[] = $state([]);
-  // Phase 63 D-14: rolling 14-day list of upcoming BS-days for the manager's
-  // tenant scope. Loaded in parallel with leave requests via Promise.all.
-  let upcomingBs: VocationalSchoolUpcoming[] = $state([]);
   let loading = $state(true);
   let error = $state("");
   let tab: TabKey = $state("open");
@@ -118,22 +102,10 @@
     loading = true;
     error = "";
     try {
-      // Phase 63 D-14: parallel fetch — leave requests + BS-days window (today..+14d).
-      const today = new Date();
-      const in14days = new Date(today.getTime() + 14 * 86_400_000);
-      const fmtIso = (d: Date) => d.toISOString().slice(0, 10);
-      const [leave, bs] = await Promise.all([
-        api.get<LeaveRequest[]>(`/leave/requests?year=${currentYear}`),
-        api.get<VocationalSchoolUpcoming[]>(
-          `/vocational-school/upcoming?from=${fmtIso(today)}&to=${fmtIso(in14days)}`,
-        ),
-      ]);
-      requests = leave;
-      upcomingBs = bs;
+      requests = await api.get<LeaveRequest[]>(`/leave/requests?year=${currentYear}`);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
       requests = [];
-      upcomingBs = [];
     } finally {
       loading = false;
     }
@@ -167,15 +139,6 @@
     if (tab === "approved") return approvedRequests;
     if (tab === "rejected") return rejectedRequests;
     return requests;
-  });
-
-  // Phase 63 D-14..D-17: BS rows are informational and time-bound (next 14
-  // days). They appear only in the "open" and "all" tabs (no approval status
-  // → never "approved" or "rejected"). Sorted by date ascending for visual
-  // chronology alongside the leave requests in the same view.
-  let visibleBs = $derived.by(() => {
-    if (tab !== "open" && tab !== "all") return [];
-    return [...upcomingBs].sort((a, b) => a.date.localeCompare(b.date));
   });
 
   let kpiPending = $derived(openRequests.length);
@@ -337,7 +300,7 @@
 
   {#if loading}
     <div class="list-empty">Lädt…</div>
-  {:else if visibleRequests.length === 0 && visibleBs.length === 0}
+  {:else if visibleRequests.length === 0}
     {#if tab === "open"}
       <EmptyState
         icon="inbox"
@@ -414,38 +377,6 @@
               }}>Details</button
             >
           {/if}
-        {/snippet}
-      </ApprovalRow>
-    {/each}
-
-    <!-- Phase 63 D-14..D-17, D-22: read-only Berufsschultag rows. No approval
-         flow — BBiG §15 mandates these days, so they exist only to inform the
-         manager. Lock icon replaces the approve/reject buttons. -->
-    {#each visibleBs as bs (bs.id)}
-      <ApprovalRow
-        avatar={initials(bs.employee.firstName, bs.employee.lastName)}
-        name={`${bs.employee.firstName} ${bs.employee.lastName}`}
-        dates={fmtDate(bs.date)}
-      >
-        {#snippet metaContent()}
-          <span
-            class="bs-badge"
-            title="Gesetzlich vorgeschrieben — keine Genehmigung nötig (BBiG §15)"
-          >
-            Berufsschule
-            <span class="bs-suffix">
-              {bs.source === "PATTERN" ? "(Vorlage)" : "(manuell)"}
-            </span>
-          </span>
-        {/snippet}
-        {#snippet actions()}
-          <span
-            class="bs-lock"
-            aria-label="Kein Genehmigungsprozess"
-            title="Gesetzlich vorgeschrieben — keine Genehmigung nötig (BBiG §15)"
-          >
-            🔒
-          </span>
         {/snippet}
       </ApprovalRow>
     {/each}
@@ -718,37 +649,5 @@
   }
   .spacer {
     flex: 1;
-  }
-
-  /* ── Phase 63 D-14..D-17, D-22 — read-only Berufsschule badge ─────────── */
-  .bs-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--brand-soft);
-    color: var(--brand);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 2px 8px;
-    font-size: 0.8125rem;
-    font-weight: 600;
-  }
-  .bs-suffix {
-    color: var(--text-muted);
-    font-weight: 400;
-    font-size: 0.75rem;
-  }
-  .bs-lock {
-    font-size: 1rem;
-    opacity: 0.7;
-    line-height: 1;
-  }
-
-  /* D-17 mobile: keep badge + lock visible, hide the (Vorlage)/(manuell)
-     suffix so the row stays a single line on narrow viewports. */
-  @media (max-width: 640px) {
-    .bs-suffix {
-      display: none;
-    }
   }
 </style>

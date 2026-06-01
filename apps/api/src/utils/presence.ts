@@ -36,6 +36,7 @@ const ABSENCE_LABELS: Record<string, string> = {
   SICK_CHILD: "Kinderkrank",
   MATERNITY: "Mutterschutz",
   PARENTAL: "Elternzeit",
+  VOCATIONAL_SCHOOL: "Berufsschule",
 };
 
 /**
