@@ -66,9 +66,10 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
   });
 
   beforeEach(async () => {
-    await app.prisma.absence.deleteMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL" },
-    });
+    // Clean ALL Absences (not just VOCATIONAL_SCHOOL) — earlier tests in this
+    // file also create SICK rows for the rank test, which would otherwise
+    // outrank a fresh BS absence and skip it from the BS-minutes aggregation.
+    await app.prisma.absence.deleteMany({ where: { employeeId: data.employee.id } });
     await app.prisma.shift.deleteMany({ where: { employeeId: data.employee.id } });
   });
 
@@ -214,5 +215,107 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     );
     expect(cell).toBeTruthy();
     expect(cell.availability).toBe("sick"); // sick beats vocational_school
+  });
+
+  // ── Soll-Korrelation: BS minutes contribute toward the weekly target ───────
+  // Post-v1.7 follow-up: Phase 63 Plan 03 wired the saldo paths but missed the
+  // /shifts/week aggregation. These tests pin the new
+  // `vocationalSchoolMinutesByEmp` map so the /shifts UI Soll-Korrelation row
+  // counts BS days as worked (D-01..D-04).
+
+  it("GET /shifts/week returns vocationalSchoolMinutesByEmp with single BS day = 480 min", async () => {
+    const monday = nextMonday();
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: monday,
+        endDate: monday,
+        days: 1.0,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?date=${toIsoDate(monday)}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.vocationalSchoolMinutesByEmp).toBeDefined();
+    // Default tenant config: vocationalSchoolMinutesPerDay = 480.
+    expect(body.vocationalSchoolMinutesByEmp[data.employee.id]).toBe(480);
+  });
+
+  it("GET /shifts/week returns 0/no entry for a week without BS days", async () => {
+    const monday = nextMonday();
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?date=${toIsoDate(monday)}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.vocationalSchoolMinutesByEmp).toBeDefined();
+    // Map omits employees with 0 minutes to keep payload small.
+    expect(body.vocationalSchoolMinutesByEmp[data.employee.id]).toBeUndefined();
+  });
+
+  it("GET /shifts/week caps a 5-day block-week at vocationalSchoolBlockMinutesPerWeek (2400)", async () => {
+    const monday = nextMonday();
+    // 5 BS days Mo..Fr → block-week semantics: total = min(5*480, 2400) = 2400.
+    for (let i = 0; i < 5; i += 1) {
+      const day = new Date(monday);
+      day.setUTCDate(day.getUTCDate() + i);
+      await app.prisma.absence.create({
+        data: {
+          employeeId: data.employee.id,
+          type: "VOCATIONAL_SCHOOL",
+          source: "PATTERN",
+          startDate: day,
+          endDate: day,
+          days: 1.0,
+          createdBy: "SYSTEM",
+        },
+      });
+    }
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?date=${toIsoDate(monday)}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    // Each day posts 2400/5 = 480 min → total still 2400 (the cap).
+    expect(body.vocationalSchoolMinutesByEmp[data.employee.id]).toBe(2400);
+  });
+
+  it("GET /shifts/week excludes soft-deleted BS Absences from the BS minutes total", async () => {
+    const monday = nextMonday();
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: monday,
+        endDate: monday,
+        days: 1.0,
+        createdBy: "SYSTEM",
+        deletedAt: new Date(), // soft-deleted
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?date=${toIsoDate(monday)}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.vocationalSchoolMinutesByEmp[data.employee.id]).toBeUndefined();
   });
 });

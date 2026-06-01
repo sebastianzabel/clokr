@@ -2,6 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
+import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -969,7 +970,49 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      return { weekDays, employees, shifts, availability, coverage };
+      // Phase 63 follow-up (post-v1.7) — Soll-Korrelation must count BS days as
+      // worked minutes (D-01..D-04). The /shifts/week Soll-Korrelation row was
+      // missed in Plan 03 (which patched overtime, auto-close, arbzg, time-entries
+      // but not shifts.ts). Aggregate per employee using the same
+      // `getVocationalSchoolMinutesForDate` helper so block-week cap (D-02) and
+      // tenant-config (vocationalSchoolMinutesPerDay) semantics stay in lockstep
+      // with the saldo math. CLAUDE.md soft-delete rule is enforced inside the
+      // helper (deletedAt: null).
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId },
+        select: {
+          vocationalSchoolMinutesPerDay: true,
+          vocationalSchoolBlockMinutesPerWeek: true,
+        },
+      });
+      const vocationalSchoolMinutesByEmp: Record<string, number> = {};
+      for (const emp of employees) {
+        let total = 0;
+        for (const iso of weekDays) {
+          // Only call the helper for cells the availability resolver flagged as
+          // vocational_school — cheap short-circuit avoids N×7 unconditional DB
+          // round-trips on weeks without any BS data.
+          const av = availabilityMap.get(keyOf(emp.id, iso))?.availability;
+          if (av !== "vocational_school") continue;
+          const min = await getVocationalSchoolMinutesForDate(
+            app.prisma,
+            emp.id,
+            new Date(iso + "T00:00:00Z"),
+            tenantConfig,
+          );
+          total += min;
+        }
+        if (total > 0) vocationalSchoolMinutesByEmp[emp.id] = total;
+      }
+
+      return {
+        weekDays,
+        employees,
+        shifts,
+        availability,
+        coverage,
+        vocationalSchoolMinutesByEmp,
+      };
     },
   });
 

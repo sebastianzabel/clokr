@@ -65,6 +65,10 @@
     shifts: Shift[];
     availability: AvailabilityEntry[];
     coverage: CoverageEntry[];
+    // Phase 63 follow-up — per-employee BS minutes for the visible week. Used by
+    // the Soll-Korrelation row so a BS day counts as worked toward the weekly
+    // target (D-01..D-04). Map omits employees with 0 BS minutes (server-side).
+    vocationalSchoolMinutesByEmp?: Record<string, number>;
   }
   interface Template {
     id: string;
@@ -571,11 +575,17 @@
     return n.toFixed(1).replace(/\.0$/, "");
   }
 
-  // Map<employeeId, { assignedH, weeklyH, diff, klass }> for the visible week.
+  // Map<employeeId, { shiftH, bsH, assignedH, weeklyH, diff, klass }> for the
+  // visible week. `assignedH` = shiftH + bsH (Phase 63 D-01: BS counts as worked
+  // toward the weekly target — server returns BS minutes via the
+  // `vocationalSchoolMinutesByEmp` map so block-week cap stays in lockstep with
+  // the saldo math).
   const sollRowByEmp = $derived.by(() => {
     const out = new Map<
       string,
       {
+        shiftH: number;
+        bsH: number;
         assignedH: number;
         weeklyH: number;
         diff: number;
@@ -583,18 +593,20 @@
       }
     >();
     if (!week) return out;
+    const bsMap = week.vocationalSchoolMinutesByEmp ?? {};
     for (const emp of week.employees) {
       const sched = emp.workSchedules?.[0];
       if (!sched || sched.type !== "SHIFT_BASED") continue;
       const wh = Number(sched.weeklyHours ?? 0);
       if (wh <= 0) continue;
       const empShifts = week.shifts.filter((s) => s.employeeId === emp.id);
-      const assignedH = empShifts.reduce(
-        (sum, s) => sum + shiftNetHours(s.startTime, s.endTime),
-        0,
-      );
+      const shiftH = empShifts.reduce((sum, s) => sum + shiftNetHours(s.startTime, s.endTime), 0);
+      const bsH = (bsMap[emp.id] ?? 0) / 60;
+      const assignedH = shiftH + bsH;
       const diff = assignedH - wh;
       out.set(emp.id, {
+        shiftH,
+        bsH,
         assignedH,
         weeklyH: wh,
         diff,
@@ -1502,9 +1514,11 @@
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
-                title="{u.firstName} {u.lastName}: Σ {formatHours(
-                  sr.assignedH,
-                )}h geplant, Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0
+                title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h ({formatHours(
+                  sr.shiftH,
+                )}h Schicht{sr.bsH > 0
+                  ? ` + ${formatHours(sr.bsH)}h Berufsschule`
+                  : ''}), Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0
                   ? '+'
                   : ''}{formatHours(sr.diff)}h"
               >

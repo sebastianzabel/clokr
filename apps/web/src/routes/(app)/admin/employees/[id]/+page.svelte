@@ -329,10 +329,15 @@
     pausendauerError = "";
     pausendauerSaved = false;
 
-    // Empty string → null (clear override, fall back to tenant); typed → integer
-    const parse = (s: string): number | null => {
-      if (s.trim() === "") return null;
-      const n = Number.parseInt(s, 10);
+    // Empty/cleared → null (fall back to tenant); typed → integer.
+    // NOTE: Even though state is typed `string`, Svelte 5 `bind:value` on
+    // `<input type="number">` coerces the bound value to `number | null` at
+    // runtime. Accept both shapes so .trim() never lands on a non-string.
+    const parse = (v: string | number | null | undefined): number | null => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : null;
+      if (v.trim() === "") return null;
+      const n = Number.parseInt(v, 10);
       return Number.isFinite(n) ? n : null;
     };
 
