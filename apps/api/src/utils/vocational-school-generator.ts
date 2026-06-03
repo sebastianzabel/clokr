@@ -396,17 +396,46 @@ async function runOrPreview(
           action: "created",
         });
       } else {
-        const absence = await prisma.absence.create({
-          data: {
-            employeeId: employee.id,
-            type: "VOCATIONAL_SCHOOL",
-            source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
-            startDate: date,
-            endDate: date,
-            days: 1.0,
-            createdBy: "SYSTEM",
-          },
-        });
+        // v1.7.4 hotfix — guard against concurrent generator runs racing on the
+        // same (employeeId, startDate, type) UNIQUE constraint. The PUT pattern
+        // handler fires a fire-and-forget generator on save; that can collide
+        // with the daily cron or the explicit POST /vocational-school/generate
+        // endpoint (used by tests). Treat P2002 (Prisma unique-violation) as a
+        // benign "already created by parallel run" and bump the existing-skip
+        // counter instead of bubbling the error up.
+        let absence;
+        try {
+          absence = await prisma.absence.create({
+            data: {
+              employeeId: employee.id,
+              type: "VOCATIONAL_SCHOOL",
+              source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
+              startDate: date,
+              endDate: date,
+              days: 1.0,
+              createdBy: "SYSTEM",
+            },
+          });
+        } catch (err: unknown) {
+          if (
+            err &&
+            typeof err === "object" &&
+            "code" in err &&
+            (err as { code: unknown }).code === "P2002"
+          ) {
+            result.skipped.existing++;
+            if (opts.dryRun) {
+              result.details!.push({
+                employeeId: employee.id,
+                date: toIsoDate(date),
+                action: "skipped",
+                reason: "existing",
+              });
+            }
+            continue;
+          }
+          throw err;
+        }
         // userId is null (FK column) — the SYSTEM-origin marker lives inside newValue.
         // Encoding the originator inside newValue is the established convention for
         // SYSTEM-owned mutations (AuditLog.userId has @relation onDelete: SetNull and

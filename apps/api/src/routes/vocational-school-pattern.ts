@@ -3,6 +3,7 @@ import { z } from "zod";
 import { FederalState } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { syncSchoolHolidaysForTenant } from "../plugins/school-holidays-sync";
+import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -232,6 +233,18 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
           app.log,
         ).catch((err) => app.log.warn({ err }, "on-demand school-holidays sync failed"));
       }
+
+      // v1.7.4 hotfix — On-demand BS-Absence-Generator trigger.
+      // Without this, pattern changes only reflect in Absences after the daily
+      // cron run at 02:30 UTC, leaving the user with stale/missing rows for
+      // up to 24h. Fire-and-forget so the PUT response stays snappy; the
+      // generator is idempotent (existing-Absence guard via BERSCH-08) so a
+      // race with the daily cron is safe. Failures are logged, never surface
+      // to the client. The weekly Saturday cron fills any gap.
+      void runVocationalSchoolGeneration(app.prisma, app.audit, {
+        tenantId: req.user.tenantId,
+        now: new Date(),
+      }).catch((err) => app.log.warn({ err }, "on-demand BS-generator run failed"));
 
       return reply.code(200).send({
         patterns: created.map((p) => ({

@@ -205,15 +205,15 @@ describe("Berufsschule (Phase 62)", () => {
     // Legacy dayOfWeek field MUST be null for multi-day rows.
     expect(persisted[0].dayOfWeek).toBeNull();
 
-    // Generator now produces Absences on all three weekdays.
+    // Generator runs. v1.7.4: PUT pattern already fired a fire-and-forget
+    // generator run, so this explicit POST may see 0 created (idempotent
+    // skip on existing rows). The authoritative signal is the DB count below.
     const genRes = await app.inject({
       method: "POST",
       url: "/api/v1/vocational-school/generate",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(genRes.statusCode).toBe(200);
-    const genBody = JSON.parse(genRes.body);
-    expect(genBody.created).toBeGreaterThan(0);
 
     const absences = await app.prisma.absence.findMany({
       where: {
@@ -222,6 +222,7 @@ describe("Berufsschule (Phase 62)", () => {
         deletedAt: null,
       },
     });
+    expect(absences.length).toBeGreaterThan(0);
     const observedDows = new Set(
       absences.map((a) => {
         const native = a.startDate.getUTCDay();
@@ -367,8 +368,9 @@ describe("Berufsschule (Phase 62)", () => {
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.created).toBeGreaterThan(0);
+    // v1.7.4: pattern was inserted directly via prisma but a fire-and-forget
+    // generator may already have run from a prior test's PUT. Authoritative
+    // signal is the DB count.
 
     const absences = await app.prisma.absence.findMany({
       where: {
