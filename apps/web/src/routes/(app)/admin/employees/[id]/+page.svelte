@@ -95,7 +95,55 @@
     isActive: boolean;
     createdAt: string;
     updatedAt: string;
+    // Phase 67.2 — Schulferien-Behandlung (Plan 03): generator skips overlapping
+    // school-holiday dates when true (default). Pflegeschulen/Berufsakademien set false.
+    respectSchoolHolidays?: boolean;
+    // Phase 67.2 — Pendler-Azubi: BS-Schule in anderem Bundesland als Tenant.
+    // null = use Tenant.federalState (default).
+    federalStateOverride?: FederalState | null;
   }
+
+  // Phase 67.2 (Plan 05) — Federal-state enum mirrored from packages/db/prisma/schema.prisma.
+  // Used for `federalStateOverride` dropdown in BS-Pattern editor + the existing /admin/system
+  // selector. Kept in sync with STATES[] in /admin/system manually (no shared type pkg yet).
+  type FederalState =
+    | "BADEN_WUERTTEMBERG"
+    | "BAYERN"
+    | "BERLIN"
+    | "BRANDENBURG"
+    | "BREMEN"
+    | "HAMBURG"
+    | "HESSEN"
+    | "MECKLENBURG_VORPOMMERN"
+    | "NIEDERSACHSEN"
+    | "NORDRHEIN_WESTFALEN"
+    | "RHEINLAND_PFALZ"
+    | "SAARLAND"
+    | "SACHSEN"
+    | "SACHSEN_ANHALT"
+    | "SCHLESWIG_HOLSTEIN"
+    | "THUERINGEN";
+
+  // Phase 67.2 (Plan 05) — Federal-state labels for the dropdown (sorted by label).
+  // Matches the verbatim label strings from /admin/system STATES.
+  const BS_FEDERAL_STATE_OPTIONS: { value: FederalState; label: string }[] = [
+    { value: "BADEN_WUERTTEMBERG", label: "Baden-Württemberg" },
+    { value: "BAYERN", label: "Bayern" },
+    { value: "BERLIN", label: "Berlin" },
+    { value: "BRANDENBURG", label: "Brandenburg" },
+    { value: "BREMEN", label: "Bremen" },
+    { value: "HAMBURG", label: "Hamburg" },
+    { value: "HESSEN", label: "Hessen" },
+    { value: "MECKLENBURG_VORPOMMERN", label: "Mecklenburg-Vorpommern" },
+    { value: "NIEDERSACHSEN", label: "Niedersachsen" },
+    { value: "NORDRHEIN_WESTFALEN", label: "Nordrhein-Westfalen" },
+    { value: "RHEINLAND_PFALZ", label: "Rheinland-Pfalz" },
+    { value: "SAARLAND", label: "Saarland" },
+    { value: "SACHSEN", label: "Sachsen" },
+    { value: "SACHSEN_ANHALT", label: "Sachsen-Anhalt" },
+    { value: "SCHLESWIG_HOLSTEIN", label: "Schleswig-Holstein" },
+    { value: "THUERINGEN", label: "Thüringen" },
+  ];
 
   // Phase 67 Plan 02 (BERSCH-15) — Local editor draft. NEVER sent to the API as-is;
   // the _key field is for {#each} keyed iteration only. On Save we serialise to the
@@ -110,6 +158,13 @@
     blockYear: number | null;
     validFrom: string; // "YYYY-MM-DD"
     validUntil: string | null;
+    // Phase 67.2 (Plan 05) — Per-Pattern toggles (Plan 03 backend support).
+    // - respectSchoolHolidays: when false, generator ignores SchoolHolidayPeriod cache for
+    //   this pattern (Pflegeschulen, Berufsakademien). Default true.
+    // - federalStateOverride: when set, generator uses this BL's holiday cache instead of
+    //   the tenant's. null = inherit from Tenant.federalState. Default null.
+    respectSchoolHolidays: boolean;
+    federalStateOverride: FederalState | null;
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
@@ -177,6 +232,10 @@
           blockYear: p.blockYear,
           validFrom: p.validFrom,
           validUntil: p.validUntil,
+          // Phase 67.2 (Plan 05) — surface Ferien fields with defensive defaults so the editor
+          // never crashes on a pre-67.2 API response that lacks the columns.
+          respectSchoolHolidays: p.respectSchoolHolidays ?? true,
+          federalStateOverride: p.federalStateOverride ?? null,
         }));
         bsPatternsLoadError = "";
       } else {
@@ -456,8 +515,24 @@
         blockYear: null,
         validFrom: new Date().toISOString().slice(0, 10), // today (D-default per CONTEXT)
         validUntil: null,
+        // Phase 67.2 (Plan 05) — new-row defaults match the API Zod defaults
+        // (apps/api/src/routes/vocational-school-pattern.ts lines 52-55).
+        respectSchoolHolidays: true,
+        federalStateOverride: null,
       },
     ];
+  }
+
+  // Phase 67.2 (Plan 05) — toggle helpers for the new per-pattern fields.
+  function bsToggleRespectSchoolHolidays(key: string) {
+    bsPatterns = bsPatterns.map((p) =>
+      p._key === key ? { ...p, respectSchoolHolidays: !p.respectSchoolHolidays } : p,
+    );
+  }
+  function bsSetFederalStateOverride(key: string, value: FederalState | null) {
+    bsPatterns = bsPatterns.map((p) =>
+      p._key === key ? { ...p, federalStateOverride: value } : p,
+    );
   }
 
   function bsRemovePattern(key: string) {
@@ -557,6 +632,10 @@
           blockYear: p.blockYear,
           validFrom: p.validFrom,
           validUntil: p.validUntil,
+          // Phase 67.2 (Plan 05) — persist Ferien fields. The API has defaults so
+          // omitting them is safe; we still send them to keep the round-trip explicit.
+          respectSchoolHolidays: p.respectSchoolHolidays,
+          federalStateOverride: p.federalStateOverride,
         })),
       };
       const res = await api.put<{ patterns: VocationalSchoolPattern[] }>(
@@ -577,6 +656,9 @@
         blockYear: p.blockYear,
         validFrom: p.validFrom,
         validUntil: p.validUntil,
+        // Phase 67.2 (Plan 05) — round-trip Ferien fields from PUT response
+        respectSchoolHolidays: p.respectSchoolHolidays ?? true,
+        federalStateOverride: p.federalStateOverride ?? null,
       }));
       bsNewKeyCounter = 0; // reset — all rows have server ids now
       bsPatternsSaved = true;
@@ -1510,6 +1592,54 @@
                         disabled={bsPatternsSaving}
                       />
                     </div>
+
+                    <!-- Phase 67.2 (Plan 05) — Schulferien-Behandlung toggle.
+                         Deaktivieren für Pflegeschulen / Berufsakademien, die nicht den
+                         KMK-Schulferien folgen (Generator ignoriert dann den Cache). -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Schulferien:</span>
+                      <label class="bs-checkbox">
+                        <input
+                          type="checkbox"
+                          checked={p.respectSchoolHolidays}
+                          onchange={() => bsToggleRespectSchoolHolidays(p._key)}
+                          disabled={bsPatternsSaving}
+                        />
+                        <span>Schulferien beachten</span>
+                      </label>
+                      <small class="bs-pattern-hint"
+                        >Pflegeschulen / Berufsakademien: deaktivieren</small
+                      >
+                    </div>
+
+                    <!-- Phase 67.2 (Plan 05) — Bundesland-Override (Pendler-Azubi).
+                         Nur sichtbar, wenn das Pattern Wochentage ODER Block-Wochen hat;
+                         sonst hat es keine Wirkung. -->
+                    {#if p.daysOfWeek.length > 0 || p.blockWeeks.length > 0}
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">BS-Bundesland:</span>
+                        <select
+                          class="form-input bs-state-select"
+                          value={p.federalStateOverride ?? ""}
+                          onchange={(e) => {
+                            const val = (e.currentTarget as HTMLSelectElement).value;
+                            bsSetFederalStateOverride(
+                              p._key,
+                              val === "" ? null : (val as FederalState),
+                            );
+                          }}
+                          disabled={bsPatternsSaving}
+                        >
+                          <option value="">Wie Mandant (Standard)</option>
+                          {#each BS_FEDERAL_STATE_OPTIONS as opt (opt.value)}
+                            <option value={opt.value}>{opt.label}</option>
+                          {/each}
+                        </select>
+                        <small class="bs-pattern-hint"
+                          >Nur bei Pendler-Azubi: Schule in anderem Bundesland</small
+                        >
+                      </div>
+                    {/if}
                   </li>
                 {/each}
               </ul>
@@ -2336,5 +2466,28 @@
 
   .bs-year-input {
     max-width: 8rem;
+  }
+
+  /* Phase 67.2 (Plan 05) — Schulferien toggle + Bundesland-Override per Pattern */
+  .bs-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: 0.9375rem;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .bs-checkbox input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+  }
+
+  .bs-pattern-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .bs-state-select {
+    max-width: 16rem;
   }
 </style>
