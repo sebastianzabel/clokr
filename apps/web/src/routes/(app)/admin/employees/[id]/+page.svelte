@@ -753,6 +753,68 @@
             </div>
           </div>
         </Section>
+
+        <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) read-only view; editor lands in 67-02 -->
+        {#if eClassification === "AZUBI"}
+          <Section
+            title="Berufsschultag (Optional)"
+            sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
+          >
+            {#if bsPatternsLoadError}
+              <div class="callout error">{bsPatternsLoadError}</div>
+            {/if}
+
+            {#if bsPatterns.length === 0 && !bsPatternsLoadError}
+              <p class="form-hint text-muted">Keine Berufsschultage konfiguriert.</p>
+            {/if}
+
+            {#if bsPatterns.length > 0}
+              <ul class="bs-pattern-list">
+                {#each bsPatterns as p (p.id)}
+                  <li class="bs-pattern-card">
+                    {#if p.dayOfWeek !== null}
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">Wochentag:</span>
+                        <div class="bs-chip-row">
+                          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as label, idx (label)}
+                            <span class="chip" class:chip-brand={p.dayOfWeek === idx}>
+                              {label}
+                            </span>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+
+                    {#if p.blockWeeks.length > 0}
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">
+                          Block-Wochen{p.blockYear ? ` (${p.blockYear})` : ""}:
+                        </span>
+                        <div class="bs-week-grid">
+                          {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
+                            <span
+                              class="chip chip-week"
+                              class:chip-brand={p.blockWeeks.includes(wk)}
+                            >
+                              {wk}
+                            </span>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Gültig:</span>
+                      <span class="bs-pattern-value">
+                        {p.validFrom} – {p.validUntil ?? "Unbefristet"}
+                      </span>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+          </Section>
+        {/if}
       {:else if tab === "arbeitszeit"}
         <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
         <Section
@@ -1885,5 +1947,74 @@
     gap: var(--s-3);
     flex-wrap: wrap;
     align-items: center;
+  }
+
+  /* Phase 67 (BERSCH-15) — BS-Pattern read-only list */
+  .bs-pattern-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  .bs-pattern-card {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: var(--s-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+
+  .bs-pattern-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    align-items: center;
+  }
+
+  .bs-pattern-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 9rem;
+  }
+
+  .bs-pattern-value {
+    font-size: 0.9375rem;
+    color: var(--text);
+    font-family: var(--font-mono);
+  }
+
+  .bs-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-1);
+  }
+
+  /* 6-column block-week grid per CONTEXT.md ("6 columns × 9 rows fits the section width") */
+  .bs-week-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(2rem, 1fr));
+    gap: var(--s-1);
+    width: 100%;
+    max-width: 28rem;
+  }
+
+  .chip-week {
+    justify-content: center;
+    text-align: center;
+    min-width: 2rem;
+    padding: var(--s-1) var(--s-2);
+  }
+
+  /* Mobile fallback: 4-column grid (per CONTEXT.md) */
+  @media (max-width: 640px) {
+    .bs-week-grid {
+      grid-template-columns: repeat(4, minmax(2rem, 1fr));
+    }
   }
 </style>
