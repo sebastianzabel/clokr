@@ -59,6 +59,17 @@
     unsupervisedAzubis: number;
     coverageStatus: "ok" | "under" | "supervision-missing";
   }
+  // v1.7.4 hotfix — SchoolHolidayPeriod marker per (employee × day). Emitted by
+  // GET /api/v1/shifts/week when the employee's effective Bundesland is in a
+  // cached holiday range. BS-Absence (vocational_school) wins display priority
+  // over Ferien marker — both can be present, but the Schichtplan cell renders
+  // BS first.
+  interface SchoolHolidayEntry {
+    employeeId: string;
+    date: string;
+    name: string;
+    federalState: string;
+  }
   interface WeekData {
     weekDays: string[];
     employees: Employee[];
@@ -73,6 +84,8 @@
     // Computed server-side via getEffectiveBreakDuration, honors Employee
     // Pausen-Override + tenant defaults. Used by the Soll-Korrelation row.
     shiftBreakMinutesByEmp?: Record<string, number>;
+    // v1.7.4 hotfix — SchoolHolidayPeriod cells for the visible week.
+    schoolHoliday?: SchoolHolidayEntry[];
   }
   interface Template {
     id: string;
@@ -521,6 +534,20 @@
     if (!week) return map;
     for (const a of week.availability) {
       map.set(`${a.employeeId}::${a.date.slice(0, 10)}`, a.availability);
+    }
+    return map;
+  });
+
+  // v1.7.4 hotfix — Schulferien marker per (employee × day). Used only when the
+  // cell is NOT already marked as vocational_school (BS-Absence wins priority).
+  const schoolHolidayByEmpDate = $derived.by(() => {
+    const map = new Map<string, { name: string; federalState: string }>();
+    if (!week?.schoolHoliday) return map;
+    for (const h of week.schoolHoliday) {
+      map.set(`${h.employeeId}::${h.date.slice(0, 10)}`, {
+        name: h.name,
+        federalState: h.federalState,
+      });
     }
     return map;
   });
@@ -1395,6 +1422,11 @@
               {@const s = shiftsByEmpDate.get(`${u.id}::${iso}`)}
               {@const av = availabilityByEmpDate.get(`${u.id}::${iso}`) ?? "available"}
               {@const cellKey = `${u.id}::${iso}`}
+              <!-- v1.7.4 hotfix — schoolHoliday marker. BS-Absence wins display
+                   priority (av === "vocational_school" path renders BS, not
+                   Ferien), but on empty days the Ferien badge surfaces so
+                   managers see why an AZUBI is absent during school break. -->
+              {@const holiday = schoolHolidayByEmpDate.get(`${u.id}::${iso}`)}
               {#if s}
                 <!-- Occupied cell: drag-source for the shift pill, NOT a drop-target.
                      Drops onto occupied cells are rejected client-side via
@@ -1477,10 +1509,15 @@
                   <span class="sp-past-dash" aria-hidden="true">—</span>
                 </div>
               {:else}
-                <!-- Empty available cell: drop-target only, NOT a drag-source. -->
+                <!-- Empty available cell: drop-target only, NOT a drag-source.
+                     v1.7.4 hotfix — when the day falls in a SchoolHolidayPeriod
+                     the cell is tinted (sp-cell--holiday) + a small "Ferien"
+                     badge surfaces with the holiday name as tooltip. Cell stays
+                     a drop-target — Ferien is informational, not blocking. -->
                 <div
                   class="shift-cell sp-cell off sp-cell--drop-target"
                   class:sp-cell--drop-hover={cellItems(cellKey).length === 1}
+                  class:sp-cell--holiday={holiday}
                   use:dndzone={{
                     items: cellItems(cellKey),
                     flipDurationMs: FLIP_MS,
@@ -1490,7 +1527,13 @@
                   }}
                   onconsider={(e) => onCellConsider(cellKey, e)}
                   onfinalize={(e) => onCellFinalize(u.id, iso, e)}
+                  title={holiday ? `${holiday.name} (${holiday.federalState})` : undefined}
                 >
+                  {#if holiday}
+                    <span class="sp-holiday-badge" aria-label="Schulferien: {holiday.name}">
+                      Ferien
+                    </span>
+                  {/if}
                   <button
                     type="button"
                     class="sp-cell-empty"
@@ -1907,6 +1950,39 @@
   .sp-cell--unavailable {
     background: var(--bg-subtle);
     opacity: 0.85;
+  }
+
+  /* v1.7.4 hotfix — Schulferien marker on empty (drop-target) cells.
+     Light blue tint via --shift-blue (existing v1.5 token) at low opacity,
+     so the cell stays clearly a drop-target but visually communicates
+     "Azubi in Schulferien". BS-Absence cells (av === "vocational_school")
+     win priority and never enter this branch. */
+  .sp-cell--holiday {
+    background: color-mix(in srgb, var(--shift-blue) 8%, transparent);
+    position: relative;
+  }
+  .sp-holiday-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: var(--r-pill);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1.2;
+    color: var(--shift-blue);
+    background: var(--bg-card);
+    border: 1px solid color-mix(in srgb, var(--shift-blue) 30%, transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+  /* Hide the badge on narrow viewports — the cell tint alone communicates
+     Schulferien without crowding the assign affordance. Tooltip still works. */
+  @media (max-width: 720px) {
+    .sp-holiday-badge {
+      display: none;
+    }
   }
   .sp-avail-badge {
     display: inline-block;
