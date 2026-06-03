@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { calcExpectedMinutesTz } from "../../utils/timezone";
 import type { FastifyInstance } from "fastify";
@@ -350,6 +350,18 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
 
     let testHoliday: { id: string } | null = null;
     let testEntry: { id: string } | null = null;
+
+    beforeAll(() => {
+      // Phase 66 fix (failure #8): pin test clock to April 15, 2026 so the saldo's
+      // current-month range (April 1 → April 15) covers the seeded holiday (April 6)
+      // and entry (April 7). Without the pin, June 3 runtime → range = June only →
+      // April data has zero effect → toggle ON vs OFF balances are identical.
+      vi.useFakeTimers({ now: new Date("2026-04-15T10:00:00.000Z"), toFake: ["Date"] });
+    });
+
+    afterAll(() => {
+      vi.useRealTimers();
+    });
 
     it("toggle ON: holiday reduces expected by dailySoll formula, improving balance", async () => {
       // Set MONTHLY_HOURS schedule with configured workdays and monthlyHours=45
