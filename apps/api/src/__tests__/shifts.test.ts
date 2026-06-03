@@ -1809,6 +1809,9 @@ describe("Shift Planning API", () => {
     });
   });
 
+  // Phase 66 fix (failure #6): fixture dates are 2099-MM-DD so the Phase 47.2 past-immutable
+  // guard never triggers on these eligibility tests. Original 2026-06-XX dates were authored
+  // around 2026-05-20 and silently became past dates after the v1.7 release window.
   // ── Phase 47.1: Shift eligibility (SHIFT_BASED-only) ─────────────────
   describe("Shift eligibility (47.1)", () => {
     let shiftEmp: { id: string };
@@ -1873,7 +1876,7 @@ describe("Shift Planning API", () => {
         method: "POST",
         url: "/api/v1/shifts",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: validShiftBody(shiftEmp.id, "2026-06-01"),
+        payload: validShiftBody(shiftEmp.id, "2099-06-01"),
       });
       expect(res.statusCode).toBe(201);
     });
@@ -1883,7 +1886,7 @@ describe("Shift Planning API", () => {
         method: "POST",
         url: "/api/v1/shifts",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: validShiftBody(fixedEmp.id, "2026-06-02"),
+        payload: validShiftBody(fixedEmp.id, "2099-06-02"),
       });
       expect(res.statusCode).toBe(422);
       const body = JSON.parse(res.body);
@@ -1895,7 +1898,7 @@ describe("Shift Planning API", () => {
         method: "POST",
         url: "/api/v1/shifts",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: validShiftBody(monthlyEmp.id, "2026-06-03"),
+        payload: validShiftBody(monthlyEmp.id, "2099-06-03"),
       });
       expect(res.statusCode).toBe(422);
       expect(JSON.parse(res.body).code).toBe("SHIFT_INVALID_EMPLOYEE_TYPE");
@@ -1906,7 +1909,7 @@ describe("Shift Planning API", () => {
         method: "POST",
         url: "/api/v1/shifts",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: validShiftBody(noScheduleEmp.id, "2026-06-04"),
+        payload: validShiftBody(noScheduleEmp.id, "2099-06-04"),
       });
       expect(res.statusCode).toBe(422);
       expect(JSON.parse(res.body).code).toBe("SHIFT_INVALID_EMPLOYEE_TYPE");
@@ -1918,7 +1921,7 @@ describe("Shift Planning API", () => {
         method: "POST",
         url: "/api/v1/shifts",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: validShiftBody(shiftEmp.id, "2026-06-05"),
+        payload: validShiftBody(shiftEmp.id, "2099-06-05"),
       });
       expect(createRes.statusCode).toBe(201);
       const shiftId = JSON.parse(createRes.body).id;
@@ -1927,7 +1930,7 @@ describe("Shift Planning API", () => {
         method: "PUT",
         url: `/api/v1/shifts/${shiftId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: fixedEmp.id, date: "2026-06-05" },
+        payload: { employeeId: fixedEmp.id, date: "2099-06-05" },
       });
       expect(moveRes.statusCode).toBe(422);
       expect(JSON.parse(moveRes.body).code).toBe("SHIFT_INVALID_EMPLOYEE_TYPE");
