@@ -261,6 +261,91 @@ describe("Berufsschule (Phase 62)", () => {
     expect(body.patterns[0].blockYear).toBe(2026);
   });
 
+  // ── Phase 67.2 (Plan 03): Pattern fields respectSchoolHolidays + federalStateOverride ──
+
+  it("Phase 67.2 — Test F: PUT with respectSchoolHolidays=false persists the flag, GET returns it", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [1],
+            blockWeeks: [],
+            validFrom: "2026-06-01",
+            respectSchoolHolidays: false,
+          },
+        ],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].respectSchoolHolidays).toBe(false);
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].respectSchoolHolidays).toBe(false);
+  });
+
+  it("Phase 67.2 — Test G: PUT with federalStateOverride=BAYERN persists, GET returns it", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [1],
+            blockWeeks: [],
+            validFrom: "2026-06-01",
+            federalStateOverride: "BAYERN",
+          },
+        ],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].federalStateOverride).toBe("BAYERN");
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].federalStateOverride).toBe("BAYERN");
+  });
+
+  it("Phase 67.2 — Test H: PUT without new fields uses defaults (respectSchoolHolidays=true, federalStateOverride=null)", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [{ daysOfWeek: [1], blockWeeks: [], validFrom: "2026-06-01" }],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].respectSchoolHolidays).toBe(true);
+    expect(putBody.patterns[0].federalStateOverride).toBeNull();
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].respectSchoolHolidays).toBe(true);
+    expect(patterns[0].federalStateOverride).toBeNull();
+  });
+
   // ── BERSCH-02: Auto-generation ─────────────────────────────────────────────
 
   it("BERSCH-02 — POST /vocational-school/generate creates Absence rows of type VOCATIONAL_SCHOOL", async () => {
