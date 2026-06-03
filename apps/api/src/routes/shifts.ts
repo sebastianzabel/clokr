@@ -704,115 +704,215 @@ export async function shiftRoutes(app: FastifyInstance) {
       // merge passes are skipped (Leave + Absence still apply).
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
 
-      const [shifts, employees, leaveTypes, leaveRequests, absences, rulesRaw, availabilityRows] =
-        await Promise.all([
-          app.prisma.shift.findMany({
-            where: {
-              employee: { tenantId },
-              date: { gte: monday, lte: sunday },
-              deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from /shifts/week
-            },
-            include: {
-              employee: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  employeeNumber: true,
-                  coverageWeight: true,
-                  requiresSupervision: true,
-                  classification: true,
-                },
-              },
-              template: { select: { name: true, color: true } },
-            },
-            orderBy: [{ date: "asc" }, { startTime: "asc" }],
-          }),
-          app.prisma.employee.findMany({
-            where: { tenantId },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              employeeNumber: true,
-              classification: true,
-              coverageWeight: true,
-              requiresSupervision: true,
-              // v1.7.3: Pausen-Override needed for Soll-Korrelation net hours
-              breakOver6hOverride: true,
-              breakOver9hOverride: true,
-              workSchedules: {
-                where: { validFrom: { lte: new Date() } },
-                orderBy: { validFrom: "desc" as const },
-                take: 1,
-                select: { type: true, weeklyHours: true },
+      const [
+        shifts,
+        employees,
+        leaveTypes,
+        leaveRequests,
+        absences,
+        rulesRaw,
+        availabilityRows,
+        tenant,
+        vocSchoolPatterns,
+      ] = await Promise.all([
+        app.prisma.shift.findMany({
+          where: {
+            employee: { tenantId },
+            date: { gte: monday, lte: sunday },
+            deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from /shifts/week
+          },
+          include: {
+            employee: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                employeeNumber: true,
+                coverageWeight: true,
+                requiresSupervision: true,
+                classification: true,
               },
             },
-            orderBy: { lastName: "asc" },
-          }),
-          app.prisma.leaveType.findMany({
-            where: { tenantId },
-            select: { id: true, name: true },
-          }),
-          app.prisma.leaveRequest.findMany({
-            where: {
-              employee: { tenantId },
-              status: "APPROVED",
-              deletedAt: null,
-              startDate: { lte: sunday },
-              endDate: { gte: monday },
+            template: { select: { name: true, color: true } },
+          },
+          orderBy: [{ date: "asc" }, { startTime: "asc" }],
+        }),
+        app.prisma.employee.findMany({
+          where: { tenantId },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeNumber: true,
+            classification: true,
+            coverageWeight: true,
+            requiresSupervision: true,
+            // v1.7.3: Pausen-Override needed for Soll-Korrelation net hours
+            breakOver6hOverride: true,
+            breakOver9hOverride: true,
+            workSchedules: {
+              where: { validFrom: { lte: new Date() } },
+              orderBy: { validFrom: "desc" as const },
+              take: 1,
+              select: { type: true, weeklyHours: true },
             },
-            select: {
-              employeeId: true,
-              leaveTypeId: true,
-              startDate: true,
-              endDate: true,
-            },
-          }),
-          app.prisma.absence.findMany({
-            where: {
-              employee: { tenantId },
-              deletedAt: null,
-              startDate: { lte: sunday },
-              endDate: { gte: monday },
-            },
-            select: {
-              employeeId: true,
-              type: true,
-              startDate: true,
-              endDate: true,
-            },
-          }),
-          app.prisma.coverageRule.findMany({
-            where: { tenantId },
-            select: {
-              templateId: true,
-              dayOfWeek: true,
-              minStaff: true,
-              requiresNonSupervised: true,
-            },
-          }),
-          // Phase 46 — EmployeeAvailability rows that overlap this week.
-          // Tenant scope via Employee join. Validity overlap via validFrom <= sunday AND
-          // (validUntil IS NULL OR validUntil >= monday). dayOfWeek rows are always
-          // candidates; date rows must fall within [monday, sunday].
-          app.prisma.employeeAvailability.findMany({
-            where: {
-              employee: { tenantId },
-              AND: [
-                { validFrom: { lte: sunday } },
-                { OR: [{ validUntil: null }, { validUntil: { gte: monday } }] },
-              ],
-              OR: [{ dayOfWeek: { not: null } }, { date: { gte: monday, lte: sunday } }],
-            },
-          }),
-        ]);
+          },
+          orderBy: { lastName: "asc" },
+        }),
+        app.prisma.leaveType.findMany({
+          where: { tenantId },
+          select: { id: true, name: true },
+        }),
+        app.prisma.leaveRequest.findMany({
+          where: {
+            employee: { tenantId },
+            status: "APPROVED",
+            deletedAt: null,
+            startDate: { lte: sunday },
+            endDate: { gte: monday },
+          },
+          select: {
+            employeeId: true,
+            leaveTypeId: true,
+            startDate: true,
+            endDate: true,
+          },
+        }),
+        app.prisma.absence.findMany({
+          where: {
+            employee: { tenantId },
+            deletedAt: null,
+            startDate: { lte: sunday },
+            endDate: { gte: monday },
+          },
+          select: {
+            employeeId: true,
+            type: true,
+            startDate: true,
+            endDate: true,
+          },
+        }),
+        app.prisma.coverageRule.findMany({
+          where: { tenantId },
+          select: {
+            templateId: true,
+            dayOfWeek: true,
+            minStaff: true,
+            requiresNonSupervised: true,
+          },
+        }),
+        // Phase 46 — EmployeeAvailability rows that overlap this week.
+        // Tenant scope via Employee join. Validity overlap via validFrom <= sunday AND
+        // (validUntil IS NULL OR validUntil >= monday). dayOfWeek rows are always
+        // candidates; date rows must fall within [monday, sunday].
+        app.prisma.employeeAvailability.findMany({
+          where: {
+            employee: { tenantId },
+            AND: [
+              { validFrom: { lte: sunday } },
+              { OR: [{ validUntil: null }, { validUntil: { gte: monday } }] },
+            ],
+            OR: [{ dayOfWeek: { not: null } }, { date: { gte: monday, lte: sunday } }],
+          },
+        }),
+        // v1.7.4 hotfix — tenant.federalState is the default Bundesland for
+        // SchoolHolidayPeriod resolution. Always loaded; never null on a valid
+        // tenant (default NIEDERSACHSEN in schema).
+        app.prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { federalState: true },
+        }),
+        // v1.7.4 hotfix — Active EmployeeVocationalSchoolPattern rows that overlap
+        // this week. Used to resolve per-AZUBI `federalStateOverride` for
+        // Pendler-Azubis whose BS is in a different Bundesland than the employer.
+        // Non-AZUBI employees have no patterns → fall back to tenant.federalState.
+        app.prisma.employeeVocationalSchoolPattern.findMany({
+          where: {
+            employee: { tenantId },
+            isActive: true,
+            validFrom: { lte: sunday },
+            OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
+          },
+          select: {
+            employeeId: true,
+            federalStateOverride: true,
+          },
+        }),
+      ]);
 
       // Phase 47.3 — Narrow availability rows to [] when the feature is disabled.
       // The query above always runs (cheap when there are no rows) but the merge
       // passes below operate on this empty array so UNAVAILABLE/PREFERRED never
       // surface in the response.
       const effectiveAvailabilityRows = availabilityOn ? availabilityRows : [];
+
+      // ── v1.7.4 hotfix — SchoolHolidayPeriod resolution for the visible week ──
+      // User report: "ferien sollten im schichtplan sichtbar sein". The 67.2
+      // generator already skips BS-day creation during Schulferien; this surface
+      // makes the same Ferien-data visible in the UI so managers can plan around
+      // an Azubi's school-holiday schedule.
+      //
+      // Resolution:
+      //  - Per-AZUBI Bundesland = first matching pattern's `federalStateOverride`
+      //    (Pendler-Azubi case), fallback to tenant.federalState.
+      //  - Non-AZUBI employees use tenant.federalState (Schulferien is global info;
+      //    UI can hide it if it's not relevant for that role, but the data is here).
+      //  - SchoolHolidayPeriod cache is per-tenant (multi-tenancy isolation, T-67.2-09).
+      const defaultFederalState = tenant?.federalState ?? "NIEDERSACHSEN";
+      // Per-employee effective Bundesland (first active pattern wins; AZUBIs only
+      // ever have one active pattern at a time, but `findFirst` semantics keep us
+      // safe in case of legacy multi-active rows).
+      const empFederalState = new Map<string, typeof defaultFederalState>();
+      for (const p of vocSchoolPatterns) {
+        if (empFederalState.has(p.employeeId)) continue;
+        empFederalState.set(p.employeeId, p.federalStateOverride ?? defaultFederalState);
+      }
+      // Collect all Bundesländer we will need to query: tenant default + every
+      // distinct override referenced by an active pattern.
+      const neededStates = new Set<typeof defaultFederalState>([defaultFederalState]);
+      for (const fs of empFederalState.values()) neededStates.add(fs);
+
+      const holidayPeriods = await app.prisma.schoolHolidayPeriod.findMany({
+        where: {
+          tenantId,
+          federalState: { in: [...neededStates] },
+          // Period overlap with this week: period.startDate <= sunday AND
+          // period.endDate >= monday (canonical range-overlap predicate).
+          startDate: { lte: sunday },
+          endDate: { gte: monday },
+        },
+        select: { federalState: true, startDate: true, endDate: true, name: true },
+      });
+
+      // Index by Bundesland for O(1) bucket lookup (typically <20 periods per
+      // BL per year).
+      const holidaysByState = new Map<
+        typeof defaultFederalState,
+        Array<{ startDate: Date; endDate: Date; name: string }>
+      >();
+      for (const h of holidayPeriods) {
+        let bucket = holidaysByState.get(h.federalState);
+        if (!bucket) {
+          bucket = [];
+          holidaysByState.set(h.federalState, bucket);
+        }
+        bucket.push({ startDate: h.startDate, endDate: h.endDate, name: h.name });
+      }
+
+      function resolveHoliday(
+        fs: typeof defaultFederalState,
+        iso: string,
+      ): { name: string; federalState: typeof defaultFederalState } | null {
+        const bucket = holidaysByState.get(fs);
+        if (!bucket || bucket.length === 0) return null;
+        const dayMs = new Date(iso + "T00:00:00Z").getTime();
+        for (const p of bucket) {
+          if (dayMs >= p.startDate.getTime() && dayMs <= p.endDate.getTime()) {
+            return { name: p.name, federalState: fs };
+          }
+        }
+        return null;
+      }
 
       // Normalize rules to plain numbers (Decimal → number)
       const rules = rulesRaw.map((r) => ({
@@ -1042,6 +1142,30 @@ export async function shiftRoutes(app: FastifyInstance) {
         shiftBreakMinutesByEmp[s.employeeId] = (shiftBreakMinutesByEmp[s.employeeId] ?? 0) + brk;
       }
 
+      // v1.7.4 hotfix — per-(employee × day) SchoolHolidayPeriod info. Emitted
+      // for every cell where the employee's effective Bundesland is currently in
+      // a school holiday range, regardless of role: the UI prioritises BS-Absence
+      // (vocational_school) over Ferien marker (see frontend /shifts/+page.svelte).
+      const schoolHoliday: Array<{
+        employeeId: string;
+        date: string;
+        name: string;
+        federalState: string;
+      }> = [];
+      for (const emp of employees) {
+        const fs = empFederalState.get(emp.id) ?? defaultFederalState;
+        for (const iso of weekDays) {
+          const h = resolveHoliday(fs, iso);
+          if (!h) continue;
+          schoolHoliday.push({
+            employeeId: emp.id,
+            date: iso,
+            name: h.name,
+            federalState: h.federalState,
+          });
+        }
+      }
+
       return {
         weekDays,
         employees,
@@ -1050,6 +1174,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         coverage,
         vocationalSchoolMinutesByEmp,
         shiftBreakMinutesByEmp,
+        schoolHoliday,
       };
     },
   });
