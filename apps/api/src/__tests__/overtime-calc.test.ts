@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -77,66 +77,76 @@ describe("Overtime Saldo Calculation", () => {
   });
 
   it("overtime balance includes today only when entry created via API", async () => {
-    const today = pastDate(0);
-    const yesterday = pastDate(1);
+    // Phase 66 fix (failure #4): pin time to 17:45 UTC so the today T18:00:00.000Z
+    // endTime falls within the future-time guard's `now + 30 min` window. Without
+    // the pin, on test runs before 17:30 UTC, POST /time-entries rejects with 400
+    // ("Endzeit darf max. 30 Minuten in der Zukunft liegen"), the createRes is
+    // ignored, and the balance2 == balance1 assertion fails.
+    vi.useFakeTimers({ now: new Date("2026-05-26T17:45:00.000Z"), toFake: ["Date"] });
+    try {
+      const today = pastDate(0);
+      const yesterday = pastDate(1);
 
-    // Clean up entries for today and yesterday
-    await app.prisma.timeEntry.deleteMany({
-      where: {
-        employeeId: data.employee.id,
-        date: { in: [new Date(today + "T00:00:00Z"), new Date(yesterday + "T00:00:00Z")] },
-        deletedAt: null,
-      },
-    });
+      // Clean up entries for today and yesterday
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [new Date(today + "T00:00:00Z"), new Date(yesterday + "T00:00:00Z")] },
+          deletedAt: null,
+        },
+      });
 
-    // Create entry for yesterday via API route (fires updateOvertimeAccount)
-    await app.inject({
-      method: "POST",
-      url: "/api/v1/time-entries",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: {
-        employeeId: data.employee.id,
-        date: yesterday,
-        startTime: new Date(`${yesterday}T08:00:00.000Z`).toISOString(),
-        endTime: new Date(`${yesterday}T16:00:00.000Z`).toISOString(),
-        breakMinutes: 0,
-      },
-    });
+      // Create entry for yesterday via API route (fires updateOvertimeAccount)
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: yesterday,
+          startTime: new Date(`${yesterday}T08:00:00.000Z`).toISOString(),
+          endTime: new Date(`${yesterday}T16:00:00.000Z`).toISOString(),
+          breakMinutes: 0,
+        },
+      });
 
-    // GET overtime — stored balance reflects yesterday's entry
-    const res1 = await app.inject({
-      method: "GET",
-      url: `/api/v1/overtime/${data.employee.id}`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
-    });
-    expect(res1.statusCode).toBe(200);
-    const balance1 = Number(JSON.parse(res1.body).balanceHours);
+      // GET overtime — stored balance reflects yesterday's entry
+      const res1 = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res1.statusCode).toBe(200);
+      const balance1 = Number(JSON.parse(res1.body).balanceHours);
 
-    // Create entry for today via API route (fires updateOvertimeAccount again)
-    await app.inject({
-      method: "POST",
-      url: "/api/v1/time-entries",
-      headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: {
-        employeeId: data.employee.id,
-        date: today,
-        startTime: new Date(`${today}T08:00:00.000Z`).toISOString(),
-        endTime: new Date(`${today}T18:00:00.000Z`).toISOString(),
-        breakMinutes: 0,
-      },
-    });
+      // Create entry for today via API route (fires updateOvertimeAccount again)
+      await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: today,
+          startTime: new Date(`${today}T08:00:00.000Z`).toISOString(),
+          endTime: new Date(`${today}T18:00:00.000Z`).toISOString(),
+          breakMinutes: 0,
+        },
+      });
 
-    // GET overtime — stored balance now includes today's 10h entry
-    const res2 = await app.inject({
-      method: "GET",
-      url: `/api/v1/overtime/${data.employee.id}`,
-      headers: { authorization: `Bearer ${data.adminToken}` },
-    });
-    expect(res2.statusCode).toBe(200);
-    const balance2 = Number(JSON.parse(res2.body).balanceHours);
+      // GET overtime — stored balance now includes today's 10h entry
+      const res2 = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${data.employee.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res2.statusCode).toBe(200);
+      const balance2 = Number(JSON.parse(res2.body).balanceHours);
 
-    // Balance increased after adding today's 10h entry (10h vs 8h schedule = +2h if weekday)
-    expect(balance2).toBeGreaterThan(balance1);
+      // Balance increased after adding today's 10h entry (10h vs 8h schedule = +2h if weekday)
+      expect(balance2).toBeGreaterThan(balance1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // ── COMPLIANCE: Overtime saldo read ────────────────────────────────────────
