@@ -1,9 +1,10 @@
 <script lang="ts">
   // Phase 67.2 Plan 05 — Manager-facing Schicht-Konflikt-Übersicht.
   //
-  // Lists soft-deleted (deletedReason=AUTO_BS_DAY_CLEANUP) and currently-flagged
-  // (conflictsWithLeave=true) shifts in two sections. Each row has a
-  // "Wiederherstellen" button that POSTs to /shifts/:id/restore.
+  // Lists shifts returned by GET /shifts/conflicts in two buckets (softDeleted
+  // and flagged). The backend filters by deletedReason and conflictsWithLeave;
+  // this page is a thin renderer. Each row has a "Wiederherstellen" button
+  // that POSTs to /shifts/:id/restore.
   //
   // Default window: 30 days back .. 60 days forward. Adjustable via two date
   // inputs at the top. Page re-fetches on date change.
