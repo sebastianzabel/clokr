@@ -1,6 +1,8 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { FederalState } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { syncSchoolHolidaysForTenant } from "../plugins/school-holidays-sync";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -12,6 +14,25 @@ import { requireAuth, requireRole } from "../middleware/auth";
 // Legacy callers sending `dayOfWeek: N` are normalised in the PUT handler to
 // `daysOfWeek: [N]` so old clients (NFC terminal, integration tests) keep working
 // during the soak release. Drop the legacy field in v1.7.5.
+const federalStateEnum = z.enum([
+  "NIEDERSACHSEN",
+  "BAYERN",
+  "BERLIN",
+  "BRANDENBURG",
+  "BREMEN",
+  "HAMBURG",
+  "HESSEN",
+  "MECKLENBURG_VORPOMMERN",
+  "NORDRHEIN_WESTFALEN",
+  "RHEINLAND_PFALZ",
+  "SAARLAND",
+  "SACHSEN",
+  "SACHSEN_ANHALT",
+  "SCHLESWIG_HOLSTEIN",
+  "THUERINGEN",
+  "BADEN_WUERTTEMBERG",
+]);
+
 const patternItemSchema = z
   .object({
     // Legacy single-value field, kept for backwards compat during v1.7.4 soak.
@@ -26,6 +47,12 @@ const patternItemSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/, "validUntil muss YYYY-MM-DD sein")
       .nullable()
       .optional(),
+    // Phase 67.2 — KMK-Ferien apply by default for IHK-Berufe; opt-out for
+    // Pflegeschulen / Berufsakademien which follow their own schedule.
+    respectSchoolHolidays: z.boolean().default(true),
+    // Phase 67.2 — Pendler-Azubi-Support: BS-Bundesland ≠ Betrieb. NULL/omitted
+    // falls back to Tenant.federalState in the generator.
+    federalStateOverride: federalStateEnum.nullable().optional(),
   })
   // At least one weekday OR at least one block week must be set.
   // Legacy `dayOfWeek` counts as "weekday set" since the PUT handler normalises it.
@@ -78,10 +105,15 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       // Phase 67.1: Response includes BOTH `daysOfWeek` (new canonical) AND `dayOfWeek`
       // (legacy single value, derived for backwards-compat consumers — populated only when
       // the row maps to exactly one weekday). Drop `dayOfWeek` from the response in v1.7.5.
+      // Phase 67.2: `respectSchoolHolidays` and `federalStateOverride` are surfaced
+      // explicitly so the UI can render the Pflegeschule opt-out toggle + Pendler
+      // override picker without depending on row-shape spread order.
       return patterns.map((p) => ({
         ...p,
         dayOfWeek: p.daysOfWeek.length === 1 ? p.daysOfWeek[0] : (p.dayOfWeek ?? null),
         daysOfWeek: p.daysOfWeek,
+        respectSchoolHolidays: p.respectSchoolHolidays,
+        federalStateOverride: p.federalStateOverride,
         validFrom: p.validFrom.toISOString().slice(0, 10),
         validUntil: p.validUntil ? p.validUntil.toISOString().slice(0, 10) : null,
       }));
@@ -108,6 +140,15 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       // captures the full history at the time of the replace.
       const oldPatterns = await app.prisma.employeeVocationalSchoolPattern.findMany({
         where: { employeeId: id },
+      });
+
+      // Phase 67.2 — Detect "first active BS-pattern for tenant" to trigger an
+      // on-demand sync after the transaction commits. The check MUST happen
+      // BEFORE the transaction's updateMany() flips this employee's existing
+      // active rows to isActive=false, otherwise the count would always be 0
+      // on every PUT (RESEARCH §200 pitfall #9).
+      const hadActivePatternsBefore = await app.prisma.employeeVocationalSchoolPattern.count({
+        where: { isActive: true, employee: { tenantId: req.user.tenantId } },
       });
 
       // Replace-Semantik: deactivate all currently active rows + create each new row.
@@ -145,6 +186,9 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
               validFrom: new Date(p.validFrom),
               validUntil: p.validUntil ? new Date(p.validUntil) : null,
               isActive: true,
+              // Phase 67.2 — Persist Ferien-Steuerung + Pendler-Override.
+              respectSchoolHolidays: p.respectSchoolHolidays ?? true,
+              federalStateOverride: p.federalStateOverride ?? null,
             },
           });
           out.push(row);
@@ -162,6 +206,33 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
+      // Phase 67.2 — Fire-and-forget on-demand SchoolHolidayPeriod sync when
+      // this PUT created the FIRST active BS-pattern for the tenant. This avoids
+      // the "first generator run has no Ferien data" pitfall (RESEARCH §200 #9).
+      // The call is NOT awaited so the PUT response is not blocked by the
+      // upstream OpenHolidays API (Threat T-67.2-10 mitigation). Failures are
+      // logged but never surface to the client; the weekly cron will fill on
+      // Saturday if this attempt fails.
+      if (hadActivePatternsBefore === 0 && body.patterns.length > 0) {
+        const tenant = await app.prisma.tenant.findUniqueOrThrow({
+          where: { id: req.user.tenantId },
+          select: { federalState: true },
+        });
+        const needed = new Set<FederalState>([tenant.federalState]);
+        for (const p of body.patterns) {
+          if (p.federalStateOverride) needed.add(p.federalStateOverride as FederalState);
+        }
+        const now = new Date();
+        // Fire-and-forget: don't await; log on failure.
+        void syncSchoolHolidaysForTenant(
+          app.prisma,
+          req.user.tenantId,
+          [...needed],
+          { from: now.getFullYear(), to: now.getFullYear() + 1 },
+          app.log,
+        ).catch((err) => app.log.warn({ err }, "on-demand school-holidays sync failed"));
+      }
+
       return reply.code(200).send({
         patterns: created.map((p) => ({
           ...p,
@@ -169,6 +240,9 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
           // regardless of whether it reads `daysOfWeek` (new) or `dayOfWeek` (legacy).
           dayOfWeek: p.daysOfWeek.length === 1 ? p.daysOfWeek[0] : (p.dayOfWeek ?? null),
           daysOfWeek: p.daysOfWeek,
+          // Phase 67.2: surface explicitly so UI bindings don't depend on spread order.
+          respectSchoolHolidays: p.respectSchoolHolidays,
+          federalStateOverride: p.federalStateOverride,
           validFrom: p.validFrom.toISOString().slice(0, 10),
           validUntil: p.validUntil ? p.validUntil.toISOString().slice(0, 10) : null,
         })),
