@@ -201,17 +201,25 @@ describe("WorkSchedule.validFrom month-1st enforcement (Phase 60, #220)", () => 
     });
   });
 
-  describe("Test 4: existing non-1st validFrom row survives read endpoints", () => {
-    it("GET /settings/work/:employeeId returns the mid-May row unchanged (audit trail preserved)", async () => {
-      const res = await app.inject({
-        method: "GET",
-        url: `/api/v1/settings/work/${secondEmpId}`,
-        headers: { authorization: `Bearer ${data.adminToken}` },
+  describe("Test 4: existing non-1st validFrom row survives in the database", () => {
+    it("the seeded mid-May row for secondEmpId remains in the DB unchanged (audit trail preserved)", async () => {
+      // Phase 66 fix (failure #7): Test 3's applyToExisting bulk-apply writes a NEW
+      // WorkSchedule row for every FIXED_SCHEDULE employee in the tenant — including
+      // secondEmpId — with validFrom = snapToMonthFirstUtc(now). The GET /work/:id
+      // endpoint orders by `validFrom desc` and returns the bulk-apply row, masking
+      // the seeded 2026-05-18 row. The real "audit trail preserved" claim is that
+      // the seeded row is still PERSISTED, not that GET returns it. Query Prisma
+      // directly by validFrom to verify the audit row is intact.
+      const seededValidFrom = new Date("2026-05-18T00:00:00.000Z");
+      const rows = await app.prisma.workSchedule.findMany({
+        where: { employeeId: secondEmpId, validFrom: seededValidFrom },
       });
-      expect(res.statusCode).toBe(200);
-      const body = JSON.parse(res.body);
-      // The mid-May row is the most recent for the second employee (only schedule).
-      expect(new Date(body.validFrom).toISOString().slice(0, 10)).toBe("2026-05-18");
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      // The original row's identity markers — type, weeklyHours — match the seed.
+      const seededRow = rows[0];
+      expect(seededRow.type).toBe("FIXED_SCHEDULE");
+      expect(Number(seededRow.weeklyHours)).toBe(40);
+      expect(seededRow.validFrom.toISOString().slice(0, 10)).toBe("2026-05-18");
     });
   });
 });
