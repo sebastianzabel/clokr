@@ -77,6 +77,22 @@
     defaultBreakOver9h?: number;
   }
 
+  // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
+  // GET /api/v1/employees/:id/vocational-school-pattern
+  // Source: apps/api/src/routes/vocational-school-pattern.ts lines 62-66
+  interface VocationalSchoolPattern {
+    id: string;
+    employeeId: string;
+    dayOfWeek: number | null; // 0=Mo..6=So (DE convention)
+    blockWeeks: number[]; // ISO week numbers; empty array when only dayOfWeek set
+    blockYear: number | null;
+    validFrom: string; // "YYYY-MM-DD"
+    validUntil: string | null;
+    isActive: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }
+
   // ── Loading state ──────────────────────────────────────────────────────────
   let loading = $state(true);
   let loadError = $state("");
@@ -88,19 +104,24 @@
   // Phase 65 — Tenant break-default config for placeholder display
   let tenantBreakConfig = $state<TenantBreakConfig | null>(null);
 
+  // Phase 67 — BS-Pattern list (AZUBI-only Section in Stammdaten tab)
+  let bsPatterns = $state<VocationalSchoolPattern[]>([]);
+  let bsPatternsLoadError = $state<string>("");
+
   const employeeId = $derived($page.params.id);
 
   onMount(async () => {
     loading = true;
     loadError = "";
     try {
-      const [empRes, schedRes, vacRes, cfgRes] = await Promise.allSettled([
+      const [empRes, schedRes, vacRes, cfgRes, bsRes] = await Promise.allSettled([
         api.get<Employee>(`/employees/${employeeId}`),
         api.get<WorkSchedule>(`/settings/work/${employeeId}`),
         api.get<VacationEntitlement>(
           `/settings/vacation/${employeeId}?year=${new Date().getFullYear()}`,
         ),
         api.get<TenantBreakConfig>(`/settings/work`),
+        api.get<VocationalSchoolPattern[]>(`/employees/${employeeId}/vocational-school-pattern`),
       ]);
 
       if (empRes.status === "rejected") {
@@ -112,6 +133,15 @@
       vacationEntitlement = vacRes.status === "fulfilled" ? vacRes.value : null;
       // Phase 65 — tenant defaults for placeholder display (D-08)
       tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
+
+      // Phase 67 — BS-Patterns (fail-soft: empty array on rejection, message banner in Section)
+      if (bsRes.status === "fulfilled") {
+        bsPatterns = bsRes.value;
+        bsPatternsLoadError = "";
+      } else {
+        bsPatterns = [];
+        bsPatternsLoadError = "Berufsschultage konnten nicht geladen werden.";
+      }
 
       // Initialise form fields from loaded data
       initFields();
