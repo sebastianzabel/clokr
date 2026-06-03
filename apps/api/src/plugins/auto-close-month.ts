@@ -11,6 +11,12 @@ import { getEffectiveSchedule } from "../routes/time-entries";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 
+declare module "fastify" {
+  interface FastifyInstance {
+    tryAutoCloseMonth: () => Promise<void>;
+  }
+}
+
 /**
  * Auto-Monatsabschluss: runs daily at 06:00 during the first 10 days of each month.
  *
@@ -564,6 +570,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
       }
     }
   }
+
+  // Phase 66 (DEBT-01): expose tryAutoCloseMonth as a Fastify decorator so the
+  // D-11 grace-period guard test can invoke it directly. Previously the test
+  // intercepted `cron.schedule("0 6 * * *", ...)`, but `carryoverWarningPlugin`
+  // registers the SAME cron expression (in its `onReady` hook, which runs after
+  // plugin registration) and overwrote the captured callback — the test then
+  // exercised the carryover-warning path instead of the auto-close path.
+  // The cron registration below is unchanged: production behavior is identical.
+  app.decorate("tryAutoCloseMonth", tryAutoCloseMonth);
 
   // Run daily at 06:00
   const task = cron.schedule("0 6 * * *", () => {
