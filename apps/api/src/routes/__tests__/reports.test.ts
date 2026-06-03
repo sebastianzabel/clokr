@@ -764,6 +764,9 @@ describe("Reports API", () => {
           fridayHours: 0,
           saturdayHours: 0,
           sundayHours: 0,
+          workDays: [], // Phase 66 fix (failure #9): explicit empty workDays so dashboard
+          // handler computes isWorkday=false. Prisma default is [1,2,3,4,5]
+          // which contradicts the all-zero hours invariant (CLAUDE.md).
           validFrom: new Date("2024-01-01"),
         },
       });
