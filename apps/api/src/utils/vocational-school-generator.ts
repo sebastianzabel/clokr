@@ -177,7 +177,17 @@ async function runOrPreview(
     const employee = pattern.employee;
     const patternValidUntil = pattern.validUntil;
     const patternValidFrom = pattern.validFrom;
-    const hasWeekday = pattern.dayOfWeek != null;
+
+    // Phase 67.1 — Multi-day weekday support. `daysOfWeek Int[]` is the canonical
+    // source; legacy single-value `dayOfWeek Int?` is folded in for old rows that
+    // pre-date the v1.7.4 migration and may have an empty `daysOfWeek` array.
+    // Existing DB rows have been backfilled, but we keep the fallback so a fresh
+    // backup-restored row from v1.7.3 still generates correctly during the soak.
+    const weekdaySet = new Set<number>(pattern.daysOfWeek);
+    if (weekdaySet.size === 0 && pattern.dayOfWeek != null) {
+      weekdaySet.add(pattern.dayOfWeek);
+    }
+    const hasWeekday = weekdaySet.size > 0;
     const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
 
     // Iterate every day in the rolling window.
@@ -193,7 +203,7 @@ async function runOrPreview(
 
       // (b) Decide if this pattern intends to produce a row for this date.
       let intended = false;
-      if (hasWeekday && dowMondayBased(date) === pattern.dayOfWeek) {
+      if (hasWeekday && weekdaySet.has(dowMondayBased(date))) {
         intended = true;
       }
       if (hasBlockWeeks) {
