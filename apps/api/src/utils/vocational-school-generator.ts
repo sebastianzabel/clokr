@@ -120,7 +120,11 @@ async function runOrPreview(
   opts: RunOpts & { dryRun: boolean },
 ): Promise<GeneratorResult> {
   const now = opts.now ?? new Date();
-  const weeksAhead = opts.weeksAhead ?? 4;
+  // v1.7.4 hotfix — bumped from 4 → 13 weeks (≈ one quarter ahead) so the
+  // rolling window spans through typical Schulferien gaps. With 4 weeks the
+  // UI showed an empty schedule for AZUBI weekdays in the post-holiday range
+  // until the daily cron caught up. 13 weeks covers a full quarter forward.
+  const weeksAhead = opts.weeksAhead ?? 13;
 
   const windowStart = dateOnlyUtc(now);
   const windowEnd = addDaysUtc(windowStart, weeksAhead * 7);
