@@ -2291,6 +2291,143 @@ export async function shiftRoutes(app: FastifyInstance) {
       return reply.code(204).send();
     },
   });
+
+  // ── Phase 67.2 Plan 05 — BS-Day Conflict Overview & Restore ───────────────────
+  //
+  // GET /conflicts — list soft-deleted (deletedReason=AUTO_BS_DAY_CLEANUP) and
+  //   actively-flagged (conflictsWithLeave=true) shifts in a window. Manager-
+  //   facing conflict overview for /shifts/conflicts page.
+  // POST /:id/restore — manager-initiated restore: clears deletedAt + deletedReason
+  //   (for soft-deleted rows) OR conflictsWithLeave (for actively-flagged rows).
+  //   Always emits a SHIFT_RESTORED AuditLog entry with the pre-restore snapshot
+  //   so the "why it was removed" trail survives (T-67.2-18).
+  //
+  // Threat coverage:
+  //   T-67.2-15 (Elevation):  requireRole("ADMIN", "MANAGER") on both endpoints.
+  //   T-67.2-16 (Tampering):  Locked-month guard returns 422 (defensive).
+  //   T-67.2-17 (Info Leak):  Queries scoped via employee.tenantId = req.user.tenantId.
+  //   T-67.2-18 (Repudiation): oldValue preserved in audit.
+
+  const conflictsQuerySchema = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  });
+
+  app.get("/conflicts", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const { from, to } = conflictsQuerySchema.parse(req.query);
+      const fromDate = new Date(`${from}T00:00:00.000Z`);
+      const toDate = new Date(`${to}T00:00:00.000Z`);
+      const employeeWhere = { tenantId: req.user.tenantId };
+
+      const softDeleted = await app.prisma.shift.findMany({
+        where: {
+          employee: employeeWhere,
+          deletedAt: { not: null },
+          deletedReason: "AUTO_BS_DAY_CLEANUP",
+          date: { gte: fromDate, lte: toDate },
+        },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true } },
+        },
+        orderBy: [{ date: "asc" }],
+      });
+
+      const flagged = await app.prisma.shift.findMany({
+        where: {
+          employee: employeeWhere,
+          deletedAt: null,
+          conflictsWithLeave: true,
+          date: { gte: fromDate, lte: toDate },
+        },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true } },
+        },
+        orderBy: [{ date: "asc" }],
+      });
+
+      // Serialise Dates to ISO strings so the JSON payload is stable for the UI.
+      type Joined = (typeof softDeleted)[number];
+      const ser = (s: Joined) => ({
+        ...s,
+        date: s.date.toISOString().slice(0, 10),
+        deletedAt: s.deletedAt ? s.deletedAt.toISOString() : null,
+      });
+
+      return { softDeleted: softDeleted.map(ser), flagged: flagged.map(ser) };
+    },
+  });
+
+  app.post("/:id/restore", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      // Tenant-scoped lookup (T-67.2-17). Note: do NOT filter by deletedAt — we
+      // need to see soft-deleted rows too, since restore is the inverse op.
+      const shift = await app.prisma.shift.findFirst({
+        where: { id, employee: { tenantId: req.user.tenantId } },
+      });
+      if (!shift) return reply.code(404).send({ error: "Schicht nicht gefunden" });
+
+      // Defensive locked-month guard (T-67.2-16). Phase 47.2 SHIFT_PAST_IMMUTABLE
+      // already forbids past mutations, but a locked future month (early close
+      // due to admin action) must also block restore.
+      const monthStart = new Date(
+        Date.UTC(shift.date.getUTCFullYear(), shift.date.getUTCMonth(), 1),
+      );
+      const lock = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: shift.employeeId,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+        },
+        select: { id: true },
+      });
+      if (lock) {
+        return reply.code(422).send({
+          error: "Monat ist abgeschlossen — Wiederherstellung nicht möglich",
+          code: "SHIFT_LOCKED_MONTH",
+        });
+      }
+
+      // Branch on what's being restored:
+      //   - Soft-deleted (deletedAt != null): clear deletedAt + deletedReason
+      //   - Flagged-only (conflictsWithLeave=true, deletedAt=null): clear flag
+      // For an idempotent restore on a healthy shift, we still emit the audit
+      // entry but the diff is empty — that's intentional (manager intent log).
+      const oldValue = { ...shift };
+      const updateData =
+        shift.deletedAt && shift.deletedReason === "AUTO_BS_DAY_CLEANUP"
+          ? { deletedAt: null, deletedReason: null }
+          : shift.conflictsWithLeave
+            ? { conflictsWithLeave: false }
+            : {};
+
+      const updated = await app.prisma.shift.update({
+        where: { id },
+        data: updateData,
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "SHIFT_RESTORED",
+        entity: "Shift",
+        entityId: id,
+        oldValue,
+        newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(200).send({
+        ...updated,
+        date: updated.date.toISOString().slice(0, 10),
+      });
+    },
+  });
 }
 
 // Severity ranking for combining availability sources (higher wins).
