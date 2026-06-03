@@ -81,12 +81,14 @@ describe("Berufsschule (Phase 62)", () => {
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
-        patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.patterns).toHaveLength(1);
+    expect(body.patterns[0].daysOfWeek).toEqual([2]);
+    // Backwards-compat field still surfaced for single-day rows.
     expect(body.patterns[0].dayOfWeek).toBe(2);
 
     const getRes = await app.inject({
@@ -97,17 +99,18 @@ describe("Berufsschule (Phase 62)", () => {
     expect(getRes.statusCode).toBe(200);
     const patterns = JSON.parse(getRes.body);
     expect(patterns).toHaveLength(1);
+    expect(patterns[0].daysOfWeek).toEqual([2]);
     expect(patterns[0].dayOfWeek).toBe(2);
     expect(patterns[0].isActive).toBe(true);
   });
 
-  it("BERSCH-01 — PUT rejected without dayOfWeek AND without blockWeeks (Zod refine)", async () => {
+  it("BERSCH-01 — PUT rejected without daysOfWeek AND without blockWeeks (Zod refine)", async () => {
     const res = await app.inject({
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
-        patterns: [{ dayOfWeek: null, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(400);
@@ -131,7 +134,7 @@ describe("Berufsschule (Phase 62)", () => {
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.empToken}` },
       payload: {
-        patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(403);
@@ -142,13 +145,13 @@ describe("Berufsschule (Phase 62)", () => {
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }] },
+      payload: { patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }] },
     });
     await app.inject({
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { patterns: [{ dayOfWeek: 4, blockWeeks: [], validFrom: "2026-06-01" }] },
+      payload: { patterns: [{ daysOfWeek: [4], blockWeeks: [], validFrom: "2026-06-01" }] },
     });
 
     // GET returns ONLY the second pattern, both rows exist in DB but only #2 is active.
@@ -159,13 +162,95 @@ describe("Berufsschule (Phase 62)", () => {
     });
     const active = JSON.parse(getRes.body);
     expect(active).toHaveLength(1);
-    expect(active[0].dayOfWeek).toBe(4);
+    expect(active[0].daysOfWeek).toEqual([4]);
 
     const allRows = await app.prisma.employeeVocationalSchoolPattern.findMany({
       where: { employeeId: data.employee.id },
     });
     expect(allRows).toHaveLength(2); // both retained for audit trail
     expect(allRows.filter((r) => r.isActive)).toHaveLength(1);
+  });
+
+  // ── Phase 67.1: Multi-day weekdays ────────────────────────────────────────
+
+  it("BERSCH-01 (67.1) — PUT with 3 weekdays creates Absences for all matching days", async () => {
+    // Pick Mo + Mi + Fr (0, 2, 4). Window is 4 weeks ahead, so we expect ~12 rows.
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [{ daysOfWeek: [0, 2, 4], blockWeeks: [], validFrom: "2020-01-01" }],
+      },
+    });
+
+    // Server should reflect array verbatim and clear the legacy single field
+    // because multi-day rows have no unambiguous scalar.
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const persisted = JSON.parse(getRes.body);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].daysOfWeek).toEqual([0, 2, 4]);
+    // Legacy dayOfWeek field MUST be null for multi-day rows.
+    expect(persisted[0].dayOfWeek).toBeNull();
+
+    // Generator now produces Absences on all three weekdays.
+    const genRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/generate",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(genRes.statusCode).toBe(200);
+    const genBody = JSON.parse(genRes.body);
+    expect(genBody.created).toBeGreaterThan(0);
+
+    const absences = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        deletedAt: null,
+      },
+    });
+    const observedDows = new Set(
+      absences.map((a) => {
+        const native = a.startDate.getUTCDay();
+        return native === 0 ? 6 : native - 1;
+      }),
+    );
+    // All Absences land on one of the three configured weekdays.
+    for (const d of observedDows) {
+      expect([0, 2, 4]).toContain(d);
+    }
+    // And we cover the full set (window is 4 weeks ahead so each weekday hits ≥ 3 times).
+    expect(observedDows.has(0)).toBe(true);
+    expect(observedDows.has(2)).toBe(true);
+    expect(observedDows.has(4)).toBe(true);
+  });
+
+  it("BERSCH-01 (67.1) — PUT with empty daysOfWeek + non-empty blockWeeks passes refine", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [],
+            blockWeeks: [12, 13],
+            blockYear: 2026,
+            validFrom: "2026-01-01",
+          },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.patterns[0].daysOfWeek).toEqual([]);
+    expect(body.patterns[0].blockWeeks).toEqual([12, 13]);
+    expect(body.patterns[0].blockYear).toBe(2026);
   });
 
   // ── BERSCH-02: Auto-generation ─────────────────────────────────────────────
@@ -175,7 +260,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -213,6 +299,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -252,6 +339,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: null,
+        daysOfWeek: [], // Phase 67.1: pure block-week pattern
         blockWeeks: [iso.week],
         blockYear: iso.year,
         validFrom: new Date("2020-01-01"),
@@ -296,6 +384,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -339,7 +428,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -378,6 +468,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -445,7 +536,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -480,6 +572,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
