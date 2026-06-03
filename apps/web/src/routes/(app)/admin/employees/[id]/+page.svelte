@@ -83,8 +83,12 @@
   interface VocationalSchoolPattern {
     id: string;
     employeeId: string;
-    dayOfWeek: number | null; // 0=Mo..6=So (DE convention)
-    blockWeeks: number[]; // ISO week numbers; empty array when only dayOfWeek set
+    // Phase 67.1 — `dayOfWeek` is the legacy single-value field (still emitted by the
+    // API during the v1.7.4 soak when daysOfWeek has exactly one entry). `daysOfWeek`
+    // is the canonical multi-day source; new code MUST read this.
+    dayOfWeek: number | null; // legacy 0=Mo..6=So (derived from daysOfWeek[0])
+    daysOfWeek: number[]; // canonical 0=Mo..6=So array
+    blockWeeks: number[]; // ISO week numbers; empty array when only daysOfWeek set
     blockYear: number | null;
     validFrom: string; // "YYYY-MM-DD"
     validUntil: string | null;
@@ -96,9 +100,12 @@
   // Phase 67 Plan 02 (BERSCH-15) — Local editor draft. NEVER sent to the API as-is;
   // the _key field is for {#each} keyed iteration only. On Save we serialise to the
   // API's putPatternsSchema (apps/api/src/routes/vocational-school-pattern.ts lines 10-31).
+  //
+  // Phase 67.1 (v1.7.4): `daysOfWeek: number[]` replaces single-value `dayOfWeek`.
+  // The chip strip in the editor toggles set-membership; multi-select is supported.
   interface BSPatternDraft {
     _key: string;
-    dayOfWeek: number | null;
+    daysOfWeek: number[];
     blockWeeks: number[];
     blockYear: number | null;
     validFrom: string; // "YYYY-MM-DD"
@@ -155,9 +162,17 @@
       // Phase 67 — BS-Patterns (fail-soft: empty array on rejection, message banner in Section)
       // Plan 02: map API response → editor drafts (persisted id becomes the {#each} key)
       if (bsRes.status === "fulfilled") {
+        // Phase 67.1: prefer canonical `daysOfWeek` array; fall back to legacy
+        // single `dayOfWeek` for rows from a pre-v1.7.4 API response that survived
+        // a cache miss (defensive — should not happen against an in-sync API).
         bsPatterns = bsRes.value.map((p) => ({
           _key: p.id,
-          dayOfWeek: p.dayOfWeek,
+          daysOfWeek:
+            p.daysOfWeek && p.daysOfWeek.length > 0
+              ? [...p.daysOfWeek]
+              : p.dayOfWeek != null
+                ? [p.dayOfWeek]
+                : [],
           blockWeeks: [...p.blockWeeks],
           blockYear: p.blockYear,
           validFrom: p.validFrom,
@@ -436,7 +451,7 @@
       ...bsPatterns,
       {
         _key: `new-${bsNewKeyCounter}`,
-        dayOfWeek: null,
+        daysOfWeek: [],
         blockWeeks: [],
         blockYear: null,
         validFrom: new Date().toISOString().slice(0, 10), // today (D-default per CONTEXT)
@@ -450,11 +465,17 @@
   }
 
   function bsToggleDayOfWeek(key: string, idx: number) {
-    // Only ONE dayOfWeek per row (Int? schema). Clicking active chip clears, clicking
-    // another chip moves selection. Matches CONTEXT.md "Day-of-week input" decision.
-    bsPatterns = bsPatterns.map((p) =>
-      p._key === key ? { ...p, dayOfWeek: p.dayOfWeek === idx ? null : idx } : p,
-    );
+    // Phase 67.1 — Multi-select: toggle set-membership in `daysOfWeek`.
+    // Clicking an active chip removes it; clicking an inactive chip adds it
+    // (kept sorted for stable {#each} render order).
+    bsPatterns = bsPatterns.map((p) => {
+      if (p._key !== key) return p;
+      const has = p.daysOfWeek.includes(idx);
+      const nextDays = has
+        ? p.daysOfWeek.filter((d) => d !== idx)
+        : [...p.daysOfWeek, idx].sort((a, b) => a - b);
+      return { ...p, daysOfWeek: nextDays };
+    });
   }
 
   function bsToggleBlockWeek(key: string, wk: number) {
@@ -490,10 +511,11 @@
 
   // Client-side validation mirroring apps/api/src/routes/vocational-school-pattern.ts
   // Returns an error string for the first invalid row, or "" if all rows pass.
+  // Phase 67.1: refine on `daysOfWeek.length > 0` instead of single-value check.
   function bsValidationError(): string {
     for (let i = 0; i < bsPatterns.length; i++) {
       const p = bsPatterns[i];
-      if (p.dayOfWeek == null && p.blockWeeks.length === 0) {
+      if (p.daysOfWeek.length === 0 && p.blockWeeks.length === 0) {
         return `Zeile ${i + 1}: Entweder Wochentag oder Block-Wochen muss gesetzt sein`;
       }
       if (p.blockWeeks.length > 0 && p.blockYear == null) {
@@ -526,9 +548,11 @@
     bsPatternsSaved = false;
     try {
       // Strip the _key field — API expects only persistable fields.
+      // Phase 67.1: send `daysOfWeek` (array). The API still tolerates legacy
+      // `dayOfWeek` but the canonical write path is the array.
       const payload = {
         patterns: bsPatterns.map((p) => ({
-          dayOfWeek: p.dayOfWeek,
+          daysOfWeek: p.daysOfWeek,
           blockWeeks: p.blockWeeks,
           blockYear: p.blockYear,
           validFrom: p.validFrom,
@@ -543,7 +567,12 @@
       // as the _key (replacing the synthetic "new-{n}"). This stabilises the {#each} key.
       bsPatterns = res.patterns.map((p) => ({
         _key: p.id,
-        dayOfWeek: p.dayOfWeek,
+        daysOfWeek:
+          p.daysOfWeek && p.daysOfWeek.length > 0
+            ? [...p.daysOfWeek]
+            : p.dayOfWeek != null
+              ? [p.dayOfWeek]
+              : [],
         blockWeeks: [...p.blockWeeks],
         blockYear: p.blockYear,
         validFrom: p.validFrom,
@@ -1397,15 +1426,18 @@
                       </button>
                     </div>
 
-                    <!-- dayOfWeek chip-row (toggle, single-select) -->
+                    <!-- daysOfWeek chip-row (toggle, multi-select) -->
+                    <!-- Phase 67.1 (v1.7.4): chip-strip toggles set-membership in
+                         `daysOfWeek`. Multiple selections produce one DB row covering
+                         all chosen weekdays (Mo + Mi + Fr -> one pattern, three days). -->
                     <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Wochentag:</span>
+                      <span class="bs-pattern-label">Wochentage:</span>
                       <div class="bs-chip-row">
                         {#each BS_WEEKDAY_LABELS as label, didx (label)}
                           <button
                             type="button"
                             class="chip chip-button"
-                            class:chip-brand={p.dayOfWeek === didx}
+                            class:chip-brand={p.daysOfWeek.includes(didx)}
                             onclick={() => bsToggleDayOfWeek(p._key, didx)}
                             disabled={bsPatternsSaving}
                           >
