@@ -2286,6 +2286,13 @@
     font: inherit;
   }
 
+  /* Selected-state — scoped specificity beats global .chip-brand */
+  .chip-button.chip-brand {
+    background: var(--brand-soft);
+    color: var(--brand);
+    border-color: var(--brand);
+  }
+
   .chip-button:hover:not(:disabled) {
     border-color: var(--brand);
   }
