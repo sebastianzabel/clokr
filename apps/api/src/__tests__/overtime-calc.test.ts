@@ -479,8 +479,11 @@ describe("Overtime Saldo Calculation", () => {
   // ── overtimeMode bifurcation ───────────────────────────────────────────────
 
   describe("overtimeMode bifurcation", () => {
-    const trackOnlyYear = 2023;
-    const trackOnlyMonth = 8; // August 2023 — well in the past
+    // Phase 66 fix (failure #5): seedTestData hireDate = 2024-01-01. trackOnlyYear=2023
+    // failed hire-date guard with 400 "noch nicht eingestellt", not "zuerst", so the
+    // sequential-close fallback didn't catch it. 2024 keeps the test in-employment.
+    const trackOnlyYear = 2024;
+    const trackOnlyMonth = 8; // August 2024 — well in the past
 
     beforeAll(async () => {
       // Remove any leftover snapshots for this employee in trackOnlyYear
