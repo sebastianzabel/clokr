@@ -93,6 +93,18 @@
     updatedAt: string;
   }
 
+  // Phase 67 Plan 02 (BERSCH-15) — Local editor draft. NEVER sent to the API as-is;
+  // the _key field is for {#each} keyed iteration only. On Save we serialise to the
+  // API's putPatternsSchema (apps/api/src/routes/vocational-school-pattern.ts lines 10-31).
+  interface BSPatternDraft {
+    _key: string;
+    dayOfWeek: number | null;
+    blockWeeks: number[];
+    blockYear: number | null;
+    validFrom: string; // "YYYY-MM-DD"
+    validUntil: string | null;
+  }
+
   // ── Loading state ──────────────────────────────────────────────────────────
   let loading = $state(true);
   let loadError = $state("");
@@ -105,8 +117,14 @@
   let tenantBreakConfig = $state<TenantBreakConfig | null>(null);
 
   // Phase 67 — BS-Pattern list (AZUBI-only Section in Stammdaten tab)
-  let bsPatterns = $state<VocationalSchoolPattern[]>([]);
+  // Plan 02: bsPatterns is a draft array (mutated by the editor, PUT en-bloc on Save)
+  let bsPatterns = $state<BSPatternDraft[]>([]);
   let bsPatternsLoadError = $state<string>("");
+  let bsPatternsSaving = $state(false);
+  let bsPatternsSaveError = $state<string>("");
+  let bsPatternsSaved = $state(false);
+  // Monotonically-increasing counter for synthetic keys on unsaved rows
+  let bsNewKeyCounter = $state(0);
 
   const employeeId = $derived($page.params.id);
 
@@ -135,8 +153,16 @@
       tenantBreakConfig = cfgRes.status === "fulfilled" ? cfgRes.value : null;
 
       // Phase 67 — BS-Patterns (fail-soft: empty array on rejection, message banner in Section)
+      // Plan 02: map API response → editor drafts (persisted id becomes the {#each} key)
       if (bsRes.status === "fulfilled") {
-        bsPatterns = bsRes.value;
+        bsPatterns = bsRes.value.map((p) => ({
+          _key: p.id,
+          dayOfWeek: p.dayOfWeek,
+          blockWeeks: [...p.blockWeeks],
+          blockYear: p.blockYear,
+          validFrom: p.validFrom,
+          validUntil: p.validUntil,
+        }));
         bsPatternsLoadError = "";
       } else {
         bsPatterns = [];
@@ -398,6 +424,143 @@
   function applyAzubiSuggestion() {
     eBreakOver6hOverride = "30";
     eBreakOver9hOverride = "60";
+  }
+
+  // ── BS-Pattern editor helpers (Phase 67 Plan 02, BERSCH-15) ───────────────
+
+  const BS_WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as const;
+
+  function bsAddPattern() {
+    bsNewKeyCounter += 1;
+    bsPatterns = [
+      ...bsPatterns,
+      {
+        _key: `new-${bsNewKeyCounter}`,
+        dayOfWeek: null,
+        blockWeeks: [],
+        blockYear: null,
+        validFrom: new Date().toISOString().slice(0, 10), // today (D-default per CONTEXT)
+        validUntil: null,
+      },
+    ];
+  }
+
+  function bsRemovePattern(key: string) {
+    bsPatterns = bsPatterns.filter((p) => p._key !== key);
+  }
+
+  function bsToggleDayOfWeek(key: string, idx: number) {
+    // Only ONE dayOfWeek per row (Int? schema). Clicking active chip clears, clicking
+    // another chip moves selection. Matches CONTEXT.md "Day-of-week input" decision.
+    bsPatterns = bsPatterns.map((p) =>
+      p._key === key ? { ...p, dayOfWeek: p.dayOfWeek === idx ? null : idx } : p,
+    );
+  }
+
+  function bsToggleBlockWeek(key: string, wk: number) {
+    bsPatterns = bsPatterns.map((p) => {
+      if (p._key !== key) return p;
+      const has = p.blockWeeks.includes(wk);
+      const nextWeeks = has
+        ? p.blockWeeks.filter((w) => w !== wk)
+        : [...p.blockWeeks, wk].sort((a, b) => a - b);
+      // If all weeks removed, also clear blockYear (matches API refine — blockYear is only
+      // meaningful when blockWeeks is non-empty).
+      const nextYear = nextWeeks.length === 0 ? null : (p.blockYear ?? new Date().getFullYear());
+      return { ...p, blockWeeks: nextWeeks, blockYear: nextYear };
+    });
+  }
+
+  function bsSetBlockYear(key: string, year: number | null) {
+    bsPatterns = bsPatterns.map((p) =>
+      p._key === key ? { ...p, blockYear: year != null && Number.isFinite(year) ? year : null } : p,
+    );
+  }
+
+  function bsSetValidFrom(key: string, value: string) {
+    bsPatterns = bsPatterns.map((p) => (p._key === key ? { ...p, validFrom: value } : p));
+  }
+
+  function bsSetValidUntil(key: string, value: string) {
+    // Empty string from <input type="date"> means "no end date"
+    bsPatterns = bsPatterns.map((p) =>
+      p._key === key ? { ...p, validUntil: value === "" ? null : value } : p,
+    );
+  }
+
+  // Client-side validation mirroring apps/api/src/routes/vocational-school-pattern.ts
+  // Returns an error string for the first invalid row, or "" if all rows pass.
+  function bsValidationError(): string {
+    for (let i = 0; i < bsPatterns.length; i++) {
+      const p = bsPatterns[i];
+      if (p.dayOfWeek == null && p.blockWeeks.length === 0) {
+        return `Zeile ${i + 1}: Entweder Wochentag oder Block-Wochen muss gesetzt sein`;
+      }
+      if (p.blockWeeks.length > 0 && p.blockYear == null) {
+        return `Zeile ${i + 1}: Jahr ist erforderlich wenn Block-Wochen gesetzt sind`;
+      }
+      if (p.validUntil && p.validUntil < p.validFrom) {
+        return `Zeile ${i + 1}: Gültig-bis muss >= Gültig-ab sein`;
+      }
+    }
+    return "";
+  }
+
+  // Phase 67 Plan 02 — derived validation message (empty string = OK)
+  let bsLocalValidationError = $derived.by(() => bsValidationError());
+  let bsCanSave = $derived(bsLocalValidationError === "" && !bsPatternsSaving);
+
+  // Phase 67 Plan 02 — Persist editor draft via PUT (replace semantics per API contract).
+  // Server-side Zod re-validates; on error the verbatim German message is shown inline.
+  async function savePatterns() {
+    if (!employee) return;
+    // Defensive re-check: button is disabled when invalid, but a quick keyboard activation
+    // could race with $derived. Bail with inline message.
+    const localErr = bsValidationError();
+    if (localErr !== "") {
+      bsPatternsSaveError = localErr;
+      return;
+    }
+    bsPatternsSaving = true;
+    bsPatternsSaveError = "";
+    bsPatternsSaved = false;
+    try {
+      // Strip the _key field — API expects only persistable fields.
+      const payload = {
+        patterns: bsPatterns.map((p) => ({
+          dayOfWeek: p.dayOfWeek,
+          blockWeeks: p.blockWeeks,
+          blockYear: p.blockYear,
+          validFrom: p.validFrom,
+          validUntil: p.validUntil,
+        })),
+      };
+      const res = await api.put<{ patterns: VocationalSchoolPattern[] }>(
+        `/employees/${employee.id}/vocational-school-pattern`,
+        payload,
+      );
+      // Reflect persisted rows back into the draft so newly-created rows get their server id
+      // as the _key (replacing the synthetic "new-{n}"). This stabilises the {#each} key.
+      bsPatterns = res.patterns.map((p) => ({
+        _key: p.id,
+        dayOfWeek: p.dayOfWeek,
+        blockWeeks: [...p.blockWeeks],
+        blockYear: p.blockYear,
+        validFrom: p.validFrom,
+        validUntil: p.validUntil,
+      }));
+      bsNewKeyCounter = 0; // reset — all rows have server ids now
+      bsPatternsSaved = true;
+      toasts.success("Berufsschultage gespeichert", 2000);
+      setTimeout(() => (bsPatternsSaved = false), 2000);
+    } catch (e: unknown) {
+      // Verbatim API error (Zod refine message or domain message)
+      bsPatternsSaveError =
+        e instanceof Error ? e.message : "Berufsschultage konnten nicht gespeichert werden.";
+      toasts.error(bsPatternsSaveError, 4000);
+    } finally {
+      bsPatternsSaving = false;
+    }
   }
 
   // ── Arbeitszeit state ──────────────────────────────────────────────────────
@@ -754,65 +917,154 @@
           </div>
         </Section>
 
-        <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) read-only view; editor lands in 67-02 -->
+        <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
         {#if eClassification === "AZUBI"}
           <Section
             title="Berufsschultag (Optional)"
             sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
           >
+            {#snippet footer()}
+              <button
+                class="btn btn-primary"
+                onclick={savePatterns}
+                disabled={!bsCanSave}
+                title={bsLocalValidationError || ""}
+              >
+                {bsPatternsSaving ? "Speichern…" : "Speichern"}
+              </button>
+              {#if bsPatternsSaved}<span class="saved-hint">Gespeichert</span>{/if}
+            {/snippet}
+
             {#if bsPatternsLoadError}
               <div class="callout error">{bsPatternsLoadError}</div>
             {/if}
+            {#if bsPatternsSaveError}
+              <div class="callout error">{bsPatternsSaveError}</div>
+            {/if}
+            {#if bsLocalValidationError && bsPatterns.length > 0}
+              <div class="callout">{bsLocalValidationError}</div>
+            {/if}
 
-            {#if bsPatterns.length === 0 && !bsPatternsLoadError}
-              <p class="form-hint text-muted">Keine Berufsschultage konfiguriert.</p>
+            {#if bsPatterns.length === 0}
+              <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+                Keine Berufsschultage konfiguriert.
+              </p>
             {/if}
 
             {#if bsPatterns.length > 0}
               <ul class="bs-pattern-list">
-                {#each bsPatterns as p (p.id)}
+                {#each bsPatterns as p, idx (p._key)}
                   <li class="bs-pattern-card">
-                    {#if p.dayOfWeek !== null}
-                      <div class="bs-pattern-row">
-                        <span class="bs-pattern-label">Wochentag:</span>
-                        <div class="bs-chip-row">
-                          {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as label, idx (label)}
-                            <span class="chip" class:chip-brand={p.dayOfWeek === idx}>
-                              {label}
-                            </span>
-                          {/each}
-                        </div>
-                      </div>
-                    {/if}
+                    <!-- Row header with delete -->
+                    <div class="bs-pattern-row bs-pattern-head">
+                      <span class="bs-pattern-label">Pattern {idx + 1}</span>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={() => bsRemovePattern(p._key)}
+                        disabled={bsPatternsSaving}
+                        aria-label="Pattern entfernen"
+                      >
+                        Entfernen
+                      </button>
+                    </div>
 
+                    <!-- dayOfWeek chip-row (toggle, single-select) -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Wochentag:</span>
+                      <div class="bs-chip-row">
+                        {#each BS_WEEKDAY_LABELS as label, didx (label)}
+                          <button
+                            type="button"
+                            class="chip chip-button"
+                            class:chip-brand={p.dayOfWeek === didx}
+                            onclick={() => bsToggleDayOfWeek(p._key, didx)}
+                            disabled={bsPatternsSaving}
+                          >
+                            {label}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+
+                    <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Block-Wochen:</span>
+                      <div class="bs-week-grid">
+                        {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
+                          <button
+                            type="button"
+                            class="chip chip-week chip-button"
+                            class:chip-brand={p.blockWeeks.includes(wk)}
+                            onclick={() => bsToggleBlockWeek(p._key, wk)}
+                            disabled={bsPatternsSaving}
+                          >
+                            {wk}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+
+                    <!-- Year picker (only when at least one block-week is selected) -->
                     {#if p.blockWeeks.length > 0}
                       <div class="bs-pattern-row">
-                        <span class="bs-pattern-label">
-                          Block-Wochen{p.blockYear ? ` (${p.blockYear})` : ""}:
-                        </span>
-                        <div class="bs-week-grid">
-                          {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
-                            <span
-                              class="chip chip-week"
-                              class:chip-brand={p.blockWeeks.includes(wk)}
-                            >
-                              {wk}
-                            </span>
-                          {/each}
-                        </div>
+                        <span class="bs-pattern-label">Jahr:</span>
+                        <input
+                          type="number"
+                          class="form-input bs-year-input"
+                          min={new Date().getFullYear() - 2}
+                          max={new Date().getFullYear() + 2}
+                          step="1"
+                          value={p.blockYear ?? new Date().getFullYear()}
+                          oninput={(e) =>
+                            bsSetBlockYear(
+                              p._key,
+                              Number.parseInt((e.currentTarget as HTMLInputElement).value, 10),
+                            )}
+                          disabled={bsPatternsSaving}
+                        />
                       </div>
                     {/if}
 
+                    <!-- Validity inputs -->
                     <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Gültig:</span>
-                      <span class="bs-pattern-value">
-                        {p.validFrom} – {p.validUntil ?? "Unbefristet"}
-                      </span>
+                      <span class="bs-pattern-label">Gültig-ab:</span>
+                      <input
+                        type="date"
+                        class="form-input"
+                        value={p.validFrom}
+                        oninput={(e) =>
+                          bsSetValidFrom(p._key, (e.currentTarget as HTMLInputElement).value)}
+                        disabled={bsPatternsSaving}
+                      />
+                    </div>
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Gültig-bis:</span>
+                      <input
+                        type="date"
+                        class="form-input"
+                        value={p.validUntil ?? ""}
+                        placeholder="Unbefristet"
+                        oninput={(e) =>
+                          bsSetValidUntil(p._key, (e.currentTarget as HTMLInputElement).value)}
+                        disabled={bsPatternsSaving}
+                      />
                     </div>
                   </li>
                 {/each}
               </ul>
             {/if}
+
+            <div style="margin-top: 1rem;">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                onclick={bsAddPattern}
+                disabled={bsPatternsSaving}
+              >
+                + Berufsschultag hinzufügen
+              </button>
+            </div>
           </Section>
         {/if}
       {:else if tab === "arbeitszeit"}
@@ -2016,5 +2268,34 @@
     .bs-week-grid {
       grid-template-columns: repeat(4, minmax(2rem, 1fr));
     }
+  }
+
+  /* Phase 67 Plan 02 — editor controls */
+  .bs-pattern-head {
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: var(--s-2);
+  }
+
+  /* button-shaped chip variant — keeps .chip recipe + adds button reset */
+  .chip-button {
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: var(--bg-card);
+    color: var(--text);
+    font: inherit;
+  }
+
+  .chip-button:hover:not(:disabled) {
+    border-color: var(--brand);
+  }
+
+  .chip-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .bs-year-input {
+    max-width: 8rem;
   }
 </style>
