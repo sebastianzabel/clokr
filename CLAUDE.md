@@ -67,38 +67,13 @@ Legal retention periods (Germany):
 
 **Default retention: 10 years** (configurable per tenant, minimum 2 years). Retention period starts at end of calendar year of record creation. Deletion is NOT rolling — it happens annually (Stichtag), e.g., on Jan 1st for records whose retention expired on Dec 31st.
 
-## Saldo Calculation & Monatsabschluss (planned)
+## Saldo Calculation & Monatsabschluss
 
-**Current state**: Saldo is recalculated from hire date on every request. This does not scale.
-
-**Target architecture** (see issue #6):
-
-- **Monatsabschluss**: Monthly `SaldoSnapshot` freezes worked/expected/balance/carryOver per employee
-- **Current saldo** = last snapshot `carryOver` + entries since snapshot date
-- **Jahresübertrag**: Yearly snapshot at Dec 31st, configurable carry-over rules (FULL / CAPPED / RESET)
-- **Archival**: After retention period, old entries can be soft-deleted/archived because snapshots preserve saldo integrity
-- Corrections to closed months: unlock → correct → re-close (new snapshot with audit trail)
+Current: recalculated from hire date on every request (does not scale). Target architecture (SaldoSnapshot per month, Jahresübertrag, correction flow) — see GitHub issue #6.
 
 ## CVE / Security Vulnerability Handling
 
-When Trivy or Dependabot reports a CVE, follow this process strictly:
-
-1. **If a fix exists**: Update the dependency immediately.
-   - Direct dependency → `pnpm update <pkg>`
-   - Transitive dependency → add/update `pnpm.overrides` in root `package.json`
-   - Docker base image → update Dockerfile + rebuild
-2. **If no fix exists**: Add the CVE to `.trivyignore` with a comment explaining:
-   - Why it's not exploitable in our context (e.g., build-only tool, not user-facing)
-   - When to revisit (e.g., "remove when upstream releases fix")
-3. **Never lower Trivy severity** (e.g., removing HIGH from scan) to make builds pass.
-4. **Never use `--ignore-scripts` globally** just to avoid CVE-related build failures — find the specific package causing the issue.
-5. All CVE fixes and exceptions MUST be documented in the commit message.
-
-Files:
-
-- `.trivyignore` — exceptions with justification comments
-- `package.json` → `pnpm.overrides` — transitive dependency version pins
-- `.github/workflows/build-push.yml` — Trivy scan configuration
+Trivy/Dependabot process (update direct/transitive/base-image, justify exceptions in `.trivyignore`, never lower severity, document in commit) → see `docs/cve-handling.md`.
 
 ## Time Entry Rules
 
@@ -136,44 +111,13 @@ These rules MUST be followed when implementing or modifying ArbZG compliance che
 4. Another manager approves cancellation → status = `CANCELLED`, time entries auto-revalidated
 5. If cancellation rejected → status reverts to `APPROVED`, time entries stay invalid
 
-## Vacation Carry-Over & Cross-Year Booking (see #58)
+## Vacation Carry-Over & Cross-Year Booking
 
-These rules MUST be followed when implementing or modifying vacation/leave carry-over logic:
-
-### BUrlG (Bundesurlaubsgesetz) Rules
-
-- **§ 3 Gesetzlicher Mindesturlaub**: `Arbeitstage/Woche × 4` (5-day week = 20 days, 6-day week = 24 days)
-- **§ 7 Abs. 3 Übertragung**: Vacation MUST be taken in the current calendar year. Carry-over to the next year ONLY with valid reason (illness, operational necessity). Carried-over days expire by **March 31** of the following year (configurable per tenant).
-- **Langzeitkrankheit**: Carry-over up to 15 months (EuGH C-214/10 "KHS")
-- **Hinweispflicht** (EuGH C-684/16): Employer must proactively warn employees about expiring vacation. Without warning, vacation does NOT expire automatically.
-
-### Cross-Year Booking
-
-- Vacation spanning Dec 30 → Jan 5 MUST be split across both years (2 days from year 1, 3 days from year 2)
-- Each year's entitlement is checked and booked separately
-- Cancellation reverses both years
-
-### Dynamic Carry-Over
-
-- Carry-over is recalculated on every booking/cancellation
-- Advance booking into next year: uses projected carry-over first, then new year entitlement
-- New booking in current year after advance booking: carry-over to next year is reduced, next year's entitlement adjusted
-- **Carry-over priority**: Always use carried-over days before new entitlement (FIFO)
-
-### Carry-Over Validation
-
-- If employee has not taken the statutory minimum (§ 3 BUrlG) in the current year, carry-over beyond `totalDays - statutoryMinimum` requires a documented reason (ILLNESS, OPERATIONAL, OTHER)
-- Reminders starting in October (configurable) when vacation is at risk of expiring
-- Escalation to manager in November, final warning in December
+BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO priority, carry-over validation with documented reasons → see `docs/burlg-carryover.md` (and GitHub issue #58).
 
 ## Overtime Saldo Calculation (current)
 
-- **Saldo = Worked hours − Expected hours** (both calculated for the same date range)
-- **Date range**: From hire date (or month start) up to today (if entries exist) or yesterday
-- Leave, holidays, and absences within this range reduce expected hours
-- Leave/holidays are clamped to the effective range (no over-deduction from pre-hire leave)
-- Saldo recalculates on every GET /overtime/:employeeId request
-- **Note**: This will be replaced by snapshot-based calculation (see "Saldo Calculation & Monatsabschluss" above)
+`Saldo = Worked − Expected` over (hire-date or month-start) → (today or yesterday). Leave/holidays/absences reduce expected, clamped to effective range. Recalculated per GET /overtime/:employeeId. Will be replaced by snapshot-based calc (see Saldo Calculation & Monatsabschluss above).
 
 ## Schedule Types
 
@@ -187,18 +131,7 @@ These rules MUST be followed when implementing or modifying vacation/leave carry
 
 ## UI Consistency Rules
 
-These rules MUST be followed when building or modifying any page in `apps/web`:
-
-- **Entrance animations**: Every primary content block (summary bars, calendars, cards, tables, stat widgets) MUST have `class="... card-animate"`. The `card-enter` keyframe and staggered `nth-child` delays are defined globally in `app.css`. Do NOT add custom fade-in animations — use `card-animate`.
-- **Theme-aware colors (v1.5)**: NEVER hardcode hex colors in component `<style>` blocks. Use the canonical v1.5 token namespace from `apps/web/src/tokens.css`: `var(--bg-card)`, `var(--bg-subtle)`, `var(--brand)`, `var(--brand-soft)`, `var(--border)`, `var(--text)`, `var(--text-muted)`, `var(--good|warn|bad)`, `var(--r-sm|md|lg)`, etc. Domain-specific colors (leave types) keep their `var(--leave-type-*)` names.
-- **BANNED legacy tokens**: `var(--color-*)`, `var(--glass-*)`, `var(--radius-*)`, `var(--gray-*)` — the compat alias block is GONE. Verified by `pnpm --filter @clokr/web lint:tokens`. See `apps/web/.lintrc-tokens.txt` for the canonical replacement cheat sheet.
-- **Card surfaces (v1.5)**: Top-level page cards use `background: var(--bg-card)`, `border: 1px solid var(--border)`, `border-radius: var(--r-lg)` (16px), `padding: var(--pad-card)` (24px comfortable / 16px compact). NO `backdrop-filter`. Use `--shadow-sm` for subtle elevation, `--shadow-md` for modals.
-- **Employee selector placement**: When a page has an employee/person filter dropdown, it goes ABOVE the view-tabs as a `<div class="employee-selector">` block — not inside the calendar nav or toolbar. See `time-entries/+page.svelte` as the reference.
-- **Summary bars**: Use `.month-summary` / `.vac-summary` pattern with `var(--font-mono)` for numeric values, `font-size: 0.9375rem`, `font-weight: 700`, `color: var(--text)`. Match padding/gap/radius from `time-entries/+page.svelte`.
-- **Calendar cells (v1.5)**: The canonical `.cal-cell` and `.cal-grid` recipe lives in `apps/web/src/app.css` and is the single source of truth for ALL calendar views (`/time-entries`, `/team/time-entries`, `/leave`, `/team/leave`, future ones). Reference page is `/time-entries`. **Per-page scoped overrides of `.cal-cell` or `.cal-grid` base properties (`min-height`, `padding`, `border`, `border-radius`, `gap`, `grid-template-columns`) are FORBIDDEN** — they cause visual drift. Pages may add **status modifier classes** (e.g. `.cal-cell--ok`, `.cal-cell--arbzg-warn`, `.cal-cell--drag-selected`) and **content selectors** (`.day-worked`, `.cal-chips`) in their scoped block, but the base cell shape MUST come from the global recipe. If a calendar view needs a different cell size, add a modifier class (e.g. `.cal-cell--compact`) to the global recipe in `app.css`, not a scoped override.
-- **Page wrapper (v1.5)**: Every (app)/ page MUST wrap its content (everything below `<PageHead>`) in `<div class="page">` or `<section class="page">`. The global `.page` recipe in `app.css` provides `display: flex; flex-direction: column; gap: var(--s-6)` for consistent vertical rhythm between sections. **Per-page overrides of `padding`, `max-width`, or `gap` on `.page` are FORBIDDEN** — page padding and max-width come from the outer `.main` container (`apps/web/src/routes/(app)/+layout.svelte`). If a page needs a different content width, the tightening belongs at the section level (e.g. `<section style="max-width: 720px">`), not on `.page`.
-- **Section stacking (v1.5)**: ANY container that hosts more than one `<Section>` component as a direct child MUST apply the page section-stacking recipe: `display: flex; flex-direction: column; gap: var(--s-6)`. The three canonical recipe holders are `.page` (top-level wrapper), `.tab-panel` (tabbed surfaces — see `SectionStack.svelte` and `ListDetail.svelte`), and any future detail-body / section-wrapper class. **`<Section>` itself MUST NOT have its own vertical margin** — spacing is the parent's responsibility. If you write a new component that renders multiple `<Section>` siblings, give the wrapper one of the canonical classes (or duplicate the 3-line recipe scoped to your component). Symptom of a missed recipe: two cards visually touching with zero gap — exactly the bug fixed in quick task 260601-iyv (#234).
-- **Full style guide**: See `.planning/UI_STYLE_GUIDE.md` for tokens, component classes, spacing, and patterns.
+Token namespace v1.5 (banned legacy `--color-*` / `--glass-*` / `--radius-*` / `--gray-*`), card surfaces, calendar-cell recipe, page wrapper, section stacking, summary bars, entrance animations — **the single source of truth is `.planning/UI_STYLE_GUIDE.md`**. Read it before modifying any page in `apps/web`. Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes`.
 
 ## Svelte 5 Gotchas
 
@@ -206,24 +139,7 @@ These rules MUST be followed when building or modifying any page in `apps/web`:
 - Use `$derived` for computed values instead of `{@const}` in templates
 - Use `preventDefault` from `svelte/legacy` for form handlers
 
-You are able to use the Svelte MCP server, where you have access to comprehensive Svelte 5 and SvelteKit documentation. Here's how to use the available tools effectively:
-
-## Available MCP Tools:
-
-### 1. list-sections
-
-Use this FIRST to discover all available documentation sections. Returns a structured list with titles, use_cases, and paths.
-When asked about Svelte or SvelteKit topics, ALWAYS use this tool at the start of the chat to find relevant sections.
-
-### 2. get-documentation
-
-Retrieves full documentation content for specific sections. Accepts single or multiple sections.
-After calling the list-sections tool, you MUST analyze the returned documentation sections (especially the use_cases field) and then use the get-documentation tool to fetch ALL documentation sections that are relevant for the user's task.
-
-### 3. svelte-autofixer
-
-Analyzes Svelte code and returns issues and suggestions.
-You MUST use this tool whenever writing Svelte code before sending it to the user. Keep calling it until no issues or suggestions are returned.
+<!-- Svelte MCP server (list-sections / get-documentation / svelte-autofixer) is self-documenting via system-reminder at session start. -->
 
 <!-- GSD:project-start source:PROJECT.md -->
 
