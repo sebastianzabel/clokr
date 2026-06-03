@@ -71,6 +71,11 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.saldoSnapshot.deleteMany({
       where: { employeeId: data.employee.id },
     });
+    // Phase 67.2 — Wipe SchoolHolidayPeriod cache between tests so Ferien-aware
+    // tests can't accidentally affect earlier weekday/block-week tests.
+    await app.prisma.schoolHolidayPeriod.deleteMany({
+      where: { tenantId: data.tenant.id },
+    });
   });
 
   // ── BERSCH-01: Pattern CRUD ────────────────────────────────────────────────
@@ -587,5 +592,243 @@ describe("Berufsschule (Phase 62)", () => {
     const body = JSON.parse(res.body);
     expect(body.created).toBeGreaterThan(0);
     expect(body.skipped.locked).toBe(0);
+  });
+
+  // ── Phase 67.2 (Plan 03): School-Holiday skip + federalStateOverride + opt-out ──
+  //
+  // Skip-priority order verified in code: schoolHoliday MUST run BEFORE existingSet
+  // and BEFORE lockedSet so the counter is accurate and idempotency holds
+  // (RESEARCH §198 pitfall #8). When the cache is empty the generator MUST behave
+  // as if no holidays exist (safe stale-cache degradation per RESEARCH §128).
+
+  it("Phase 67.2 — Test A: BS-Day in SchoolHolidayPeriod → date skipped, schoolHoliday counter increments, no Absence created", async () => {
+    // Seed pattern targeting Tuesdays (1=Tu).
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // Pick the next Tuesday inside the window and seed a SchoolHolidayPeriod
+    // covering that exact date for the tenant's federal state (NIEDERSACHSEN).
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    expect(result.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+
+    // No VOCATIONAL_SCHOOL Absence on the Ferien-Tuesday.
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(0);
+
+    // Cleanup the SchoolHolidayPeriod so following tests aren't affected.
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test B: respectSchoolHolidays=false → SchoolHolidayPeriod IGNORED, Absence IS created (Pflegeschule opt-out)", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: false, // Pflegeschule opt-out
+      },
+    });
+
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    // schoolHoliday counter is NOT incremented for opt-out patterns.
+    expect(result.skipped.schoolHoliday).toBe(0);
+
+    // An Absence WAS created on the Ferien-Tuesday because the opt-out bypasses the filter.
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(1);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test C: federalStateOverride=BAYERN honored — SchoolHolidayPeriod only in BAYERN skips the date (Pendler-Azubi)", async () => {
+    // Tenant is NIEDERSACHSEN by seed; Azubi attends school in BAYERN.
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+        federalStateOverride: "BAYERN",
+      },
+    });
+
+    const nextTuesday = nextDow(1);
+    // Ferien exist ONLY for BAYERN — not for the tenant's NIEDERSACHSEN.
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "BAYERN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Bayern-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    expect(result.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(0);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test D: Empty SchoolHolidayPeriod cache + respectSchoolHolidays=true → generator DOES NOT skip (safe stale-cache degradation)", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // No SchoolHolidayPeriod rows seeded — cache is empty (e.g. sync hasn't run yet).
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    // Behaves as if no holidays exist — no schoolHoliday skips at all.
+    expect(result.skipped.schoolHoliday).toBe(0);
+    // Generator still produced rows on every Tuesday in the window.
+    expect(result.created).toBeGreaterThan(0);
+  });
+
+  it("Phase 67.2 — Test E: Idempotency — re-running the generator with Ferien seeded creates 0 rows on second run and still counts schoolHoliday skips", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // Seed one Ferien-Tuesday so we exercise the schoolHoliday branch on both runs.
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const r1 = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+    expect(r1.created).toBeGreaterThan(0);
+    expect(r1.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+    const firstCount = r1.created;
+
+    const r2 = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+    expect(r2.created).toBe(0); // idempotent — no duplicates
+    // schoolHoliday skip-check runs BEFORE existing-check, so the Ferien-Tuesday
+    // is still counted as schoolHoliday on the second run (NOT existing).
+    expect(r2.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+    expect(r2.skipped.existing).toBeGreaterThanOrEqual(firstCount);
+
+    const absences = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+    });
+    expect(absences.length).toBe(firstCount);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
   });
 });
