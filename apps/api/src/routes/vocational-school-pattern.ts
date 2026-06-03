@@ -5,11 +5,19 @@ import { requireAuth, requireRole } from "../middleware/auth";
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
 // Phase 62 — Berufsschultag pattern item.
-// LOCKED decision (CONTEXT.md): at least one of dayOfWeek OR blockWeeks must be set.
+// LOCKED decision (CONTEXT.md): at least one of daysOfWeek OR blockWeeks must be set.
 // blockYear is required when blockWeeks is set so annual block-week intent is unambiguous.
+//
+// Phase 67.1 (v1.7.4) — daysOfWeek Int[] replaces single-value dayOfWeek Int?.
+// Legacy callers sending `dayOfWeek: N` are normalised in the PUT handler to
+// `daysOfWeek: [N]` so old clients (NFC terminal, integration tests) keep working
+// during the soak release. Drop the legacy field in v1.7.5.
 const patternItemSchema = z
   .object({
+    // Legacy single-value field, kept for backwards compat during v1.7.4 soak.
     dayOfWeek: z.number().int().min(0).max(6).nullable().optional(),
+    // New multi-day field — array of 0=Mo..6=So.
+    daysOfWeek: z.array(z.number().int().min(0).max(6)).default([]),
     blockWeeks: z.array(z.number().int().min(1).max(53)).default([]),
     blockYear: z.number().int().min(2000).max(2100).nullable().optional(),
     validFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "validFrom muss YYYY-MM-DD sein"),
@@ -19,9 +27,17 @@ const patternItemSchema = z
       .nullable()
       .optional(),
   })
-  .refine((p) => p.dayOfWeek != null || (p.blockWeeks && p.blockWeeks.length > 0), {
-    message: "Entweder dayOfWeek oder blockWeeks muss gesetzt sein",
-  })
+  // At least one weekday OR at least one block week must be set.
+  // Legacy `dayOfWeek` counts as "weekday set" since the PUT handler normalises it.
+  .refine(
+    (p) =>
+      (p.daysOfWeek && p.daysOfWeek.length > 0) ||
+      p.dayOfWeek != null ||
+      (p.blockWeeks && p.blockWeeks.length > 0),
+    {
+      message: "Entweder daysOfWeek oder blockWeeks muss gesetzt sein",
+    },
+  )
   .refine((p) => (p.blockWeeks && p.blockWeeks.length > 0 ? p.blockYear != null : true), {
     message: "blockYear ist erforderlich wenn blockWeeks gesetzt ist",
   });
@@ -56,11 +72,16 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
 
       const patterns = await app.prisma.employeeVocationalSchoolPattern.findMany({
         where: { employeeId: id, isActive: true },
-        orderBy: [{ validFrom: "desc" }, { dayOfWeek: "asc" }],
+        orderBy: [{ validFrom: "desc" }],
       });
 
+      // Phase 67.1: Response includes BOTH `daysOfWeek` (new canonical) AND `dayOfWeek`
+      // (legacy single value, derived for backwards-compat consumers — populated only when
+      // the row maps to exactly one weekday). Drop `dayOfWeek` from the response in v1.7.5.
       return patterns.map((p) => ({
         ...p,
+        dayOfWeek: p.daysOfWeek.length === 1 ? p.daysOfWeek[0] : (p.dayOfWeek ?? null),
+        daysOfWeek: p.daysOfWeek,
         validFrom: p.validFrom.toISOString().slice(0, 10),
         validUntil: p.validUntil ? p.validUntil.toISOString().slice(0, 10) : null,
       }));
@@ -100,10 +121,25 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
 
         const out = [];
         for (const p of body.patterns) {
+          // Phase 67.1 normalisation: legacy clients send `dayOfWeek: N` instead of
+          // `daysOfWeek: [N]`. Coerce into the new shape (dedup + sort for stable rows).
+          // Legacy `dayOfWeek` column is still written for one release of soak so a
+          // downgrade can roll back to v1.7.3 without breaking existing readers; new
+          // canonical reads come from `daysOfWeek`.
+          const incomingDays =
+            p.daysOfWeek && p.daysOfWeek.length > 0
+              ? p.daysOfWeek
+              : p.dayOfWeek != null
+                ? [p.dayOfWeek]
+                : [];
+          const normalisedDays = Array.from(new Set(incomingDays)).sort((a, b) => a - b);
+          const legacyDayOfWeek = normalisedDays.length === 1 ? normalisedDays[0] : null;
+
           const row = await tx.employeeVocationalSchoolPattern.create({
             data: {
               employeeId: id,
-              dayOfWeek: p.dayOfWeek ?? null,
+              dayOfWeek: legacyDayOfWeek,
+              daysOfWeek: normalisedDays,
               blockWeeks: p.blockWeeks ?? [],
               blockYear: p.blockYear ?? null,
               validFrom: new Date(p.validFrom),
@@ -129,6 +165,10 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       return reply.code(200).send({
         patterns: created.map((p) => ({
           ...p,
+          // Phase 67.1: mirror GET shape so the UI's optimistic re-hydrate works
+          // regardless of whether it reads `daysOfWeek` (new) or `dayOfWeek` (legacy).
+          dayOfWeek: p.daysOfWeek.length === 1 ? p.daysOfWeek[0] : (p.dayOfWeek ?? null),
+          daysOfWeek: p.daysOfWeek,
           validFrom: p.validFrom.toISOString().slice(0, 10),
           validUntil: p.validUntil ? p.validUntil.toISOString().slice(0, 10) : null,
         })),
