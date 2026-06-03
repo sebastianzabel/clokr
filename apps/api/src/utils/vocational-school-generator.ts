@@ -484,6 +484,85 @@ async function runOrPreview(
     );
   }
 
+  // v1.7.4 hotfix — Orphan PATTERN-Absence cleanup.
+  // When a user deselects a weekday from their pattern (e.g. removes Fr from
+  // [Mo, Fr]), the previously-generated PATTERN Absences for the removed day
+  // stay in DB and continue to render in the Schichtplan. This sweep finds
+  // PATTERN-source Absences in the rolling window that no longer match ANY
+  // active pattern's daysOfWeek / blockWeeks intent and soft-deletes them.
+  // Source=MANUAL rows are NEVER touched (user-curated, audit-proof). Locked
+  // months are skipped (Revisionssicherheit / Phase 47.2 immutability).
+  if (!opts.dryRun) {
+    const intendedSet = new Set<string>();
+    for (const pattern of patterns) {
+      const weekdaySet = new Set<number>(pattern.daysOfWeek);
+      if (weekdaySet.size === 0 && pattern.dayOfWeek != null) {
+        weekdaySet.add(pattern.dayOfWeek);
+      }
+      const hasWeekday = weekdaySet.size > 0;
+      const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
+      const patternStart = dateOnlyUtc(pattern.validFrom);
+      const patternEnd = pattern.validUntil ? dateOnlyUtc(pattern.validUntil) : null;
+      for (let i = 0; i <= weeksAhead * 7; i++) {
+        const date = addDaysUtc(windowStart, i);
+        // Respect the pattern's own validity window — outside it, the pattern
+        // has no claim on this date and the existing-Absence is not its child.
+        if (date < patternStart) continue;
+        if (patternEnd && date > patternEnd) continue;
+        let matches = false;
+        if (hasWeekday && weekdaySet.has(dowMondayBased(date))) matches = true;
+        if (hasBlockWeeks) {
+          const iso = isoWeekOf(date);
+          if (iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
+            matches = true;
+          }
+        }
+        if (matches) intendedSet.add(`${pattern.employeeId}::${toIsoDate(date)}`);
+      }
+    }
+
+    const orphanCandidates = await prisma.absence.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        deletedAt: null,
+        startDate: { gte: windowStart, lte: windowEnd },
+      },
+    });
+
+    for (const a of orphanCandidates) {
+      const key = `${a.employeeId}::${toIsoDate(a.startDate)}`;
+      if (intendedSet.has(key)) continue;
+      // Skip locked-month rows (audit-proof).
+      const lockKey = `${a.employeeId}::${toIsoDate(monthStartUtc(a.startDate))}`;
+      if (lockedSet.has(lockKey)) continue;
+
+      await prisma.absence.update({
+        where: { id: a.id },
+        data: { deletedAt: now },
+      });
+      await audit({
+        userId: undefined,
+        action: "VOCATIONAL_SCHOOL_AUTO_DELETED",
+        entity: "Absence",
+        entityId: a.id,
+        oldValue: {
+          origin: "SYSTEM",
+          employeeId: a.employeeId,
+          date: toIsoDate(a.startDate),
+          source: "PATTERN",
+        },
+        newValue: {
+          origin: "SYSTEM",
+          deletedAt: now.toISOString(),
+          reason: "orphaned_after_pattern_change",
+        },
+        request: undefined,
+      });
+    }
+  }
+
   return result;
 }
 
