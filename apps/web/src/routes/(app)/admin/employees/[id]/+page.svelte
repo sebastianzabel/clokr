@@ -916,157 +916,6 @@
             </div>
           </div>
         </Section>
-
-        <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
-        {#if eClassification === "AZUBI"}
-          <Section
-            title="Berufsschultag (Optional)"
-            sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
-          >
-            {#snippet footer()}
-              <button
-                class="btn btn-primary"
-                onclick={savePatterns}
-                disabled={!bsCanSave}
-                title={bsLocalValidationError || ""}
-              >
-                {bsPatternsSaving ? "Speichern…" : "Speichern"}
-              </button>
-              {#if bsPatternsSaved}<span class="saved-hint">Gespeichert</span>{/if}
-            {/snippet}
-
-            {#if bsPatternsLoadError}
-              <div class="callout error">{bsPatternsLoadError}</div>
-            {/if}
-            {#if bsPatternsSaveError}
-              <div class="callout error">{bsPatternsSaveError}</div>
-            {/if}
-            {#if bsLocalValidationError && bsPatterns.length > 0}
-              <div class="callout">{bsLocalValidationError}</div>
-            {/if}
-
-            {#if bsPatterns.length === 0}
-              <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-                Keine Berufsschultage konfiguriert.
-              </p>
-            {/if}
-
-            {#if bsPatterns.length > 0}
-              <ul class="bs-pattern-list">
-                {#each bsPatterns as p, idx (p._key)}
-                  <li class="bs-pattern-card">
-                    <!-- Row header with delete -->
-                    <div class="bs-pattern-row bs-pattern-head">
-                      <span class="bs-pattern-label">Pattern {idx + 1}</span>
-                      <button
-                        type="button"
-                        class="btn btn-ghost btn-sm"
-                        onclick={() => bsRemovePattern(p._key)}
-                        disabled={bsPatternsSaving}
-                        aria-label="Pattern entfernen"
-                      >
-                        Entfernen
-                      </button>
-                    </div>
-
-                    <!-- dayOfWeek chip-row (toggle, single-select) -->
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Wochentag:</span>
-                      <div class="bs-chip-row">
-                        {#each BS_WEEKDAY_LABELS as label, didx (label)}
-                          <button
-                            type="button"
-                            class="chip chip-button"
-                            class:chip-brand={p.dayOfWeek === didx}
-                            onclick={() => bsToggleDayOfWeek(p._key, didx)}
-                            disabled={bsPatternsSaving}
-                          >
-                            {label}
-                          </button>
-                        {/each}
-                      </div>
-                    </div>
-
-                    <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Block-Wochen:</span>
-                      <div class="bs-week-grid">
-                        {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
-                          <button
-                            type="button"
-                            class="chip chip-week chip-button"
-                            class:chip-brand={p.blockWeeks.includes(wk)}
-                            onclick={() => bsToggleBlockWeek(p._key, wk)}
-                            disabled={bsPatternsSaving}
-                          >
-                            {wk}
-                          </button>
-                        {/each}
-                      </div>
-                    </div>
-
-                    <!-- Year picker (only when at least one block-week is selected) -->
-                    {#if p.blockWeeks.length > 0}
-                      <div class="bs-pattern-row">
-                        <span class="bs-pattern-label">Jahr:</span>
-                        <input
-                          type="number"
-                          class="form-input bs-year-input"
-                          min={new Date().getFullYear() - 2}
-                          max={new Date().getFullYear() + 2}
-                          step="1"
-                          value={p.blockYear ?? new Date().getFullYear()}
-                          oninput={(e) =>
-                            bsSetBlockYear(
-                              p._key,
-                              Number.parseInt((e.currentTarget as HTMLInputElement).value, 10),
-                            )}
-                          disabled={bsPatternsSaving}
-                        />
-                      </div>
-                    {/if}
-
-                    <!-- Validity inputs -->
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Gültig-ab:</span>
-                      <input
-                        type="date"
-                        class="form-input"
-                        value={p.validFrom}
-                        oninput={(e) =>
-                          bsSetValidFrom(p._key, (e.currentTarget as HTMLInputElement).value)}
-                        disabled={bsPatternsSaving}
-                      />
-                    </div>
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Gültig-bis:</span>
-                      <input
-                        type="date"
-                        class="form-input"
-                        value={p.validUntil ?? ""}
-                        placeholder="Unbefristet"
-                        oninput={(e) =>
-                          bsSetValidUntil(p._key, (e.currentTarget as HTMLInputElement).value)}
-                        disabled={bsPatternsSaving}
-                      />
-                    </div>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-
-            <div style="margin-top: 1rem;">
-              <button
-                type="button"
-                class="btn btn-secondary"
-                onclick={bsAddPattern}
-                disabled={bsPatternsSaving}
-              >
-                + Berufsschultag hinzufügen
-              </button>
-            </div>
-          </Section>
-        {/if}
       {:else if tab === "arbeitszeit"}
         <!-- ── Arbeitszeit ─────────────────────────────────────────────────── -->
         <Section
@@ -1495,6 +1344,157 @@
             <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
           </div>
         </Section>
+
+        <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
+        {#if eClassification === "AZUBI"}
+          <Section
+            title="Berufsschultag (Optional)"
+            sub="Wiederkehrende Berufsschultage und Block-Wochen für BBiG-§15-Freistellung"
+          >
+            {#snippet footer()}
+              <button
+                class="btn btn-primary"
+                onclick={savePatterns}
+                disabled={!bsCanSave}
+                title={bsLocalValidationError || ""}
+              >
+                {bsPatternsSaving ? "Speichern…" : "Speichern"}
+              </button>
+              {#if bsPatternsSaved}<span class="saved-hint">Gespeichert</span>{/if}
+            {/snippet}
+
+            {#if bsPatternsLoadError}
+              <div class="callout error">{bsPatternsLoadError}</div>
+            {/if}
+            {#if bsPatternsSaveError}
+              <div class="callout error">{bsPatternsSaveError}</div>
+            {/if}
+            {#if bsLocalValidationError && bsPatterns.length > 0}
+              <div class="callout">{bsLocalValidationError}</div>
+            {/if}
+
+            {#if bsPatterns.length === 0}
+              <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+                Keine Berufsschultage konfiguriert.
+              </p>
+            {/if}
+
+            {#if bsPatterns.length > 0}
+              <ul class="bs-pattern-list">
+                {#each bsPatterns as p, idx (p._key)}
+                  <li class="bs-pattern-card">
+                    <!-- Row header with delete -->
+                    <div class="bs-pattern-row bs-pattern-head">
+                      <span class="bs-pattern-label">Pattern {idx + 1}</span>
+                      <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={() => bsRemovePattern(p._key)}
+                        disabled={bsPatternsSaving}
+                        aria-label="Pattern entfernen"
+                      >
+                        Entfernen
+                      </button>
+                    </div>
+
+                    <!-- dayOfWeek chip-row (toggle, single-select) -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Wochentag:</span>
+                      <div class="bs-chip-row">
+                        {#each BS_WEEKDAY_LABELS as label, didx (label)}
+                          <button
+                            type="button"
+                            class="chip chip-button"
+                            class:chip-brand={p.dayOfWeek === didx}
+                            onclick={() => bsToggleDayOfWeek(p._key, didx)}
+                            disabled={bsPatternsSaving}
+                          >
+                            {label}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+
+                    <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Block-Wochen:</span>
+                      <div class="bs-week-grid">
+                        {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
+                          <button
+                            type="button"
+                            class="chip chip-week chip-button"
+                            class:chip-brand={p.blockWeeks.includes(wk)}
+                            onclick={() => bsToggleBlockWeek(p._key, wk)}
+                            disabled={bsPatternsSaving}
+                          >
+                            {wk}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
+
+                    <!-- Year picker (only when at least one block-week is selected) -->
+                    {#if p.blockWeeks.length > 0}
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">Jahr:</span>
+                        <input
+                          type="number"
+                          class="form-input bs-year-input"
+                          min={new Date().getFullYear() - 2}
+                          max={new Date().getFullYear() + 2}
+                          step="1"
+                          value={p.blockYear ?? new Date().getFullYear()}
+                          oninput={(e) =>
+                            bsSetBlockYear(
+                              p._key,
+                              Number.parseInt((e.currentTarget as HTMLInputElement).value, 10),
+                            )}
+                          disabled={bsPatternsSaving}
+                        />
+                      </div>
+                    {/if}
+
+                    <!-- Validity inputs -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Gültig-ab:</span>
+                      <input
+                        type="date"
+                        class="form-input"
+                        value={p.validFrom}
+                        oninput={(e) =>
+                          bsSetValidFrom(p._key, (e.currentTarget as HTMLInputElement).value)}
+                        disabled={bsPatternsSaving}
+                      />
+                    </div>
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">Gültig-bis:</span>
+                      <input
+                        type="date"
+                        class="form-input"
+                        value={p.validUntil ?? ""}
+                        placeholder="Unbefristet"
+                        oninput={(e) =>
+                          bsSetValidUntil(p._key, (e.currentTarget as HTMLInputElement).value)}
+                        disabled={bsPatternsSaving}
+                      />
+                    </div>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
+            <div style="margin-top: 1rem;">
+              <button
+                type="button"
+                class="btn btn-secondary"
+                onclick={bsAddPattern}
+                disabled={bsPatternsSaving}
+              >
+                + Berufsschultag hinzufügen
+              </button>
+            </div>
+          </Section>
+        {/if}
 
         <!-- Orphan-Schichten modal -->
         {#if orphanModalOpen}
