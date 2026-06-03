@@ -803,7 +803,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       if (scheduleType === "SHIFT_BASED") {
         const shifts = await app.prisma.shift.findMany({
-          where: { employeeId, date: { gte: effectiveStart, lte: monthEnd } },
+          where: {
+            employeeId,
+            date: { gte: effectiveStart, lte: monthEnd },
+            deletedAt: null, // Phase 67.2 — overtime saldo ignores soft-deleted shifts
+          },
           select: { date: true, startTime: true, endTime: true },
         });
         const approvedLeave = await app.prisma.leaveRequest.findMany({

@@ -20,6 +20,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
+  dispatchShiftCleanupForCreatedAbsences,
 } from "../utils/vocational-school-generator";
 
 const previewQuerySchema = z.object({
@@ -235,6 +236,26 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
           },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
+
+        // Phase 67.2 Plan 04 — Shift-Auto-Cleanup hook for MANUAL insert.
+        // Reuses the same dispatcher as the Generator (PATTERN trigger) so the
+        // cleanup + batched-notification surface is identical. Wrapped in try/catch
+        // because the manual-insert MUST succeed even if cleanup fails — the
+        // Absence is the user-visible artifact; cleanup is best-effort follow-up.
+        try {
+          const created_map = new Map<string, Date[]>();
+          created_map.set(employee.id, [dateUtc]);
+          await dispatchShiftCleanupForCreatedAbsences(
+            app.prisma,
+            app.audit,
+            tenantId,
+            created_map,
+            new Date(),
+            "MANUAL",
+          );
+        } catch (cleanupErr) {
+          app.log.warn({ err: cleanupErr }, "Shift-Cleanup after manual BS insert failed");
+        }
 
         return reply.code(201).send(created);
       } catch (err: unknown) {

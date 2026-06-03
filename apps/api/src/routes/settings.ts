@@ -638,6 +638,7 @@ export async function settingsRoutes(app: FastifyInstance) {
             where: {
               employeeId,
               date: { gte: new Date(todayIso) },
+              deletedAt: null, // Phase 67.2 — orphan check only sees active shifts
             },
             orderBy: { date: "asc" },
             select: { id: true, date: true, startTime: true, endTime: true },

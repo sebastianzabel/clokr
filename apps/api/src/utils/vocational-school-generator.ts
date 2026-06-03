@@ -17,6 +17,7 @@
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -136,6 +137,11 @@ async function runOrPreview(
     },
     details: opts.dryRun ? [] : undefined,
   };
+
+  // Phase 67.2 Plan 04 — Track newly-created Absence dates per employee so we can
+  // invoke the Shift-Auto-Cleanup hook ONCE per employee at the end of the run
+  // (batched notification, no per-day fan-out). Skipped entirely in dryRun.
+  const createdDatesByEmployee = new Map<string, Date[]>();
 
   // 1. Load all active patterns for this tenant whose validity range intersects the window.
   //    Includes Phase 67.2 fields `respectSchoolHolidays` and `federalStateOverride`
@@ -422,11 +428,94 @@ async function runOrPreview(
         // (e.g. weekday + block-week both match in the same iteration).
         existingSet.add(existKey);
         result.created++;
+        // Phase 67.2 Plan 04 — record the new BS-day so the Shift-Auto-Cleanup hook
+        // can scan it after the loop completes.
+        let bucket = createdDatesByEmployee.get(employee.id);
+        if (!bucket) {
+          bucket = [];
+          createdDatesByEmployee.set(employee.id, bucket);
+        }
+        bucket.push(date);
       }
     }
   }
 
+  // Phase 67.2 Plan 04 — Shift-Auto-Cleanup hook. Runs ONCE per employee after all
+  // Absences are created in the run (batched notification). Skipped in dryRun.
+  // Tenant opt-out is honored inside cleanupShiftsForBSAbsence(); the helper returns
+  // { skipped: true } when vocationalSchoolAutoCleanupShifts=false.
+  if (!opts.dryRun && createdDatesByEmployee.size > 0) {
+    await dispatchShiftCleanupForCreatedAbsences(
+      prisma,
+      audit,
+      opts.tenantId,
+      createdDatesByEmployee,
+      now,
+      "PATTERN",
+    );
+  }
+
   return result;
+}
+
+// ── Phase 67.2 Plan 04 — Shift-Auto-Cleanup dispatcher ───────────────────────
+//
+// Walks the per-employee createdDates Map and:
+//   1. Invokes cleanupShiftsForBSAbsence for each employee with the new BS-dates
+//   2. Sends ONE batched Notification per affected employee to all ADMIN+MANAGER
+//      users in the tenant (in-app only — the email layer of app.notify() is not
+//      wired here because Generator runs without an app instance; the in-app
+//      notification surface alone matches the BS-Cleanup UX described in Plan 05).
+//
+// Exported for reuse by routes/vocational-school.ts (manual-insert D-23).
+export async function dispatchShiftCleanupForCreatedAbsences(
+  prisma: PrismaClient,
+  audit: AuditFn,
+  tenantId: string,
+  createdDatesByEmployee: Map<string, Date[]>,
+  now: Date,
+  triggerSource: "PATTERN" | "MANUAL",
+): Promise<void> {
+  for (const [employeeId, dates] of createdDatesByEmployee) {
+    const r = await cleanupShiftsForBSAbsence(prisma, audit, {
+      tenantId,
+      employeeId,
+      dates,
+      now,
+      triggerSource,
+    });
+    if (r.skipped) continue;
+    if (r.futureSoftDeleted === 0 && r.pastFlagged === 0) continue;
+
+    // Resolve employee display name + recipient list for the batched notification.
+    const emp = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true },
+    });
+    const empName = emp ? `${emp.firstName} ${emp.lastName}` : employeeId;
+    const recipients = await prisma.employee.findMany({
+      where: {
+        tenantId,
+        user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+      },
+      include: { user: { select: { id: true } } },
+    });
+
+    const notificationData = {
+      type: "SHIFT_BS_CLEANUP",
+      title: "Schichten auf Berufsschultagen",
+      message: `Für ${empName}: ${r.futureSoftDeleted} Schicht(en) entfernt, ${r.pastFlagged} markiert`,
+      link: "/shifts/conflicts",
+      relatedType: "Shift",
+      relatedId: r.affectedShiftIds[0] ?? null,
+    };
+    for (const e of recipients) {
+      if (!e.user) continue;
+      await prisma.notification.create({
+        data: { userId: e.user.id, ...notificationData },
+      });
+    }
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

@@ -439,6 +439,7 @@ async function assertArbZGRestPeriod(
     where: {
       employeeId,
       date: new Date(prevIso + "T00:00:00Z"),
+      deletedAt: null, // Phase 67.2 — exclude soft-deleted shifts from rest-period calc
       ...(excludeShiftId ? { NOT: { id: excludeShiftId } } : {}),
     },
     select: { id: true, startTime: true, endTime: true },
@@ -709,6 +710,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             where: {
               employee: { tenantId },
               date: { gte: monday, lte: sunday },
+              deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from /shifts/week
             },
             include: {
               employee: {
@@ -1099,6 +1101,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         where: {
           employee: { tenantId: req.user.tenantId },
           date: { gte: monday, lte: sunday },
+          deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from per-employee week view
         },
         include: {
           employee: { select: { id: true, firstName: true } },
@@ -1706,6 +1709,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             where: {
               employee: { tenantId },
               date: { gte: weekStartDate, lte: weekEndDate },
+              deletedAt: null, // Phase 67.2 — generate-week existingSet must not see soft-deleted rows
             },
             select: { id: true, employeeId: true, date: true },
           }),
@@ -1989,6 +1993,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             where: {
               employee: { tenantId },
               date: { gte: sourceStartDate, lte: sourceEndDate },
+              deletedAt: null, // Phase 67.2 — copy-week must not propagate soft-deleted shifts
             },
             include: {
               template: { select: { id: true, name: true } },
@@ -2018,6 +2023,7 @@ export async function shiftRoutes(app: FastifyInstance) {
             where: {
               employee: { tenantId },
               date: { gte: targetStartDate, lte: targetEndDate },
+              deletedAt: null, // Phase 67.2 — target-week existingSet must not see soft-deleted rows
             },
             select: { id: true, employeeId: true, date: true },
           }),

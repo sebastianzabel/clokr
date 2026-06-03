@@ -823,6 +823,7 @@ export async function leaveRoutes(app: FastifyInstance) {
               employeeId: existing.employeeId,
               date: { gte: existing.startDate, lte: existing.endDate },
               conflictsWithLeave: false,
+              deletedAt: null, // Phase 67.2 — leave-approval hook only flags ACTIVE shifts
             },
             select: { id: true, date: true, startTime: true, endTime: true, label: true },
           });

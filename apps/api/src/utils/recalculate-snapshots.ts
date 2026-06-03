@@ -116,7 +116,11 @@ export async function recalculateSnapshots(
 
     if (scheduleType === "SHIFT_BASED") {
       const shifts = await app.prisma.shift.findMany({
-        where: { employeeId, date: { gte: effectiveStart, lte: monthEnd } },
+        where: {
+          employeeId,
+          date: { gte: effectiveStart, lte: monthEnd },
+          deletedAt: null, // Phase 67.2 — snapshot recalc ignores soft-deleted shifts
+        },
         select: { date: true, startTime: true, endTime: true },
       });
       const approvedLeave = await app.prisma.leaveRequest.findMany({
