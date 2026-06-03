@@ -953,17 +953,23 @@ model EmployeeShiftPattern {
 }
 
 // Phase 62 — Recurring vocational-school day pattern per employee.
-// Either dayOfWeek (regular weekday) OR blockWeeks (ISO weeks of a year) must be set.
+// Either daysOfWeek (regular weekdays) OR blockWeeks (ISO weeks of a year) must be set.
 // Enforced application-side via Zod refine in routes/vocational-school-pattern.ts.
 // The auto-generator (plugins/vocational-school-generator.ts) reads these and produces
 // Absence rows of type VOCATIONAL_SCHOOL for the next TenantConfig.vocationalSchoolPreviewWeeks weeks.
+//
+// Phase 67.1 (v1.7.4) — Multi-day support: `daysOfWeek Int[]` replaces single-value
+// `dayOfWeek Int?`. The legacy `dayOfWeek` column is retained for one release of soak
+// (drop scheduled for v1.7.5) so downgrade is possible. New code MUST read/write
+// `daysOfWeek`; the API normalises legacy inbound `dayOfWeek` into the array form.
 model EmployeeVocationalSchoolPattern {
   id         String    @id @default(uuid())
   employeeId String
   employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  dayOfWeek  Int? // 0=Mo..6=So for recurring weekday; null when only blockWeeks set
-  blockWeeks Int[] // ISO week numbers for block-school weeks; empty array when only dayOfWeek set
-  blockYear  Int? // Year context for blockWeeks (for annual uniqueness); null when only dayOfWeek set
+  dayOfWeek  Int? // DEPRECATED v1.7.4 — kept for one release of soak, drop in v1.7.5
+  daysOfWeek Int[]     @default([]) // 0=Mo..6=So for recurring weekdays; empty array when only blockWeeks set
+  blockWeeks Int[] // ISO week numbers for block-school weeks; empty array when only daysOfWeek set
+  blockYear  Int? // Year context for blockWeeks (for annual uniqueness); null when only daysOfWeek set
   validFrom  DateTime  @db.Date
   validUntil DateTime? @db.Date // null = open-ended
   isActive   Boolean   @default(true)
