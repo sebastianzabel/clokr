@@ -65,8 +65,11 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.deleteMany({
       where: { employeeId: data.employee.id },
     });
+    // Wipe ALL Absence types here (not only VOCATIONAL_SCHOOL) so leftover SICK/etc.
+    // rows from BERSCH-08 tests don't trip the schoolHoliday-vs-existing priority chain
+    // in Phase 67.2 tests below.
     await app.prisma.absence.deleteMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL" },
+      where: { employeeId: data.employee.id },
     });
     await app.prisma.saldoSnapshot.deleteMany({
       where: { employeeId: data.employee.id },

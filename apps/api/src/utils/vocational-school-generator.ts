@@ -15,6 +15,7 @@
 //                   action VOCATIONAL_SCHOOL_AUTO_GENERATED.
 
 import type { PrismaClient } from "@clokr/db";
+import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 
 // ── Public types ─────────────────────────────────────────────────────────────
@@ -22,6 +23,7 @@ import type { FastifyInstance } from "fastify";
 export interface GeneratorResult {
   created: number;
   skipped: {
+    schoolHoliday: number; // Phase 67.2: date falls in SchoolHolidayPeriod for resolved BL
     existing: number; // BERSCH-08: an Absence already exists for (employeeId, date)
     locked: number; // BERSCH-09: month is closed (SaldoSnapshot present)
     preHire: number;
@@ -124,11 +126,20 @@ async function runOrPreview(
 
   const result: GeneratorResult = {
     created: 0,
-    skipped: { existing: 0, locked: 0, preHire: 0, postExit: 0, outOfWindow: 0 },
+    skipped: {
+      schoolHoliday: 0,
+      existing: 0,
+      locked: 0,
+      preHire: 0,
+      postExit: 0,
+      outOfWindow: 0,
+    },
     details: opts.dryRun ? [] : undefined,
   };
 
   // 1. Load all active patterns for this tenant whose validity range intersects the window.
+  //    Includes Phase 67.2 fields `respectSchoolHolidays` and `federalStateOverride`
+  //    via Prisma's default-scalar inclusion.
   const patterns = await prisma.employeeVocationalSchoolPattern.findMany({
     where: {
       isActive: true,
@@ -142,6 +153,13 @@ async function runOrPreview(
   });
 
   if (patterns.length === 0) return result;
+
+  // Phase 67.2 — Load tenant federalState as default for school-holiday resolution
+  // (overridable per-pattern via federalStateOverride).
+  const tenant = await prisma.tenant.findUniqueOrThrow({
+    where: { id: opts.tenantId },
+    select: { id: true, federalState: true },
+  });
 
   // 2. Bulk-fetch existing Absences in the window for these tenants' employees (idempotency).
   //    Build a set keyed by "employeeId::YYYY-MM-DD" for O(1) lookups.
@@ -172,11 +190,63 @@ async function runOrPreview(
     lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
   );
 
-  // 4. Iterate patterns × candidate dates, applying skip-conditions in order.
+  // 4. Phase 67.2 — Bulk-fetch SchoolHolidayPeriods for every federal state we will
+  //    consult (tenant.federalState + every distinct Pattern.federalStateOverride).
+  //    The cache is per-tenant (filtered by tenantId for multi-tenant isolation,
+  //    Threat T-67.2-09) and only contains periods that overlap the window.
+  //
+  //    Stale-cache fallback: if a state's periods are missing entirely (sync hasn't
+  //    populated yet or upstream is down), isSchoolHoliday() returns false for that
+  //    state and the generator behaves as if no holidays exist (RESEARCH §128 safe
+  //    degradation).
+  const neededStates = new Set<FederalState>([tenant.federalState]);
+  for (const p of patterns) {
+    if (p.federalStateOverride) neededStates.add(p.federalStateOverride);
+  }
+  const holidayPeriods = await prisma.schoolHolidayPeriod.findMany({
+    where: {
+      tenantId: opts.tenantId,
+      federalState: { in: [...neededStates] },
+      // Period overlap: period.startDate <= windowEnd AND period.endDate >= windowStart
+      startDate: { lte: windowEnd },
+      endDate: { gte: windowStart },
+    },
+    select: { federalState: true, startDate: true, endDate: true },
+  });
+  // Index by federalState for O(1) bucket access; we scan within-bucket
+  // (typically <20 entries/year/BL).
+  const holidaysByState = new Map<FederalState, Array<{ startDate: Date; endDate: Date }>>();
+  for (const h of holidayPeriods) {
+    let bucket = holidaysByState.get(h.federalState);
+    if (!bucket) {
+      bucket = [];
+      holidaysByState.set(h.federalState, bucket);
+    }
+    bucket.push({ startDate: h.startDate, endDate: h.endDate });
+  }
+
+  function isSchoolHoliday(date: Date, fs: FederalState): boolean {
+    const periods = holidaysByState.get(fs);
+    if (!periods) return false;
+    const t = date.getTime();
+    for (const p of periods) {
+      if (t >= p.startDate.getTime() && t <= p.endDate.getTime()) return true;
+    }
+    return false;
+  }
+
+  // 5. Iterate patterns × candidate dates, applying skip-conditions in order.
   for (const pattern of patterns) {
     const employee = pattern.employee;
     const patternValidUntil = pattern.validUntil;
     const patternValidFrom = pattern.validFrom;
+
+    // Phase 67.2 — Resolve effective federal state + opt-out flag per pattern.
+    // `respectSchoolHolidays === false` is the Pflegeschule / Berufsakademie
+    // opt-out: holidays do NOT apply. `federalStateOverride` is the
+    // Pendler-Azubi case (BS in a different BL than the employer's tenant).
+    const effectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
+    const skipHolidayCheck = pattern.respectSchoolHolidays === false;
 
     // Phase 67.1 — Multi-day weekday support. `daysOfWeek Int[]` is the canonical
     // source; legacy single-value `dayOfWeek Int?` is folded in for old rows that
@@ -262,6 +332,22 @@ async function runOrPreview(
             date: toIsoDate(date),
             action: "skipped",
             reason: "outOfWindow",
+          });
+        }
+        continue;
+      }
+      // (c.5) School-Holiday skip (Phase 67.2). MUST run BEFORE BERSCH-08 existing
+      // check so the `schoolHoliday` counter is accurate and idempotency holds
+      // on reruns (RESEARCH §198 pitfall #8). When `respectSchoolHolidays=false`
+      // (Pflegeschule opt-out) we bypass this branch entirely.
+      if (!skipHolidayCheck && isSchoolHoliday(date, effectiveFs)) {
+        result.skipped.schoolHoliday++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: employee.id,
+            date: toIsoDate(date),
+            action: "skipped",
+            reason: "schoolHoliday",
           });
         }
         continue;
