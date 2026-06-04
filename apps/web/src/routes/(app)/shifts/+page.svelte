@@ -1369,8 +1369,12 @@
               <!-- v1.7.4 hotfix — schoolHoliday marker. BS-Absence wins display
                    priority (av === "vocational_school" path renders BS, not
                    Ferien), but on empty days the Ferien badge surfaces so
-                   managers see why an AZUBI is absent during school break. -->
-              {@const holiday = schoolHolidayByEmpDate.get(`${u.id}::${iso}`)}
+                   managers see why an AZUBI is absent during school break.
+                   Guard: only AZUBI rows ever get a holiday marker — the API
+                   already filters (BBiG §15), this is defense-in-depth. -->
+              {@const holiday = isAzubi(u)
+                ? schoolHolidayByEmpDate.get(`${u.id}::${iso}`)
+                : undefined}
               {#if s}
                 <!-- Occupied cell: drag-source for the shift pill, NOT a drop-target.
                      Drops onto occupied cells are rejected client-side via
