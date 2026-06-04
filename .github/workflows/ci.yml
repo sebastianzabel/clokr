@@ -88,6 +88,31 @@ jobs:
         id: tests_web
         run: pnpm --filter @clokr/web test:coverage
 
+      - name: Audit dependencies (pnpm audit)
+        # Exits 1 when HIGH or CRITICAL vulnerabilities are found in production dependencies.
+        # For accepted CVEs (with documented justification), add to root package.json
+        # under pnpm.auditConfig.ignoreCves[]. .trivyignore is Trivy-specific and is
+        # NOT read by pnpm audit (RESEARCH § Pitfall 8). Do NOT add --json (pnpm/pnpm#3827).
+        run: pnpm audit --audit-level high
+
+      - name: Trivy filesystem scan (pnpm-lock.yaml dependencies)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy FS scan to GitHub Security
+        uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-fs
+
       - name: Build API
         run: pnpm --filter @clokr/api build
 
