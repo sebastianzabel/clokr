@@ -57,12 +57,28 @@ export async function activityRoutes(app: FastifyInstance) {
         const since = new Date();
         since.setDate(since.getDate() - 7);
 
+        // Tenant scoping for audit logs (WR-06):
+        // AuditLog has no direct tenantId column, only a nullable userId.
+        // A naive filter on `user: { employee: { tenantId } }` would silently
+        // drop two categories of rows the admin SHOULD see:
+        //   1) SYSTEM-actor rows (cron jobs: auto-close-month, data-retention,
+        //      attendance-checker, scheduler) — these have userId=null OR a
+        //      SYSTEM user with no employee link.
+        //   2) DSGVO-anonymized rows — anonymization sets userId=null per
+        //      CLAUDE.md § DSGVO Employee Deletion.
+        // We therefore OR three branches: actor-in-tenant, SYSTEM (userId
+        // null), and orphan-user (user without employee link). The latter
+        // two are global since AuditLog cannot be tenant-resolved without
+        // a schema change — acceptable because the ADMIN role is already
+        // tenant-scoped at the request-auth layer.
         const logs = await app.prisma.auditLog.findMany({
           where: {
             createdAt: { gte: since },
-            // Scope to tenant via the actor's Employee.tenantId
-            // (User has no tenantId; tenant lives on Employee)
-            user: { employee: { tenantId } },
+            OR: [
+              { user: { employee: { tenantId } } },
+              { userId: null }, // SYSTEM cron actions + DSGVO-anonymized rows
+              { user: { employeeId: null } }, // SYSTEM-user actor without employee link
+            ],
           },
           orderBy: { createdAt: "desc" },
           take: limit,
