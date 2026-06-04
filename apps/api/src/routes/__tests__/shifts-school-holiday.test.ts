@@ -6,15 +6,19 @@ import type { FastifyInstance } from "fastify";
  * v1.7.4 hotfix — GET /api/v1/shifts/week emits schoolHoliday[] per cell.
  *
  * Covers:
- *  - Test A: Week that overlaps a SchoolHolidayPeriod for the tenant's
- *    Bundesland surfaces schoolHoliday entries for every (employee × in-range day).
+ *  - Test A: AZUBI employee in a week that overlaps a SchoolHolidayPeriod gets
+ *    schoolHoliday entries emitted for every (employee × in-range day).
  *  - Test B: When BOTH a VOCATIONAL_SCHOOL Absence AND a SchoolHolidayPeriod cover
  *    the same day, the BS-Absence wins the availability bucket; the schoolHoliday
  *    array still emits the holiday info so the UI's BS-wins priority is
  *    enforced on the rendering side (matches API contract: holiday data is
  *    advisory, availability classification is authoritative).
+ *  - Test C (regression): Non-AZUBI employee MUST NOT receive schoolHoliday entries
+ *    even when a SchoolHolidayPeriod covers the week (BBiG §15 — Schulferien are
+ *    only relevant for apprentices).
  *
  * User report: "ferien sollten im schichtplan sichtbar sein".
+ * v1.7.5 fix: "schulferien shown for all employees" — emit only for AZUBI.
  */
 describe("GET /shifts/week — SchoolHolidayPeriod (v1.7.4 hotfix)", () => {
   let app: FastifyInstance;
@@ -39,6 +43,13 @@ describe("GET /shifts/week — SchoolHolidayPeriod (v1.7.4 hotfix)", () => {
         weeklyHours: 40,
         validFrom: new Date("2024-02-01"),
       },
+    });
+
+    // v1.7.5 fix — schoolHoliday is only emitted for AZUBI employees (BBiG §15).
+    // Mark the default test employee as AZUBI so Tests A + B can assert emission.
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { classification: "AZUBI" },
     });
   });
 
@@ -171,5 +182,48 @@ describe("GET /shifts/week — SchoolHolidayPeriod (v1.7.4 hotfix)", () => {
     );
     expect(hEntry).toBeDefined();
     expect(hEntry?.name).toBe("Herbstferien-Test");
+  });
+
+  // ── Test C: Non-AZUBI employees MUST NOT receive schoolHoliday entries ──────
+  it("does not emit schoolHoliday for non-AZUBI employees (BBiG §15 regression)", async () => {
+    // Temporarily reclassify the employee to VOLLZEIT (non-AZUBI) to verify
+    // the guard. VOLLZEIT is the schema default and a representative non-AZUBI
+    // classification (BBiG §15 only applies to AZUBI).
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { classification: "VOLLZEIT" },
+    });
+
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: new Date(HOLIDAY_TUESDAY + "T00:00:00Z"),
+        endDate: new Date(HOLIDAY_WEDNESDAY + "T00:00:00Z"),
+        name: "Herbstferien-Test",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/shifts/week?date=${TEST_WEEK_START}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const body = JSON.parse(res.body) as {
+      schoolHoliday: Array<{ employeeId: string; date: string }>;
+    };
+    // Non-AZUBI employee must produce zero schoolHoliday entries.
+    const empEntries = body.schoolHoliday.filter((e) => e.employeeId === data.employee.id);
+    expect(empEntries).toHaveLength(0);
+
+    // Restore AZUBI classification for subsequent tests.
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { classification: "AZUBI" },
+    });
   });
 });

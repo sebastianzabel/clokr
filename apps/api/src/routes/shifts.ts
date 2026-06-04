@@ -1143,9 +1143,10 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // v1.7.4 hotfix — per-(employee × day) SchoolHolidayPeriod info. Emitted
-      // for every cell where the employee's effective Bundesland is currently in
-      // a school holiday range, regardless of role: the UI prioritises BS-Absence
-      // (vocational_school) over Ferien marker (see frontend /shifts/+page.svelte).
+      // only for AZUBI employees: Schulferien are governed by BBiG §15 and are
+      // only relevant for apprentices. Non-AZUBI employees (REGULAR, MINIJOB,
+      // etc.) have no Berufsschule relationship so showing Ferien markers on
+      // their rows is semantically incorrect and visually confusing.
       const schoolHoliday: Array<{
         employeeId: string;
         date: string;
@@ -1153,6 +1154,8 @@ export async function shiftRoutes(app: FastifyInstance) {
         federalState: string;
       }> = [];
       for (const emp of employees) {
+        // Skip non-AZUBIs — Schulferien are not relevant for them (BBiG §15).
+        if (emp.classification !== "AZUBI") continue;
         const fs = empFederalState.get(emp.id) ?? defaultFederalState;
         for (const iso of weekDays) {
           const h = resolveHoliday(fs, iso);
