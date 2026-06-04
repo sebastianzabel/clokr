@@ -41,8 +41,16 @@
       <div
         class="toast toast-{toast.type}"
         animate:flip={{ duration: reducedMotion ? 0 : 250 }}
-        in:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 350, easing: (t) => 1 - Math.pow(1 - t, 3) }}
-        out:fly={{ x: reducedMotion ? 0 : 360, duration: reducedMotion ? 0 : 250, easing: (t) => t * t }}
+        in:fly={{
+          x: reducedMotion ? 0 : 360,
+          duration: reducedMotion ? 0 : 350,
+          easing: (t) => 1 - Math.pow(1 - t, 3),
+        }}
+        out:fly={{
+          x: reducedMotion ? 0 : 360,
+          duration: reducedMotion ? 0 : 250,
+          easing: (t) => t * t,
+        }}
         style="
           --toast-color: {toastColors(toast.type).color};
           --toast-bg: {toastColors(toast.type).bg};

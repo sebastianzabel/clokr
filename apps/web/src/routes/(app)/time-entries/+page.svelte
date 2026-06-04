@@ -8,7 +8,15 @@
   import MonthBar from "$components/ui/MonthBar.svelte";
   import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
   import Modal from "$components/ui/Modal.svelte";
-  import { format, startOfMonth, endOfMonth, addMonths, subMonths, startOfWeek, endOfWeek } from "date-fns";
+  import {
+    format,
+    startOfMonth,
+    endOfMonth,
+    addMonths,
+    subMonths,
+    startOfWeek,
+    endOfWeek,
+  } from "date-fns";
   import { de } from "date-fns/locale";
 
   interface Break {

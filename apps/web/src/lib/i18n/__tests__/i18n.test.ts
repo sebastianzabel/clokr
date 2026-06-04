@@ -31,9 +31,9 @@ describe("i18n module", () => {
   it("globalThis.__CLOKR_I18N__.en.save === 'Save' (EN bundle reachable at runtime)", () => {
     // The presence of this pinning ensures the EN bundle survives tree-shaking
     // (required for I18N-02 build verification).
-    expect((globalThis as unknown as { __CLOKR_I18N__?: { en: typeof en } }).__CLOKR_I18N__?.en?.save).toBe(
-      "Save",
-    );
+    expect(
+      (globalThis as unknown as { __CLOKR_I18N__?: { en: typeof en } }).__CLOKR_I18N__?.en?.save,
+    ).toBe("Save");
   });
 
   it("for every key in de, typeof de[k] === typeof en[k] and arrays have identical length", () => {

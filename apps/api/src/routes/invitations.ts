@@ -36,11 +36,9 @@ export async function invitationRoutes(app: FastifyInstance) {
       }
 
       if (invitation.expiresAt < new Date()) {
-        return reply
-          .code(410)
-          .send({
-            error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
-          });
+        return reply.code(410).send({
+          error: "Dieser Link ist abgelaufen. Bitte wenden Sie sich an den Administrator.",
+        });
       }
 
       // Validate password against tenant policy

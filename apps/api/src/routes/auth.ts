@@ -297,9 +297,12 @@ export async function authRoutes(app: FastifyInstance) {
 
       const newAccessToken = app.jwt.sign(payload);
       // Add jti to ensure uniqueness even when payload and timestamp are identical
-      const newRefreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string }, {
-        expiresIn: "7d",
-      });
+      const newRefreshToken = app.jwt.sign(
+        { ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string },
+        {
+          expiresIn: "7d",
+        },
+      );
 
       await app.prisma.refreshToken.create({
         data: {
@@ -547,9 +550,12 @@ async function issueTokens(
   };
 
   const accessToken = app.jwt.sign(payload);
-  const refreshToken = app.jwt.sign({ ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string }, {
-    expiresIn: `${refreshDays}d`,
-  });
+  const refreshToken = app.jwt.sign(
+    { ...payload, jti: crypto.randomUUID() } as JwtPayload & { jti: string },
+    {
+      expiresIn: `${refreshDays}d`,
+    },
+  );
 
   // Enforce max sessions per user
   const maxSessions = tenantConfig?.maxSessionsPerUser ?? 0;

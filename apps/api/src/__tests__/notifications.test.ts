@@ -60,7 +60,9 @@ describe("Notifications API", () => {
       });
 
       const body = JSON.parse(notifRes.body);
-      const leaveNotif = body.notifications.find((n: { type: string; title: string }) => n.type === "LEAVE_REQUEST");
+      const leaveNotif = body.notifications.find(
+        (n: { type: string; title: string }) => n.type === "LEAVE_REQUEST",
+      );
       expect(leaveNotif).toBeDefined();
       expect(leaveNotif.title).toContain("Urlaubsantrag");
     });
@@ -132,7 +134,9 @@ describe("Notifications API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const body = JSON.parse(listRes.body);
-      const leaveNotif = body.notifications.find((n: { type: string }) => n.type === "LEAVE_REQUEST");
+      const leaveNotif = body.notifications.find(
+        (n: { type: string }) => n.type === "LEAVE_REQUEST",
+      );
       notificationId = leaveNotif?.id;
     });
 
@@ -156,7 +160,9 @@ describe("Notifications API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const listBody = JSON.parse(listRes.body);
-      const stillThere = listBody.notifications.find((n: { id: string }) => n.id === notificationId);
+      const stillThere = listBody.notifications.find(
+        (n: { id: string }) => n.id === notificationId,
+      );
       expect(stillThere).toBeUndefined();
     });
 
@@ -179,7 +185,9 @@ describe("Notifications API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const listBody = JSON.parse(listRes.body);
-      const adminNotif = listBody.notifications.find((n: { type: string }) => n.type === "LEAVE_REQUEST");
+      const adminNotif = listBody.notifications.find(
+        (n: { type: string }) => n.type === "LEAVE_REQUEST",
+      );
       expect(adminNotif).toBeDefined();
 
       // Try to dismiss admin's notification as employee (cross-user)

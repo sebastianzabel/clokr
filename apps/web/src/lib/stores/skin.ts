@@ -1,7 +1,7 @@
-import { writable, get } from 'svelte/store';
-import { browser } from '$app/environment';
-import { prefsHydrated } from '$stores/prefs-state';
-import { savePreferences } from '$api/preferences';
+import { writable, get } from "svelte/store";
+import { browser } from "$app/environment";
+import { prefsHydrated } from "$stores/prefs-state";
+import { savePreferences } from "$api/preferences";
 
 /**
  * v999.2 skin — applied via `data-skin` attribute on <html>.
@@ -17,29 +17,29 @@ import { savePreferences } from '$api/preferences';
  * offline fallback, server-persisted via /me/preferences once the
  * `prefsHydrated` gate is open.
  */
-export type Skin = 'editorial' | 'modern';
+export type Skin = "editorial" | "modern";
 
-const VALID: readonly Skin[] = ['editorial', 'modern'] as const;
+const VALID: readonly Skin[] = ["editorial", "modern"] as const;
 
 function readInitial(): Skin {
-  if (!browser) return 'editorial';
-  const raw = localStorage.getItem('skin');
+  if (!browser) return "editorial";
+  const raw = localStorage.getItem("skin");
   if (raw && (VALID as readonly string[]).includes(raw)) return raw as Skin;
-  return 'editorial';
+  return "editorial";
 }
 
 export const skin = writable<Skin>(readInitial());
 
-skin.subscribe(value => {
+skin.subscribe((value) => {
   if (!browser) return;
-  localStorage.setItem('skin', value);
+  localStorage.setItem("skin", value);
   // Editorial = default — drop the attribute entirely so component selectors
   // that key off `[data-skin="modern"]` cleanly stop matching. This is the
   // cheapest way to guarantee the editorial layout is byte-for-byte unchanged.
-  if (value === 'editorial') {
-    document.documentElement.removeAttribute('data-skin');
+  if (value === "editorial") {
+    document.documentElement.removeAttribute("data-skin");
   } else {
-    document.documentElement.setAttribute('data-skin', value);
+    document.documentElement.setAttribute("data-skin", value);
   }
   // After hydration from the server, persist user toggles back to /me/preferences.
   if (get(prefsHydrated)) {

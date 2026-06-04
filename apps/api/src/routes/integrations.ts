@@ -315,11 +315,9 @@ export async function integrationRoutes(app: FastifyInstance) {
         );
       } catch (err: unknown) {
         app.log.error({ err }, "Fehler beim Laden der Phorest WorkTimeTables");
-        return reply
-          .code(502)
-          .send({
-            error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}`,
-          });
+        return reply.code(502).send({
+          error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
       // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
       const entries =

@@ -242,12 +242,7 @@
 
 <svelte:head><title>Integrationen – Clokr</title></svelte:head>
 
-<SectionStack
-  eyebrow="System"
-  title="Integrationen"
-  sub="WiFi-Präsenz und externe Dienste"
-  animate
->
+<SectionStack eyebrow="System" title="Integrationen" sub="WiFi-Präsenz und externe Dienste" animate>
   <!-- ── Block 1: Presence-Quellen ──────────────────────────────────────── -->
   <Section title="Presence-Quellen" sub="API-Schlüssel für WiFi-Adapter verwalten">
     {#if showNewKey}

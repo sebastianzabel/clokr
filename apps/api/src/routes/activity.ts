@@ -205,10 +205,7 @@ export async function activityRoutes(app: FastifyInstance) {
             id: `rev-${lr.id}`,
             icon: lr.status === "APPROVED" ? "check" : "x",
             who: empName,
-            what:
-              lr.status === "APPROVED"
-                ? `${typeName}: Genehmigt`
-                : `${typeName}: Abgelehnt`,
+            what: lr.status === "APPROVED" ? `${typeName}: Genehmigt` : `${typeName}: Abgelehnt`,
             when: lr.reviewedAt.toISOString(),
             category: "leave",
           });

@@ -38,6 +38,6 @@ export const auditPlugin = fp(async (app) => {
           userAgent: params.request?.headers["user-agent"] as string | undefined,
         },
       });
-    }
+    },
   );
 });

@@ -13,11 +13,20 @@
   let { password, policy }: Props = $props();
 
   let checks = $derived([
-    { label: `Min. ${policy.passwordMinLength} Zeichen`, ok: password.length >= policy.passwordMinLength },
-    ...(policy.passwordRequireUpper ? [{ label: "Großbuchstabe (A-Z)", ok: /[A-Z]/.test(password) }] : []),
-    ...(policy.passwordRequireLower ? [{ label: "Kleinbuchstabe (a-z)", ok: /[a-z]/.test(password) }] : []),
+    {
+      label: `Min. ${policy.passwordMinLength} Zeichen`,
+      ok: password.length >= policy.passwordMinLength,
+    },
+    ...(policy.passwordRequireUpper
+      ? [{ label: "Großbuchstabe (A-Z)", ok: /[A-Z]/.test(password) }]
+      : []),
+    ...(policy.passwordRequireLower
+      ? [{ label: "Kleinbuchstabe (a-z)", ok: /[a-z]/.test(password) }]
+      : []),
     ...(policy.passwordRequireDigit ? [{ label: "Ziffer (0-9)", ok: /\d/.test(password) }] : []),
-    ...(policy.passwordRequireSpecial ? [{ label: "Sonderzeichen (!@#...)", ok: /[^A-Za-z0-9]/.test(password) }] : []),
+    ...(policy.passwordRequireSpecial
+      ? [{ label: "Sonderzeichen (!@#...)", ok: /[^A-Za-z0-9]/.test(password) }]
+      : []),
   ]);
 
   let passedCount = $derived(checks.filter((c) => c.ok).length);
@@ -62,11 +71,19 @@
   .pw-bar-fill {
     height: 100%;
     border-radius: 2px;
-    transition: width 0.3s ease, background 0.3s ease;
+    transition:
+      width 0.3s ease,
+      background 0.3s ease;
   }
-  .pw-weak { background: var(--bad); }
-  .pw-medium { background: var(--warn); }
-  .pw-strong { background: var(--good); }
+  .pw-weak {
+    background: var(--bad);
+  }
+  .pw-medium {
+    background: var(--warn);
+  }
+  .pw-strong {
+    background: var(--good);
+  }
   .pw-checks {
     list-style: none;
     padding: 0;

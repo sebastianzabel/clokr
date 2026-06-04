@@ -11,7 +11,7 @@
   let { animate = false, class: extraClass = "", style = null, children }: Props = $props();
 
   const classes = $derived(
-    ["card", animate ? "card-animate" : "", extraClass].filter(Boolean).join(" ")
+    ["card", animate ? "card-animate" : "", extraClass].filter(Boolean).join(" "),
   );
 </script>
 

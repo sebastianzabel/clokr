@@ -127,7 +127,7 @@ describe("Tenant Isolation", () => {
       if (res.statusCode === 200) {
         const body = JSON.parse(res.body);
         // If endpoint returns data, it must be empty (no tenantB entries)
-        const entries = Array.isArray(body) ? body : body.entries ?? [];
+        const entries = Array.isArray(body) ? body : (body.entries ?? []);
         const entryIds = entries.map((e: { id: string }) => e.id);
         if (tenantBTimeEntryId) {
           expect(entryIds).not.toContain(tenantBTimeEntryId);
@@ -193,7 +193,7 @@ describe("Tenant Isolation", () => {
       });
       if (res.statusCode === 200) {
         const body = JSON.parse(res.body);
-        const requests = Array.isArray(body) ? body : body.requests ?? [];
+        const requests = Array.isArray(body) ? body : (body.requests ?? []);
         const ids = requests.map((r: { id: string }) => r.id);
         if (tenantBLeaveRequestId) {
           expect(ids).not.toContain(tenantBLeaveRequestId);
@@ -240,7 +240,7 @@ describe("Tenant Isolation", () => {
       });
       if (res.statusCode === 200) {
         const body = JSON.parse(res.body);
-        const absences = Array.isArray(body) ? body : body.absences ?? [];
+        const absences = Array.isArray(body) ? body : (body.absences ?? []);
         // All returned absences must belong to tenantA employees
         for (const absence of absences) {
           if (absence.employee?.tenantId) {

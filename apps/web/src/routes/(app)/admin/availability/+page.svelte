@@ -64,7 +64,10 @@
   animate
 >
   {#snippet list()}
-    <Section title="Mitarbeiter" sub="Wähle einen Mitarbeiter, um seine Verfügbarkeit zu bearbeiten.">
+    <Section
+      title="Mitarbeiter"
+      sub="Wähle einen Mitarbeiter, um seine Verfügbarkeit zu bearbeiten."
+    >
       <div class="av-list-toolbar">
         <input
           type="search"

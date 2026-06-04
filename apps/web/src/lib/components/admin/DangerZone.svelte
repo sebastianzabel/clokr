@@ -34,20 +34,10 @@
     actions: Snippet;
   }
 
-  let {
-    title = "Danger Zone",
-    description,
-    animate,
-    actions,
-  }: Props = $props();
+  let { title = "Danger Zone", description, animate, actions }: Props = $props();
 </script>
 
-<Section
-  tone="danger"
-  title={title}
-  sub={description}
-  animate={animate}
->
+<Section tone="danger" {title} sub={description} {animate}>
   <div class="danger-actions">
     {@render actions()}
   </div>

@@ -145,9 +145,7 @@ describe("Employee Availability API (Phase 46)", () => {
         url: `/api/v1/employees/${data.employee.id}/availability`,
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
-          entries: [
-            { dayOfWeek: 2, status: "PREFERRED", validFrom: "2026-01-01" },
-          ],
+          entries: [{ dayOfWeek: 2, status: "PREFERRED", validFrom: "2026-01-01" }],
         },
       });
       expect(res.statusCode).toBe(200);
@@ -168,9 +166,7 @@ describe("Employee Availability API (Phase 46)", () => {
         url: `/api/v1/employees/${data.adminEmployee.id}/availability`,
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
-          entries: [
-            { dayOfWeek: 0, status: "UNAVAILABLE", validFrom: "2026-01-01" },
-          ],
+          entries: [{ dayOfWeek: 0, status: "UNAVAILABLE", validFrom: "2026-01-01" }],
         },
       });
       expect(res.statusCode).toBe(403);
@@ -182,9 +178,7 @@ describe("Employee Availability API (Phase 46)", () => {
         url: `/api/v1/employees/${data.adminEmployee.id}/availability`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          entries: [
-            { dayOfWeek: 6, status: "AVAILABLE", validFrom: "2026-01-01" },
-          ],
+          entries: [{ dayOfWeek: 6, status: "AVAILABLE", validFrom: "2026-01-01" }],
         },
       });
       expect(res.statusCode).toBe(200);
@@ -339,9 +333,7 @@ describe("Employee Availability API (Phase 46)", () => {
         url: `/api/v1/employees/${emp2.id}/availability`,
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
-          entries: [
-            { dayOfWeek: 6, status: "UNAVAILABLE", validFrom: "2026-01-01" },
-          ],
+          entries: [{ dayOfWeek: 6, status: "UNAVAILABLE", validFrom: "2026-01-01" }],
         },
       });
 
@@ -377,9 +369,7 @@ describe("Employee Availability API (Phase 46)", () => {
         url: `/api/v1/me/availability`,
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
-          entries: [
-            { dayOfWeek: 3, status: "PREFERRED", validFrom: "2026-01-01" },
-          ],
+          entries: [{ dayOfWeek: 3, status: "PREFERRED", validFrom: "2026-01-01" }],
         },
       });
       expect(seedRes.statusCode).toBe(200);
