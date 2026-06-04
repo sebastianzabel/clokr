@@ -91,3 +91,37 @@ jobs:
           format: spdx-json
           artifact-name: ${{ matrix.image }}-${{ steps.meta.outputs.version }}.sbom.spdx.json
           upload-release-assets: true
+
+  # ── Post-Deploy Smoke (DEVOPS-V8-05) ─────────────────────────────────
+  # Runs after promote completes for BOTH images. Skipped until Phase 71
+  # provisions the int cluster + sets the INT_BASE_URL repository variable
+  # (`gh variable set INT_BASE_URL --body "https://int.clokr.example/"`).
+  # The if-guard makes this a no-op for releases cut before int is live.
+  smoke-test:
+    needs: promote
+    runs-on: ubuntu-latest
+    if: ${{ vars.INT_BASE_URL != '' }}
+    steps:
+      - name: Health check
+        run: |
+          # Fail-fast on any error, undefined variable, or pipe failure (memory:
+          # release.yml comment WR-02 documents the rationale).
+          set -euo pipefail
+          STATUS=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/api/v1/health" | jq -r '.status')
+          if [ "$STATUS" != "ok" ]; then
+            echo "Health check failed: status=$STATUS (expected: ok)" >&2
+            exit 1
+          fi
+          echo "Health check OK"
+
+      - name: Version match assertion
+        run: |
+          set -euo pipefail
+          EXPECTED="${GITHUB_REF_NAME#v}"
+          ACTUAL=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/api/v1/version" | jq -r '.version')
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "Version mismatch: expected $EXPECTED, got $ACTUAL" >&2
+            echo "This usually means the promoted image did not roll out — check the int cluster." >&2
+            exit 1
+          fi
+          echo "Version match OK: $ACTUAL"
