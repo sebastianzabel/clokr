@@ -1,22 +1,37 @@
-# Clokr Production Compose — no source code needed
-# Usage: docker compose -f docker-compose.prod.yml up -d
-#
-# Requirements: .env file (copy from .env.example)
-
 name: clokr
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Production Docker Compose for clokr on prod-host VPS.
+#
+# Decisions enforced (Phase 71 CONTEXT):
+#   D-01: TLS terminates on OPNsense HAProxy (NOT in this compose). NO Traefik
+#         labels. NO reverse-proxy container. prod-host only listens on plain
+#         HTTP behind the firewall's HAProxy frontend.
+#   D-02: No reverse-proxy services (no traefik/nginx/caddy containers).
+#   D-04: This file is deployed MANUALLY by the operator via SSH. It is NEVER
+#         touched by any CI workflow. See docs/prod-deploy.md.
+#   D-11: GHCR images are public — no docker login required on prod-host.
+#
+# Pitfall #8 (Phase 71 RESEARCH.md): api + web use pinned `image:` tags, NOT
+# `build:`, because prod-host does not carry the monorepo source tree.
+#
+# All sensitive values are sourced from the `.env` file colocated with this
+# compose file on prod-host (NEVER committed to this repo).
+# ──────────────────────────────────────────────────────────────────────────────
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-clokr}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-clokr}
+      POSTGRES_USER: clokr
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: clokr
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # NOTE: NO public ports exposed in prod — postgres only on the internal network.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clokr} -d ${POSTGRES_DB:-clokr}"]
+      test: ["CMD-SHELL", "pg_isready -U clokr -d clokr"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -26,6 +41,7 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    # NO public ports.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -37,31 +53,34 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD}"
     volumes:
       - minio_data:/data
+    # NO public ports — MinIO console accessible via SSH tunnel only.
 
   api:
-    image: ghcr.io/sebastianz84/clokr-api:${CLOKR_VERSION:-latest}
+    # Pitfall #8: pinned image, NO build directive (no source tree on prod-host).
+    image: "ghcr.io/sebastianzabel/clokr-api:${CLOKR_VERSION:-latest}"
     restart: unless-stopped
+    # D-01: NO Traefik labels — HAProxy on OPNsense handles TLS + SNI routing.
     ports:
-      - "${API_PORT:-4000}:4000"
+      - "4000:4000"
     environment:
       NODE_ENV: production
       API_PORT: "4000"
       API_HOST: "0.0.0.0"
-      DATABASE_URL: "postgresql://${POSTGRES_USER:-clokr}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-clokr}"
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env (min 32 chars)}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
-      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
-      CORS_ORIGIN: ${APP_URL:-http://localhost:3000}
+      DATABASE_URL: "postgresql://clokr:${POSTGRES_PASSWORD}@postgres:5432/clokr"
+      JWT_SECRET: "${JWT_SECRET}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET}"
+      JWT_EXPIRES_IN: "15m"
+      JWT_REFRESH_EXPIRES_IN: "7d"
+      CORS_ORIGIN: "${CORS_ORIGIN}"
       REDIS_URL: "redis://redis:6379"
-      APP_URL: ${APP_URL:-http://localhost:3000}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env (min 32 chars)}
-      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
-      NFC_TERMINAL_SECRET: ${NFC_TERMINAL_SECRET:-}
+      APP_URL: "${APP_URL}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      SEED_DEMO_DATA: "false"
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-500}"
     deploy:
       resources:
         limits:
@@ -79,14 +98,15 @@ services:
       retries: 5
 
   web:
-    image: ghcr.io/sebastianz84/clokr-web:${CLOKR_VERSION:-latest}
+    image: "ghcr.io/sebastianzabel/clokr-web:${CLOKR_VERSION:-latest}"
     restart: unless-stopped
+    # D-01: NO Traefik labels — HAProxy on OPNsense terminates TLS.
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "3000:3000"
     environment:
       NODE_ENV: production
       PORT: "3000"
-      ORIGIN: ${APP_URL:-http://localhost:3000}
+      ORIGIN: "${APP_URL}"
       API_URL: "http://api:4000"
     deploy:
       resources:
@@ -98,12 +118,13 @@ services:
         condition: service_healthy
 
   backup:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       PGHOST: postgres
-      PGUSER: ${POSTGRES_USER:-clokr}
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-      PGDATABASE: ${POSTGRES_DB:-clokr}
+      PGUSER: clokr
+      PGPASSWORD: "${POSTGRES_PASSWORD}"
+      PGDATABASE: clokr
     volumes:
       - ./backups:/backups
     entrypoint: >
@@ -116,8 +137,31 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # NOTE: `profiles: [backup]` removed for prod — backup MUST run daily.
+
+  fritzbox-adapter:
+    # NOTE: kept as `build:` because prod-host has the source tree
+    # (single-tenant utility). If multi-tenant prod is added later, publish
+    # as ghcr.io/sebastianzabel/clokr-fritzbox-adapter and switch to `image:`.
+    build:
+      context: apps/fritzbox-adapter
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      FRITZBOX_URL: "${FRITZBOX_URL}"
+      FRITZBOX_USER: "${FRITZBOX_USER}"
+      FRITZBOX_PASS: "${FRITZBOX_PASS}"
+      CLOKR_API_URL: "http://api:4000"
+      CLOKR_PRESENCE_KEY: "${CLOKR_PRESENCE_KEY}"
+      POLL_INTERVAL_SECONDS: "${POLL_INTERVAL_SECONDS:-60}"
+      DEVICES_BIND: "0.0.0.0"
+    ports:
+      - "127.0.0.1:8765:8765"
+    depends_on:
+      api:
+        condition: service_healthy
     profiles:
-      - backup
+      - fritzbox
 
 volumes:
   postgres_data:
