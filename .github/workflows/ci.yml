@@ -73,6 +73,11 @@ jobs:
       - name: Primitive class alignment
         run: pnpm --filter @clokr/web lint:ui-classes
 
+      - name: Lint legacy token references
+        # CLAUDE.md § UI Consistency Rules mandates this alongside lint:ui-classes —
+        # blocks reintroduction of banned v1.2 tokens (--color-*, --glass-*, etc.).
+        run: pnpm --filter @clokr/web lint:tokens
+
       - name: Type check API
         id: typecheck
         run: pnpm --filter @clokr/api typecheck
