@@ -8,7 +8,7 @@
 # (32 chars) so the API starts, but they are NOT secure. Do NOT use these in prod.
 
 image:
-  tag: "main"             # tracks main branch; ArgoCD-triggered sync + imagePullPolicy: Always rolls out new images
+  tag: "main" # tracks main branch; ArgoCD-triggered sync + imagePullPolicy: Always rolls out new images
 
 ingress:
   enabled: true
@@ -18,7 +18,7 @@ ingress:
 
 secrets:
   # Real values injected via ArgoCD UI — these are placeholders.
-  databaseUrl: "postgresql://clokr:CHANGE_ME_IN_ARGOCD@clokr-postgres.clokr.svc.cluster.local:5432/clokr"
+  databaseUrl: "postgresql://clokr:CHANGEME-IN-ARGOCD@clokr-postgres.clokr.svc.cluster.local:5432/clokr"
   jwtSecret: "CHANGEME-int-jwt-placeholder-32chars!!"
   jwtRefreshSecret: "CHANGEME-int-refresh-placeholder-32!!"
   encryptionKey: "CHANGEME-int-encryption-placeholder!!"
