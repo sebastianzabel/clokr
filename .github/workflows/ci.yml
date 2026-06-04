@@ -144,6 +144,47 @@ jobs:
               });
             }
 
+  # ── CodeQL SAST (DEVOPS-V8-04) ───────────────────────────────────────
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: javascript-typescript
+          config-file: .github/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:javascript-typescript"
+
+  # ── Secret scan (DEVOPS-V8-04) ───────────────────────────────────────
+  # NOTE: gitleaks/gitleaks-action requires a free GITLEAKS_LICENSE for org repos.
+  # If license cannot be provisioned, fallback action is `gacts/gitleaks` (MIT, no license).
+  # See 70-03-SUMMARY.md for setup instructions.
+  secret-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # required for gitleaks to access commit history
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
