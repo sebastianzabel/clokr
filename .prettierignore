@@ -5,3 +5,10 @@ build
 generated
 coverage
 pnpm-lock.yaml
+
+# Helm chart templates use Go template syntax ({{ }}) inside YAML —
+# prettier's YAML parser chokes on them. Other templates in this dir
+# (deployment-api.yaml, ingress.yaml, etc.) were committed pre-Phase-72
+# without lint-staged coverage; this exclusion keeps them consistent.
+charts/**/templates/*.yaml
+charts/**/templates/*.tpl
