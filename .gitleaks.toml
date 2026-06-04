@@ -1,0 +1,28 @@
+# Gitleaks v8 configuration.
+#
+# Extends the default ruleset and adds an allowlist for the test fixtures
+# embedded in .github/workflows/ci.yml. These are NOT real credentials —
+# they are the placeholders enforced by apps/api/src/config.ts's min-length
+# Zod validators (>= 32 chars) so that the API can boot in the CI test job.
+#
+# WR-01 (Phase 70): .gitleaksignore plain-string entries are silently
+# dropped by gitleaks v8 — only commit-fingerprint lines are honored there.
+# An allowlist in this config file is the documented, version-agnostic
+# escape hatch for fixtures that we INTEND to live in the tree.
+#
+# Reference: https://github.com/gitleaks/gitleaks/blob/master/README.md#configuration
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Phase 70 CI test fixtures (apps/api/src/config.ts min-length placeholders)"
+paths = [
+  '''^\.github/workflows/ci\.yml$''',
+  '''^\.gitleaks\.toml$''',
+  '''^\.gitleaksignore$''',
+]
+regexes = [
+  '''test-jwt-secret-min-32-characters-long''',
+  '''test-refresh-secret-min-32-characters''',
+  '''test-encryption-key-min-32-characters-long!!''',
+]
