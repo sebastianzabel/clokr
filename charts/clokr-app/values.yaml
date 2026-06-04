@@ -15,7 +15,7 @@ createNamespace: false
 image:
   registry: ghcr.io
   repository: sebastianzabel
-  tag: "latest"          # overridden per env (values-int.yaml: "main"; values-prod.yaml: "vX.Y.Z")
+  tag: "latest" # overridden per env (values-int.yaml: "main"; values-prod.yaml: "vX.Y.Z")
   pullPolicy: Always
   # NO imagePullSecrets — GHCR packages ghcr.io/sebastianzabel/clokr-{api,web}
   # are PUBLIC (verified 2026-06-04 via `gh api user/packages`). See D-10.
@@ -43,10 +43,10 @@ web:
       cpu: 200m
 
 postgres:
-  enabled: true           # set false on prod (prod uses docker-compose postgres service)
+  enabled: true # set false on prod (prod uses docker-compose postgres service)
   image: postgres:18-alpine
   storage: 5Gi
-  storageClass: ""        # blank = k3s default (local-path-provisioner)
+  storageClass: "" # blank = k3s default (local-path-provisioner)
   resources:
     requests:
       memory: 256Mi
@@ -57,7 +57,7 @@ postgres:
 
 ingress:
   enabled: true
-  host: "clokr.example"   # MUST be overridden per env
+  host: "clokr.example" # MUST be overridden per env
   tlsSecretName: "clokr-tls"
   clusterIssuer: "letsencrypt-prod"
 
@@ -72,5 +72,30 @@ secrets:
   appUrl: ""
   corsOrigin: ""
   seedDemoData: "false"
-  postgresPassword: ""    # used by Postgres StatefulSet AND should match databaseUrl password
-  redisUrl: ""            # optional — if set, API connects to shared-infrastructure Redis
+  postgresPassword: "" # used by Postgres StatefulSet AND should match databaseUrl password
+  redisUrl: "" # optional — if set, API connects to shared-infrastructure Redis
+
+# Anonymization pipeline (Phase 72). The CronJob runs `pnpm tsx scripts/anonymize-dump.ts`
+# inside the apps/api image. Disabled by default — opt in per-env (values-int.yaml).
+# Prod stays disabled: prod is the SOURCE of the dump, never the target.
+# See `charts/clokr-app/templates/cronjob-anonymizer.yaml` for the rendered spec.
+anonymizer:
+  enabled: false
+  # Cron expression — Sunday 03:00 UTC per Phase 72 D-03.
+  schedule: "0 3 * * 0"
+  # Hostname of the prod box that hosts the read-only PG role (Phase 72 D-04 + D-07).
+  # Replace with the real prod hostname via ArgoCD UI Parameters in int.
+  prodSshHost: ""
+  prodSshUser: clokr-anonymizer
+  # Reserved env vars for Plans 72-03 + 72-04. The CronJob spec ships them
+  # now so future plans only touch values, not the template.
+  databaseUrlStaging: "" # int's `clokr_staging` DB (atomic-swap source)
+  databaseUrlAdmin: "" # int's `postgres` superuser conn for the swap step
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+      ephemeral-storage: 10Gi
