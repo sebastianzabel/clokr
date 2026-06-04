@@ -83,3 +83,11 @@ jobs:
             echo "Promoting ${SRC} -> ${DST}"
             crane copy "${SRC}" "${DST}"
           done
+
+      - name: Generate SBOM for ${{ matrix.image }}
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610  # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}
+          format: spdx-json
+          artifact-name: ${{ matrix.image }}-${{ steps.meta.outputs.version }}.sbom.spdx.json
+          upload-release-assets: true
