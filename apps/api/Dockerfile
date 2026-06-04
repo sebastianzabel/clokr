@@ -45,7 +45,14 @@ RUN npm install -g npm@latest 2>/dev/null || true \
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 
-# Copy full workspace from build (Prisma db push + seed need all deps at startup)
+# Copy full workspace from build (Prisma db push + seed need all deps at startup).
+# IMPORTANT: dev deps (tsx, prisma CLI) are retained in node_modules because the
+# `deps` stage runs `pnpm install` BEFORE NODE_ENV=production is set. This is
+# intentional and required by:
+#   - docker-entrypoint.sh (uses prisma CLI for db push / migrate deploy)
+#   - apps/api/scripts/anonymize-dump.ts (Phase 72 k3s CronJob, invokes `pnpm tsx`)
+# If you later switch to `pnpm install --prod`, ensure tsx + prisma stay available
+# (either move to dependencies or pre-compile scripts/anonymize-dump.ts).
 COPY --from=build /app/node_modules/ ./node_modules/
 COPY --from=build /app/apps/api/ ./apps/api/
 COPY --from=build /app/packages/ ./packages/
