@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clokr-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+    app: clokr-web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      app: clokr-web
+  template:
+    metadata:
+      labels:
+        app: clokr-web
+        {{- include "clokr-app.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: clokr-web
+        image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}/clokr-web:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.web.port }}
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "{{ .Values.web.port }}"
+        - name: ORIGIN
+          value: "https://{{ .Values.ingress.host }}"
+        - name: API_URL
+          value: "http://clokr-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.api.port }}"
+        resources:
+          {{- toYaml .Values.web.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.web.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: {{ .Values.web.port }}
+          initialDelaySeconds: 30
+          periodSeconds: 30
