@@ -189,6 +189,12 @@ export async function activityRoutes(app: FastifyInstance) {
             reviewedBy: userId,
             deletedAt: null,
             status: { in: ["APPROVED", "REJECTED"] },
+            // Defense in depth (CLAUDE.md § Multi-Tenancy Convention): also
+            // scope by tenant on the related employee. Today reviewedBy is
+            // already tenant-bound by the regular review flow, but guarding
+            // here prevents an impersonation bug elsewhere from leaking
+            // cross-tenant review rows through this read.
+            employee: { tenantId },
           },
           orderBy: { reviewedAt: "desc" },
           take: fetchLimit,
