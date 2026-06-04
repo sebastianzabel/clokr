@@ -29,6 +29,12 @@ apps/e2e/playwright-report/
 audit-*.png
 *.webm
 
+# Ad-hoc working screenshots (root-level only — tracked images live in apps/web/static and images/)
+/*.png
+
+# Local design handoff package (external designer artifacts, kept local-only)
+docs/design/
+
 # Claude Code / AI tooling (internal)
 .claude/
 .playwright-mcp/
