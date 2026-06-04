@@ -210,6 +210,83 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
+  # ── Lighthouse CI (DEVOPS-V8-05, advisory in Phase 70) ───────────────
+  # Phase 73 will upgrade to blocking + extend to authenticated pages via
+  # docker-compose webServer integration. Today: login page only, warn-mode.
+  lighthouse:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v6
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Web (for static Lighthouse audit)
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+          configPath: .github/lighthouserc.json
+
+  # ── Axe a11y scan (DEVOPS-V8-05, advisory in Phase 70) ───────────────
+  # Phase 73 will upgrade to blocking + extend to authenticated pages.
+  axe-scan:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v6
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter e2e exec playwright install --with-deps chromium
+
+      - name: Build Web (for axe to scan)
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Serve built Web on :4173
+        run: pnpm --filter @clokr/web preview --port 4173 &
+        # & sends to background; subsequent step polls for readiness.
+
+      - name: Wait for preview server
+        run: |
+          set -euo pipefail
+          for i in {1..30}; do
+            if curl -sf http://localhost:4173/login > /dev/null; then
+              echo "Preview server ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Preview server did not start in 30s" >&2
+          exit 1
+
+      - name: Run axe scan on /login
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:4173
+        run: pnpm --filter e2e exec playwright test --project=axe-scan tests/axe-scan.spec.ts
+
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:

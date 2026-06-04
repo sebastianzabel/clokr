@@ -15,7 +15,9 @@ try {
   /* .env optional */
 }
 
-const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
+// PLAYWRIGHT_BASE_URL is the canonical env var (used by Phase 70 CI axe-scan job).
+// BASE_URL is kept for backwards compatibility with existing local workflows.
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || process.env.BASE_URL || "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests",
@@ -39,6 +41,16 @@ export default defineConfig({
     {
       name: "setup",
       testMatch: /auth\.setup\.ts/,
+    },
+    {
+      // Phase 70 advisory a11y gate (DEVOPS-V8-05): scans the public /login page only,
+      // requires no auth/storageState. Phase 73 will extend this to authenticated pages
+      // once docker-compose webServer + seeded DB are wired into CI.
+      name: "axe-scan",
+      testMatch: /axe-scan\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+      },
     },
     {
       name: "desktop-chrome",
