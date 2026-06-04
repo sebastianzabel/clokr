@@ -8,6 +8,7 @@ import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 import { calculateProRataVacation } from "../utils/vacation-calc";
 import { normalizeMac } from "../utils/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
+import { anonymizeEmployeeData } from "../utils/anonymize";
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -725,9 +726,6 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
-      const userId = employee.userId;
-      const anonymizedLabel = `GELÖSCHT-${employee.employeeNumber || id.slice(0, 8)}`;
-
       await app.audit({
         userId: req.user.sub,
         action: "ANONYMIZE",
@@ -738,52 +736,7 @@ export async function employeeRoutes(app: FastifyInstance) {
       });
 
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        // AuditLog anonymisieren (userId → null)
-        await tx.auditLog.updateMany({ where: { userId }, data: { userId: null } });
-
-        // Employee: personenbezogene Daten anonymisieren, Record behalten
-        await tx.employee.update({
-          where: { id },
-          data: {
-            firstName: "Gelöscht",
-            lastName: anonymizedLabel,
-            employeeNumber: anonymizedLabel,
-            nfcCardId: null,
-          },
-        });
-
-        // User: deaktivieren + anonymisieren (kein Login mehr möglich)
-        await tx.user.update({
-          where: { id: userId },
-          data: {
-            email: `deleted-${id.slice(0, 8)}@anonymized.local`,
-            passwordHash: "ANONYMIZED",
-            isActive: false,
-          },
-        });
-
-        // Notizen in Zeiteinträgen anonymisieren (können persönliche Daten enthalten)
-        await tx.timeEntry.updateMany({
-          where: { employeeId: id, note: { not: null } },
-          data: { note: null },
-        });
-
-        // Notizen in Urlaubsanträgen anonymisieren
-        await tx.leaveRequest.updateMany({
-          where: { employeeId: id, note: { not: null } },
-          data: { note: null },
-        });
-
-        // Notizen in Abwesenheiten anonymisieren + Dokument-Pfad entfernen
-        await tx.absence.updateMany({
-          where: { employeeId: id },
-          data: { note: null, documentPath: null },
-        });
-
-        // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
-        await tx.invitation.deleteMany({ where: { employeeId: id } });
-        await tx.otpToken.deleteMany({ where: { userId } });
-        await tx.refreshToken.deleteMany({ where: { userId } });
+        await anonymizeEmployeeData({ tx, employeeId: id });
       });
 
       return reply.code(204).send();
