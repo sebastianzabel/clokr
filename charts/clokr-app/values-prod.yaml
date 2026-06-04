@@ -7,13 +7,13 @@
 # Ingress / Traefik. Therefore ingress.enabled is false for prod parity.
 
 image:
-  tag: "v1.8.0"           # pinned version on prod (replace at each release)
+  tag: "v1.8.0" # pinned version on prod (replace at each release)
 
 postgres:
-  enabled: false          # prod uses docker-compose postgres service, not StatefulSet
+  enabled: false # prod uses docker-compose postgres service, not StatefulSet
 
 ingress:
-  enabled: false          # prod uses HAProxy on OPNsense for TLS+SNI (D-01), no Ingress object
+  enabled: false # prod uses HAProxy on OPNsense for TLS+SNI (D-01), no Ingress object
 
 secrets:
   databaseUrl: "postgresql://clokr:<PROD_PG_PASSWORD>@postgres:5432/clokr"
@@ -21,3 +21,9 @@ secrets:
   corsOrigin: "https://clokr.example.com"
   seedDemoData: "false"
   # All other secret values live in prod-host's .env file, NOT in this repo.
+
+# Anonymizer (Phase 72) — explicitly disabled on prod. Prod is the SOURCE of
+# the pg_dump (read-only PG role + SSH user live on prod), never the target.
+# Enabling this on prod would be a DSGVO violation (anonymizing live prod data).
+anonymizer:
+  enabled: false

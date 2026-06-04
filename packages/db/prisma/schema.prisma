@@ -637,7 +637,7 @@ model SchoolHolidayPeriod {
 model AuditLog {
   id        String   @id @default(uuid())
   userId    String?
-  action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT
+  action    String // CREATE, UPDATE, DELETE, LOGIN, EXPORT, ANONYMIZE (per-employee DSGVO), ANONYMIZATION_RUN (batch sweep), BACKFILL_REVALIDATE
   entity    String // "TimeEntry", "LeaveRequest", etc.
   entityId  String?
   oldValue  Json?

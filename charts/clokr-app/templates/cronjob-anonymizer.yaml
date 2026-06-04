@@ -1,0 +1,87 @@
+{{/*
+Phase 72 — DSGVO anonymization pipeline.
+
+This CronJob runs `pnpm tsx scripts/anonymize-dump.ts` inside the apps/api
+image on a weekly schedule (default `0 3 * * 0` — Sunday 03:00 UTC) and
+transforms a freshly pg_dump'd copy of prod into DSGVO-safe int data.
+
+Disabled by default in values.yaml (`anonymizer.enabled: false`).
+Enabled per-env in values-int.yaml. Prod stays disabled (D-CONTEXT: prod is
+the SOURCE never the target).
+
+After Plan 72-02 this CronJob will FAIL at the pg_dump step — Plan 72-03
+provisions the SSH tunnel + read-only PG role on prod, Plan 72-04 ships
+the validation gate + first manual run. The schedule lights up only once
+Plan 72-04 verifies the first manual workflow_dispatch.
+
+Secrets:
+- `clokr-secrets`: shared DB creds (same Secret the API Deployment uses)
+- `{{ include "clokr-app.fullname" . }}-anonymizer-ssh`: SSH key for the
+  `clokr-anonymizer@<prod>` user. Created out-of-band (Plan 72-03 / ArgoCD
+  parameter override). Mounted read-only at /etc/anonymizer-ssh.
+*/}}
+{{- if .Values.anonymizer.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "clokr-app.fullname" . }}-anonymizer
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+    app: clokr-anonymizer
+spec:
+  schedule: {{ .Values.anonymizer.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: clokr-anonymizer
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: anonymizer
+              image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}/clokr-api:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              workingDir: /app/apps/api
+              command: ["pnpm", "tsx", "scripts/anonymize-dump.ts"]
+              envFrom:
+                - secretRef:
+                    name: clokr-secrets
+              env:
+                - name: NODE_ENV
+                  value: "production"
+                # DATABASE_URL is inherited from clokr-secrets and points at int's
+                # live `clokr` DB by default. Plans 72-03 / 72-04 override this to
+                # point at `clokr_staging` (the atomic-swap source). Reserved
+                # placeholders below let the CronJob spec stay stable across plans.
+                - name: DATABASE_URL_STAGING
+                  value: {{ .Values.anonymizer.databaseUrlStaging | default "" | quote }}
+                - name: DATABASE_URL_ADMIN
+                  value: {{ .Values.anonymizer.databaseUrlAdmin | default "" | quote }}
+                - name: PROD_SSH_HOST
+                  value: {{ .Values.anonymizer.prodSshHost | quote }}
+                - name: PROD_SSH_USER
+                  value: {{ .Values.anonymizer.prodSshUser | default "clokr-anonymizer" | quote }}
+                - name: PROD_SSH_KEY_PATH
+                  value: "/etc/anonymizer-ssh/id_ed25519"
+              volumeMounts:
+                - name: ssh-key
+                  mountPath: /etc/anonymizer-ssh
+                  readOnly: true
+              resources:
+                requests:
+                  {{- toYaml .Values.anonymizer.resources.requests | nindent 18 }}
+                limits:
+                  {{- toYaml .Values.anonymizer.resources.limits | nindent 18 }}
+          volumes:
+            - name: ssh-key
+              secret:
+                secretName: {{ include "clokr-app.fullname" . }}-anonymizer-ssh
+                defaultMode: 0400
+                optional: true
+{{- end }}

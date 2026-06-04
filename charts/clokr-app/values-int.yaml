@@ -27,3 +27,11 @@ secrets:
   seedDemoData: "true"
   postgresPassword: "CHANGEME-IN-ARGOCD"
   # redisUrl: "redis://redis.shared-infrastructure.svc.cluster.local:6379"  # optional, uncomment if shared redis is used
+
+# Anonymizer (Phase 72) — enabled in int, runs weekly against int's clokr DB
+# (Plans 72-03 + 72-04 wire DATABASE_URL_STAGING + the SSH Secret).
+# prodSshHost must be replaced via ArgoCD UI Parameter override (per D-11a)
+# before the first manual workflow_dispatch run — see Phase 72 D-16.
+anonymizer:
+  enabled: true
+  prodSshHost: "CHANGEME-PROD-HOST" # overridden via ArgoCD UI Parameters (Plan 72-03)
