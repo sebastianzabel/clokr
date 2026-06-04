@@ -1,0 +1,8 @@
+apiVersion: v2
+name: clokr-app
+description: Clokr audit-proof time tracking application
+type: application
+version: 0.1.0
+appVersion: "latest"
+maintainers:
+  - name: the operatorZ84

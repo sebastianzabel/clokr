@@ -1,0 +1,23 @@
+# Prod REFERENCE values — prod runs on Docker Compose (D-01), NOT Kubernetes.
+# This file is used by Plan 71-03 prod-deploy.md as the canonical source of
+# prod env-var values for docs / drift comparison. Do NOT install this Helm
+# chart in prod.
+#
+# TLS termination on prod is HAProxy on OPNsense firewall — NOT a Kubernetes
+# Ingress / Traefik. Therefore ingress.enabled is false for prod parity.
+
+image:
+  tag: "v1.8.0"           # pinned version on prod (replace at each release)
+
+postgres:
+  enabled: false          # prod uses docker-compose postgres service, not StatefulSet
+
+ingress:
+  enabled: false          # prod uses HAProxy on OPNsense for TLS+SNI (D-01), no Ingress object
+
+secrets:
+  databaseUrl: "postgresql://clokr:<PROD_PG_PASSWORD>@postgres:5432/clokr"
+  appUrl: "https://clokr.example.com"
+  corsOrigin: "https://clokr.example.com"
+  seedDemoData: "false"
+  # All other secret values live in prod-host's .env file, NOT in this repo.
