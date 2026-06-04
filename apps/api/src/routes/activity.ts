@@ -132,7 +132,7 @@ export async function activityRoutes(app: FastifyInstance) {
         for (const lr of myLeaves) {
           const typeName = lr.leaveType?.name ?? "Urlaub";
           let what: string;
-          let icon: ActivityItem["icon"] = "inbox";
+          let icon: ActivityItem["icon"];
           if (lr.status === "APPROVED") {
             what = `${typeName} genehmigt`;
             icon = "check";
