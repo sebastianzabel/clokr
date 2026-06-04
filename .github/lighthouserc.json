@@ -1,8 +1,10 @@
 {
   "ci": {
     "collect": {
-      "staticDistDir": "./apps/web/.svelte-kit/output/client",
-      "url": ["http://localhost/login"]
+      "startServerCommand": "pnpm --filter @clokr/web preview --port 4173 --host 127.0.0.1",
+      "startServerReadyPattern": "Local:\\s+http",
+      "url": ["http://127.0.0.1:4173/login"],
+      "numberOfRuns": 1
     },
     "assert": {
       "preset": "lighthouse:no-pwa",
