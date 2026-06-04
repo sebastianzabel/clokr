@@ -304,9 +304,12 @@ describe("GET /api/v1/shifts/my-week (Phase 49-01)", () => {
     expect(body.weekStart).toBe("2026-07-20");
     expect(body.weekEnd).toBe("2026-07-26");
     // No shifts in that week
-    expect(body.days.every((d: { ownShifts: unknown[]; colleagues: unknown[] }) =>
-      d.ownShifts.length === 0 && d.colleagues.length === 0
-    )).toBe(true);
+    expect(
+      body.days.every(
+        (d: { ownShifts: unknown[]; colleagues: unknown[] }) =>
+          d.ownShifts.length === 0 && d.colleagues.length === 0,
+      ),
+    ).toBe(true);
   });
 
   // Silence unused-var lint for IDs used only as seed inputs

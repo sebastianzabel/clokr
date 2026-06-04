@@ -1,13 +1,13 @@
 // i18n bundle (DE + EN). Bundled per I18N-02; no runtime locale switching this milestone.
 // The presence of this re-export ensures BOTH locales end up in the built asset
 // (verifiable via `pnpm --filter @clokr/web build` + grep on .svelte-kit/output).
-import { de, type I18nKey } from './de';
-import { en } from './en';
+import { de, type I18nKey } from "./de";
+import { en } from "./en";
 
-export { de, type I18nKey, type I18nStrings } from './de';
-export { en } from './en';
-export type Locale = 'de' | 'en';
-export const DEFAULT_LOCALE: Locale = 'de';
+export { de, type I18nKey, type I18nStrings } from "./de";
+export { en } from "./en";
+export type Locale = "de" | "en";
+export const DEFAULT_LOCALE: Locale = "de";
 
 /**
  * Lookup a UI string by key. v1.5 stub: always returns the German value.
@@ -40,6 +40,6 @@ declare global {
   // eslint-disable-next-line no-var
   var __CLOKR_I18N__: { de: typeof de; en: typeof en } | undefined;
 }
-if (typeof globalThis !== 'undefined') {
+if (typeof globalThis !== "undefined") {
   globalThis.__CLOKR_I18N__ = { de, en };
 }

@@ -4,7 +4,7 @@ export interface ICalEvent {
   uid: string;
   summary: string;
   dtstart: string; // YYYY-MM-DD (all-day event)
-  dtend: string;   // YYYY-MM-DD (exclusive end, so +1 day)
+  dtend: string; // YYYY-MM-DD (exclusive end, so +1 day)
   description?: string;
   status?: string;
   categories?: string;
@@ -38,11 +38,18 @@ export function generateICal(calName: string, events: ICalEvent[]): string {
 }
 
 function escapeIcal(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\n/g, "\\n");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
 }
 
 function formatIcalDate(d: Date): string {
-  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  return d
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}/, "");
 }
 
 /**

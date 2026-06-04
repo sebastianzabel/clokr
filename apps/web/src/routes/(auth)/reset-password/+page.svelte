@@ -21,13 +21,17 @@
 
   let token = $derived($page.url.searchParams.get("token") ?? "");
   let passwordMismatch = $derived(confirmPassword.length > 0 && password !== confirmPassword);
-  let canSubmit = $derived(password.length >= pwPolicy.passwordMinLength && password === confirmPassword && !loading);
+  let canSubmit = $derived(
+    password.length >= pwPolicy.passwordMinLength && password === confirmPassword && !loading,
+  );
 
   onMount(async () => {
     try {
       const p = await api.get<typeof pwPolicy>("/auth/password-policy");
       pwPolicy = p;
-    } catch { /* use defaults */ }
+    } catch {
+      /* use defaults */
+    }
   });
 
   async function handleSubmit() {

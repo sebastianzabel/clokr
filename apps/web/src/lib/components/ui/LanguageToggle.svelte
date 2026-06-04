@@ -34,9 +34,7 @@
       affordance only; the "Bald" badge signals the not-yet state. Real toggle
       semantics ship with I18N-04 (v1.6).
     -->
-    <button type="button" class="seg-btn active" onclick={handleGerman}>
-      Deutsch
-    </button>
+    <button type="button" class="seg-btn active" onclick={handleGerman}> Deutsch </button>
     <button type="button" class="seg-btn" onclick={handleEnglish}>
       English
       <span class="badge-soon">Bald</span>

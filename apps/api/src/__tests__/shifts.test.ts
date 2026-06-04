@@ -1433,9 +1433,7 @@ describe("Shift Planning API", () => {
         const body = JSON.parse(res.body);
 
         // Other tenant's employee should not appear in this tenant's response
-        const leaked = body.employees.find(
-          (e: { id: string }) => e.id === otherData.employee.id,
-        );
+        const leaked = body.employees.find((e: { id: string }) => e.id === otherData.employee.id);
         expect(leaked).toBeUndefined();
         const leakedAvail = body.availability.find(
           (a: { employeeId: string }) => a.employeeId === otherData.employee.id,

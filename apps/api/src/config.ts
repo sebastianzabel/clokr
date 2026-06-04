@@ -11,9 +11,12 @@ const envSchema = z
     JWT_REFRESH_SECRET: z.string().min(32),
     JWT_EXPIRES_IN: z.string().default("15m"),
     JWT_REFRESH_EXPIRES_IN: z.string().default("7d"),
-    CORS_ORIGIN: z.string().default("http://localhost:5173").refine((v) => v !== "*", {
-      message: "CORS_ORIGIN must not be a wildcard (*) — set an explicit origin",
-    }),
+    CORS_ORIGIN: z
+      .string()
+      .default("http://localhost:5173")
+      .refine((v) => v !== "*", {
+        message: "CORS_ORIGIN must not be a wildcard (*) — set an explicit origin",
+      }),
     REDIS_URL: z.string().default("redis://localhost:6379"),
     APP_URL: z.string().default("http://localhost:5173"),
     POOL_MIN: z.coerce.number().default(2),

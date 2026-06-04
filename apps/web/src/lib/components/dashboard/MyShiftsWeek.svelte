@@ -159,11 +159,8 @@
           onclick={prev}>‹</button
         >
         <button type="button" class="btn btn-ghost btn-sm" onclick={today}>Heute</button>
-        <button
-          type="button"
-          class="btn btn-ghost btn-sm"
-          aria-label="Nächste Woche"
-          onclick={next}>›</button
+        <button type="button" class="btn btn-ghost btn-sm" aria-label="Nächste Woche" onclick={next}
+          >›</button
         >
       </div>
     </div>

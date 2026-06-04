@@ -44,7 +44,11 @@ describe("Overtime Saldo Calculation", () => {
     const targetDate = pastDate(2);
     // Clean up any existing entry for that day first
     await app.prisma.timeEntry.deleteMany({
-      where: { employeeId: data.employee.id, date: new Date(targetDate + "T00:00:00Z"), deletedAt: null },
+      where: {
+        employeeId: data.employee.id,
+        date: new Date(targetDate + "T00:00:00Z"),
+        deletedAt: null,
+      },
     });
 
     const createRes = await app.inject({
@@ -519,7 +523,12 @@ describe("Overtime Saldo Calculation", () => {
       // Confirm baseline: FIXED_SCHEDULE + CARRY_FORWARD schedule (already set in seedTestData)
       await app.prisma.workSchedule.updateMany({
         where: { employeeId: data.employee.id },
-        data: { type: "FIXED_SCHEDULE", weeklyHours: 40, monthlyHours: null, overtimeMode: "CARRY_FORWARD" },
+        data: {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          monthlyHours: null,
+          overtimeMode: "CARRY_FORWARD",
+        },
       });
 
       // Create 10h entry for a past weekday (Monday 7 days ago)

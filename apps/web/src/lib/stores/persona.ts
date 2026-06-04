@@ -1,6 +1,6 @@
-import { writable, get } from 'svelte/store';
-import { browser } from '$app/environment';
-import { authStore } from './auth';
+import { writable, get } from "svelte/store";
+import { browser } from "$app/environment";
+import { authStore } from "./auth";
 
 /**
  * v1.5 persona — logical view-mode for the authenticated shell.
@@ -25,18 +25,18 @@ import { authStore } from './auth';
  * Switching persona in the UI does NOT grant elevated permissions — a
  * non-admin user clicking an Admin link results in a server 403.
  */
-export type Persona = 'employee' | 'manager' | 'admin';
+export type Persona = "employee" | "manager" | "admin";
 
-const VALID: readonly Persona[] = ['employee', 'manager', 'admin'] as const;
+const VALID: readonly Persona[] = ["employee", "manager", "admin"] as const;
 
 function readInitial(): Persona {
-  if (!browser) return 'employee';
-  const raw = localStorage.getItem('persona');
+  if (!browser) return "employee";
+  const raw = localStorage.getItem("persona");
   if (raw && (VALID as readonly string[]).includes(raw)) return raw as Persona;
   const role = get(authStore).user?.role;
-  if (role === 'ADMIN') return 'admin';
-  if (role === 'MANAGER') return 'manager';
-  return 'employee';
+  if (role === "ADMIN") return "admin";
+  if (role === "MANAGER") return "manager";
+  return "employee";
 }
 
 /**
@@ -45,18 +45,18 @@ function readInitial(): Persona {
  * disable forbidden options.
  */
 export function allowedPersonas(
-  role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | undefined | null,
+  role: "ADMIN" | "MANAGER" | "EMPLOYEE" | undefined | null,
 ): Persona[] {
-  if (role === 'ADMIN') return ['employee', 'manager', 'admin'];
-  if (role === 'MANAGER') return ['employee', 'manager'];
-  return ['employee'];
+  if (role === "ADMIN") return ["employee", "manager", "admin"];
+  if (role === "MANAGER") return ["employee", "manager"];
+  return ["employee"];
 }
 
 export const persona = writable<Persona>(readInitial());
 
 persona.subscribe((value) => {
   if (!browser) return;
-  localStorage.setItem('persona', value);
+  localStorage.setItem("persona", value);
   // Note: persona does NOT set a data-* attribute on <html> (unlike theme/mode/density).
   // It is a logical state consumed by Sidebar/Topbar via reactive subscription only.
 });

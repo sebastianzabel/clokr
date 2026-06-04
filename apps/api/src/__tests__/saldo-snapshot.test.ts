@@ -358,7 +358,9 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       });
       expect(res.statusCode).toBe(200);
       const report = JSON.parse(res.body);
-      const row = report.rows.find((r: { employeeId: string; workedHours: number }) => r.employeeId === data.employee.id);
+      const row = report.rows.find(
+        (r: { employeeId: string; workedHours: number }) => r.employeeId === data.employee.id,
+      );
 
       // Only 8h from active entry should count
       expect(row.workedHours).toBeCloseTo(8, 1);

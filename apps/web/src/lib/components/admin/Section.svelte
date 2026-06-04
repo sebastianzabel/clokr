@@ -36,24 +36,13 @@
     children: Snippet;
   }
 
-  let {
-    title,
-    sub,
-    actions,
-    footer,
-    animate,
-    tone = "default",
-    children,
-  }: Props = $props();
+  let { title, sub, actions, footer, animate, tone = "default", children }: Props = $props();
 
   const contextAnimate = getContext<boolean | undefined>("admin-animate");
   const shouldAnimate = $derived(animate ?? contextAnimate ?? false);
 </script>
 
-<section
-  class:card-animate={shouldAnimate}
-  class:section--danger={tone === "danger"}
->
+<section class:card-animate={shouldAnimate} class:section--danger={tone === "danger"}>
   {#if title}
     <header class="section-hd">
       <div class="section-hd-text">

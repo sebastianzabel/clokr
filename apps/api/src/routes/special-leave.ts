@@ -136,7 +136,9 @@ export async function specialLeaveRoutes(app: FastifyInstance) {
 
       // Statutory rules: name cannot be changed
       if (existing.isStatutory && body.name && body.name !== existing.name) {
-        return reply.code(400).send({ error: "Name gesetzlicher Regeln kann nicht geändert werden" });
+        return reply
+          .code(400)
+          .send({ error: "Name gesetzlicher Regeln kann nicht geändert werden" });
       }
 
       const updated = await app.prisma.specialLeaveRule.update({
