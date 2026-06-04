@@ -14,10 +14,9 @@ export default defineConfig({
       provider: "v8",
       include: ["**/*.ts"],
       exclude: ["**/*.test.ts", "**/index.ts"],
-      // Thresholds set 4pp below baseline measured 2026-03-30:
-      // lines=41.74%, functions=41.05%, branches=28.48%
+      // Thresholds enforce per DEVOPS-V8-03 (lines >= 40); baseline measured 2026-03-30: lines=41.74%, functions=41.05%, branches=28.48%
       thresholds: {
-        lines: 37,
+        lines: 40,
         functions: 37,
         branches: 24,
       },
