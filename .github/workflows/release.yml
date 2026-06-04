@@ -24,6 +24,15 @@ permissions:
   contents: read
   packages: write
 
+# Serialize ALL release promotions globally so a later release (e.g. v1.8.1)
+# cannot race an in-flight earlier promote (v1.8.0) on the shared `:latest`
+# and `:MAJOR.MINOR` tags. `cancel-in-progress: false` lets a half-promoted
+# release finish before the next one starts — avoids partial-tag states
+# where one image was retagged but the other wasn't. See WR-03.
+concurrency:
+  group: release-promote
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
 
