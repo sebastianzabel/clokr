@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: clokr-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: {{ .Values.api.port }}
+    targetPort: {{ .Values.api.port }}
+    protocol: TCP
+  selector:
+    app: clokr-api
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clokr-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: {{ .Values.web.port }}
+    targetPort: {{ .Values.web.port }}
+    protocol: TCP
+  selector:
+    app: clokr-web

@@ -1,0 +1,36 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clokr
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer }}
+spec:
+  ingressClassName: traefik
+  tls:
+  - hosts:
+    - {{ .Values.ingress.host }}
+    secretName: {{ .Values.ingress.tlsSecretName }}
+  rules:
+  - host: {{ .Values.ingress.host }}
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: clokr-api
+            port:
+              number: {{ .Values.api.port }}
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: clokr-web
+            port:
+              number: {{ .Values.web.port }}
+{{- end }}
