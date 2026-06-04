@@ -11,7 +11,9 @@
     "lint:tokens": "! grep -rE 'var\\(--(color-|glass-|radius-|gray-)' src/ || (echo 'ERROR: legacy v1.2 token reference found. See apps/web/.lintrc-tokens.txt for replacements.' && exit 1)",
     "lint:ui": "node scripts/lint-ui.mjs",
     "lint:ui-classes": "node scripts/lint-ui-classes.mjs",
-    "typecheck": "svelte-kit sync && tsc --noEmit"
+    "typecheck": "svelte-kit sync && tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
