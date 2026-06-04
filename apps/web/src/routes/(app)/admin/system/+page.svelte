@@ -54,6 +54,10 @@
     // Phase 58 — Ladenöffnungszeiten (moved from /admin/shifts)
     storeHours?: StoreHourEntry[];
     shiftStoreHoursMode?: "STRICT" | "DAY_ONLY" | "OFF";
+    // Phase 67.2 — Auto-Cleanup für Berufsschultag-Schichten (Plan 04 backend hook,
+    // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
+    // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
+    vocationalSchoolAutoCleanupShifts?: boolean;
   }
 
   interface StoreHourEntry {
@@ -193,6 +197,10 @@
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
   let availabilitySaving = $state(false);
+
+  // Phase 67.2 (Plan 05) — Auto-Cleanup für Berufsschultag-Schichten Toggle
+  let vocationalSchoolAutoCleanupShifts = $state(true);
+  let vsAutoCleanupSaving = $state(false);
 
   // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
   let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
@@ -394,6 +402,9 @@
       defaultBreakOver9h = cfg.defaultBreakOver9h ?? 45;
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
       availabilityEnabled = cfg.availabilityEnabled ?? true;
+
+      // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
+      vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
       defaultCoreStart = cfg.defaultCoreStart ?? "";
       defaultCoreEnd = cfg.defaultCoreEnd ?? "";
@@ -659,6 +670,28 @@
       // revert: state unchanged
     } finally {
       availabilitySaving = false;
+    }
+  }
+
+  // Phase 67.2 (Plan 05) — Tenant Feature-Toggle: BS-Shift-Auto-Cleanup.
+  // Mirrors saveAvailabilityEnabled exactly; the backend reads
+  // TenantConfig.vocationalSchoolAutoCleanupShifts in shift-cleanup.ts.
+  async function saveVocationalSchoolAutoCleanupShifts() {
+    if (!_gOtherFields) return;
+    vsAutoCleanupSaving = true;
+    const newValue = !vocationalSchoolAutoCleanupShifts;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        vocationalSchoolAutoCleanupShifts: newValue,
+      });
+      vocationalSchoolAutoCleanupShifts = newValue;
+    } catch {
+      // revert: state unchanged — toggle bounces back since we never wrote the new value
+    } finally {
+      vsAutoCleanupSaving = false;
     }
   }
 
@@ -1177,6 +1210,39 @@
               checked={availabilityEnabled}
               onchange={saveAvailabilityEnabled}
               disabled={availabilitySaving}
+            />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+
+        <!-- Phase 67.2 (Plan 05) — Tenant-weiter Toggle für BS-Shift-Auto-Cleanup.
+             Default ON: Generator entfernt künftige Shifts auf neuen BS-Tagen automatisch
+             (Vergangenheit wird nur markiert). OFF: Shifts werden ausschließlich als
+             Konflikt markiert, kein Auto-Soft-Delete. -->
+        <div class="toggle-row">
+          <div class="toggle-info">
+            <span class="toggle-row-label"
+              >Schichten auf Berufsschultagen automatisch entfernen</span
+            >
+            <p class="form-hint text-muted">
+              {#if vocationalSchoolAutoCleanupShifts}
+                Aktiv: Wenn der Generator neue Berufsschultage anlegt, werden zukünftige Schichten
+                auf diesen Tagen automatisch entfernt (Soft-Delete, wiederherstellbar unter <a
+                  href="/shifts/conflicts">/shifts/conflicts</a
+                >). Schichten in der Vergangenheit werden nur als Konflikt markiert.
+              {:else}
+                Deaktiviert: Schichten auf neuen Berufsschultagen werden ausschließlich als Konflikt
+                markiert. Manuelle Bereinigung erforderlich.
+              {/if}
+            </p>
+          </div>
+          <label class="switch">
+            <input
+              type="checkbox"
+              aria-label="BS-Shift-Auto-Cleanup aktivieren"
+              checked={vocationalSchoolAutoCleanupShifts}
+              onchange={saveVocationalSchoolAutoCleanupShifts}
+              disabled={vsAutoCleanupSaving}
             />
             <span class="switch-slider"></span>
           </label>

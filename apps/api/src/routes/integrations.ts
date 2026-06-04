@@ -317,7 +317,9 @@ export async function integrationRoutes(app: FastifyInstance) {
         app.log.error({ err }, "Fehler beim Laden der Phorest WorkTimeTables");
         return reply
           .code(502)
-          .send({ error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}` });
+          .send({
+            error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}`,
+          });
       }
       // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
       const entries =
@@ -358,6 +360,7 @@ export async function integrationRoutes(app: FastifyInstance) {
             date: new Date(date),
             startTime: startH,
             endTime: endH,
+            deletedAt: null, // Phase 67.2 — integration import only checks active shifts
           },
         });
         if (existing) {
@@ -378,7 +381,9 @@ export async function integrationRoutes(app: FastifyInstance) {
           });
           created++;
         } catch (err: unknown) {
-          errors.push(`${date} ${startH}-${endH}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`);
+          errors.push(
+            `${date} ${startH}-${endH}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`,
+          );
         }
       }
 

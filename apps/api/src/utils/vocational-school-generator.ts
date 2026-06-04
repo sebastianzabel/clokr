@@ -15,13 +15,16 @@
 //                   action VOCATIONAL_SCHOOL_AUTO_GENERATED.
 
 import type { PrismaClient } from "@clokr/db";
+import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
+import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
 export interface GeneratorResult {
   created: number;
   skipped: {
+    schoolHoliday: number; // Phase 67.2: date falls in SchoolHolidayPeriod for resolved BL
     existing: number; // BERSCH-08: an Absence already exists for (employeeId, date)
     locked: number; // BERSCH-09: month is closed (SaldoSnapshot present)
     preHire: number;
@@ -117,18 +120,36 @@ async function runOrPreview(
   opts: RunOpts & { dryRun: boolean },
 ): Promise<GeneratorResult> {
   const now = opts.now ?? new Date();
-  const weeksAhead = opts.weeksAhead ?? 4;
+  // v1.7.4 hotfix — bumped from 4 → 13 weeks (≈ one quarter ahead) so the
+  // rolling window spans through typical Schulferien gaps. With 4 weeks the
+  // UI showed an empty schedule for AZUBI weekdays in the post-holiday range
+  // until the daily cron caught up. 13 weeks covers a full quarter forward.
+  const weeksAhead = opts.weeksAhead ?? 13;
 
   const windowStart = dateOnlyUtc(now);
   const windowEnd = addDaysUtc(windowStart, weeksAhead * 7);
 
   const result: GeneratorResult = {
     created: 0,
-    skipped: { existing: 0, locked: 0, preHire: 0, postExit: 0, outOfWindow: 0 },
+    skipped: {
+      schoolHoliday: 0,
+      existing: 0,
+      locked: 0,
+      preHire: 0,
+      postExit: 0,
+      outOfWindow: 0,
+    },
     details: opts.dryRun ? [] : undefined,
   };
 
+  // Phase 67.2 Plan 04 — Track newly-created Absence dates per employee so we can
+  // invoke the Shift-Auto-Cleanup hook ONCE per employee at the end of the run
+  // (batched notification, no per-day fan-out). Skipped entirely in dryRun.
+  const createdDatesByEmployee = new Map<string, Date[]>();
+
   // 1. Load all active patterns for this tenant whose validity range intersects the window.
+  //    Includes Phase 67.2 fields `respectSchoolHolidays` and `federalStateOverride`
+  //    via Prisma's default-scalar inclusion.
   const patterns = await prisma.employeeVocationalSchoolPattern.findMany({
     where: {
       isActive: true,
@@ -142,6 +163,13 @@ async function runOrPreview(
   });
 
   if (patterns.length === 0) return result;
+
+  // Phase 67.2 — Load tenant federalState as default for school-holiday resolution
+  // (overridable per-pattern via federalStateOverride).
+  const tenant = await prisma.tenant.findUniqueOrThrow({
+    where: { id: opts.tenantId },
+    select: { id: true, federalState: true },
+  });
 
   // 2. Bulk-fetch existing Absences in the window for these tenants' employees (idempotency).
   //    Build a set keyed by "employeeId::YYYY-MM-DD" for O(1) lookups.
@@ -172,12 +200,74 @@ async function runOrPreview(
     lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
   );
 
-  // 4. Iterate patterns × candidate dates, applying skip-conditions in order.
+  // 4. Phase 67.2 — Bulk-fetch SchoolHolidayPeriods for every federal state we will
+  //    consult (tenant.federalState + every distinct Pattern.federalStateOverride).
+  //    The cache is per-tenant (filtered by tenantId for multi-tenant isolation,
+  //    Threat T-67.2-09) and only contains periods that overlap the window.
+  //
+  //    Stale-cache fallback: if a state's periods are missing entirely (sync hasn't
+  //    populated yet or upstream is down), isSchoolHoliday() returns false for that
+  //    state and the generator behaves as if no holidays exist (RESEARCH §128 safe
+  //    degradation).
+  const neededStates = new Set<FederalState>([tenant.federalState]);
+  for (const p of patterns) {
+    if (p.federalStateOverride) neededStates.add(p.federalStateOverride);
+  }
+  const holidayPeriods = await prisma.schoolHolidayPeriod.findMany({
+    where: {
+      tenantId: opts.tenantId,
+      federalState: { in: [...neededStates] },
+      // Period overlap: period.startDate <= windowEnd AND period.endDate >= windowStart
+      startDate: { lte: windowEnd },
+      endDate: { gte: windowStart },
+    },
+    select: { federalState: true, startDate: true, endDate: true },
+  });
+  // Index by federalState for O(1) bucket access; we scan within-bucket
+  // (typically <20 entries/year/BL).
+  const holidaysByState = new Map<FederalState, Array<{ startDate: Date; endDate: Date }>>();
+  for (const h of holidayPeriods) {
+    let bucket = holidaysByState.get(h.federalState);
+    if (!bucket) {
+      bucket = [];
+      holidaysByState.set(h.federalState, bucket);
+    }
+    bucket.push({ startDate: h.startDate, endDate: h.endDate });
+  }
+
+  function isSchoolHoliday(date: Date, fs: FederalState): boolean {
+    const periods = holidaysByState.get(fs);
+    if (!periods) return false;
+    const t = date.getTime();
+    for (const p of periods) {
+      if (t >= p.startDate.getTime() && t <= p.endDate.getTime()) return true;
+    }
+    return false;
+  }
+
+  // 5. Iterate patterns × candidate dates, applying skip-conditions in order.
   for (const pattern of patterns) {
     const employee = pattern.employee;
     const patternValidUntil = pattern.validUntil;
     const patternValidFrom = pattern.validFrom;
-    const hasWeekday = pattern.dayOfWeek != null;
+
+    // Phase 67.2 — Resolve effective federal state + opt-out flag per pattern.
+    // `respectSchoolHolidays === false` is the Pflegeschule / Berufsakademie
+    // opt-out: holidays do NOT apply. `federalStateOverride` is the
+    // Pendler-Azubi case (BS in a different BL than the employer's tenant).
+    const effectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
+    const skipHolidayCheck = pattern.respectSchoolHolidays === false;
+
+    // Phase 67.1 — Multi-day weekday support. `daysOfWeek Int[]` is the canonical
+    // source; legacy single-value `dayOfWeek Int?` is folded in for old rows that
+    // pre-date the v1.7.4 migration and may have an empty `daysOfWeek` array.
+    // Existing DB rows have been backfilled, but we keep the fallback so a fresh
+    // backup-restored row from v1.7.3 still generates correctly during the soak.
+    const weekdaySet = new Set<number>(pattern.daysOfWeek);
+    if (weekdaySet.size === 0 && pattern.dayOfWeek != null) {
+      weekdaySet.add(pattern.dayOfWeek);
+    }
+    const hasWeekday = weekdaySet.size > 0;
     const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
 
     // Iterate every day in the rolling window.
@@ -193,12 +283,19 @@ async function runOrPreview(
 
       // (b) Decide if this pattern intends to produce a row for this date.
       let intended = false;
-      if (hasWeekday && dowMondayBased(date) === pattern.dayOfWeek) {
+      if (hasWeekday && weekdaySet.has(dowMondayBased(date))) {
         intended = true;
       }
       if (hasBlockWeeks) {
         const iso = isoWeekOf(date);
-        if (iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
+        // v1.7.4 hotfix — Blockunterricht runs Mo-Fr per BBiG §15 Abs.1 Nr.3
+        // (25h / mind. 5 Tage) and IHK/HWK/BASS-NRW practice. Sa/So are never
+        // school days under the standard 5-day-Berufsschulwoche; explicit
+        // Sa-models ("Berufsschule Plus") are out of scope for v1.7.x. See
+        // .planning/debug/bs-blockweek-weekday-research.md
+        const dow = dowMondayBased(date);
+        const isWeekday = dow >= 0 && dow <= 4;
+        if (isWeekday && iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
           intended = true;
         }
       }
@@ -256,6 +353,22 @@ async function runOrPreview(
         }
         continue;
       }
+      // (c.5) School-Holiday skip (Phase 67.2). MUST run BEFORE BERSCH-08 existing
+      // check so the `schoolHoliday` counter is accurate and idempotency holds
+      // on reruns (RESEARCH §198 pitfall #8). When `respectSchoolHolidays=false`
+      // (Pflegeschule opt-out) we bypass this branch entirely.
+      if (!skipHolidayCheck && isSchoolHoliday(date, effectiveFs)) {
+        result.skipped.schoolHoliday++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: employee.id,
+            date: toIsoDate(date),
+            action: "skipped",
+            reason: "schoolHoliday",
+          });
+        }
+        continue;
+      }
       // Existing Absence (BERSCH-08)
       const existKey = `${employee.id}::${toIsoDate(date)}`;
       if (existingSet.has(existKey)) {
@@ -294,17 +407,74 @@ async function runOrPreview(
           action: "created",
         });
       } else {
-        const absence = await prisma.absence.create({
-          data: {
-            employeeId: employee.id,
-            type: "VOCATIONAL_SCHOOL",
-            source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
-            startDate: date,
-            endDate: date,
-            days: 1.0,
-            createdBy: "SYSTEM",
-          },
-        });
+        // v1.7.4 hotfix — guard against concurrent generator runs racing on the
+        // same (employeeId, startDate, type) UNIQUE constraint. The PUT pattern
+        // handler fires a fire-and-forget generator on save; that can collide
+        // with the daily cron or the explicit POST /vocational-school/generate
+        // endpoint (used by tests). Treat P2002 (Prisma unique-violation) as a
+        // benign "already created by parallel run" and bump the existing-skip
+        // counter instead of bubbling the error up.
+        let absence;
+        try {
+          absence = await prisma.absence.create({
+            data: {
+              employeeId: employee.id,
+              type: "VOCATIONAL_SCHOOL",
+              source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
+              startDate: date,
+              endDate: date,
+              days: 1.0,
+              createdBy: "SYSTEM",
+            },
+          });
+        } catch (err: unknown) {
+          if (
+            err &&
+            typeof err === "object" &&
+            "code" in err &&
+            (err as { code: unknown }).code === "P2002"
+          ) {
+            // v1.7.4 hotfix — P2002 means the @@unique(employeeId, startDate, type)
+            // already has a row. Two scenarios: (a) a parallel run created it
+            // (benign — skip), or (b) a previous orphan-sweep soft-deleted it
+            // and the pattern now claims this date again (restore it!). Without
+            // the restore branch the row would be stuck in soft-deleted state
+            // forever, leaving the user with a missing BS-day in the Schichtplan.
+            const existing = await prisma.absence.findUnique({
+              where: {
+                employeeId_startDate_type: {
+                  employeeId: employee.id,
+                  startDate: date,
+                  type: "VOCATIONAL_SCHOOL",
+                },
+              },
+            });
+            if (existing && existing.deletedAt !== null) {
+              absence = await prisma.absence.update({
+                where: { id: existing.id },
+                data: {
+                  deletedAt: null,
+                  source: "PATTERN",
+                  createdBy: "SYSTEM",
+                },
+              });
+              // Fall through to the audit + counted-as-created path below.
+            } else {
+              result.skipped.existing++;
+              if (opts.dryRun) {
+                result.details!.push({
+                  employeeId: employee.id,
+                  date: toIsoDate(date),
+                  action: "skipped",
+                  reason: "existing",
+                });
+              }
+              continue;
+            }
+          } else {
+            throw err;
+          }
+        }
         // userId is null (FK column) — the SYSTEM-origin marker lives inside newValue.
         // Encoding the originator inside newValue is the established convention for
         // SYSTEM-owned mutations (AuditLog.userId has @relation onDelete: SetNull and
@@ -326,11 +496,194 @@ async function runOrPreview(
         // (e.g. weekday + block-week both match in the same iteration).
         existingSet.add(existKey);
         result.created++;
+        // Phase 67.2 Plan 04 — record the new BS-day so the Shift-Auto-Cleanup hook
+        // can scan it after the loop completes.
+        let bucket = createdDatesByEmployee.get(employee.id);
+        if (!bucket) {
+          bucket = [];
+          createdDatesByEmployee.set(employee.id, bucket);
+        }
+        bucket.push(date);
       }
     }
   }
 
+  // Phase 67.2 Plan 04 — Shift-Auto-Cleanup hook. Runs ONCE per employee after all
+  // Absences are created in the run (batched notification). Skipped in dryRun.
+  // Tenant opt-out is honored inside cleanupShiftsForBSAbsence(); the helper returns
+  // { skipped: true } when vocationalSchoolAutoCleanupShifts=false.
+  if (!opts.dryRun && createdDatesByEmployee.size > 0) {
+    await dispatchShiftCleanupForCreatedAbsences(
+      prisma,
+      audit,
+      opts.tenantId,
+      createdDatesByEmployee,
+      now,
+      "PATTERN",
+    );
+  }
+
+  // v1.7.4 hotfix — Orphan PATTERN-Absence cleanup.
+  // When a user deselects a weekday from their pattern (e.g. removes Fr from
+  // [Mo, Fr]), the previously-generated PATTERN Absences for the removed day
+  // stay in DB and continue to render in the Schichtplan. This sweep finds
+  // PATTERN-source Absences in the rolling window that no longer match ANY
+  // active pattern's daysOfWeek / blockWeeks intent and soft-deletes them.
+  // Source=MANUAL rows are NEVER touched (user-curated, audit-proof). Locked
+  // months are skipped (Revisionssicherheit / Phase 47.2 immutability).
+  if (!opts.dryRun) {
+    const intendedSet = new Set<string>();
+    for (const pattern of patterns) {
+      const weekdaySet = new Set<number>(pattern.daysOfWeek);
+      if (weekdaySet.size === 0 && pattern.dayOfWeek != null) {
+        weekdaySet.add(pattern.dayOfWeek);
+      }
+      const hasWeekday = weekdaySet.size > 0;
+      const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
+      const patternStart = dateOnlyUtc(pattern.validFrom);
+      const patternEnd = pattern.validUntil ? dateOnlyUtc(pattern.validUntil) : null;
+      // v1.7.4 hotfix — Resolve effective Bundesland + Ferien-opt-out per pattern
+      // so the intended-set respects the SAME skip rules the create-loop applies.
+      // Without this, dates that were generated BEFORE the SchoolHolidayPeriod
+      // cache was populated (e.g. first PUT racing with on-demand sync) stay
+      // orphaned in Ferien and continue to render in the Schichtplan.
+      const patEffectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
+      const patSkipHolidayCheck = pattern.respectSchoolHolidays === false;
+      for (let i = 0; i <= weeksAhead * 7; i++) {
+        const date = addDaysUtc(windowStart, i);
+        // Respect the pattern's own validity window — outside it, the pattern
+        // has no claim on this date and the existing-Absence is not its child.
+        if (date < patternStart) continue;
+        if (patternEnd && date > patternEnd) continue;
+        let matches = false;
+        if (hasWeekday && weekdaySet.has(dowMondayBased(date))) matches = true;
+        if (hasBlockWeeks) {
+          const iso = isoWeekOf(date);
+          // v1.7.4 hotfix — Same Mo-Fr filter as create-loop above. Without
+          // this the orphan-sweep would falsely re-claim Sa/So absences left
+          // over from pre-fix runs and keep them active in the DB.
+          const dow = dowMondayBased(date);
+          const isWeekday = dow >= 0 && dow <= 4;
+          if (
+            isWeekday &&
+            iso.year === pattern.blockYear &&
+            pattern.blockWeeks.includes(iso.week)
+          ) {
+            matches = true;
+          }
+        }
+        if (!matches) continue;
+        // v1.7.4 hotfix — Ferien-aware orphan sweep. If THIS pattern would skip
+        // the date as a school holiday during the create loop, this pattern does
+        // NOT actually claim the date — drop it from intendedSet.
+        if (!patSkipHolidayCheck && isSchoolHoliday(date, patEffectiveFs)) continue;
+        intendedSet.add(`${pattern.employeeId}::${toIsoDate(date)}`);
+      }
+    }
+
+    const orphanCandidates = await prisma.absence.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        deletedAt: null,
+        startDate: { gte: windowStart, lte: windowEnd },
+      },
+    });
+
+    for (const a of orphanCandidates) {
+      const key = `${a.employeeId}::${toIsoDate(a.startDate)}`;
+      if (intendedSet.has(key)) continue;
+      // Skip locked-month rows (audit-proof).
+      const lockKey = `${a.employeeId}::${toIsoDate(monthStartUtc(a.startDate))}`;
+      if (lockedSet.has(lockKey)) continue;
+
+      await prisma.absence.update({
+        where: { id: a.id },
+        data: { deletedAt: now },
+      });
+      await audit({
+        userId: undefined,
+        action: "VOCATIONAL_SCHOOL_AUTO_DELETED",
+        entity: "Absence",
+        entityId: a.id,
+        oldValue: {
+          origin: "SYSTEM",
+          employeeId: a.employeeId,
+          date: toIsoDate(a.startDate),
+          source: "PATTERN",
+        },
+        newValue: {
+          origin: "SYSTEM",
+          deletedAt: now.toISOString(),
+          reason: "orphaned_after_pattern_change",
+        },
+        request: undefined,
+      });
+    }
+  }
+
   return result;
+}
+
+// ── Phase 67.2 Plan 04 — Shift-Auto-Cleanup dispatcher ───────────────────────
+//
+// Walks the per-employee createdDates Map and:
+//   1. Invokes cleanupShiftsForBSAbsence for each employee with the new BS-dates
+//   2. Sends ONE batched Notification per affected employee to all ADMIN+MANAGER
+//      users in the tenant (in-app only — the email layer of app.notify() is not
+//      wired here because Generator runs without an app instance; the in-app
+//      notification surface alone matches the BS-Cleanup UX described in Plan 05).
+//
+// Exported for reuse by routes/vocational-school.ts (manual-insert D-23).
+export async function dispatchShiftCleanupForCreatedAbsences(
+  prisma: PrismaClient,
+  audit: AuditFn,
+  tenantId: string,
+  createdDatesByEmployee: Map<string, Date[]>,
+  now: Date,
+  triggerSource: "PATTERN" | "MANUAL",
+): Promise<void> {
+  for (const [employeeId, dates] of createdDatesByEmployee) {
+    const r = await cleanupShiftsForBSAbsence(prisma, audit, {
+      tenantId,
+      employeeId,
+      dates,
+      now,
+      triggerSource,
+    });
+    if (r.skipped) continue;
+    if (r.futureSoftDeleted === 0 && r.pastFlagged === 0) continue;
+
+    // Resolve employee display name + recipient list for the batched notification.
+    const emp = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { firstName: true, lastName: true },
+    });
+    const empName = emp ? `${emp.firstName} ${emp.lastName}` : employeeId;
+    const recipients = await prisma.employee.findMany({
+      where: {
+        tenantId,
+        user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+      },
+      include: { user: { select: { id: true } } },
+    });
+
+    const notificationData = {
+      type: "SHIFT_BS_CLEANUP",
+      title: "Schichten auf Berufsschultagen",
+      message: `Für ${empName}: ${r.futureSoftDeleted} Schicht(en) entfernt, ${r.pastFlagged} markiert`,
+      link: "/shifts/conflicts",
+      relatedType: "Shift",
+      relatedId: r.affectedShiftIds[0] ?? null,
+    };
+    for (const e of recipients) {
+      if (!e.user) continue;
+      await prisma.notification.create({
+        data: { userId: e.user.id, ...notificationData },
+      });
+    }
+  }
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────

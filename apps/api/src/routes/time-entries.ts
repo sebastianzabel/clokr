@@ -1649,7 +1649,11 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   if (scheduleType === "SHIFT_BASED") {
     // ── SHIFT_BASED: expected = Σ Shift durations minus leave/absence-covered days ─
     const shifts = await app.prisma.shift.findMany({
-      where: { employeeId, date: { gte: rangeStart, lte: effectiveEnd } },
+      where: {
+        employeeId,
+        date: { gte: rangeStart, lte: effectiveEnd },
+        deletedAt: null, // Phase 67.2 — saldo math ignores soft-deleted shifts
+      },
       select: { date: true, startTime: true, endTime: true },
     });
 

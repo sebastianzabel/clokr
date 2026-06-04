@@ -329,6 +329,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: {
           employee: { tenantId },
           date: { gte: weekStart, lte: weekEnd },
+          deletedAt: null, // Phase 67.2 — hide soft-deleted shifts on dashboard week
         },
         include: { template: { select: { name: true, color: true } } },
       });
@@ -773,7 +774,11 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // Phase 49.4 (fix): own shifts for this week so SHIFT_BASED users see the planned shift
       // time on scheduled days instead of a generic "Geplant" label.
       const myWeekShifts = await app.prisma.shift.findMany({
-        where: { employeeId, date: { gte: start, lte: end } },
+        where: {
+          employeeId,
+          date: { gte: start, lte: end },
+          deletedAt: null, // Phase 67.2 — hide soft-deleted shifts from my-week view
+        },
         include: { template: { select: { name: true, color: true } } },
       });
       const scheduleType = (schedule as { type?: string } | null)?.type ?? null;

@@ -403,11 +403,13 @@ describe("Time Entry Validation Rules", () => {
           method: "POST",
           url: "/api/v1/time-entries/clock-in",
           headers: { authorization: `Bearer ${data.empToken}` },
-          payload: { source: "WEB" },
+          payload: { source: "MOBILE" }, // Phase 66 fix (failure #10): "WEB" was not in TimeEntrySource enum → 400
         });
 
-        // Should NOT be blocked — invalid entries must not count as "already clocked in"
-        expect(res.statusCode).toBe(201);
+        // Should NOT be blocked — invalid entries must not count as "already clocked in".
+        // Note: /clock-in returns 200 (default Fastify success) not 201; the conflict-check
+        // filter (isInvalid: false) is the actual claim under test here.
+        expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.body);
         expect(body.success).toBe(true);
 
@@ -440,7 +442,7 @@ describe("Time Entry Validation Rules", () => {
           method: "POST",
           url: "/api/v1/time-entries/clock-in",
           headers: { authorization: `Bearer ${data.empToken}` },
-          payload: { source: "WEB" },
+          payload: { source: "MOBILE" }, // Phase 66 fix (failure #11): "WEB" was not in TimeEntrySource enum → 400
         });
 
         // Valid open entry MUST block clock-in

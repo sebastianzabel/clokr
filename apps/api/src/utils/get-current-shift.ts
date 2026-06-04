@@ -29,7 +29,11 @@ export async function getCurrentShift(
   const dateForQuery = new Date(dateStr + "T00:00:00Z");
 
   const shift = await prisma.shift.findFirst({
-    where: { employeeId, date: dateForQuery },
+    where: {
+      employeeId,
+      date: dateForQuery,
+      deletedAt: null, // Phase 67.2 — terminal lookup must ignore soft-deleted shifts
+    },
     select: { id: true, startTime: true, endTime: true },
   });
 

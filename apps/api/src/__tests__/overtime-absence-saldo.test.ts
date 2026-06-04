@@ -6,7 +6,7 @@
  * Reproduces the "a-tenant" bug where 13 MAs went from saldo=0 to -100..-150h
  * after a single test TimeEntry was created.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { updateOvertimeAccount } from "../routes/time-entries";
 import type { FastifyInstance } from "fastify";
@@ -247,17 +247,26 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
   });
 
   it("regression: WITHOUT Absence, saldo IS strongly negative (sanity check)", async () => {
-    // Call updateOvertimeAccount for the employee without any absence.
-    // Hire date is Jan 1 2026 — by late May that's ~100 workdays of expected time.
-    // With 0 time entries, saldo must be strongly negative.
-    await updateOvertimeAccount(app, employeeWithoutAbsenceId);
+    // Phase 66 fix (failure #3): pin to a late-month date so updateOvertimeAccount's
+    // current-month range (May 1 → pinned-today) covers ~18 workdays * 8h = ~144h
+    // expected. Without the pin, on early-month run dates (e.g. 2026-06-03), the
+    // range only covers 2 workdays → balance = -16h, failing the < -20 assertion.
+    vi.useFakeTimers({ now: new Date("2026-05-26T10:00:00.000Z"), toFake: ["Date"] });
+    try {
+      // Call updateOvertimeAccount for the employee without any absence.
+      // Hire date is Jan 1 2026 — by late May that's ~100 workdays of expected time.
+      // With 0 time entries, saldo must be strongly negative.
+      await updateOvertimeAccount(app, employeeWithoutAbsenceId);
 
-    const account = await app.prisma.overtimeAccount.findUnique({
-      where: { employeeId: employeeWithoutAbsenceId },
-    });
-    const balanceHours = Number(account?.balanceHours ?? 0);
+      const account = await app.prisma.overtimeAccount.findUnique({
+        where: { employeeId: employeeWithoutAbsenceId },
+      });
+      const balanceHours = Number(account?.balanceHours ?? 0);
 
-    // Must be strongly negative — this is the pre-fix behavior for employees with no absence
-    expect(balanceHours).toBeLessThan(-20);
+      // Must be strongly negative — this is the pre-fix behavior for employees with no absence
+      expect(balanceHours).toBeLessThan(-20);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

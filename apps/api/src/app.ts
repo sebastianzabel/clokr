@@ -24,6 +24,7 @@ import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./plugins/carryover-warning";
 import { dataRetentionPlugin } from "./plugins/data-retention";
 import { vocationalSchoolGeneratorPlugin } from "./plugins/vocational-school-generator";
+import { schoolHolidaysSyncPlugin } from "./plugins/school-holidays-sync";
 import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
 import { storagePlugin } from "./plugins/storage";
 import multipart from "@fastify/multipart";
@@ -46,6 +47,7 @@ import { avatarRoutes } from "./routes/avatars";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
+import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
 
 export async function buildApp() {
@@ -223,6 +225,7 @@ export async function buildApp() {
   await app.register(carryoverWarningPlugin);
   await app.register(dataRetentionPlugin);
   await app.register(vocationalSchoolGeneratorPlugin);
+  await app.register(schoolHolidaysSyncPlugin);
   await app.register(autoCloseMonthPlugin);
   await app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } });
   await app.register(storagePlugin);
@@ -266,6 +269,7 @@ export async function buildApp() {
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
+  await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
 
   // ── Client Error Logging ─────────────────────────────────

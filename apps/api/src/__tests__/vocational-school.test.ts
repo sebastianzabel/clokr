@@ -65,11 +65,19 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.deleteMany({
       where: { employeeId: data.employee.id },
     });
+    // Wipe ALL Absence types here (not only VOCATIONAL_SCHOOL) so leftover SICK/etc.
+    // rows from BERSCH-08 tests don't trip the schoolHoliday-vs-existing priority chain
+    // in Phase 67.2 tests below.
     await app.prisma.absence.deleteMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL" },
+      where: { employeeId: data.employee.id },
     });
     await app.prisma.saldoSnapshot.deleteMany({
       where: { employeeId: data.employee.id },
+    });
+    // Phase 67.2 — Wipe SchoolHolidayPeriod cache between tests so Ferien-aware
+    // tests can't accidentally affect earlier weekday/block-week tests.
+    await app.prisma.schoolHolidayPeriod.deleteMany({
+      where: { tenantId: data.tenant.id },
     });
   });
 
@@ -81,12 +89,14 @@ describe("Berufsschule (Phase 62)", () => {
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
-        patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.patterns).toHaveLength(1);
+    expect(body.patterns[0].daysOfWeek).toEqual([2]);
+    // Backwards-compat field still surfaced for single-day rows.
     expect(body.patterns[0].dayOfWeek).toBe(2);
 
     const getRes = await app.inject({
@@ -97,17 +107,18 @@ describe("Berufsschule (Phase 62)", () => {
     expect(getRes.statusCode).toBe(200);
     const patterns = JSON.parse(getRes.body);
     expect(patterns).toHaveLength(1);
+    expect(patterns[0].daysOfWeek).toEqual([2]);
     expect(patterns[0].dayOfWeek).toBe(2);
     expect(patterns[0].isActive).toBe(true);
   });
 
-  it("BERSCH-01 — PUT rejected without dayOfWeek AND without blockWeeks (Zod refine)", async () => {
+  it("BERSCH-01 — PUT rejected without daysOfWeek AND without blockWeeks (Zod refine)", async () => {
     const res = await app.inject({
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {
-        patterns: [{ dayOfWeek: null, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(400);
@@ -131,7 +142,7 @@ describe("Berufsschule (Phase 62)", () => {
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.empToken}` },
       payload: {
-        patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }],
+        patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }],
       },
     });
     expect(res.statusCode).toBe(403);
@@ -142,13 +153,13 @@ describe("Berufsschule (Phase 62)", () => {
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { patterns: [{ dayOfWeek: 2, blockWeeks: [], validFrom: "2026-06-01" }] },
+      payload: { patterns: [{ daysOfWeek: [2], blockWeeks: [], validFrom: "2026-06-01" }] },
     });
     await app.inject({
       method: "PUT",
       url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { patterns: [{ dayOfWeek: 4, blockWeeks: [], validFrom: "2026-06-01" }] },
+      payload: { patterns: [{ daysOfWeek: [4], blockWeeks: [], validFrom: "2026-06-01" }] },
     });
 
     // GET returns ONLY the second pattern, both rows exist in DB but only #2 is active.
@@ -159,13 +170,181 @@ describe("Berufsschule (Phase 62)", () => {
     });
     const active = JSON.parse(getRes.body);
     expect(active).toHaveLength(1);
-    expect(active[0].dayOfWeek).toBe(4);
+    expect(active[0].daysOfWeek).toEqual([4]);
 
     const allRows = await app.prisma.employeeVocationalSchoolPattern.findMany({
       where: { employeeId: data.employee.id },
     });
     expect(allRows).toHaveLength(2); // both retained for audit trail
     expect(allRows.filter((r) => r.isActive)).toHaveLength(1);
+  });
+
+  // ── Phase 67.1: Multi-day weekdays ────────────────────────────────────────
+
+  it("BERSCH-01 (67.1) — PUT with 3 weekdays creates Absences for all matching days", async () => {
+    // Pick Mo + Mi + Fr (0, 2, 4). Window is 4 weeks ahead, so we expect ~12 rows.
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [{ daysOfWeek: [0, 2, 4], blockWeeks: [], validFrom: "2020-01-01" }],
+      },
+    });
+
+    // Server should reflect array verbatim and clear the legacy single field
+    // because multi-day rows have no unambiguous scalar.
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const persisted = JSON.parse(getRes.body);
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].daysOfWeek).toEqual([0, 2, 4]);
+    // Legacy dayOfWeek field MUST be null for multi-day rows.
+    expect(persisted[0].dayOfWeek).toBeNull();
+
+    // Generator runs. v1.7.4: PUT pattern already fired a fire-and-forget
+    // generator run, so this explicit POST may see 0 created (idempotent
+    // skip on existing rows). The authoritative signal is the DB count below.
+    const genRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/vocational-school/generate",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(genRes.statusCode).toBe(200);
+
+    const absences = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        deletedAt: null,
+      },
+    });
+    expect(absences.length).toBeGreaterThan(0);
+    const observedDows = new Set(
+      absences.map((a) => {
+        const native = a.startDate.getUTCDay();
+        return native === 0 ? 6 : native - 1;
+      }),
+    );
+    // All Absences land on one of the three configured weekdays.
+    for (const d of observedDows) {
+      expect([0, 2, 4]).toContain(d);
+    }
+    // And we cover the full set (window is 4 weeks ahead so each weekday hits ≥ 3 times).
+    expect(observedDows.has(0)).toBe(true);
+    expect(observedDows.has(2)).toBe(true);
+    expect(observedDows.has(4)).toBe(true);
+  });
+
+  it("BERSCH-01 (67.1) — PUT with empty daysOfWeek + non-empty blockWeeks passes refine", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [],
+            blockWeeks: [12, 13],
+            blockYear: 2026,
+            validFrom: "2026-01-01",
+          },
+        ],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.patterns[0].daysOfWeek).toEqual([]);
+    expect(body.patterns[0].blockWeeks).toEqual([12, 13]);
+    expect(body.patterns[0].blockYear).toBe(2026);
+  });
+
+  // ── Phase 67.2 (Plan 03): Pattern fields respectSchoolHolidays + federalStateOverride ──
+
+  it("Phase 67.2 — Test F: PUT with respectSchoolHolidays=false persists the flag, GET returns it", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [1],
+            blockWeeks: [],
+            validFrom: "2026-06-01",
+            respectSchoolHolidays: false,
+          },
+        ],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].respectSchoolHolidays).toBe(false);
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(getRes.statusCode).toBe(200);
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].respectSchoolHolidays).toBe(false);
+  });
+
+  it("Phase 67.2 — Test G: PUT with federalStateOverride=BAYERN persists, GET returns it", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [
+          {
+            daysOfWeek: [1],
+            blockWeeks: [],
+            validFrom: "2026-06-01",
+            federalStateOverride: "BAYERN",
+          },
+        ],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].federalStateOverride).toBe("BAYERN");
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].federalStateOverride).toBe("BAYERN");
+  });
+
+  it("Phase 67.2 — Test H: PUT without new fields uses defaults (respectSchoolHolidays=true, federalStateOverride=null)", async () => {
+    const putRes = await app.inject({
+      method: "PUT",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        patterns: [{ daysOfWeek: [1], blockWeeks: [], validFrom: "2026-06-01" }],
+      },
+    });
+    expect(putRes.statusCode).toBe(200);
+    const putBody = JSON.parse(putRes.body);
+    expect(putBody.patterns[0].respectSchoolHolidays).toBe(true);
+    expect(putBody.patterns[0].federalStateOverride).toBeNull();
+
+    const getRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/employees/${data.employee.id}/vocational-school-pattern`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const patterns = JSON.parse(getRes.body);
+    expect(patterns[0].respectSchoolHolidays).toBe(true);
+    expect(patterns[0].federalStateOverride).toBeNull();
   });
 
   // ── BERSCH-02: Auto-generation ─────────────────────────────────────────────
@@ -175,7 +354,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -188,8 +368,9 @@ describe("Berufsschule (Phase 62)", () => {
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
     expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.created).toBeGreaterThan(0);
+    // v1.7.4: pattern was inserted directly via prisma but a fire-and-forget
+    // generator may already have run from a prior test's PUT. Authoritative
+    // signal is the DB count.
 
     const absences = await app.prisma.absence.findMany({
       where: {
@@ -213,6 +394,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -243,7 +425,7 @@ describe("Berufsschule (Phase 62)", () => {
     expect(absences.length).toBe(firstCount); // No duplicates.
   });
 
-  it("BERSCH-02 — Block-week pattern generates 7 Absence rows per matching ISO week", async () => {
+  it("BERSCH-02 — Block-week pattern generates 5 weekday Absence rows per matching ISO week", async () => {
     // Pick next Monday and use its ISO week as the block week.
     const nextMonday = nextDow(0); // 0=Mo
     const iso = isoWeekOf(nextMonday);
@@ -252,6 +434,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: null,
+        daysOfWeek: [], // Phase 67.1: pure block-week pattern
         blockWeeks: [iso.week],
         blockYear: iso.year,
         validFrom: new Date("2020-01-01"),
@@ -266,14 +449,17 @@ describe("Berufsschule (Phase 62)", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    // Expect 7 days (Mo-Su) for that one block week.
-    expect(body.created).toBe(7);
+    // v1.7.4 hotfix: Blockunterricht runs Mo-Fr per BBiG §15 Abs.1 Nr.3
+    // (25h / mind. 5 Tage). Sa+So are weekends — never school days under the
+    // standard 5-day-Berufsschulwoche. See
+    // .planning/debug/bs-blockweek-weekday-research.md
+    expect(body.created).toBe(5);
 
     const absences = await app.prisma.absence.findMany({
       where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
       orderBy: { startDate: "asc" },
     });
-    expect(absences).toHaveLength(7);
+    expect(absences).toHaveLength(5);
     // All within the same ISO week
     for (const a of absences) {
       const wk = isoWeekOf(a.startDate);
@@ -296,6 +482,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -339,7 +526,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -378,6 +566,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -445,7 +634,8 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.employeeVocationalSchoolPattern.create({
       data: {
         employeeId: data.employee.id,
-        dayOfWeek: 1, // Tuesday
+        dayOfWeek: 1, // Tuesday (legacy column for backwards-compat readers)
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -480,6 +670,7 @@ describe("Berufsschule (Phase 62)", () => {
       data: {
         employeeId: data.employee.id,
         dayOfWeek: 1,
+        daysOfWeek: [1], // Phase 67.1: canonical multi-day field
         blockWeeks: [],
         validFrom: new Date("2020-01-01"),
         isActive: true,
@@ -494,5 +685,243 @@ describe("Berufsschule (Phase 62)", () => {
     const body = JSON.parse(res.body);
     expect(body.created).toBeGreaterThan(0);
     expect(body.skipped.locked).toBe(0);
+  });
+
+  // ── Phase 67.2 (Plan 03): School-Holiday skip + federalStateOverride + opt-out ──
+  //
+  // Skip-priority order verified in code: schoolHoliday MUST run BEFORE existingSet
+  // and BEFORE lockedSet so the counter is accurate and idempotency holds
+  // (RESEARCH §198 pitfall #8). When the cache is empty the generator MUST behave
+  // as if no holidays exist (safe stale-cache degradation per RESEARCH §128).
+
+  it("Phase 67.2 — Test A: BS-Day in SchoolHolidayPeriod → date skipped, schoolHoliday counter increments, no Absence created", async () => {
+    // Seed pattern targeting Tuesdays (1=Tu).
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // Pick the next Tuesday inside the window and seed a SchoolHolidayPeriod
+    // covering that exact date for the tenant's federal state (NIEDERSACHSEN).
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    expect(result.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+
+    // No VOCATIONAL_SCHOOL Absence on the Ferien-Tuesday.
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(0);
+
+    // Cleanup the SchoolHolidayPeriod so following tests aren't affected.
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test B: respectSchoolHolidays=false → SchoolHolidayPeriod IGNORED, Absence IS created (Pflegeschule opt-out)", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: false, // Pflegeschule opt-out
+      },
+    });
+
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    // schoolHoliday counter is NOT incremented for opt-out patterns.
+    expect(result.skipped.schoolHoliday).toBe(0);
+
+    // An Absence WAS created on the Ferien-Tuesday because the opt-out bypasses the filter.
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(1);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test C: federalStateOverride=BAYERN honored — SchoolHolidayPeriod only in BAYERN skips the date (Pendler-Azubi)", async () => {
+    // Tenant is NIEDERSACHSEN by seed; Azubi attends school in BAYERN.
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+        federalStateOverride: "BAYERN",
+      },
+    });
+
+    const nextTuesday = nextDow(1);
+    // Ferien exist ONLY for BAYERN — not for the tenant's NIEDERSACHSEN.
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "BAYERN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Bayern-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    expect(result.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+
+    const onFerienDay = await app.prisma.absence.findMany({
+      where: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        startDate: nextTuesday,
+        deletedAt: null,
+      },
+    });
+    expect(onFerienDay).toHaveLength(0);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
+  });
+
+  it("Phase 67.2 — Test D: Empty SchoolHolidayPeriod cache + respectSchoolHolidays=true → generator DOES NOT skip (safe stale-cache degradation)", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // No SchoolHolidayPeriod rows seeded — cache is empty (e.g. sync hasn't run yet).
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+
+    // Behaves as if no holidays exist — no schoolHoliday skips at all.
+    expect(result.skipped.schoolHoliday).toBe(0);
+    // Generator still produced rows on every Tuesday in the window.
+    expect(result.created).toBeGreaterThan(0);
+  });
+
+  it("Phase 67.2 — Test E: Idempotency — re-running the generator with Ferien seeded creates 0 rows on second run and still counts schoolHoliday skips", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+        respectSchoolHolidays: true,
+      },
+    });
+
+    // Seed one Ferien-Tuesday so we exercise the schoolHoliday branch on both runs.
+    const nextTuesday = nextDow(1);
+    await app.prisma.schoolHolidayPeriod.create({
+      data: {
+        tenantId: data.tenant.id,
+        federalState: "NIEDERSACHSEN",
+        startDate: nextTuesday,
+        endDate: nextTuesday,
+        name: "Test-Ferien",
+        source: "MANUAL",
+        fetchedAt: new Date(),
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const r1 = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+    expect(r1.created).toBeGreaterThan(0);
+    expect(r1.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+    const firstCount = r1.created;
+
+    const r2 = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 4,
+    });
+    expect(r2.created).toBe(0); // idempotent — no duplicates
+    // schoolHoliday skip-check runs BEFORE existing-check, so the Ferien-Tuesday
+    // is still counted as schoolHoliday on the second run (NOT existing).
+    expect(r2.skipped.schoolHoliday).toBeGreaterThanOrEqual(1);
+    expect(r2.skipped.existing).toBeGreaterThanOrEqual(firstCount);
+
+    const absences = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+    });
+    expect(absences.length).toBe(firstCount);
+
+    await app.prisma.schoolHolidayPeriod.deleteMany({ where: { tenantId: data.tenant.id } });
   });
 });

@@ -19,18 +19,20 @@ model Tenant {
   createdAt    DateTime     @default(now()) @db.Timestamptz
   updatedAt    DateTime     @updatedAt @db.Timestamptz
 
-  employees         Employee[]
-  leaveTypes        LeaveType[]
-  publicHolidays    PublicHoliday[]
-  config            TenantConfig?
-  companyShutdowns  CompanyShutdown[]
-  shiftTemplates    ShiftTemplate[]
-  coverageRules     CoverageRule[]
-  terminalApiKeys   TerminalApiKey[]
-  apiKeys           ApiKey[]
-  specialLeaveRules SpecialLeaveRule[]
-  presenceSources   PresenceSource[]
-  presenceDevices   PresenceDevice[]
+  employees            Employee[]
+  leaveTypes           LeaveType[]
+  publicHolidays       PublicHoliday[]
+  config               TenantConfig?
+  companyShutdowns     CompanyShutdown[]
+  shiftTemplates       ShiftTemplate[]
+  coverageRules        CoverageRule[]
+  terminalApiKeys      TerminalApiKey[]
+  apiKeys              ApiKey[]
+  specialLeaveRules    SpecialLeaveRule[]
+  presenceSources      PresenceSource[]
+  presenceDevices      PresenceDevice[]
+  // Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland
+  schoolHolidayPeriods SchoolHolidayPeriod[]
 }
 
 // ─────────────────────────────────────────────
@@ -95,6 +97,10 @@ model TenantConfig {
   // auto-gen/copy-week do NOT skip UNAVAILABLE, and GET/PUT availability endpoints return 410 Gone.
   // Data preserved (rows remain), feature toggleable at any time.
   availabilityEnabled                 Boolean @default(true)
+  // Phase 67.2 — Globaler Opt-Out für Auto-Cleanup von Shifts auf neuen BS-Tagen.
+  // FALSE = nur Konflikt-Badge setzen (heutiges Verhalten), keine Soft-Delete.
+  // TRUE = Auto-Soft-Delete für `date >= today + 1d` Shifts + Audit + Notification.
+  vocationalSchoolAutoCleanupShifts   Boolean @default(true)
   // Heiligabend / Silvester: NORMAL | HALF_DAY | FULL_DAY_OFF
   christmasEveRule                    String  @default("NORMAL")
   newYearsEveRule                     String  @default("NORMAL")
@@ -103,7 +109,7 @@ model TenantConfig {
   vacationLeadTimeDays                Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
   vacationMaxAdvanceMonths            Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
   // Phase 62 — Berufsschultag-Auto-Generator: rolling preview window (weeks ahead)
-  vocationalSchoolPreviewWeeks        Int     @default(4) // Rolling window (weeks ahead) the cron generator pre-populates
+  vocationalSchoolPreviewWeeks        Int     @default(13) // Rolling window (weeks ahead) the cron generator pre-populates — v1.7.4 bumped 4→13 so the window spans typical Schulferien gaps
   // Phase 63 — Berufsschule Saldo/ArbZG (D-02): per-tenant configurable BS-day duration
   vocationalSchoolMinutesPerDay       Int     @default(480) // Net Anrechnung per single BS-day (default 8h = 480 min, BERSCH-03)
   vocationalSchoolBlockMinutesPerWeek Int     @default(2400) // Total Anrechnung per block-week (default 40h = 2400 min, BERSCH-04)
@@ -599,6 +605,32 @@ model PublicHoliday {
 }
 
 // ─────────────────────────────────────────────
+// SCHULFERIEN (Phase 67.2)
+// ─────────────────────────────────────────────
+
+// Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland.
+// Quelle primär: OpenHolidays API; sekundär MANUAL (ICS-Upload / Admin-Seed).
+// Per-Tenant Cache (NICHT global) — Multi-Tenancy-Audit-Anforderung, siehe RESEARCH §192.
+// Trennung von PublicHoliday: Schulferien sind Date-RANGES, Feiertage 1-Tag. Andere Quelle, andere Semantik.
+model SchoolHolidayPeriod {
+  id           String       @id @default(uuid())
+  tenantId     String
+  federalState FederalState
+  startDate    DateTime     @db.Date
+  endDate      DateTime     @db.Date
+  name         String // z.B. "Frühjahrsferien", "Sommerferien"
+  source       String // "OPENHOLIDAYS_API" | "MANUAL"
+  externalId   String? // OpenHolidays UUID für Dedupe
+  fetchedAt    DateTime     @db.Timestamptz
+  createdAt    DateTime     @default(now()) @db.Timestamptz
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, federalState, startDate, endDate, source])
+  @@index([tenantId, federalState, startDate])
+}
+
+// ─────────────────────────────────────────────
 // AUDIT LOG (DSGVO)
 // ─────────────────────────────────────────────
 
@@ -925,9 +957,16 @@ model Shift {
   conflictsWithLeave Boolean        @default(false)
   createdAt          DateTime       @default(now()) @db.Timestamptz
   createdBy          String?
+  // Phase 67.2 — Soft-Delete (additive only, audit-proof).
+  // Set when an Auto-Cleanup-Hook removes a Shift on einem neu entstandenen Berufsschultag.
+  // Vergangenheits-Shifts (date < today) werden NIE soft-deleted — nur conflictsWithLeave=true gesetzt.
+  // Restore-Pfad via /shifts/conflicts UI mit explicit Manager-Aktion + AuditLog.
+  deletedAt          DateTime?      @db.Timestamptz
+  deletedReason      String? // z.B. "AUTO_BS_DAY_CLEANUP", "MANUAL_RESTORE_REVERT"
 
   @@index([employeeId, date])
   @@index([date])
+  @@index([employeeId, date, deletedAt])
 }
 
 // Phase 43 — Recurring weekly shift assignments per employee.
@@ -953,22 +992,34 @@ model EmployeeShiftPattern {
 }
 
 // Phase 62 — Recurring vocational-school day pattern per employee.
-// Either dayOfWeek (regular weekday) OR blockWeeks (ISO weeks of a year) must be set.
+// Either daysOfWeek (regular weekdays) OR blockWeeks (ISO weeks of a year) must be set.
 // Enforced application-side via Zod refine in routes/vocational-school-pattern.ts.
 // The auto-generator (plugins/vocational-school-generator.ts) reads these and produces
 // Absence rows of type VOCATIONAL_SCHOOL for the next TenantConfig.vocationalSchoolPreviewWeeks weeks.
+//
+// Phase 67.1 (v1.7.4) — Multi-day support: `daysOfWeek Int[]` replaces single-value
+// `dayOfWeek Int?`. The legacy `dayOfWeek` column is retained for one release of soak
+// (drop scheduled for v1.7.5) so downgrade is possible. New code MUST read/write
+// `daysOfWeek`; the API normalises legacy inbound `dayOfWeek` into the array form.
 model EmployeeVocationalSchoolPattern {
-  id         String    @id @default(uuid())
-  employeeId String
-  employee   Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  dayOfWeek  Int? // 0=Mo..6=So for recurring weekday; null when only blockWeeks set
-  blockWeeks Int[] // ISO week numbers for block-school weeks; empty array when only dayOfWeek set
-  blockYear  Int? // Year context for blockWeeks (for annual uniqueness); null when only dayOfWeek set
-  validFrom  DateTime  @db.Date
-  validUntil DateTime? @db.Date // null = open-ended
-  isActive   Boolean   @default(true)
-  createdAt  DateTime  @default(now()) @db.Timestamptz
-  updatedAt  DateTime  @updatedAt @db.Timestamptz
+  id                    String        @id @default(uuid())
+  employeeId            String
+  employee              Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dayOfWeek             Int? // DEPRECATED v1.7.4 — kept for one release of soak, drop in v1.7.5
+  daysOfWeek            Int[]         @default([]) // 0=Mo..6=So for recurring weekdays; empty array when only blockWeeks set
+  blockWeeks            Int[] // ISO week numbers for block-school weeks; empty array when only daysOfWeek set
+  blockYear             Int? // Year context for blockWeeks (for annual uniqueness); null when only daysOfWeek set
+  validFrom             DateTime      @db.Date
+  validUntil            DateTime?     @db.Date // null = open-ended
+  isActive              Boolean       @default(true)
+  // Phase 67.2 — Schulferien-Integration. Default TRUE für IHK-Berufe (KMK-Ferien).
+  // Opt-OUT für Pflegeschulen / Berufsakademien die eigenem Schuljahresplan folgen.
+  respectSchoolHolidays Boolean       @default(true)
+  // Phase 67.2 — Pendler-Azubi-Support: BS in anderem Bundesland als Betrieb.
+  // NULL = verwende Tenant.federalState (Default).
+  federalStateOverride  FederalState?
+  createdAt             DateTime      @default(now()) @db.Timestamptz
+  updatedAt             DateTime      @updatedAt @db.Timestamptz
 
   @@index([employeeId, isActive])
 }

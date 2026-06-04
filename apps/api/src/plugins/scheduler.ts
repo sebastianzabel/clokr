@@ -108,7 +108,13 @@ export const schedulerPlugin = fp(async (app) => {
         if (!startH || !endH) continue;
 
         const existing = await app.prisma.shift.findFirst({
-          where: { employeeId, date: new Date(date), startTime: startH, endTime: endH },
+          where: {
+            employeeId,
+            date: new Date(date),
+            startTime: startH,
+            endTime: endH,
+            deletedAt: null, // Phase 67.2 — Phorest sync only checks active shifts
+          },
         });
         if (existing) continue;
 
