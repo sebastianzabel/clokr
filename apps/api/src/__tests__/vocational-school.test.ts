@@ -425,7 +425,7 @@ describe("Berufsschule (Phase 62)", () => {
     expect(absences.length).toBe(firstCount); // No duplicates.
   });
 
-  it("BERSCH-02 — Block-week pattern generates 7 Absence rows per matching ISO week", async () => {
+  it("BERSCH-02 — Block-week pattern generates 5 weekday Absence rows per matching ISO week", async () => {
     // Pick next Monday and use its ISO week as the block week.
     const nextMonday = nextDow(0); // 0=Mo
     const iso = isoWeekOf(nextMonday);
@@ -449,14 +449,17 @@ describe("Berufsschule (Phase 62)", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    // Expect 7 days (Mo-Su) for that one block week.
-    expect(body.created).toBe(7);
+    // v1.7.4 hotfix: Blockunterricht runs Mo-Fr per BBiG §15 Abs.1 Nr.3
+    // (25h / mind. 5 Tage). Sa+So are weekends — never school days under the
+    // standard 5-day-Berufsschulwoche. See
+    // .planning/debug/bs-blockweek-weekday-research.md
+    expect(body.created).toBe(5);
 
     const absences = await app.prisma.absence.findMany({
       where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
       orderBy: { startDate: "asc" },
     });
-    expect(absences).toHaveLength(7);
+    expect(absences).toHaveLength(5);
     // All within the same ISO week
     for (const a of absences) {
       const wk = isoWeekOf(a.startDate);

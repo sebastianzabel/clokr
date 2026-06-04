@@ -288,7 +288,14 @@ async function runOrPreview(
       }
       if (hasBlockWeeks) {
         const iso = isoWeekOf(date);
-        if (iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
+        // v1.7.4 hotfix — Blockunterricht runs Mo-Fr per BBiG §15 Abs.1 Nr.3
+        // (25h / mind. 5 Tage) and IHK/HWK/BASS-NRW practice. Sa/So are never
+        // school days under the standard 5-day-Berufsschulwoche; explicit
+        // Sa-models ("Berufsschule Plus") are out of scope for v1.7.x. See
+        // .planning/debug/bs-blockweek-weekday-research.md
+        const dow = dowMondayBased(date);
+        const isWeekday = dow >= 0 && dow <= 4;
+        if (isWeekday && iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
           intended = true;
         }
       }
@@ -524,7 +531,16 @@ async function runOrPreview(
         if (hasWeekday && weekdaySet.has(dowMondayBased(date))) matches = true;
         if (hasBlockWeeks) {
           const iso = isoWeekOf(date);
-          if (iso.year === pattern.blockYear && pattern.blockWeeks.includes(iso.week)) {
+          // v1.7.4 hotfix — Same Mo-Fr filter as create-loop above. Without
+          // this the orphan-sweep would falsely re-claim Sa/So absences left
+          // over from pre-fix runs and keep them active in the DB.
+          const dow = dowMondayBased(date);
+          const isWeekday = dow >= 0 && dow <= 4;
+          if (
+            isWeekday &&
+            iso.year === pattern.blockYear &&
+            pattern.blockWeeks.includes(iso.week)
+          ) {
             matches = true;
           }
         }

@@ -1570,16 +1570,20 @@
 
                     <!-- v1.7.4 hotfix — Mode toggle: mutually-exclusive BBiG semantics.
                          'weekly' = wöchentlich wiederkehrende BS-Tage (Mo + Mi)
-                         'block'  = Blockunterricht (komplette Wochen, Pflege/Friseur) -->
-                    <div class="bs-pattern-row" role="radiogroup" aria-label="BS-Modus">
-                      <span class="bs-pattern-label">Modus:</span>
-                      <div class="bs-chip-row">
+                         'block'  = Blockunterricht (komplette Wochen, Pflege/Friseur)
+                         Reuses the .schedule-type-picker / .stp-btn recipe from the
+                         Arbeitszeitmodell widget above so the BS section visually fits
+                         the rest of the Arbeitszeit tab. -->
+                    <div class="form-group">
+                      <label class="form-label">BS-Modus</label>
+                      <div class="schedule-type-picker" role="radiogroup" aria-label="BS-Modus">
                         <button
                           type="button"
                           role="radio"
                           aria-checked={p.mode === "weekly"}
-                          class="chip chip-button bs-mode-chip"
-                          class:chip-brand={p.mode === "weekly"}
+                          class="stp-btn"
+                          class:stp-btn--active={p.mode === "weekly"}
+                          title="Wöchentlich 1-2 BS-Tage (Standard für IHK-Berufe)"
                           onclick={() => bsSetMode(p._key, "weekly")}
                           disabled={bsPatternsSaving}
                         >
@@ -1589,8 +1593,9 @@
                           type="button"
                           role="radio"
                           aria-checked={p.mode === "block"}
-                          class="chip chip-button bs-mode-chip"
-                          class:chip-brand={p.mode === "block"}
+                          class="stp-btn"
+                          class:stp-btn--active={p.mode === "block"}
+                          title="Blockunterricht — komplette Wochen am Stück (Pflege, Friseur)"
                           onclick={() => bsSetMode(p._key, "block")}
                           disabled={bsPatternsSaving}
                         >
@@ -2600,12 +2605,9 @@
     max-width: 16rem;
   }
 
-  /* v1.7.4 hotfix — Mode-toggle chips (Wöchentlich vs. Blockunterricht) */
-  .bs-mode-chip {
-    font-weight: 600;
-    padding: var(--s-1) var(--s-3);
-  }
-
+  /* v1.7.4 hotfix — BS-mode picker now reuses the .schedule-type-picker /
+     .stp-btn recipe from the Arbeitszeitmodell widget for visual consistency
+     within the Arbeitszeit tab. Only the help-text helper remains scoped. */
   .bs-mode-help {
     margin: 0 0 0 9rem;
     font-style: italic;
