@@ -4,12 +4,29 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
+  import { onMount } from "svelte";
 
   interface Props {
     currentPath: string;
   }
 
   let { currentPath }: Props = $props();
+
+  // Phase 69 (DEVOPS-V8-02): runtime version display.
+  // Fetches /api/v1/version on mount; fail-silent (D-08) — no toast, no console.error.
+  // The api.client.ts BASE_URL is "/api/v1", so the path here is "/version".
+  let version = $state("");
+  onMount(() => {
+    api
+      .get<{ version: string }>("/version")
+      .then((r) => {
+        version = r.version;
+      })
+      .catch(() => {
+        // Intentionally swallowed (D-08): if the endpoint is unreachable
+        // (e.g. running against an older API image), simply do not render the line.
+      });
+  });
 
   type NavItem = { href: string; label: string; icon: string };
   // NavSection is a top-level sidebar section (e.g. "Mein Bereich", "Team") or
@@ -195,6 +212,12 @@
       </button>
     {/if}
   </div>
+
+  {#if version}
+    <div class="sidebar-version" aria-label="Anwendungsversion">
+      <span class="version-label" translate="no">v{version}</span>
+    </div>
+  {/if}
 </aside>
 
 <style>
@@ -410,6 +433,21 @@
   .icon-btn:focus-visible {
     outline: 2px solid var(--brand-light);
     outline-offset: 2px;
+  }
+
+  /* Phase 69 — runtime version display.
+     Literal font-size 0.75rem per D-07 (no --text-xs token exists in tokens.css). */
+  .sidebar-version {
+    padding: var(--s-2) var(--s-3) var(--s-3);
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .version-label {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+    font-feature-settings: "tnum";
+    letter-spacing: 0.02em;
   }
 
   @media (max-width: 960px) {
