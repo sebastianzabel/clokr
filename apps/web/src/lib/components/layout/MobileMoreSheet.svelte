@@ -1,5 +1,7 @@
 <script lang="ts">
   import { focusTrap } from "$lib/utils/focus-trap";
+  import { versionStore, loadVersion } from "$stores/version";
+  import { onMount } from "svelte";
 
   type NavItem = { href: string; label: string; icon: string };
 
@@ -13,6 +15,14 @@
   }
 
   let { open = $bindable(), items, currentPath }: Props = $props();
+
+  // Phase 69 (DEVOPS-V8-02): mobile runtime version display.
+  // Subscribes to the shared $versionStore (hydrated by loadVersion()) so
+  // Sidebar + MobileMoreSheet stay in sync and only one network call is made.
+  // Fail-silent (D-08) — no toast, no console.error.
+  onMount(() => {
+    loadVersion();
+  });
 
   let scrimEl: HTMLDivElement | undefined = $state();
 
@@ -196,6 +206,11 @@
             </a>
           {/each}
         </nav>
+        {#if $versionStore}
+          <div class="mehr-sheet-version" aria-label="Anwendungsversion">
+            <span class="mehr-version-label" translate="no">v{$versionStore}</span>
+          </div>
+        {/if}
       </div>
     </div>
   </div>
@@ -349,6 +364,22 @@
   .mehr-item-label {
     flex: 1;
     min-width: 0;
+  }
+
+  /* Phase 69 — runtime version display in the mobile drawer.
+     Mirrors .sidebar-version on desktop. Literal font-size 0.75rem per D-07
+     (no --text-xs token exists in tokens.css). */
+  .mehr-sheet-version {
+    padding: var(--s-3) var(--s-3) var(--s-2);
+    border-top: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .mehr-version-label {
+    font-size: 0.75rem;
+    color: var(--text-faint);
+    font-feature-settings: "tnum";
+    letter-spacing: 0.02em;
   }
 
   @keyframes mehr-fade {
