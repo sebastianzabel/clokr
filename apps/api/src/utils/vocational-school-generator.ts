@@ -434,18 +434,46 @@ async function runOrPreview(
             "code" in err &&
             (err as { code: unknown }).code === "P2002"
           ) {
-            result.skipped.existing++;
-            if (opts.dryRun) {
-              result.details!.push({
-                employeeId: employee.id,
-                date: toIsoDate(date),
-                action: "skipped",
-                reason: "existing",
+            // v1.7.4 hotfix — P2002 means the @@unique(employeeId, startDate, type)
+            // already has a row. Two scenarios: (a) a parallel run created it
+            // (benign — skip), or (b) a previous orphan-sweep soft-deleted it
+            // and the pattern now claims this date again (restore it!). Without
+            // the restore branch the row would be stuck in soft-deleted state
+            // forever, leaving the user with a missing BS-day in the Schichtplan.
+            const existing = await prisma.absence.findUnique({
+              where: {
+                employeeId_startDate_type: {
+                  employeeId: employee.id,
+                  startDate: date,
+                  type: "VOCATIONAL_SCHOOL",
+                },
+              },
+            });
+            if (existing && existing.deletedAt !== null) {
+              absence = await prisma.absence.update({
+                where: { id: existing.id },
+                data: {
+                  deletedAt: null,
+                  source: "PATTERN",
+                  createdBy: "SYSTEM",
+                },
               });
+              // Fall through to the audit + counted-as-created path below.
+            } else {
+              result.skipped.existing++;
+              if (opts.dryRun) {
+                result.details!.push({
+                  employeeId: employee.id,
+                  date: toIsoDate(date),
+                  action: "skipped",
+                  reason: "existing",
+                });
+              }
+              continue;
             }
-            continue;
+          } else {
+            throw err;
           }
-          throw err;
         }
         // userId is null (FK column) — the SYSTEM-origin marker lives inside newValue.
         // Encoding the originator inside newValue is the established convention for
