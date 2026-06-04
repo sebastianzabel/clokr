@@ -55,15 +55,15 @@ jobs:
       - name: Push schema to test DB
         run: pnpm --filter @clokr/db exec prisma db push
 
-      - name: Lint
+      - name: Lint API
         id: lint
-        run: |
-          LINT_OUTPUT=$(pnpm --filter @clokr/api exec eslint src/ --no-warn-ignored 2>&1) || true
-          LINT_ERRORS=$(echo "$LINT_OUTPUT" | grep -c "error" || true)
-          LINT_WARNINGS=$(echo "$LINT_OUTPUT" | grep -c "warning" || true)
-          echo "errors=${LINT_ERRORS:-0}" >> $GITHUB_OUTPUT
-          echo "warnings=${LINT_WARNINGS:-0}" >> $GITHUB_OUTPUT
-          echo "$LINT_OUTPUT"
+        run: pnpm --filter @clokr/api exec eslint src/ --no-warn-ignored
+
+      - name: Lint Web
+        run: pnpm --filter @clokr/web exec eslint src/
+
+      - name: Format check (Prettier)
+        run: npx prettier --check "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,svelte,css}" "packages/**/*.ts" "packages/**/*.json"
 
       - name: Lint UI primitives usage
         run: pnpm --filter @clokr/web lint:ui
@@ -73,58 +73,50 @@ jobs:
 
       - name: Type check API
         id: typecheck
-        run: |
-          npx tsc --noEmit -p apps/api/tsconfig.json 2>&1 | tee /tmp/tsc-output.txt || true
-          TSC_ERRORS=$(grep -c "error TS" /tmp/tsc-output.txt || true)
-          echo "errors=${TSC_ERRORS:-0}" >> $GITHUB_OUTPUT
+        run: pnpm --filter @clokr/api typecheck
 
-      - name: Run tests
+      - name: Type check Web
+        run: pnpm --filter @clokr/web typecheck
+
+      - name: Run API tests with coverage
         id: tests
-        run: |
-          cd apps/api && npx vitest run --reporter=verbose 2>&1 | tee /tmp/test-output.txt
-          PASSED=$(grep -oP '\d+ passed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || true)
-          FAILED=$(grep -oP '\d+ failed' /tmp/test-output.txt | head -1 | grep -oP '\d+' || true)
-          SUITES=$(grep -oP '\d+ passed' /tmp/test-output.txt | tail -1 | grep -oP '\d+' || true)
-          echo "passed=${PASSED:-0}" >> $GITHUB_OUTPUT
-          echo "failed=${FAILED:-0}" >> $GITHUB_OUTPUT
-          echo "suites=${SUITES:-0}" >> $GITHUB_OUTPUT
+        run: pnpm --filter @clokr/api test:coverage
+
+      - name: Run Web tests with coverage
+        id: tests_web
+        run: pnpm --filter @clokr/web test:coverage
 
       - name: Build API
         run: pnpm --filter @clokr/api build
 
       - name: Build Web
         id: build_web
-        run: |
-          pnpm --filter @clokr/web build 2>&1 | tee /tmp/web-build.txt
-          SVELTE_WARNINGS=$(grep -c "vite-plugin-svelte" /tmp/web-build.txt || true)
-          echo "warnings=${SVELTE_WARNINGS:-0}" >> $GITHUB_OUTPUT
+        run: pnpm --filter @clokr/web build
 
       - name: Post PR Summary
+        if: always()
         uses: actions/github-script@v9
         with:
           script: |
-            const passed = '${{ steps.tests.outputs.passed }}';
-            const failed = '${{ steps.tests.outputs.failed }}';
-            const suites = '${{ steps.tests.outputs.suites }}';
-            const tscErrors = '${{ steps.typecheck.outputs.errors }}';
-            const lintErrors = '${{ steps.lint.outputs.errors }}';
-            const lintWarnings = '${{ steps.lint.outputs.warnings }}';
-            const svelteWarnings = '${{ steps.build_web.outputs.warnings }}';
+            const lintStatus = '${{ steps.lint.conclusion }}';
+            const typecheckStatus = '${{ steps.typecheck.conclusion }}';
+            const testsStatus = '${{ steps.tests.conclusion }}';
+            const testsWebStatus = '${{ steps.tests_web.conclusion }}';
+            const buildWebStatus = '${{ steps.build_web.conclusion }}';
 
-            const testIcon = failed === '0' ? '✅' : '❌';
-            const tscIcon = tscErrors === '0' ? '✅' : '❌';
-            const lintIcon = lintErrors === '0' ? '✅' : '⚠️';
-            const buildIcon = '✅';
+            const icon = (s) => s === 'success' ? '✅' : (s === 'skipped' ? '⏭️' : '❌');
 
             const body = `## CI Summary
 
-            | Check | Status | Details |
-            |-------|--------|---------|
-            | ${testIcon} Tests | **${passed} passed**, ${failed} failed | ${suites} suites |
-            | ${tscIcon} TypeScript | ${tscErrors} errors | \`tsc --noEmit\` |
-            | ${lintIcon} Lint | ${lintErrors} errors, ${lintWarnings} warnings | ESLint |
-            | ${buildIcon} API Build | Success | \`tsc\` |
-            | ${buildIcon} Web Build | Success | ${svelteWarnings} Svelte warnings |
+            | Check | Status |
+            |-------|--------|
+            | ${icon(lintStatus)} Lint (API + Web) | ${lintStatus} |
+            | ${icon(typecheckStatus)} TypeScript (API) | ${typecheckStatus} |
+            | ${icon(testsStatus)} API Tests + Coverage (lines >= 40) | ${testsStatus} |
+            | ${icon(testsWebStatus)} Web Tests + Coverage (lines >= 40) | ${testsWebStatus} |
+            | ${icon(buildWebStatus)} Web Build | ${buildWebStatus} |
+
+            _Detailed errors are in the job logs above._
             `;
 
             const { data: comments } = await github.rest.issues.listComments({
