@@ -61,8 +61,16 @@ jobs:
 
       - name: Promote ${{ matrix.image }}
         run: |
+          # Fail-fast on any error, undefined variable, or pipe failure (WR-02).
+          # Without -u a typo'd ${{ steps.meta.outputs.* }} would expand to empty
+          # and crane would push to an unintended tag (e.g. :latest with garbage).
+          set -euo pipefail
           SRC="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}"
-          echo "Promoting ${SRC} -> ${{ steps.meta.outputs.version }}, ${{ steps.meta.outputs.major_minor }}, latest"
-          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.version }}"
-          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${{ steps.meta.outputs.major_minor }}"
-          crane copy "${SRC}" "${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:latest"
+          # Loop so per-tag failure semantics are explicit. `latest` is last so a
+          # mid-loop failure leaves an inconsistent-but-recoverable state where
+          # the version-pinned tag may already point at the new digest.
+          for TAG in "${{ steps.meta.outputs.version }}" "${{ steps.meta.outputs.major_minor }}" "latest"; do
+            DST="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${TAG}"
+            echo "Promoting ${SRC} -> ${DST}"
+            crane copy "${SRC}" "${DST}"
+          done
