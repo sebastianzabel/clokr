@@ -507,6 +507,13 @@ async function runOrPreview(
       const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
       const patternStart = dateOnlyUtc(pattern.validFrom);
       const patternEnd = pattern.validUntil ? dateOnlyUtc(pattern.validUntil) : null;
+      // v1.7.4 hotfix — Resolve effective Bundesland + Ferien-opt-out per pattern
+      // so the intended-set respects the SAME skip rules the create-loop applies.
+      // Without this, dates that were generated BEFORE the SchoolHolidayPeriod
+      // cache was populated (e.g. first PUT racing with on-demand sync) stay
+      // orphaned in Ferien and continue to render in the Schichtplan.
+      const patEffectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
+      const patSkipHolidayCheck = pattern.respectSchoolHolidays === false;
       for (let i = 0; i <= weeksAhead * 7; i++) {
         const date = addDaysUtc(windowStart, i);
         // Respect the pattern's own validity window — outside it, the pattern
@@ -521,7 +528,12 @@ async function runOrPreview(
             matches = true;
           }
         }
-        if (matches) intendedSet.add(`${pattern.employeeId}::${toIsoDate(date)}`);
+        if (!matches) continue;
+        // v1.7.4 hotfix — Ferien-aware orphan sweep. If THIS pattern would skip
+        // the date as a school holiday during the create loop, this pattern does
+        // NOT actually claim the date — drop it from intendedSet.
+        if (!patSkipHolidayCheck && isSchoolHoliday(date, patEffectiveFs)) continue;
+        intendedSet.add(`${pattern.employeeId}::${toIsoDate(date)}`);
       }
     }
 
