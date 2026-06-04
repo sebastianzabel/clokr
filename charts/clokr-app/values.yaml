@@ -1,0 +1,76 @@
+# Default values for clokr-app Helm chart.
+# Shared across all environments. Environment-specific overrides live in
+# values-int.yaml (k3s int) and values-prod.yaml (docker-compose prod reference).
+#
+# NEVER commit real secret values here. See `secrets:` block below.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# When true, the chart renders a Namespace resource. Disabled by default because
+# ArgoCD's CreateNamespace=true syncOption handles it for int. Keep false for
+# standalone `helm install` and rely on `kubectl create ns` upfront.
+createNamespace: false
+
+image:
+  registry: ghcr.io
+  repository: sebastianzabel
+  tag: "latest"          # overridden per env (values-int.yaml: "main"; values-prod.yaml: "vX.Y.Z")
+  pullPolicy: Always
+  # NO imagePullSecrets — GHCR packages ghcr.io/sebastianzabel/clokr-{api,web}
+  # are PUBLIC (verified 2026-06-04 via `gh api user/packages`). See D-10.
+
+api:
+  port: 4000
+  replicas: 1
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+web:
+  port: 3000
+  replicas: 1
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+
+postgres:
+  enabled: true           # set false on prod (prod uses docker-compose postgres service)
+  image: postgres:18-alpine
+  storage: 5Gi
+  storageClass: ""        # blank = k3s default (local-path-provisioner)
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 200m
+
+ingress:
+  enabled: true
+  host: "clokr.example"   # MUST be overridden per env
+  tlsSecretName: "clokr-tls"
+  clusterIssuer: "letsencrypt-prod"
+
+# Secrets injected via envFrom -> clokr-secrets. NEVER commit real values here.
+# Real int values are set via ArgoCD UI parameter overrides (per D-11a).
+# See 71-RESEARCH.md Pitfall #2 for rationale (clokr GitHub repo is public).
+secrets:
+  databaseUrl: ""
+  jwtSecret: ""
+  jwtRefreshSecret: ""
+  encryptionKey: ""
+  appUrl: ""
+  corsOrigin: ""
+  seedDemoData: "false"
+  postgresPassword: ""    # used by Postgres StatefulSet AND should match databaseUrl password
+  redisUrl: ""            # optional — if set, API connects to shared-infrastructure Redis

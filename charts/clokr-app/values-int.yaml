@@ -1,0 +1,29 @@
+# Int environment overrides (k3s cluster, hostname clokr-int.example.com).
+#
+# This file is committed to the PUBLIC clokr repo (D-11a) — placeholder secrets only.
+# Real JWT_SECRET / ENCRYPTION_KEY / POSTGRES_PASSWORD are injected via ArgoCD UI
+# parameter overrides (see Pitfall #2 in 71-RESEARCH.md).
+#
+# The CHANGEME-* values below pass apps/api/src/config.ts Zod min-length validation
+# (32 chars) so the API starts, but they are NOT secure. Do NOT use these in prod.
+
+image:
+  tag: "main"             # tracks main branch; ArgoCD-triggered sync + imagePullPolicy: Always rolls out new images
+
+ingress:
+  enabled: true
+  host: "clokr-int.example.com"
+  tlsSecretName: "clokr-int-tls"
+  clusterIssuer: "letsencrypt-prod"
+
+secrets:
+  # Real values injected via ArgoCD UI — these are placeholders.
+  databaseUrl: "postgresql://clokr:CHANGE_ME_IN_ARGOCD@clokr-postgres.clokr.svc.cluster.local:5432/clokr"
+  jwtSecret: "CHANGEME-int-jwt-placeholder-32chars!!"
+  jwtRefreshSecret: "CHANGEME-int-refresh-placeholder-32!!"
+  encryptionKey: "CHANGEME-int-encryption-placeholder!!"
+  appUrl: "https://clokr-int.example.com"
+  corsOrigin: "https://clokr-int.example.com"
+  seedDemoData: "true"
+  postgresPassword: "CHANGEME-IN-ARGOCD"
+  # redisUrl: "redis://redis.shared-infrastructure.svc.cluster.local:6379"  # optional, uncomment if shared redis is used

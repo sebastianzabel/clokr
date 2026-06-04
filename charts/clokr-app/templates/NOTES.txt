@@ -1,0 +1,11 @@
+Clokr {{ .Chart.AppVersion }} deployed to namespace {{ .Release.Namespace }}.
+
+Verify:
+  kubectl -n {{ .Release.Namespace }} get pods
+  curl -sf https://{{ .Values.ingress.host }}/api/v1/health | jq .
+  curl -sf https://{{ .Values.ingress.host }}/api/v1/version | jq .
+
+Secrets reminder:
+  This chart's values-int.yaml contains PLACEHOLDER secrets only.
+  Real values must be set via ArgoCD UI parameter overrides (see docs/prod-deploy.md or
+  homelab repo argocd-apps/clokr-app.yaml setup notes).
