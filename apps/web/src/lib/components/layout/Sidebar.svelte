@@ -1,6 +1,7 @@
 <script lang="ts">
   import { authStore } from "$stores/auth";
   import { tenantFeatures } from "$stores/tenant-features";
+  import { versionStore, loadVersion } from "$stores/version";
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
@@ -13,19 +14,11 @@
   let { currentPath }: Props = $props();
 
   // Phase 69 (DEVOPS-V8-02): runtime version display.
-  // Fetches /api/v1/version on mount; fail-silent (D-08) — no toast, no console.error.
-  // The api.client.ts BASE_URL is "/api/v1", so the path here is "/version".
-  let version = $state("");
+  // Subscribes to the shared $versionStore (hydrated by loadVersion()) so
+  // Sidebar + MobileMoreSheet stay in sync and only one network call is made.
+  // Fail-silent (D-08) — no toast, no console.error.
   onMount(() => {
-    api
-      .get<{ version: string }>("/version")
-      .then((r) => {
-        version = r.version;
-      })
-      .catch(() => {
-        // Intentionally swallowed (D-08): if the endpoint is unreachable
-        // (e.g. running against an older API image), simply do not render the line.
-      });
+    loadVersion();
   });
 
   type NavItem = { href: string; label: string; icon: string };
@@ -213,9 +206,9 @@
     {/if}
   </div>
 
-  {#if version}
+  {#if $versionStore}
     <div class="sidebar-version" aria-label="Anwendungsversion">
-      <span class="version-label" translate="no">v{version}</span>
+      <span class="version-label" translate="no">v{$versionStore}</span>
     </div>
   {/if}
 </aside>
