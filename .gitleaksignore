@@ -1,0 +1,11 @@
+# Test fixtures in .github/workflows/ci.yml env block — NOT real credentials.
+# These are documented in apps/api/src/config.ts as min-length-validation placeholders.
+
+# JWT signing secret (test-only — replaced per environment)
+test-jwt-secret-min-32-characters-long
+
+# JWT refresh signing secret (test-only)
+test-refresh-secret-min-32-characters
+
+# Field-level encryption key (test-only)
+test-encryption-key-min-32-characters-long!!

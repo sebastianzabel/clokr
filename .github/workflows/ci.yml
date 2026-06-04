@@ -9,6 +9,8 @@ permissions:
   packages: read
   pull-requests: write
   issues: write
+  security-events: write # required for SARIF uploads from codeql, secret-scan, trivy-fs (DEVOPS-V8-04)
+  actions: read # required for codeql-action/init (DEVOPS-V8-04)
 
 jobs:
   # ── Tests, Lint, Type-Check ──────────────────────────────────────────
