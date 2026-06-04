@@ -1,4 +1,6 @@
 import crypto from "crypto";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -49,6 +51,15 @@ import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
+
+// Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
+// Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
+// Do NOT read from APP_VERSION env var — env vars drift; image content does not.
+const PKG_VERSION = (() => {
+  const pkgPath = resolve(__dirname, "../package.json");
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+  return pkg.version;
+})();
 
 export async function buildApp() {
   // ── Logger configuration ──────────────────────────────────
@@ -303,6 +314,14 @@ export async function buildApp() {
 
   // ── Health ────────────────────────────────────────────────
   app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
+  // /api/v1/health — non-breaking alias of /health (D-05). Phase 70 smoke tests use this path.
+  // Identical payload; keep /health for Docker/k8s healthcheck + prod-host LB backwards compat.
+  app.get("/api/v1/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
+
+  // ── Version (Phase 69 / DEVOPS-V8-02) ─────────────────────
+  // Public endpoint (no requireAuth — same posture as /health per D-04).
+  // Returns ONLY { version: string } per D-02 — forward-compatible minimal shape.
+  app.get("/api/v1/version", async () => ({ version: PKG_VERSION }));
 
   return app;
 }
