@@ -1,11 +1,17 @@
-# Test fixtures in .github/workflows/ci.yml env block — NOT real credentials.
-# These are documented in apps/api/src/config.ts as min-length-validation placeholders.
-
-# JWT signing secret (test-only — replaced per environment)
-test-jwt-secret-min-32-characters-long
-
-# JWT refresh signing secret (test-only)
-test-refresh-secret-min-32-characters
-
-# Field-level encryption key (test-only)
-test-encryption-key-min-32-characters-long!!
+# This file is kept for historical context, but is INTENTIONALLY empty.
+#
+# Gitleaks v8 (the version bundled with gitleaks/gitleaks-action@v3) only
+# honors entries in .gitleaksignore that use the commit-fingerprint format:
+#
+#   <commit-sha>:<file>:<rule-id>:<line>
+#
+# Plain-string allowlist entries are silently dropped (WR-01, Phase 70).
+#
+# The actual allowlist for the test-fixture secrets in
+# .github/workflows/ci.yml (test-jwt-secret-*, test-refresh-secret-*,
+# test-encryption-key-*) lives in `.gitleaks.toml` under [allowlist].
+#
+# To suppress a real future finding, regenerate fingerprints with:
+#   gitleaks detect --report-format json --report-path /tmp/leaks.json
+#   jq -r '.[].Fingerprint' /tmp/leaks.json
+# and append the resulting `<sha>:<file>:<rule>:<line>` lines here.
