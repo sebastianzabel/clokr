@@ -151,8 +151,15 @@
   //
   // Phase 67.1 (v1.7.4): `daysOfWeek: number[]` replaces single-value `dayOfWeek`.
   // The chip strip in the editor toggles set-membership; multi-select is supported.
+  //
+  // v1.7.4 hotfix: `mode` makes the two BBiG semantics mutually exclusive in the UI —
+  // 'weekly' = recurring weekday BS (Mo + Mi), 'block' = block weeks (Pflege, Friseur).
+  // Backend Zod refine already accepts either-or; this only enforces the discipline
+  // in the editor so the inactive mode's array is always empty on save.
+  type BSPatternMode = "weekly" | "block";
   interface BSPatternDraft {
     _key: string;
+    mode: BSPatternMode;
     daysOfWeek: number[];
     blockWeeks: number[];
     blockYear: number | null;
@@ -220,23 +227,33 @@
         // Phase 67.1: prefer canonical `daysOfWeek` array; fall back to legacy
         // single `dayOfWeek` for rows from a pre-v1.7.4 API response that survived
         // a cache miss (defensive — should not happen against an in-sync API).
-        bsPatterns = bsRes.value.map((p) => ({
-          _key: p.id,
-          daysOfWeek:
+        bsPatterns = bsRes.value.map((p) => {
+          const hydratedDays =
             p.daysOfWeek && p.daysOfWeek.length > 0
               ? [...p.daysOfWeek]
               : p.dayOfWeek != null
                 ? [p.dayOfWeek]
-                : [],
-          blockWeeks: [...p.blockWeeks],
-          blockYear: p.blockYear,
-          validFrom: p.validFrom,
-          validUntil: p.validUntil,
-          // Phase 67.2 (Plan 05) — surface Ferien fields with defensive defaults so the editor
-          // never crashes on a pre-67.2 API response that lacks the columns.
-          respectSchoolHolidays: p.respectSchoolHolidays ?? true,
-          federalStateOverride: p.federalStateOverride ?? null,
-        }));
+                : [];
+          const hydratedWeeks = [...p.blockWeeks];
+          // v1.7.4 hotfix — Mode is derived from the data shape:
+          // blockWeeks.length > 0 → 'block' (Pflege / Friseur), else 'weekly' (default).
+          // Existing rows that have BOTH (legacy ambiguity) are coerced to 'block' since
+          // that was the visually dominant choice in the old OR-semantics UI.
+          const mode: BSPatternMode = hydratedWeeks.length > 0 ? "block" : "weekly";
+          return {
+            _key: p.id,
+            mode,
+            daysOfWeek: hydratedDays,
+            blockWeeks: hydratedWeeks,
+            blockYear: p.blockYear,
+            validFrom: p.validFrom,
+            validUntil: p.validUntil,
+            // Phase 67.2 (Plan 05) — surface Ferien fields with defensive defaults so the editor
+            // never crashes on a pre-67.2 API response that lacks the columns.
+            respectSchoolHolidays: p.respectSchoolHolidays ?? true,
+            federalStateOverride: p.federalStateOverride ?? null,
+          };
+        });
         bsPatternsLoadError = "";
       } else {
         bsPatterns = [];
@@ -510,6 +527,9 @@
       ...bsPatterns,
       {
         _key: `new-${bsNewKeyCounter}`,
+        // v1.7.4 hotfix — default new rows to 'weekly' (the much more common case;
+        // block-Berufsschulen are pflege/friseur-specific).
+        mode: "weekly",
         daysOfWeek: [],
         blockWeeks: [],
         blockYear: null,
@@ -521,6 +541,21 @@
         federalStateOverride: null,
       },
     ];
+  }
+
+  // v1.7.4 hotfix — Switch mode and immediately clear the OTHER mode's data so the
+  // payload sent to the API never carries leftover values from the discarded mode.
+  // Backend Zod still accepts either-or, but a 'block' row with stray daysOfWeek would
+  // re-confuse the UI on the next round-trip.
+  function bsSetMode(key: string, mode: BSPatternMode) {
+    bsPatterns = bsPatterns.map((p) => {
+      if (p._key !== key) return p;
+      if (p.mode === mode) return p;
+      if (mode === "weekly") {
+        return { ...p, mode, blockWeeks: [], blockYear: null };
+      }
+      return { ...p, mode, daysOfWeek: [] };
+    });
   }
 
   // Phase 67.2 (Plan 05) — toggle helpers for the new per-pattern fields.
@@ -599,14 +634,21 @@
   // Client-side validation mirroring apps/api/src/routes/vocational-school-pattern.ts
   // Returns an error string for the first invalid row, or "" if all rows pass.
   // Phase 67.1: refine on `daysOfWeek.length > 0` instead of single-value check.
+  // v1.7.4 hotfix: mode-aware. 'weekly' requires daysOfWeek; 'block' requires blockWeeks + blockYear.
   function bsValidationError(): string {
     for (let i = 0; i < bsPatterns.length; i++) {
       const p = bsPatterns[i];
-      if (p.daysOfWeek.length === 0 && p.blockWeeks.length === 0) {
-        return `Zeile ${i + 1}: Entweder Wochentag oder Block-Wochen muss gesetzt sein`;
-      }
-      if (p.blockWeeks.length > 0 && p.blockYear == null) {
-        return `Zeile ${i + 1}: Jahr ist erforderlich wenn Block-Wochen gesetzt sind`;
+      if (p.mode === "weekly") {
+        if (p.daysOfWeek.length === 0) {
+          return `Zeile ${i + 1}: Mindestens ein Wochentag muss ausgewählt sein`;
+        }
+      } else {
+        if (p.blockWeeks.length === 0) {
+          return `Zeile ${i + 1}: Mindestens eine Block-Woche muss ausgewählt sein`;
+        }
+        if (p.blockYear == null) {
+          return `Zeile ${i + 1}: Jahr ist erforderlich wenn Block-Wochen gesetzt sind`;
+        }
       }
       if (p.validUntil && p.validUntil < p.validFrom) {
         return `Zeile ${i + 1}: Gültig-bis muss >= Gültig-ab sein`;
@@ -656,22 +698,28 @@
       );
       // Reflect persisted rows back into the draft so newly-created rows get their server id
       // as the _key (replacing the synthetic "new-{n}"). This stabilises the {#each} key.
-      bsPatterns = res.patterns.map((p) => ({
-        _key: p.id,
-        daysOfWeek:
+      bsPatterns = res.patterns.map((p) => {
+        const hydratedDays =
           p.daysOfWeek && p.daysOfWeek.length > 0
             ? [...p.daysOfWeek]
             : p.dayOfWeek != null
               ? [p.dayOfWeek]
-              : [],
-        blockWeeks: [...p.blockWeeks],
-        blockYear: p.blockYear,
-        validFrom: p.validFrom,
-        validUntil: p.validUntil,
-        // Phase 67.2 (Plan 05) — round-trip Ferien fields from PUT response
-        respectSchoolHolidays: p.respectSchoolHolidays ?? true,
-        federalStateOverride: p.federalStateOverride ?? null,
-      }));
+              : [];
+        const hydratedWeeks = [...p.blockWeeks];
+        const mode: BSPatternMode = hydratedWeeks.length > 0 ? "block" : "weekly";
+        return {
+          _key: p.id,
+          mode,
+          daysOfWeek: hydratedDays,
+          blockWeeks: hydratedWeeks,
+          blockYear: p.blockYear,
+          validFrom: p.validFrom,
+          validUntil: p.validUntil,
+          // Phase 67.2 (Plan 05) — round-trip Ferien fields from PUT response
+          respectSchoolHolidays: p.respectSchoolHolidays ?? true,
+          federalStateOverride: p.federalStateOverride ?? null,
+        };
+      });
       bsNewKeyCounter = 0; // reset — all rows have server ids now
       bsPatternsSaved = true;
       toasts.success("Berufsschultage gespeichert", 2000);
@@ -1520,61 +1568,95 @@
                       </button>
                     </div>
 
-                    <!-- daysOfWeek chip-row (toggle, multi-select) -->
-                    <!-- Phase 67.1 (v1.7.4): chip-strip toggles set-membership in
-                         `daysOfWeek`. Multiple selections produce one DB row covering
-                         all chosen weekdays (Mo + Mi + Fr -> one pattern, three days). -->
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Wochentage:</span>
+                    <!-- v1.7.4 hotfix — Mode toggle: mutually-exclusive BBiG semantics.
+                         'weekly' = wöchentlich wiederkehrende BS-Tage (Mo + Mi)
+                         'block'  = Blockunterricht (komplette Wochen, Pflege/Friseur) -->
+                    <div class="bs-pattern-row" role="radiogroup" aria-label="BS-Modus">
+                      <span class="bs-pattern-label">Modus:</span>
                       <div class="bs-chip-row">
-                        {#each BS_WEEKDAY_LABELS as label, didx (label)}
-                          <button
-                            type="button"
-                            class="chip chip-button"
-                            class:chip-brand={p.daysOfWeek.includes(didx)}
-                            onclick={() => bsToggleDayOfWeek(p._key, didx)}
-                            disabled={bsPatternsSaving}
-                          >
-                            {label}
-                          </button>
-                        {/each}
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={p.mode === "weekly"}
+                          class="chip chip-button bs-mode-chip"
+                          class:chip-brand={p.mode === "weekly"}
+                          onclick={() => bsSetMode(p._key, "weekly")}
+                          disabled={bsPatternsSaving}
+                        >
+                          Wöchentlicher BS-Tag
+                        </button>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={p.mode === "block"}
+                          class="chip chip-button bs-mode-chip"
+                          class:chip-brand={p.mode === "block"}
+                          onclick={() => bsSetMode(p._key, "block")}
+                          disabled={bsPatternsSaving}
+                        >
+                          Blockunterricht
+                        </button>
                       </div>
                     </div>
 
-                    <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
-                    <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">
-                        Block-Wochen
-                        {#if p.blockWeeks.length > 0}
-                          <span class="bs-week-count">({p.blockWeeks.length})</span>
-                          <button
-                            type="button"
-                            class="btn btn-ghost btn-sm bs-week-clear"
-                            onclick={() => bsClearBlockWeeks(p._key)}
-                            disabled={bsPatternsSaving}
-                            title="Alle Block-Wochen abwählen"
-                          >
-                            Alle abwählen
-                          </button>
-                        {/if}:
-                      </span>
-                      <div class="bs-week-grid">
-                        {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
-                          <button
-                            type="button"
-                            class="chip chip-week chip-button"
-                            class:chip-brand={p.blockWeeks.includes(wk)}
-                            onclick={() => bsToggleBlockWeek(p._key, wk)}
-                            disabled={bsPatternsSaving}
-                          >
-                            {wk}
-                          </button>
-                        {/each}
+                    {#if p.mode === "weekly"}
+                      <!-- daysOfWeek chip-row (toggle, multi-select) -->
+                      <!-- Phase 67.1 (v1.7.4): chip-strip toggles set-membership in
+                           `daysOfWeek`. Multiple selections produce one DB row covering
+                           all chosen weekdays (Mo + Mi + Fr -> one pattern, three days). -->
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">Wochentage:</span>
+                        <div class="bs-chip-row">
+                          {#each BS_WEEKDAY_LABELS as label, didx (label)}
+                            <button
+                              type="button"
+                              class="chip chip-button"
+                              class:chip-brand={p.daysOfWeek.includes(didx)}
+                              onclick={() => bsToggleDayOfWeek(p._key, didx)}
+                              disabled={bsPatternsSaving}
+                            >
+                              {label}
+                            </button>
+                          {/each}
+                        </div>
                       </div>
-                    </div>
+                      <p class="bs-pattern-hint bs-mode-help">
+                        Wähle 1-7 Wochentage, an denen der/die Azubi zur Berufsschule geht.
+                      </p>
+                    {:else}
+                      <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
+                      <div class="bs-pattern-row">
+                        <span class="bs-pattern-label">
+                          Block-Wochen
+                          {#if p.blockWeeks.length > 0}
+                            <span class="bs-week-count">({p.blockWeeks.length})</span>
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm bs-week-clear"
+                              onclick={() => bsClearBlockWeeks(p._key)}
+                              disabled={bsPatternsSaving}
+                              title="Alle Block-Wochen abwählen"
+                            >
+                              Alle abwählen
+                            </button>
+                          {/if}:
+                        </span>
+                        <div class="bs-week-grid">
+                          {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
+                            <button
+                              type="button"
+                              class="chip chip-week chip-button"
+                              class:chip-brand={p.blockWeeks.includes(wk)}
+                              onclick={() => bsToggleBlockWeek(p._key, wk)}
+                              disabled={bsPatternsSaving}
+                            >
+                              {wk}
+                            </button>
+                          {/each}
+                        </div>
+                      </div>
 
-                    <!-- Year picker (only when at least one block-week is selected) -->
-                    {#if p.blockWeeks.length > 0}
+                      <!-- Year picker (always visible in block mode; blockYear is required) -->
                       <div class="bs-pattern-row">
                         <span class="bs-pattern-label">Jahr:</span>
                         <input
@@ -1592,6 +1674,10 @@
                           disabled={bsPatternsSaving}
                         />
                       </div>
+                      <p class="bs-pattern-hint bs-mode-help">
+                        Markiere die KWs, in denen Blockunterricht stattfindet. Jeder Tag dieser
+                        Wochen zählt dann als Berufsschultag.
+                      </p>
                     {/if}
 
                     <!-- Validity inputs -->
@@ -1639,33 +1725,30 @@
                     </div>
 
                     <!-- Phase 67.2 (Plan 05) — Bundesland-Override (Pendler-Azubi).
-                         Nur sichtbar, wenn das Pattern Wochentage ODER Block-Wochen hat;
-                         sonst hat es keine Wirkung. -->
-                    {#if p.daysOfWeek.length > 0 || p.blockWeeks.length > 0}
-                      <div class="bs-pattern-row">
-                        <span class="bs-pattern-label">BS-Bundesland:</span>
-                        <select
-                          class="form-input bs-state-select"
-                          value={p.federalStateOverride ?? ""}
-                          onchange={(e) => {
-                            const val = (e.currentTarget as HTMLSelectElement).value;
-                            bsSetFederalStateOverride(
-                              p._key,
-                              val === "" ? null : (val as FederalState),
-                            );
-                          }}
-                          disabled={bsPatternsSaving}
-                        >
-                          <option value="">Wie Mandant (Standard)</option>
-                          {#each BS_FEDERAL_STATE_OPTIONS as opt (opt.value)}
-                            <option value={opt.value}>{opt.label}</option>
-                          {/each}
-                        </select>
-                        <small class="bs-pattern-hint"
-                          >Nur bei Pendler-Azubi: Schule in anderem Bundesland</small
-                        >
-                      </div>
-                    {/if}
+                         v1.7.4 hotfix: cross-cutting field — always visible regardless of mode. -->
+                    <div class="bs-pattern-row">
+                      <span class="bs-pattern-label">BS-Bundesland:</span>
+                      <select
+                        class="form-input bs-state-select"
+                        value={p.federalStateOverride ?? ""}
+                        onchange={(e) => {
+                          const val = (e.currentTarget as HTMLSelectElement).value;
+                          bsSetFederalStateOverride(
+                            p._key,
+                            val === "" ? null : (val as FederalState),
+                          );
+                        }}
+                        disabled={bsPatternsSaving}
+                      >
+                        <option value="">Wie Mandant (Standard)</option>
+                        {#each BS_FEDERAL_STATE_OPTIONS as opt (opt.value)}
+                          <option value={opt.value}>{opt.label}</option>
+                        {/each}
+                      </select>
+                      <small class="bs-pattern-hint"
+                        >Nur bei Pendler-Azubi: Schule in anderem Bundesland</small
+                      >
+                    </div>
                   </li>
                 {/each}
               </ul>
@@ -2515,5 +2598,22 @@
 
   .bs-state-select {
     max-width: 16rem;
+  }
+
+  /* v1.7.4 hotfix — Mode-toggle chips (Wöchentlich vs. Blockunterricht) */
+  .bs-mode-chip {
+    font-weight: 600;
+    padding: var(--s-1) var(--s-3);
+  }
+
+  .bs-mode-help {
+    margin: 0 0 0 9rem;
+    font-style: italic;
+  }
+
+  @media (max-width: 640px) {
+    .bs-mode-help {
+      margin-left: 0;
+    }
   }
 </style>
