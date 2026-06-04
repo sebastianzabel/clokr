@@ -567,6 +567,18 @@
     });
   }
 
+  // v1.7.4 hotfix — Clear-all helper. Without this users have to click 53 chips
+  // individually to deactivate the block-school mode, which is a footgun (one
+  // accidental "select all" leaves the pattern claiming every weekday of the
+  // year and overrides the daysOfWeek choice). Mirrors the blockYear-reset
+  // semantics of bsToggleBlockWeek when blockWeeks ends up empty.
+  function bsClearBlockWeeks(key: string) {
+    bsPatterns = bsPatterns.map((p) => {
+      if (p._key !== key) return p;
+      return { ...p, blockWeeks: [], blockYear: null };
+    });
+  }
+
   function bsSetBlockYear(key: string, year: number | null) {
     bsPatterns = bsPatterns.map((p) =>
       p._key === key ? { ...p, blockYear: year != null && Number.isFinite(year) ? year : null } : p,
@@ -1531,7 +1543,21 @@
 
                     <!-- blockWeeks chip-grid 1..53 (toggle, multi-select) -->
                     <div class="bs-pattern-row">
-                      <span class="bs-pattern-label">Block-Wochen:</span>
+                      <span class="bs-pattern-label">
+                        Block-Wochen
+                        {#if p.blockWeeks.length > 0}
+                          <span class="bs-week-count">({p.blockWeeks.length})</span>
+                          <button
+                            type="button"
+                            class="btn btn-ghost btn-sm bs-week-clear"
+                            onclick={() => bsClearBlockWeeks(p._key)}
+                            disabled={bsPatternsSaving}
+                            title="Alle Block-Wochen abwählen"
+                          >
+                            Alle abwählen
+                          </button>
+                        {/if}:
+                      </span>
                       <div class="bs-week-grid">
                         {#each Array.from({ length: 53 }, (_, i) => i + 1) as wk (wk)}
                           <button
