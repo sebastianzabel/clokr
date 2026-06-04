@@ -1,0 +1,19 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: clokr-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+    app: clokr-postgres
+spec:
+  type: ClusterIP
+  ports:
+  - name: postgres
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  selector:
+    app: clokr-postgres
+{{- end }}

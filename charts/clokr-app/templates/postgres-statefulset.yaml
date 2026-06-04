@@ -1,0 +1,73 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clokr-postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clokr-app.labels" . | nindent 4 }}
+    app: clokr-postgres
+  # Pitfall #4: helm.sh/resource-policy: keep lives on the PVC template (below) —
+  # NOT on the StatefulSet itself. This prevents ArgoCD prune from cascading to
+  # the data volume when the chart/template is removed, while still allowing the
+  # workload to be re-deployed cleanly.
+spec:
+  serviceName: clokr-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clokr-postgres
+  template:
+    metadata:
+      labels:
+        app: clokr-postgres
+        {{- include "clokr-app.labels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: postgres
+        image: {{ .Values.postgres.image | quote }}
+        env:
+        - name: POSTGRES_DB
+          value: clokr
+        - name: POSTGRES_USER
+          value: clokr
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: clokr-secrets
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          {{- toYaml .Values.postgres.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command: [pg_isready, -U, clokr, -d, clokr]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command: [pg_isready, -U, clokr, -d, clokr]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+      annotations:
+        # Pitfall #4: prevent ArgoCD prune from deleting the PVC on chart removal
+        helm.sh/resource-policy: keep
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      {{- if .Values.postgres.storageClass }}
+      storageClassName: {{ .Values.postgres.storageClass | quote }}
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.postgres.storage }}
+{{- end }}
