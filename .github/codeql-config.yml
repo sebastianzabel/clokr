@@ -1,0 +1,13 @@
+name: "Clokr CodeQL Config"
+paths:
+  - apps/api/src
+  - apps/web/src
+  - packages/types/src
+paths-ignore:
+  - "**/node_modules"
+  - "**/__tests__"
+  - "**/*.test.ts"
+  - apps/e2e
+  - .planning
+queries:
+  - uses: security-and-quality
