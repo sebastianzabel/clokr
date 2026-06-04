@@ -152,15 +152,12 @@
     originEmployeeId: string;
     originIso: string;
   };
-  // Phase 65 follow-up — Berufsschule pseudo-template: lives in the same strip
-  // as shift templates so admins drag a "Berufsschule"-chip onto an AZUBI cell
-  // to mark that day as a vocational-school day. Drop creates an Absence (not
-  // a Shift) via POST /vocational-school/manual-insert.
-  type VocationalSchoolDragItem = { id: string; kind: "vocational_school" };
-  type DragItem = TemplateDragItem | ShiftDragItem | VocationalSchoolDragItem;
+  // v1.7.4 — Berufsschule chip removed from the strip. The canonical BS source
+  // is now `EmployeeVocationalSchoolPattern` + auto-generator. Manual one-off
+  // BS-days are still supported via the POST /vocational-school/manual-insert
+  // endpoint (used by future UX), just no longer via drag-and-drop.
+  type DragItem = TemplateDragItem | ShiftDragItem;
 
-  // Stable strip id for the BS chip — must NOT collide with a template id
-  const VS_STRIP_ID = "vs-chip";
   type DropTargetKey = string; // `${employeeId}::${iso}`
 
   // The strip's dndzone item array — TemplateDragItems plus svelte-dnd-action's
@@ -478,15 +475,11 @@
       // maps items[i] to children[i] positionally, so the initial list and
       // restoreTemplatesStrip() must both render the full canonical templates
       // array — slicing here cancels drags for templates beyond the cut.
-      dndTemplates = [
-        ...t.map((tpl) => ({
-          id: `tpl-${tpl.id}`,
-          kind: "template" as const,
-          templateId: tpl.id,
-        })),
-        // Phase 65 follow-up — Berufsschule chip always last in the strip
-        { id: VS_STRIP_ID, kind: "vocational_school" as const },
-      ];
+      dndTemplates = t.map((tpl) => ({
+        id: `tpl-${tpl.id}`,
+        kind: "template" as const,
+        templateId: tpl.id,
+      }));
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -653,15 +646,11 @@
   // (whether the chip landed on a cell or was dropped outside) so the chip
   // always reappears in the strip.
   function restoreTemplatesStrip() {
-    dndTemplates = [
-      ...templates.map((tpl) => ({
-        id: `tpl-${tpl.id}`,
-        kind: "template" as const,
-        templateId: tpl.id,
-      })),
-      // Phase 65 follow-up — keep BS chip in the strip after a drop
-      { id: VS_STRIP_ID, kind: "vocational_school" as const },
-    ];
+    dndTemplates = templates.map((tpl) => ({
+      id: `tpl-${tpl.id}`,
+      kind: "template" as const,
+      templateId: tpl.id,
+    }));
   }
 
   // Strip dndzone handlers — we don't reorder templates within the strip; we
@@ -710,38 +699,6 @@
         toasts.error("Berufsschultag existiert bereits für diesen Tag");
       } else {
         toasts.error("Berufsschultag — Schichten können nicht eingeplant werden");
-      }
-      return;
-    }
-
-    // Phase 65 follow-up — Berufsschule chip dropped onto an empty cell.
-    // Server enforces AZUBI gate + locked-month + uniqueness; client-side AZUBI
-    // pre-check gives a faster, more specific German toast.
-    if (item.kind === "vocational_school") {
-      restoreTemplatesStrip();
-      const emp = shiftEmployees.find((e) => e.id === employeeId);
-      if (!emp || !isAzubi(emp)) {
-        toasts.error("Berufsschultage sind nur für Auszubildende vorgesehen.");
-        return;
-      }
-      dropPending = key;
-      try {
-        await api.post("/vocational-school/manual-insert", {
-          employeeId,
-          date: iso,
-        });
-        toasts.success("Berufsschultag hinzugefügt");
-        await load();
-      } catch (err: unknown) {
-        const status = err instanceof ApiError ? err.status : 0;
-        const msg = err instanceof Error ? err.message : "Fehler beim Anlegen";
-        if (status === 403)
-          toasts.error("Monat ist abgeschlossen und kann nicht bearbeitet werden");
-        else if (status === 409) toasts.error("Berufsschultag existiert bereits für diesen Tag");
-        else if (status === 400) toasts.error(msg);
-        else toasts.error(msg);
-      } finally {
-        dropPending = null;
       }
       return;
     }
@@ -1300,8 +1257,8 @@
   {/if}
 
   <!-- Template strip — Phase 47: draggable chips via use:dndzone, one chip per template.
-       Phase 65 follow-up: strip is shown whenever there are any draggable items in it
-       (templates OR the Berufsschule chip) so admins can drop BS even without shift templates. -->
+       v1.7.4: Berufsschule chip removed — BS is now managed via the canonical
+       EmployeeVocationalSchoolPattern + auto-generator path. -->
   {#if dndTemplates.length > 0}
     <div
       class="sp-template-strip"
@@ -1317,23 +1274,16 @@
       {#each dndTemplates as item (item.id)}
         {@const tpl =
           item.kind === "template" ? templates.find((t) => t.id === item.templateId) : undefined}
-        {@const isVs = item.kind === "vocational_school"}
         <!--
           ALWAYS render a chip div for every item so children.length stays
           equal to items.length — svelte-dnd-action requires a 1:1 mapping
           between items[] and direct children. Shadow placeholders (mid-drag)
           may not resolve to a Template; render an invisible spacer for them.
-          Phase 65 follow-up: Berufsschule chip uses the same shell but
-          renders its own label + brand-soft accent.
         -->
         <div
           class="card sp-tpl-row sp-tpl-chip"
-          class:sp-tpl-chip--shadow={!tpl && !isVs}
-          class:sp-tpl-chip--vs={isVs}
+          class:sp-tpl-chip--shadow={!tpl}
           data-template-id={tpl?.id ?? ""}
-          title={isVs
-            ? "Auf eine Azubi-Zelle ziehen, um einen Berufsschultag anzulegen"
-            : undefined}
         >
           {#if tpl}
             <div class="sp-tpl-text">
@@ -1342,12 +1292,6 @@
               <div class="sp-tpl-time">
                 {tpl.startTime.slice(0, 5)}–{tpl.endTime.slice(0, 5)}
               </div>
-            </div>
-          {:else if isVs}
-            <div class="sp-tpl-text">
-              <div class="serif-eyebrow sp-tpl-eyebrow">Sonder-Vorlage</div>
-              <div class="sp-tpl-name">🔒 Berufsschule</div>
-              <div class="sp-tpl-time">ganztägig · nur Azubi</div>
             </div>
           {/if}
         </div>
@@ -1904,18 +1848,6 @@
     color: var(--text-muted);
     margin-top: 4px;
   }
-  /* Phase 65 follow-up — Berufsschule chip uses a brand-soft accent so it's
-     visually distinct from regular shift templates but still part of the strip. */
-  .sp-tpl-chip--vs {
-    background: var(--brand-soft);
-    border-color: var(--brand);
-  }
-  .sp-tpl-chip--vs .sp-tpl-eyebrow,
-  .sp-tpl-chip--vs .sp-tpl-name,
-  .sp-tpl-chip--vs .sp-tpl-time {
-    color: var(--text);
-  }
-
   .week-header {
     padding: 14px 18px;
     border-bottom: 1px solid var(--border);
