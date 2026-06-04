@@ -109,7 +109,7 @@ model TenantConfig {
   vacationLeadTimeDays                Int     @default(0) // Min. Tage im Voraus für Urlaubsanträge (0 = keine)
   vacationMaxAdvanceMonths            Int     @default(0) // Max. Monate im Voraus für Urlaub (0 = unbegrenzt)
   // Phase 62 — Berufsschultag-Auto-Generator: rolling preview window (weeks ahead)
-  vocationalSchoolPreviewWeeks        Int     @default(4) // Rolling window (weeks ahead) the cron generator pre-populates
+  vocationalSchoolPreviewWeeks        Int     @default(13) // Rolling window (weeks ahead) the cron generator pre-populates — v1.7.4 bumped 4→13 so the window spans typical Schulferien gaps
   // Phase 63 — Berufsschule Saldo/ArbZG (D-02): per-tenant configurable BS-day duration
   vocationalSchoolMinutesPerDay       Int     @default(480) // Net Anrechnung per single BS-day (default 8h = 480 min, BERSCH-03)
   vocationalSchoolBlockMinutesPerWeek Int     @default(2400) // Total Anrechnung per block-week (default 40h = 2400 min, BERSCH-04)

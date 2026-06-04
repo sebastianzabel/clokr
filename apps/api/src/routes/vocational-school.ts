@@ -67,7 +67,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         where: { tenantId },
         select: { vocationalSchoolPreviewWeeks: true },
       });
-      const weeksAhead = config?.vocationalSchoolPreviewWeeks ?? 4;
+      const weeksAhead = config?.vocationalSchoolPreviewWeeks ?? 13;
 
       const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
         tenantId,
@@ -91,7 +91,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
           where: { tenantId },
           select: { vocationalSchoolPreviewWeeks: true },
         });
-        weeksAhead = config?.vocationalSchoolPreviewWeeks ?? 4;
+        weeksAhead = config?.vocationalSchoolPreviewWeeks ?? 13;
       }
 
       const result = await previewVocationalSchoolGeneration(app.prisma, {

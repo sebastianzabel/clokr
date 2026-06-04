@@ -29,7 +29,7 @@ export const vocationalSchoolGeneratorPlugin = fp(async (app) => {
 
     for (const tenant of tenants) {
       try {
-        const weeksAhead = tenant.config?.vocationalSchoolPreviewWeeks ?? 4;
+        const weeksAhead = tenant.config?.vocationalSchoolPreviewWeeks ?? 13;
         const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
           tenantId: tenant.id,
           weeksAhead,
