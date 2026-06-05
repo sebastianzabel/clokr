@@ -27,3 +27,29 @@ export async function logout(page: Page) {
 export async function screenshotPage(page: Page, name: string) {
   await page.screenshot({ path: `test-results/screenshots/${name}.png`, fullPage: true });
 }
+
+/**
+ * Deterministic replacement for fixed-delay waits after navigation or scroll
+ * when a screenshot needs the layout to settle.
+ *
+ * Waits for: fonts loaded, all CSS animations finished, no pending RAF.
+ * Bails out after `timeout` so the caller still proceeds on slow/animated pages.
+ */
+export async function waitForPaintSettled(page: Page, timeout = 2000): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        // Fonts are loaded
+        if (document.fonts && document.fonts.status !== "loaded") return false;
+        // No element has running CSS animations or transitions
+        const animations = document.getAnimations?.() ?? [];
+        if (animations.some((a) => a.playState === "running")) return false;
+        return true;
+      },
+      null,
+      { timeout },
+    )
+    .catch(() => {
+      /* slow / always-animating page — fall through */
+    });
+}

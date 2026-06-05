@@ -478,7 +478,20 @@ test.describe("UI Quality — Interactive States", () => {
     if (await btn.isVisible()) {
       const beforeBg = await btn.evaluate((el) => getComputedStyle(el).backgroundColor);
       await btn.hover();
-      await page.waitForTimeout(200);
+      // Hover transition is short; poll for the background to settle (or bail after 500ms
+      // so the "minor" finding still gets recorded for non-animated buttons).
+      await page
+        .waitForFunction(
+          ({ before }) => {
+            const el = document.querySelector(".btn-primary, .clock-btn");
+            return !!el && getComputedStyle(el).backgroundColor !== before;
+          },
+          { before: beforeBg },
+          { timeout: 500 },
+        )
+        .catch(() => {
+          /* no hover change — recorded as a "minor" finding below */
+        });
       const afterBg = await btn.evaluate((el) => getComputedStyle(el).backgroundColor);
 
       if (beforeBg !== afterBg) {
@@ -503,7 +516,20 @@ test.describe("UI Quality — Interactive States", () => {
     if (await input.isVisible()) {
       const beforeBorder = await input.evaluate((el) => getComputedStyle(el).borderColor);
       await input.focus();
-      await page.waitForTimeout(200);
+      // Poll for the focused border to differ from the pre-focus border; bail after 500ms
+      // so the "minor" finding still records for inputs without a focus indicator.
+      await page
+        .waitForFunction(
+          ({ before }) => {
+            const el = document.querySelector("input[type='password']");
+            return !!el && getComputedStyle(el).borderColor !== before;
+          },
+          { before: beforeBorder },
+          { timeout: 500 },
+        )
+        .catch(() => {
+          /* no focus change — recorded as a "minor" finding below */
+        });
       const afterBorder = await input.evaluate((el) => getComputedStyle(el).borderColor);
 
       if (beforeBorder !== afterBorder) {

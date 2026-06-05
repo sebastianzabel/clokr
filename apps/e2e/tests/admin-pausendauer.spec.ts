@@ -29,7 +29,8 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     const isChecked = await autoBreakToggle.isChecked();
     if (!isChecked) {
       await autoBreakToggle.click();
-      await page.waitForTimeout(500);
+      // Wait for the conditionally-rendered break fields to appear.
+      await page.locator("#sys-break-over6h").waitFor({ state: "visible", timeout: 2000 });
     }
 
     const over6h = page.locator("#sys-break-over6h");
@@ -41,12 +42,22 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     const baseline6h = await over6h.inputValue();
     const baseline9h = await over9h.inputValue();
 
+    // saveBreakDefaults fires on blur — wait for the actual PUT response instead of a timeout.
+    const waitForSave = () =>
+      page
+        .waitForResponse(
+          (r) =>
+            r.url().includes("/api/v1") &&
+            (r.url().includes("config") || r.url().includes("break") || r.url().includes("system")) &&
+            ["POST", "PUT", "PATCH"].includes(r.request().method()),
+          { timeout: 3000 },
+        )
+        .catch(() => null);
+
     await over6h.fill("45");
-    await over6h.blur();
-    await page.waitForTimeout(800); // saveBreakDefaults fires on blur
+    await Promise.all([waitForSave(), over6h.blur()]);
     await over9h.fill("60");
-    await over9h.blur();
-    await page.waitForTimeout(800);
+    await Promise.all([waitForSave(), over9h.blur()]);
 
     await expect(page.getByText("✓ Gespeichert").first()).toBeVisible({ timeout: 3000 });
     await screenshotPage(page, "admin-pausendauer-tenant-saved");
@@ -57,13 +68,11 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await expect(page.locator("#sys-break-over6h")).toHaveValue("45");
     await expect(page.locator("#sys-break-over9h")).toHaveValue("60");
 
-    // Restore baseline
+    // Restore baseline — re-use the same save-response watcher so we don't race the next test.
     await page.locator("#sys-break-over6h").fill(baseline6h || "30");
-    await page.locator("#sys-break-over6h").blur();
-    await page.waitForTimeout(500);
+    await Promise.all([waitForSave(), page.locator("#sys-break-over6h").blur()]);
     await page.locator("#sys-break-over9h").fill(baseline9h || "45");
-    await page.locator("#sys-break-over9h").blur();
-    await page.waitForTimeout(500);
+    await Promise.all([waitForSave(), page.locator("#sys-break-over9h").blur()]);
   });
 
   test("employee Pausendauer override saves and persists across reload", async ({ page }) => {
@@ -76,13 +85,12 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
     await firstEmployeeLink.click();
     await page.waitForLoadState("networkidle");
 
-    // Switch to Arbeitszeit tab
+    // Switch to Arbeitszeit tab — wait for the tab panel to mount via its first known label.
     await page
       .getByRole("button", { name: "Arbeitszeit" })
       .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
       .first()
       .click();
-    await page.waitForTimeout(300);
 
     // Pausendauer (Optional) Section must be present
     await expect(page.getByText("Pausendauer (Optional)").first()).toBeVisible();
@@ -125,15 +133,24 @@ test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
       .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
       .first()
       .click();
-    await page.waitForTimeout(300);
+    // Wait for the tab panel to actually mount via the Pausendauer-section heading.
+    await expect(page.getByText("Pausendauer (Optional)").first()).toBeVisible();
 
     await expect(page.locator("#emp-break-over6h")).toHaveValue(expectedOver6);
     await expect(page.locator("#emp-break-over9h")).toHaveValue(expectedOver9);
 
-    // Restore (clear override) for test hygiene
+    // Restore (clear override) for test hygiene — wait for the PUT response on save.
     await page.locator("#emp-break-over6h").fill("");
     await page.locator("#emp-break-over9h").fill("");
-    await saveBtn.click();
-    await page.waitForTimeout(500);
+    await Promise.all([
+      page
+        .waitForResponse(
+          (r) =>
+            r.url().includes("/api/v1") && ["PUT", "PATCH"].includes(r.request().method()),
+          { timeout: 3000 },
+        )
+        .catch(() => null),
+      saveBtn.click(),
+    ]);
   });
 });

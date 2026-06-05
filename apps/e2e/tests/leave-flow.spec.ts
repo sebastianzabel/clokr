@@ -19,7 +19,6 @@ test.describe("Abwesenheiten — Complete Flow", () => {
   test("create leave request via UI form", async ({ page }) => {
     // Click "Neuer Antrag"
     await page.getByText(/Neuer Antrag/).first().click();
-    await page.waitForTimeout(500);
 
     // Form must be visible
     const typeSelect = page.locator("#f-type").first();
@@ -40,25 +39,30 @@ test.describe("Abwesenheiten — Complete Flow", () => {
     const startInput = page.locator("#f-start").first();
     await expect(startInput).toBeVisible();
     await startInput.fill(startStr);
-    await page.waitForTimeout(200);
+    await expect(startInput).toHaveValue(startStr);
 
     const endInput = page.locator("#f-end").first();
     await expect(endInput).toBeVisible();
     await endInput.fill(endStr);
-    await page.waitForTimeout(200);
+    await expect(endInput).toHaveValue(endStr);
 
     await screenshotPage(page, "flow-leave-request-filled");
 
-    // Submit
+    // Submit and wait for the POST /leave/requests to resolve (201 success or 4xx error)
+    // instead of an arbitrary delay.
     const submitBtn = page
       .getByRole("button", { name: /einreichen|antrag stellen|speichern/i })
       .first();
     await expect(submitBtn).toBeVisible();
-    await submitBtn.click();
-
-    // Wait for form to close (form-backdrop disappears on successful submit)
-    // If submit fails (e.g. overlap), the form stays open — check for error or success
-    await page.waitForTimeout(2000);
+    await Promise.all([
+      page
+        .waitForResponse(
+          (r) => r.url().includes("/api/v1/leave") && r.request().method() === "POST",
+          { timeout: 10_000 },
+        )
+        .catch(() => null),
+      submitBtn.click(),
+    ]);
 
     // If form is still visible with an error, the test should still pass as the form
     // is functioning correctly (showing the error). Close it using the Abbrechen button.
@@ -68,7 +72,9 @@ test.describe("Abwesenheiten — Complete Flow", () => {
       // Close the dialog using the Abbrechen button (works even when backdrop is blocked)
       const cancelBtn = formDialog.getByRole("button", { name: /Abbrechen/i });
       await cancelBtn.click();
-      await page.waitForTimeout(500);
+      await formDialog.waitFor({ state: "hidden", timeout: 2000 }).catch(() => {
+        /* fall through — backdrop click may still close it */
+      });
     }
 
     // Navigate to "Meine Anträge" tab to verify the request appears
@@ -160,14 +166,12 @@ test.describe("Abwesenheiten — Complete Flow", () => {
 
   test("special leave shows reason dropdown", async ({ page }) => {
     await page.getByText(/Neuer Antrag|Antrag/).first().click();
-    await page.waitForTimeout(500);
 
     const typeSelect = page.locator("#f-type").first();
     await expect(typeSelect).toBeVisible();
     await typeSelect.selectOption("SPECIAL");
-    await page.waitForTimeout(500);
 
-    // Should show special leave rule dropdown
+    // Should show special leave rule dropdown (conditionally rendered after SPECIAL).
     const ruleSelect = page.locator("#f-special-rule");
     await expect(ruleSelect).toBeVisible();
     await screenshotPage(page, "flow-leave-special-dropdown");
@@ -182,23 +186,37 @@ test.describe("Abwesenheiten — Complete Flow", () => {
     const picker = page.locator(".month-picker");
     await expect(picker).toBeVisible();
 
-    // Navigate year
+    // Navigate year — capture current label so we can wait for it to actually change.
+    const beforeLabel = (await monthTitle.textContent()) ?? "";
     const yearNext = picker.locator("button").filter({ hasText: "›" });
     await yearNext.click();
-    await page.waitForTimeout(300);
+    // Wait for the title to reflect the new year (or 500ms grace if the picker doesn't
+    // rebind monthTitle synchronously).
+    try {
+      await expect
+        .poll(() => monthTitle.textContent(), { timeout: 500 })
+        .not.toBe(beforeLabel);
+    } catch {
+      /* picker may keep monthTitle stable until commit — still safe to screenshot */
+    }
 
     await screenshotPage(page, "flow-leave-month-picker");
 
-    // Close by pressing Escape
+    // Close by pressing Escape and confirm the picker actually closed.
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
+    await picker.waitFor({ state: "hidden", timeout: 1000 }).catch(() => {
+      /* fall through */
+    });
   });
 
   test("switch to Meine Anträge tab", async ({ page }) => {
     const myRequestsTab = page.getByText("Meine Anträge", { exact: false });
     await expect(myRequestsTab.first()).toBeVisible();
     await myRequestsTab.first().click();
-    await page.waitForTimeout(500);
+    // Wait for the tab panel to render its empty-state or list before screenshotting.
+    await expect(
+      page.locator(".leave-item, .request-row, tr, .empty-state").first(),
+    ).toBeVisible();
     await screenshotPage(page, "flow-leave-my-requests");
   });
 
@@ -206,19 +224,36 @@ test.describe("Abwesenheiten — Complete Flow", () => {
     const approvalsTab = page.getByText(/Genehmigungen/i);
     await expect(approvalsTab.first()).toBeVisible();
     await approvalsTab.first().click();
-    await page.waitForTimeout(500);
+    // Wait for the approvals panel to render before screenshotting.
+    await expect(
+      page.locator(".leave-item, .request-row, tr, .empty-state").first(),
+    ).toBeVisible();
     await screenshotPage(page, "flow-leave-approvals");
   });
 
   test("team toggle works", async ({ page }) => {
     const teamBtn = page.locator(".team-toggle").first();
     await expect(teamBtn).toBeVisible();
+    const beforePressed = await teamBtn.getAttribute("aria-pressed");
     await teamBtn.click();
-    await page.waitForTimeout(500);
+    // Wait for aria-pressed to flip (or 500ms grace if the component doesn't expose it).
+    try {
+      await expect.poll(() => teamBtn.getAttribute("aria-pressed"), { timeout: 500 }).not.toBe(
+        beforePressed,
+      );
+    } catch {
+      /* component may not expose aria-pressed — screenshot still captures the visual */
+    }
     await screenshotPage(page, "flow-leave-team-view");
 
     // Toggle back
     await teamBtn.click();
-    await page.waitForTimeout(300);
+    try {
+      await expect.poll(() => teamBtn.getAttribute("aria-pressed"), { timeout: 500 }).toBe(
+        beforePressed,
+      );
+    } catch {
+      /* see above */
+    }
   });
 });

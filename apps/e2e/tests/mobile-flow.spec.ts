@@ -1,5 +1,5 @@
 import { test, expect, devices } from "@playwright/test";
-import { loginAsAdmin, screenshotPage } from "./helpers";
+import { loginAsAdmin, screenshotPage, waitForPaintSettled } from "./helpers";
 
 // test.use() with defaultBrowserType must be top-level (not inside describe)
 const { defaultBrowserType: _bt, ...iphone14Settings } = devices["iPhone 14"];
@@ -49,7 +49,6 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
   test("dashboard — timer card visible on mobile without overflow", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(500);
 
     // The v1.5 dashboard hero is the `.timer-card` (replaces the old `.clock-btn`).
     const timerCard = page.locator(".timer-card").first();
@@ -105,7 +104,8 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
   test("time entries — calendar usable on mobile (no horizontal overflow)", async ({ page }) => {
     await page.goto("/time-entries");
     await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(500);
+    // Wait for the calendar to actually render before measuring overflow.
+    await expect(page.locator(".cal-month-title, .cal-nav-title").first()).toBeVisible();
 
     const hasOverflow = await page.evaluate(() => {
       return document.documentElement.scrollWidth > document.documentElement.clientWidth + 5;
@@ -126,7 +126,6 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
       .getByText(/Neuer Antrag/)
       .first()
       .click();
-    await page.waitForTimeout(500);
 
     // Form elements should be within viewport.
     const typeSelect = page.locator("#f-type").first();
@@ -160,7 +159,7 @@ test.describe("Mobile Experience (UI-15 — v1.5 Bottom-Tab Bar)", () => {
     for (const route of routes) {
       await page.goto(route);
       await page.waitForLoadState("networkidle");
-      await page.waitForTimeout(300);
+      await waitForPaintSettled(page, 1000);
 
       const hasOverflow = await page.evaluate(() => {
         return document.documentElement.scrollWidth > document.documentElement.clientWidth + 5;

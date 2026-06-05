@@ -21,6 +21,12 @@ export default [
   },
   {
     files: ["**/*.ts"],
+    // Don't warn on inline `eslint-disable-next-line foo` comments where rule `foo` is not
+    // configured here — they may target the root workspace config (which layers no-console,
+    // no-floating-promises, etc.) and are still useful even if this config doesn't enable them.
+    linterOptions: {
+      reportUnusedDisableDirectives: false,
+    },
     languageOptions: {
       parser: tsParser,
       parserOptions: {

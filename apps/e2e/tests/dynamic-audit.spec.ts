@@ -95,7 +95,13 @@ test.describe("Dynamic UI Audit", () => {
     for (const p of ALL_PAGES) {
       await page.goto(p.url);
       await page.waitForLoadState("networkidle");
-      await page.waitForTimeout(500);
+      // Wait for body to have rendered content (deterministic replacement for a fixed delay).
+      // Bail out after 2s so an actually-empty page still falls through to the assertion below.
+      await page
+        .waitForFunction(() => document.body.innerText.trim().length >= 50, null, { timeout: 2000 })
+        .catch(() => {
+          /* fall through and let the assertion record the empty page */
+        });
 
       const textLength = await page.evaluate(() => document.body.innerText.trim().length);
       if (textLength < 50) {

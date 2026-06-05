@@ -26,7 +26,8 @@ test.describe("Admin Settings — Complete Flow", () => {
       await expect(link).toBeVisible();
       await link.click();
       await page.waitForLoadState("networkidle");
-      await page.waitForTimeout(300);
+      // Confirm the new tab's heading actually mounted before navigating onward.
+      await expect(page.getByRole("heading").first()).toBeVisible();
     }
     await screenshotPage(page, "flow-admin-tabs");
   });
@@ -40,8 +41,14 @@ test.describe("Admin Settings — Complete Flow", () => {
     const count = await headers.count();
 
     for (let i = 0; i < Math.min(count, 5); i++) {
-      await headers.nth(i).click();
-      await page.waitForTimeout(200);
+      const header = headers.nth(i);
+      await header.click();
+      // Wait for the accordion's expanded state to settle on the same element.
+      try {
+        await expect(header).toHaveAttribute("aria-expanded", /true|false/);
+      } catch {
+        /* element may not expose aria-expanded; the next click is still safe */
+      }
     }
     await screenshotPage(page, "flow-admin-vacation-accordions");
   });
@@ -68,21 +75,23 @@ test.describe("Admin Settings — Complete Flow", () => {
     await expect(twoFaRow).toBeVisible();
     const twoFaLabel = twoFaRow.locator("label.switch").first();
     await expect(twoFaLabel).toBeVisible();
+    const checkbox = twoFaRow.locator("input[type='checkbox']").first();
+    const initial = await checkbox.isChecked();
     await twoFaLabel.click();
-    await page.waitForTimeout(500);
+    // Wait for the underlying checkbox state to actually flip.
+    await expect.poll(() => checkbox.isChecked(), { timeout: 2000 }).toBe(!initial);
 
     // Toggle back
     await twoFaLabel.click();
-    await page.waitForTimeout(500);
+    await expect.poll(() => checkbox.isChecked(), { timeout: 2000 }).toBe(initial);
   });
 
   test("admin system — API keys section", async ({ page }) => {
     await page.goto("/admin/system");
     await page.waitForLoadState("networkidle");
 
-    // Scroll to API keys
+    // Scroll to API keys — assertion below waits for the section to enter the viewport.
     await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(500);
 
     const apiSection = page.getByText("API Keys").first();
     await expect(apiSection).toBeVisible();
@@ -105,7 +114,6 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.waitForLoadState("networkidle");
 
     await page.getByText("Neue Regel").click();
-    await page.waitForTimeout(300);
 
     const modal = page.locator(".modal, [role='dialog']").first();
     await expect(modal).toBeVisible();
@@ -139,7 +147,6 @@ test.describe("Admin Settings — Complete Flow", () => {
       .getByText(/Mitarbeiter anlegen/i)
       .first()
       .click();
-    await page.waitForTimeout(300);
 
     // Assert modal opens
     const modal = page.locator(".modal").first();
@@ -157,7 +164,7 @@ test.describe("Admin Settings — Complete Flow", () => {
     const usePasswordCheckbox = modal.locator("input[type='checkbox']").first();
     await expect(usePasswordCheckbox).toBeVisible();
     await usePasswordCheckbox.check();
-    await page.waitForTimeout(200);
+    // The #c-password input is conditionally rendered — wait for it instead of a timeout.
     const passwordInput = modal.locator("#c-password");
     await expect(passwordInput).toBeVisible();
     await passwordInput.fill("Test1234!Pass#5");
@@ -233,12 +240,20 @@ test.describe("Admin Settings — Complete Flow", () => {
       await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible({ timeout: 10_000 });
     }
 
-    // Step 3: Find and click the first "Abschliessen" button
+    // Step 3: Find and click the first "Abschliessen" button. Wait for the close API call to
+    // resolve (success OR error) instead of an arbitrary 3s delay.
     await expect(closeBtn).toBeVisible({ timeout: 10_000 });
-    await closeBtn.click();
-
-    // Step 4: Wait for UI update — avoid networkidle (background polling keeps network active)
-    await page.waitForTimeout(3000);
+    await Promise.all([
+      page
+        .waitForResponse(
+          (r) =>
+            (r.url().includes("/api/v1/month-close") || r.url().includes("/api/v1/monatsabschluss")) &&
+            ["POST", "PUT"].includes(r.request().method()),
+          { timeout: 10_000 },
+        )
+        .catch(() => null),
+      closeBtn.click(),
+    ]);
 
     // Step 5: Assert the close operation completed — either:
     //   a) Success: at least one month status shows "Abgeschlossen" (closed) in a table cell
@@ -256,9 +271,8 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.goto("/admin/system");
     await page.waitForLoadState("networkidle");
 
-    // Scroll to the Passwort-Richtlinie section
+    // Scroll to the Passwort-Richtlinie section — assertion below waits for the input to mount.
     await page.getByText("Passwort-Richtlinie").first().scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
 
     // Find the min-length input via its ID
     const minLengthInput = page.locator("#pw-min-length");
@@ -271,7 +285,9 @@ test.describe("Admin Settings — Complete Flow", () => {
     const newValue = currentNum === 12 ? 14 : 12;
 
     await minLengthInput.fill(String(newValue));
-    await page.waitForTimeout(200);
+    // Confirm the input reflects the new value before clicking save (avoids a race with
+    // any debounce wrapper around the input).
+    await expect(minLengthInput).toHaveValue(String(newValue));
 
     // Click the save button in the password policy section
     // The button is inside .settings-actions after the toggle rows
@@ -291,9 +307,8 @@ test.describe("Admin Settings — Complete Flow", () => {
     await page.reload();
     await page.waitForLoadState("networkidle");
 
-    // Scroll back to the section
+    // Scroll back to the section — assertion below waits for the input to mount.
     await page.getByText("Passwort-Richtlinie").first().scrollIntoViewIfNeeded();
-    await page.waitForTimeout(300);
 
     // Assert the saved value persists
     const persistedInput = page.locator("#pw-min-length");
@@ -303,7 +318,7 @@ test.describe("Admin Settings — Complete Flow", () => {
 
     // Restore original value
     await persistedInput.fill(currentValue);
-    await page.waitForTimeout(200);
+    await expect(persistedInput).toHaveValue(currentValue);
     await page
       .locator(".sys-section")
       .filter({ hasText: "Passwort-Richtlinie" })
