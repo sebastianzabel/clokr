@@ -362,6 +362,107 @@ jobs:
           WEB_SERVER_DISABLED: "true"
         run: pnpm --filter e2e exec playwright test --project=axe-scan tests/axe-scan.spec.ts
 
+  # ── Visual regression (TEST-V8-14, Phase 75) ─────────────────────────
+  # Runs the pinned Playwright image (mcr.microsoft.com/playwright:v1.60.0-jammy
+  # — see apps/e2e/Dockerfile.visual; tag MUST match @playwright/test version in
+  # apps/e2e/package.json) against the committed baselines under
+  # apps/e2e/tests/visual.spec.ts-snapshots/.
+  # Gated on visual-relevant path changes only (D-06) — docs-only / API-only
+  # / .planning-only PRs skip this job entirely.
+  visual-regression:
+    runs-on: ubuntu-latest
+    # Path filter: only run when the PR touches code that can affect rendered output.
+    # GitHub does not support `on.pull_request.paths` PLUS per-job conditionals
+    # cleanly; we use the dorny/paths-filter pattern instead. The pre-step decides
+    # whether the heavy steps run.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Detect visual-relevant changes
+        id: changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            visual:
+              - 'apps/web/**'
+              - 'apps/web/src/tokens.css'
+              - 'apps/e2e/**'
+              - 'apps/e2e/tests/visual.spec.ts-snapshots/**'
+              - 'docker-compose.e2e.yml'
+              - '.github/workflows/ci.yml'
+
+      - name: Skip notice (no visual-relevant changes)
+        if: steps.changes.outputs.visual != 'true'
+        run: |
+          echo "::notice title=Visual regression skipped::No changes under apps/web/**, tokens.css, or apps/e2e/** — skipping visual-regression job (D-06)."
+
+      - uses: actions/setup-node@v6
+        if: steps.changes.outputs.visual == 'true'
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+        if: steps.changes.outputs.visual == 'true'
+
+      - name: Install dependencies
+        if: steps.changes.outputs.visual == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        if: steps.changes.outputs.visual == 'true'
+        run: pnpm --filter @clokr/db exec prisma generate
+
+      - name: Build web (for the visual stack)
+        if: steps.changes.outputs.visual == 'true'
+        run: pnpm --filter @clokr/web build
+        env:
+          PUBLIC_API_URL: http://localhost:4000
+
+      - name: Start docker dev stack
+        if: steps.changes.outputs.visual == 'true'
+        run: |
+          docker compose up --build -d
+          # Wait for api + web health
+          for i in {1..60}; do
+            if curl -sf http://localhost:4000/api/v1/health > /dev/null \
+              && curl -sf http://localhost:3000/login > /dev/null; then
+              echo "Stack ready after ${i}s"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run visual project inside pinned image (D-02, D-03, D-04)
+        id: visual
+        if: steps.changes.outputs.visual == 'true'
+        run: |
+          docker compose -f docker-compose.e2e.yml build e2e-visual
+          docker compose -f docker-compose.e2e.yml run --rm \
+            -e PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+            -e CI=true \
+            e2e-visual \
+            pnpm --filter e2e exec playwright test --project=visual
+
+      - name: Upload playwright-report on failure
+        if: failure() && steps.changes.outputs.visual == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-report
+          path: apps/e2e/playwright-report/
+          retention-days: 14
+
+      - name: Upload diff PNGs on failure
+        if: failure() && steps.changes.outputs.visual == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-diffs
+          path: apps/e2e/test-results/**/*.png
+          retention-days: 14
+
+      - name: Tear down docker stack
+        if: always() && steps.changes.outputs.visual == 'true'
+        run: docker compose down -v || true
+
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
   docker:
