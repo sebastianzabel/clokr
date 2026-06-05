@@ -62,6 +62,12 @@ export default defineConfig({
     },
   },
   resolve: {
+    // Svelte 5 ships a server entry (svelte/internal/server) used by SSR/SvelteKit
+    // and a client entry used by the browser. Vitest with environment: jsdom DOES NOT
+    // auto-pick the browser condition — so we resolve to the browser entry explicitly.
+    // Without this, `mount(...)` errors with "lifecycle_function_unavailable" because
+    // the server build of svelte is loaded.
+    conditions: ["browser"],
     alias: {
       $lib: path.resolve(__dirname, "./src/lib"),
       $components: path.resolve(__dirname, "./src/lib/components"),
