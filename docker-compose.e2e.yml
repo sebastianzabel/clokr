@@ -1,0 +1,29 @@
+# Phase 75 — Visual regression compose.
+# Usage:
+#   1. Start the dev stack: docker compose up --build -d   (postgres, api, web)
+#   2. Run visual specs:    docker compose -f docker-compose.e2e.yml run --rm e2e-visual
+#
+# The e2e-visual service uses host networking to reach http://localhost:3000 (web)
+# served by the dev stack. On Linux this works directly; on macOS the
+# `host.docker.internal` fallback is used via PLAYWRIGHT_BASE_URL override.
+
+services:
+  e2e-visual:
+    build:
+      context: .
+      dockerfile: apps/e2e/Dockerfile.visual
+    image: clokr-e2e-visual:v1.58.2-jammy
+    # Bind-mount the whole repo so the playwright config + specs + node_modules
+    # are visible. Mount as read-write so updated baselines land back on the host.
+    volumes:
+      - .:/work
+      - /work/node_modules
+      - /work/apps/e2e/node_modules
+    working_dir: /work
+    environment:
+      # Override at run-time on macOS: PLAYWRIGHT_BASE_URL=http://host.docker.internal:3000
+      PLAYWRIGHT_BASE_URL: ${PLAYWRIGHT_BASE_URL:-http://localhost:3000}
+      CI: ${CI:-false}
+    network_mode: host
+    # Override-able: pass extra args like `--update-snapshots` to re-baseline.
+    command: ["pnpm", "--filter", "e2e", "exec", "playwright", "test", "--project=visual"]
