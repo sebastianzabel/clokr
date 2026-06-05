@@ -72,6 +72,11 @@ jobs:
           output: trivy-container-${{ matrix.image }}.sarif
           severity: CRITICAL,HIGH
           exit-code: 1
+          # Without this, the action's entrypoint.sh unsets TRIVY_SEVERITY when
+          # generating SARIF — exit-code: 1 then fires on MEDIUM/LOW findings too,
+          # not just the CRITICAL/HIGH gate this step is meant to enforce. Same
+          # fix already applied to .github/workflows/ci.yml (commit 6b551c8).
+          limit-severities-for-sarif: true
           trivyignores: .trivyignore
 
       - name: Upload Trivy container scan to GitHub Security
