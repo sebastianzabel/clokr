@@ -13,6 +13,7 @@
     "lint:ui-classes": "node scripts/lint-ui-classes.mjs",
     "typecheck": "svelte-kit sync && tsc --noEmit",
     "test": "vitest run",
+    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
@@ -26,12 +27,17 @@
     "@sveltejs/adapter-node": "^5.5.4",
     "@sveltejs/kit": "^2.60.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/svelte": "^5.2.7",
+    "@vitest/coverage-v8": "^4.1.6",
     "autoprefixer": "^10.5.0",
+    "jsdom": "^25.0.1",
     "postcss": "^8.5.14",
     "svelte": "^5.55.7",
     "svelte-check": "^4.4.8",
     "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13"
+    "vite": "^8.0.13",
+    "vitest": "^4.1.6"
   }
 }

@@ -105,6 +105,15 @@ jobs:
         id: tests_web
         run: pnpm --filter @clokr/web test:coverage
 
+      - name: Web coverage gate (lib/ lines floor)
+        # Phase 76-03 (D-05): hard CI gate on apps/web/src/lib/** line coverage.
+        # The floor is encoded in apps/web/scripts/check-coverage.mjs (v1.8: 5%,
+        # v1.9 target: 40%). Separate from vitest's built-in threshold so CI
+        # produces a cleaner error message and the floor is decoupled from
+        # vitest.config.ts drift.
+        id: coverage_gate_web
+        run: node apps/web/scripts/check-coverage.mjs
+
       - name: Audit dependencies (pnpm audit)
         # Exits 1 when HIGH or CRITICAL vulnerabilities are found in production dependencies.
         # For accepted CVEs (with documented justification), add to root package.json
@@ -177,6 +186,7 @@ jobs:
             const typecheckStatus = '${{ steps.typecheck.conclusion }}';
             const testsStatus = '${{ steps.tests.conclusion }}';
             const testsWebStatus = '${{ steps.tests_web.conclusion }}';
+            const coverageGateWebStatus = '${{ steps.coverage_gate_web.conclusion }}';
             const buildWebStatus = '${{ steps.build_web.conclusion }}';
 
             const icon = (s) => s === 'success' ? '✅' : (s === 'skipped' ? '⏭️' : '❌');
@@ -188,7 +198,8 @@ jobs:
             | ${icon(lintStatus)} Lint (API + Web) | ${lintStatus} |
             | ${icon(typecheckStatus)} TypeScript (API) | ${typecheckStatus} |
             | ${icon(testsStatus)} API Tests + Coverage (lines >= 40) | ${testsStatus} |
-            | ${icon(testsWebStatus)} Web Tests + Coverage (lines >= 40) | ${testsWebStatus} |
+            | ${icon(testsWebStatus)} Web Tests + Coverage | ${testsWebStatus} |
+            | ${icon(coverageGateWebStatus)} Web Coverage Gate (lib/ lines floor) | ${coverageGateWebStatus} |
             | ${icon(buildWebStatus)} Web Build | ${buildWebStatus} |
 
             _Detailed errors are in the job logs above._

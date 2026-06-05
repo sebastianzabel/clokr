@@ -11,6 +11,10 @@ const config = {
       $components: "./src/lib/components",
       $stores: "./src/lib/stores",
       $api: "./src/lib/api",
+      // Phase 76 — colocated component tests import { renderWithTheme } from
+      // "$tests/test-utils". Mirror the vitest.config.ts alias here so tsc
+      // (driven by .svelte-kit/tsconfig.json paths) resolves the same.
+      $tests: "./src/__tests__",
     },
   },
 };

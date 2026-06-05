@@ -9,5 +9,27 @@
     "skipLibCheck": true,
     "sourceMap": true,
     "strict": true
-  }
+  },
+  // SvelteKit's generated tsconfig (.svelte-kit/tsconfig.json) includes:
+  //   ambient.d.ts, non-ambient.d.ts, ./types/**/$types.d.ts,
+  //   ../vite.config.{js,ts}, ../src/**/*.{js,ts,svelte}, ../test{,s}/**
+  // Re-listing them here is required because `include` is overridden (not merged)
+  // on extension. We add ../vitest.config.ts so type-aware ESLint can lint it.
+  // Paths are RELATIVE to this tsconfig.json (sibling of .svelte-kit/).
+  "include": [
+    "./.svelte-kit/ambient.d.ts",
+    "./.svelte-kit/non-ambient.d.ts",
+    "./.svelte-kit/types/**/$types.d.ts",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "src/**/*.js",
+    "src/**/*.ts",
+    "src/**/*.svelte",
+    "test/**/*.js",
+    "test/**/*.ts",
+    "test/**/*.svelte",
+    "tests/**/*.js",
+    "tests/**/*.ts",
+    "tests/**/*.svelte"
+  ]
 }
