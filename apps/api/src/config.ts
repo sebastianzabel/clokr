@@ -32,6 +32,15 @@ const envSchema = z
     LOG_FILE: z.string().optional(), // Optional file path for log output
     LOG_FORMAT: z.enum(["json", "ecs", "pretty"]).default("json"), // json, ecs (Elastic Common Schema), pretty (dev)
     RATE_LIMIT_MAX: z.coerce.number().default(500), // Max requests per IP per minute
+    // Phase 73-01 / 74-03 — gates the /api/v1/test/* surface (bootstrap-tenant,
+    // teardown, X-Test-Now header). MUST remain false on int + prod per
+    // CONTEXT T-74-01: date-pinning + tenant-bootstrap leak into prod would let
+    // attackers backdate leave + create rogue tenants. Default false; CI + dev
+    // docker compose set this to "true" explicitly.
+    ALLOW_TEST_BOOTSTRAP: z
+      .string()
+      .default("false")
+      .transform((v) => v === "true"),
   })
   .refine((data) => !data.SMTP_HOST || (data.SMTP_PORT && data.SMTP_USER), {
     message: "SMTP_PORT and SMTP_USER required when SMTP_HOST is set",
