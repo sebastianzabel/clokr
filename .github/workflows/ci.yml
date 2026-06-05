@@ -34,8 +34,13 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
+      # apps/api tests connect to a separate `test` schema for isolation
+      # (mirrors apps/api/.env.test which is gitignored).
+      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr?schema=test
       JWT_SECRET: test-jwt-secret-min-32-characters-long
       JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
       ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
       NODE_ENV: test
 
