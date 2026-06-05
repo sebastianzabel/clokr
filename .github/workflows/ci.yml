@@ -473,10 +473,17 @@ jobs:
           # Chromium runs fine as root inside the playwright container (no sandbox
           # implications for CI throwaway runs). Local devs on macOS don't hit
           # this because Docker Desktop handles uid mapping.
+          # WEB_SERVER_DISABLED: the playwright.config.ts webServer is meant to
+          # bring up docker-compose.test.yml on first invocation, but the CI step
+          # above already did that. Without this flag, Playwright sees port 4001
+          # busy and aborts with "is already used, … set reuseExistingServer:true"
+          # because reuseExistingServer is gated on `!CI` (false here). Same
+          # escape hatch axe-scan uses.
           docker compose -f docker-compose.e2e.yml run --rm \
             --user root \
             -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
             -e CI=true \
+            -e WEB_SERVER_DISABLED=true \
             e2e-visual \
             sh -c "pnpm install --frozen-lockfile && pnpm --filter e2e exec playwright test --project=visual"
 
