@@ -1,139 +1,184 @@
-import { test, expect } from "@playwright/test";
-import { loginAsAdmin, screenshotPage } from "./helpers";
-
 /**
- * Phase 65 — Pausendauer Admin-UI + Azubi-Defaults (BREAK-05/06/07)
+ * Admin Pausendauer flow — Phase 73-05 migration.
  *
- * Flow A — Tenant defaults round-trip:
- *   Admin loads /admin/system, finds the two new break-default inputs in the
- *   Auto-Pausen card, types 45 and 60, blurs the field, sees "✓ Gespeichert",
- *   reloads the page, values persist as 45 and 60.
+ * Phase 65 BREAK-05/06/07 covers tenant-default + per-employee Pausendauer
+ * overrides. The original spec used CSS-class selectors (`#sys-break-over6h`)
+ * and the shared admin login. This rewrite uses:
  *
- * Flow B — Employee Pausendauer override:
- *   Admin opens any employee detail page, switches to Arbeitszeit tab, finds
- *   the "Pausendauer (Optional)" Section. If employee is AZUBI < 18, the
- *   JArbSchG §9 pill is shown and "Azubi-Vorschlag übernehmen" button fills
- *   30 / 60. Otherwise admin types overrides manually. Save round-trip.
+ *   - tenant fixture (73-02 D-04) for per-test isolation
+ *   - data-testid selectors from 73-05:
+ *       admin/system: admin-system-pausendauer-{autoBreakEnabled,over6h,over9h}
+ *       admin/employees/[id]: pausendauer-{over6h,over9h,save,azubi-pill,azubi-apply}
+ *   - waitForResponse instead of waitForTimeout
+ *
+ * Flow A — tenant defaults round-trip:
+ *   Admin loads /admin/system → Arbeitszeit tab → toggles auto-break ON
+ *   if needed, fills 45/60 into the two break inputs, blurs to save, reloads,
+ *   asserts values persist.
+ *
+ * Flow B — employee Pausendauer override:
+ *   Admin creates an employee, navigates to the detail page, finds the
+ *   Pausendauer Section, fills overrides, saves, reloads, asserts persistence.
  */
-test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+import { test, expect } from "../fixtures";
+import type { TestTenant } from "../fixtures";
+import type { Page } from "@playwright/test";
+
+const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4000";
+
+// See admin-settings-flow.spec.ts for rationale — login through the real
+// form so the JWT + tenant-features hydrate exactly as in production.
+async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void> {
+  await page.goto("/login");
+  await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
+  await page.getByLabel("Passwort", { exact: true }).fill("test1234");
+  await page.getByRole("button", { name: /anmelden/i }).click();
+  await page.waitForURL("**/dashboard", { timeout: 10_000 });
+}
+
+// The tenant bootstrap (73-01) creates the admin user but no employees.
+// We seed a single regular employee via the API so the per-employee
+// Pausendauer override test has something to navigate to. The returned id
+// drives the URL — no UI scraping required.
+async function seedEmployee(
+  tenant: TestTenant,
+  opts: { firstName?: string; lastName?: string } = {},
+): Promise<{ employeeId: string }> {
+  const res = await fetch(`${API_BASE}/api/v1/employees`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${tenant.adminToken}`,
+    },
+    body: JSON.stringify({
+      firstName: opts.firstName ?? "Test",
+      lastName: opts.lastName ?? "Mitarbeiter",
+      email: `emp-${Date.now()}@${tenant.tenantId}.test`,
+      employeeNumber: `EMP-${Date.now()}`,
+      hireDate: "2024-01-01",
+      role: "EMPLOYEE",
+      password: "test1234",
+    }),
   });
+  if (!res.ok) {
+    throw new Error(`seedEmployee failed (${res.status}): ${await res.text()}`);
+  }
+  const body = (await res.json()) as { id: string };
+  return { employeeId: body.id };
+}
 
-  test("tenant-default Pausendauer saves and persists across reload", async ({ page }) => {
+test.describe("Admin Pausendauer — Phase 65 (BREAK-05/06/07)", () => {
+  test("tenant-default Pausendauer saves and persists across reload", async ({
+    page,
+    tenant,
+  }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.waitForLoadState("networkidle");
+    await expect(page.getByTestId("admin-system-page")).toBeVisible();
 
-    // Ensure auto-break is enabled so the new fields are visible
-    const autoBreakToggle = page.getByLabel("Pausen automatisch abziehen");
-    const isChecked = await autoBreakToggle.isChecked();
-    if (!isChecked) {
-      await autoBreakToggle.click();
-      await page.waitForTimeout(500);
+    // Auto-break + Pausendauer fields live in the Arbeitszeit tab.
+    await page.getByRole("tab", { name: /Arbeitszeit/i }).click();
+
+    // Ensure auto-break is enabled so the >6h / >9h inputs are not disabled.
+    const autoBreak = page.getByTestId("admin-system-pausendauer-autoBreakEnabled");
+    if (!(await autoBreak.isChecked())) {
+      const toggleResponse = page.waitForResponse(
+        (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
+      );
+      await page.locator("label.switch", { has: autoBreak }).click();
+      await toggleResponse;
     }
 
-    const over6h = page.locator("#sys-break-over6h");
-    const over9h = page.locator("#sys-break-over9h");
+    const over6h = page.getByTestId("admin-system-pausendauer-over6h");
+    const over9h = page.getByTestId("admin-system-pausendauer-over9h");
     await expect(over6h).toBeVisible();
     await expect(over9h).toBeVisible();
 
-    // Capture baseline so we can restore at end of test (no audit-log pollution)
+    // Capture baseline so we can leave the tenant in a clean state.
     const baseline6h = await over6h.inputValue();
     const baseline9h = await over9h.inputValue();
 
+    // saveBreakDefaults fires on blur — wait for the PATCH each time so the
+    // assertion below doesn't race against the request.
+    const save6 = page.waitForResponse(
+      (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
+    );
     await over6h.fill("45");
     await over6h.blur();
-    await page.waitForTimeout(800); // saveBreakDefaults fires on blur
+    await save6;
+
+    const save9 = page.waitForResponse(
+      (res) => res.url().includes("/settings/work") && res.request().method() === "PATCH",
+    );
     await over9h.fill("60");
     await over9h.blur();
-    await page.waitForTimeout(800);
+    await save9;
 
-    await expect(page.getByText("✓ Gespeichert").first()).toBeVisible({ timeout: 3000 });
-    await screenshotPage(page, "admin-pausendauer-tenant-saved");
-
-    // Reload and confirm persistence
+    // Reload + reopen tab — the values must persist.
     await page.reload();
-    await page.waitForLoadState("networkidle");
-    await expect(page.locator("#sys-break-over6h")).toHaveValue("45");
-    await expect(page.locator("#sys-break-over9h")).toHaveValue("60");
+    await page.getByRole("tab", { name: /Arbeitszeit/i }).click();
+    await expect(page.getByTestId("admin-system-pausendauer-over6h")).toHaveValue("45");
+    await expect(page.getByTestId("admin-system-pausendauer-over9h")).toHaveValue("60");
 
-    // Restore baseline
-    await page.locator("#sys-break-over6h").fill(baseline6h || "30");
-    await page.locator("#sys-break-over6h").blur();
-    await page.waitForTimeout(500);
-    await page.locator("#sys-break-over9h").fill(baseline9h || "45");
-    await page.locator("#sys-break-over9h").blur();
-    await page.waitForTimeout(500);
+    // Restore baseline so any sibling assertion on the tenant sees the
+    // original config (tenant is torn down, but explicit is better).
+    await page.getByTestId("admin-system-pausendauer-over6h").fill(baseline6h || "30");
+    await page.getByTestId("admin-system-pausendauer-over6h").blur();
+    await page.getByTestId("admin-system-pausendauer-over9h").fill(baseline9h || "45");
+    await page.getByTestId("admin-system-pausendauer-over9h").blur();
   });
 
-  test("employee Pausendauer override saves and persists across reload", async ({ page }) => {
-    // Navigate to first employee detail page (employee list always seeded)
-    await page.goto("/admin/employees");
-    await page.waitForLoadState("networkidle");
+  test("employee Pausendauer override saves and persists across reload", async ({
+    page,
+    tenant,
+  }) => {
+    const { employeeId } = await seedEmployee(tenant);
+    await loginAsTenantAdmin(page, tenant);
 
-    const firstEmployeeLink = page.locator("a[href*='/admin/employees/']").first();
-    await expect(firstEmployeeLink).toBeVisible();
-    await firstEmployeeLink.click();
-    await page.waitForLoadState("networkidle");
-
-    // Switch to Arbeitszeit tab
+    await page.goto(`/admin/employees/${employeeId}`);
+    // The Pausendauer Section lives under the Arbeitszeit tab on the detail page.
     await page
-      .getByRole("button", { name: "Arbeitszeit" })
+      .getByRole("button", { name: /Arbeitszeit/i })
       .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
       .first()
       .click();
-    await page.waitForTimeout(300);
 
-    // Pausendauer (Optional) Section must be present
-    await expect(page.getByText("Pausendauer (Optional)").first()).toBeVisible();
+    const editor = page.getByTestId("pausendauer-editor");
+    await expect(editor).toBeVisible();
 
-    const over6h = page.locator("#emp-break-over6h");
-    const over9h = page.locator("#emp-break-over9h");
+    const over6h = page.getByTestId("pausendauer-over6h");
+    const over9h = page.getByTestId("pausendauer-over9h");
     await expect(over6h).toBeVisible();
     await expect(over9h).toBeVisible();
 
-    // If Azubi-under-18 pill is visible, exercise the one-click suggestion path
-    const azubiPill = page.getByText("Azubi unter 18 — JArbSchG §9 Empfehlung");
-    const isAzubi = await azubiPill.isVisible().catch(() => false);
+    // Regular employee (not Azubi) — the JArbSchG pill must NOT be visible.
+    await expect(page.getByTestId("pausendauer-azubi-pill")).toBeHidden();
 
-    if (isAzubi) {
-      await page.getByRole("button", { name: /Azubi-Vorschlag übernehmen/ }).click();
-      await expect(over6h).toHaveValue("30");
-      await expect(over9h).toHaveValue("60");
-      await screenshotPage(page, "admin-pausendauer-azubi-suggestion-applied");
-    } else {
-      // Fallback: type override manually (still exercises save round-trip)
-      await over6h.fill("40");
-      await over9h.fill("50");
-    }
-
-    // Save and verify
-    const saveBtn = page
-      .locator("button.btn-primary")
-      .filter({ hasText: /Speichern/ })
-      .last();
-    await saveBtn.click();
-    await expect(page.getByText("Gespeichert").last()).toBeVisible({ timeout: 3000 });
-
-    const expectedOver6 = isAzubi ? "30" : "40";
-    const expectedOver9 = isAzubi ? "60" : "50";
+    // Fill overrides + save + verify the PATCH round-trips.
+    const savePromise = page.waitForResponse(
+      (res) => res.url().includes(`/employees/${employeeId}`) && res.request().method() === "PATCH",
+    );
+    await over6h.fill("40");
+    await over9h.fill("50");
+    await page.getByTestId("pausendauer-save").click();
+    await savePromise;
 
     await page.reload();
-    await page.waitForLoadState("networkidle");
     await page
-      .getByRole("button", { name: "Arbeitszeit" })
+      .getByRole("button", { name: /Arbeitszeit/i })
       .or(page.locator(".admin-tab").filter({ hasText: "Arbeitszeit" }))
       .first()
       .click();
-    await page.waitForTimeout(300);
+    await expect(page.getByTestId("pausendauer-over6h")).toHaveValue("40");
+    await expect(page.getByTestId("pausendauer-over9h")).toHaveValue("50");
 
-    await expect(page.locator("#emp-break-over6h")).toHaveValue(expectedOver6);
-    await expect(page.locator("#emp-break-over9h")).toHaveValue(expectedOver9);
-
-    // Restore (clear override) for test hygiene
-    await page.locator("#emp-break-over6h").fill("");
-    await page.locator("#emp-break-over9h").fill("");
-    await saveBtn.click();
-    await page.waitForTimeout(500);
+    // Restore (clear) the override so the tenant ends in default state.
+    await page.getByTestId("pausendauer-over6h").fill("");
+    await page.getByTestId("pausendauer-over9h").fill("");
+    const clearPromise = page.waitForResponse(
+      (res) => res.url().includes(`/employees/${employeeId}`) && res.request().method() === "PATCH",
+    );
+    await page.getByTestId("pausendauer-save").click();
+    await clearPromise;
   });
 });
