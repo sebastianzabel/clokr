@@ -674,25 +674,32 @@
 </div>
 
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs">
+<div class="view-tabs" data-testid="leave-team-view-tabs">
   <button
+    data-testid="leave-team-view-calendar"
     class="view-tab"
     class:view-tab--active={view === "calendar"}
     onclick={() => (view = "calendar")}
   >
     Kalender
   </button>
-  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
+  <button
+    data-testid="leave-team-view-list"
+    class="view-tab"
+    class:view-tab--active={view === "list"}
+    onclick={() => (view = "list")}
+  >
     Anträge
   </button>
   <button
+    data-testid="leave-team-view-approvals"
     class="view-tab"
     class:view-tab--active={view === "approvals"}
     onclick={() => (view = "approvals")}
   >
     Genehmigungen
     {#if filteredPendingRequests.length > 0}
-      <span class="tab-badge">{filteredPendingRequests.length}</span>
+      <span class="tab-badge" data-testid="leave-team-approvals-badge">{filteredPendingRequests.length}</span>
     {/if}
   </button>
 </div>

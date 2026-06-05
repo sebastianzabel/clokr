@@ -207,9 +207,10 @@ test.describe("Leave (Urlaub) UI flow", () => {
         ? page.getByTestId(`leave-team-row-${leave.id}-review-cancel`)
         : page.getByTestId(`leave-team-row-${leave.id}-review`);
 
-    // List view tab name is "Anträge" — its locator depends on the page's
-    // view-tabs nav; clicking the testid below is the resilient path.
-    await page.getByRole("button", { name: /Anträge/i }).first().click();
+    // Switch to the Anträge tab on /team/leave via the testid surface — the
+    // resilient path that does not depend on the German tab label or any
+    // role/name combo.
+    await page.getByTestId("leave-team-view-list").click();
     await expect(reviewBtn).toBeVisible();
     await reviewBtn.click();
 
