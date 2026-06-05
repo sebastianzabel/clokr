@@ -3,7 +3,7 @@
  *
  * Design: every value below is frozen. No `new Date()` for IDs, no `nanoid()`,
  * no random data. The same call produces the same database state on every run
- * inside the same `mcr.microsoft.com/playwright:v1.58.2-jammy` image.
+ * inside the same `mcr.microsoft.com/playwright:v1.60.0-jammy` image.
  *
  * Per CLAUDE.md memory `feedback_no_pii_in_github`: these names are obviously
  * synthetic (Anna Visual, Bob Regression, Clara Snapshot, Dirk Baseline) and
