@@ -461,11 +461,16 @@ jobs:
         if: steps.changes.outputs.visual == 'true'
         run: |
           docker compose -f docker-compose.e2e.yml build e2e-visual
+          # The visual runner mounts anonymous volumes over node_modules to keep
+          # linux/macOS binaries separated (docker-compose.e2e.yml comment), so
+          # node_modules is empty on container start and `pnpm exec playwright`
+          # can't find the binary. Chain `pnpm install` first — the Dockerfile
+          # comment already documents this as the intended container entry shape.
           docker compose -f docker-compose.e2e.yml run --rm \
             -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
             -e CI=true \
             e2e-visual \
-            pnpm --filter e2e exec playwright test --project=visual
+            sh -c "pnpm install --frozen-lockfile && pnpm --filter e2e exec playwright test --project=visual"
 
       - name: Upload playwright-report on failure
         if: failure() && steps.changes.outputs.visual == 'true'
