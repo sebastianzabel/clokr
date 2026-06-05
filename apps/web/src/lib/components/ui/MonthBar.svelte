@@ -104,9 +104,9 @@
     {/if}
   </div>
   {#if stats.length}
-    <div class="month-bar-stats">
+    <div class="month-bar-stats" data-testid={`${testIdPrefix}-stats`}>
       {#each stats as s (s.label)}
-        <div class="mstat">
+        <div class="mstat" data-testid={`${testIdPrefix}-stat-${s.label}`}>
           <div class="mstat-label">{s.label}</div>
           <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
             {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}

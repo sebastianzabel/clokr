@@ -1026,16 +1026,22 @@
 
 <PageHead eyebrow="Mein Bereich" title="Zeiterfassung">
   {#snippet actions()}
-    <button class="btn btn-primary btn-sm" onclick={() => openAdd()}>+ Neuer Eintrag</button>
+    <button
+      class="btn btn-primary btn-sm"
+      onclick={() => openAdd()}
+      data-testid="time-entries-add">+ Neuer Eintrag</button
+    >
   {/snippet}
 </PageHead>
 
+<div data-testid="time-entries-page">
 <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-<div class="view-tabs">
+<div class="view-tabs" data-testid="time-entries-view-tabs">
   <button
     class="view-tab"
     class:view-tab--active={teView === "calendar"}
     onclick={() => (teView = "calendar")}
+    data-testid="time-entries-view-calendar"
   >
     Kalender
   </button>
@@ -1043,6 +1049,7 @@
     class="view-tab"
     class:view-tab--active={teView === "list"}
     onclick={() => (teView = "list")}
+    data-testid="time-entries-view-list"
   >
     Liste
   </button>
@@ -1054,6 +1061,7 @@
 
 <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
 <Card animate class="te-monthbar-card">
+  <div data-testid="time-entries-summary">
   <MonthBar
     eyebrow="Buchungsmonat"
     date={calMonth}
@@ -1083,6 +1091,7 @@
       {/if}
     {/snippet}
   </MonthBar>
+  </div><!-- /data-testid="time-entries-summary" -->
 </Card>
 
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
@@ -1185,7 +1194,7 @@
 
 <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
 {#if teView === "list"}
-  <div class="card card-animate list-card">
+  <div class="card card-animate list-card" data-testid="time-entries-list">
     <div class="table-wrapper">
       <table class="data-table">
         <thead>
@@ -1204,7 +1213,10 @@
           {#each allEntries as slot (slot.id)}
             {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
             {@const slotArbzg = arbzgDayMap.get(slotDate)}
-            <tr class:row-invalid={slot.isInvalid}>
+            <tr
+              class:row-invalid={slot.isInvalid}
+              data-testid={`time-entry-row-${slot.id}`}
+            >
               <td class="font-mono"
                 >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                   day: "2-digit",
@@ -1240,26 +1252,58 @@
               </td>
               <td class="action-cell">
                 {#if slot.isLocked}
-                  <!-- locked entries are read-only; no actions shown (D-08) -->
+                  <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
+                       74-01: render the buttons as disabled instead of
+                       hiding so the row testids stay queryable for the
+                       locked-month spec — matches the
+                       `getByTestId(...-edit).toBeDisabled()` contract. -->
+                  <span class="row-actions row-actions--visible">
+                    <span
+                      class="badge badge-locked"
+                      title="Monat ist abgeschlossen"
+                      data-testid={`time-entry-row-${slot.id}-locked-badge`}
+                      >🔒 Gesperrt</span
+                    >
+                    <button
+                      class="btn-icon"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-danger"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                    >
+                  </span>
                 {:else if deleteConfirmId === slot.id}
                   <span class="del-confirm">
                     <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                    <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                      >Ja</button
+                    <button
+                      class="btn btn-sm btn-danger"
+                      onclick={() => deleteEntry(slot.id)}
+                      data-testid={`time-entry-row-${slot.id}-confirm-delete`}>Ja</button
                     >
-                    <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                      >Nein</button
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => (deleteConfirmId = "")}
+                      data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
                     >
                   </span>
                 {:else}
                   <span class="row-actions row-actions--visible">
-                    <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                      >✏️</button
+                    <button
+                      class="btn-icon"
+                      onclick={() => openEdit(slot)}
+                      title="Bearbeiten"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
                     >
                     <button
                       class="btn-icon btn-icon-danger"
                       onclick={() => (deleteConfirmId = slot.id)}
-                      title="Löschen">🗑</button
+                      title="Löschen"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                     >
                   </span>
                 {/if}
@@ -1465,6 +1509,7 @@
     </button>
   {/snippet}
 </Modal>
+</div><!-- /data-testid="time-entries-page" -->
 
 <style>
   /* ── MonthBar card spacing (primitive itself has no margin) ────────── */
