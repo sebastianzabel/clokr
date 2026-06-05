@@ -984,14 +984,22 @@
           </thead>
           <tbody>
             {#each pagedTeamRequests as req (req.id)}
-              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+              <tr
+                id="request-{req.id}"
+                data-testid={`leave-team-row-${req.id}`}
+                data-status={req.status}
+                class:highlight-row={highlightRequestId === req.id}
+              >
                 <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
                 <td>{typeName(req.typeCode)}</td>
                 <td class="font-mono">{fmtDate(req.startDate)}</td>
                 <td class="font-mono">{fmtDate(req.endDate)}</td>
                 <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
                 <td>
-                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  <span
+                    class="badge {statusClass(req.status)}"
+                    data-testid={`leave-team-row-${req.id}-status-badge`}
+                  >{statusLabel(req.status)}</span>
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
                       class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
@@ -1009,7 +1017,13 @@
                 </td>
                 <td class="action-cell">
                   {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                    <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
+                    <button
+                      data-testid={req.status === "CANCELLATION_REQUESTED"
+                        ? `leave-team-row-${req.id}-review-cancel`
+                        : `leave-team-row-${req.id}-review`}
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => openReview(req)}
+                    >
                       {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
                     </button>
                   {/if}
@@ -1068,6 +1082,13 @@
 {/if}
 
 <!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
+<!-- Phase 73-04 testid strategy:
+     - When the request is a regular APPROVAL/REJECTION → testids use the
+       `leave-approval-modal-*` prefix.
+     - When the request is a CANCELLATION_REQUESTED review → testids use the
+       `leave-cancel-approval-modal-*` prefix (matches CLAUDE.md leave-cancellation
+       flow contract). The same component renders both states because the
+       multi-step flow is owned by the same modal in this codebase. -->
 {#if reviewModal}
   <Modal
     bind:open={reviewOpen}
@@ -1076,8 +1097,19 @@
       ? "Stornierungsantrag prüfen"
       : "Antrag prüfen"}
   >
+    <div
+      data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+        ? "leave-cancel-approval-modal"
+        : "leave-approval-modal"}
+      style="display: contents"
+    >
     <!-- Antrag-Details -->
-    <div class="review-grid">
+    <div
+      class="review-grid"
+      data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+        ? "leave-cancel-approval-modal-summary"
+        : "leave-approval-modal-summary"}
+    >
       <div class="review-field">
         <span class="review-label">Mitarbeiter</span>
         <span class="review-value"
@@ -1162,6 +1194,9 @@
       <label class="form-label" for="review-note">Anmerkung (optional)</label>
       <input
         id="review-note"
+        data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+          ? "leave-cancel-approval-modal-reason"
+          : "leave-approval-modal-reason"}
         type="text"
         bind:value={reviewNote}
         class="form-input"
@@ -1174,14 +1209,23 @@
         <span>⚠</span><span>{reviewError}</span>
       </div>
     {/if}
+    </div><!-- /leave-approval-modal body wrapper -->
 
     {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeReview} disabled={reviewSaving}>
+      <button
+        data-testid={reviewModal!.status === "CANCELLATION_REQUESTED"
+          ? "leave-cancel-approval-modal-close"
+          : "leave-approval-modal-close"}
+        class="btn btn-ghost"
+        onclick={closeReview}
+        disabled={reviewSaving}
+      >
         Abbrechen
       </button>
       {#if reviewModal!.employeeId !== $authStore.user?.employeeId}
         {#if reviewModal!.status === "CANCELLATION_REQUESTED"}
           <button
+            data-testid="leave-cancel-approval-modal-reject"
             class="btn btn-ghost"
             onclick={() => submitReview("REJECTED")}
             disabled={reviewSaving}
@@ -1189,6 +1233,7 @@
             {reviewSaving ? "…" : "Stornierung ablehnen"}
           </button>
           <button
+            data-testid="leave-cancel-approval-modal-approve"
             class="btn btn-danger"
             onclick={() => submitReview("APPROVED")}
             disabled={reviewSaving}
@@ -1197,6 +1242,7 @@
           </button>
         {:else}
           <button
+            data-testid="leave-approval-modal-reject"
             class="btn btn-danger"
             onclick={() => submitReview("REJECTED")}
             disabled={reviewSaving}
@@ -1204,6 +1250,7 @@
             {reviewSaving ? "…" : "Ablehnen"}
           </button>
           <button
+            data-testid="leave-approval-modal-approve"
             class="btn btn-primary"
             onclick={() => submitReview("APPROVED")}
             disabled={reviewSaving}
@@ -1212,7 +1259,7 @@
           </button>
         {/if}
       {:else}
-        <p class="text-muted self-approval-note">
+        <p class="text-muted self-approval-note" data-testid="leave-approval-modal-self-block">
           Eigene Anträge können nicht selbst genehmigt werden.
         </p>
       {/if}
