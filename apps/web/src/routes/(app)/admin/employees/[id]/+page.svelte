@@ -1445,29 +1445,43 @@
         </Section>
 
         <!-- Phase 65 — Pausendauer (Optional) per-Employee Override (BREAK-06, BREAK-07, D-04..D-07) -->
+        <!-- Phase 73-05: data-testid surface for the per-employee Pausendauer editor.
+             Clokr's break model has 2 fixed thresholds (>6h / >9h), not a table of N
+             rows — so the plan's pausendauer-row-${i} pattern doesn't apply. Plan
+             says: "apply only to elements that exist; don't invent UI." -->
+        <div data-testid="pausendauer-editor" style="display: contents;">
         <Section
           title="Pausendauer (Optional)"
           sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
         >
           {#snippet footer()}
-            <button class="btn btn-primary" onclick={savePausendauer} disabled={pausendauerSaving}>
+            <button
+              class="btn btn-primary"
+              onclick={savePausendauer}
+              disabled={pausendauerSaving}
+              data-testid="pausendauer-save"
+            >
               {pausendauerSaving ? "Speichern…" : "Speichern"}
             </button>
             {#if pausendauerSaved}<span class="saved-hint">Gespeichert</span>{/if}
           {/snippet}
 
           {#if pausendauerError}
-            <div class="callout error">{pausendauerError}</div>
+            <div class="callout error" data-testid="pausendauer-error">{pausendauerError}</div>
           {/if}
 
           {#if isAzubiUnder18}
             <!-- JArbSchG §9 info pill (recommendation, not violation — uses .alert-info per app.css) -->
-            <div class="alert alert-info" role="status" style="margin-bottom: 1rem;">
+            <div class="alert alert-info" role="status" style="margin-bottom: 1rem;" data-testid="pausendauer-azubi-pill">
               <span>ℹ️</span><span>Azubi unter 18 — JArbSchG §9 Empfehlung</span>
             </div>
             {#if showAzubiSuggestionButton}
               <div style="margin-bottom: 1rem;">
-                <button type="button" class="btn btn-secondary" onclick={applyAzubiSuggestion}
+                <button
+                  type="button"
+                  class="btn btn-secondary"
+                  onclick={applyAzubiSuggestion}
+                  data-testid="pausendauer-azubi-apply"
                   >Azubi-Vorschlag übernehmen (30 / 60 Min)</button
                 >
               </div>
@@ -1493,6 +1507,7 @@
                 : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
               class="form-input"
               disabled={pausendauerSaving}
+              data-testid="pausendauer-over6h"
             />
             <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
           </div>
@@ -1511,10 +1526,12 @@
                 : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
               class="form-input"
               disabled={pausendauerSaving}
+              data-testid="pausendauer-over9h"
             />
             <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
           </div>
         </Section>
+        </div>
 
         <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->
         {#if eClassification === "AZUBI"}
