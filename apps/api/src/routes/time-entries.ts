@@ -263,6 +263,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // Offenen Eintrag suchen + clock-in/out in einer Transaktion (Race-Condition vermeiden)
       const txResult = await app.prisma.$transaction(async (tx) => {
+        // TIME-V19-03: serialize concurrent clock-in via pessimistic Employee row lock (prod incident 2026-06-04 — two NFC punches 3 ms apart created duplicate open entries)
+        await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
         const openEntry = await tx.timeEntry.findFirst({
           where: {
             employeeId: employee.id,
@@ -573,6 +575,8 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
 
       const txResult = await app.prisma.$transaction(async (tx) => {
+        // TIME-V19-03: serialize concurrent clock-in via pessimistic Employee row lock (prod incident 2026-06-04 — two NFC punches 3 ms apart created duplicate open entries)
+        await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employeeId} FOR UPDATE`;
         const activeEntry = await tx.timeEntry.findFirst({
           where: { employeeId, deletedAt: null, endTime: null, isInvalid: false },
         });
