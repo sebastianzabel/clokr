@@ -57,10 +57,6 @@ services:
       APP_URL: "http://localhost:3001"
       API_PORT: "4000"
       API_HOST: "0.0.0.0"
-      # Explicit pass-through so 75-03 CI visual job auth.setup.ts can log in
-      # as admin@clokr.de — env_file's SEED_DEMO_DATA is shadowed by docker
-      # compose's environment block precedence on some compose versions.
-      SEED_DEMO_DATA: "true"
       SEED_DEMO_DATA: "false"
     ports:
       - "4001:4000"

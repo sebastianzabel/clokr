@@ -135,7 +135,11 @@ export default defineConfig({
         reducedMotion: "reduce",
         // Force a stable color-scheme so theme `data-theme="pflaume"` is consistent.
         colorScheme: "light",
-        storageState: ".auth/admin.json",
+        // NOTE: visual specs handle their own auth per-test via the Phase 73
+        // bootstrap-tenant endpoint + addInitScript (see visual.spec.ts header).
+        // No storageState / setup dependency — the test stack does NOT seed
+        // admin@clokr.de, so the auth.setup.ts that drives the other projects
+        // would always fail here.
       },
       // Per-test threshold defaults: D-04 sets 0.2% max diff ratio.
       // Override per-spec: `expect(page).toHaveScreenshot({ maxDiffPixelRatio: 0.005 })`.
@@ -147,7 +151,8 @@ export default defineConfig({
           scale: "css",
         },
       },
-      dependencies: ["setup"],
+      // No `dependencies: ["setup"]` — see Use block comment. Auth lives in
+      // per-test addInitScript via the bootstrap-tenant endpoint.
     },
   ],
 });
