@@ -6,6 +6,7 @@
     "test": "playwright test",
     "test:chrome": "playwright test --project=desktop-chrome",
     "test:mobile": "playwright test --project=mobile-chrome",
+    "test:visual": "playwright test --project=visual",
     "test:a11y": "playwright test tests/accessibility.spec.ts",
     "test:audit": "playwright test tests/ui-audit.spec.ts tests/accessibility.spec.ts",
     "report": "playwright show-report"

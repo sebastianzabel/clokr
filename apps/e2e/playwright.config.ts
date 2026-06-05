@@ -76,5 +76,35 @@ export default defineConfig({
       },
       dependencies: ["setup"],
     },
+    {
+      // Phase 75 — Visual regression baselines (D-02, D-03, D-04).
+      // Runs ONLY inside the pinned mcr.microsoft.com/playwright:v1.58.2-jammy image.
+      // Outside that image, font rendering will differ and the run will be all-red.
+      // Use `docker compose -f docker-compose.e2e.yml run --rm e2e-visual` locally.
+      name: "visual",
+      testMatch: /visual\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1,
+        // Honor prefers-reduced-motion at the browser level (defense-in-depth
+        // alongside the per-test freezeAnimations fixture in visual.setup.ts).
+        reducedMotion: "reduce",
+        // Force a stable color-scheme so theme `data-theme="pflaume"` is consistent.
+        colorScheme: "light",
+        storageState: ".auth/admin.json",
+      },
+      // Per-test threshold defaults: D-04 sets 0.2% max diff ratio.
+      // Override per-spec: `expect(page).toHaveScreenshot({ maxDiffPixelRatio: 0.005 })`.
+      expect: {
+        toHaveScreenshot: {
+          maxDiffPixelRatio: 0.002,
+          animations: "disabled",
+          caret: "hide",
+          scale: "css",
+        },
+      },
+      dependencies: ["setup"],
+    },
   ],
 });
