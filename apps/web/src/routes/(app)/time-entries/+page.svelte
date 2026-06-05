@@ -1061,6 +1061,7 @@
     onPrev={() => gotoMonth(-1)}
     onNext={() => gotoMonth(1)}
     onToday={gotoToday}
+    testIdPrefix="calendar-month-header"
   >
     {#snippet extraActions()}
       {#if monthIsLocked}
@@ -1086,7 +1087,7 @@
 
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
 {#if teView === "calendar"}
-  <div class="cal-section card card-animate">
+  <div class="cal-section card card-animate" data-testid="calendar">
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -1100,11 +1101,12 @@
         {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
-      <div class="cal-grid">
+      <div class="cal-grid" data-testid="calendar-grid">
         {#each calendarDays as day (day.dateStr)}
           <button
             type="button"
             data-date={day.dateStr}
+            data-testid={`calendar-cell-${day.dateStr}`}
             class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
               ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
               : ''}"
