@@ -35,7 +35,11 @@ services:
       retries: 30
     tmpfs:
       # Ephemeral DB — test data lives only for the lifetime of the container.
-      - /var/lib/postgresql/data
+      # Postgres 18+ stores PGDATA in /var/lib/postgresql/<major>/docker (not
+      # /var/lib/postgresql/data); mounting the parent directory keeps the
+      # tmpfs ephemeral while letting the entrypoint use the correct subdir.
+      # See https://github.com/docker-library/postgres/pull/1259
+      - /var/lib/postgresql
 
   api-test:
     build:
@@ -61,7 +65,9 @@ services:
         condition: service_healthy
     healthcheck:
       # /api/v1/health is the canonical Phase 69 endpoint used by Playwright webServer.
-      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/v1/health"]
+      # Use 127.0.0.1 explicitly — the alpine image's `localhost` resolves to ::1 (IPv6)
+      # but the API listens on 0.0.0.0 (IPv4 only), so `localhost` connection refuses.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/api/v1/health"]
       interval: 2s
       timeout: 5s
       retries: 30
@@ -82,7 +88,9 @@ services:
       api-test:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      # Same IPv4 explicitness as api-test: alpine `localhost` resolves to ::1 (IPv6)
+      # while the Node web server listens on IPv4 only.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 2s
       timeout: 5s
       retries: 30

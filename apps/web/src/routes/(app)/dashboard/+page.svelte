@@ -988,7 +988,9 @@
   <title>Dashboard – Clokr</title>
 </svelte:head>
 
-<div class="dashboard">
+<!-- Phase 75-02 (D-01): data-testid surface for the Dashboard visual baseline.
+     Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
+<div class="dashboard" data-testid="dashboard-page">
   <!-- Page Header -->
   <PageHead
     eyebrow="Mein Bereich"
