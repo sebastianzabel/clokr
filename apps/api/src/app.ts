@@ -51,6 +51,7 @@ import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
+import { testBootstrapRoutes } from "./routes/test-bootstrap";
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
 // Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
@@ -282,6 +283,11 @@ export async function buildApp() {
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });
   await app.register(adminSchoolHolidaysRoutes, { prefix: "/api/v1/admin/school-holidays" });
   await app.register(meRoutes, { prefix: "/api/v1/me" });
+
+  // Phase 73-01 + 74-03 (D-05): test-only bootstrap + X-Test-Now header.
+  // The plugin self-gates on ALLOW_TEST_BOOTSTRAP; registering it
+  // unconditionally is safe — it no-ops on int + prod. See T-74-01.
+  await app.register(testBootstrapRoutes, { prefix: "/api/v1/test" });
 
   // ── Client Error Logging ─────────────────────────────────
   app.post("/api/v1/logs/client", {

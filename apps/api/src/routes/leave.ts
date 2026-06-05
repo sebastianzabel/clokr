@@ -1418,7 +1418,13 @@ export async function leaveRoutes(app: FastifyInstance) {
     handler: async (req) => {
       const { employeeId } = req.params as { employeeId: string };
       const { year } = req.query as { year?: string };
-      const targetYear = year ? parseInt(year) : new Date().getFullYear();
+      // Plan 74-03 / D-05: respect the test-only X-Test-Now header so the
+      // year-boundary E2E flows can pin "now" deterministically. The
+      // testBootstrap plugin only registers the hook when
+      // ALLOW_TEST_BOOTSTRAP=true; on int + prod `req.testNow` is always
+      // undefined and we fall through to the real clock.
+      const now = req.testNow ?? new Date();
+      const targetYear = year ? parseInt(year) : now.getFullYear();
       const tenantId = req.user.tenantId;
 
       // Resturlaub auto-übertragen falls nötig
@@ -1457,7 +1463,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
             ([, d]) => d.name === r.leaveType.name,
           )?.[0] ?? "VACATION") as TypeCode,
-          effectiveCarryOverDays: getEffectiveCarryOver(r, new Date()),
+          effectiveCarryOverDays: getEffectiveCarryOver(r, now),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
         };
