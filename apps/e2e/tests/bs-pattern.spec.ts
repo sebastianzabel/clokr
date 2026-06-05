@@ -1,36 +1,15 @@
 /**
  * Berufsschule (BS-Pattern) admin flows — E2E spec.
  *
- * Phase 67 introduced the BS-Pattern editor (Wöchentlich + Blockunterricht
- * modes) on the admin employee detail page. Phase 67.2 added Schulferien-
- * Integration + Shift Auto-Cleanup (soft-delete + restore via
- * /shifts/conflicts).
+ * Phase 67 introduced the BS-Pattern editor (Wöchentlich + Blockunterricht)
+ * on the admin employee detail page; Phase 67.2 added Schulferien-Integration
+ * + Shift Auto-Cleanup (soft-delete + restore via /shifts/conflicts).
  *
- * Per CONTEXT D-06 ("BS-Pattern tests cover Phase 67.2 deliverables
- * specifically") and threat T-74-03 ("BS-Pattern test breaks on
- * Schulferien-API change — mitigate via mock"), this spec:
- *
- *   1. Uses the Phase 73 `tenant` fixture for per-test tenant isolation.
- *   2. Mocks the Schulferien API in `beforeEach` (never hits live
- *      OpenHolidays / ferienapi.de during the test run).
- *   3. Asserts admin-flow behaviour at the UI level — the Phase 67 + 67.2
- *      API-side test suite covers backend correctness exhaustively.
- *
- * Test cases (5):
- *   1. Create a Wöchentlich pattern with Mo-Fr default
- *   2. Switch from Wöchentlich → Blockunterricht and back
- *   3. Schulferien window is skipped in pattern generation (NW)
- *   4. federalStateOverride changes which Schulferien window applies (BY)
- *   5. Soft-delete then restore via /shifts/conflicts UI surface
- *
- * The data-testids referenced (bs-pattern-mode-weekly, bs-pattern-weekday-*,
- * bs-day-{date}, bs-pattern-{id}-delete, bs-pattern-conflict-{id}-restore)
- * are introduced by Phase 73-05 (Admin data-testid migration). This spec is
- * wave 2 of Phase 74 and depends on 73-05 having landed.
- *
- * The Phase 73 tenant fixture exports `test` + `TestTenant` from
- * `../fixtures` (barrel re-export). Specs are intentionally agnostic about
- * the fixture's file layout — they consume only the published interface.
+ * Per CONTEXT D-06 + threat T-74-03: uses the Phase 73 tenant fixture for
+ * per-test isolation and mocks the Schulferien API in beforeEach (never hits
+ * live OpenHolidays / ferienapi.de). The data-testids referenced come from
+ * Phase 73-05 (Admin data-testid migration) — wave 2 of Phase 74 depends on
+ * 73-05 having landed. Five tests cover the Phase 67 + 67.2 deliverables.
  */
 
 import { test, expect } from "../fixtures";
