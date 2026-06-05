@@ -56,11 +56,11 @@ const TENANT_ID_RE = /^test-[a-zA-Z0-9_-]{8,}$/;
 const TEST_PASSWORD = "test1234";
 
 function newTenantId(): string {
-  // 8-char base36 — wide enough that 100 parallel tests don't collide and
-  // narrow enough that the fixture annotation stays readable.
-  const a = Math.random().toString(36).slice(2, 6);
-  const b = Math.random().toString(36).slice(2, 6);
-  return `test-${a}${b}`.slice(0, 13);
+  // 8-char base36 from crypto.randomBytes — Math.random is not cryptographically
+  // strong (CodeQL js/insecure-randomness). The ID flows into IDs returned via the
+  // bootstrap-tenant endpoint; even though ALLOW_TEST_BOOTSTRAP gates the route,
+  // we keep this entropy source CSPRNG so the scanner stops flagging it.
+  return `test-${randomBytes(6).toString("base64url").slice(0, 8)}`;
 }
 
 /**
