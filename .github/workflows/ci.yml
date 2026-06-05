@@ -466,7 +466,15 @@ jobs:
           # node_modules is empty on container start and `pnpm exec playwright`
           # can't find the binary. Chain `pnpm install` first — the Dockerfile
           # comment already documents this as the intended container entry shape.
+          # --user root: the bind-mounted /work is owned by the GH Actions runner
+          # user (uid 1001), not pwuser (uid 1000) from the playwright base image.
+          # When pwuser tries `pnpm install`, it writes atomic tmp files next to
+          # the targets in /work and hits EACCES. Running as root sidesteps it;
+          # Chromium runs fine as root inside the playwright container (no sandbox
+          # implications for CI throwaway runs). Local devs on macOS don't hit
+          # this because Docker Desktop handles uid mapping.
           docker compose -f docker-compose.e2e.yml run --rm \
+            --user root \
             -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
             -e CI=true \
             e2e-visual \
