@@ -251,7 +251,15 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         tenantId: req.user.tenantId,
         now: new Date(),
       }).catch((err) => app.log.warn({ err }, "on-demand BS-generator run failed"));
-      app.trackPendingBSGeneration?.(bgRun);
+      // v1.8-trace — REMOVE once CI race fix is confirmed working
+      if (process.env.NODE_ENV === "test") {
+        app.log.warn(`[v1.8-trace] PUT handler: trackFn=${typeof app.trackPendingBSGeneration}`);
+      }
+      if (app.trackPendingBSGeneration) {
+        app.trackPendingBSGeneration(bgRun);
+      } else if (process.env.NODE_ENV === "test") {
+        app.log.warn("[v1.8-trace] PUT handler: trackPendingBSGeneration is UNDEFINED");
+      }
 
       return reply.code(200).send({
         patterns: created.map((p) => ({

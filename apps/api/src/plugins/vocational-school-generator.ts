@@ -39,17 +39,32 @@ export const vocationalSchoolGeneratorPlugin = fp(async (app) => {
 
   app.decorate("trackPendingBSGeneration", (p: Promise<unknown>) => {
     pendingBgRuns.add(p);
-    void p.finally(() => pendingBgRuns.delete(p));
+    // v1.8-trace — REMOVE once CI race fix is confirmed working. Logs are
+    // gated on NODE_ENV=test so they only appear in test/CI runs, never prod.
+    if (process.env.NODE_ENV === "test") {
+      app.log.warn(`[v1.8-trace] +track total=${pendingBgRuns.size}`);
+    }
+    void p.finally(() => {
+      pendingBgRuns.delete(p);
+      if (process.env.NODE_ENV === "test") {
+        app.log.warn(`[v1.8-trace] -track total=${pendingBgRuns.size}`);
+      }
+    });
   });
 
   app.decorate("waitForPendingBSGenerations", async () => {
-    // Snapshot — new runs registered after this point are NOT awaited.
-    // Tests should call this AFTER all triggering operations have returned.
     const snapshot = Array.from(pendingBgRuns);
+    if (process.env.NODE_ENV === "test") {
+      app.log.warn(`[v1.8-trace] wait snapshot=${snapshot.length}`);
+    }
     if (snapshot.length === 0) return;
-    // allSettled so a single rejected bg run doesn't make the wait throw.
     await Promise.allSettled(snapshot);
   });
+
+  // v1.8-trace — confirm plugin registration on CI
+  if (process.env.NODE_ENV === "test") {
+    app.log.warn("[v1.8-trace] vocationalSchoolGeneratorPlugin loaded");
+  }
 
   async function runAllTenants() {
     app.log.info("Berufsschule-Auto-Gen: Starte tägliche Vorab-Generierung");
