@@ -877,11 +877,17 @@
 
 <svelte:window onmouseup={handleDayMouseUp} />
 
+<!-- Phase 73-04 (D-05): `data-testid="leave-page"` is the stable surface anchor.
+     Wrapped via `display:contents` so the marker contributes nothing to layout
+     but Playwright (and future visual-regression specs) can address the page
+     root without keying off CSS class hashes. -->
+<div data-testid="leave-page" style="display: contents">
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
   {#snippet actions()}
     {#if !showForm}
       <button
+        data-testid="leave-new-request"
         class="btn btn-primary btn-sm"
         onclick={() => {
           editingRequest = null;
@@ -893,11 +899,13 @@
 </PageHead>
 
 {#if error}
-  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+  <div class="alert alert-error" role="alert" data-testid="leave-page-error">
+    <span>⚠</span><span>{error}</span>
+  </div>
 {/if}
 
 <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
-<div class="kpi-row">
+<div class="kpi-row" data-testid="leave-balance">
   <Card animate class="kpi-card">
     <KPIStat
       label="Resturlaub"
@@ -930,36 +938,58 @@
 </div>
 
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs">
+<div class="view-tabs" data-testid="leave-view-tabs">
   <button
+    data-testid="leave-view-calendar"
     class="view-tab"
     class:view-tab--active={view === "calendar"}
     onclick={() => (view = "calendar")}
   >
     Kalender
   </button>
-  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
+  <button
+    data-testid="leave-view-list"
+    class="view-tab"
+    class:view-tab--active={view === "list"}
+    onclick={() => (view = "list")}
+  >
     Meine Anträge
   </button>
 </div>
 
 <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
+<!-- Phase 73-04 testid wiring:
+     - Modal primitive does not pass attrs through to its inner DOM; a
+       display:contents wrapper around the modal body owns
+       `leave-form-modal`, and the inner <form> owns `leave-form`. -->
 <Modal
   bind:open={showForm}
   eyebrow="Urlaub"
   title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
 >
+  <div data-testid="leave-form-modal" style="display: contents">
   {#if formError}
-    <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
+    <div
+      class="alert alert-error"
+      role="alert"
+      style="margin-bottom:1rem"
+      data-testid="leave-form-error"
+    >
       <span>⚠</span><span>{formError}</span>
     </div>
   {/if}
 
-  <form id="leave-form" onsubmit={preventDefault(submitRequest)} class="form-grid">
+  <form
+    id="leave-form"
+    data-testid="leave-form"
+    onsubmit={preventDefault(submitRequest)}
+    class="form-grid"
+  >
     <div class="form-group">
       <label class="form-label" for="f-type">Art der Abwesenheit</label>
       <select
         id="f-type"
+        data-testid="leave-form-type"
         bind:value={formType}
         class="form-input"
         disabled={!!editingRequest}
@@ -987,13 +1017,21 @@
 
     <div class="form-group">
       <label class="form-label" for="f-start">Von</label>
-      <input id="f-start" type="date" bind:value={formStart} required class="form-input" />
+      <input
+        id="f-start"
+        data-testid="leave-form-from"
+        type="date"
+        bind:value={formStart}
+        required
+        class="form-input"
+      />
     </div>
 
     <div class="form-group">
       <label class="form-label" for="f-end">Bis</label>
       <input
         id="f-end"
+        data-testid="leave-form-to"
         type="date"
         bind:value={formEnd}
         required
@@ -1044,7 +1082,7 @@
 
     <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
     {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
-      <div class="form-group form-group--full">
+      <div class="form-group form-group--full" data-testid="leave-form-days-calc">
         <div class="days-info-bar">
           <span class="days-info-icon">📅</span>
           <span class="days-info-text">
@@ -1132,6 +1170,7 @@
       <label class="form-label" for="f-note">Anmerkung (optional)</label>
       <input
         id="f-note"
+        data-testid="leave-form-note"
         type="text"
         bind:value={formNote}
         class="form-input"
@@ -1141,7 +1180,12 @@
 
     <div class="form-group form-group--full">
       <label class="toggle-label">
-        <input type="checkbox" bind:checked={formHalfDay} class="toggle-cb" />
+        <input
+          type="checkbox"
+          data-testid="leave-form-half-day"
+          bind:checked={formHalfDay}
+          class="toggle-cb"
+        />
         <span>Halber Tag</span>
       </label>
     </div>
@@ -1172,12 +1216,25 @@
     {/if}
 
     <div class="form-actions form-group--full">
-      <button type="submit" class="btn btn-primary" disabled={formSaving}>
+      <button
+        type="submit"
+        data-testid="leave-form-submit"
+        class="btn btn-primary"
+        disabled={formSaving}
+      >
         {formSaving ? "Speichern…" : editingRequest ? "Änderungen speichern" : "Antrag einreichen"}
       </button>
-      <button type="button" class="btn btn-ghost" onclick={resetForm}> Abbrechen </button>
+      <button
+        type="button"
+        data-testid="leave-form-cancel"
+        class="btn btn-ghost"
+        onclick={resetForm}
+      >
+        Abbrechen
+      </button>
     </div>
   </form>
+  </div><!-- /leave-form-modal -->
 </Modal>
 
 <!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
@@ -1505,18 +1562,22 @@
   {:else}
     <div class="filter-bar card-animate">
       <select
+        data-testid="leave-filter-status"
         class="form-input filter-select"
         bind:value={filterLeaveStatus}
         aria-label="Nach Status filtern"
       >
-        <option value="">Alle Status</option>
+        <option value="" data-testid="leave-filter-open">Alle Status</option>
         <option value="PENDING">Ausstehend</option>
-        <option value="APPROVED">Genehmigt</option>
+        <option value="APPROVED" data-testid="leave-filter-approved">Genehmigt</option>
         <option value="REJECTED">Abgelehnt</option>
         <option value="CANCELLED">Storniert</option>
-        <option value="CANCELLATION_REQUESTED">Stornierung beantragt</option>
+        <option value="CANCELLATION_REQUESTED" data-testid="leave-filter-cancellation"
+          >Stornierung beantragt</option
+        >
       </select>
       <select
+        data-testid="leave-filter-type"
         class="form-input filter-select"
         bind:value={filterLeaveType}
         aria-label="Nach Art filtern"
@@ -1530,14 +1591,14 @@
     </div>
 
     {#if myRequests.length === 0}
-      <div class="empty-state card card-body">
+      <div class="empty-state card card-body" data-testid="leave-empty-state">
         <span class="empty-icon">🏖️</span>
         <h3>Keine Anträge in {calYear}</h3>
         <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
       </div>
     {:else}
       <div class="table-wrapper">
-        <table class="data-table">
+        <table class="data-table" data-testid="leave-mine-table">
           <thead>
             <tr>
               <th>Art</th>
@@ -1552,13 +1613,21 @@
           <tbody>
             {#each pagedMyRequests as req (req.id)}
               {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+              <tr
+                id="request-{req.id}"
+                data-testid={`leave-mine-row-${req.id}`}
+                data-status={req.status}
+                class:highlight-row={highlightRequestId === req.id}
+              >
                 <td>{typeName(req.typeCode)}</td>
                 <td class="font-mono">{fmtDate(req.startDate)}</td>
                 <td class="font-mono">{fmtDate(req.endDate)}</td>
                 <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
                 <td>
-                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  <span
+                    class="badge {statusClass(req.status)}"
+                    data-testid={`leave-mine-row-${req.id}-status-badge`}
+                  >{statusLabel(req.status)}</span>
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
                       class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
@@ -1576,16 +1645,20 @@
                 </td>
                 <td class="action-cell">
                   {#if isOwn && req.status === "PENDING"}
-                    <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
-                      >Bearbeiten</button
+                    <button
+                      data-testid={`leave-mine-row-${req.id}-edit`}
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => openEditForm(req)}>Bearbeiten</button
                     >
                     <button
+                      data-testid={`leave-mine-row-${req.id}-withdraw`}
                       class="btn btn-sm btn-ghost text-red"
                       onclick={() => cancelRequest(req.id)}>Zurückziehen</button
                     >
                   {/if}
                   {#if isOwn && req.status === "APPROVED"}
                     <button
+                      data-testid={`leave-mine-row-${req.id}-cancel`}
                       class="btn btn-sm btn-ghost text-red"
                       onclick={() => cancelRequest(req.id)}>Stornieren</button
                     >
@@ -1663,6 +1736,7 @@
     {/snippet}
   </Modal>
 {/if}
+</div><!-- /leave-page -->
 
 <style>
   /* ── KPI Row (v1.5 design system) ─────────────────────────────────── */
