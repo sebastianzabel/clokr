@@ -230,7 +230,18 @@ jobs:
   # ── Lighthouse CI (DEVOPS-V8-05, advisory in Phase 70) ───────────────
   # Phase 73 will upgrade to blocking + extend to authenticated pages via
   # docker-compose webServer integration. Today: login page only, warn-mode.
+  #
+  # DISABLED 2026-06-05: treosh/lighthouse-ci-action@v12.6.2 produces NO_FCP
+  # on this runner even with --no-sandbox --disable-dev-shm-usage --disable-gpu
+  # --headless=new and 60s/90s timeouts. Local `pnpm preview` returns the
+  # login page (HTTP 200, 6KB HTML, all form elements present) — the page
+  # paints. This is a headless-Chrome / lighthouse-ci-action environment
+  # bug, not an app bug. Phase 73's docker-compose webServer migration
+  # rewrites the audit harness end-to-end (different lifecycle, different
+  # Chrome launcher) so re-enabling here under the broken setup would only
+  # produce noise. Re-enable as part of Phase 73 with the new harness.
   lighthouse:
+    if: false
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
