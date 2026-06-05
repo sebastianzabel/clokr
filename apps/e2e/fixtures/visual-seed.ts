@@ -9,9 +9,13 @@
  * synthetic (Anna Visual, Bob Regression, Clara Snapshot, Dirk Baseline) and
  * cannot collide with real the operator-tenant employees.
  *
- * Date anchor: 2026-06-15 (Monday). The system-clock-freeze happens at the
- * page level in visual.spec.ts via `page.clock.install({ time: ANCHOR_DATE })`;
- * server-side data uses absolute dates relative to this anchor.
+ * Date anchor: 2025-06-16 (Monday) — deliberately a PAST date so the API's
+ * "no time entries in the future" guard (apps/api/src/routes/time-entries.ts:905)
+ * accepts the seeded shifts on every run. The system-clock-freeze happens at
+ * the BROWSER level in visual.spec.ts via
+ * `page.clock.install({ time: ANCHOR_DATE })`; the server clock continues to
+ * report real time but every entry date is in the absolute past so the
+ * future-check is satisfied regardless of when the test runs.
  *
  * API contracts validated against `apps/api/src/routes/`:
  *   * Bootstrap: POST /api/v1/test/bootstrap-tenant
@@ -33,8 +37,13 @@
  */
 import type { APIRequestContext } from "@playwright/test";
 
-/** Frozen "today" for every visual spec — 2026-06-15 is a Monday. */
-export const ANCHOR_DATE = "2026-06-15T08:00:00.000Z";
+/**
+ * Frozen "today" for every visual spec — 2025-06-16 is a Monday.
+ * Past date (vs. real "now" 2026-06-05) so the API's future-entry guard
+ * accepts every seeded shift while still landing the calendar widgets on
+ * the same week/month relative to the seeded data.
+ */
+export const ANCHOR_DATE = "2025-06-16T08:00:00.000Z";
 
 export interface DeterministicEmployee {
   firstName: string;
@@ -76,110 +85,112 @@ export const DETERMINISTIC_EMPLOYEES: readonly DeterministicEmployee[] = [
 ] as const;
 
 /**
- * Time entries for the visual month (2026-06-01..2026-06-12). Fixed shift
- * patterns chosen to exercise calendar-cell variants:
- *   - regular full days
- *   - one short day (proves the Soll/Ist delta renders)
+ * Time entries for the visual month (June 2025). Fixed shift patterns chosen
+ * to exercise calendar-cell variants:
+ *   - regular full days (Mo-Fri 8:00-16:30 + 30min break)
+ *   - one short day on Thu 2025-06-05 (proves the Soll/Ist delta renders)
+ * Anna gets two weeks (06-02..06-13); Bob gets one Mo-Thu week to exercise
+ * the workDays=[1,2,3,4] schedule.
  */
 export const DETERMINISTIC_TIME_ENTRIES = [
-  // Anna — first two weeks of June 2026
+  // Anna — first two weeks of June 2025
   {
     employeeKey: "VIS-001",
-    date: "2026-06-01",
-    startTime: "2026-06-01T08:00:00.000Z",
-    endTime: "2026-06-01T16:30:00.000Z",
+    date: "2025-06-02",
+    startTime: "2025-06-02T08:00:00.000Z",
+    endTime: "2025-06-02T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-02",
-    startTime: "2026-06-02T08:00:00.000Z",
-    endTime: "2026-06-02T16:30:00.000Z",
+    date: "2025-06-03",
+    startTime: "2025-06-03T08:00:00.000Z",
+    endTime: "2025-06-03T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-03",
-    startTime: "2026-06-03T08:00:00.000Z",
-    endTime: "2026-06-03T17:00:00.000Z",
+    date: "2025-06-04",
+    startTime: "2025-06-04T08:00:00.000Z",
+    endTime: "2025-06-04T17:00:00.000Z",
     breakMinutes: 60,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-04",
-    startTime: "2026-06-04T08:00:00.000Z",
-    endTime: "2026-06-04T14:00:00.000Z",
+    date: "2025-06-05",
+    startTime: "2025-06-05T08:00:00.000Z",
+    endTime: "2025-06-05T14:00:00.000Z",
     breakMinutes: 30,
   }, // short day
   {
     employeeKey: "VIS-001",
-    date: "2026-06-05",
-    startTime: "2026-06-05T08:00:00.000Z",
-    endTime: "2026-06-05T16:30:00.000Z",
+    date: "2025-06-06",
+    startTime: "2025-06-06T08:00:00.000Z",
+    endTime: "2025-06-06T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-08",
-    startTime: "2026-06-08T08:00:00.000Z",
-    endTime: "2026-06-08T16:30:00.000Z",
+    date: "2025-06-09",
+    startTime: "2025-06-09T08:00:00.000Z",
+    endTime: "2025-06-09T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-09",
-    startTime: "2026-06-09T08:00:00.000Z",
-    endTime: "2026-06-09T16:30:00.000Z",
+    date: "2025-06-10",
+    startTime: "2025-06-10T08:00:00.000Z",
+    endTime: "2025-06-10T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-10",
-    startTime: "2026-06-10T08:00:00.000Z",
-    endTime: "2026-06-10T16:30:00.000Z",
+    date: "2025-06-11",
+    startTime: "2025-06-11T08:00:00.000Z",
+    endTime: "2025-06-11T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-11",
-    startTime: "2026-06-11T08:00:00.000Z",
-    endTime: "2026-06-11T16:30:00.000Z",
+    date: "2025-06-12",
+    startTime: "2025-06-12T08:00:00.000Z",
+    endTime: "2025-06-12T16:30:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-001",
-    date: "2026-06-12",
-    startTime: "2026-06-12T08:00:00.000Z",
-    endTime: "2026-06-12T16:30:00.000Z",
+    date: "2025-06-13",
+    startTime: "2025-06-13T08:00:00.000Z",
+    endTime: "2025-06-13T16:30:00.000Z",
     breakMinutes: 30,
   },
-  // Bob — Mon-Thu only (workDays exercise)
+  // Bob — Mon-Thu only (workDays exercise) in 2025-06-02..05
   {
     employeeKey: "VIS-002",
-    date: "2026-06-01",
-    startTime: "2026-06-01T09:00:00.000Z",
-    endTime: "2026-06-01T17:00:00.000Z",
-    breakMinutes: 30,
-  },
-  {
-    employeeKey: "VIS-002",
-    date: "2026-06-02",
-    startTime: "2026-06-02T09:00:00.000Z",
-    endTime: "2026-06-02T17:00:00.000Z",
+    date: "2025-06-02",
+    startTime: "2025-06-02T09:00:00.000Z",
+    endTime: "2025-06-02T17:00:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-002",
-    date: "2026-06-03",
-    startTime: "2026-06-03T09:00:00.000Z",
-    endTime: "2026-06-03T17:00:00.000Z",
+    date: "2025-06-03",
+    startTime: "2025-06-03T09:00:00.000Z",
+    endTime: "2025-06-03T17:00:00.000Z",
     breakMinutes: 30,
   },
   {
     employeeKey: "VIS-002",
-    date: "2026-06-04",
-    startTime: "2026-06-04T09:00:00.000Z",
-    endTime: "2026-06-04T17:00:00.000Z",
+    date: "2025-06-04",
+    startTime: "2025-06-04T09:00:00.000Z",
+    endTime: "2025-06-04T17:00:00.000Z",
+    breakMinutes: 30,
+  },
+  {
+    employeeKey: "VIS-002",
+    date: "2025-06-05",
+    startTime: "2025-06-05T09:00:00.000Z",
+    endTime: "2025-06-05T17:00:00.000Z",
     breakMinutes: 30,
   },
 ] as const;
@@ -193,31 +204,35 @@ export const DETERMINISTIC_TIME_ENTRIES = [
  * the seed.
  */
 export const DETERMINISTIC_LEAVE_REQUESTS = [
+  // Anna — Sommerurlaub week (Mo 06-23 .. Fri 06-27, 2025)
   {
     employeeKey: "VIS-001",
-    startDate: "2026-06-22",
-    endDate: "2026-06-26",
+    startDate: "2025-06-23",
+    endDate: "2025-06-27",
     type: "VACATION",
     note: "Sommerurlaub",
   },
+  // Bob — single Brückentag on the ANCHOR_DATE (Mon 2025-06-16)
   {
     employeeKey: "VIS-002",
-    startDate: "2026-06-15",
-    endDate: "2026-06-15",
+    startDate: "2025-06-16",
+    endDate: "2025-06-16",
     type: "VACATION",
     note: "Brückentag",
   },
+  // Clara — single sick day in week 2
   {
     employeeKey: "VIS-003",
-    startDate: "2026-06-10",
-    endDate: "2026-06-10",
+    startDate: "2025-06-11",
+    endDate: "2025-06-11",
     type: "SICK",
     note: null,
   },
+  // Dirk — month-end vacation
   {
     employeeKey: "VIS-004",
-    startDate: "2026-06-29",
-    endDate: "2026-06-30",
+    startDate: "2025-06-30",
+    endDate: "2025-06-30",
     type: "VACATION",
     note: null,
   },
@@ -319,13 +334,23 @@ export async function seedDeterministicTenant(
         lastName: emp.lastName,
         employeeNumber: emp.employeeNumber,
         // hireDate must be ISO datetime per createEmployeeSchema.hireDate.
-        hireDate: "2026-01-01T00:00:00.000Z",
-        email: `${emp.employeeNumber.toLowerCase()}@visual-regression.test`,
+        // Before the seeded time-entry month so saldo calculation has runway.
+        hireDate: "2025-01-01T00:00:00.000Z",
+        // Stable email — User.email is globally unique. Pairing this with
+        // the test.afterEach teardown in visual.spec.ts (DELETE
+        // /api/v1/test/tenant/:id) means the previous tenant's rows are
+        // dropped before the next bootstrap call, so the seeded employees
+        // get back this exact address on every run → byte-stable snapshot.
+        email: `${emp.employeeNumber.toLowerCase()}@visual.clokr.test`,
         role: "EMPLOYEE",
         weeklyHours: emp.weeklyHours,
         scheduleType: "FIXED_SCHEDULE",
         workDays: [...emp.workDays],
-        password: "test1234",
+        // Password must satisfy the tenant policy: ≥12 chars, ≥1 uppercase,
+        // ≥1 special character. The seeded employees never actually log in
+        // (the admin token drives all baseline flows) but the create endpoint
+        // still validates the field.
+        password: "VisualSeed!2026",
       },
     });
     if (!res.ok()) {

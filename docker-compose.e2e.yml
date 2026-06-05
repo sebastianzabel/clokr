@@ -12,7 +12,7 @@ services:
     build:
       context: .
       dockerfile: apps/e2e/Dockerfile.visual
-    image: clokr-e2e-visual:v1.58.2-jammy
+    image: clokr-e2e-visual:v1.60.0-jammy
     # Bind-mount the whole repo so the playwright config + specs + node_modules
     # are visible. Mount as read-write so updated baselines land back on the host.
     volumes:

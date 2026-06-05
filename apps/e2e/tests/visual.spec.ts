@@ -29,11 +29,17 @@
 import { visualTest as test, expect } from "./visual.setup";
 import { seedDeterministicTenant, ANCHOR_DATE } from "../fixtures/visual-seed";
 
-test.beforeEach(async ({ page, request }) => {
-  // Freeze "now" at 2026-06-15T08:00:00Z so every component reading
+// Track the seed result across the test lifecycle so afterEach can drop the
+// tenant. Using an outer Map keyed by testInfo.testId avoids leakage between
+// parallel workers (each worker has its own module state).
+const seedByTest = new Map<string, { tenantId: string; apiBaseUrl: string }>();
+
+test.beforeEach(async ({ page, request }, testInfo) => {
+  // Freeze "now" at 2025-06-16T08:00:00Z (Mon) so every component reading
   // `new Date()` snaps to the same instant. Time-entries page defaults to
-  // the current month → June 2026; shifts page defaults to the current
-  // week → 2026-W24 (June 8–14).
+  // the current month → June 2025; shifts page defaults to the current
+  // week → 2025-W25 (June 16–22). Past date so the API's future-entry
+  // guard accepts every seeded shift regardless of real clock.
   await page.clock.install({ time: new Date(ANCHOR_DATE) });
 
   // Bootstrap + seed the deterministic tenant. The login response gives us
@@ -41,6 +47,11 @@ test.beforeEach(async ({ page, request }) => {
   // BEFORE any page script runs so the SvelteKit auth store hydrates with
   // the test-tenant identity instead of the dev-stack one from .auth/admin.json.
   const seed = await seedDeterministicTenant(request);
+  seedByTest.set(testInfo.testId, {
+    tenantId: seed.tenantId,
+    apiBaseUrl: process.env.E2E_API_BASE ?? "http://localhost:4001",
+  });
+
   await page.addInitScript(({ accessToken, refreshToken, user }) => {
     try {
       localStorage.setItem("accessToken", accessToken);
@@ -50,6 +61,23 @@ test.beforeEach(async ({ page, request }) => {
       /* localStorage may be locked in some contexts — auth store will fall back */
     }
   }, seed.auth);
+});
+
+test.afterEach(async ({ request }, testInfo) => {
+  // Tear down the seeded tenant so the next test (or the next run) can
+  // re-create employees with the same employeeNumbers without colliding
+  // on User.email's global unique index. Mirrors the Phase 73-02 tenant
+  // fixture's KEEP_TEST_TENANTS escape hatch — set the env var to skip
+  // teardown when debugging a flaky baseline.
+  if (process.env.KEEP_TEST_TENANTS === "true") return;
+  const ctx = seedByTest.get(testInfo.testId);
+  if (!ctx) return;
+  seedByTest.delete(testInfo.testId);
+  await request.delete(`${ctx.apiBaseUrl}/api/v1/test/tenant/${ctx.tenantId}`).catch(() => {
+    /* teardown is best-effort; a stale tenant will be cleaned by the
+       next bootstrap call's email uniqueness check or by the nightly
+       test-tenant sweep (Phase 73 follow-up). */
+  });
 });
 
 test.describe("Phase 75 — Visual baselines", () => {
@@ -107,6 +135,15 @@ test.describe("Phase 75 — Visual baselines", () => {
 
   test("07 — Admin Mitarbeiter Liste", async ({ page }) => {
     await page.goto("/admin/employees");
+    await expect(page.getByTestId("admin-employees-page")).toBeVisible();
+    await page.waitForLoadState("networkidle");
+    // Filter to "VIS" so the non-deterministic bootstrap admin row
+    // (employeeNumber: `A-{tenantId.slice(-4)}`, last-login timestamp,
+    // email with random hex) is excluded — only the 4 deterministic
+    // VIS-001..VIS-004 employees remain in the snapshot.
+    await page.getByTestId("admin-employees-search").fill("VIS");
+    // Re-anchor on the page after debounce so the filtered table is rendered
+    // before the screenshot fires.
     await expect(page.getByTestId("admin-employees-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveScreenshot("07-admin-employees-list.png", { fullPage: true });

@@ -1,9 +1,15 @@
 # Phase 75 — Visual regression runner.
-# Pinned to mcr.microsoft.com/playwright:v1.58.2-jammy so font rendering
+# Pinned to mcr.microsoft.com/playwright:v1.60.0-jammy so font rendering
 # (Liberation Sans, DejaVu, Noto) is byte-identical on macOS dev, Linux dev,
-# and GitHub Actions runners. DO NOT bump the tag without re-baselining all
-# screenshots in apps/e2e/tests/visual.spec.ts-snapshots/.
-FROM mcr.microsoft.com/playwright:v1.58.2-jammy
+# and GitHub Actions runners. The tag MUST match the `@playwright/test`
+# version pinned in apps/e2e/package.json — bumping the npm dep without
+# bumping the image tag (or vice versa) produces "Executable doesn't exist"
+# launch errors. Plan 75-02 bumped 1.58.2 → 1.60.0 to track the npm dep
+# that landed during Phase 70-06 / 73 chains; baselines are first-run on
+# 1.60.0 so no historical drift to reconcile.
+# DO NOT bump the tag without re-baselining all screenshots in
+# apps/e2e/tests/visual.spec.ts-snapshots/.
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
 # pnpm — match repo lockfile version (10.33.0)
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
