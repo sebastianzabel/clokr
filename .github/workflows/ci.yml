@@ -57,6 +57,13 @@ jobs:
       - name: Push schema to test DB
         run: pnpm --filter @clokr/db exec prisma db push
 
+      - name: Sync SvelteKit generated files
+        # ESLint + tsc on apps/web extend ./.svelte-kit/tsconfig.json (generated
+        # by `svelte-kit sync`). The file is gitignored, so we must regenerate
+        # it before any lint/typecheck step that touches Web. Required for
+        # Lint Web, Type check Web, Run Web tests with coverage.
+        run: pnpm --filter @clokr/web exec svelte-kit sync
+
       - name: Lint API
         id: lint
         run: pnpm --filter @clokr/api exec eslint src/ --no-warn-ignored
