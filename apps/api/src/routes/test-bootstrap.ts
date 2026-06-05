@@ -56,11 +56,15 @@ const TENANT_ID_RE = /^test-[a-zA-Z0-9_-]{8,}$/;
 const TEST_PASSWORD = "test1234";
 
 function newTenantId(): string {
-  // 8-char base36 from crypto.randomBytes — Math.random is not cryptographically
-  // strong (CodeQL js/insecure-randomness). The ID flows into IDs returned via the
-  // bootstrap-tenant endpoint; even though ALLOW_TEST_BOOTSTRAP gates the route,
-  // we keep this entropy source CSPRNG so the scanner stops flagging it.
-  return `test-${randomBytes(6).toString("base64url").slice(0, 8)}`;
+  // 8-char hex from crypto.randomBytes. Math.random is not cryptographically
+  // strong (CodeQL js/insecure-randomness); hex (`[0-9a-f]`) is also a strict
+  // subset of DNS label characters so `admin@test-${id}.test` is a syntactically
+  // valid email — AJV's `format: "email"` validator rejects `_` and accepts `-`
+  // only in non-leading positions, both of which were intermittently produced
+  // by the previous base64url slice. (Phase 73-01 fix-up — observed as flaky
+  // 500 on bootstrap-tenant when the slice landed on `_`.) The wider regex
+  // `^test-[a-zA-Z0-9_-]{8}$` consumed by the e2e fixture still matches.
+  return `test-${randomBytes(4).toString("hex")}`;
 }
 
 /**
@@ -129,7 +133,7 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
-      await prisma.employee.create({
+      const adminEmployee = await prisma.employee.create({
         data: {
           tenantId: tenant.id,
           userId: adminUser.id,
@@ -140,15 +144,57 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         },
       });
 
+      // Phase 73-01 must_haves: bootstrap a usable admin — not just the
+      // identity row. WorkSchedule + OvertimeAccount unlock /overtime,
+      // /reports and Saldo-derived endpoints from the very first request.
+      // Without these, Plan 73-02's fixture lights up the calendar page
+      // but every Soll-/+- cell renders empty and downstream specs that
+      // assert on saldo numbers go red on the FIRST navigation. Default
+      // hours mirror `seedTestData()` in __tests__/setup.ts so behaviour
+      // matches the Vitest integration suites and the Playwright E2E
+      // suites byte-for-byte.
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: adminEmployee.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+
+      await prisma.overtimeAccount.create({
+        data: { employeeId: adminEmployee.id, balanceHours: 0 },
+      });
+
       // Standard vacation type — every Plan 74-03 test reads carry-over
       // off this exact `LeaveType` row.
-      await prisma.leaveType.create({
+      const vacationType = await prisma.leaveType.create({
         data: {
           tenantId: tenant.id,
           name: "Urlaub",
           isPaid: true,
           requiresApproval: true,
           color: "#3B82F6",
+        },
+      });
+
+      // LeaveEntitlement for the current year — without it, /leave routes
+      // 404 on "no entitlement found". 30 days @ Mo–Fr aligns with the
+      // tenant-config default and BUrlG-pro-rata baseline.
+      const currentYear = new Date().getFullYear();
+      await prisma.leaveEntitlement.create({
+        data: {
+          employeeId: adminEmployee.id,
+          leaveTypeId: vacationType.id,
+          year: currentYear,
+          totalDays: 30,
+          usedDays: 0,
         },
       });
 

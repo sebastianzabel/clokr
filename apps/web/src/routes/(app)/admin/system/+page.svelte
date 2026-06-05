@@ -996,1315 +996,1355 @@
   }
 </script>
 
-<SectionStack
-  eyebrow="System"
-  title="Allgemein"
-  sub="Tenant-Einstellungen, Sicherheit & Benachrichtigungen"
-  tabs={TABS}
-  bind:activeTab
-  animate
->
-  {#snippet tabContent(currentTab)}
-    {#if loading}
-      <div class="sys-loading-placeholder"></div>
-    {:else if error}
-      <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-    {:else if currentTab === "allgemein"}
-      <!-- ── Erscheinungsbild ─────────────────────────────────────────────── -->
-      <Section title="Erscheinungsbild" sub="Theme & Branding">
-        <p class="sys-note">
-          Theme, Modus und Dichte werden jetzt auf der eigenen Seite
-          <a href="/admin/themes">Themes &amp; Branding</a> verwaltet.
-        </p>
-      </Section>
+<!-- Phase 73-05 (D-05): data-testid surface for admin-system flows.
+     `display: contents` keeps SectionStack's layout intact while giving E2E
+     specs a stable page-root selector + the active tab as data-attribute. -->
+<div data-testid="admin-system-page" data-active-tab={activeTab} style="display: contents;">
+  <SectionStack
+    eyebrow="System"
+    title="Allgemein"
+    sub="Tenant-Einstellungen, Sicherheit & Benachrichtigungen"
+    tabs={TABS}
+    bind:activeTab
+    animate
+  >
+    {#snippet tabContent(currentTab)}
+      {#if loading}
+        <div class="sys-loading-placeholder"></div>
+      {:else if error}
+        <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
+      {:else if currentTab === "allgemein"}
+        <!-- ── Erscheinungsbild ─────────────────────────────────────────────── -->
+        <Section title="Erscheinungsbild" sub="Theme & Branding">
+          <p class="sys-note">
+            Theme, Modus und Dichte werden jetzt auf der eigenen Seite
+            <a href="/admin/themes">Themes &amp; Branding</a> verwaltet.
+          </p>
+        </Section>
 
-      <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
-      <Section title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone">
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveFederalState} disabled={stateSaving}>
-            {#if stateSaving}<Spinner />{/if}
-            Speichern
-          </button>
-          {#if stateSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
-        {/snippet}
-        {#if stateError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{stateError}</span>
-          </div>
-        {/if}
-        <div class="form-group" style="margin-bottom: 1rem;">
-          <label class="form-label" for="g-tenant-name">Firmenname</label>
-          <input
-            id="g-tenant-name"
-            type="text"
-            bind:value={gTenantName}
-            class="form-input"
-            placeholder="Name des Unternehmens"
-          />
-          <p class="form-hint text-muted">Wird in PDF-Exporten als Überschrift verwendet.</p>
-        </div>
-        <div class="inline-fields">
-          <div class="form-group">
-            <label class="form-label" for="g-federal-state">Bundesland</label>
-            <select
-              id="g-federal-state"
-              bind:value={gFederalState}
-              class="form-input federal-state-select"
-            >
-              {#each STATES as s (s.prisma)}
-                <option value={s.prisma}>{s.label}</option>
-              {/each}
-            </select>
-            <p class="form-hint text-muted">Bestimmt gesetzliche Feiertage.</p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="g-timezone">Zeitzone</label>
-            <select id="g-timezone" bind:value={gTimezone} class="form-input">
-              {#each TIMEZONE_OPTIONS as tz (tz)}
-                <option value={tz}>{tz}</option>
-              {/each}
-            </select>
-            <p class="form-hint text-muted">Zuordnung von Zeitstempeln zu Tagen.</p>
-          </div>
-        </div>
-      </Section>
-
-      <!-- ── Ladenöffnungszeiten (Phase 58 — moved from /admin/shifts) ────── -->
-      <Section
-        title="Ladenöffnungszeiten"
-        sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
-      >
-        {#snippet footer()}
-          <button
-            type="button"
-            class="btn btn-primary sm"
-            onclick={saveStoreHours}
-            disabled={storeHoursSaving}
-          >
-            {storeHoursSaving ? "Speichern …" : "Öffnungszeiten speichern"}
-          </button>
-          {#if storeHoursMsg}
-            <span class="cfg-muted cfg-msg">{storeHoursMsg}</span>
-          {/if}
-        {/snippet}
-
-        <div class="cfg-table cfg-hours-table">
-          <div class="cfg-row cfg-row--head cfg-row--hours">
-            <div>Wochentag</div>
-            <div>Geschlossen</div>
-            <div>Öffnung</div>
-            <div>Schließung</div>
-          </div>
-          {#each storeHours as h, idx (h.day)}
-            <div class="cfg-row cfg-row--hours">
-              <div class="cfg-cell-name">{DAY_NAMES_LONG[h.day]}</div>
-              <div>
-                <input
-                  id="hours-closed-{idx}"
-                  type="checkbox"
-                  checked={h.closed ?? false}
-                  onchange={(e) =>
-                    (storeHours[idx] = {
-                      ...h,
-                      closed: (e.currentTarget as HTMLInputElement).checked,
-                    })}
-                />
-              </div>
-              <div>
-                <input
-                  class="form-input"
-                  type="time"
-                  value={h.open}
-                  disabled={h.closed ?? false}
-                  onchange={(e) =>
-                    (storeHours[idx] = {
-                      ...h,
-                      open: (e.currentTarget as HTMLInputElement).value,
-                    })}
-                />
-              </div>
-              <div>
-                <input
-                  class="form-input"
-                  type="time"
-                  value={h.close}
-                  disabled={h.closed ?? false}
-                  onchange={(e) =>
-                    (storeHours[idx] = {
-                      ...h,
-                      close: (e.currentTarget as HTMLInputElement).value,
-                    })}
-                />
-              </div>
-            </div>
-          {/each}
-        </div>
-
-        <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
-        <div class="cfg-mode-options">
-          <label class="cfg-mode-option">
-            <input
-              type="radio"
-              name="shiftStoreHoursMode"
-              value="DAY_ONLY"
-              checked={shiftStoreHoursMode === "DAY_ONLY"}
-              onchange={() => (shiftStoreHoursMode = "DAY_ONLY")}
-            />
-            <span>
-              <strong>Nur geschlossene Tage blockieren</strong> (Standard) — Schichten dürfen vor Öffnung
-              beginnen / nach Schließung enden (Vor- &amp; Nachbereitung). An geschlossenen Tagen ist
-              keine Schicht möglich.
-            </span>
-          </label>
-          <label class="cfg-mode-option">
-            <input
-              type="radio"
-              name="shiftStoreHoursMode"
-              value="STRICT"
-              checked={shiftStoreHoursMode === "STRICT"}
-              onchange={() => (shiftStoreHoursMode = "STRICT")}
-            />
-            <span>
-              <strong>Strikt</strong> — Schichten müssen vollständig in den Öffnungszeiten liegen.
-            </span>
-          </label>
-          <label class="cfg-mode-option">
-            <input
-              type="radio"
-              name="shiftStoreHoursMode"
-              value="OFF"
-              checked={shiftStoreHoursMode === "OFF"}
-              onchange={() => (shiftStoreHoursMode = "OFF")}
-            />
-            <span>
-              <strong>Deaktiviert</strong> — keine Bindung an Öffnungszeiten.
-            </span>
-          </label>
-        </div>
-      </Section>
-
-      <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
-      <Section title="Features" sub="Tenant-weite Feature-Toggles">
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label">Verfügbarkeits-System aktiviert</span>
-            <p class="form-hint text-muted">
-              {#if availabilityEnabled}
-                Mitarbeiter pflegen ihre Verfügbarkeit selbst (Sidebar &amp; BottomTab zeigen
-                „Verfügbarkeit"). Auto-Generierung &amp; Woche-Kopieren respektieren „Nicht
-                verfügbar"; Manager können bei UNAVAILABLE per ConfirmDialog überschreiben (mit
-                Audit-Eintrag).
-              {:else}
-                Deaktiviert. „Verfügbarkeit"-Navigation ist ausgeblendet, Resolver &amp; Auto-Gen
-                ignorieren EmployeeAvailability-Markierungen. Bereits angelegte Verfügbarkeits-Daten
-                bleiben in der DB erhalten.
-              {/if}
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="Verfügbarkeits-System aktivieren"
-              checked={availabilityEnabled}
-              onchange={saveAvailabilityEnabled}
-              disabled={availabilitySaving}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-
-        <!-- Phase 67.2 (Plan 05) — Tenant-weiter Toggle für BS-Shift-Auto-Cleanup.
-             Default ON: Generator entfernt künftige Shifts auf neuen BS-Tagen automatisch
-             (Vergangenheit wird nur markiert). OFF: Shifts werden ausschließlich als
-             Konflikt markiert, kein Auto-Soft-Delete. -->
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label"
-              >Schichten auf Berufsschultagen automatisch entfernen</span
-            >
-            <p class="form-hint text-muted">
-              {#if vocationalSchoolAutoCleanupShifts}
-                Aktiv: Wenn der Generator neue Berufsschultage anlegt, werden zukünftige Schichten
-                auf diesen Tagen automatisch entfernt (Soft-Delete, wiederherstellbar unter <a
-                  href="/shifts/conflicts">/shifts/conflicts</a
-                >). Schichten in der Vergangenheit werden nur als Konflikt markiert.
-              {:else}
-                Deaktiviert: Schichten auf neuen Berufsschultagen werden ausschließlich als Konflikt
-                markiert. Manuelle Bereinigung erforderlich.
-              {/if}
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="BS-Shift-Auto-Cleanup aktivieren"
-              checked={vocationalSchoolAutoCleanupShifts}
-              onchange={saveVocationalSchoolAutoCleanupShifts}
-              disabled={vsAutoCleanupSaving}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-
-        <!-- Phase 49.5 — Standard-Arbeitstage/Woche (Anzahl) -->
-        <div class="workdays-section">
-          <div class="toggle-info" style="margin-bottom: 0.5rem;">
-            <span class="toggle-row-label">Standard-Arbeitstage pro Woche</span>
-            <p class="form-hint text-muted">
-              Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom AZ-Modell —
-              wird für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet. Default-Reihenfolge Mo–Fr
-              (Mo–Sa bei 6, Mo–So bei 7). Pro MA überschreibbar unter
-              <a href="/admin/vacation">Urlaub &amp; Zeiten</a>.
-            </p>
-          </div>
-          <div class="workdays-row" style="align-items: center;">
-            <input
-              type="number"
-              min="1"
-              max="7"
-              step="1"
-              class="form-input"
-              style="max-width: 6rem;"
-              aria-label="Anzahl Arbeitstage pro Woche"
-              value={defaultWorkDays.length}
-              oninput={(ev) => {
-                const n = Math.max(
-                  1,
-                  Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
-                );
-                const canonical = [1, 2, 3, 4, 5, 6, 0];
-                defaultWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
-              }}
-            />
-            <span class="form-hint" style="margin: 0;">Tage</span>
-          </div>
-          <div class="workdays-actions">
+        <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
+        <Section title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone">
+          {#snippet footer()}
             <button
-              class="btn btn-primary btn-sm"
-              onclick={saveDefaultWorkDays}
-              disabled={workDaysSaving || defaultWorkDays.length === 0}
+              class="btn btn-primary"
+              onclick={saveFederalState}
+              disabled={stateSaving}
+              data-testid="admin-system-region-save"
             >
-              {#if workDaysSaving}<Spinner />{/if}
+              {#if stateSaving}<Spinner />{/if}
               Speichern
             </button>
-            {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-            {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
-          </div>
-        </div>
-      </Section>
-    {:else if currentTab === "arbeitszeit"}
-      <!-- ── Arbeitszeit ──────────────────────────────────────────────────── -->
-      <Section title="Arbeitszeit" sub="Monatsstunden & Feiertagsabzug">
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label">Feiertage kürzen Monatsstunden-Soll</span>
-            <p class="form-hint text-muted">
-              Feiertage auf Arbeitstagen von Monatsstunden-Mitarbeitern reduzieren das Monats-Soll.
-              Formel: Budget ÷ (Arbeitstage − Feiertage auf Arbeitstagen)
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="Feiertagsabzug für Monatsstunden aktivieren"
-              checked={monthlyHoursHolidayDeduction}
-              onchange={saveHolidayDeduction}
-              disabled={holidayDeductionSaving}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-      </Section>
-
-      <!-- ── Automatische Pausen (§ 4 ArbZG) ──────────────────────────────── -->
-      <Section
-        title="Pausen automatisch abziehen"
-        sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
-      >
-        {#if autoBreakError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{autoBreakError}</span>
-          </div>
-        {/if}
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label">Pausen automatisch abziehen</span>
-            <p class="form-hint text-muted">
-              Beim Ausstempeln wird die gesetzliche Pflichtpause automatisch als Pausen-Eintrag
-              angelegt und von der gestempelten Arbeitszeit abgezogen — 30 Min. ab 6h
-              Bruttoarbeitszeit, 45 Min. ab 9h. Wirkt auf neue Einträge ab Aktivierung.
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="Pausen automatisch abziehen"
-              checked={autoBreakEnabled}
-              onchange={toggleAutoBreak}
-              disabled={autoBreakSaving}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-        {#if autoBreakEnabled}
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="sys-break-start">Standard-Pausenbeginn</label>
-            <input
-              id="sys-break-start"
-              type="time"
-              bind:value={defaultBreakStart}
-              onchange={saveDefaultBreakStart}
-              class="form-input modal-input-sm"
-              disabled={autoBreakSaving}
-            />
-            <p class="form-hint text-muted">
-              Vorgeschlagene Uhrzeit, ab der die automatische Pause gelegt wird. Liegt sie außerhalb
-              des gestempelten Zeitraums, fällt das System auf die Tagesmitte zurück.
-            </p>
-          </div>
-        {/if}
-        <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
-             Always visible (not gated on autoBreakEnabled): admins should
-             be able to pre-configure the defaults so that turning Auto-Pause ON
-             later picks them up. Each input is independently saved on blur. -->
-        <div class="form-group" style="margin-top: 1rem;">
-          <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
-          <input
-            id="sys-break-over6h"
-            type="number"
-            min="30"
-            max="120"
-            step="1"
-            bind:value={defaultBreakOver6h}
-            onblur={saveBreakDefaults}
-            class="form-input modal-input-sm"
-            disabled={breakDefaultsSaving}
-          />
-          <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
-        </div>
-        <div class="form-group" style="margin-top: 1rem;">
-          <label class="form-label" for="sys-break-over9h">Pause &gt;9h (Min)</label>
-          <input
-            id="sys-break-over9h"
-            type="number"
-            min="45"
-            max="180"
-            step="1"
-            bind:value={defaultBreakOver9h}
-            onblur={saveBreakDefaults}
-            class="form-input modal-input-sm"
-            disabled={breakDefaultsSaving}
-          />
-          <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
-        </div>
-        {#if breakDefaultsError}
-          <div class="alert alert-error" role="alert" style="margin-top: 0.75rem;">
-            <span>⚠</span><span>{breakDefaultsError}</span>
-          </div>
-        {/if}
-        {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-        {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
-      </Section>
-
-      <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->
-      <Section
-        title="Kernarbeitszeit-Defaults (Gleitzeit)"
-        sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
-      >
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveCoreDefaults} disabled={coreDefaultsSaving}>
-            {coreDefaultsSaving ? "Speichern…" : "Speichern"}
-          </button>
-          {#if coreDefaultsSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
+            {#if stateSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+          {#if stateError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{stateError}</span>
+            </div>
           {/if}
-        {/snippet}
-        {#if coreDefaultsError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{coreDefaultsError}</span>
-          </div>
-        {/if}
-        <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-          Standard-Kernarbeitszeit für neue Gleitzeit-Mitarbeiter. Beim Anlegen wird vorbelegt, kann
-          pro Mitarbeiter überschrieben werden.
-        </p>
-        <div class="core-defaults-row">
-          <div class="form-group">
-            <label class="form-label" for="def-core-start">Kernzeitbeginn</label>
+          <div class="form-group" style="margin-bottom: 1rem;">
+            <label class="form-label" for="g-tenant-name">Firmenname</label>
             <input
-              id="def-core-start"
-              type="time"
-              bind:value={defaultCoreStart}
-              class="form-input modal-input-sm"
-              placeholder="—"
+              id="g-tenant-name"
+              type="text"
+              bind:value={gTenantName}
+              class="form-input"
+              placeholder="Name des Unternehmens"
+              data-testid="admin-system-region-tenantName"
             />
+            <p class="form-hint text-muted">Wird in PDF-Exporten als Überschrift verwendet.</p>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="def-core-end">Kernzeitende</label>
-            <input
-              id="def-core-end"
-              type="time"
-              bind:value={defaultCoreEnd}
-              class="form-input modal-input-sm"
-              placeholder="—"
-            />
-          </div>
-        </div>
-        <div class="form-group" style="margin-top: 0.75rem;">
-          <label class="form-label">Standard-Kernzeit-Tage</label>
-          <div class="weekday-chips" role="group" aria-label="Standard-Kerntage">
-            {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-              <button
-                type="button"
-                class="wd-chip"
-                class:wd-chip--active={defaultCoreDays.includes(day.value)}
-                onclick={() => {
-                  if (defaultCoreDays.includes(day.value)) {
-                    defaultCoreDays = defaultCoreDays.filter((d) => d !== day.value);
-                  } else {
-                    defaultCoreDays = [...defaultCoreDays, day.value];
-                  }
-                }}>{day.label}</button
+          <div class="inline-fields">
+            <div class="form-group">
+              <label class="form-label" for="g-federal-state">Bundesland</label>
+              <select
+                id="g-federal-state"
+                bind:value={gFederalState}
+                class="form-input federal-state-select"
+                data-testid="admin-system-region-federalState"
               >
+                {#each STATES as s (s.prisma)}
+                  <option value={s.prisma}>{s.label}</option>
+                {/each}
+              </select>
+              <p class="form-hint text-muted">Bestimmt gesetzliche Feiertage.</p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="g-timezone">Zeitzone</label>
+              <select id="g-timezone" bind:value={gTimezone} class="form-input">
+                {#each TIMEZONE_OPTIONS as tz (tz)}
+                  <option value={tz}>{tz}</option>
+                {/each}
+              </select>
+              <p class="form-hint text-muted">Zuordnung von Zeitstempeln zu Tagen.</p>
+            </div>
+          </div>
+        </Section>
+
+        <!-- ── Ladenöffnungszeiten (Phase 58 — moved from /admin/shifts) ────── -->
+        <Section
+          title="Ladenöffnungszeiten"
+          sub="Wochentägliche Öffnungs- und Schließzeiten. Schichtplanung warnt bei Konflikten."
+        >
+          {#snippet footer()}
+            <button
+              type="button"
+              class="btn btn-primary sm"
+              onclick={saveStoreHours}
+              disabled={storeHoursSaving}
+            >
+              {storeHoursSaving ? "Speichern …" : "Öffnungszeiten speichern"}
+            </button>
+            {#if storeHoursMsg}
+              <span class="cfg-muted cfg-msg">{storeHoursMsg}</span>
+            {/if}
+          {/snippet}
+
+          <div class="cfg-table cfg-hours-table">
+            <div class="cfg-row cfg-row--head cfg-row--hours">
+              <div>Wochentag</div>
+              <div>Geschlossen</div>
+              <div>Öffnung</div>
+              <div>Schließung</div>
+            </div>
+            {#each storeHours as h, idx (h.day)}
+              <div class="cfg-row cfg-row--hours">
+                <div class="cfg-cell-name">{DAY_NAMES_LONG[h.day]}</div>
+                <div>
+                  <input
+                    id="hours-closed-{idx}"
+                    type="checkbox"
+                    checked={h.closed ?? false}
+                    onchange={(e) =>
+                      (storeHours[idx] = {
+                        ...h,
+                        closed: (e.currentTarget as HTMLInputElement).checked,
+                      })}
+                  />
+                </div>
+                <div>
+                  <input
+                    class="form-input"
+                    type="time"
+                    value={h.open}
+                    disabled={h.closed ?? false}
+                    onchange={(e) =>
+                      (storeHours[idx] = {
+                        ...h,
+                        open: (e.currentTarget as HTMLInputElement).value,
+                      })}
+                  />
+                </div>
+                <div>
+                  <input
+                    class="form-input"
+                    type="time"
+                    value={h.close}
+                    disabled={h.closed ?? false}
+                    onchange={(e) =>
+                      (storeHours[idx] = {
+                        ...h,
+                        close: (e.currentTarget as HTMLInputElement).value,
+                      })}
+                  />
+                </div>
+              </div>
             {/each}
           </div>
-          <p class="form-hint text-muted">
-            Leer lassen für keine Tenant-Defaults (Gleitzeit-MA starten ohne Kernzeit-Vorauswahl).
-          </p>
-        </div>
-      </Section>
-    {:else if currentTab === "sicherheit"}
-      <!-- ── Sicherheit / 2FA ─────────────────────────────────────────────── -->
-      <Section title="Sicherheit" sub="Zwei-Faktor-Authentifizierung">
-        {#if twoFaError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{twoFaError}</span>
-          </div>
-        {/if}
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label">2-Faktor-Authentifizierung (E-Mail OTP)</span>
-            <p class="form-hint text-muted">
-              Nach dem Login wird ein 6-stelliger Code per E-Mail gesendet.
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="2-Faktor-Authentifizierung aktivieren"
-              checked={twoFaEnabled}
-              onchange={toggleTwoFa}
-              disabled={twoFaSaving}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-      </Section>
 
-      <!-- ── Session-Management ───────────────────────────────────────────── -->
-      <Section title="Session-Management" sub="Timeouts & Sperrzeiten">
-        {#if sessionError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{sessionError}</span>
-          </div>
-        {/if}
-
-        <div class="opt-stack">
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="session-timeout">Inaktivitäts-Timeout</label>
-              <p class="opt-hint">0 = deaktiviert. Benutzer wird nach Inaktivität ausgeloggt.</p>
-            </div>
-            <div class="opt-control">
+          <div class="cfg-section-title">Schicht-Zeiten an Öffnungszeiten binden</div>
+          <div class="cfg-mode-options">
+            <label class="cfg-mode-option">
               <input
-                id="session-timeout"
-                type="number"
-                min="0"
-                max="480"
-                bind:value={sessionTimeoutMinutes}
-                class="form-input opt-input-num"
+                type="radio"
+                name="shiftStoreHoursMode"
+                value="DAY_ONLY"
+                checked={shiftStoreHoursMode === "DAY_ONLY"}
+                onchange={() => (shiftStoreHoursMode = "DAY_ONLY")}
               />
-              <span class="opt-unit">Min.</span>
-            </div>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="refresh-days">Session-Dauer</label>
-              <p class="opt-hint">Wie lange ein Login ohne „Angemeldet bleiben" gültig ist.</p>
-            </div>
-            <div class="opt-control">
+              <span>
+                <strong>Nur geschlossene Tage blockieren</strong> (Standard) — Schichten dürfen vor Öffnung
+                beginnen / nach Schließung enden (Vor- &amp; Nachbereitung). An geschlossenen Tagen ist
+                keine Schicht möglich.
+              </span>
+            </label>
+            <label class="cfg-mode-option">
               <input
-                id="refresh-days"
-                type="number"
-                min="1"
-                max="90"
-                bind:value={refreshTokenDays}
-                class="form-input opt-input-num"
+                type="radio"
+                name="shiftStoreHoursMode"
+                value="STRICT"
+                checked={shiftStoreHoursMode === "STRICT"}
+                onchange={() => (shiftStoreHoursMode = "STRICT")}
               />
-              <span class="opt-unit">Tage</span>
-            </div>
+              <span>
+                <strong>Strikt</strong> — Schichten müssen vollständig in den Öffnungszeiten liegen.
+              </span>
+            </label>
+            <label class="cfg-mode-option">
+              <input
+                type="radio"
+                name="shiftStoreHoursMode"
+                value="OFF"
+                checked={shiftStoreHoursMode === "OFF"}
+                onchange={() => (shiftStoreHoursMode = "OFF")}
+              />
+              <span>
+                <strong>Deaktiviert</strong> — keine Bindung an Öffnungszeiten.
+              </span>
+            </label>
           </div>
+        </Section>
 
-          <div class="opt-row">
-            <div class="opt-info">
-              <span class="opt-label">„Angemeldet bleiben" erlauben</span>
-              <p class="opt-hint">
-                Benutzer können beim Login angemeldet bleiben über mehrere Sitzungen hinweg.
+        <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
+        <Section title="Features" sub="Tenant-weite Feature-Toggles">
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">Verfügbarkeits-System aktiviert</span>
+              <p class="form-hint text-muted">
+                {#if availabilityEnabled}
+                  Mitarbeiter pflegen ihre Verfügbarkeit selbst (Sidebar &amp; BottomTab zeigen
+                  „Verfügbarkeit"). Auto-Generierung &amp; Woche-Kopieren respektieren „Nicht
+                  verfügbar"; Manager können bei UNAVAILABLE per ConfirmDialog überschreiben (mit
+                  Audit-Eintrag).
+                {:else}
+                  Deaktiviert. „Verfügbarkeit"-Navigation ist ausgeblendet, Resolver &amp; Auto-Gen
+                  ignorieren EmployeeAvailability-Markierungen. Bereits angelegte
+                  Verfügbarkeits-Daten bleiben in der DB erhalten.
+                {/if}
               </p>
             </div>
-            <label class="switch opt-control-switch">
+            <label class="switch">
               <input
                 type="checkbox"
-                aria-label="„Angemeldet bleiben&quot; erlauben"
-                bind:checked={rememberMeEnabled}
+                aria-label="Verfügbarkeits-System aktivieren"
+                checked={availabilityEnabled}
+                onchange={saveAvailabilityEnabled}
+                disabled={availabilitySaving}
               />
               <span class="switch-slider"></span>
             </label>
           </div>
 
-          {#if rememberMeEnabled}
-            <div class="opt-row opt-row--nested">
+          <!-- Phase 67.2 (Plan 05) — Tenant-weiter Toggle für BS-Shift-Auto-Cleanup.
+             Default ON: Generator entfernt künftige Shifts auf neuen BS-Tagen automatisch
+             (Vergangenheit wird nur markiert). OFF: Shifts werden ausschließlich als
+             Konflikt markiert, kein Auto-Soft-Delete. -->
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label"
+                >Schichten auf Berufsschultagen automatisch entfernen</span
+              >
+              <p class="form-hint text-muted">
+                {#if vocationalSchoolAutoCleanupShifts}
+                  Aktiv: Wenn der Generator neue Berufsschultage anlegt, werden zukünftige Schichten
+                  auf diesen Tagen automatisch entfernt (Soft-Delete, wiederherstellbar unter <a
+                    href="/shifts/conflicts">/shifts/conflicts</a
+                  >). Schichten in der Vergangenheit werden nur als Konflikt markiert.
+                {:else}
+                  Deaktiviert: Schichten auf neuen Berufsschultagen werden ausschließlich als
+                  Konflikt markiert. Manuelle Bereinigung erforderlich.
+                {/if}
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="BS-Shift-Auto-Cleanup aktivieren"
+                checked={vocationalSchoolAutoCleanupShifts}
+                onchange={saveVocationalSchoolAutoCleanupShifts}
+                disabled={vsAutoCleanupSaving}
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <!-- Phase 49.5 — Standard-Arbeitstage/Woche (Anzahl) -->
+          <div class="workdays-section">
+            <div class="toggle-info" style="margin-bottom: 0.5rem;">
+              <span class="toggle-row-label">Standard-Arbeitstage pro Woche</span>
+              <p class="form-hint text-muted">
+                Wie viele Arbeitstage hat eine Vollzeit-Woche bei euch? Unabhängig vom AZ-Modell —
+                wird für Urlaubsverbrauch und Pro-Rata-Berechnung verwendet. Default-Reihenfolge
+                Mo–Fr (Mo–Sa bei 6, Mo–So bei 7). Pro MA überschreibbar unter
+                <a href="/admin/vacation">Urlaub &amp; Zeiten</a>.
+              </p>
+            </div>
+            <div class="workdays-row" style="align-items: center;">
+              <input
+                type="number"
+                min="1"
+                max="7"
+                step="1"
+                class="form-input"
+                style="max-width: 6rem;"
+                aria-label="Anzahl Arbeitstage pro Woche"
+                value={defaultWorkDays.length}
+                oninput={(ev) => {
+                  const n = Math.max(
+                    1,
+                    Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
+                  );
+                  const canonical = [1, 2, 3, 4, 5, 6, 0];
+                  defaultWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
+                }}
+              />
+              <span class="form-hint" style="margin: 0;">Tage</span>
+            </div>
+            <div class="workdays-actions">
+              <button
+                class="btn btn-primary btn-sm"
+                onclick={saveDefaultWorkDays}
+                disabled={workDaysSaving || defaultWorkDays.length === 0}
+              >
+                {#if workDaysSaving}<Spinner />{/if}
+                Speichern
+              </button>
+              {#if workDaysSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+              {#if workDaysError}<span class="error-hint">{workDaysError}</span>{/if}
+            </div>
+          </div>
+        </Section>
+      {:else if currentTab === "arbeitszeit"}
+        <!-- ── Arbeitszeit ──────────────────────────────────────────────────── -->
+        <Section title="Arbeitszeit" sub="Monatsstunden & Feiertagsabzug">
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">Feiertage kürzen Monatsstunden-Soll</span>
+              <p class="form-hint text-muted">
+                Feiertage auf Arbeitstagen von Monatsstunden-Mitarbeitern reduzieren das
+                Monats-Soll. Formel: Budget ÷ (Arbeitstage − Feiertage auf Arbeitstagen)
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="Feiertagsabzug für Monatsstunden aktivieren"
+                checked={monthlyHoursHolidayDeduction}
+                onchange={saveHolidayDeduction}
+                disabled={holidayDeductionSaving}
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </Section>
+
+        <!-- ── Automatische Pausen (§ 4 ArbZG) ──────────────────────────────── -->
+        <Section
+          title="Pausen automatisch abziehen"
+          sub="Pflicht-Pausen nach § 4 ArbZG (>6h: 30 Min., >9h: 45 Min.)"
+        >
+          {#if autoBreakError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{autoBreakError}</span>
+            </div>
+          {/if}
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">Pausen automatisch abziehen</span>
+              <p class="form-hint text-muted">
+                Beim Ausstempeln wird die gesetzliche Pflichtpause automatisch als Pausen-Eintrag
+                angelegt und von der gestempelten Arbeitszeit abgezogen — 30 Min. ab 6h
+                Bruttoarbeitszeit, 45 Min. ab 9h. Wirkt auf neue Einträge ab Aktivierung.
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="Pausen automatisch abziehen"
+                checked={autoBreakEnabled}
+                onchange={toggleAutoBreak}
+                disabled={autoBreakSaving}
+                data-testid="admin-system-pausendauer-autoBreakEnabled"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          {#if autoBreakEnabled}
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="sys-break-start">Standard-Pausenbeginn</label>
+              <input
+                id="sys-break-start"
+                type="time"
+                bind:value={defaultBreakStart}
+                onchange={saveDefaultBreakStart}
+                class="form-input modal-input-sm"
+                disabled={autoBreakSaving}
+              />
+              <p class="form-hint text-muted">
+                Vorgeschlagene Uhrzeit, ab der die automatische Pause gelegt wird. Liegt sie
+                außerhalb des gestempelten Zeitraums, fällt das System auf die Tagesmitte zurück.
+              </p>
+            </div>
+          {/if}
+          <!-- Phase 65 — Tenant-Default Pausendauer (BREAK-05, D-01..D-03)
+             Always visible (not gated on autoBreakEnabled): admins should
+             be able to pre-configure the defaults so that turning Auto-Pause ON
+             later picks them up. Each input is independently saved on blur. -->
+          <div class="form-group" style="margin-top: 1rem;">
+            <label class="form-label" for="sys-break-over6h">Pause &gt;6h (Min)</label>
+            <input
+              id="sys-break-over6h"
+              type="number"
+              min="30"
+              max="120"
+              step="1"
+              bind:value={defaultBreakOver6h}
+              onblur={saveBreakDefaults}
+              class="form-input modal-input-sm"
+              disabled={breakDefaultsSaving}
+              data-testid="admin-system-pausendauer-over6h"
+            />
+            <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
+          </div>
+          <div class="form-group" style="margin-top: 1rem;">
+            <label class="form-label" for="sys-break-over9h">Pause &gt;9h (Min)</label>
+            <input
+              id="sys-break-over9h"
+              type="number"
+              min="45"
+              max="180"
+              step="1"
+              bind:value={defaultBreakOver9h}
+              onblur={saveBreakDefaults}
+              class="form-input modal-input-sm"
+              disabled={breakDefaultsSaving}
+              data-testid="admin-system-pausendauer-over9h"
+            />
+            <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
+          </div>
+          {#if breakDefaultsError}
+            <div class="alert alert-error" role="alert" style="margin-top: 0.75rem;">
+              <span>⚠</span><span>{breakDefaultsError}</span>
+            </div>
+          {/if}
+          {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+          {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+        </Section>
+
+        <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->
+        <Section
+          title="Kernarbeitszeit-Defaults (Gleitzeit)"
+          sub="Standard-Kernzeit für neue Gleitzeit-Mitarbeiter"
+        >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveCoreDefaults}
+              disabled={coreDefaultsSaving}
+            >
+              {coreDefaultsSaving ? "Speichern…" : "Speichern"}
+            </button>
+            {#if coreDefaultsSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+          {#if coreDefaultsError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{coreDefaultsError}</span>
+            </div>
+          {/if}
+          <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+            Standard-Kernarbeitszeit für neue Gleitzeit-Mitarbeiter. Beim Anlegen wird vorbelegt,
+            kann pro Mitarbeiter überschrieben werden.
+          </p>
+          <div class="core-defaults-row">
+            <div class="form-group">
+              <label class="form-label" for="def-core-start">Kernzeitbeginn</label>
+              <input
+                id="def-core-start"
+                type="time"
+                bind:value={defaultCoreStart}
+                class="form-input modal-input-sm"
+                placeholder="—"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="def-core-end">Kernzeitende</label>
+              <input
+                id="def-core-end"
+                type="time"
+                bind:value={defaultCoreEnd}
+                class="form-input modal-input-sm"
+                placeholder="—"
+              />
+            </div>
+          </div>
+          <div class="form-group" style="margin-top: 0.75rem;">
+            <label class="form-label">Standard-Kernzeit-Tage</label>
+            <div class="weekday-chips" role="group" aria-label="Standard-Kerntage">
+              {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                <button
+                  type="button"
+                  class="wd-chip"
+                  class:wd-chip--active={defaultCoreDays.includes(day.value)}
+                  onclick={() => {
+                    if (defaultCoreDays.includes(day.value)) {
+                      defaultCoreDays = defaultCoreDays.filter((d) => d !== day.value);
+                    } else {
+                      defaultCoreDays = [...defaultCoreDays, day.value];
+                    }
+                  }}>{day.label}</button
+                >
+              {/each}
+            </div>
+            <p class="form-hint text-muted">
+              Leer lassen für keine Tenant-Defaults (Gleitzeit-MA starten ohne Kernzeit-Vorauswahl).
+            </p>
+          </div>
+        </Section>
+      {:else if currentTab === "sicherheit"}
+        <!-- ── Sicherheit / 2FA ─────────────────────────────────────────────── -->
+        <Section title="Sicherheit" sub="Zwei-Faktor-Authentifizierung">
+          {#if twoFaError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{twoFaError}</span>
+            </div>
+          {/if}
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">2-Faktor-Authentifizierung (E-Mail OTP)</span>
+              <p class="form-hint text-muted">
+                Nach dem Login wird ein 6-stelliger Code per E-Mail gesendet.
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="2-Faktor-Authentifizierung aktivieren"
+                checked={twoFaEnabled}
+                onchange={toggleTwoFa}
+                disabled={twoFaSaving}
+                data-testid="admin-system-sicherheit-twoFaEnabled"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </Section>
+
+        <!-- ── Session-Management ───────────────────────────────────────────── -->
+        <Section title="Session-Management" sub="Timeouts & Sperrzeiten">
+          {#if sessionError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{sessionError}</span>
+            </div>
+          {/if}
+
+          <div class="opt-stack">
+            <div class="opt-row">
               <div class="opt-info">
-                <label class="opt-label" for="remember-days">„Angemeldet bleiben" Dauer</label>
-                <p class="opt-hint">Maximale Geltungsdauer der „Angemeldet bleiben"-Sitzung.</p>
+                <label class="opt-label" for="session-timeout">Inaktivitäts-Timeout</label>
+                <p class="opt-hint">0 = deaktiviert. Benutzer wird nach Inaktivität ausgeloggt.</p>
               </div>
               <div class="opt-control">
                 <input
-                  id="remember-days"
+                  id="session-timeout"
+                  type="number"
+                  min="0"
+                  max="480"
+                  bind:value={sessionTimeoutMinutes}
+                  class="form-input opt-input-num"
+                />
+                <span class="opt-unit">Min.</span>
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <label class="opt-label" for="refresh-days">Session-Dauer</label>
+                <p class="opt-hint">Wie lange ein Login ohne „Angemeldet bleiben" gültig ist.</p>
+              </div>
+              <div class="opt-control">
+                <input
+                  id="refresh-days"
                   type="number"
                   min="1"
-                  max="365"
-                  bind:value={rememberMeDays}
+                  max="90"
+                  bind:value={refreshTokenDays}
                   class="form-input opt-input-num"
                 />
                 <span class="opt-unit">Tage</span>
               </div>
             </div>
-          {/if}
 
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="max-sessions">Max. gleichzeitige Sessions</label>
-              <p class="opt-hint">
-                0 = unbegrenzt. Älteste Session wird bei Überschreitung beendet.
-              </p>
-            </div>
-            <div class="opt-control">
-              <input
-                id="max-sessions"
-                type="number"
-                min="0"
-                max="20"
-                bind:value={maxSessionsPerUser}
-                class="form-input opt-input-num"
-              />
-            </div>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="login-max-attempts">Max. Fehlversuche bis Sperre</label>
-              <p class="opt-hint">
-                Anzahl falscher Login-Versuche bis das Konto temporär gesperrt wird.
-              </p>
-            </div>
-            <div class="opt-control">
-              <input
-                id="login-max-attempts"
-                type="number"
-                min="1"
-                max="20"
-                bind:value={loginMaxAttempts}
-                class="form-input opt-input-num"
-              />
-            </div>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="login-lockout-min">Sperrzeit nach Fehlversuchen</label>
-              <p class="opt-hint">
-                Nach Ablauf wird der Zähler zurückgesetzt. Admin kann manuell entsperren.
-              </p>
-            </div>
-            <div class="opt-control">
-              <input
-                id="login-lockout-min"
-                type="number"
-                min="1"
-                max="1440"
-                bind:value={loginLockoutMinutes}
-                class="form-input opt-input-num"
-              />
-              <span class="opt-unit">Min.</span>
-            </div>
-          </div>
-        </div>
-
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveSessionConfig} disabled={sessionSaving}>
-            {sessionSaving ? "Speichern…" : "Speichern"}
-          </button>
-          {#if sessionSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
-        {/snippet}
-      </Section>
-
-      <!-- ── Passwort-Richtlinie ──────────────────────────────────────────── -->
-      <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln">
-        {#if pwError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{pwError}</span>
-          </div>
-        {/if}
-
-        <div class="opt-stack">
-          <div class="opt-row">
-            <div class="opt-info">
-              <label class="opt-label" for="pw-min-length">Mindestlänge</label>
-              <p class="opt-hint">BSI empfiehlt mindestens 12 Zeichen.</p>
-            </div>
-            <div class="opt-control">
-              <input
-                id="pw-min-length"
-                type="number"
-                min="8"
-                max="128"
-                bind:value={pwMinLength}
-                class="form-input opt-input-num"
-              />
-              <span class="opt-unit">Zeichen</span>
-            </div>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <span class="opt-label">Großbuchstabe erforderlich</span>
-            </div>
-            <label class="switch opt-control-switch">
-              <input
-                type="checkbox"
-                aria-label="Großbuchstabe erforderlich"
-                bind:checked={pwRequireUpper}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <span class="opt-label">Kleinbuchstabe erforderlich</span>
-            </div>
-            <label class="switch opt-control-switch">
-              <input
-                type="checkbox"
-                aria-label="Kleinbuchstabe erforderlich"
-                bind:checked={pwRequireLower}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <span class="opt-label">Ziffer erforderlich</span>
-            </div>
-            <label class="switch opt-control-switch">
-              <input
-                type="checkbox"
-                aria-label="Ziffer erforderlich"
-                bind:checked={pwRequireDigit}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-
-          <div class="opt-row">
-            <div class="opt-info">
-              <span class="opt-label">Sonderzeichen erforderlich</span>
-            </div>
-            <label class="switch opt-control-switch">
-              <input
-                type="checkbox"
-                aria-label="Sonderzeichen erforderlich"
-                bind:checked={pwRequireSpecial}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-        </div>
-
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={savePasswordPolicy} disabled={pwSaving}>
-            {pwSaving ? "Speichern…" : "Speichern"}
-          </button>
-          {#if pwSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
-        {/snippet}
-      </Section>
-    {:else if currentTab === "kommunikation"}
-      <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
-      <Section title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden">
-        {#if emailError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{emailError}</span>
-          </div>
-        {/if}
-        <div class="toggle-row">
-          <div class="toggle-info">
-            <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
-            <p class="form-hint text-muted">
-              Sendet zusätzlich zur In-App-Benachrichtigung eine E-Mail. SMTP muss konfiguriert
-              sein.
-            </p>
-          </div>
-          <label class="switch">
-            <input
-              type="checkbox"
-              aria-label="E-Mail-Benachrichtigungen aktivieren"
-              bind:checked={emailEnabled}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
-        {#if emailEnabled}
-          <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
-          <div class="toggle-row">
-            <span class="toggle-row-label">Neuer Urlaubsantrag</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Neuer Urlaubsantrag"
-                bind:checked={emailOnLeaveRequest}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
-                bind:checked={emailOnLeaveDecision}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-row-label">Überstunden-Warnung</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Überstunden-Warnung"
-                bind:checked={emailOnOvertimeWarning}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-row-label">Fehlende Zeiteinträge</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Fehlende Zeiteinträge"
-                bind:checked={emailOnMissingEntries}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-row-label">Vergessene Stempelung</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Vergessene Stempelung"
-                bind:checked={emailOnClockOutReminder}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-          <div class="toggle-row">
-            <span class="toggle-row-label" translate="no">Monatsabschluss</span>
-            <label class="switch">
-              <input
-                type="checkbox"
-                aria-label="Benachrichtigung: Monatsabschluss"
-                bind:checked={emailOnMonthClose}
-              />
-              <span class="switch-slider"></span>
-            </label>
-          </div>
-        {/if}
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveEmailConfig} disabled={emailSaving}>
-            {emailSaving ? "Speichern…" : "Speichern"}
-          </button>
-          {#if emailSaved}
-            <span class="saved-hint">✓ Gespeichert</span>
-          {/if}
-        {/snippet}
-      </Section>
-
-      <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
-      <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren">
-        {#if smtpError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{smtpError}</span>
-          </div>
-        {/if}
-        {#if smtpSaved}
-          <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
-            <span>✓</span><span>SMTP gespeichert.</span>
-          </div>
-        {/if}
-
-        <div class="smtp-grid">
-          <div class="form-group">
-            <label class="form-label" for="smtp-host">SMTP-Host</label>
-            <input
-              id="smtp-host"
-              type="text"
-              bind:value={smtpHost}
-              class="form-input"
-              placeholder="smtp.example.com"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="smtp-port">Port</label>
-            <input
-              id="smtp-port"
-              type="number"
-              bind:value={smtpPort}
-              class="form-input"
-              placeholder="587"
-              min="1"
-              max="65535"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="smtp-user">Benutzername</label>
-            <input
-              id="smtp-user"
-              type="text"
-              bind:value={smtpUser}
-              class="form-input"
-              placeholder="user@example.com"
-              autocomplete="off"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="smtp-pass">
-              Passwort
-              {#if smtpPasswordSet}<span class="badge-saved">gespeichert</span>{/if}
-            </label>
-            <input
-              id="smtp-pass"
-              type="password"
-              bind:value={smtpPassword}
-              class="form-input"
-              placeholder="Unverändert lassen"
-              autocomplete="new-password"
-            />
-            <p class="form-hint">
-              Gmail/Google: <a
-                href="https://myaccount.google.com/apppasswords"
-                target="_blank"
-                rel="noopener">App-Passwort</a
-              > verwenden (2FA erforderlich). Outlook: App-Passwort in den Sicherheitseinstellungen.
-            </p>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="smtp-from-email">Von E-Mail</label>
-            <input
-              id="smtp-from-email"
-              type="email"
-              bind:value={smtpFromEmail}
-              class="form-input"
-              placeholder="noreply@clokr.de"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="smtp-from-name">Von Name</label>
-            <input
-              id="smtp-from-name"
-              type="text"
-              bind:value={smtpFromName}
-              class="form-input"
-              placeholder="Clokr"
-            />
-          </div>
-          <div class="form-group form-group--full">
-            <label class="toggle-label">
-              <input type="checkbox" bind:checked={smtpSecure} class="toggle-cb" />
-              <span>TLS/SSL (Port 465)</span>
-            </label>
-          </div>
-        </div>
-
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveSmtp} disabled={smtpSaving}>
-            {smtpSaving ? "Speichern…" : "SMTP speichern"}
-          </button>
-        {/snippet}
-
-        <div class="smtp-test-section">
-          <span class="form-label">Testmail senden</span>
-          <div class="smtp-test-row">
-            <input
-              type="email"
-              bind:value={smtpTestEmail}
-              class="form-input"
-              placeholder="test@example.com"
-              style="max-width: 280px;"
-            />
-            <button
-              class="btn btn-ghost"
-              onclick={testSmtp}
-              disabled={smtpTesting || !smtpTestEmail}
-            >
-              {smtpTesting ? "Senden…" : "Testmail senden"}
-            </button>
-          </div>
-          {#if smtpTestResult}
-            <p class="smtp-test-success">✓ {smtpTestResult}</p>
-          {/if}
-          {#if smtpTestError}
-            <p class="smtp-test-error">⚠ {smtpTestError}</p>
-          {/if}
-        </div>
-      </Section>
-    {:else if currentTab === "integration"}
-      <!-- ── NFC-Terminals ────────────────────────────────────────────────── -->
-      <Section title="NFC-Terminals" sub="API-Schlüssel für stationäre Geräte">
-        {#if showNewKey}
-          <div class="alert alert-success" style="margin-bottom: 1rem;">
-            <div>
-              <strong>Neuer Schlüssel erstellt!</strong>
-              <p style="margin: 0.5rem 0;">
-                Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
-              </p>
-              <div class="key-display">
-                <code class="key-code">{newKeyRaw}</code>
-                <button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(newKeyRaw)}
-                  >Kopieren</button
-                >
+            <div class="opt-row">
+              <div class="opt-info">
+                <span class="opt-label">„Angemeldet bleiben" erlauben</span>
+                <p class="opt-hint">
+                  Benutzer können beim Login angemeldet bleiben über mehrere Sitzungen hinweg.
+                </p>
               </div>
-              <button
-                class="btn btn-ghost btn-sm"
-                style="margin-top: 0.5rem;"
-                onclick={() => {
-                  showNewKey = false;
-                  newKeyRaw = "";
-                }}>Schließen</button
-              >
+              <label class="switch opt-control-switch">
+                <input
+                  type="checkbox"
+                  aria-label="„Angemeldet bleiben&quot; erlauben"
+                  bind:checked={rememberMeEnabled}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            {#if rememberMeEnabled}
+              <div class="opt-row opt-row--nested">
+                <div class="opt-info">
+                  <label class="opt-label" for="remember-days">„Angemeldet bleiben" Dauer</label>
+                  <p class="opt-hint">Maximale Geltungsdauer der „Angemeldet bleiben"-Sitzung.</p>
+                </div>
+                <div class="opt-control">
+                  <input
+                    id="remember-days"
+                    type="number"
+                    min="1"
+                    max="365"
+                    bind:value={rememberMeDays}
+                    class="form-input opt-input-num"
+                  />
+                  <span class="opt-unit">Tage</span>
+                </div>
+              </div>
+            {/if}
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <label class="opt-label" for="max-sessions">Max. gleichzeitige Sessions</label>
+                <p class="opt-hint">
+                  0 = unbegrenzt. Älteste Session wird bei Überschreitung beendet.
+                </p>
+              </div>
+              <div class="opt-control">
+                <input
+                  id="max-sessions"
+                  type="number"
+                  min="0"
+                  max="20"
+                  bind:value={maxSessionsPerUser}
+                  class="form-input opt-input-num"
+                />
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <label class="opt-label" for="login-max-attempts"
+                  >Max. Fehlversuche bis Sperre</label
+                >
+                <p class="opt-hint">
+                  Anzahl falscher Login-Versuche bis das Konto temporär gesperrt wird.
+                </p>
+              </div>
+              <div class="opt-control">
+                <input
+                  id="login-max-attempts"
+                  type="number"
+                  min="1"
+                  max="20"
+                  bind:value={loginMaxAttempts}
+                  class="form-input opt-input-num"
+                />
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <label class="opt-label" for="login-lockout-min">Sperrzeit nach Fehlversuchen</label
+                >
+                <p class="opt-hint">
+                  Nach Ablauf wird der Zähler zurückgesetzt. Admin kann manuell entsperren.
+                </p>
+              </div>
+              <div class="opt-control">
+                <input
+                  id="login-lockout-min"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  bind:value={loginLockoutMinutes}
+                  class="form-input opt-input-num"
+                />
+                <span class="opt-unit">Min.</span>
+              </div>
             </div>
           </div>
-        {/if}
 
-        <div class="inline-create">
-          <input
-            type="text"
-            class="form-input"
-            bind:value={newKeyName}
-            placeholder="Terminal-Name (z.B. Kasse 1)"
-          />
-          <button
-            class="btn btn-primary"
-            onclick={createTerminalKey}
-            disabled={terminalLoading || !newKeyName.trim()}
-          >
-            Schlüssel erstellen
-          </button>
-        </div>
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveSessionConfig}
+              disabled={sessionSaving}
+              data-testid="admin-system-session-save"
+            >
+              {sessionSaving ? "Speichern…" : "Speichern"}
+            </button>
+            {#if sessionSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+        </Section>
 
-        {#if terminalKeys.length > 0}
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Schlüssel</th>
-                  <th>Zuletzt verwendet</th>
-                  <th>Status</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each pagedTerminalKeys as key (key.id)}
-                  <tr class:row-revoked={key.revokedAt}>
-                    <td>{key.name}</td>
-                    <td><code class="inline-code">{key.keyPrefix}</code></td>
-                    <td
-                      >{key.lastUsedAt
-                        ? new Date(key.lastUsedAt).toLocaleString("de-DE")
-                        : "Nie"}</td
-                    >
-                    <td>
-                      {#if key.revokedAt}
-                        <span class="badge badge-red">Widerrufen</span>
-                      {:else}
-                        <span class="badge badge-green">Aktiv</span>
-                      {/if}
-                    </td>
-                    <td>
-                      {#if !key.revokedAt}
-                        <button
-                          class="btn btn-sm btn-ghost btn-danger-ghost"
-                          onclick={() => revokeTerminalKey(key.id)}>Widerrufen</button
-                        >
-                      {/if}
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-            <Pagination total={terminalKeys.length} bind:page={tkPage} bind:pageSize={tkPageSize} />
+        <!-- ── Passwort-Richtlinie ──────────────────────────────────────────── -->
+        <Section title="Passwort-Richtlinie" sub="BSI-konforme Komplexitätsregeln">
+          {#if pwError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{pwError}</span>
+            </div>
+          {/if}
+
+          <div class="opt-stack">
+            <div class="opt-row">
+              <div class="opt-info">
+                <label class="opt-label" for="pw-min-length">Mindestlänge</label>
+                <p class="opt-hint">BSI empfiehlt mindestens 12 Zeichen.</p>
+              </div>
+              <div class="opt-control">
+                <input
+                  id="pw-min-length"
+                  type="number"
+                  min="8"
+                  max="128"
+                  bind:value={pwMinLength}
+                  class="form-input opt-input-num"
+                  data-testid="admin-system-password-minLength"
+                />
+                <span class="opt-unit">Zeichen</span>
+              </div>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <span class="opt-label">Großbuchstabe erforderlich</span>
+              </div>
+              <label class="switch opt-control-switch">
+                <input
+                  type="checkbox"
+                  aria-label="Großbuchstabe erforderlich"
+                  bind:checked={pwRequireUpper}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <span class="opt-label">Kleinbuchstabe erforderlich</span>
+              </div>
+              <label class="switch opt-control-switch">
+                <input
+                  type="checkbox"
+                  aria-label="Kleinbuchstabe erforderlich"
+                  bind:checked={pwRequireLower}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <span class="opt-label">Ziffer erforderlich</span>
+              </div>
+              <label class="switch opt-control-switch">
+                <input
+                  type="checkbox"
+                  aria-label="Ziffer erforderlich"
+                  bind:checked={pwRequireDigit}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+
+            <div class="opt-row">
+              <div class="opt-info">
+                <span class="opt-label">Sonderzeichen erforderlich</span>
+              </div>
+              <label class="switch opt-control-switch">
+                <input
+                  type="checkbox"
+                  aria-label="Sonderzeichen erforderlich"
+                  bind:checked={pwRequireSpecial}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
           </div>
-        {:else}
-          <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
-        {/if}
-      </Section>
 
-      <!-- ── API Keys ─────────────────────────────────────────────────────── -->
-      <Section title="API Keys" sub="Schlüssel für externe Integrationen">
-        {#if showNewApiKey}
-          <div class="alert alert-success" style="margin-bottom: 1rem;">
-            <div>
-              <strong>API Key erstellt!</strong>
-              <p style="margin: 0.5rem 0;">
-                Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={savePasswordPolicy}
+              disabled={pwSaving}
+              data-testid="admin-system-password-save"
+            >
+              {pwSaving ? "Speichern…" : "Speichern"}
+            </button>
+            {#if pwSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+        </Section>
+      {:else if currentTab === "kommunikation"}
+        <!-- ── E-Mail-Benachrichtigungen ────────────────────────────────────── -->
+        <Section title="E-Mail-Benachrichtigungen" sub="Welche Ereignisse per E-Mail melden">
+          {#if emailError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{emailError}</span>
+            </div>
+          {/if}
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">E-Mail-Benachrichtigungen aktivieren</span>
+              <p class="form-hint text-muted">
+                Sendet zusätzlich zur In-App-Benachrichtigung eine E-Mail. SMTP muss konfiguriert
+                sein.
               </p>
-              <div class="key-display">
-                <code class="key-code">{newApiKeyRaw}</code>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="E-Mail-Benachrichtigungen aktivieren"
+                bind:checked={emailEnabled}
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          {#if emailEnabled}
+            <h4 class="sys-subtitle" style="margin-top: 1rem;">Benachrichtigungstypen</h4>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Neuer Urlaubsantrag</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Neuer Urlaubsantrag"
+                  bind:checked={emailOnLeaveRequest}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Urlaub genehmigt / abgelehnt</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Urlaub genehmigt / abgelehnt"
+                  bind:checked={emailOnLeaveDecision}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Überstunden-Warnung</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Überstunden-Warnung"
+                  bind:checked={emailOnOvertimeWarning}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Fehlende Zeiteinträge</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Fehlende Zeiteinträge"
+                  bind:checked={emailOnMissingEntries}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Vergessene Stempelung</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Vergessene Stempelung"
+                  bind:checked={emailOnClockOutReminder}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label" translate="no">Monatsabschluss</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Monatsabschluss"
+                  bind:checked={emailOnMonthClose}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+          {/if}
+          {#snippet footer()}
+            <button class="btn btn-primary" onclick={saveEmailConfig} disabled={emailSaving}>
+              {emailSaving ? "Speichern…" : "Speichern"}
+            </button>
+            {#if emailSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+          {/snippet}
+        </Section>
+
+        <!-- ── E-Mail / SMTP ────────────────────────────────────────────────── -->
+        <Section title="E-Mail / SMTP" sub="Postausgangsserver konfigurieren">
+          {#if smtpError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{smtpError}</span>
+            </div>
+          {/if}
+          {#if smtpSaved}
+            <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
+              <span>✓</span><span>SMTP gespeichert.</span>
+            </div>
+          {/if}
+
+          <div class="smtp-grid">
+            <div class="form-group">
+              <label class="form-label" for="smtp-host">SMTP-Host</label>
+              <input
+                id="smtp-host"
+                type="text"
+                bind:value={smtpHost}
+                class="form-input"
+                placeholder="smtp.example.com"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="smtp-port">Port</label>
+              <input
+                id="smtp-port"
+                type="number"
+                bind:value={smtpPort}
+                class="form-input"
+                placeholder="587"
+                min="1"
+                max="65535"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="smtp-user">Benutzername</label>
+              <input
+                id="smtp-user"
+                type="text"
+                bind:value={smtpUser}
+                class="form-input"
+                placeholder="user@example.com"
+                autocomplete="off"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="smtp-pass">
+                Passwort
+                {#if smtpPasswordSet}<span class="badge-saved">gespeichert</span>{/if}
+              </label>
+              <input
+                id="smtp-pass"
+                type="password"
+                bind:value={smtpPassword}
+                class="form-input"
+                placeholder="Unverändert lassen"
+                autocomplete="new-password"
+              />
+              <p class="form-hint">
+                Gmail/Google: <a
+                  href="https://myaccount.google.com/apppasswords"
+                  target="_blank"
+                  rel="noopener">App-Passwort</a
+                > verwenden (2FA erforderlich). Outlook: App-Passwort in den Sicherheitseinstellungen.
+              </p>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="smtp-from-email">Von E-Mail</label>
+              <input
+                id="smtp-from-email"
+                type="email"
+                bind:value={smtpFromEmail}
+                class="form-input"
+                placeholder="noreply@clokr.de"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="smtp-from-name">Von Name</label>
+              <input
+                id="smtp-from-name"
+                type="text"
+                bind:value={smtpFromName}
+                class="form-input"
+                placeholder="Clokr"
+              />
+            </div>
+            <div class="form-group form-group--full">
+              <label class="toggle-label">
+                <input type="checkbox" bind:checked={smtpSecure} class="toggle-cb" />
+                <span>TLS/SSL (Port 465)</span>
+              </label>
+            </div>
+          </div>
+
+          {#snippet footer()}
+            <button class="btn btn-primary" onclick={saveSmtp} disabled={smtpSaving}>
+              {smtpSaving ? "Speichern…" : "SMTP speichern"}
+            </button>
+          {/snippet}
+
+          <div class="smtp-test-section">
+            <span class="form-label">Testmail senden</span>
+            <div class="smtp-test-row">
+              <input
+                type="email"
+                bind:value={smtpTestEmail}
+                class="form-input"
+                placeholder="test@example.com"
+                style="max-width: 280px;"
+              />
+              <button
+                class="btn btn-ghost"
+                onclick={testSmtp}
+                disabled={smtpTesting || !smtpTestEmail}
+              >
+                {smtpTesting ? "Senden…" : "Testmail senden"}
+              </button>
+            </div>
+            {#if smtpTestResult}
+              <p class="smtp-test-success">✓ {smtpTestResult}</p>
+            {/if}
+            {#if smtpTestError}
+              <p class="smtp-test-error">⚠ {smtpTestError}</p>
+            {/if}
+          </div>
+        </Section>
+      {:else if currentTab === "integration"}
+        <!-- ── NFC-Terminals ────────────────────────────────────────────────── -->
+        <Section title="NFC-Terminals" sub="API-Schlüssel für stationäre Geräte">
+          {#if showNewKey}
+            <div class="alert alert-success" style="margin-bottom: 1rem;">
+              <div>
+                <strong>Neuer Schlüssel erstellt!</strong>
+                <p style="margin: 0.5rem 0;">
+                  Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+                </p>
+                <div class="key-display">
+                  <code class="key-code">{newKeyRaw}</code>
+                  <button class="btn btn-ghost btn-sm" onclick={() => copyToClipboard(newKeyRaw)}
+                    >Kopieren</button
+                  >
+                </div>
                 <button
                   class="btn btn-ghost btn-sm"
-                  onclick={() => navigator.clipboard.writeText(newApiKeyRaw)}>Kopieren</button
+                  style="margin-top: 0.5rem;"
+                  onclick={() => {
+                    showNewKey = false;
+                    newKeyRaw = "";
+                  }}>Schließen</button
                 >
               </div>
-              <button
-                class="btn btn-ghost btn-sm"
-                style="margin-top: 0.5rem;"
-                onclick={() => {
-                  showNewApiKey = false;
-                  newApiKeyRaw = "";
-                }}>Schließen</button
-              >
             </div>
-          </div>
-        {/if}
+          {/if}
 
-        <div class="api-key-create">
           <div class="inline-create">
             <input
               type="text"
               class="form-input"
-              bind:value={newApiKeyName}
-              placeholder="Name (z.B. DATEV Export)"
+              bind:value={newKeyName}
+              placeholder="Terminal-Name (z.B. Kasse 1)"
             />
             <button
               class="btn btn-primary"
-              onclick={createApiKey}
-              disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
+              onclick={createTerminalKey}
+              disabled={terminalLoading || !newKeyName.trim()}
             >
-              Key erstellen
+              Schlüssel erstellen
             </button>
           </div>
-          <div class="scope-chips">
-            {#each API_SCOPES as s (s.scope)}
-              <button
-                class="btn btn-sm"
-                class:btn-primary={newApiKeyScopes.includes(s.scope)}
-                class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
-                onclick={() => toggleScope(s.scope)}>{s.label}</button
-              >
-            {/each}
-          </div>
-        </div>
 
-        {#if apiKeys.length > 0}
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th></th></tr
-                >
-              </thead>
-              <tbody>
-                {#each pagedApiKeys as key (key.id)}
-                  <tr class:row-revoked={!!key.revokedAt}>
-                    <td>{key.name}</td>
-                    <td><code class="inline-code">{key.keyPrefix}…</code></td>
-                    <td class="scope-cell">{key.scopes.join(", ")}</td>
-                    <td>
-                      {key.lastUsedAt
-                        ? new Date(key.lastUsedAt).toLocaleDateString("de-DE")
-                        : "Nie"}
-                    </td>
-                    <td>
-                      {#if !key.revokedAt}
-                        <button
-                          class="btn btn-sm btn-ghost btn-danger-ghost"
-                          onclick={() => revokeApiKey(key.id)}>Widerrufen</button
-                        >
-                      {:else}
-                        <span class="text-muted revoked-label">Widerrufen</span>
-                      {/if}
-                    </td>
+          {#if terminalKeys.length > 0}
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Schlüssel</th>
+                    <th>Zuletzt verwendet</th>
+                    <th>Status</th>
+                    <th></th>
                   </tr>
-                {/each}
-              </tbody>
-            </table>
-            <Pagination total={apiKeys.length} bind:page={akPage} bind:pageSize={akPageSize} />
-          </div>
-        {:else}
-          <p class="text-muted">Keine API Keys vorhanden.</p>
-        {/if}
-      </Section>
+                </thead>
+                <tbody>
+                  {#each pagedTerminalKeys as key (key.id)}
+                    <tr class:row-revoked={key.revokedAt}>
+                      <td>{key.name}</td>
+                      <td><code class="inline-code">{key.keyPrefix}</code></td>
+                      <td
+                        >{key.lastUsedAt
+                          ? new Date(key.lastUsedAt).toLocaleString("de-DE")
+                          : "Nie"}</td
+                      >
+                      <td>
+                        {#if key.revokedAt}
+                          <span class="badge badge-red">Widerrufen</span>
+                        {:else}
+                          <span class="badge badge-green">Aktiv</span>
+                        {/if}
+                      </td>
+                      <td>
+                        {#if !key.revokedAt}
+                          <button
+                            class="btn btn-sm btn-ghost btn-danger-ghost"
+                            onclick={() => revokeTerminalKey(key.id)}>Widerrufen</button
+                          >
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+              <Pagination
+                total={terminalKeys.length}
+                bind:page={tkPage}
+                bind:pageSize={tkPageSize}
+              />
+            </div>
+          {:else}
+            <p class="text-muted">Keine Terminal-Schlüssel vorhanden.</p>
+          {/if}
+        </Section>
 
-      <!-- ── Phorest-Integration ──────────────────────────────────────────── -->
-      <Section title="Phorest-Integration" sub="Schichten aus Salon-Software importieren">
-        {#if phError}
-          <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
-            <span>⚠</span><span>{phError}</span>
-          </div>
-        {/if}
-        {#if phSaved}
-          <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
-            <span>✓</span><span>Phorest-Konfiguration gespeichert.</span>
-          </div>
-        {/if}
-
-        <div class="form-grid">
-          <div class="form-group">
-            <label class="form-label" for="ph-biz">Business ID</label>
-            <input
-              id="ph-biz"
-              type="text"
-              bind:value={phBusinessId}
-              class="form-input"
-              placeholder="z.B. abc123def456"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ph-branch">Branch ID</label>
-            <input
-              id="ph-branch"
-              type="text"
-              bind:value={phBranchId}
-              class="form-input"
-              placeholder="z.B. branch-001"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
-            <input
-              id="ph-user"
-              type="text"
-              bind:value={phUsername}
-              class="form-input"
-              placeholder="api@salon.de"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="ph-pass">API-Passwort</label>
-            <input
-              id="ph-pass"
-              type="password"
-              bind:value={phPassword}
-              class="form-input"
-              placeholder="••••••••"
-            />
-          </div>
-        </div>
-
-        {#snippet footer()}
-          <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
-            {phSaving ? "Speichern…" : "Konfiguration speichern"}
-          </button>
-          <button
-            class="btn btn-outline"
-            onclick={testPhorest}
-            disabled={phTesting || !phConfigured}
-          >
-            {phTesting ? "Teste…" : "Verbindung testen"}
-          </button>
-        {/snippet}
-
-        {#if phTestResult}
-          <p class="ph-test-result">{phTestResult}</p>
-        {/if}
-
-        {#if phConfigured}
-          <hr class="ph-divider" />
-
-          <h4 class="sys-subtitle">Automatischer Sync</h4>
-          <label class="toggle-label" style="margin-bottom: 1rem;">
-            <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
-            <span>
-              <strong>Auto-Sync aktivieren</strong><br />
-              <span class="text-muted ph-sync-hint"
-                >Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span
-              >
-            </span>
-          </label>
-
-          {#if phAutoSync}
-            <div class="form-group ph-cron-group">
-              <label class="form-label" for="ph-cron">Zeitplan</label>
-              <select id="ph-cron" bind:value={phSyncCron} class="form-input">
-                <option value="0 3 * * *">Täglich um 03:00</option>
-                <option value="0 */6 * * *">Alle 6 Stunden</option>
-                <option value="0 */2 * * *">Alle 2 Stunden</option>
-                <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
-              </select>
-              <p class="form-hint text-muted">
-                Zeitplan wird beim Speichern der Konfiguration aktiviert.
-              </p>
+        <!-- ── API Keys ─────────────────────────────────────────────────────── -->
+        <Section title="API Keys" sub="Schlüssel für externe Integrationen">
+          {#if showNewApiKey}
+            <div class="alert alert-success" style="margin-bottom: 1rem;">
+              <div>
+                <strong>API Key erstellt!</strong>
+                <p style="margin: 0.5rem 0;">
+                  Kopieren Sie den Schlüssel jetzt — er wird nicht erneut angezeigt:
+                </p>
+                <div class="key-display">
+                  <code class="key-code">{newApiKeyRaw}</code>
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    onclick={() => navigator.clipboard.writeText(newApiKeyRaw)}>Kopieren</button
+                  >
+                </div>
+                <button
+                  class="btn btn-ghost btn-sm"
+                  style="margin-top: 0.5rem;"
+                  onclick={() => {
+                    showNewApiKey = false;
+                    newApiKeyRaw = "";
+                  }}>Schließen</button
+                >
+              </div>
             </div>
           {/if}
 
-          <h4 class="sys-subtitle">Manueller Sync</h4>
+          <div class="api-key-create">
+            <div class="inline-create">
+              <input
+                type="text"
+                class="form-input"
+                bind:value={newApiKeyName}
+                placeholder="Name (z.B. DATEV Export)"
+              />
+              <button
+                class="btn btn-primary"
+                onclick={createApiKey}
+                disabled={apiKeyLoading || !newApiKeyName.trim() || newApiKeyScopes.length === 0}
+              >
+                Key erstellen
+              </button>
+            </div>
+            <div class="scope-chips">
+              {#each API_SCOPES as s (s.scope)}
+                <button
+                  class="btn btn-sm"
+                  class:btn-primary={newApiKeyScopes.includes(s.scope)}
+                  class:btn-ghost={!newApiKeyScopes.includes(s.scope)}
+                  onclick={() => toggleScope(s.scope)}>{s.label}</button
+                >
+              {/each}
+            </div>
+          </div>
+
+          {#if apiKeys.length > 0}
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr
+                    ><th>Name</th><th>Prefix</th><th>Scopes</th><th>Letzter Zugriff</th><th
+                    ></th></tr
+                  >
+                </thead>
+                <tbody>
+                  {#each pagedApiKeys as key (key.id)}
+                    <tr class:row-revoked={!!key.revokedAt}>
+                      <td>{key.name}</td>
+                      <td><code class="inline-code">{key.keyPrefix}…</code></td>
+                      <td class="scope-cell">{key.scopes.join(", ")}</td>
+                      <td>
+                        {key.lastUsedAt
+                          ? new Date(key.lastUsedAt).toLocaleDateString("de-DE")
+                          : "Nie"}
+                      </td>
+                      <td>
+                        {#if !key.revokedAt}
+                          <button
+                            class="btn btn-sm btn-ghost btn-danger-ghost"
+                            onclick={() => revokeApiKey(key.id)}>Widerrufen</button
+                          >
+                        {:else}
+                          <span class="text-muted revoked-label">Widerrufen</span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+              <Pagination total={apiKeys.length} bind:page={akPage} bind:pageSize={akPageSize} />
+            </div>
+          {:else}
+            <p class="text-muted">Keine API Keys vorhanden.</p>
+          {/if}
+        </Section>
+
+        <!-- ── Phorest-Integration ──────────────────────────────────────────── -->
+        <Section title="Phorest-Integration" sub="Schichten aus Salon-Software importieren">
+          {#if phError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{phError}</span>
+            </div>
+          {/if}
+          {#if phSaved}
+            <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
+              <span>✓</span><span>Phorest-Konfiguration gespeichert.</span>
+            </div>
+          {/if}
+
           <div class="form-grid">
             <div class="form-group">
-              <label class="form-label" for="ph-sync-start">Von</label>
-              <input id="ph-sync-start" type="date" bind:value={phSyncStart} class="form-input" />
+              <label class="form-label" for="ph-biz">Business ID</label>
+              <input
+                id="ph-biz"
+                type="text"
+                bind:value={phBusinessId}
+                class="form-input"
+                placeholder="z.B. abc123def456"
+              />
             </div>
             <div class="form-group">
-              <label class="form-label" for="ph-sync-end">Bis</label>
-              <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
+              <label class="form-label" for="ph-branch">Branch ID</label>
+              <input
+                id="ph-branch"
+                type="text"
+                bind:value={phBranchId}
+                class="form-input"
+                placeholder="z.B. branch-001"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ph-user">API-Benutzername (E-Mail)</label>
+              <input
+                id="ph-user"
+                type="text"
+                bind:value={phUsername}
+                class="form-input"
+                placeholder="api@salon.de"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ph-pass">API-Passwort</label>
+              <input
+                id="ph-pass"
+                type="password"
+                bind:value={phPassword}
+                class="form-input"
+                placeholder="••••••••"
+              />
             </div>
           </div>
-          <div class="settings-actions">
-            <button
-              class="btn btn-primary"
-              onclick={syncPhorest}
-              disabled={phSyncing || !phSyncStart || !phSyncEnd}
-            >
-              {phSyncing ? "Synchronisiere…" : "Schichten importieren"}
-            </button>
-          </div>
-          <p class="form-hint text-muted">
-            Mitarbeiter werden automatisch per E-Mail oder Name zugeordnet.
-          </p>
 
-          {#if phSyncResult}
-            <div class="ph-sync-result">
-              <strong>{phSyncResult.created}</strong> Schichten importiert,
-              <strong>{phSyncResult.skipped}</strong> übersprungen (bereits vorhanden),
-              <strong>{phSyncResult.unmapped}</strong> ohne Zuordnung,
-              <strong>{phSyncResult.errors}</strong> Fehler
-            </div>
+          {#snippet footer()}
+            <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
+              {phSaving ? "Speichern…" : "Konfiguration speichern"}
+            </button>
+            <button
+              class="btn btn-outline"
+              onclick={testPhorest}
+              disabled={phTesting || !phConfigured}
+            >
+              {phTesting ? "Teste…" : "Verbindung testen"}
+            </button>
+          {/snippet}
+
+          {#if phTestResult}
+            <p class="ph-test-result">{phTestResult}</p>
           {/if}
-        {/if}
-      </Section>
-    {/if}
-  {/snippet}
-</SectionStack>
+
+          {#if phConfigured}
+            <hr class="ph-divider" />
+
+            <h4 class="sys-subtitle">Automatischer Sync</h4>
+            <label class="toggle-label" style="margin-bottom: 1rem;">
+              <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
+              <span>
+                <strong>Auto-Sync aktivieren</strong><br />
+                <span class="text-muted ph-sync-hint"
+                  >Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span
+                >
+              </span>
+            </label>
+
+            {#if phAutoSync}
+              <div class="form-group ph-cron-group">
+                <label class="form-label" for="ph-cron">Zeitplan</label>
+                <select id="ph-cron" bind:value={phSyncCron} class="form-input">
+                  <option value="0 3 * * *">Täglich um 03:00</option>
+                  <option value="0 */6 * * *">Alle 6 Stunden</option>
+                  <option value="0 */2 * * *">Alle 2 Stunden</option>
+                  <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
+                </select>
+                <p class="form-hint text-muted">
+                  Zeitplan wird beim Speichern der Konfiguration aktiviert.
+                </p>
+              </div>
+            {/if}
+
+            <h4 class="sys-subtitle">Manueller Sync</h4>
+            <div class="form-grid">
+              <div class="form-group">
+                <label class="form-label" for="ph-sync-start">Von</label>
+                <input id="ph-sync-start" type="date" bind:value={phSyncStart} class="form-input" />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="ph-sync-end">Bis</label>
+                <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button
+                class="btn btn-primary"
+                onclick={syncPhorest}
+                disabled={phSyncing || !phSyncStart || !phSyncEnd}
+              >
+                {phSyncing ? "Synchronisiere…" : "Schichten importieren"}
+              </button>
+            </div>
+            <p class="form-hint text-muted">
+              Mitarbeiter werden automatisch per E-Mail oder Name zugeordnet.
+            </p>
+
+            {#if phSyncResult}
+              <div class="ph-sync-result">
+                <strong>{phSyncResult.created}</strong> Schichten importiert,
+                <strong>{phSyncResult.skipped}</strong> übersprungen (bereits vorhanden),
+                <strong>{phSyncResult.unmapped}</strong> ohne Zuordnung,
+                <strong>{phSyncResult.errors}</strong> Fehler
+              </div>
+            {/if}
+          {/if}
+        </Section>
+      {/if}
+    {/snippet}
+  </SectionStack>
+</div>
 
 <style>
   /* Loading placeholder while settings are fetching */

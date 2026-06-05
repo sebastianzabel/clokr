@@ -5,7 +5,9 @@ node_modules/
 .env
 .env.local
 .env.*.local
-apps/api/.env.test
+# Note: apps/api/.env.test is INTENTIONALLY tracked (Phase 73-07). It holds
+# placeholder (clearly non-production) values used by docker-compose.test.yml
+# to spin up the test stack for Playwright. See plan 73-07-PLAN.md task 1.
 
 # Build output
 dist/

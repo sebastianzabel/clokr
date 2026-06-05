@@ -370,182 +370,202 @@
   <title>Mitarbeitende – Clokr</title>
 </svelte:head>
 
-<ListDetail
-  view="list"
-  eyebrow="Personal"
-  title="Mitarbeitende"
-  sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
->
-  {#snippet actions()}
-    {#if isAdmin}
-      <button class="btn btn-primary" onclick={openCreate}>+ Mitarbeiter anlegen</button>
-    {/if}
-  {/snippet}
+<!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
+     `display: contents` keeps the existing ListDetail layout untouched while
+     giving E2E specs a stable page-root selector. -->
+<div data-testid="admin-employees-page" style="display: contents;">
+  <ListDetail
+    view="list"
+    eyebrow="Personal"
+    title="Mitarbeitende"
+    sub="Einladungsbasiertes Onboarding · Rollen · CSV-Import · DSGVO-konforme Anonymisierung beim Löschen."
+  >
+    {#snippet actions()}
+      {#if isAdmin}
+        <button class="btn btn-primary" onclick={openCreate} data-testid="admin-employees-add"
+          >+ Mitarbeiter anlegen</button
+        >
+      {/if}
+    {/snippet}
 
-  {#snippet list()}
-    {#if loading}
-      <div class="loading">Laden…</div>
-    {:else if error}
-      <div class="callout error">{error}</div>
-    {:else if employees.length === 0}
-      <div class="empty-state">
-        <p>Noch keine Mitarbeiter angelegt.</p>
-        {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
-          >{/if}
-      </div>
-    {:else}
-      <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
-      <Section title="Übersicht" sub="Belegschaft auf einen Blick">
-        <div class="kpi-row">
-          <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
-          <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
-          <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
-          <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+    {#snippet list()}
+      {#if loading}
+        <div class="loading">Laden…</div>
+      {:else if error}
+        <div class="callout error">{error}</div>
+      {:else if employees.length === 0}
+        <div class="empty-state">
+          <p>Noch keine Mitarbeiter angelegt.</p>
+          {#if isAdmin}<button class="btn btn-primary" onclick={openCreate}>Jetzt anlegen</button
+            >{/if}
         </div>
-      </Section>
+      {:else}
+        <!-- ── KPI cluster ──────────────────────────────────────────────────── -->
+        <Section title="Übersicht" sub="Belegschaft auf einen Blick">
+          <div class="kpi-row">
+            <KPIStat label="Mitarbeitende" value={String(statTotal)} unit="gesamt" />
+            <KPIStat label="Aktiv" value={String(statActive)} unit="angemeldet" />
+            <KPIStat label="Manager" value={String(statManagers)} unit="Rolle" />
+            <KPIStat label="Administratoren" value={String(statAdmins)} unit="Rolle" />
+          </div>
+        </Section>
 
-      <Section title="Personenverzeichnis" sub="Filter · Rollenwechsel · Einladungen">
-        <div class="table-toolbar">
-          <input
-            type="search"
-            class="input filter-search"
-            placeholder="Person suchen…"
-            bind:value={filterSearch}
-            aria-label="Mitarbeiter suchen"
-          />
-          <select
-            class="select filter-select"
-            bind:value={filterRole}
-            aria-label="Nach Rolle filtern"
-          >
-            <option value="">Alle Rollen</option>
-            <option value="ADMIN">Administrator</option>
-            <option value="MANAGER">Manager</option>
-            <option value="EMPLOYEE">Mitarbeiter</option>
-          </select>
-          <select
-            class="select filter-select"
-            bind:value={filterStatus}
-            aria-label="Nach Status filtern"
-          >
-            <option value="">Alle Status</option>
-            <option value="active">Aktiv</option>
-            <option value="pending">Einladung ausstehend</option>
-            <option value="expired">Einladung abgelaufen</option>
-            <option value="inactive">Inaktiv</option>
-          </select>
-          <label class="filter-checkbox">
-            <input type="checkbox" bind:checked={showAnonymized} />
-            Anonymisierte anzeigen
-          </label>
-          <span class="spacer"></span>
-          <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
-        </div>
+        <Section title="Personenverzeichnis" sub="Filter · Rollenwechsel · Einladungen">
+          <div class="table-toolbar">
+            <input
+              type="search"
+              class="input filter-search"
+              placeholder="Person suchen…"
+              bind:value={filterSearch}
+              aria-label="Mitarbeiter suchen"
+              data-testid="admin-employees-search"
+            />
+            <select
+              class="select filter-select"
+              bind:value={filterRole}
+              aria-label="Nach Rolle filtern"
+            >
+              <option value="">Alle Rollen</option>
+              <option value="ADMIN">Administrator</option>
+              <option value="MANAGER">Manager</option>
+              <option value="EMPLOYEE">Mitarbeiter</option>
+            </select>
+            <select
+              class="select filter-select"
+              bind:value={filterStatus}
+              aria-label="Nach Status filtern"
+            >
+              <option value="">Alle Status</option>
+              <option value="active">Aktiv</option>
+              <option value="pending">Einladung ausstehend</option>
+              <option value="expired">Einladung abgelaufen</option>
+              <option value="inactive">Inaktiv</option>
+            </select>
+            <label class="filter-checkbox">
+              <input type="checkbox" bind:checked={showAnonymized} />
+              Anonymisierte anzeigen
+            </label>
+            <span class="spacer"></span>
+            <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
+          </div>
 
-        <div class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>Nr.</th>
-                <th>Name</th>
-                <th>E-Mail</th>
-                <th>Rolle</th>
-                <th>Eintritt</th>
-                <th>Arbeitszeitmodell</th>
-                <th>Status</th>
-                <th>Letzter Login</th>
-                {#if isAdmin}<th>Aktionen</th>{/if}
-              </tr>
-            </thead>
-            <tbody>
-              {#each pagedEmployees as emp (emp.id)}
-                <tr
-                  class:row-inactive={!emp.user.isActive}
-                  class="row-clickable"
-                  onclick={() => goto(`/admin/employees/${emp.id}`)}
-                  role="row"
-                >
-                  <td class="col-number num">{emp.employeeNumber}</td>
-                  <td class="col-name">
-                    <a
-                      href="/admin/employees/{emp.id}"
-                      class="row-link"
-                      onclick={(e) => e.stopPropagation()}
-                    >
-                      <strong>{emp.lastName}, {emp.firstName}</strong>
-                    </a>
-                  </td>
-                  <td class="col-email">{emp.user.email}</td>
-                  <td>
-                    <span class={roleChipClass(emp.user.role)}>
-                      <span class="dot"></span>{roleLabel(emp.user.role)}
-                    </span>
-                  </td>
-                  <td class="col-date"
-                    >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
-                      day: "2-digit",
-                      month: "2-digit",
-                      year: "numeric",
-                    })}</td
-                  >
-                  <td class="col-schedule">
-                    <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
-                  </td>
-                  <td>
-                    <span class={statusClass(emp)}>
-                      <span class="dot"></span>{statusLabel(emp)}
-                    </span>
-                  </td>
-                  <td class="col-login">
-                    {emp.user.lastLoginAt
-                      ? new Date(emp.user.lastLoginAt).toLocaleDateString("de-DE", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                        })
-                      : "—"}
-                  </td>
-                  {#if isAdmin}
-                    <td class="col-actions" onclick={(e) => e.stopPropagation()} role="cell">
-                      <div class="action-group">
-                        {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
-                          <button
-                            class="btn btn-ghost btn-sm"
-                            onclick={() => resendInvitation(emp)}
-                            title="Einladung erneut senden"
-                          >
-                            Einladen
-                          </button>
-                        {/if}
-                        <a href="/admin/employees/{emp.id}" class="btn btn-ghost btn-sm">
-                          Bearbeiten
-                        </a>
-                        {#if emp.user.isActive}
-                          <button class="btn btn-ghost btn-sm" onclick={() => askDeactivate(emp)}
-                            >Deaktivieren</button
-                          >
-                        {:else}
-                          <button class="btn btn-ghost btn-sm" onclick={() => askReactivate(emp)}
-                            >Reaktivieren</button
-                          >
-                        {/if}
-                      </div>
-                    </td>
-                  {/if}
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Nr.</th>
+                  <th>Name</th>
+                  <th>E-Mail</th>
+                  <th>Rolle</th>
+                  <th>Eintritt</th>
+                  <th>Arbeitszeitmodell</th>
+                  <th>Status</th>
+                  <th>Letzter Login</th>
+                  {#if isAdmin}<th>Aktionen</th>{/if}
                 </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-        <Pagination
-          total={filteredEmployees.length}
-          bind:page={empPage}
-          bind:pageSize={empPageSize}
-        />
-      </Section>
-    {/if}
-  {/snippet}
-</ListDetail>
+              </thead>
+              <tbody>
+                {#each pagedEmployees as emp (emp.id)}
+                  <tr
+                    class:row-inactive={!emp.user.isActive}
+                    class="row-clickable"
+                    onclick={() => goto(`/admin/employees/${emp.id}`)}
+                    role="row"
+                    data-testid={`admin-employees-row-${emp.id}`}
+                  >
+                    <td class="col-number num">{emp.employeeNumber}</td>
+                    <td class="col-name">
+                      <a
+                        href="/admin/employees/{emp.id}"
+                        class="row-link"
+                        onclick={(e) => e.stopPropagation()}
+                      >
+                        <strong>{emp.lastName}, {emp.firstName}</strong>
+                      </a>
+                    </td>
+                    <td class="col-email">{emp.user.email}</td>
+                    <td>
+                      <span class={roleChipClass(emp.user.role)}>
+                        <span class="dot"></span>{roleLabel(emp.user.role)}
+                      </span>
+                    </td>
+                    <td class="col-date"
+                      >{new Date(emp.hireDate).toLocaleDateString("de-DE", {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                      })}</td
+                    >
+                    <td class="col-schedule">
+                      <span class="chip">{scheduleLabel(emp.workSchedule?.type)}</span>
+                    </td>
+                    <td>
+                      <span class={statusClass(emp)}>
+                        <span class="dot"></span>{statusLabel(emp)}
+                      </span>
+                    </td>
+                    <td class="col-login">
+                      {emp.user.lastLoginAt
+                        ? new Date(emp.user.lastLoginAt).toLocaleDateString("de-DE", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                          })
+                        : "—"}
+                    </td>
+                    {#if isAdmin}
+                      <td class="col-actions" onclick={(e) => e.stopPropagation()} role="cell">
+                        <div class="action-group">
+                          {#if !emp.user.isActive && (emp.invitationStatus === "PENDING" || emp.invitationStatus === "EXPIRED")}
+                            <button
+                              class="btn btn-ghost btn-sm"
+                              onclick={() => resendInvitation(emp)}
+                              title="Einladung erneut senden"
+                              data-testid={`admin-employees-row-${emp.id}-invite`}
+                            >
+                              Einladen
+                            </button>
+                          {/if}
+                          <a
+                            href="/admin/employees/{emp.id}"
+                            class="btn btn-ghost btn-sm"
+                            data-testid={`admin-employees-row-${emp.id}-edit`}
+                          >
+                            Bearbeiten
+                          </a>
+                          {#if emp.user.isActive}
+                            <button
+                              class="btn btn-ghost btn-sm"
+                              onclick={() => askDeactivate(emp)}
+                              data-testid={`admin-employees-row-${emp.id}-deactivate`}
+                              >Deaktivieren</button
+                            >
+                          {:else}
+                            <button
+                              class="btn btn-ghost btn-sm"
+                              onclick={() => askReactivate(emp)}
+                              data-testid={`admin-employees-row-${emp.id}-reactivate`}
+                              >Reaktivieren</button
+                            >
+                          {/if}
+                        </div>
+                      </td>
+                    {/if}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <Pagination
+            total={filteredEmployees.length}
+            bind:page={empPage}
+            bind:pageSize={empPageSize}
+          />
+        </Section>
+      {/if}
+    {/snippet}
+  </ListDetail>
+</div>
 
 <!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
 <Modal bind:open={createOpen} eyebrow="Mitarbeiter einladen" title="Person einladen">

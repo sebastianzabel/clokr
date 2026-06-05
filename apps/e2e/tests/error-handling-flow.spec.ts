@@ -24,7 +24,8 @@ test.describe("Error Handling + UX Plausibility", () => {
       if (!formIsOpen) {
         // The "Neuer Antrag" button is only shown when the form is closed
         await page.getByText(/Neuer Antrag/).first().click();
-        await page.waitForTimeout(300);
+        // Wait for the dialog to actually appear
+        await page.locator("[role='dialog']").first().waitFor({ state: "visible" });
       }
 
       const startInput = page.locator("#f-start").first();
@@ -34,11 +35,20 @@ test.describe("Error Handling + UX Plausibility", () => {
 
       await startInput.fill(startStr);
       await endInput.fill(startStr);
-      await page.waitForTimeout(300);
 
       const submit = page.getByRole("button", { name: /einreichen|antrag/i }).first();
-      if (await submit.isVisible()) await submit.click();
-      await page.waitForTimeout(1000);
+      if (await submit.isVisible()) {
+        // Wait for the leave POST response (success OR error) instead of an arbitrary delay.
+        await Promise.all([
+          page
+            .waitForResponse(
+              (r) => r.url().includes("/api/v1/leave") && r.request().method() === "POST",
+              { timeout: 5000 },
+            )
+            .catch(() => null),
+          submit.click(),
+        ]);
+      }
       return true;
     }
 
@@ -64,8 +74,16 @@ test.describe("Error Handling + UX Plausibility", () => {
     await page.goto("/login");
     await page.getByLabel("E-Mail").fill("wrong@test.de");
     await page.getByLabel("Passwort", { exact: true }).fill("wrongpassword");
-    await page.getByRole("button", { name: /anmelden/i }).click();
-    await page.waitForTimeout(2000);
+    // Wait for the auth POST to resolve (it returns 401) before screenshotting.
+    await Promise.all([
+      page
+        .waitForResponse(
+          (r) => r.url().includes("/api/v1/auth/login") && r.request().method() === "POST",
+          { timeout: 5000 },
+        )
+        .catch(() => null),
+      page.getByRole("button", { name: /anmelden/i }).click(),
+    ]);
 
     await screenshotPage(page, "flow-error-login");
     // Should still be on login page
@@ -85,8 +103,19 @@ test.describe("Error Handling + UX Plausibility", () => {
       await newPw.fill("NewStr0ng!Pass#42");
       await confirmPw.fill("NewStr0ng!Pass#42");
 
-      await page.getByRole("button", { name: /passwort ändern/i }).click();
-      await page.waitForTimeout(1000);
+      // Wait for the password-change request to resolve before screenshotting.
+      await Promise.all([
+        page
+          .waitForResponse(
+            (r) =>
+              r.url().includes("/api/v1") &&
+              (r.url().includes("password") || r.url().includes("me")) &&
+              ["POST", "PUT", "PATCH"].includes(r.request().method()),
+            { timeout: 5000 },
+          )
+          .catch(() => null),
+        page.getByRole("button", { name: /passwort ändern/i }).click(),
+      ]);
 
       await screenshotPage(page, "flow-error-password-change");
     }
@@ -95,7 +124,6 @@ test.describe("Error Handling + UX Plausibility", () => {
   test("dashboard provides clear information hierarchy", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(1000);
 
     // Check information hierarchy
     // 1. Greeting should be most prominent
@@ -129,7 +157,8 @@ test.describe("Error Handling + UX Plausibility", () => {
       .getByText(/Neuer Antrag/)
       .first()
       .click();
-    await page.waitForTimeout(300);
+    // Wait for the form dialog to actually appear before inspecting inputs.
+    await page.locator("[role='dialog']").first().waitFor({ state: "visible" });
 
     // Every visible input should have a label
     const inputs = await page.locator("input:visible, select:visible").all();

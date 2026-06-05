@@ -674,25 +674,34 @@
 </div>
 
 <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs">
+<div class="view-tabs" data-testid="leave-team-view-tabs">
   <button
+    data-testid="leave-team-view-calendar"
     class="view-tab"
     class:view-tab--active={view === "calendar"}
     onclick={() => (view = "calendar")}
   >
     Kalender
   </button>
-  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
+  <button
+    data-testid="leave-team-view-list"
+    class="view-tab"
+    class:view-tab--active={view === "list"}
+    onclick={() => (view = "list")}
+  >
     Anträge
   </button>
   <button
+    data-testid="leave-team-view-approvals"
     class="view-tab"
     class:view-tab--active={view === "approvals"}
     onclick={() => (view = "approvals")}
   >
     Genehmigungen
     {#if filteredPendingRequests.length > 0}
-      <span class="tab-badge">{filteredPendingRequests.length}</span>
+      <span class="tab-badge" data-testid="leave-team-approvals-badge"
+        >{filteredPendingRequests.length}</span
+      >
     {/if}
   </button>
 </div>
@@ -984,14 +993,23 @@
           </thead>
           <tbody>
             {#each pagedTeamRequests as req (req.id)}
-              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
+              <tr
+                id="request-{req.id}"
+                data-testid={`leave-team-row-${req.id}`}
+                data-status={req.status}
+                class:highlight-row={highlightRequestId === req.id}
+              >
                 <td class="font-medium">{req.employee.firstName} {req.employee.lastName}</td>
                 <td>{typeName(req.typeCode)}</td>
                 <td class="font-mono">{fmtDate(req.startDate)}</td>
                 <td class="font-mono">{fmtDate(req.endDate)}</td>
                 <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
                 <td>
-                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
+                  <span
+                    class="badge {statusClass(req.status)}"
+                    data-testid={`leave-team-row-${req.id}-status-badge`}
+                    >{statusLabel(req.status)}</span
+                  >
                   {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                     <span
                       class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
@@ -1009,7 +1027,13 @@
                 </td>
                 <td class="action-cell">
                   {#if req.status === "PENDING" || req.status === "CANCELLATION_REQUESTED"}
-                    <button class="btn btn-sm btn-ghost" onclick={() => openReview(req)}>
+                    <button
+                      data-testid={req.status === "CANCELLATION_REQUESTED"
+                        ? `leave-team-row-${req.id}-review-cancel`
+                        : `leave-team-row-${req.id}-review`}
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => openReview(req)}
+                    >
                       {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
                     </button>
                   {/if}
@@ -1068,6 +1092,13 @@
 {/if}
 
 <!-- ── Review-Modal ─────────────────────────────────────────────────────────── -->
+<!-- Phase 73-04 testid strategy:
+     - When the request is a regular APPROVAL/REJECTION → testids use the
+       `leave-approval-modal-*` prefix.
+     - When the request is a CANCELLATION_REQUESTED review → testids use the
+       `leave-cancel-approval-modal-*` prefix (matches CLAUDE.md leave-cancellation
+       flow contract). The same component renders both states because the
+       multi-step flow is owned by the same modal in this codebase. -->
 {#if reviewModal}
   <Modal
     bind:open={reviewOpen}
@@ -1076,112 +1107,138 @@
       ? "Stornierungsantrag prüfen"
       : "Antrag prüfen"}
   >
-    <!-- Antrag-Details -->
-    <div class="review-grid">
-      <div class="review-field">
-        <span class="review-label">Mitarbeiter</span>
-        <span class="review-value"
-          >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
-        >
-      </div>
-      <div class="review-field">
-        <span class="review-label">Art</span>
-        <span class="review-value">{typeName(reviewModal.typeCode)}</span>
-      </div>
-      <div class="review-field">
-        <span class="review-label">Zeitraum</span>
-        <span class="review-value font-mono"
-          >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
-        >
-      </div>
-      <div class="review-field">
-        <span class="review-label">Umfang</span>
-        <span class="review-value">{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span>
-      </div>
-      {#if reviewModal.note}
-        <div class="review-field review-field--full">
-          <span class="review-label">Anmerkung Mitarbeiter</span>
-          <span class="review-value">„{reviewModal.note}"</span>
+    <div
+      data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+        ? "leave-cancel-approval-modal"
+        : "leave-approval-modal"}
+      style="display: contents"
+    >
+      <!-- Antrag-Details -->
+      <div
+        class="review-grid"
+        data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+          ? "leave-cancel-approval-modal-summary"
+          : "leave-approval-modal-summary"}
+      >
+        <div class="review-field">
+          <span class="review-label">Mitarbeiter</span>
+          <span class="review-value"
+            >{reviewModal.employee.firstName} {reviewModal.employee.lastName}</span
+          >
         </div>
-      {/if}
-    </div>
-
-    <!-- Parallele Abwesenheiten -->
-    <div class="overlap-box review-section">
-      <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
-      {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
-        <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-      {:else}
-        <div class="overlap-list">
-          {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
-            <div class="overlap-row">
-              <span class="overlap-name">{o.employeeName}</span>
-              <span class="overlap-type">abwesend</span>
-              <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-            </div>
-          {/each}
+        <div class="review-field">
+          <span class="review-label">Art</span>
+          <span class="review-value">{typeName(reviewModal.typeCode)}</span>
         </div>
-      {/if}
-    </div>
-
-    <!-- Attest (nur für Krankmeldungen) -->
-    {#if SICK_CODES.includes(reviewModal.typeCode)}
-      <div class="attest-box review-section">
-        <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
-          <span>Attest liegt vor</span>
-        </label>
-        {#if reviewAttestPresent}
-          <div class="attest-dates">
-            <div class="form-group">
-              <label class="form-label" for="r-attest-from">Gültig von</label>
-              <input
-                id="r-attest-from"
-                type="date"
-                bind:value={reviewAttestFrom}
-                class="form-input attest-date-input"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="r-attest-to">Gültig bis</label>
-              <input
-                id="r-attest-to"
-                type="date"
-                bind:value={reviewAttestTo}
-                class="form-input attest-date-input"
-              />
-            </div>
+        <div class="review-field">
+          <span class="review-label">Zeitraum</span>
+          <span class="review-value font-mono"
+            >{fmtDate(reviewModal.startDate)} – {fmtDate(reviewModal.endDate)}</span
+          >
+        </div>
+        <div class="review-field">
+          <span class="review-label">Umfang</span>
+          <span class="review-value"
+            >{daysLabel(Number(reviewModal.days), reviewModal.halfDay)}</span
+          >
+        </div>
+        {#if reviewModal.note}
+          <div class="review-field review-field--full">
+            <span class="review-label">Anmerkung Mitarbeiter</span>
+            <span class="review-value">„{reviewModal.note}"</span>
           </div>
         {/if}
       </div>
-    {/if}
 
-    <!-- Review-Notiz -->
-    <div class="form-group review-section">
-      <label class="form-label" for="review-note">Anmerkung (optional)</label>
-      <input
-        id="review-note"
-        type="text"
-        bind:value={reviewNote}
-        class="form-input"
-        placeholder="Grund für Ablehnung o.ä."
-      />
-    </div>
-
-    {#if reviewError}
-      <div class="alert alert-error review-error" role="alert">
-        <span>⚠</span><span>{reviewError}</span>
+      <!-- Parallele Abwesenheiten -->
+      <div class="overlap-box review-section">
+        <p class="overlap-title">Kolleg:innen im gleichen Zeitraum</p>
+        {#if reviewOverlap.filter((o) => o.status === "APPROVED").length === 0}
+          <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
+        {:else}
+          <div class="overlap-list">
+            {#each reviewOverlap.filter((o) => o.status === "APPROVED") as o (o.id)}
+              <div class="overlap-row">
+                <span class="overlap-name">{o.employeeName}</span>
+                <span class="overlap-type">abwesend</span>
+                <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
       </div>
-    {/if}
+
+      <!-- Attest (nur für Krankmeldungen) -->
+      {#if SICK_CODES.includes(reviewModal.typeCode)}
+        <div class="attest-box review-section">
+          <p class="attest-title">Attest / Arbeitsunfähigkeitsbescheinigung</p>
+          <label class="toggle-label">
+            <input type="checkbox" bind:checked={reviewAttestPresent} class="toggle-cb" />
+            <span>Attest liegt vor</span>
+          </label>
+          {#if reviewAttestPresent}
+            <div class="attest-dates">
+              <div class="form-group">
+                <label class="form-label" for="r-attest-from">Gültig von</label>
+                <input
+                  id="r-attest-from"
+                  type="date"
+                  bind:value={reviewAttestFrom}
+                  class="form-input attest-date-input"
+                />
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="r-attest-to">Gültig bis</label>
+                <input
+                  id="r-attest-to"
+                  type="date"
+                  bind:value={reviewAttestTo}
+                  class="form-input attest-date-input"
+                />
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
+      <!-- Review-Notiz -->
+      <div class="form-group review-section">
+        <label class="form-label" for="review-note">Anmerkung (optional)</label>
+        <input
+          id="review-note"
+          data-testid={reviewModal.status === "CANCELLATION_REQUESTED"
+            ? "leave-cancel-approval-modal-reason"
+            : "leave-approval-modal-reason"}
+          type="text"
+          bind:value={reviewNote}
+          class="form-input"
+          placeholder="Grund für Ablehnung o.ä."
+        />
+      </div>
+
+      {#if reviewError}
+        <div class="alert alert-error review-error" role="alert">
+          <span>⚠</span><span>{reviewError}</span>
+        </div>
+      {/if}
+    </div>
+    <!-- /leave-approval-modal body wrapper -->
 
     {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeReview} disabled={reviewSaving}>
+      <button
+        data-testid={reviewModal!.status === "CANCELLATION_REQUESTED"
+          ? "leave-cancel-approval-modal-close"
+          : "leave-approval-modal-close"}
+        class="btn btn-ghost"
+        onclick={closeReview}
+        disabled={reviewSaving}
+      >
         Abbrechen
       </button>
       {#if reviewModal!.employeeId !== $authStore.user?.employeeId}
         {#if reviewModal!.status === "CANCELLATION_REQUESTED"}
           <button
+            data-testid="leave-cancel-approval-modal-reject"
             class="btn btn-ghost"
             onclick={() => submitReview("REJECTED")}
             disabled={reviewSaving}
@@ -1189,6 +1246,7 @@
             {reviewSaving ? "…" : "Stornierung ablehnen"}
           </button>
           <button
+            data-testid="leave-cancel-approval-modal-approve"
             class="btn btn-danger"
             onclick={() => submitReview("APPROVED")}
             disabled={reviewSaving}
@@ -1197,6 +1255,7 @@
           </button>
         {:else}
           <button
+            data-testid="leave-approval-modal-reject"
             class="btn btn-danger"
             onclick={() => submitReview("REJECTED")}
             disabled={reviewSaving}
@@ -1204,6 +1263,7 @@
             {reviewSaving ? "…" : "Ablehnen"}
           </button>
           <button
+            data-testid="leave-approval-modal-approve"
             class="btn btn-primary"
             onclick={() => submitReview("APPROVED")}
             disabled={reviewSaving}
@@ -1212,7 +1272,7 @@
           </button>
         {/if}
       {:else}
-        <p class="text-muted self-approval-note">
+        <p class="text-muted self-approval-note" data-testid="leave-approval-modal-self-block">
           Eigene Anträge können nicht selbst genehmigt werden.
         </p>
       {/if}

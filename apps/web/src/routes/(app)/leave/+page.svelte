@@ -877,792 +877,882 @@
 
 <svelte:window onmouseup={handleDayMouseUp} />
 
-<!-- ── Header ─────────────────────────────────────────────────────────────── -->
-<PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
-  {#snippet actions()}
-    {#if !showForm}
-      <button
-        class="btn btn-primary btn-sm"
-        onclick={() => {
-          editingRequest = null;
-          showForm = true;
-        }}>+ Neue Abwesenheit</button
-      >
-    {/if}
-  {/snippet}
-</PageHead>
+<!-- Phase 73-04 (D-05): `data-testid="leave-page"` is the stable surface anchor.
+     Wrapped via `display:contents` so the marker contributes nothing to layout
+     but Playwright (and future visual-regression specs) can address the page
+     root without keying off CSS class hashes. -->
+<div data-testid="leave-page" style="display: contents">
+  <!-- ── Header ─────────────────────────────────────────────────────────────── -->
+  <PageHead eyebrow="Mein Bereich" title="Urlaub & Abwesenheit" accent="Abwesenheit">
+    {#snippet actions()}
+      {#if !showForm}
+        <button
+          data-testid="leave-new-request"
+          class="btn btn-primary btn-sm"
+          onclick={() => {
+            editingRequest = null;
+            showForm = true;
+          }}>+ Neue Abwesenheit</button
+        >
+      {/if}
+    {/snippet}
+  </PageHead>
 
-{#if error}
-  <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
-{/if}
-
-<!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
-<div class="kpi-row">
-  <Card animate class="kpi-card">
-    <KPIStat
-      label="Resturlaub"
-      value={vacRemaining === null ? "–" : String(vacRemaining)}
-      unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
-      delta={vacationBalance
-        ? `von ${vacationBalance.total + vacationBalance.carryOver} verfügbar`
-        : undefined}
-    />
-  </Card>
-
-  <Card animate class="kpi-card">
-    <KPIStat
-      label="Überstundenkonto"
-      value={overtimeBalance === null
-        ? "–"
-        : `${overtimeBalance >= 0 ? "+" : "−"}${fmtH(overtimeBalance)}`}
-      delta="aktueller Saldo"
-    />
-  </Card>
-
-  <Card animate class="kpi-card">
-    <KPIStat
-      label="Krankheitstage"
-      value={String(sickDaysYear)}
-      unit={sickDaysYear === 1 ? "Tag" : "Tage"}
-      delta={`in ${calYear}`}
-    />
-  </Card>
-</div>
-
-<!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
-<div class="view-tabs">
-  <button
-    class="view-tab"
-    class:view-tab--active={view === "calendar"}
-    onclick={() => (view = "calendar")}
-  >
-    Kalender
-  </button>
-  <button class="view-tab" class:view-tab--active={view === "list"} onclick={() => (view = "list")}>
-    Meine Anträge
-  </button>
-</div>
-
-<!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
-<Modal
-  bind:open={showForm}
-  eyebrow="Urlaub"
-  title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
->
-  {#if formError}
-    <div class="alert alert-error" role="alert" style="margin-bottom:1rem">
-      <span>⚠</span><span>{formError}</span>
+  {#if error}
+    <div class="alert alert-error" role="alert" data-testid="leave-page-error">
+      <span>⚠</span><span>{error}</span>
     </div>
   {/if}
 
-  <form id="leave-form" onsubmit={preventDefault(submitRequest)} class="form-grid">
-    <div class="form-group">
-      <label class="form-label" for="f-type">Art der Abwesenheit</label>
-      <select
-        id="f-type"
-        bind:value={formType}
-        class="form-input"
-        disabled={!!editingRequest}
-        onchange={() => {
-          if (formType === "SPECIAL") loadSpecialLeaveRules();
-        }}
-      >
-        {#each TYPE_OPTIONS as t (t.code)}
-          <option value={t.code}>{t.label}</option>
-        {/each}
-      </select>
-    </div>
-
-    {#if formType === "SPECIAL"}
-      <div class="form-group">
-        <label class="form-label" for="f-special-rule">Anlass</label>
-        <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
-          <option value="">— Anlass wählen —</option>
-          {#each specialLeaveRules as rule (rule.id)}
-            <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
-          {/each}
-        </select>
-      </div>
-    {/if}
-
-    <div class="form-group">
-      <label class="form-label" for="f-start">Von</label>
-      <input id="f-start" type="date" bind:value={formStart} required class="form-input" />
-    </div>
-
-    <div class="form-group">
-      <label class="form-label" for="f-end">Bis</label>
-      <input
-        id="f-end"
-        type="date"
-        bind:value={formEnd}
-        required
-        min={formStart}
-        class="form-input"
+  <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
+  <div class="kpi-row" data-testid="leave-balance">
+    <Card animate class="kpi-card">
+      <KPIStat
+        label="Resturlaub"
+        value={vacRemaining === null ? "–" : String(vacRemaining)}
+        unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
+        delta={vacationBalance
+          ? `von ${vacationBalance.total + vacationBalance.carryOver} verfügbar`
+          : undefined}
       />
-    </div>
+    </Card>
 
-    <!-- Überstundensaldo-Info -->
-    {#if formType === "OVERTIME_COMP" && overtimeBalance !== null}
-      <div class="form-group form-group--full">
-        <div class="balance-box">
-          <div class="balance-row">
-            <span class="balance-label">Guthaben</span>
-            <span class="balance-value">{fmtH(overtimeBalance)}</span>
-          </div>
-          {#if effectiveDays > 0 || formHalfDay}
-            <div class="balance-row">
-              <span class="balance-label">
-                Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})
-              </span>
-              <span class="balance-value balance-deduct">
-                {#if hoursPreviewLoading}
-                  <span class="text-muted">…</span>
-                {:else}
-                  − {fmtH(hoursNeeded)}
-                {/if}
-              </span>
-            </div>
-            <div class="balance-divider"></div>
-            <div class="balance-row">
-              <span class="balance-label">Verbleibend</span>
-              <span class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}">
-                {#if hoursPreviewLoading}
-                  <span class="text-muted">…</span>
-                {:else}
-                  {fmtH(overtimeBalance - hoursNeeded)}
-                {/if}
-              </span>
-            </div>
-            {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
-              <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
-            {/if}
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
-    {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
-      <div class="form-group form-group--full">
-        <div class="days-info-bar">
-          <span class="days-info-icon">📅</span>
-          <span class="days-info-text">
-            <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
-            {#if hoursPreviewLoading}
-              <span class="days-info-note">(Feiertage werden geprüft…)</span>
-            {:else if serverDays !== null && serverDays !== formDays}
-              <span class="days-info-note">(Feiertage berücksichtigt)</span>
-            {/if}
-          </span>
-        </div>
-      </div>
-    {/if}
-
-    <!-- Urlaubssaldo-Info -->
-    {#if formType === "VACATION" && vacationBalance !== null}
-      <div class="form-group form-group--full">
-        <div class="balance-box">
-          <div class="balance-row">
-            <span class="balance-label">Jahresanspruch</span>
-            <span class="balance-value">{vacationBalance.total} Tage</span>
-          </div>
-          {#if vacationBalance.carryOver > 0}
-            <div class="balance-row">
-              <span class="balance-label">
-                Resturlaub Vorjahr
-                {#if vacationBalance.carryOverDeadline}
-                  <span class="balance-meta"
-                    >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
-                  >
-                {/if}
-              </span>
-              <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
-            </div>
-          {/if}
-          <div class="balance-row">
-            <span class="balance-label">Genommen</span>
-            <span class="balance-value">− {vacationBalance.used} Tage</span>
-          </div>
-          <div class="balance-row">
-            <span class="balance-label">Verfügbar</span>
-            <span class="balance-value">{vacRemaining} Tage</span>
-          </div>
-          {#if effectiveDays > 0 || formHalfDay}
-            <div class="balance-row">
-              <span class="balance-label">
-                Wird genutzt
-                {#if hoursPreviewLoading}
-                  <span class="text-muted">…</span>
-                {:else}
-                  ({daysLabel(
-                    effectiveDays,
-                    formHalfDay,
-                  )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
-                {/if}
-              </span>
-              <span class="balance-value balance-deduct">
-                {#if hoursPreviewLoading}
-                  <span class="text-muted">…</span>
-                {:else}
-                  − {effectiveDays} {effectiveDays === 1 ? "Tag" : "Tage"}
-                {/if}
-              </span>
-            </div>
-            <div class="balance-divider"></div>
-            <div class="balance-row">
-              <span class="balance-label">Verbleibend</span>
-              <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
-                {#if hoursPreviewLoading}
-                  <span class="text-muted">…</span>
-                {:else}
-                  {vacAfter} {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}
-                {/if}
-              </span>
-            </div>
-            {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
-              <p class="balance-hint-warn">⚠ Nicht genug Resturlaub vorhanden</p>
-            {/if}
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    <div class="form-group form-group--full">
-      <label class="form-label" for="f-note">Anmerkung (optional)</label>
-      <input
-        id="f-note"
-        type="text"
-        bind:value={formNote}
-        class="form-input"
-        placeholder="z.B. Hochzeit, Arzttermin …"
+    <Card animate class="kpi-card">
+      <KPIStat
+        label="Überstundenkonto"
+        value={overtimeBalance === null
+          ? "–"
+          : `${overtimeBalance >= 0 ? "+" : "−"}${fmtH(overtimeBalance)}`}
+        delta="aktueller Saldo"
       />
-    </div>
+    </Card>
 
-    <div class="form-group form-group--full">
-      <label class="toggle-label">
-        <input type="checkbox" bind:checked={formHalfDay} class="toggle-cb" />
-        <span>Halber Tag</span>
-      </label>
-    </div>
-
-    <!-- Parallele Abwesenheiten -->
-    {#if formStart && formEnd && formStart <= formEnd}
-      <div class="form-group form-group--full">
-        <div class="overlap-box">
-          <p class="overlap-title">
-            Kolleg:innen im gleichen Zeitraum
-            {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
-          </p>
-          {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
-            <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
-          {:else}
-            <div class="overlap-list">
-              {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
-                <div class="overlap-row">
-                  <span class="overlap-name">{o.employeeName}</span>
-                  <span class="overlap-type">abwesend</span>
-                  <span class="overlap-dates">{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      </div>
-    {/if}
-
-    <div class="form-actions form-group--full">
-      <button type="submit" class="btn btn-primary" disabled={formSaving}>
-        {formSaving ? "Speichern…" : editingRequest ? "Änderungen speichern" : "Antrag einreichen"}
-      </button>
-      <button type="button" class="btn btn-ghost" onclick={resetForm}> Abbrechen </button>
-    </div>
-  </form>
-</Modal>
-
-<!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
-{#if proRataWarning}
-  <div class="alert alert-warning card-animate" role="status">
-    Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
-    ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
-    nötig ist.
+    <Card animate class="kpi-card">
+      <KPIStat
+        label="Krankheitstage"
+        value={String(sickDaysYear)}
+        unit={sickDaysYear === 1 ? "Tag" : "Tage"}
+        delta={`in ${calYear}`}
+      />
+    </Card>
   </div>
-{/if}
-{#snippet vacStats()}
-  <div class="vac-stats">
-    <div class="vac-stat">
-      <div class="vac-stat-label">Anspruch</div>
-      <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
-    </div>
-    {#if vacSummaryCarryOver > 0}
-      <div class="vac-stat">
-        <div class="vac-stat-label">Resturlaub</div>
-        <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
-          {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
-            class="vac-stat-unit">T</span
-          >
-        </div>
-      </div>
-    {/if}
-    <div class="vac-stat">
-      <div class="vac-stat-label">Genommen</div>
-      <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
-    </div>
-    {#if vacSummaryPlanned > 0}
-      <div class="vac-stat">
-        <div class="vac-stat-label">Geplant</div>
-        <div class="vac-stat-value vac-stat-planned">
-          {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
-        </div>
-      </div>
-    {/if}
-    <div class="vac-stat vac-stat--highlight">
-      <div class="vac-stat-label">Verbleibend</div>
-      <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
-        {vacSummaryLeft}<span class="vac-stat-unit">T</span>
-      </div>
-    </div>
-  </div>
-{/snippet}
 
-<!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
-{#if view === "calendar"}
-  <!-- Combined month bar (v1.5 — identisch zu Zeiterfassung, with picker dropdown) -->
-  <div class="card cal-monthbar card-animate">
-    <div class="cal-monthbar-nav">
-      <button
-        class="nav-btn"
-        onclick={prevMonth}
-        title="Vorheriger Monat"
-        aria-label="Vorheriger Monat"
+  <!-- ── View-Toggle ────────────────────────────────────────────────────────── -->
+  <div class="view-tabs" data-testid="leave-view-tabs">
+    <button
+      data-testid="leave-view-calendar"
+      class="view-tab"
+      class:view-tab--active={view === "calendar"}
+      onclick={() => (view = "calendar")}
+    >
+      Kalender
+    </button>
+    <button
+      data-testid="leave-view-list"
+      class="view-tab"
+      class:view-tab--active={view === "list"}
+      onclick={() => (view = "list")}
+    >
+      Meine Anträge
+    </button>
+  </div>
+
+  <!-- ── Neuer Antrag (Modal) ─────────────────────────────────────────────────── -->
+  <!-- Phase 73-04 testid wiring:
+     - Modal primitive does not pass attrs through to its inner DOM; a
+       display:contents wrapper around the modal body owns
+       `leave-form-modal`, and the inner <form> owns `leave-form`. -->
+  <Modal
+    bind:open={showForm}
+    eyebrow="Urlaub"
+    title={editingRequest ? "Antrag bearbeiten" : "Neuer Abwesenheitsantrag"}
+  >
+    <div data-testid="leave-form-modal" style="display: contents">
+      {#if formError}
+        <div
+          class="alert alert-error"
+          role="alert"
+          style="margin-bottom:1rem"
+          data-testid="leave-form-error"
+        >
+          <span>⚠</span><span>{formError}</span>
+        </div>
+      {/if}
+
+      <form
+        id="leave-form"
+        data-testid="leave-form"
+        onsubmit={preventDefault(submitRequest)}
+        class="form-grid"
       >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-        >
-      </button>
-      <div class="cal-nav-center cal-monthbar-center">
-        <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
-        <button
-          class="cal-monthbar-title"
-          onclick={() => {
-            pickerYear = calYear;
-            showMonthPicker = !showMonthPicker;
-          }}
-          title="Monat/Jahr wählen"
-        >
-          {MONTH_NAMES[calMonth - 1]}
-          {calYear}
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
-          >
-        </button>
-        {#if showMonthPicker}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
-          <div class="month-picker">
-            <div class="month-picker-year">
-              <button onclick={() => pickerYear--}>‹</button>
-              <span>{pickerYear}</span>
-              <button onclick={() => pickerYear++}>›</button>
-            </div>
-            <div class="month-picker-grid">
-              {#each MONTH_NAMES as name, i (i)}
-                <button
-                  class="month-picker-btn"
-                  class:active={i + 1 === calMonth && pickerYear === calYear}
-                  onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name.slice(0, 3)}</button
-                >
-              {/each}
-            </div>
-            <button class="month-picker-today" onclick={gotoToday}>Heute</button>
-          </div>
-        {/if}
-      </div>
-      <button
-        class="nav-btn"
-        onclick={nextMonth}
-        title="Nächster Monat"
-        aria-label="Nächster Monat"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
-      <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
-    </div>
-    {#if showVacSummary}
-      {@render vacStats()}
-    {/if}
-  </div>
-
-  <div class="cal-section card card-animate">
-    <!-- Wochentag-Header -->
-    <div class="cal-grid cal-header-row">
-      {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
-        <div class="cal-dow">{wd}</div>
-      {/each}
-    </div>
-
-    <!-- Tage -->
-    {#if calLoading}
-      <div class="cal-grid">
-        {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
-      </div>
-    {:else}
-      <div class="cal-grid">
-        {#each calDays as day (day.dateStr)}
-          {@const entries = calMap.get(day.dateStr) ?? []}
-          {@const holidays = entries.filter((e) => e.isHoliday)}
-          {@const absences = entries.filter((e) => !e.isHoliday)}
-          {@const isHoliday = holidays.length > 0}
-          <div
-            class="cal-cell"
-            class:cal-current={day.isCurrentMonth}
-            class:cal-other={!day.isCurrentMonth}
-            class:cal-today={day.isToday}
-            class:cal-weekend={day.isWeekend && day.isCurrentMonth}
-            class:cal-holiday={isHoliday && day.isCurrentMonth}
-            class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
-            role={day.isCurrentMonth ? "button" : undefined}
-            tabindex={day.isCurrentMonth ? 0 : undefined}
-            onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
-            onmouseenter={() => handleDayMouseEnter(day.dateStr)}
-            onkeydown={(e) => {
-              if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
-                e.preventDefault();
-                formStart = day.dateStr;
-                formEnd = day.dateStr;
-                editingRequest = null;
-                showForm = true;
-              }
+        <div class="form-group">
+          <label class="form-label" for="f-type">Art der Abwesenheit</label>
+          <select
+            id="f-type"
+            data-testid="leave-form-type"
+            bind:value={formType}
+            class="form-input"
+            disabled={!!editingRequest}
+            onchange={() => {
+              if (formType === "SPECIAL") loadSpecialLeaveRules();
             }}
           >
-            <span class="cal-day-num">{day.dayNum}</span>
-            {#if isHoliday && day.isCurrentMonth}
-              <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
-                {holidays[0].firstName}
-              </div>
-            {/if}
-            <div class="cal-chips">
-              {#each absences.filter((e) => e.isOwn || e.status === "APPROVED") as e (e.id)}
-                {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-                {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-                {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-                {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                <div
-                  class="cal-chip"
-                  class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                  class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                  class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                  class:cal-chip--pending={e.status === "PENDING" ||
-                    e.status === "CANCELLATION_REQUESTED"}
-                  class:cal-chip--own={e.isOwn}
-                  style:background={typeColor(e.typeCode, e.status, e.isOwn)}
-                  title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
-                    ? ' · ' + e.typeName
-                    : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-                >
-                  {#if _showLabel}
-                    <span class="cal-chip-name">{e.firstName}</span>
-                    {#if e.isOwn && e.typeName}
-                      <span class="cal-chip-type">{e.typeName}</span>
-                    {:else}
-                      <span class="cal-chip-type">abwesend</span>
-                    {/if}
-                  {/if}
-                </div>
+            {#each TYPE_OPTIONS as t (t.code)}
+              <option value={t.code}>{t.label}</option>
+            {/each}
+          </select>
+        </div>
+
+        {#if formType === "SPECIAL"}
+          <div class="form-group">
+            <label class="form-label" for="f-special-rule">Anlass</label>
+            <select id="f-special-rule" bind:value={formSpecialRuleId} class="form-input" required>
+              <option value="">— Anlass wählen —</option>
+              {#each specialLeaveRules as rule (rule.id)}
+                <option value={rule.id}>{rule.name} ({Number(rule.defaultDays)} Tage)</option>
               {/each}
+            </select>
+          </div>
+        {/if}
+
+        <div class="form-group">
+          <label class="form-label" for="f-start">Von</label>
+          <input
+            id="f-start"
+            data-testid="leave-form-from"
+            type="date"
+            bind:value={formStart}
+            required
+            class="form-input"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="f-end">Bis</label>
+          <input
+            id="f-end"
+            data-testid="leave-form-to"
+            type="date"
+            bind:value={formEnd}
+            required
+            min={formStart}
+            class="form-input"
+          />
+        </div>
+
+        <!-- Überstundensaldo-Info -->
+        {#if formType === "OVERTIME_COMP" && overtimeBalance !== null}
+          <div class="form-group form-group--full">
+            <div class="balance-box">
+              <div class="balance-row">
+                <span class="balance-label">Guthaben</span>
+                <span class="balance-value">{fmtH(overtimeBalance)}</span>
+              </div>
+              {#if effectiveDays > 0 || formHalfDay}
+                <div class="balance-row">
+                  <span class="balance-label">
+                    Wird genutzt ({daysLabel(effectiveDays, formHalfDay)})
+                  </span>
+                  <span class="balance-value balance-deduct">
+                    {#if hoursPreviewLoading}
+                      <span class="text-muted">…</span>
+                    {:else}
+                      − {fmtH(hoursNeeded)}
+                    {/if}
+                  </span>
+                </div>
+                <div class="balance-divider"></div>
+                <div class="balance-row">
+                  <span class="balance-label">Verbleibend</span>
+                  <span
+                    class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}"
+                  >
+                    {#if hoursPreviewLoading}
+                      <span class="text-muted">…</span>
+                    {:else}
+                      {fmtH(overtimeBalance - hoursNeeded)}
+                    {/if}
+                  </span>
+                </div>
+                {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
+                  <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
+                {/if}
+              {/if}
             </div>
           </div>
-        {/each}
-      </div>
-    {/if}
+        {/if}
 
-    <!-- Legende -->
-    <div class="cal-legend">
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-vacation)"></span>Urlaub</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-overtime)"
-        ></span>ÜSt-Ausgleich</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
-        ></span>Kinderkrank</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-special)"
-        ></span>Sonderurlaub</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-education)"
-        ></span>Bildungsurlaub</span
-      >
-      <span class="legend-item"
-        ><span class="legend-dot" style:background="var(--leave-type-absent)"></span>Abwesend</span
-      >
-      <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
-      <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
-    </div>
-  </div>
-
-  <!-- iCal-Download -->
-  <div class="ical-section">
-    <div class="ical-header">
-      <span class="ical-icon">📥</span>
-      <div>
-        <p class="ical-title">Kalender exportieren</p>
-        <p class="ical-desc">
-          Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
-        </p>
-      </div>
-    </div>
-    <div class="ical-actions">
-      <button
-        class="btn btn-ghost btn-sm"
-        onclick={() => downloadIcal("personal")}
-        disabled={icalDownloading}
-      >
-        {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
-      </button>
-      <button
-        class="btn btn-ghost btn-sm"
-        onclick={() => downloadIcal("team")}
-        disabled={icalDownloading}
-      >
-        {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
-      </button>
-    </div>
-  </div>
-{/if}
-
-<!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
-{#if view === "list"}
-  <!-- Combined year-bar (v1.5 — identisch zu Zeiterfassung, static year title) -->
-  <div class="card cal-monthbar card-animate">
-    <div class="cal-monthbar-nav">
-      <button
-        class="nav-btn"
-        onclick={prevYear}
-        title="Vorheriges Jahr"
-        aria-label="Vorheriges Jahr"
-      >
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
-        >
-      </button>
-      <div class="cal-nav-center cal-monthbar-center">
-        <div class="serif-eyebrow cal-monthbar-eyebrow">Urlaubsjahr</div>
-        <div class="cal-monthbar-title cal-monthbar-title--static">{calYear}</div>
-      </div>
-      <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-        >
-      </button>
-    </div>
-    {#if showVacSummary}
-      {@render vacStats()}
-    {/if}
-  </div>
-
-  <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
-  <div class="section-header card-animate">
-    <h2>Meine Anträge</h2>
-  </div>
-
-  {#if loading}
-    <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
-  {:else}
-    <div class="filter-bar card-animate">
-      <select
-        class="form-input filter-select"
-        bind:value={filterLeaveStatus}
-        aria-label="Nach Status filtern"
-      >
-        <option value="">Alle Status</option>
-        <option value="PENDING">Ausstehend</option>
-        <option value="APPROVED">Genehmigt</option>
-        <option value="REJECTED">Abgelehnt</option>
-        <option value="CANCELLED">Storniert</option>
-        <option value="CANCELLATION_REQUESTED">Stornierung beantragt</option>
-      </select>
-      <select
-        class="form-input filter-select"
-        bind:value={filterLeaveType}
-        aria-label="Nach Art filtern"
-      >
-        <option value="">Alle Arten</option>
-        {#each TYPE_OPTIONS as t (t.code)}
-          <option value={t.code}>{t.label}</option>
-        {/each}
-      </select>
-      <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
-    </div>
-
-    {#if myRequests.length === 0}
-      <div class="empty-state card card-body">
-        <span class="empty-icon">🏖️</span>
-        <h3>Keine Anträge in {calYear}</h3>
-        <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
-      </div>
-    {:else}
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Art</th>
-              <th>Von</th>
-              <th>Bis</th>
-              <th class="text-center">Umfang</th>
-              <th>Status</th>
-              <th>Anmerkung</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each pagedMyRequests as req (req.id)}
-              {@const isOwn = req.employeeId === $authStore.user?.employeeId}
-              <tr id="request-{req.id}" class:highlight-row={highlightRequestId === req.id}>
-                <td>{typeName(req.typeCode)}</td>
-                <td class="font-mono">{fmtDate(req.startDate)}</td>
-                <td class="font-mono">{fmtDate(req.endDate)}</td>
-                <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
-                <td>
-                  <span class="badge {statusClass(req.status)}">{statusLabel(req.status)}</span>
-                  {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
-                    <span
-                      class="badge badge-attest {req.attestPresent ? 'badge-green' : 'badge-gray'}"
-                    >
-                      {req.attestPresent ? "Attest" : "Kein Attest"}
-                    </span>
-                  {/if}
-                </td>
-                <td class="note-cell text-muted">
-                  {#if req.status === "REJECTED" && req.reviewNote}
-                    <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
-                  {:else}
-                    {req.note ?? "—"}
-                  {/if}
-                </td>
-                <td class="action-cell">
-                  {#if isOwn && req.status === "PENDING"}
-                    <button class="btn btn-sm btn-ghost" onclick={() => openEditForm(req)}
-                      >Bearbeiten</button
-                    >
-                    <button
-                      class="btn btn-sm btn-ghost text-red"
-                      onclick={() => cancelRequest(req.id)}>Zurückziehen</button
-                    >
-                  {/if}
-                  {#if isOwn && req.status === "APPROVED"}
-                    <button
-                      class="btn btn-sm btn-ghost text-red"
-                      onclick={() => cancelRequest(req.id)}>Stornieren</button
-                    >
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-        <Pagination
-          total={filteredMyRequests.length}
-          bind:page={myReqPage}
-          bind:pageSize={myReqPageSize}
-        />
-      </div>
-    {/if}
-  {/if}
-{/if}<!-- Ende Liste -->
-
-<!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
-{#if attestModal}
-  <Modal
-    bind:open={attestOpen}
-    eyebrow="Krankmeldung"
-    title={`Attest: ${attestModal.employee.firstName} ${attestModal.employee.lastName}`}
-  >
-    <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-      {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
-        attestModal.typeCode,
-      )}
-    </p>
-    <div class="attest-box">
-      <label class="toggle-label">
-        <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
-        <span>Attest liegt vor</span>
-      </label>
-      {#if attestPresent}
-        <div class="attest-dates">
-          <div class="form-group">
-            <label class="form-label" for="a-from">Gültig von</label>
-            <input
-              id="a-from"
-              type="date"
-              bind:value={attestFrom}
-              class="form-input"
-              style="max-width:160px"
-            />
+        <!-- Tage-Info (sofort sichtbar, kein Ladeindikator) -->
+        {#if formStart && formEnd && formStart <= formEnd && (formDays > 0 || formHalfDay)}
+          <div class="form-group form-group--full" data-testid="leave-form-days-calc">
+            <div class="days-info-bar">
+              <span class="days-info-icon">📅</span>
+              <span class="days-info-text">
+                <strong>{daysLabel(effectiveDays, formHalfDay)}</strong>
+                {#if hoursPreviewLoading}
+                  <span class="days-info-note">(Feiertage werden geprüft…)</span>
+                {:else if serverDays !== null && serverDays !== formDays}
+                  <span class="days-info-note">(Feiertage berücksichtigt)</span>
+                {/if}
+              </span>
+            </div>
           </div>
-          <div class="form-group">
-            <label class="form-label" for="a-to">Gültig bis</label>
+        {/if}
+
+        <!-- Urlaubssaldo-Info -->
+        {#if formType === "VACATION" && vacationBalance !== null}
+          <div class="form-group form-group--full">
+            <div class="balance-box">
+              <div class="balance-row">
+                <span class="balance-label">Jahresanspruch</span>
+                <span class="balance-value">{vacationBalance.total} Tage</span>
+              </div>
+              {#if vacationBalance.carryOver > 0}
+                <div class="balance-row">
+                  <span class="balance-label">
+                    Resturlaub Vorjahr
+                    {#if vacationBalance.carryOverDeadline}
+                      <span class="balance-meta"
+                        >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
+                      >
+                    {/if}
+                  </span>
+                  <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
+                </div>
+              {/if}
+              <div class="balance-row">
+                <span class="balance-label">Genommen</span>
+                <span class="balance-value">− {vacationBalance.used} Tage</span>
+              </div>
+              <div class="balance-row">
+                <span class="balance-label">Verfügbar</span>
+                <span class="balance-value">{vacRemaining} Tage</span>
+              </div>
+              {#if effectiveDays > 0 || formHalfDay}
+                <div class="balance-row">
+                  <span class="balance-label">
+                    Wird genutzt
+                    {#if hoursPreviewLoading}
+                      <span class="text-muted">…</span>
+                    {:else}
+                      ({daysLabel(
+                        effectiveDays,
+                        formHalfDay,
+                      )}{#if serverDays !== null && serverDays !== formDays}, Feiertage abgezogen{/if})
+                    {/if}
+                  </span>
+                  <span class="balance-value balance-deduct">
+                    {#if hoursPreviewLoading}
+                      <span class="text-muted">…</span>
+                    {:else}
+                      − {effectiveDays} {effectiveDays === 1 ? "Tag" : "Tage"}
+                    {/if}
+                  </span>
+                </div>
+                <div class="balance-divider"></div>
+                <div class="balance-row">
+                  <span class="balance-label">Verbleibend</span>
+                  <span class="balance-value {(vacAfter ?? 0) < 0 ? 'balance-warn' : ''}">
+                    {#if hoursPreviewLoading}
+                      <span class="text-muted">…</span>
+                    {:else}
+                      {vacAfter} {(vacAfter ?? 0) === 1 ? "Tag" : "Tage"}
+                    {/if}
+                  </span>
+                </div>
+                {#if !hoursPreviewLoading && (vacAfter ?? 0) < 0}
+                  <p class="balance-hint-warn">⚠ Nicht genug Resturlaub vorhanden</p>
+                {/if}
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <div class="form-group form-group--full">
+          <label class="form-label" for="f-note">Anmerkung (optional)</label>
+          <input
+            id="f-note"
+            data-testid="leave-form-note"
+            type="text"
+            bind:value={formNote}
+            class="form-input"
+            placeholder="z.B. Hochzeit, Arzttermin …"
+          />
+        </div>
+
+        <div class="form-group form-group--full">
+          <label class="toggle-label">
             <input
-              id="a-to"
-              type="date"
-              bind:value={attestTo}
-              class="form-input"
-              style="max-width:160px"
+              type="checkbox"
+              data-testid="leave-form-half-day"
+              bind:checked={formHalfDay}
+              class="toggle-cb"
             />
+            <span>Halber Tag</span>
+          </label>
+        </div>
+
+        <!-- Parallele Abwesenheiten -->
+        {#if formStart && formEnd && formStart <= formEnd}
+          <div class="form-group form-group--full">
+            <div class="overlap-box">
+              <p class="overlap-title">
+                Kolleg:innen im gleichen Zeitraum
+                {#if overlapLoading}<span class="text-muted"> laden…</span>{/if}
+              </p>
+              {#if !overlapLoading && overlapEntries.filter((o) => o.status === "APPROVED").length === 0}
+                <p class="text-muted overlap-empty">Niemand sonst abwesend ✓</p>
+              {:else}
+                <div class="overlap-list">
+                  {#each overlapEntries.filter((o) => o.status === "APPROVED") as o (o.id)}
+                    <div class="overlap-row">
+                      <span class="overlap-name">{o.employeeName}</span>
+                      <span class="overlap-type">abwesend</span>
+                      <span class="overlap-dates"
+                        >{fmtDate(o.startDate)} – {fmtDate(o.endDate)}</span
+                      >
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <div class="form-actions form-group--full">
+          <button
+            type="submit"
+            data-testid="leave-form-submit"
+            class="btn btn-primary"
+            disabled={formSaving}
+          >
+            {formSaving
+              ? "Speichern…"
+              : editingRequest
+                ? "Änderungen speichern"
+                : "Antrag einreichen"}
+          </button>
+          <button
+            type="button"
+            data-testid="leave-form-cancel"
+            class="btn btn-ghost"
+            onclick={resetForm}
+          >
+            Abbrechen
+          </button>
+        </div>
+      </form>
+    </div>
+    <!-- /leave-form-modal -->
+  </Modal>
+
+  <!-- ── Übergreifend: Pro-rata Warnung + Urlaubsübersicht (beide Tabs) ──────── -->
+  {#if proRataWarning}
+    <div class="alert alert-warning card-animate" role="status">
+      Achtung: Der Mitarbeiter hat mehr Urlaub genommen oder genehmigt ({proRataWarning.used} Tage) als
+      ihm anteilig zusteht ({proRataWarning.entitlement} Tage). Bitte prüfen Sie, ob eine Rückforderung
+      nötig ist.
+    </div>
+  {/if}
+  {#snippet vacStats()}
+    <div class="vac-stats">
+      <div class="vac-stat">
+        <div class="vac-stat-label">Anspruch</div>
+        <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
+      </div>
+      {#if vacSummaryCarryOver > 0}
+        <div class="vac-stat">
+          <div class="vac-stat-label">Resturlaub</div>
+          <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
+            {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
+              class="vac-stat-unit">T</span
+            >
           </div>
         </div>
       {/if}
-    </div>
-    {#if attestError}
-      <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-        <span>⚠</span><span>{attestError}</span>
+      <div class="vac-stat">
+        <div class="vac-stat-label">Genommen</div>
+        <div class="vac-stat-value">{vacSummaryUsed}<span class="vac-stat-unit">T</span></div>
       </div>
-    {/if}
+      {#if vacSummaryPlanned > 0}
+        <div class="vac-stat">
+          <div class="vac-stat-label">Geplant</div>
+          <div class="vac-stat-value vac-stat-planned">
+            {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
+          </div>
+        </div>
+      {/if}
+      <div class="vac-stat vac-stat--highlight">
+        <div class="vac-stat-label">Verbleibend</div>
+        <div class="vac-stat-value {vacSummaryLeft < 0 ? 'neg' : 'pos'}">
+          {vacSummaryLeft}<span class="vac-stat-unit">T</span>
+        </div>
+      </div>
+    </div>
+  {/snippet}
 
-    {#snippet footer()}
-      <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
-        >Abbrechen</button
-      >
-      <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
-        {attestSaving ? "Speichern…" : "Speichern"}
-      </button>
-    {/snippet}
-  </Modal>
-{/if}
+  <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
+  {#if view === "calendar"}
+    <!-- Combined month bar (v1.5 — identisch zu Zeiterfassung, with picker dropdown) -->
+    <div class="card cal-monthbar card-animate">
+      <div class="cal-monthbar-nav">
+        <button
+          class="nav-btn"
+          onclick={prevMonth}
+          title="Vorheriger Monat"
+          aria-label="Vorheriger Monat"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+          >
+        </button>
+        <div class="cal-nav-center cal-monthbar-center">
+          <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
+          <button
+            class="cal-monthbar-title"
+            onclick={() => {
+              pickerYear = calYear;
+              showMonthPicker = !showMonthPicker;
+            }}
+            title="Monat/Jahr wählen"
+          >
+            {MONTH_NAMES[calMonth - 1]}
+            {calYear}
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"><polyline points="6 9 12 15 18 9" /></svg
+            >
+          </button>
+          {#if showMonthPicker}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="month-picker-backdrop" onclick={() => (showMonthPicker = false)}></div>
+            <div class="month-picker">
+              <div class="month-picker-year">
+                <button onclick={() => pickerYear--}>‹</button>
+                <span>{pickerYear}</span>
+                <button onclick={() => pickerYear++}>›</button>
+              </div>
+              <div class="month-picker-grid">
+                {#each MONTH_NAMES as name, i (i)}
+                  <button
+                    class="month-picker-btn"
+                    class:active={i + 1 === calMonth && pickerYear === calYear}
+                    onclick={() => gotoMonthYear(i + 1, pickerYear)}>{name.slice(0, 3)}</button
+                  >
+                {/each}
+              </div>
+              <button class="month-picker-today" onclick={gotoToday}>Heute</button>
+            </div>
+          {/if}
+        </div>
+        <button
+          class="nav-btn"
+          onclick={nextMonth}
+          title="Nächster Monat"
+          aria-label="Nächster Monat"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+          >
+        </button>
+        <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
+      </div>
+      {#if showVacSummary}
+        {@render vacStats()}
+      {/if}
+    </div>
+
+    <div class="cal-section card card-animate">
+      <!-- Wochentag-Header -->
+      <div class="cal-grid cal-header-row">
+        {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
+          <div class="cal-dow">{wd}</div>
+        {/each}
+      </div>
+
+      <!-- Tage -->
+      {#if calLoading}
+        <div class="cal-grid">
+          {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
+        </div>
+      {:else}
+        <div class="cal-grid">
+          {#each calDays as day (day.dateStr)}
+            {@const entries = calMap.get(day.dateStr) ?? []}
+            {@const holidays = entries.filter((e) => e.isHoliday)}
+            {@const absences = entries.filter((e) => !e.isHoliday)}
+            {@const isHoliday = holidays.length > 0}
+            <div
+              class="cal-cell"
+              class:cal-current={day.isCurrentMonth}
+              class:cal-other={!day.isCurrentMonth}
+              class:cal-today={day.isToday}
+              class:cal-weekend={day.isWeekend && day.isCurrentMonth}
+              class:cal-holiday={isHoliday && day.isCurrentMonth}
+              class:cal-cell--drag-selected={isDayInDragRange(day.dateStr)}
+              role={day.isCurrentMonth ? "button" : undefined}
+              tabindex={day.isCurrentMonth ? 0 : undefined}
+              onmousedown={() => handleDayMouseDown(day.dateStr, day.isCurrentMonth)}
+              onmouseenter={() => handleDayMouseEnter(day.dateStr)}
+              onkeydown={(e) => {
+                if ((e.key === "Enter" || e.key === " ") && day.isCurrentMonth) {
+                  e.preventDefault();
+                  formStart = day.dateStr;
+                  formEnd = day.dateStr;
+                  editingRequest = null;
+                  showForm = true;
+                }
+              }}
+            >
+              <span class="cal-day-num">{day.dayNum}</span>
+              {#if isHoliday && day.isCurrentMonth}
+                <div class="cal-holiday-label" title={holidays[0].typeName ?? ""}>
+                  {holidays[0].firstName}
+                </div>
+              {/if}
+              <div class="cal-chips">
+                {#each absences.filter((e) => e.isOwn || e.status === "APPROVED") as e (e.id)}
+                  {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
+                  {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                  {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                  {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                  <div
+                    class="cal-chip"
+                    class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                    class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                    class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                    class:cal-chip--pending={e.status === "PENDING" ||
+                      e.status === "CANCELLATION_REQUESTED"}
+                    class:cal-chip--own={e.isOwn}
+                    style:background={typeColor(e.typeCode, e.status, e.isOwn)}
+                    title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
+                      ? ' · ' + e.typeName
+                      : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                  >
+                    {#if _showLabel}
+                      <span class="cal-chip-name">{e.firstName}</span>
+                      {#if e.isOwn && e.typeName}
+                        <span class="cal-chip-type">{e.typeName}</span>
+                      {:else}
+                        <span class="cal-chip-type">abwesend</span>
+                      {/if}
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <!-- Legende -->
+      <div class="cal-legend">
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-vacation)"
+          ></span>Urlaub</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-overtime)"
+          ></span>ÜSt-Ausgleich</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-sick)"></span>Krank</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-sick-child)"
+          ></span>Kinderkrank</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-special)"
+          ></span>Sonderurlaub</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-education)"
+          ></span>Bildungsurlaub</span
+        >
+        <span class="legend-item"
+          ><span class="legend-dot" style:background="var(--leave-type-absent)"
+          ></span>Abwesend</span
+        >
+        <span class="legend-item"><span class="legend-holiday-dot"></span>Feiertag</span>
+        <span class="legend-item legend-pending">gestrichelt = ausstehend</span>
+      </div>
+    </div>
+
+    <!-- iCal-Download -->
+    <div class="ical-section">
+      <div class="ical-header">
+        <span class="ical-icon">📥</span>
+        <div>
+          <p class="ical-title">Kalender exportieren</p>
+          <p class="ical-desc">
+            Abwesenheiten als .ics-Datei herunterladen (Outlook, Google Calendar, Apple Kalender)
+          </p>
+        </div>
+      </div>
+      <div class="ical-actions">
+        <button
+          class="btn btn-ghost btn-sm"
+          onclick={() => downloadIcal("personal")}
+          disabled={icalDownloading}
+        >
+          {icalDownloading ? "Laden…" : "Meine Abwesenheiten"}
+        </button>
+        <button
+          class="btn btn-ghost btn-sm"
+          onclick={() => downloadIcal("team")}
+          disabled={icalDownloading}
+        >
+          {icalDownloading ? "Laden…" : "Team-Abwesenheiten"}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- ── Listen-Ansicht ────────────────────────────────────────────────────── -->
+  {#if view === "list"}
+    <!-- Combined year-bar (v1.5 — identisch zu Zeiterfassung, static year title) -->
+    <div class="card cal-monthbar card-animate">
+      <div class="cal-monthbar-nav">
+        <button
+          class="nav-btn"
+          onclick={prevYear}
+          title="Vorheriges Jahr"
+          aria-label="Vorheriges Jahr"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+          >
+        </button>
+        <div class="cal-nav-center cal-monthbar-center">
+          <div class="serif-eyebrow cal-monthbar-eyebrow">Urlaubsjahr</div>
+          <div class="cal-monthbar-title cal-monthbar-title--static">{calYear}</div>
+        </div>
+        <button class="nav-btn" onclick={nextYear} title="Nächstes Jahr" aria-label="Nächstes Jahr">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+          >
+        </button>
+      </div>
+      {#if showVacSummary}
+        {@render vacStats()}
+      {/if}
+    </div>
+
+    <!-- ── Anträge-Tabelle ─────────────────────────────────────────────────────── -->
+    <div class="section-header card-animate">
+      <h2>Meine Anträge</h2>
+    </div>
+
+    {#if loading}
+      <div class="card card-body skeleton skeleton-card" style="height:180px"></div>
+    {:else}
+      <div class="filter-bar card-animate">
+        <select
+          data-testid="leave-filter-status"
+          class="form-input filter-select"
+          bind:value={filterLeaveStatus}
+          aria-label="Nach Status filtern"
+        >
+          <option value="" data-testid="leave-filter-open">Alle Status</option>
+          <option value="PENDING">Ausstehend</option>
+          <option value="APPROVED" data-testid="leave-filter-approved">Genehmigt</option>
+          <option value="REJECTED">Abgelehnt</option>
+          <option value="CANCELLED">Storniert</option>
+          <option value="CANCELLATION_REQUESTED" data-testid="leave-filter-cancellation"
+            >Stornierung beantragt</option
+          >
+        </select>
+        <select
+          data-testid="leave-filter-type"
+          class="form-input filter-select"
+          bind:value={filterLeaveType}
+          aria-label="Nach Art filtern"
+        >
+          <option value="">Alle Arten</option>
+          {#each TYPE_OPTIONS as t (t.code)}
+            <option value={t.code}>{t.label}</option>
+          {/each}
+        </select>
+        <span class="filter-count">{filteredMyRequests.length} im Jahr {calYear}</span>
+      </div>
+
+      {#if myRequests.length === 0}
+        <div class="empty-state card card-body" data-testid="leave-empty-state">
+          <span class="empty-icon">🏖️</span>
+          <h3>Keine Anträge in {calYear}</h3>
+          <p class="text-muted">Wähle ein anderes Jahr oder lege einen neuen Antrag an.</p>
+        </div>
+      {:else}
+        <div class="table-wrapper">
+          <table class="data-table" data-testid="leave-mine-table">
+            <thead>
+              <tr>
+                <th>Art</th>
+                <th>Von</th>
+                <th>Bis</th>
+                <th class="text-center">Umfang</th>
+                <th>Status</th>
+                <th>Anmerkung</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each pagedMyRequests as req (req.id)}
+                {@const isOwn = req.employeeId === $authStore.user?.employeeId}
+                <tr
+                  id="request-{req.id}"
+                  data-testid={`leave-mine-row-${req.id}`}
+                  data-status={req.status}
+                  class:highlight-row={highlightRequestId === req.id}
+                >
+                  <td>{typeName(req.typeCode)}</td>
+                  <td class="font-mono">{fmtDate(req.startDate)}</td>
+                  <td class="font-mono">{fmtDate(req.endDate)}</td>
+                  <td class="text-center">{daysLabel(Number(req.days), req.halfDay)}</td>
+                  <td>
+                    <span
+                      class="badge {statusClass(req.status)}"
+                      data-testid={`leave-mine-row-${req.id}-status-badge`}
+                      >{statusLabel(req.status)}</span
+                    >
+                    {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
+                      <span
+                        class="badge badge-attest {req.attestPresent
+                          ? 'badge-green'
+                          : 'badge-gray'}"
+                      >
+                        {req.attestPresent ? "Attest" : "Kein Attest"}
+                      </span>
+                    {/if}
+                  </td>
+                  <td class="note-cell text-muted">
+                    {#if req.status === "REJECTED" && req.reviewNote}
+                      <span class="text-red" title={req.reviewNote}>⚠ {req.reviewNote}</span>
+                    {:else}
+                      {req.note ?? "—"}
+                    {/if}
+                  </td>
+                  <td class="action-cell">
+                    {#if isOwn && req.status === "PENDING"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-edit`}
+                        class="btn btn-sm btn-ghost"
+                        onclick={() => openEditForm(req)}>Bearbeiten</button
+                      >
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-withdraw`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => cancelRequest(req.id)}>Zurückziehen</button
+                      >
+                    {/if}
+                    {#if isOwn && req.status === "APPROVED"}
+                      <button
+                        data-testid={`leave-mine-row-${req.id}-cancel`}
+                        class="btn btn-sm btn-ghost text-red"
+                        onclick={() => cancelRequest(req.id)}>Stornieren</button
+                      >
+                    {/if}
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <Pagination
+            total={filteredMyRequests.length}
+            bind:page={myReqPage}
+            bind:pageSize={myReqPageSize}
+          />
+        </div>
+      {/if}
+    {/if}
+  {/if}<!-- Ende Liste -->
+
+  <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
+  {#if attestModal}
+    <Modal
+      bind:open={attestOpen}
+      eyebrow="Krankmeldung"
+      title={`Attest: ${attestModal.employee.firstName} ${attestModal.employee.lastName}`}
+    >
+      <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
+        {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
+          attestModal.typeCode,
+        )}
+      </p>
+      <div class="attest-box">
+        <label class="toggle-label">
+          <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
+          <span>Attest liegt vor</span>
+        </label>
+        {#if attestPresent}
+          <div class="attest-dates">
+            <div class="form-group">
+              <label class="form-label" for="a-from">Gültig von</label>
+              <input
+                id="a-from"
+                type="date"
+                bind:value={attestFrom}
+                class="form-input"
+                style="max-width:160px"
+              />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="a-to">Gültig bis</label>
+              <input
+                id="a-to"
+                type="date"
+                bind:value={attestTo}
+                class="form-input"
+                style="max-width:160px"
+              />
+            </div>
+          </div>
+        {/if}
+      </div>
+      {#if attestError}
+        <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
+          <span>⚠</span><span>{attestError}</span>
+        </div>
+      {/if}
+
+      {#snippet footer()}
+        <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
+          >Abbrechen</button
+        >
+        <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
+          {attestSaving ? "Speichern…" : "Speichern"}
+        </button>
+      {/snippet}
+    </Modal>
+  {/if}
+</div>
+
+<!-- /leave-page -->
 
 <style>
   /* ── KPI Row (v1.5 design system) ─────────────────────────────────── */

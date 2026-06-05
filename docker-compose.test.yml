@@ -1,0 +1,88 @@
+# Phase 73-07 — Test-stack compose for Playwright.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up --wait        (CI + local)
+#   docker compose -f docker-compose.test.yml down -v          (cleanup)
+#
+# Why a separate file:
+#   - Test runs use an isolated ephemeral Postgres (tmpfs, dropped on container exit)
+#     so dev DB is untouched.
+#   - ALLOW_TEST_BOOTSTRAP=true is wired up; dev/prod images leave it false.
+#   - POOL_MAX bumped to 50 to absorb 4 parallel Playwright workers (D-09).
+#
+# Ports:
+#   postgres-test  5433  (host) -> 5432 (container)
+#   api-test       4001  (host) -> 4000 (container)
+#   web-test       3001  (host) -> 3000 (container)
+#
+# 5433/4001/3001 picked so the dev stack on 5432/4000/3000 can coexist locally.
+
+name: clokr-test
+
+services:
+  postgres-test:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: clokr_test
+      POSTGRES_USER: clokr
+      POSTGRES_PASSWORD: clokr
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clokr -d clokr_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    tmpfs:
+      # Ephemeral DB — test data lives only for the lifetime of the container.
+      - /var/lib/postgresql/data
+
+  api-test:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - apps/api/.env.test
+    environment:
+      # docker-compose env overrides .env.test for connection wiring.
+      DATABASE_URL: "postgresql://clokr:clokr@postgres-test:5432/clokr_test"
+      JWT_SECRET: "test-jwt-secret-for-local-dev-only-32chars-min"
+      JWT_REFRESH_SECRET: "test-jwt-refresh-secret-for-local-dev-only-32chars"
+      ENCRYPTION_KEY: "test-encryption-key-for-local-dev-only-32chars-min"
+      CORS_ORIGIN: "http://localhost:3001"
+      APP_URL: "http://localhost:3001"
+      API_PORT: "4000"
+      API_HOST: "0.0.0.0"
+      SEED_DEMO_DATA: "false"
+    ports:
+      - "4001:4000"
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+    healthcheck:
+      # /api/v1/health is the canonical Phase 69 endpoint used by Playwright webServer.
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/api/v1/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  web-test:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      # SvelteKit reads API_URL in hooks.server.ts to proxy /api/* to the backend.
+      API_URL: "http://api-test:4000"
+      PORT: "3000"
+      ORIGIN: "http://localhost:3001"
+      NODE_ENV: "production"
+    ports:
+      - "3001:3000"
+    depends_on:
+      api-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

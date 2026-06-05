@@ -1,224 +1,240 @@
-import { test, expect } from "@playwright/test";
-import { loginAsAdmin, screenshotPage } from "./helpers";
+/**
+ * Leave (Urlaub) UI flow — Phase 73-04 migrated spec.
+ *
+ * Replaces the v1-era CSS-class + arbitrary-sleep spec with the Phase 73
+ * test-tenant fixture + `data-testid` selectors. Each test gets an
+ * isolated tenant via `tenant` fixture (Phase 73-02); selectors come
+ * from the Phase 73-04 testid surface on `/leave` + `/team/leave`.
+ *
+ * Migration rules (Plan 73-04 Task 4):
+ *   - Use `page.getByTestId(...)` exclusively for interactive elements.
+ *   - Import `test` + `expect` from `../fixtures` (NOT `@playwright/test`).
+ *   - No arbitrary sleeps — wait on state via `expect().toBeVisible()`
+ *     or `page.waitForResponse(...)` (Plan 73-06 ESLint gate enforces it).
+ *   - Per-test tenant means no shared state between tests.
+ *
+ * Auth model:
+ *   - The tenant fixture bootstraps a fresh tenant whose admin user has
+ *     email `admin@{tenantId}.test` + password `test1234` (Phase 73-01).
+ *   - Each test does a UI login with those credentials. Going through
+ *     `/login` populates localStorage exactly like the real app, so the
+ *     SvelteKit `(app)` layout + authStore work identically.
+ */
+import { test, expect } from "../fixtures";
+import type { TestTenant } from "../fixtures";
 
-test.describe("Abwesenheiten — Complete Flow", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+const API_BASE = process.env.E2E_API_BASE ?? "http://localhost:4000";
+const TEST_PASSWORD = "test1234";
+
+/**
+ * Log in via the public /login form using the bootstrap admin credentials
+ * for the fresh tenant. After this call the page is on a post-auth route
+ * (the app auto-redirects to /dashboard) with localStorage populated.
+ *
+ * UI login (not API-shortcut) is intentional: it exercises the exact
+ * flow real users take and proves the testids don't break navigation.
+ */
+async function loginAsTenantAdmin(
+  page: import("@playwright/test").Page,
+  tenant: TestTenant,
+): Promise<void> {
+  await page.goto("/login");
+  await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
+  await page.getByLabel("Passwort", { exact: true }).fill(TEST_PASSWORD);
+  await page.getByRole("button", { name: /anmelden/i }).click();
+  // Wait for the app shell to take over — the redirect target may vary
+  // (/dashboard, /time-entries, /) so wait on any (app)-layout marker.
+  await page.waitForURL(/\/(dashboard|time-entries|leave|$)/, { timeout: 10_000 });
+}
+
+/**
+ * Helper: hand-off the bootstrap admin token to a `request` call. The
+ * spec uses this to seed a second employee + leave request via the API
+ * before exercising the UI — way faster than driving the UI to create
+ * a second user.
+ */
+function tenantAuthHeaders(tenant: TestTenant): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    authorization: `Bearer ${tenant.adminToken}`,
+  };
+}
+
+test.describe("Leave (Urlaub) UI flow", () => {
+  test("page renders the documented testid surface (D-05)", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/leave");
-    await page.waitForLoadState("networkidle");
+
+    // Surface anchors — these prove the page-level testid contract.
+    await expect(page.getByTestId("leave-page")).toBeAttached();
+    await expect(page.getByTestId("leave-new-request")).toBeVisible();
+    await expect(page.getByTestId("leave-balance")).toBeVisible();
+    await expect(page.getByTestId("leave-view-tabs")).toBeVisible();
+    await expect(page.getByTestId("leave-view-calendar")).toBeVisible();
+    await expect(page.getByTestId("leave-view-list")).toBeVisible();
   });
 
-  test("page loads with tabs and vacation summary", async ({ page }) => {
-    await expect(page.getByText(/Kalender/).first()).toBeVisible();
-    await expect(page.getByText(/Meine Anträge/i).first()).toBeVisible();
-    // Vacation summary should show
-    await expect(page.getByText(/Jahresanspruch|Verbleibend/).first()).toBeVisible();
-    await screenshotPage(page, "flow-leave-overview");
-  });
-
-  test("create leave request via UI form", async ({ page }) => {
-    // Click "Neuer Antrag"
-    await page.getByText(/Neuer Antrag/).first().click();
-    await page.waitForTimeout(500);
-
-    // Form must be visible
-    const typeSelect = page.locator("#f-type").first();
-    await expect(typeSelect).toBeVisible();
-
-    // Select SICK to avoid vacation entitlement constraints
-    await typeSelect.selectOption("SICK");
-
-    // Use a date far in the future to avoid conflicts from repeated test runs
-    // (90 days + random offset based on current time)
-    const offsetDays = 90 + (Date.now() % 30);
-    const start = new Date();
-    start.setDate(start.getDate() + offsetDays);
-    while (start.getDay() === 0 || start.getDay() === 6) start.setDate(start.getDate() + 1);
-    const startStr = start.toISOString().split("T")[0];
-    const endStr = startStr;
-
-    const startInput = page.locator("#f-start").first();
-    await expect(startInput).toBeVisible();
-    await startInput.fill(startStr);
-    await page.waitForTimeout(200);
-
-    const endInput = page.locator("#f-end").first();
-    await expect(endInput).toBeVisible();
-    await endInput.fill(endStr);
-    await page.waitForTimeout(200);
-
-    await screenshotPage(page, "flow-leave-request-filled");
-
-    // Submit
-    const submitBtn = page
-      .getByRole("button", { name: /einreichen|antrag stellen|speichern/i })
-      .first();
-    await expect(submitBtn).toBeVisible();
-    await submitBtn.click();
-
-    // Wait for form to close (form-backdrop disappears on successful submit)
-    // If submit fails (e.g. overlap), the form stays open — check for error or success
-    await page.waitForTimeout(2000);
-
-    // If form is still visible with an error, the test should still pass as the form
-    // is functioning correctly (showing the error). Close it using the Abbrechen button.
-    const formDialog = page.locator(".form-dialog");
-    const isFormOpen = await formDialog.isVisible().catch(() => false);
-    if (isFormOpen) {
-      // Close the dialog using the Abbrechen button (works even when backdrop is blocked)
-      const cancelBtn = formDialog.getByRole("button", { name: /Abbrechen/i });
-      await cancelBtn.click();
-      await page.waitForTimeout(500);
-    }
-
-    // Navigate to "Meine Anträge" tab to verify the request appears
-    await page.getByText("Meine Anträge", { exact: false }).first().click();
-    await page.waitForLoadState("networkidle");
-    // At least one request should exist in the list
-    await expect(page.locator(".leave-item, .request-row, tr").first()).toBeVisible();
-
-    await screenshotPage(page, "flow-leave-created");
-  });
-
-  test("approve leave request (employee-creates, admin-approves)", async ({ page }) => {
-    // Navigate first so localStorage is populated with the auth token
+  test("switching to list view exposes filter testids", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/leave");
-    await page.waitForLoadState("networkidle");
 
-    // Extract the JWT from localStorage (auth is stored there, not in cookies)
-    const accessToken = await page.evaluate(() => localStorage.getItem("accessToken"));
-    expect(accessToken).toBeTruthy();
-    const authHeaders = { Authorization: `Bearer ${accessToken}` };
+    await page.getByTestId("leave-view-list").click();
+    await expect(page.getByTestId("leave-filter-status")).toBeVisible();
+    await expect(page.getByTestId("leave-filter-type")).toBeVisible();
+  });
 
-    // Step 1: Get employee list via admin API — find a non-admin employee with a UUID id
-    const empRes = await page.request.get("/api/v1/employees", { headers: authHeaders });
-    expect(empRes.ok()).toBeTruthy();
-    const employees = await empRes.json();
-    // Skip admin (id='e1' is non-UUID) and find a real UUID-id employee
-    const targetEmployee = employees.find(
-      (e: { id?: string; user?: { email?: string } }) =>
-        e.id && e.id.includes("-") && e.user?.email !== "admin@clokr.de",
+  test("opens form modal with full leave-form-* testid coverage", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/leave");
+
+    await page.getByTestId("leave-new-request").click();
+
+    const form = page.getByTestId("leave-form");
+    await expect(form).toBeVisible();
+    await expect(page.getByTestId("leave-form-modal")).toBeAttached();
+    await expect(form.getByTestId("leave-form-type")).toBeVisible();
+    await expect(form.getByTestId("leave-form-from")).toBeVisible();
+    await expect(form.getByTestId("leave-form-to")).toBeVisible();
+    await expect(form.getByTestId("leave-form-note")).toBeVisible();
+    await expect(form.getByTestId("leave-form-half-day")).toBeAttached();
+    await expect(form.getByTestId("leave-form-submit")).toBeVisible();
+    await expect(form.getByTestId("leave-form-cancel")).toBeVisible();
+  });
+
+  test("submits a SICK leave request via the testid form and verifies via API", async ({
+    page,
+    tenant,
+  }) => {
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/leave");
+
+    await page.getByTestId("leave-new-request").click();
+    const form = page.getByTestId("leave-form");
+    await expect(form).toBeVisible();
+
+    // SICK avoids the vacation-entitlement guard. Date 90 days out + tenant
+    // isolation prevents collisions across test runs.
+    const future = new Date();
+    future.setDate(future.getDate() + 90);
+    while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
+    const dateStr = future.toISOString().slice(0, 10);
+
+    await form.getByTestId("leave-form-type").selectOption("SICK");
+    await form.getByTestId("leave-form-from").fill(dateStr);
+    await form.getByTestId("leave-form-to").fill(dateStr);
+
+    // Wait on the create response — deterministic stand-in for arbitrary
+    // sleeps. The API contract is POST /api/v1/leave/requests; status 201
+    // on success.
+    const createResponse = page.waitForResponse(
+      (r) => r.url().includes("/api/v1/leave/requests") && r.request().method() === "POST",
     );
-    // If no non-admin employee exists, skip this test
-    if (!targetEmployee) {
-      console.log("⚠ No non-admin employee found — skipping approve leave test");
-      return;
-    }
+    await form.getByTestId("leave-form-submit").click();
+    const response = await createResponse;
+    expect(response.status()).toBe(201);
 
-    // Step 2: Compute a future weekday (60 days out to avoid conflicts from other test runs)
-    const futureDate = new Date();
-    futureDate.setDate(futureDate.getDate() + 60);
-    while (futureDate.getDay() === 0 || futureDate.getDay() === 6) {
-      futureDate.setDate(futureDate.getDate() + 1);
-    }
-    const startDate = futureDate.toISOString().split("T")[0];
-    const endDate = startDate;
+    // Cross-check via API (use tenant.adminToken, not the UI's token, so we
+    // assert the request landed in this tenant's scope).
+    const listRes = await page.request.get(`${API_BASE}/api/v1/leave/requests`, {
+      headers: tenantAuthHeaders(tenant),
+    });
+    expect(listRes.ok()).toBeTruthy();
+    const requests = (await listRes.json()) as Array<{
+      id: string;
+      startDate: string;
+      typeCode: string;
+    }>;
+    const created = requests.find((r) => r.startDate.slice(0, 10) === dateStr);
+    expect(created, `Created SICK leave on ${dateStr} should be visible via API`).toBeDefined();
+    expect(created!.typeCode).toBe("SICK");
 
-    // Step 3: Create SICK leave request via API as admin (admin can create leave for any employee)
-    const leaveRes = await page.request.post("/api/v1/leave/requests", {
-      headers: authHeaders,
+    // The list view should now address the new row by its id. The list-view
+    // tab is the entry point.
+    await page.getByTestId("leave-view-list").click();
+    await expect(page.getByTestId(`leave-mine-row-${created!.id}`)).toBeVisible();
+    await expect(page.getByTestId(`leave-mine-row-${created!.id}-status-badge`)).toBeVisible();
+  });
+
+  test("manager review modal exposes leave-approval-modal-* testids", async ({
+    page,
+    tenant,
+  }) => {
+    // Seed a SICK leave for the bootstrap admin's employee via the API so the
+    // /team/leave Genehmigungen tab has something to render. Using SICK over
+    // VACATION sidesteps the vacation-entitlement guard on bare-bones tenants.
+    const future = new Date();
+    future.setDate(future.getDate() + 100);
+    while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
+    const dateStr = future.toISOString().slice(0, 10);
+
+    // Create a second employee in the tenant so the admin (manager) is not
+    // looking at their OWN request — `/team/leave` blocks self-approval and
+    // hides the approve/reject buttons for the user's own employee row.
+    const empRes = await page.request.post(`${API_BASE}/api/v1/employees`, {
+      headers: tenantAuthHeaders(tenant),
       data: {
-        type: "SICK",
-        startDate,
-        endDate,
-        employeeId: targetEmployee.id,
+        email: `emp-${Date.now()}@${tenant.tenantId}.test`,
+        firstName: "Review",
+        lastName: "Target",
+        employeeNumber: `RT-${Date.now().toString(36).slice(-6)}`,
+        hireDate: new Date("2024-01-01T00:00:00.000Z").toISOString(),
+        role: "EMPLOYEE",
       },
     });
-    // 201 = created, 409 = already exists for this date (acceptable)
-    expect(leaveRes.status() === 201 || leaveRes.status() === 409).toBeTruthy();
-    if (leaveRes.status() === 409) {
-      console.log("⚠ Leave already exists for this date — skipping approve step");
-      return;
-    }
-    const leaveData = await leaveRes.json();
-    const leaveId = leaveData.id;
-    expect(leaveId).toBeTruthy();
+    expect(empRes.ok()).toBeTruthy();
+    const employee = (await empRes.json()) as { id: string };
 
-    // Step 4: Approve via API (admin approves — SICK doesn't require approval per business rules,
-    // but we test the flow anyway; if it auto-approves that's fine)
-    const approveRes = await page.request.put(`/api/v1/leave/${leaveId}/review`, {
-      headers: authHeaders,
-      data: { action: "APPROVED" },
+    const leaveRes = await page.request.post(`${API_BASE}/api/v1/leave/requests`, {
+      headers: tenantAuthHeaders(tenant),
+      data: {
+        type: "SICK",
+        startDate: dateStr,
+        endDate: dateStr,
+        employeeId: employee.id,
+      },
     });
-    // Some leave types (SICK) auto-approve; 200 or 422 (auto-approved) both acceptable
-    expect(approveRes.status() === 200 || approveRes.status() === 422).toBeTruthy();
+    expect(leaveRes.ok()).toBeTruthy();
+    const leave = (await leaveRes.json()) as { id: string; status: string };
 
-    // Step 5: Navigate to Genehmigungen tab and assert the UI loads
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/team/leave");
+
+    // Open the review modal via the row's testid action — works regardless
+    // of which tab the page lands on (list shows it, approvals tab shows it).
+    // Switch to the list view tab first to guarantee a stable row.
+    const reviewBtn =
+      leave.status === "CANCELLATION_REQUESTED"
+        ? page.getByTestId(`leave-team-row-${leave.id}-review-cancel`)
+        : page.getByTestId(`leave-team-row-${leave.id}-review`);
+
+    // Switch to the Anträge tab on /team/leave via the testid surface — the
+    // resilient path that does not depend on the German tab label or any
+    // role/name combo.
+    await page.getByTestId("leave-team-view-list").click();
+    await expect(reviewBtn).toBeVisible();
+    await reviewBtn.click();
+
+    const modal = page.getByTestId("leave-approval-modal");
+    await expect(modal).toBeAttached();
+    await expect(page.getByTestId("leave-approval-modal-summary")).toBeVisible();
+    await expect(page.getByTestId("leave-approval-modal-reason")).toBeVisible();
+    await expect(page.getByTestId("leave-approval-modal-approve")).toBeVisible();
+    await expect(page.getByTestId("leave-approval-modal-reject")).toBeVisible();
+    await expect(page.getByTestId("leave-approval-modal-close")).toBeVisible();
+  });
+
+  test("filter testids drive the visible status filter", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/leave");
-    await page.waitForLoadState("networkidle");
-    await page.getByText(/Genehmigungen/i).first().click();
-    await page.waitForLoadState("networkidle");
+    await page.getByTestId("leave-view-list").click();
 
-    // Step 6: Verify via API that the leave exists
-    const statusRes = await page.request.get(`/api/v1/leave/${leaveId}`, {
-      headers: authHeaders,
-    });
-    expect(statusRes.ok()).toBeTruthy();
-
-    await screenshotPage(page, "flow-leave-approved");
-  });
-
-  test("special leave shows reason dropdown", async ({ page }) => {
-    await page.getByText(/Neuer Antrag|Antrag/).first().click();
-    await page.waitForTimeout(500);
-
-    const typeSelect = page.locator("#f-type").first();
-    await expect(typeSelect).toBeVisible();
-    await typeSelect.selectOption("SPECIAL");
-    await page.waitForTimeout(500);
-
-    // Should show special leave rule dropdown
-    const ruleSelect = page.locator("#f-special-rule");
-    await expect(ruleSelect).toBeVisible();
-    await screenshotPage(page, "flow-leave-special-dropdown");
-  });
-
-  test("calendar month navigation", async ({ page }) => {
-    const monthTitle = page.locator(".cal-nav-title, .cal-month-title").first();
-    await expect(monthTitle).toBeVisible();
-
-    // Open month picker
-    await monthTitle.click();
-    const picker = page.locator(".month-picker");
-    await expect(picker).toBeVisible();
-
-    // Navigate year
-    const yearNext = picker.locator("button").filter({ hasText: "›" });
-    await yearNext.click();
-    await page.waitForTimeout(300);
-
-    await screenshotPage(page, "flow-leave-month-picker");
-
-    // Close by pressing Escape
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
-  });
-
-  test("switch to Meine Anträge tab", async ({ page }) => {
-    const myRequestsTab = page.getByText("Meine Anträge", { exact: false });
-    await expect(myRequestsTab.first()).toBeVisible();
-    await myRequestsTab.first().click();
-    await page.waitForTimeout(500);
-    await screenshotPage(page, "flow-leave-my-requests");
-  });
-
-  test("manager sees approvals tab", async ({ page }) => {
-    const approvalsTab = page.getByText(/Genehmigungen/i);
-    await expect(approvalsTab.first()).toBeVisible();
-    await approvalsTab.first().click();
-    await page.waitForTimeout(500);
-    await screenshotPage(page, "flow-leave-approvals");
-  });
-
-  test("team toggle works", async ({ page }) => {
-    const teamBtn = page.locator(".team-toggle").first();
-    await expect(teamBtn).toBeVisible();
-    await teamBtn.click();
-    await page.waitForTimeout(500);
-    await screenshotPage(page, "flow-leave-team-view");
-
-    // Toggle back
-    await teamBtn.click();
-    await page.waitForTimeout(300);
+    // Select the "Genehmigt" option via the testid wired on the <option>.
+    // Playwright's selectOption resolves either by value or by label; here
+    // we use value because the testid lives on the option element itself.
+    await page.getByTestId("leave-filter-status").selectOption("APPROVED");
+    // No assertion on row count — the empty-tenant state has no rows.
+    // The contract proven here is "filter-status is addressable + driveable
+    // via testid"; row-state behavior is covered by the SICK-create test.
+    await expect(page.getByTestId("leave-filter-status")).toHaveValue("APPROVED");
   });
 });
