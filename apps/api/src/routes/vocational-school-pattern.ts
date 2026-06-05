@@ -241,10 +241,17 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
       // generator is idempotent (existing-Absence guard via BERSCH-08) so a
       // race with the daily cron is safe. Failures are logged, never surface
       // to the client. The weekly Saturday cron fills any gap.
-      void runVocationalSchoolGeneration(app.prisma, app.audit, {
+      //
+      // v1.8 fix — register the bg promise with the plugin's tracker so tests
+      // can `await app.waitForPendingBSGenerations()` to drain pending work
+      // before asserting on DB state. Production behavior is unchanged (we
+      // still don't await the promise from this handler — the response goes
+      // out immediately).
+      const bgRun = runVocationalSchoolGeneration(app.prisma, app.audit, {
         tenantId: req.user.tenantId,
         now: new Date(),
       }).catch((err) => app.log.warn({ err }, "on-demand BS-generator run failed"));
+      app.trackPendingBSGeneration?.(bgRun);
 
       return reply.code(200).send({
         patterns: created.map((p) => ({

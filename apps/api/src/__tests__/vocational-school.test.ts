@@ -7,7 +7,7 @@
 // SaldoSnapshot.periodStart lookup key, so the tests seed snapshots with the same
 // UTC-aligned month boundary (Date.UTC(y, m, 1)).
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -79,6 +79,18 @@ describe("Berufsschule (Phase 62)", () => {
     await app.prisma.schoolHolidayPeriod.deleteMany({
       where: { tenantId: data.tenant.id },
     });
+  });
+
+  // v1.8 race fix — The PUT pattern handler fires a fire-and-forget BS-generator
+  // for snappy UX (vocational-school-pattern.ts:244). In tests this races with
+  // the next test's beforeEach: the prior bg run can persist Absences AFTER our
+  // delete sweep, leaving phantom rows that break idempotency / orphan-sweep
+  // logic in BERSCH-02 etc. Drain pending bg work after every test so the next
+  // beforeEach starts from a stable baseline. Production code is untouched —
+  // tests opt into the await via the plugin's `waitForPendingBSGenerations()`
+  // decorator; PUT responses still return without awaiting.
+  afterEach(async () => {
+    await app.waitForPendingBSGenerations?.();
   });
 
   // ── BERSCH-01: Pattern CRUD ────────────────────────────────────────────────
