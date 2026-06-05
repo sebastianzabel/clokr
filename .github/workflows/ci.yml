@@ -444,19 +444,17 @@ jobs:
         env:
           PUBLIC_API_URL: http://localhost:4000
 
-      - name: Start docker dev stack
+      - name: Start docker test stack
         if: steps.changes.outputs.visual == 'true'
         run: |
-          docker compose up --build -d
-          # Wait for api + web health
-          for i in {1..60}; do
-            if curl -sf http://localhost:4000/api/v1/health > /dev/null \
-              && curl -sf http://localhost:3000/login > /dev/null; then
-              echo "Stack ready after ${i}s"
-              break
-            fi
-            sleep 2
-          done
+          # Use the 73-07 test stack (ports 5433/4001/3001) which has known-good
+          # CI defaults via apps/api/.env.test — the prod-shaped dev stack on
+          # 5432/4000/3000 needs runtime secrets that aren't available on the runner.
+          docker compose -f docker-compose.test.yml up --wait --quiet-pull
+          # Sanity probe — --wait already blocks on healthcheck, but log it so the
+          # CI annotation makes the boundary obvious.
+          curl -sf http://localhost:4001/api/v1/health || (echo "api-test not healthy" && exit 1)
+          curl -sf http://localhost:3001/login || (echo "web-test not reachable" && exit 1)
 
       - name: Run visual project inside pinned image (D-02, D-03, D-04)
         id: visual
@@ -464,7 +462,7 @@ jobs:
         run: |
           docker compose -f docker-compose.e2e.yml build e2e-visual
           docker compose -f docker-compose.e2e.yml run --rm \
-            -e PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+            -e PLAYWRIGHT_BASE_URL=http://localhost:3001 \
             -e CI=true \
             e2e-visual \
             pnpm --filter e2e exec playwright test --project=visual
@@ -487,7 +485,7 @@ jobs:
 
       - name: Tear down docker stack
         if: always() && steps.changes.outputs.visual == 'true'
-        run: docker compose down -v || true
+        run: docker compose -f docker-compose.test.yml down -v || true
 
   # ── Docker Build Check (no push) ──────────────────────────────────────
   # Validates Dockerfiles compile and warms the GHA cache for faster builds on main.
