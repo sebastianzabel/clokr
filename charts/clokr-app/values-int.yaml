@@ -28,10 +28,9 @@ secrets:
   postgresPassword: "CHANGEME-IN-ARGOCD"
   # redisUrl: "redis://redis.shared-infrastructure.svc.cluster.local:6379"  # optional, uncomment if shared redis is used
 
-# Anonymizer (Phase 72) — enabled in int, runs weekly against int's clokr DB
-# (Plans 72-03 + 72-04 wire DATABASE_URL_STAGING + the SSH Secret).
-# prodSshHost must be replaced via ArgoCD UI Parameter override (per D-11a)
-# before the first manual workflow_dispatch run — see Phase 72 D-16.
+# Anonymizer (Phase 72) — manual workflow only (see docs/data-refresh-process.md).
+# The CronJob template ships disabled. Operator runs `apps/api/scripts/anonymize-dump.ts`
+# manually + `apps/api/scripts/validate-anonymization.ts` to refresh int from prod.
+# Re-enabling automated cron + Wireguard/SSH transport is deferred to a later phase.
 anonymizer:
-  enabled: true
-  prodSshHost: "CHANGEME-PROD-HOST" # overridden via ArgoCD UI Parameters (Plan 72-03)
+  enabled: false
