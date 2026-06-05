@@ -1026,16 +1026,22 @@
 
 <PageHead eyebrow="Mein Bereich" title="Zeiterfassung">
   {#snippet actions()}
-    <button class="btn btn-primary btn-sm" onclick={() => openAdd()}>+ Neuer Eintrag</button>
+    <button
+      class="btn btn-primary btn-sm"
+      onclick={() => openAdd()}
+      data-testid="time-entries-add">+ Neuer Eintrag</button
+    >
   {/snippet}
 </PageHead>
 
+<div data-testid="time-entries-page">
 <!-- ── View Tabs ──────────────────────────────────────────────────────── -->
-<div class="view-tabs">
+<div class="view-tabs" data-testid="time-entries-view-tabs">
   <button
     class="view-tab"
     class:view-tab--active={teView === "calendar"}
     onclick={() => (teView = "calendar")}
+    data-testid="time-entries-view-calendar"
   >
     Kalender
   </button>
@@ -1043,6 +1049,7 @@
     class="view-tab"
     class:view-tab--active={teView === "list"}
     onclick={() => (teView = "list")}
+    data-testid="time-entries-view-list"
   >
     Liste
   </button>
@@ -1054,6 +1061,7 @@
 
 <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
 <Card animate class="te-monthbar-card">
+  <div data-testid="time-entries-summary">
   <MonthBar
     eyebrow="Buchungsmonat"
     date={calMonth}
@@ -1061,6 +1069,7 @@
     onPrev={() => gotoMonth(-1)}
     onNext={() => gotoMonth(1)}
     onToday={gotoToday}
+    testIdPrefix="calendar-month-header"
   >
     {#snippet extraActions()}
       {#if monthIsLocked}
@@ -1082,11 +1091,12 @@
       {/if}
     {/snippet}
   </MonthBar>
+  </div><!-- /data-testid="time-entries-summary" -->
 </Card>
 
 <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
 {#if teView === "calendar"}
-  <div class="cal-section card card-animate">
+  <div class="cal-section card card-animate" data-testid="calendar">
     <!-- Wochentage-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as d (d)}
@@ -1100,11 +1110,12 @@
         {#each Array(35) as _, i (i)}<div class="cal-cell skeleton"></div>{/each}
       </div>
     {:else}
-      <div class="cal-grid">
+      <div class="cal-grid" data-testid="calendar-grid">
         {#each calendarDays as day (day.dateStr)}
           <button
             type="button"
             data-date={day.dateStr}
+            data-testid={`calendar-cell-${day.dateStr}`}
             class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
               ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
               : ''}"
@@ -1183,7 +1194,7 @@
 
 <!-- ── Listenansicht ──────────────────────────────────────────────────── -->
 {#if teView === "list"}
-  <div class="card card-animate list-card">
+  <div class="card card-animate list-card" data-testid="time-entries-list">
     <div class="table-wrapper">
       <table class="data-table">
         <thead>
@@ -1202,7 +1213,10 @@
           {#each allEntries as slot (slot.id)}
             {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
             {@const slotArbzg = arbzgDayMap.get(slotDate)}
-            <tr class:row-invalid={slot.isInvalid}>
+            <tr
+              class:row-invalid={slot.isInvalid}
+              data-testid={`time-entry-row-${slot.id}`}
+            >
               <td class="font-mono"
                 >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                   day: "2-digit",
@@ -1238,26 +1252,58 @@
               </td>
               <td class="action-cell">
                 {#if slot.isLocked}
-                  <!-- locked entries are read-only; no actions shown (D-08) -->
+                  <!-- Locked entries are read-only (D-08). Per Phase 73-03 +
+                       74-01: render the buttons as disabled instead of
+                       hiding so the row testids stay queryable for the
+                       locked-month spec — matches the
+                       `getByTestId(...-edit).toBeDisabled()` contract. -->
+                  <span class="row-actions row-actions--visible">
+                    <span
+                      class="badge badge-locked"
+                      title="Monat ist abgeschlossen"
+                      data-testid={`time-entry-row-${slot.id}-locked-badge`}
+                      >🔒 Gesperrt</span
+                    >
+                    <button
+                      class="btn-icon"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
+                    >
+                    <button
+                      class="btn-icon btn-icon-danger"
+                      disabled
+                      title="Eintrag gesperrt"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                    >
+                  </span>
                 {:else if deleteConfirmId === slot.id}
                   <span class="del-confirm">
                     <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                    <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                      >Ja</button
+                    <button
+                      class="btn btn-sm btn-danger"
+                      onclick={() => deleteEntry(slot.id)}
+                      data-testid={`time-entry-row-${slot.id}-confirm-delete`}>Ja</button
                     >
-                    <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                      >Nein</button
+                    <button
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => (deleteConfirmId = "")}
+                      data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
                     >
                   </span>
                 {:else}
                   <span class="row-actions row-actions--visible">
-                    <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                      >✏️</button
+                    <button
+                      class="btn-icon"
+                      onclick={() => openEdit(slot)}
+                      title="Bearbeiten"
+                      data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
                     >
                     <button
                       class="btn-icon btn-icon-danger"
                       onclick={() => (deleteConfirmId = slot.id)}
-                      title="Löschen">🗑</button
+                      title="Löschen"
+                      data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                     >
                   </span>
                 {/if}
@@ -1285,137 +1331,185 @@
     ? format(new Date(formDate + "T12:00:00"), "EEEE, d. MMMM yyyy", { locale: de })
     : "Zeiteintrag"}
 >
-  {#if saveError}
-    <div class="alert alert-error" role="alert"><span>⚠</span><span>{saveError}</span></div>
-  {/if}
-  <div class="form-group">
-    <label class="form-label" for="f-date">Datum</label>
-    <input id="f-date" type="date" bind:value={formDate} class="form-input" />
-  </div>
-  <div class="form-row-two">
+  <!-- Phase 73-03: every interactive element in the time-entry modal gets a
+       data-testid following [surface]-[element]-[action]? (D-05). The modal
+       primitive owns role=dialog already; this wrapper exposes the modal
+       root + body fields by stable id for spec consumers. -->
+  <div data-testid="time-entry-modal">
+    {#if saveError}
+      <div
+        class="alert alert-error"
+        role="alert"
+        data-testid="time-entry-modal-error"
+      ><span>⚠</span><span>{saveError}</span></div>
+    {/if}
     <div class="form-group">
-      <label class="form-label" for="f-start">Arbeitsbeginn</label>
-      <input id="f-start" type="time" bind:value={formStart} class="form-input" />
-    </div>
-    <div class="form-group">
-      <div class="form-label-row">
-        <label class="form-label" for="f-end">Arbeitsende</label>
-        <label class="end-toggle">
-          <input type="checkbox" bind:checked={formHasEnd} aria-label="Arbeitsende erfasst" />
-          <span class="text-muted end-toggle-hint">erfasst</span>
-        </label>
-      </div>
+      <label class="form-label" for="f-date">Datum</label>
       <input
-        id="f-end"
-        type="time"
-        bind:value={formEnd}
+        id="f-date"
+        type="date"
+        bind:value={formDate}
         class="form-input"
-        disabled={!formHasEnd}
+        data-testid="time-entry-modal-date"
       />
     </div>
-  </div>
-  <div class="breaks-section">
-    <span class="form-label">Pausen</span>
-    {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
-      <div class="break-legacy">
-        <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
-        <button
-          class="btn btn-sm btn-ghost"
-          type="button"
-          onclick={() => {
-            formBreaks = [
-              { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
-            ];
-          }}>In Pausen umwandeln</button
-        >
-      </div>
-    {/if}
-    {#each formBreaks as brk, i (i)}
-      <div class="break-row">
+    <div class="form-row-two">
+      <div class="form-group">
+        <label class="form-label" for="f-start">Arbeitsbeginn</label>
         <input
+          id="f-start"
           type="time"
-          bind:value={brk.start}
+          bind:value={formStart}
           class="form-input"
-          aria-label={`Pause ${i + 1} Beginn`}
+          data-testid="time-entry-modal-start"
         />
-        <span class="break-sep">&ndash;</span>
-        <input
-          type="time"
-          bind:value={brk.end}
-          class="form-input"
-          aria-label={`Pause ${i + 1} Ende`}
-        />
-        <button
-          class="btn-icon"
-          type="button"
-          onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
-          title="Pause entfernen">✕</button
-        >
       </div>
-    {/each}
-    <button
-      class="btn btn-sm btn-ghost"
-      type="button"
-      onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
-      >+ Pause hinzufügen</button
-    >
-    {#if formBreakTotal > 0}
-      <span class="text-muted break-total">Gesamt: {formBreakTotal} Min.</span>
-    {/if}
-  </div>
-  <div class="form-group">
-    <label class="form-label" for="f-note">Notiz <span class="text-muted">(optional)</span></label>
-    <input
-      id="f-note"
-      type="text"
-      bind:value={formNote}
-      class="form-input"
-      placeholder="z.B. Kundentermin…"
-      maxlength="200"
-    />
-  </div>
-  {#if formNetMin !== null}
-    <div class="net-display">
-      <span class="net-label">Netto</span>
-      <span class="net-value {modalWarnings.some((w) => w.code === '§3') ? 'net-over' : ''}"
-        >{fmtMin(formNetMin)}<span class="net-unit">h</span></span
-      >
-    </div>
-  {/if}
-  {#if modalWarnings.length > 0}
-    <div class="modal-callouts">
-      {#each modalWarnings as w, i (i)}
-        <div class="callout {w.severity === 'error' ? 'error' : ''}" role="alert">
-          <svg
-            class="ico"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path
-              d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+      <div class="form-group">
+        <div class="form-label-row">
+          <label class="form-label" for="f-end">Arbeitsende</label>
+          <label class="end-toggle">
+            <input
+              type="checkbox"
+              bind:checked={formHasEnd}
+              aria-label="Arbeitsende erfasst"
+              data-testid="time-entry-modal-end-toggle"
             />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          <p><b>{w.code} ArbZG:</b> {w.message}</p>
+            <span class="text-muted end-toggle-hint">erfasst</span>
+          </label>
+        </div>
+        <input
+          id="f-end"
+          type="time"
+          bind:value={formEnd}
+          class="form-input"
+          disabled={!formHasEnd}
+          data-testid="time-entry-modal-end"
+        />
+      </div>
+    </div>
+    <div class="breaks-section" data-testid="break-slots-editor">
+      <span class="form-label">Pausen</span>
+      {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
+        <div class="break-legacy">
+          <span class="text-muted">Pauschale: {editEntry.breakMinutes} Min.</span>
+          <button
+            class="btn btn-sm btn-ghost"
+            type="button"
+            data-testid="break-slot-convert-legacy"
+            onclick={() => {
+              formBreaks = [
+                { start: "12:00", end: addMinutesToTime("12:00", editEntry!.breakMinutes) },
+              ];
+            }}>In Pausen umwandeln</button
+          >
+        </div>
+      {/if}
+      {#each formBreaks as brk, i (i)}
+        <div class="break-row" data-testid={`break-slot-${i}`}>
+          <input
+            type="time"
+            bind:value={brk.start}
+            class="form-input"
+            aria-label={`Pause ${i + 1} Beginn`}
+            data-testid={`break-slot-${i}-start`}
+          />
+          <span class="break-sep">&ndash;</span>
+          <input
+            type="time"
+            bind:value={brk.end}
+            class="form-input"
+            aria-label={`Pause ${i + 1} Ende`}
+            data-testid={`break-slot-${i}-end`}
+          />
+          <button
+            class="btn-icon"
+            type="button"
+            onclick={() => (formBreaks = formBreaks.filter((_, j) => j !== i))}
+            title="Pause entfernen"
+            data-testid={`break-slot-${i}-remove`}>✕</button
+          >
         </div>
       {/each}
+      <button
+        class="btn btn-sm btn-ghost"
+        type="button"
+        onclick={() => (formBreaks = [...formBreaks, { start: "12:00", end: "12:30" }])}
+        data-testid="break-slot-add"
+        >+ Pause hinzufügen</button
+      >
+      {#if formBreakTotal > 0}
+        <span
+          class="text-muted break-total"
+          data-testid="break-slots-total">Gesamt: {formBreakTotal} Min.</span
+        >
+      {/if}
     </div>
-  {/if}
+    <div class="form-group">
+      <label class="form-label" for="f-note">Notiz <span class="text-muted">(optional)</span></label>
+      <input
+        id="f-note"
+        type="text"
+        bind:value={formNote}
+        class="form-input"
+        placeholder="z.B. Kundentermin…"
+        maxlength="200"
+        data-testid="time-entry-modal-note"
+      />
+    </div>
+    {#if formNetMin !== null}
+      <div class="net-display" data-testid="time-entry-modal-net">
+        <span class="net-label">Netto</span>
+        <span class="net-value {modalWarnings.some((w) => w.code === '§3') ? 'net-over' : ''}"
+          >{fmtMin(formNetMin)}<span class="net-unit">h</span></span
+        >
+      </div>
+    {/if}
+    {#if modalWarnings.length > 0}
+      <div class="modal-callouts" data-testid="time-entry-modal-warnings">
+        {#each modalWarnings as w, i (i)}
+          <div class="callout {w.severity === 'error' ? 'error' : ''}" role="alert">
+            <svg
+              class="ico"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path
+                d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+              />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <p><b>{w.code} ArbZG:</b> {w.message}</p>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={closeModal} disabled={saving}>Abbrechen</button>
-    <button class="btn btn-primary" onclick={saveEntry} disabled={saving}>
+    <button
+      class="btn btn-ghost"
+      onclick={closeModal}
+      disabled={saving}
+      data-testid="time-entry-modal-cancel">Abbrechen</button
+    >
+    <button
+      class="btn btn-primary"
+      onclick={saveEntry}
+      disabled={saving}
+      data-testid="time-entry-modal-save"
+    >
       {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
     </button>
   {/snippet}
 </Modal>
+</div><!-- /data-testid="time-entries-page" -->
 
 <style>
   /* ── MonthBar card spacing (primitive itself has no margin) ────────── */

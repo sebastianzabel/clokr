@@ -24,9 +24,25 @@
     onToday?: () => void;
     /** Optional extra trailing actions slot (e.g. PDF export button). */
     extraActions?: Snippet;
+    /**
+     * Test-id surface prefix (Phase 73-03, D-05). The primitive emits
+     * `{prefix}`, `{prefix}-prev`, `{prefix}-next`, `{prefix}-today`,
+     * `{prefix}-label`. Pages override per surface, e.g. "calendar-month-header"
+     * on Zeiterfassung. Default keeps existing month-bar surface.
+     */
+    testIdPrefix?: string;
   }
 
-  let { eyebrow, date, stats = [], onPrev, onNext, onToday, extraActions }: Props = $props();
+  let {
+    eyebrow,
+    date,
+    stats = [],
+    onPrev,
+    onNext,
+    onToday,
+    extraActions,
+    testIdPrefix = "month-bar",
+  }: Props = $props();
 
   const monthLabel = $derived(
     new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(date),
@@ -36,9 +52,15 @@
 <!-- Month navigation bar primitive (D-02). Encapsulates the v1.5 .month-bar recipe.
      The primitive does NOT include `.card` because consumers typically wrap it
      in `<Card>` themselves (compositional). When used standalone, wrap in Card. -->
-<div class="month-bar">
+<div class="month-bar" data-testid={testIdPrefix}>
   <div class="month-bar-nav">
-    <button class="nav-btn" onclick={onPrev} title="Vorheriger Monat" aria-label="Vorheriger Monat">
+    <button
+      class="nav-btn"
+      onclick={onPrev}
+      title="Vorheriger Monat"
+      aria-label="Vorheriger Monat"
+      data-testid={`${testIdPrefix}-prev`}
+    >
       <svg
         width="18"
         height="18"
@@ -52,9 +74,15 @@
       {#if eyebrow}
         <div class="month-bar-eyebrow">{eyebrow}</div>
       {/if}
-      <div class="month-bar-label">{monthLabel}</div>
+      <div class="month-bar-label" data-testid={`${testIdPrefix}-label`}>{monthLabel}</div>
     </div>
-    <button class="nav-btn" onclick={onNext} title="Nächster Monat" aria-label="Nächster Monat">
+    <button
+      class="nav-btn"
+      onclick={onNext}
+      title="Nächster Monat"
+      aria-label="Nächster Monat"
+      data-testid={`${testIdPrefix}-next`}
+    >
       <svg
         width="18"
         height="18"
@@ -65,16 +93,20 @@
       >
     </button>
     {#if onToday}
-      <button class="btn btn-ghost btn-sm month-bar-today" onclick={onToday}>Heute</button>
+      <button
+        class="btn btn-ghost btn-sm month-bar-today"
+        onclick={onToday}
+        data-testid={`${testIdPrefix}-today`}>Heute</button
+      >
     {/if}
     {#if extraActions}
       <div class="month-bar-extra">{@render extraActions()}</div>
     {/if}
   </div>
   {#if stats.length}
-    <div class="month-bar-stats">
+    <div class="month-bar-stats" data-testid={`${testIdPrefix}-stats`}>
       {#each stats as s (s.label)}
-        <div class="mstat">
+        <div class="mstat" data-testid={`${testIdPrefix}-stat-${s.label}`}>
           <div class="mstat-label">{s.label}</div>
           <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
             {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}
