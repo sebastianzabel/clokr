@@ -9,5 +9,10 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["@playwright/test", "node"]
   },
-  "include": ["tests/**/*.ts", "playwright.config.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "helpers/**/*.ts",
+    "fixtures/**/*.ts",
+    "playwright.config.ts"
+  ]
 }
