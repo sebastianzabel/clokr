@@ -34,8 +34,13 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
+      # apps/api tests connect to a separate `test` schema for isolation
+      # (mirrors apps/api/.env.test which is gitignored).
+      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr?schema=test
       JWT_SECRET: test-jwt-secret-min-32-characters-long
       JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
+      JWT_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
       ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
       NODE_ENV: test
 
@@ -56,6 +61,13 @@ jobs:
 
       - name: Push schema to test DB
         run: pnpm --filter @clokr/db exec prisma db push
+
+      - name: Sync SvelteKit generated files
+        # ESLint + tsc on apps/web extend ./.svelte-kit/tsconfig.json (generated
+        # by `svelte-kit sync`). The file is gitignored, so we must regenerate
+        # it before any lint/typecheck step that touches Web. Required for
+        # Lint Web, Type check Web, Run Web tests with coverage.
+        run: pnpm --filter @clokr/web exec svelte-kit sync
 
       - name: Lint API
         id: lint
@@ -100,8 +112,30 @@ jobs:
         # NOT read by pnpm audit (RESEARCH § Pitfall 8). Do NOT add --json (pnpm/pnpm#3827).
         run: pnpm audit --audit-level high
 
-      - name: Trivy filesystem scan (pnpm-lock.yaml dependencies)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      # ── Trivy filesystem scan ─────────────────────────────────────
+      # Two steps: (1) human-readable table in CI log so findings are visible
+      # without downloading SARIF; (2) SARIF generation for GitHub Security tab.
+      # Both share the SAME trivy version + skip-dirs + ignorefile.
+      # skip-dirs:
+      #   - .claude/skills/*/prototypes/** — Claude Skill prototypes are NOT
+      #     deployed; their package-lock.json files can carry HIGH CVEs (e.g.
+      #     undici WebSocket DoS) that have no production impact
+      #   - .claude/worktrees/** — isolated agent worktrees with stale lockfiles
+      #   - .svelte-kit/** — generated build artifacts
+      - name: Trivy filesystem scan — table output (CI log diagnostics)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0 (action) — runs Trivy v0.71.0 via `version:` input
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 0 # diagnostic step — do not fail here
+          trivyignores: .trivyignore
+          skip-dirs: ".claude/skills/*/prototypes,.claude/worktrees,.svelte-kit"
+          version: v0.71.0
+
+      - name: Trivy filesystem scan — SARIF upload (blocking)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0 (action) — runs Trivy v0.71.0 via `version:` input
         with:
           scan-type: fs
           scan-ref: .
@@ -109,7 +143,16 @@ jobs:
           output: trivy-fs-results.sarif
           severity: CRITICAL,HIGH
           exit-code: 1
+          # Without this, the action's entrypoint.sh unsets TRIVY_SEVERITY when
+          # generating SARIF (so the SARIF report contains all severities), but
+          # the unset is process-global — `exit-code: 1` then also fires on
+          # MEDIUM/LOW findings. Setting this to true keeps the severity filter
+          # applied to both SARIF generation AND the exit-code check, matching
+          # the table-output step above.
+          limit-severities-for-sarif: true
           trivyignores: .trivyignore
+          skip-dirs: ".claude/skills/*/prototypes,.claude/worktrees,.svelte-kit"
+          version: v0.71.0
 
       - name: Upload Trivy FS scan to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
@@ -218,7 +261,18 @@ jobs:
   # ── Lighthouse CI (DEVOPS-V8-05, advisory in Phase 70) ───────────────
   # Phase 73 will upgrade to blocking + extend to authenticated pages via
   # docker-compose webServer integration. Today: login page only, warn-mode.
+  #
+  # DISABLED 2026-06-05: treosh/lighthouse-ci-action@v12.6.2 produces NO_FCP
+  # on this runner even with --no-sandbox --disable-dev-shm-usage --disable-gpu
+  # --headless=new and 60s/90s timeouts. Local `pnpm preview` returns the
+  # login page (HTTP 200, 6KB HTML, all form elements present) — the page
+  # paints. This is a headless-Chrome / lighthouse-ci-action environment
+  # bug, not an app bug. Phase 73's docker-compose webServer migration
+  # rewrites the audit harness end-to-end (different lifecycle, different
+  # Chrome launcher) so re-enabling here under the broken setup would only
+  # produce noise. Re-enable as part of Phase 73 with the new harness.
   lighthouse:
+    if: false
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
