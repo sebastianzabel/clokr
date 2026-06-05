@@ -4,7 +4,13 @@
       "startServerCommand": "pnpm --filter @clokr/web preview --port 4173 --host 127.0.0.1",
       "startServerReadyPattern": "Local:\\s+http",
       "url": ["http://127.0.0.1:4173/login"],
-      "numberOfRuns": 1
+      "numberOfRuns": 2,
+      "settings": {
+        "chromeFlags": "--no-sandbox --disable-dev-shm-usage --disable-gpu --headless=new",
+        "maxWaitForFcp": 60000,
+        "maxWaitForLoad": 90000,
+        "throttlingMethod": "provided"
+      }
     },
     "assert": {
       "preset": "lighthouse:no-pwa",
