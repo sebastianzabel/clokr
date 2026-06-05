@@ -36,6 +36,8 @@
  */
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "crypto";
+import { z } from "zod";
 import { config } from "../config.js";
 
 declare module "fastify" {
@@ -238,6 +240,101 @@ export async function testBootstrapRoutes(app: FastifyInstance): Promise<void> {
         return { error: "TenantNotFound" };
       }
       return { tenantId: id, deleted: true };
+    },
+  });
+
+  // ── POST /test/bootstrap-terminal (Phase 74-05) ──────────────────
+  // Provisions a TerminalApiKey + an Employee with `nfcCardId` for E2E
+  // NFC-punch tests. Mirrors Phase 73-01's bootstrap-tenant contract:
+  //   * gated by ALLOW_TEST_BOOTSTRAP (plugin-level early return above);
+  //   * only operates against test tenants (`TENANT_ID_RE` allow-list);
+  //   * returns the raw API key EXACTLY ONCE in the response — never
+  //     logged (T-74-05-01). Server logs only capture `apiKey.id`.
+  //
+  // The endpoint is idempotent in spirit but not in practice: each call
+  // creates a fresh TerminalApiKey and a fresh Employee. Teardown via
+  // `DELETE /api/v1/test/tenant/:id` already cascades both rows.
+  const bootstrapTerminalSchema = z.object({
+    tenantId: z.string(),
+    nfcCardId: z.string().optional(),
+  });
+  app.post("/bootstrap-terminal", {
+    config: { rateLimit: false },
+    schema: { tags: ["TestBootstrap"], hide: true },
+    handler: async (req, reply) => {
+      const body = bootstrapTerminalSchema.parse(req.body ?? {});
+
+      // Belt-and-braces: even with the env flag on, only `test-…` tenants
+      // may be provisioned via this surface. Prevents test tooling from
+      // accidentally minting a Terminal key against a real tenant.
+      if (!TENANT_ID_RE.test(body.tenantId)) {
+        reply.code(404);
+        return { error: "NotATestTenant" };
+      }
+
+      const tenant = await app.prisma.tenant.findUnique({
+        where: { id: body.tenantId },
+      });
+      if (!tenant) {
+        reply.code(404);
+        return { error: "TenantNotFound" };
+      }
+
+      // 1. TerminalApiKey — same generation contract as
+      //    `apps/api/src/routes/terminals.ts` (clk_ prefix, 32-byte hex,
+      //    SHA-256 hash). Raw key returned to the caller, NEVER persisted.
+      const rawKey = `clk_${randomBytes(32).toString("hex")}`;
+      const keyHash = createHash("sha256").update(rawKey).digest("hex");
+      const keyPrefix = rawKey.substring(0, 12) + "...";
+      const apiKey = await app.prisma.terminalApiKey.create({
+        data: {
+          tenantId: body.tenantId,
+          name: "test-terminal",
+          keyHash,
+          keyPrefix,
+        },
+      });
+
+      // 2. Test employee + backing User. nfcCardId defaults to a
+      //    collision-resistant random value so parallel tests on the
+      //    same tenant don't clash on the `nfcCardId @unique` index.
+      const nfcCardId = body.nfcCardId ?? `test-nfc-${randomBytes(6).toString("hex")}`;
+      const passwordHash = await bcrypt.hash(TEST_PASSWORD, 10);
+      const empSuffix = randomBytes(3).toString("hex");
+      const employeeUser = await app.prisma.user.create({
+        data: {
+          email: `terminal-${empSuffix}@${body.tenantId}.test`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId: body.tenantId,
+          userId: employeeUser.id,
+          employeeNumber: `T-${empSuffix}`,
+          firstName: "Test",
+          lastName: "Terminal",
+          nfcCardId,
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      // Log only the non-secret id — the raw key MUST stay out of logs
+      // per T-74-05-01 (audit-proof for terminal credentials).
+      req.log.info(
+        { apiKeyId: apiKey.id, employeeId: employee.id, tenantId: body.tenantId },
+        "test-bootstrap: terminal provisioned",
+      );
+
+      return reply.code(201).send({
+        apiKey: rawKey,
+        apiKeyId: apiKey.id,
+        employeeId: employee.id,
+        userId: employeeUser.id,
+        nfcCardId,
+      });
     },
   });
 }
