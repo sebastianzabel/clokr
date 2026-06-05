@@ -143,6 +143,13 @@ jobs:
           output: trivy-fs-results.sarif
           severity: CRITICAL,HIGH
           exit-code: 1
+          # Without this, the action's entrypoint.sh unsets TRIVY_SEVERITY when
+          # generating SARIF (so the SARIF report contains all severities), but
+          # the unset is process-global — `exit-code: 1` then also fires on
+          # MEDIUM/LOW findings. Setting this to true keeps the severity filter
+          # applied to both SARIF generation AND the exit-code check, matching
+          # the table-output step above.
+          limit-severities-for-sarif: true
           trivyignores: .trivyignore
           skip-dirs: ".claude/skills/*/prototypes,.claude/worktrees,.svelte-kit"
           version: v0.71.0
