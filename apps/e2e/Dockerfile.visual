@@ -1,0 +1,21 @@
+# Phase 75 — Visual regression runner.
+# Pinned to mcr.microsoft.com/playwright:v1.58.2-jammy so font rendering
+# (Liberation Sans, DejaVu, Noto) is byte-identical on macOS dev, Linux dev,
+# and GitHub Actions runners. DO NOT bump the tag without re-baselining all
+# screenshots in apps/e2e/tests/visual.spec.ts-snapshots/.
+FROM mcr.microsoft.com/playwright:v1.58.2-jammy
+
+# pnpm — match repo lockfile version (10.33.0)
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
+WORKDIR /work
+
+# We do NOT copy package.json here; the repo is bind-mounted by docker-compose.e2e.yml.
+# This keeps the image cache stable across dependency changes — pnpm install runs at
+# container start against the mounted node_modules.
+
+# Run as the playwright user that ships with the base image (non-root).
+USER pwuser
+
+# Default command — overridden by docker-compose.
+CMD ["pnpm", "--filter", "e2e", "exec", "playwright", "test", "--project=visual"]
