@@ -131,6 +131,15 @@
     return path === href || path.startsWith(href + "/");
   }
 
+  // Phase 73-05 (D-05) — derive a stable, predictable test-id slug from a
+  // route href so every nav link is addressable as `nav-{slug}`.
+  // Examples: `/dashboard` → `dashboard`, `/admin/employees` → `admin-employees`,
+  // `/team/time-entries` → `team-time-entries`. Used by every E2E spec going
+  // forward to navigate without coupling to visible German labels.
+  function navSlug(href: string): string {
+    return href.replace(/^\//, "").replace(/\//g, "-");
+  }
+
   async function handleLogout() {
     try {
       const state = $authStore;
@@ -147,8 +156,8 @@
   }
 </script>
 
-<aside class="sidebar" aria-label="Hauptnavigation">
-  <a href="/dashboard" class="sidebar-brand">
+<aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
+  <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
     <img class="mark" src="/clokr-icon.png" alt="" aria-hidden="true" />
     <div class="name" translate="no">clo<em>kr</em></div>
   </a>
@@ -168,6 +177,7 @@
             class="nav-item"
             class:active
             aria-current={active ? "page" : undefined}
+            data-testid={`nav-${navSlug(item.href)}`}
           >
             <span class="ico" aria-hidden="true"><Icon name={item.icon} size={17} /></span>
             <span class="label" translate="no">{item.label}</span>
@@ -177,7 +187,7 @@
     {/each}
   </div>
 
-  <div class="sidebar-foot">
+  <div class="sidebar-foot" data-testid="sidebar-user-menu">
     {#if $authStore.user}
       <div class="avatar" aria-hidden="true">
         {($authStore.user.firstName?.[0] ?? $authStore.user.email[0] ?? "?").toUpperCase()}
@@ -200,6 +210,7 @@
         onclick={handleLogout}
         aria-label="Abmelden"
         title="Abmelden"
+        data-testid="sidebar-logout"
       >
         <Icon name="logout" size={17} />
       </button>

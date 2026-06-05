@@ -432,6 +432,10 @@
 
 <svelte:head><title>Monatsabschluss – Clokr</title></svelte:head>
 
+<!-- Phase 73-05 (D-05): data-testid surface for admin Monatsabschluss flows.
+     `display: contents` keeps ToolPage's layout intact while exposing a
+     stable page-root selector to E2E specs (74-01 reopen flow). -->
+<div data-testid="month-close-page" style="display: contents;">
 <ToolPage
   eyebrow="Compliance"
   title="Monatsabschluss"
@@ -446,7 +450,12 @@
         <div class="control-row">
           <label class="control-group">
             <span class="control-label">Jahr</span>
-            <select class="form-select" bind:value={selectedYear} onchange={onYearChange}>
+            <select
+              class="form-select"
+              bind:value={selectedYear}
+              onchange={onYearChange}
+              data-testid="month-close-year"
+            >
               {#each years as y (y)}
                 <option value={y}>{y}</option>
               {/each}
@@ -540,6 +549,8 @@
                       if (ms.status !== "future" && ms.status !== "no_data")
                         toggleMonthDetail(ms.month);
                     }}
+                    data-testid={`month-close-row-${ms.month}`}
+                    data-status={ms.status}
                   >
                     <td class="month-name">
                       <span class="month-expand-icon">
@@ -570,9 +581,12 @@
                             e.stopPropagation();
                             openConfirmCloseMonth(ms.month);
                           }}
+                          data-testid={`month-close-row-${ms.month}-trigger`}
                         >
                           Abschließen
                         </button>
+                      {:else if ms.status === "closed"}
+                        <span class="text-muted text-sm" data-testid={`month-close-row-${ms.month}-locked`}>&mdash;</span>
                       {:else}
                         <span class="text-muted text-sm">&mdash;</span>
                       {/if}
@@ -694,7 +708,7 @@
 
 <!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
 <Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
-  <div class="callout warn" role="alert">
+  <div class="callout warn" role="alert" data-testid="month-close-modal">
     <div>
       <b>Diese Aktion ist nicht rückgängig.</b>
       <p>
@@ -708,13 +722,24 @@
     Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
   </p>
   {#snippet footer()}
-    <button class="btn btn-ghost" onclick={closeConfirmModal} disabled={closing}>Abbrechen</button>
-    <button class="btn btn-primary" onclick={onConfirmProceed} disabled={closing}>
+    <button
+      class="btn btn-ghost"
+      onclick={closeConfirmModal}
+      disabled={closing}
+      data-testid="month-close-cancel">Abbrechen</button
+    >
+    <button
+      class="btn btn-primary"
+      onclick={onConfirmProceed}
+      disabled={closing}
+      data-testid="month-close-confirm"
+    >
       {#if closing}<Spinner />{/if}
       Endgültig sperren
     </button>
   {/snippet}
 </Modal>
+</div>
 
 <style>
   /* ─── Controls ──────────────────────────────────────── */

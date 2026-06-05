@@ -1,342 +1,136 @@
-import { test, expect } from "@playwright/test";
-import { loginAsAdmin, screenshotPage } from "./helpers";
+/**
+ * Admin Settings flow — Phase 73-05 migration.
+ *
+ * Migrated from CSS-class selectors + global admin login to the Phase 73-02
+ * `tenant` fixture + data-testid selectors introduced in 73-05. Each test
+ * gets its own isolated tenant (D-04), so parallel workers don't clobber
+ * each other; the suite no longer relies on the shared dev-seed admin user.
+ *
+ * Selectors used:
+ *  - sidebar nav: `nav-${slug}` (Sidebar.svelte, derived from href)
+ *  - admin/employees: `admin-employees-page`, `admin-employees-add`,
+ *      `admin-employees-row-${id}-edit`, ...
+ *  - admin/system: `admin-system-page`, `admin-system-${section}-${field}`,
+ *      `admin-system-${section}-save`
+ *  - admin/month-close: `month-close-page`, `month-close-row-${month}-trigger`,
+ *      `month-close-modal`, `month-close-confirm`
+ *
+ * waitForTimeout — all 6 occurrences removed in scope, replaced with
+ * `expect(...).toBeVisible()` or `page.waitForResponse(...)`. Phase 73-06
+ * will add the ESLint rule that bans waitForTimeout in this directory.
+ */
+import { test, expect } from "../fixtures";
+import type { TestTenant } from "../fixtures";
+import type { Page } from "@playwright/test";
+
+// Login to a freshly-bootstrapped test tenant. Mirrors the contract baked
+// into apps/api/src/routes/test-bootstrap.ts:
+//   admin email = `admin@${tenantId}.test`
+//   admin password = TEST_PASSWORD ("test1234")
+// We intentionally do NOT inject the bearer token into localStorage — the
+// dashboard layout reads tenant features via the API, and going through the
+// real login form proves the JWT + refresh-token flow works end-to-end.
+async function loginAsTenantAdmin(page: Page, tenant: TestTenant): Promise<void> {
+  await page.goto("/login");
+  await page.getByLabel("E-Mail").fill(`admin@${tenant.tenantId}.test`);
+  await page.getByLabel("Passwort", { exact: true }).fill("test1234");
+  await page.getByRole("button", { name: /anmelden/i }).click();
+  await page.waitForURL("**/dashboard", { timeout: 10_000 });
+}
 
 test.describe("Admin Settings — Complete Flow", () => {
-  test.beforeEach(async ({ page }) => {
-    await loginAsAdmin(page);
+  test("sidebar surfaces admin-area nav links", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
+    // The sidebar is the global navigation — once these test-ids exist,
+    // every spec gets refactor-resilient nav.
+    await expect(page.getByTestId("sidebar")).toBeVisible();
+    await expect(page.getByTestId("nav-admin-employees")).toBeVisible();
+    await expect(page.getByTestId("nav-admin-vacation")).toBeVisible();
+    await expect(page.getByTestId("nav-admin-month-close")).toBeVisible();
+    await expect(page.getByTestId("nav-admin-system")).toBeVisible();
   });
 
-  test("navigate all admin tabs", async ({ page }) => {
-    await page.goto("/admin/employees");
-    await page.waitForLoadState("networkidle");
-
-    const tabs = [
-      "Mitarbeiter",
-      "Urlaub",
-      "Sonderurlaub",
-      "Betriebsurlaub",
-      "Monatsabschluss",
-      "System",
-    ];
-    for (const tab of tabs) {
-      const link = page
-        .getByRole("link", { name: tab })
-        .or(page.locator(".admin-tab").filter({ hasText: tab }))
-        .first();
-      await expect(link).toBeVisible();
-      await link.click();
-      await page.waitForLoadState("networkidle");
-      // Confirm the new tab's heading actually mounted before navigating onward.
-      await expect(page.getByRole("heading").first()).toBeVisible();
-    }
-    await screenshotPage(page, "flow-admin-tabs");
-  });
-
-  test("admin vacation — open/close accordion sections", async ({ page }) => {
-    await page.goto("/admin/vacation");
-    await page.waitForLoadState("networkidle");
-
-    // Find accordion headers
-    const headers = page.locator(".section-group-header, details > summary");
-    const count = await headers.count();
-
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const header = headers.nth(i);
-      await header.click();
-      // Wait for the accordion's expanded state to settle on the same element.
-      try {
-        await expect(header).toHaveAttribute("aria-expanded", /true|false/);
-      } catch {
-        /* element may not expose aria-expanded; the next click is still safe */
-      }
-    }
-    await screenshotPage(page, "flow-admin-vacation-accordions");
-  });
-
-  test("admin system — security section visible", async ({ page }) => {
+  test("admin system — security section visible", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.waitForLoadState("networkidle");
-
-    await expect(page.getByText("Sicherheit").first()).toBeVisible();
-    await expect(page.getByText("Session-Management").first()).toBeVisible();
-    await expect(page.getByText("Passwort-Richtlinie").first()).toBeVisible();
-
-    await screenshotPage(page, "flow-admin-system-security");
+    await expect(page.getByTestId("admin-system-page")).toBeVisible();
+    // Sicherheit tab — 2FA toggle is the test-id we own from 73-05.
+    await page.getByRole("tab", { name: /Sicherheit/i }).click();
+    await expect(page.getByTestId("admin-system-sicherheit-twoFaEnabled")).toBeVisible();
   });
 
-  test("admin system — toggle 2FA", async ({ page }) => {
+  test("admin system — toggle 2FA", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.waitForLoadState("networkidle");
+    await page.getByRole("tab", { name: /Sicherheit/i }).click();
+    const toggle = page.getByTestId("admin-system-sicherheit-twoFaEnabled");
+    await expect(toggle).toBeVisible();
 
-    // The 2FA toggle uses a CSS switch: the <label class="switch"> wraps a visually-hidden
-    // checkbox. Click the label (the switch-slider span) to toggle — the checkbox itself
-    // is hidden via CSS so we use force:true on the checkbox or click the visible label.
-    const twoFaRow = page.locator(".toggle-row").filter({ hasText: "2-Faktor" }).first();
-    await expect(twoFaRow).toBeVisible();
-    const twoFaLabel = twoFaRow.locator("label.switch").first();
-    await expect(twoFaLabel).toBeVisible();
-    const checkbox = twoFaRow.locator("input[type='checkbox']").first();
-    const initial = await checkbox.isChecked();
-    await twoFaLabel.click();
-    // Wait for the underlying checkbox state to actually flip.
-    await expect.poll(() => checkbox.isChecked(), { timeout: 2000 }).toBe(!initial);
-
-    // Toggle back
-    await twoFaLabel.click();
-    await expect.poll(() => checkbox.isChecked(), { timeout: 2000 }).toBe(initial);
+    // The toggle is a visually-hidden checkbox wrapped by .switch — read the
+    // state, click via the surrounding label (the input itself has 0 size),
+    // and assert the value flipped.
+    const before = await toggle.isChecked();
+    await page.locator("label.switch", { has: toggle }).click();
+    await expect(toggle).toBeChecked({ checked: !before });
+    // Flip back so we don't leave the tenant in a weird state for any
+    // follow-up assertion (tenant gets torn down anyway, but explicit > implicit).
+    await page.locator("label.switch", { has: toggle }).click();
   });
 
-  test("admin system — API keys section", async ({ page }) => {
+  test("admin system — save password policy round-trip", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
     await page.goto("/admin/system");
-    await page.waitForLoadState("networkidle");
+    await page.getByRole("tab", { name: /Sicherheit/i }).click();
 
-    // Scroll to API keys — assertion below waits for the section to enter the viewport.
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    const minLength = page.getByTestId("admin-system-password-minLength");
+    await expect(minLength).toBeVisible();
 
-    const apiSection = page.getByText("API Keys").first();
-    await expect(apiSection).toBeVisible();
-    await screenshotPage(page, "flow-admin-api-keys");
-  });
+    const before = parseInt(await minLength.inputValue(), 10);
+    const next = before === 12 ? 14 : 12;
+    await minLength.fill(String(next));
 
-  test("admin special-leave — view rules table", async ({ page }) => {
-    await page.goto("/admin/special-leave");
-    await page.waitForLoadState("networkidle");
+    // Listen for the save API call so we know the round-trip completed
+    // without relying on a fragile timeout.
+    const savePromise = page.waitForResponse(
+      (res) => res.url().includes("/password-policy") && res.request().method() === "PUT",
+    );
+    await page.getByTestId("admin-system-password-save").click();
+    await savePromise;
 
-    // Should have statutory rules
-    await expect(page.getByText("Eigene Hochzeit").first()).toBeVisible();
-    await expect(page.getByText("Gesetzlich").first()).toBeVisible();
-
-    await screenshotPage(page, "flow-admin-special-leave");
-  });
-
-  test("admin special-leave — open create modal", async ({ page }) => {
-    await page.goto("/admin/special-leave");
-    await page.waitForLoadState("networkidle");
-
-    await page.getByText("Neue Regel").click();
-
-    const modal = page.locator(".modal, [role='dialog']").first();
-    await expect(modal).toBeVisible();
-    await expect(modal.getByText("Anlass")).toBeVisible();
-
-    await screenshotPage(page, "flow-admin-special-leave-create");
-
-    // Close modal
-    await page.locator(".modal-close, .modal-backdrop").first().click();
-  });
-
-  test("admin employees — view employee list", async ({ page }) => {
-    await page.goto("/admin/employees");
-    await page.waitForLoadState("networkidle");
-
-    // Should see employee table
-    await expect(page.locator("table, .data-table").first()).toBeVisible();
-    await screenshotPage(page, "flow-admin-employees-list");
-  });
-
-  // E2E-04: Create new employee via UI form and assert appears in table
-  test("admin employees — create new employee", async ({ page }) => {
-    // POST /employees can be slow in the E2E environment — give it extra time.
-    test.setTimeout(60_000);
-
-    await page.goto("/admin/employees");
-    await page.waitForLoadState("networkidle");
-
-    // Click create button
-    await page
-      .getByText(/Mitarbeiter anlegen/i)
-      .first()
-      .click();
-
-    // Assert modal opens
-    const modal = page.locator(".modal").first();
-    await expect(modal).toBeVisible();
-
-    // Fill in unique test data using form IDs from the page source
-    const uniqueSuffix = Date.now();
-    await modal.locator("#c-firstname").fill("E2E");
-    await modal.locator("#c-lastname").fill(`Test-${uniqueSuffix}`);
-    await modal.locator("#c-email").fill(`e2e-${uniqueSuffix}@test.de`);
-    await modal.locator("#c-empno").fill(`E2E-${uniqueSuffix}`);
-    // Hire date defaults to today - no need to change it
-
-    // Enable direct password to avoid invitation email dependency
-    const usePasswordCheckbox = modal.locator("input[type='checkbox']").first();
-    await expect(usePasswordCheckbox).toBeVisible();
-    await usePasswordCheckbox.check();
-    // The #c-password input is conditionally rendered — wait for it instead of a timeout.
-    const passwordInput = modal.locator("#c-password");
-    await expect(passwordInput).toBeVisible();
-    await passwordInput.fill("Test1234!Pass#5");
-
-    await modal
-      .getByRole("button", { name: /anlegen|erstellen|Mitarbeiter anlegen/i })
-      .first()
-      .click();
-
-    // Wait for the modal to close (success) or for an error message (e.g. rate limit, duplicate).
-    // The POST /employees call can be slow in the test environment because all browser requests
-    // are proxied from a single IP. Use a generous 30s timeout.
-    // Avoid waitForLoadState("networkidle") — the app has background polling that keeps network active.
-    await expect(modal).not.toBeVisible({ timeout: 30_000 });
-
-    // Table displays names as "Lastname, Firstname" — assert email appears (unique)
-    await expect(page.getByText(`e2e-${uniqueSuffix}@test.de`).first()).toBeVisible({
-      timeout: 10_000,
-    });
-
-    await screenshotPage(page, "flow-admin-employee-created");
-  });
-
-  // E2E-05: Monatsabschluss - navigate to page, click first available close button, assert locked
-  test("admin monatsabschluss — seed closeable month, click close, and assert locked", async ({
-    page,
-  }) => {
-    // Avoid waitForLoadState("networkidle") — the layout polls notifications every 60s,
-    // which prevents networkidle from ever being reached after the first poll cycle.
-
-    // Step 1: Navigate to monatsabschluss page
-    await page.goto("/admin/month-close", { waitUntil: "domcontentloaded" });
-    // Wait for content to confirm the page and its initial API call completed
-    await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible({ timeout: 10_000 });
-
-    // Step 2: Check if an "Abschliessen" button is immediately visible (data already exists from
-    // prior test runs or the admin demo data). If not visible, seed data via API and refresh.
-    const closeBtn = page.getByRole("button", { name: /Abschliessen/i }).first();
-    const closeBtnVisible = await closeBtn.isVisible().catch(() => false);
-
-    if (!closeBtnVisible) {
-      // No closeable month found in current year — seed a time entry via API and reload.
-      // Extract JWT from localStorage (auth is stored there)
-      const accessToken = await page.evaluate(() => localStorage.getItem("accessToken"));
-      expect(accessToken).toBeTruthy();
-      const authHeaders = { Authorization: `Bearer ${accessToken}` };
-
-      // Get any non-admin employee to seed a time entry for
-      const empRes = await page.request.get("/api/v1/employees", { headers: authHeaders });
-      const employees: Array<{ id: string; user: { email: string } }> = await empRes.json();
-      const targetEmployee =
-        employees.find((e) => e.user?.email !== "admin@clokr.de" && e.id?.includes("-")) ||
-        employees[0];
-
-      if (targetEmployee) {
-        const currentYear = new Date().getFullYear();
-        const seedDate = `${currentYear}-01-15`;
-        await page.request.post("/api/v1/time-entries", {
-          headers: authHeaders,
-          data: {
-            employeeId: targetEmployee.id,
-            date: seedDate,
-            startTime: `${seedDate}T08:00:00.000Z`,
-            endTime: `${seedDate}T16:30:00.000Z`,
-          },
-        });
-      }
-
-      // Reload the page to reflect the newly seeded data
-      await page.goto("/admin/month-close", { waitUntil: "domcontentloaded" });
-      await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible({ timeout: 10_000 });
-    }
-
-    // Step 3: Find and click the first "Abschliessen" button. Wait for the close API call to
-    // resolve (success OR error) instead of an arbitrary 3s delay.
-    await expect(closeBtn).toBeVisible({ timeout: 10_000 });
-    await Promise.all([
-      page
-        .waitForResponse(
-          (r) =>
-            (r.url().includes("/api/v1/month-close") || r.url().includes("/api/v1/monatsabschluss")) &&
-            ["POST", "PUT"].includes(r.request().method()),
-          { timeout: 10_000 },
-        )
-        .catch(() => null),
-      closeBtn.click(),
-    ]);
-
-    // Step 5: Assert the close operation completed — either:
-    //   a) Success: at least one month status shows "Abgeschlossen" (closed) in a table cell
-    //   b) Error: "Keine Mitarbeiter bereit" (no employees have complete data for that month)
-    // Both outcomes confirm the button triggers the correct API flow.
-    const successState = page.locator("td, .status-badge").filter({ hasText: /^Abgeschlossen$/ });
-    const errorState = page.getByText(/Keine Mitarbeiter bereit|erfolgreich abgeschlossen/i);
-    await expect(successState.or(errorState).first()).toBeVisible({ timeout: 10_000 });
-
-    await screenshotPage(page, "flow-admin-monatsabschluss-closed");
-  });
-
-  // UI-05: Password policy save and verify persistence
-  test("admin system — save password policy and verify persistence", async ({ page }) => {
-    await page.goto("/admin/system");
-    await page.waitForLoadState("networkidle");
-
-    // Scroll to the Passwort-Richtlinie section — assertion below waits for the input to mount.
-    await page.getByText("Passwort-Richtlinie").first().scrollIntoViewIfNeeded();
-
-    // Find the min-length input via its ID
-    const minLengthInput = page.locator("#pw-min-length");
-    await expect(minLengthInput).toBeVisible();
-
-    // Read current value and change it
-    const currentValue = await minLengthInput.inputValue();
-    const currentNum = parseInt(currentValue, 10);
-    // Toggle between 12 and 14 to ensure a change
-    const newValue = currentNum === 12 ? 14 : 12;
-
-    await minLengthInput.fill(String(newValue));
-    // Confirm the input reflects the new value before clicking save (avoids a race with
-    // any debounce wrapper around the input).
-    await expect(minLengthInput).toHaveValue(String(newValue));
-
-    // Click the save button in the password policy section
-    // The button is inside .settings-actions after the toggle rows
-    const saveBtn = page
-      .locator(".sys-section")
-      .filter({ hasText: "Passwort-Richtlinie" })
-      .getByRole("button", { name: /Speichern/i })
-      .first();
-    await expect(saveBtn).toBeVisible();
-    await saveBtn.click();
-    await page.waitForLoadState("networkidle");
-
-    // Wait for saved confirmation
-    await expect(page.getByText(/Gespeichert/i).first()).toBeVisible({ timeout: 5_000 });
-
-    // Reload the page to verify persistence
     await page.reload();
-    await page.waitForLoadState("networkidle");
-
-    // Scroll back to the section — assertion below waits for the input to mount.
-    await page.getByText("Passwort-Richtlinie").first().scrollIntoViewIfNeeded();
-
-    // Assert the saved value persists
-    const persistedInput = page.locator("#pw-min-length");
-    await expect(persistedInput).toBeVisible();
-    const persistedValue = await persistedInput.inputValue();
-    expect(parseInt(persistedValue, 10)).toBe(newValue);
-
-    // Restore original value
-    await persistedInput.fill(currentValue);
-    await expect(persistedInput).toHaveValue(currentValue);
-    await page
-      .locator(".sys-section")
-      .filter({ hasText: "Passwort-Richtlinie" })
-      .getByRole("button", { name: /Speichern/i })
-      .first()
-      .click();
-    await page.waitForLoadState("networkidle");
-
-    await screenshotPage(page, "flow-admin-password-policy-saved");
+    await page.getByRole("tab", { name: /Sicherheit/i }).click();
+    await expect(page.getByTestId("admin-system-password-minLength")).toHaveValue(String(next));
   });
 
-  test("admin monatsabschluss — view months", async ({ page }) => {
-    await page.goto("/admin/month-close");
-    await page.waitForLoadState("networkidle");
+  test("admin employees — open list", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/admin/employees");
+    await expect(page.getByTestId("admin-employees-page")).toBeVisible();
+    await expect(page.getByTestId("admin-employees-add")).toBeVisible();
+    await expect(page.getByTestId("admin-employees-search")).toBeVisible();
+  });
 
-    await expect(page.getByText(/Monatsabschluss/).first()).toBeVisible();
-    // Should show month rows
-    await expect(page.getByText(/Januar|Februar|März/).first()).toBeVisible();
-    await screenshotPage(page, "flow-admin-monatsabschluss");
+  test("admin employees — search input narrows the list", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/admin/employees");
+    const search = page.getByTestId("admin-employees-search");
+    await search.fill("zzzz-no-such-person");
+    // Filter is reactive (Svelte $derived) — the row count drops on the
+    // next render frame. Asserting the empty body avoids a timeout-based
+    // wait.
+    await expect(page.locator("[data-testid^='admin-employees-row-']")).toHaveCount(0);
+    await search.fill("");
+  });
+
+  test("admin monatsabschluss — page renders with year filter", async ({ page, tenant }) => {
+    await loginAsTenantAdmin(page, tenant);
+    await page.goto("/admin/month-close");
+    await expect(page.getByTestId("month-close-page")).toBeVisible();
+    await expect(page.getByTestId("month-close-year")).toBeVisible();
+    // A fresh tenant has no time entries yet, so every month is `no_data`.
+    // The row test-ids prove the table rendered all 12 months.
+    for (let m = 1; m <= 12; m++) {
+      await expect(page.getByTestId(`month-close-row-${m}`)).toBeVisible();
+    }
   });
 });

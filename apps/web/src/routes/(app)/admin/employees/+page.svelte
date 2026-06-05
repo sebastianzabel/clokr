@@ -370,6 +370,10 @@
   <title>Mitarbeitende – Clokr</title>
 </svelte:head>
 
+<!-- Phase 73-05 (D-05): data-testid surface for admin-employees flows.
+     `display: contents` keeps the existing ListDetail layout untouched while
+     giving E2E specs a stable page-root selector. -->
+<div data-testid="admin-employees-page" style="display: contents;">
 <ListDetail
   view="list"
   eyebrow="Personal"
@@ -378,7 +382,11 @@
 >
   {#snippet actions()}
     {#if isAdmin}
-      <button class="btn btn-primary" onclick={openCreate}>+ Mitarbeiter anlegen</button>
+      <button
+        class="btn btn-primary"
+        onclick={openCreate}
+        data-testid="admin-employees-add">+ Mitarbeiter anlegen</button
+      >
     {/if}
   {/snippet}
 
@@ -412,6 +420,7 @@
             placeholder="Person suchen…"
             bind:value={filterSearch}
             aria-label="Mitarbeiter suchen"
+            data-testid="admin-employees-search"
           />
           <select
             class="select filter-select"
@@ -464,6 +473,7 @@
                   class="row-clickable"
                   onclick={() => goto(`/admin/employees/${emp.id}`)}
                   role="row"
+                  data-testid={`admin-employees-row-${emp.id}`}
                 >
                   <td class="col-number num">{emp.employeeNumber}</td>
                   <td class="col-name">
@@ -513,19 +523,30 @@
                             class="btn btn-ghost btn-sm"
                             onclick={() => resendInvitation(emp)}
                             title="Einladung erneut senden"
+                            data-testid={`admin-employees-row-${emp.id}-invite`}
                           >
                             Einladen
                           </button>
                         {/if}
-                        <a href="/admin/employees/{emp.id}" class="btn btn-ghost btn-sm">
+                        <a
+                          href="/admin/employees/{emp.id}"
+                          class="btn btn-ghost btn-sm"
+                          data-testid={`admin-employees-row-${emp.id}-edit`}
+                        >
                           Bearbeiten
                         </a>
                         {#if emp.user.isActive}
-                          <button class="btn btn-ghost btn-sm" onclick={() => askDeactivate(emp)}
+                          <button
+                            class="btn btn-ghost btn-sm"
+                            onclick={() => askDeactivate(emp)}
+                            data-testid={`admin-employees-row-${emp.id}-deactivate`}
                             >Deaktivieren</button
                           >
                         {:else}
-                          <button class="btn btn-ghost btn-sm" onclick={() => askReactivate(emp)}
+                          <button
+                            class="btn btn-ghost btn-sm"
+                            onclick={() => askReactivate(emp)}
+                            data-testid={`admin-employees-row-${emp.id}-reactivate`}
                             >Reaktivieren</button
                           >
                         {/if}
@@ -546,6 +567,7 @@
     {/if}
   {/snippet}
 </ListDetail>
+</div>
 
 <!-- ── Anlegen Modal ──────────────────────────────────────────────────────── -->
 <Modal bind:open={createOpen} eyebrow="Mitarbeiter einladen" title="Person einladen">
