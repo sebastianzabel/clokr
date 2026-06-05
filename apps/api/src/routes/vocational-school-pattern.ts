@@ -225,13 +225,20 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         }
         const now = new Date();
         // Fire-and-forget: don't await; log on failure.
-        void syncSchoolHolidaysForTenant(
+        // v1.8 race fix — track via the same registry as the BS-generator so tests
+        // can drain pending OpenHolidays-API work before asserting on DB state.
+        // Without this, the sync (hundreds of ms) can finish AFTER a later test's
+        // beforeEach wipes SchoolHolidayPeriod, repopulating it mid-test and
+        // triggering the generator's Ferien-aware orphan-sweep to soft-delete
+        // valid Absences (root cause of BERSCH-02 idempotency CI flake).
+        const syncRun = syncSchoolHolidaysForTenant(
           app.prisma,
           req.user.tenantId,
           [...needed],
           { from: now.getFullYear(), to: now.getFullYear() + 1 },
           app.log,
         ).catch((err) => app.log.warn({ err }, "on-demand school-holidays sync failed"));
+        app.trackPendingBSGeneration?.(syncRun);
       }
 
       // v1.7.4 hotfix — On-demand BS-Absence-Generator trigger.
@@ -251,15 +258,7 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
         tenantId: req.user.tenantId,
         now: new Date(),
       }).catch((err) => app.log.warn({ err }, "on-demand BS-generator run failed"));
-      // v1.8-trace — REMOVE once CI race fix is confirmed working
-      if (process.env.NODE_ENV === "test") {
-        app.log.warn(`[v1.8-trace] PUT handler: trackFn=${typeof app.trackPendingBSGeneration}`);
-      }
-      if (app.trackPendingBSGeneration) {
-        app.trackPendingBSGeneration(bgRun);
-      } else if (process.env.NODE_ENV === "test") {
-        app.log.warn("[v1.8-trace] PUT handler: trackPendingBSGeneration is UNDEFINED");
-      }
+      app.trackPendingBSGeneration?.(bgRun);
 
       return reply.code(200).send({
         patterns: created.map((p) => ({

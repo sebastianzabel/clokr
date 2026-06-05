@@ -14,16 +14,17 @@ import { runVocationalSchoolGeneration } from "../utils/vocational-school-genera
 declare module "fastify" {
   interface FastifyInstance {
     runVocationalSchoolGeneration?: () => Promise<void>;
-    // v1.8 fix — Tracking handle for fire-and-forget generator runs triggered by
-    // the PUT pattern handler (vocational-school-pattern.ts:244). Production code
-    // uses `void`-discard for snappy UX, but tests need a way to await pending
-    // background work before asserting on DB state. Returns a Promise that resolves
-    // when ALL currently-pending bg generator runs complete (rejected ones are
-    // logged inside the generator and resolve to undefined here).
+    // v1.8 fix — Tracking handle for fire-and-forget background work triggered by
+    // the PUT pattern handler (vocational-school-pattern.ts). Production code uses
+    // `void`-discard for snappy UX, but tests need a way to await pending bg work
+    // before asserting on DB state. Tracks BOTH the BS-generator promise AND the
+    // OpenHolidays school-holidays sync promise — both can race into a later test
+    // and corrupt its DB snapshot (Ferien-aware orphan-sweep deleting valid rows).
+    // Returns a Promise that resolves when ALL currently-pending bg work settles.
     waitForPendingBSGenerations?: () => Promise<void>;
     // Internal — public only because the PUT handler in routes/ needs to register
-    // its fire-and-forget Promise here. Do not call from application code; use the
-    // existing `void runVocationalSchoolGeneration(...)` pattern directly.
+    // its fire-and-forget Promises here. Accepts any Promise — name is historical
+    // (originally for the BS-generator only). Do not call from application code.
     trackPendingBSGeneration?: (p: Promise<unknown>) => void;
   }
 }
@@ -39,32 +40,16 @@ export const vocationalSchoolGeneratorPlugin = fp(async (app) => {
 
   app.decorate("trackPendingBSGeneration", (p: Promise<unknown>) => {
     pendingBgRuns.add(p);
-    // v1.8-trace — REMOVE once CI race fix is confirmed working. Logs are
-    // gated on NODE_ENV=test so they only appear in test/CI runs, never prod.
-    if (process.env.NODE_ENV === "test") {
-      app.log.warn(`[v1.8-trace] +track total=${pendingBgRuns.size}`);
-    }
     void p.finally(() => {
       pendingBgRuns.delete(p);
-      if (process.env.NODE_ENV === "test") {
-        app.log.warn(`[v1.8-trace] -track total=${pendingBgRuns.size}`);
-      }
     });
   });
 
   app.decorate("waitForPendingBSGenerations", async () => {
     const snapshot = Array.from(pendingBgRuns);
-    if (process.env.NODE_ENV === "test") {
-      app.log.warn(`[v1.8-trace] wait snapshot=${snapshot.length}`);
-    }
     if (snapshot.length === 0) return;
     await Promise.allSettled(snapshot);
   });
-
-  // v1.8-trace — confirm plugin registration on CI
-  if (process.env.NODE_ENV === "test") {
-    app.log.warn("[v1.8-trace] vocationalSchoolGeneratorPlugin loaded");
-  }
 
   async function runAllTenants() {
     app.log.info("Berufsschule-Auto-Gen: Starte tägliche Vorab-Generierung");
