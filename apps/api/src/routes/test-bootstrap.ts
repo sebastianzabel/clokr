@@ -56,11 +56,15 @@ const TENANT_ID_RE = /^test-[a-zA-Z0-9_-]{8,}$/;
 const TEST_PASSWORD = "test1234";
 
 function newTenantId(): string {
-  // 8-char base36 from crypto.randomBytes — Math.random is not cryptographically
-  // strong (CodeQL js/insecure-randomness). The ID flows into IDs returned via the
-  // bootstrap-tenant endpoint; even though ALLOW_TEST_BOOTSTRAP gates the route,
-  // we keep this entropy source CSPRNG so the scanner stops flagging it.
-  return `test-${randomBytes(6).toString("base64url").slice(0, 8)}`;
+  // 8-char hex from crypto.randomBytes. Math.random is not cryptographically
+  // strong (CodeQL js/insecure-randomness); hex (`[0-9a-f]`) is also a strict
+  // subset of DNS label characters so `admin@test-${id}.test` is a syntactically
+  // valid email — AJV's `format: "email"` validator rejects `_` and accepts `-`
+  // only in non-leading positions, both of which were intermittently produced
+  // by the previous base64url slice. (Phase 73-01 fix-up — observed as flaky
+  // 500 on bootstrap-tenant when the slice landed on `_`.) The wider regex
+  // `^test-[a-zA-Z0-9_-]{8}$` consumed by the e2e fixture still matches.
+  return `test-${randomBytes(4).toString("hex")}`;
 }
 
 /**
