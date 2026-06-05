@@ -153,6 +153,12 @@ export default defineConfig({
       },
       // No `dependencies: ["setup"]` — see Use block comment. Auth lives in
       // per-test addInitScript via the bootstrap-tenant endpoint.
+      // Force sequential: visual-seed.ts uses stable employee emails
+      // (anna.visual@…, bob.regression@…) which are GLOBAL-unique on User.email.
+      // Parallel workers race on the same emails → 500 P2002. v1.8.1 follow-up:
+      // namespace emails by tenantId so workers can run in parallel.
+      fullyParallel: false,
+      workers: 1,
     },
   ],
 });
