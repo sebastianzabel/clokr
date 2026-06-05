@@ -1244,7 +1244,9 @@
   <title>Schichtplanung – Clokr</title>
 </svelte:head>
 
-<div class="page">
+<!-- Phase 75-02 (D-01): data-testid surface for the Schichtplanung visual baseline.
+     Matches the Phase 73-04/-05 convention (`<surface>-page`). -->
+<div class="page" data-testid="shifts-page">
   <PageHead
     eyebrow="Team"
     title="Schichtplanung"
