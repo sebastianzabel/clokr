@@ -996,6 +996,10 @@
   }
 </script>
 
+<!-- Phase 73-05 (D-05): data-testid surface for admin-system flows.
+     `display: contents` keeps SectionStack's layout intact while giving E2E
+     specs a stable page-root selector + the active tab as data-attribute. -->
+<div data-testid="admin-system-page" data-active-tab={activeTab} style="display: contents;">
 <SectionStack
   eyebrow="System"
   title="Allgemein"
@@ -1021,7 +1025,12 @@
       <!-- ── Unternehmen & Region ─────────────────────────────────────────── -->
       <Section title="Unternehmen & Region" sub="Firmenname, Bundesland & Zeitzone">
         {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveFederalState} disabled={stateSaving}>
+          <button
+            class="btn btn-primary"
+            onclick={saveFederalState}
+            disabled={stateSaving}
+            data-testid="admin-system-region-save"
+          >
             {#if stateSaving}<Spinner />{/if}
             Speichern
           </button>
@@ -1042,6 +1051,7 @@
             bind:value={gTenantName}
             class="form-input"
             placeholder="Name des Unternehmens"
+            data-testid="admin-system-region-tenantName"
           />
           <p class="form-hint text-muted">Wird in PDF-Exporten als Überschrift verwendet.</p>
         </div>
@@ -1052,6 +1062,7 @@
               id="g-federal-state"
               bind:value={gFederalState}
               class="form-input federal-state-select"
+              data-testid="admin-system-region-federalState"
             >
               {#each STATES as s (s.prisma)}
                 <option value={s.prisma}>{s.label}</option>
@@ -1344,6 +1355,7 @@
               checked={autoBreakEnabled}
               onchange={toggleAutoBreak}
               disabled={autoBreakSaving}
+              data-testid="admin-system-pausendauer-autoBreakEnabled"
             />
             <span class="switch-slider"></span>
           </label>
@@ -1381,6 +1393,7 @@
             onblur={saveBreakDefaults}
             class="form-input modal-input-sm"
             disabled={breakDefaultsSaving}
+            data-testid="admin-system-pausendauer-over6h"
           />
           <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
         </div>
@@ -1396,6 +1409,7 @@
             onblur={saveBreakDefaults}
             class="form-input modal-input-sm"
             disabled={breakDefaultsSaving}
+            data-testid="admin-system-pausendauer-over9h"
           />
           <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
         </div>
@@ -1497,6 +1511,7 @@
               checked={twoFaEnabled}
               onchange={toggleTwoFa}
               disabled={twoFaSaving}
+              data-testid="admin-system-sicherheit-twoFaEnabled"
             />
             <span class="switch-slider"></span>
           </label>
@@ -1645,7 +1660,12 @@
         </div>
 
         {#snippet footer()}
-          <button class="btn btn-primary" onclick={saveSessionConfig} disabled={sessionSaving}>
+          <button
+            class="btn btn-primary"
+            onclick={saveSessionConfig}
+            disabled={sessionSaving}
+            data-testid="admin-system-session-save"
+          >
             {sessionSaving ? "Speichern…" : "Speichern"}
           </button>
           {#if sessionSaved}
@@ -1676,6 +1696,7 @@
                 max="128"
                 bind:value={pwMinLength}
                 class="form-input opt-input-num"
+                data-testid="admin-system-password-minLength"
               />
               <span class="opt-unit">Zeichen</span>
             </div>
@@ -1739,7 +1760,12 @@
         </div>
 
         {#snippet footer()}
-          <button class="btn btn-primary" onclick={savePasswordPolicy} disabled={pwSaving}>
+          <button
+            class="btn btn-primary"
+            onclick={savePasswordPolicy}
+            disabled={pwSaving}
+            data-testid="admin-system-password-save"
+          >
             {pwSaving ? "Speichern…" : "Speichern"}
           </button>
           {#if pwSaved}
@@ -2305,6 +2331,7 @@
     {/if}
   {/snippet}
 </SectionStack>
+</div>
 
 <style>
   /* Loading placeholder while settings are fetching */
