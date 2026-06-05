@@ -14,7 +14,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { fireEvent, screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
-import BSPatternPicker, { type BSPatternDraft } from "../BSPatternPicker.svelte";
+import BSPatternPicker from "../BSPatternPicker.svelte";
+import type { BSPatternDraft } from "../types";
 
 function baseDraft(overrides: Partial<BSPatternDraft> = {}): BSPatternDraft {
   return {
