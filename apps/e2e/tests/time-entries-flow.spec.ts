@@ -37,8 +37,14 @@ async function navigateToMonth(page: import("@playwright/test").Page, targetDate
     }
     // Determine if we need to go backwards or forwards
     // Simple approach: always go backwards (test dates are in the past)
+    const labelBefore = centerText ?? "";
     await page.locator(".cal-nav button[title='Vorheriger Monat']").click();
-    await page.waitForTimeout(200);
+    // Wait for the month label to actually advance before checking again.
+    try {
+      await expect.poll(() => centerBtn.textContent(), { timeout: 1000 }).not.toBe(labelBefore);
+    } catch {
+      /* same label across the click — next iteration will short-circuit on the match */
+    }
   }
   console.log(`Navigated to: ${targetLabel}`);
 }
@@ -136,10 +142,17 @@ test.describe("Zeiterfassung — Complete Flow", () => {
 
     // Confirm deletion by clicking the confirm button "Ja"
     await expect(page.getByRole("button", { name: "Ja" })).toBeVisible({ timeout: 3_000 });
-    await page.getByRole("button", { name: "Ja" }).first().click();
-
-    // Wait for the deletion to process
-    await page.waitForTimeout(500);
+    // Wait for the DELETE response (or 5s safety net) instead of an arbitrary delay.
+    await Promise.all([
+      page
+        .waitForResponse(
+          (r) =>
+            r.url().includes("/api/v1/time-entries") && r.request().method() === "DELETE",
+          { timeout: 5_000 },
+        )
+        .catch(() => null),
+      page.getByRole("button", { name: "Ja" }).first().click(),
+    ]);
 
     await screenshotPage(page, "flow-time-entry-deleted");
   });

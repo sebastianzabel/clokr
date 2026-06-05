@@ -188,6 +188,15 @@ importers:
       '@playwright/test':
         specifier: ^1.60.0
         version: 1.60.0
+      '@typescript-eslint/eslint-plugin':
+        specifier: ^8.59.3
+        version: 8.59.3(@typescript-eslint/parser@8.59.3(eslint@10.4.0(jiti@2.6.1))(typescript@6.0.3))(eslint@10.4.0(jiti@2.6.1))(typescript@6.0.3)
+      '@typescript-eslint/parser':
+        specifier: ^8.59.3
+        version: 8.59.3(eslint@10.4.0(jiti@2.6.1))(typescript@6.0.3)
+      eslint:
+        specifier: ^10.4.0
+        version: 10.4.0(jiti@2.6.1)
 
   apps/fritzbox-adapter:
     dependencies:

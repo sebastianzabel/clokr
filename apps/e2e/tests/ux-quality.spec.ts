@@ -62,10 +62,11 @@ test.describe("UX Quality — Feedback & Confirmation", () => {
     const saveBtn = page.getByRole("button", { name: /speichern/i }).first();
     if (await saveBtn.isVisible()) {
       await saveBtn.click();
-      await page.waitForTimeout(1500);
-
-      // Should show "Gespeichert" or toast
+      // Wait for the confirmation element to appear (or 1.5s timeout to record the "major" finding).
       const confirmation = page.getByText(/gespeichert|erfolgreich|✓/i).first();
+      await confirmation.waitFor({ state: "visible", timeout: 1500 }).catch(() => {
+        /* no confirmation — recorded as "major" finding below */
+      });
       const hasConfirmation = await confirmation.isVisible().catch(() => false);
 
       if (hasConfirmation) {
@@ -92,7 +93,14 @@ test.describe("UX Quality — Feedback & Confirmation", () => {
       await page.locator("#new-pw").fill("NeuesPasswort123!");
       await page.locator("#confirm-pw").fill("NeuesPasswort123!");
       await page.getByRole("button", { name: /passwort ändern/i }).click();
-      await page.waitForTimeout(1500);
+      // Wait for the toast/alert to appear (or 1.5s timeout for the "major" finding).
+      await page
+        .locator(".toast, .alert, [role='alert']")
+        .first()
+        .waitFor({ state: "visible", timeout: 1500 })
+        .catch(() => {
+          /* no error — recorded as "major" finding below */
+        });
 
       // Error should be in German and helpful
       const errorText = await page
@@ -334,14 +342,16 @@ test.describe("UX Quality — Flow Continuity", () => {
 
     // Open create modal
     await page.getByText("Neue Regel").click();
-    await page.waitForTimeout(300);
 
     const modal = page.locator(".modal, [role='dialog']").first();
     await expect(modal).toBeVisible();
 
-    // Close with Escape
+    // Close with Escape and wait for it to actually disappear (or 500ms grace for
+    // animation — after which `stillVisible` will record the "major" finding).
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
+    await modal.waitFor({ state: "hidden", timeout: 500 }).catch(() => {
+      /* still visible — recorded below */
+    });
 
     const stillVisible = await modal.isVisible().catch(() => false);
     if (!stillVisible) {
@@ -364,10 +374,11 @@ test.describe("UX Quality — Plausibility & Data Consistency", () => {
 
   test("time entries summary matches calendar data", async ({ page }) => {
     await page.goto("/time-entries");
-    // Use domcontentloaded + explicit wait instead of networkidle — the layout has a 60s
-    // notification polling interval that keeps the network active and causes networkidle to hang.
+    // Use domcontentloaded instead of networkidle — the layout has a 60s notification polling
+    // interval that keeps the network active and causes networkidle to hang. Then wait for the
+    // month-summary element to actually mount (deterministic replacement for a fixed delay).
     await page.waitForLoadState("domcontentloaded");
-    await page.waitForTimeout(1500);
+    await page.locator(".month-summary").first().waitFor({ state: "visible", timeout: 5000 });
 
     // Get summary bar values
     const summaryText = await page
