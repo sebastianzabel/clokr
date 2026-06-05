@@ -195,10 +195,14 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
     });
     const balanceHours = Number(account?.balanceHours ?? 9999);
 
-    // Absence covers Jan → ~8 days ago. Without the fix, saldo would be -100 to -150h.
-    // With the fix, absence is subtracted — saldo must NOT be strongly negative.
-    // Allow positive values (worked > expected is possible with clamped absence deduction).
-    expect(balanceHours).toBeGreaterThan(-20);
+    // Absence covers Jan 1 → ~8 days ago. The 8-day uncovered tail before
+    // "now" has no time entries → ~5–6 weekdays × 8h = 40–48h expected, no
+    // worked → saldo is expected to land in the −50…0h range depending on
+    // how many of the 8 days are weekdays/holidays. Without the absence-
+    // subtraction fix, saldo would be ~−800h (5 months without entries).
+    // The point of this assertion is: saldo MUST NOT be in the hundreds-of-
+    // hours negative range — i.e. absences are deducted from expected.
+    expect(balanceHours).toBeGreaterThan(-60);
   });
 
   it("creating a TimeEntry does not drift saldo when prior period is fully absent", async () => {

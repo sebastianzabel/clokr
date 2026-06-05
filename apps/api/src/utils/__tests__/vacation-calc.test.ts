@@ -199,11 +199,14 @@ describe("splitDaysAcrossYears", () => {
   });
 
   it("excludes holidays from count", () => {
+    // 2027: Jan 1 (Fri) is Neujahr (holiday → excluded),
+    //       Jan 2 (Sat), Jan 3 (Sun) are weekend (not in MO_FR),
+    //       Jan 4 (Mon) is the only workday → year2Days = 1
     const holidays = new Set(["2027-01-01"]); // Neujahr
     const start = new Date("2026-12-29");
-    const end = new Date("2027-01-02");
+    const end = new Date("2027-01-04");
     const result = splitDaysAcrossYears(start, end, false, MO_FR, holidays);
-    expect(result.year2Days).toBe(1); // Only Jan 2
+    expect(result.year2Days).toBe(1); // Only Jan 4
   });
 
   it("handles half-day correctly", () => {
