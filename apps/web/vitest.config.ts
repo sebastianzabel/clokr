@@ -53,17 +53,19 @@ export default defineConfig({
         "src/lib/**/*.d.ts",
         "src/lib/api/client.ts", // pure HTTP wrapper, covered by E2E (Phase 74)
       ],
-      // TODO 76-03: ratchet thresholds back to lines>=40 / functions>=35 /
-      // branches>=30 / statements>=40 once 76-02 + 76-03 component tests land.
-      // These zeros let Plan 76-01 ship alone without CI failing on coverage
-      // (see 76-01-PLAN.md verification "KNOWN TRADE-OFF" — the broader
-      // include scope captures src/lib/** which won't be covered until 76-02/03
-      // add Calendar-Cell / Saldo / ArbZG / BS-Pattern tests).
+      // Phase 76-03 (D-05): v1.8 milestone target is lines >= 40, but Plan
+      // 76-03 alone covers ~5% of src/lib/** (ArbZG + BS-Pattern). Plan 76-02
+      // (CalendarCell + SaldoAnzeige) will push it toward ~30%. The HARD CI
+      // gate (apps/web/scripts/check-coverage.mjs) is the single source of
+      // truth for the floor — these thresholds mirror it so vitest fails fast
+      // locally before CI does. Ratchet both this block AND check-coverage.mjs
+      // TODO comment to 40 once Plan 76-02 has merged. NEVER lower thresholds
+      // silently — coverage gains are the milestone deliverable.
       thresholds: {
-        lines: 0,
-        functions: 0,
-        branches: 0,
-        statements: 0,
+        lines: 5,
+        functions: 5,
+        branches: 3,
+        statements: 4,
       },
     },
   },
