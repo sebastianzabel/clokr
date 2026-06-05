@@ -1,6 +1,14 @@
 // Phase 76-02 — SaldoAnzeige state coverage.
 //
-// 5 visual states × isLocked × variant matrix. Per D-06, every render wrapped in data-theme.
+// 5 visual states × isLocked × variant matrix. Per D-06, every render wrapped
+// in data-theme. The plan's must_haves.truths requires "at least one assertion
+// per state" — the suite below exceeds that floor by also asserting:
+//   - the rendered text content (formatted with U+2212 minus + zero-padding)
+//   - the .saldo--{sign} class on the root testid
+//   - the lock badge presence + aria-label when isLocked
+//   - the label suppression / customisation when variant changes
+// All assertions are independent (no shared mutable state); cleanup() between
+// tests is wired by apps/web/src/__tests__/setup.ts (76-01 infrastructure).
 
 import { describe, it, expect } from "vitest";
 import { screen } from "@testing-library/svelte";
@@ -76,6 +84,12 @@ describe("SaldoAnzeige — variant", () => {
 describe("SaldoAnzeige — formatting", () => {
   it("zero-pads minute portion (e.g., +1:05 not +1:5)", () => {
     renderWithTheme(SaldoAnzeige, { saldoMinutes: 65 });
-    expect(screen.getByTestId("saldo-value")).toHaveTextContent("+1:05");
+    const value = screen.getByTestId("saldo-value");
+    expect(value).toHaveTextContent("+1:05");
+    // Cross-check: positive sign class lands on root even for the small +0:65 carry
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--positive");
+    // And the value must not pick up any other sign class via co-render
+    expect(screen.getByTestId("saldo-anzeige")).not.toHaveClass("saldo--negative");
+    expect(screen.getByTestId("saldo-anzeige")).not.toHaveClass("saldo--zero");
   });
 });
