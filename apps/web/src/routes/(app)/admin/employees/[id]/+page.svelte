@@ -1450,87 +1450,92 @@
              rows — so the plan's pausendauer-row-${i} pattern doesn't apply. Plan
              says: "apply only to elements that exist; don't invent UI." -->
         <div data-testid="pausendauer-editor" style="display: contents;">
-        <Section
-          title="Pausendauer (Optional)"
-          sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
-        >
-          {#snippet footer()}
-            <button
-              class="btn btn-primary"
-              onclick={savePausendauer}
-              disabled={pausendauerSaving}
-              data-testid="pausendauer-save"
-            >
-              {pausendauerSaving ? "Speichern…" : "Speichern"}
-            </button>
-            {#if pausendauerSaved}<span class="saved-hint">Gespeichert</span>{/if}
-          {/snippet}
+          <Section
+            title="Pausendauer (Optional)"
+            sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+          >
+            {#snippet footer()}
+              <button
+                class="btn btn-primary"
+                onclick={savePausendauer}
+                disabled={pausendauerSaving}
+                data-testid="pausendauer-save"
+              >
+                {pausendauerSaving ? "Speichern…" : "Speichern"}
+              </button>
+              {#if pausendauerSaved}<span class="saved-hint">Gespeichert</span>{/if}
+            {/snippet}
 
-          {#if pausendauerError}
-            <div class="callout error" data-testid="pausendauer-error">{pausendauerError}</div>
-          {/if}
-
-          {#if isAzubiUnder18}
-            <!-- JArbSchG §9 info pill (recommendation, not violation — uses .alert-info per app.css) -->
-            <div class="alert alert-info" role="status" style="margin-bottom: 1rem;" data-testid="pausendauer-azubi-pill">
-              <span>ℹ️</span><span>Azubi unter 18 — JArbSchG §9 Empfehlung</span>
-            </div>
-            {#if showAzubiSuggestionButton}
-              <div style="margin-bottom: 1rem;">
-                <button
-                  type="button"
-                  class="btn btn-secondary"
-                  onclick={applyAzubiSuggestion}
-                  data-testid="pausendauer-azubi-apply"
-                  >Azubi-Vorschlag übernehmen (30 / 60 Min)</button
-                >
-              </div>
+            {#if pausendauerError}
+              <div class="callout error" data-testid="pausendauer-error">{pausendauerError}</div>
             {/if}
-          {/if}
 
-          <p class="form-hint text-muted" style="margin-bottom: 1rem;">
-            Leer = Tenant-Standard nutzen ({tenantBreakConfig?.defaultBreakOver6h ??
-              30}/{tenantBreakConfig?.defaultBreakOver9h ?? 45} Min)
-          </p>
+            {#if isAzubiUnder18}
+              <!-- JArbSchG §9 info pill (recommendation, not violation — uses .alert-info per app.css) -->
+              <div
+                class="alert alert-info"
+                role="status"
+                style="margin-bottom: 1rem;"
+                data-testid="pausendauer-azubi-pill"
+              >
+                <span>ℹ️</span><span>Azubi unter 18 — JArbSchG §9 Empfehlung</span>
+              </div>
+              {#if showAzubiSuggestionButton}
+                <div style="margin-bottom: 1rem;">
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    onclick={applyAzubiSuggestion}
+                    data-testid="pausendauer-azubi-apply"
+                    >Azubi-Vorschlag übernehmen (30 / 60 Min)</button
+                  >
+                </div>
+              {/if}
+            {/if}
 
-          <div class="form-group">
-            <label class="form-label" for="emp-break-over6h">Pause &gt;6h (Min)</label>
-            <input
-              id="emp-break-over6h"
-              type="number"
-              min="30"
-              max="120"
-              step="1"
-              bind:value={eBreakOver6hOverride}
-              placeholder={isAzubiUnder18
-                ? "30 Min — JArbSchG-Empfehlung"
-                : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
-              class="form-input"
-              disabled={pausendauerSaving}
-              data-testid="pausendauer-over6h"
-            />
-            <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
-          </div>
+            <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+              Leer = Tenant-Standard nutzen ({tenantBreakConfig?.defaultBreakOver6h ??
+                30}/{tenantBreakConfig?.defaultBreakOver9h ?? 45} Min)
+            </p>
 
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="emp-break-over9h">Pause &gt;9h (Min)</label>
-            <input
-              id="emp-break-over9h"
-              type="number"
-              min="45"
-              max="180"
-              step="1"
-              bind:value={eBreakOver9hOverride}
-              placeholder={isAzubiUnder18
-                ? "60 Min — JArbSchG-Empfehlung"
-                : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
-              class="form-input"
-              disabled={pausendauerSaving}
-              data-testid="pausendauer-over9h"
-            />
-            <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
-          </div>
-        </Section>
+            <div class="form-group">
+              <label class="form-label" for="emp-break-over6h">Pause &gt;6h (Min)</label>
+              <input
+                id="emp-break-over6h"
+                type="number"
+                min="30"
+                max="120"
+                step="1"
+                bind:value={eBreakOver6hOverride}
+                placeholder={isAzubiUnder18
+                  ? "30 Min — JArbSchG-Empfehlung"
+                  : `Standard: ${tenantBreakConfig?.defaultBreakOver6h ?? 30} Min`}
+                class="form-input"
+                disabled={pausendauerSaving}
+                data-testid="pausendauer-over6h"
+              />
+              <p class="form-hint text-muted">ArbZG-Minimum: 30 Min</p>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="emp-break-over9h">Pause &gt;9h (Min)</label>
+              <input
+                id="emp-break-over9h"
+                type="number"
+                min="45"
+                max="180"
+                step="1"
+                bind:value={eBreakOver9hOverride}
+                placeholder={isAzubiUnder18
+                  ? "60 Min — JArbSchG-Empfehlung"
+                  : `Standard: ${tenantBreakConfig?.defaultBreakOver9h ?? 45} Min`}
+                class="form-input"
+                disabled={pausendauerSaving}
+                data-testid="pausendauer-over9h"
+              />
+              <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
+            </div>
+          </Section>
         </div>
 
         <!-- Phase 67 (BERSCH-15) — Berufsschultag (Optional) editor (full edit semantics) -->

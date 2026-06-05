@@ -355,6 +355,11 @@ jobs:
       - name: Run axe scan on /login
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:4173
+          # Phase 73-07's playwright.config has a docker-compose webServer for the
+          # main test suite. axe-scan brings its own preview server (port 4173) on
+          # this runner, so skip the docker-compose bring-up to avoid postgres-test
+          # container conflicts with the runner's lack of docker network access.
+          WEB_SERVER_DISABLED: "true"
         run: pnpm --filter e2e exec playwright test --project=axe-scan tests/axe-scan.spec.ts
 
   # ── Docker Build Check (no push) ──────────────────────────────────────
