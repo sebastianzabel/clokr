@@ -189,6 +189,31 @@ jobs:
             const coverageGateWebStatus = '${{ steps.coverage_gate_web.conclusion }}';
             const buildWebStatus = '${{ steps.build_web.conclusion }}';
 
+            // Visual regression status (separate job, Phase 75) — fetch via API.
+            // The visual-regression job runs in parallel with this `test` job, so its
+            // conclusion is NOT available as a step output here; we read it from the
+            // workflow run's jobs list. May still be `in_progress` when this summary
+            // step fires — the comment is best-effort and updates on subsequent re-runs.
+            let visualStatus = 'unknown';
+            try {
+              const runs = await github.rest.actions.listJobsForWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: context.runId,
+              });
+              const visualJob = runs.data.jobs.find(j => j.name === 'visual-regression');
+              if (visualJob && visualJob.status === 'completed') {
+                visualStatus = visualJob.conclusion || 'unknown';
+              } else if (visualJob) {
+                visualStatus = 'in_progress';
+              } else {
+                // Job entry not yet created (race) — treat as in_progress for icon purposes.
+                visualStatus = 'in_progress';
+              }
+            } catch (e) {
+              visualStatus = 'unknown';
+            }
+
             const icon = (s) => s === 'success' ? '✅' : (s === 'skipped' ? '⏭️' : '❌');
 
             const body = `## CI Summary
@@ -201,6 +226,7 @@ jobs:
             | ${icon(testsWebStatus)} Web Tests + Coverage | ${testsWebStatus} |
             | ${icon(coverageGateWebStatus)} Web Coverage Gate (lib/ lines floor) | ${coverageGateWebStatus} |
             | ${icon(buildWebStatus)} Web Build | ${buildWebStatus} |
+            | ${icon(visualStatus)} Visual regression (Phase 75) | ${visualStatus} |
 
             _Detailed errors are in the job logs above._
             `;
