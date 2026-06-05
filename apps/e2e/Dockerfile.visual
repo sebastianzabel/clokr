@@ -13,6 +13,14 @@ WORKDIR /work
 # We do NOT copy package.json here; the repo is bind-mounted by docker-compose.e2e.yml.
 # This keeps the image cache stable across dependency changes — pnpm install runs at
 # container start against the mounted node_modules.
+#
+# Pre-create node_modules mount points and chown to pwuser so the anonymous volumes
+# declared in docker-compose.e2e.yml (which shadow the host's node_modules to keep
+# linux-vs-macOS binaries from leaking in) inherit pwuser ownership. Without this,
+# anonymous volumes are created root-owned and `pnpm install` inside the container
+# fails with EACCES.
+RUN mkdir -p /work/node_modules /work/apps/e2e/node_modules \
+ && chown -R pwuser:pwuser /work
 
 # Run as the playwright user that ships with the base image (non-root).
 USER pwuser
