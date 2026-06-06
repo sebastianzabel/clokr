@@ -107,7 +107,11 @@ jobs:
           # Fail-fast on any error, undefined variable, or pipe failure (memory:
           # release.yml comment WR-02 documents the rationale).
           set -euo pipefail
-          STATUS=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/api/v1/health" | jq -r '.status')
+          # WR-fix v1.8.2: health route is mounted at /health (no /api/v1 prefix).
+          # See apps/api/src/app.ts:322 — app.get("/health", ...). The /api/v1
+          # prefix is only applied to route plugins registered with that prefix;
+          # /health is registered directly on the app instance.
+          STATUS=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/health" | jq -r '.status')
           if [ "$STATUS" != "ok" ]; then
             echo "Health check failed: status=$STATUS (expected: ok)" >&2
             exit 1
