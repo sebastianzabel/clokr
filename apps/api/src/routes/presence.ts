@@ -4,6 +4,8 @@ import { createHash } from "crypto";
 import { normalizeMac } from "../utils/normalize-mac";
 import { getCurrentShift } from "../utils/get-current-shift";
 import { getTenantTimezone, dateStrInTz } from "../utils/timezone";
+import { resolveClockEvent } from "../services/clock/resolver";
+import type { ClockEvent } from "../services/clock/types";
 
 // ── Zod schema ────────────────────────────────────────────
 const presenceEventSchema = z.object({
@@ -213,7 +215,12 @@ export async function presenceRoutes(app: FastifyInstance) {
         return reply.code(200).send({ ok: true });
       }
 
-      // ── 8. Clock-in / clock-out transaction ───────────────────────────────
+      // ── 8. Clock-in / clock-out via resolver (Phase 76.2 Plan 5) ──────────
+      // The existing-WIFI-entry short-circuit (Block B in tests) and the
+      // cross-source short-circuit (lines 186-214 above) stay at the adapter
+      // for WIFI-specific semantics: same-source AUTO + OPEN_ENTRY through the
+      // resolver returns STOP (clock-out), which is the wrong WIFI semantics
+      // for a presence-confirm ping. See RESEARCH.md Pitfall 4.
       if (body.eventType === "connected") {
         // Check for existing WIFI entry — never create a second entry
         const existingWifiEntry = await app.prisma.timeEntry.findFirst({
@@ -221,7 +228,9 @@ export async function presenceRoutes(app: FastifyInstance) {
         });
 
         if (existingWifiEntry) {
-          // Already clocked in via WIFI — confirm presence, no duplicate
+          // Already clocked in via WIFI — confirm presence, no duplicate.
+          // Adapter emits WIFI_PRESENCE_CONFIRMED verbatim (Fritzbox-adapter
+          // audit-log grep + Phase 70 activity feed depend on this string).
           await app.prisma.auditLog.create({
             data: {
               userId: null,
@@ -235,97 +244,117 @@ export async function presenceRoutes(app: FastifyInstance) {
           return reply.code(200).send({ ok: true });
         }
 
-        // Create new WIFI clock-in inside a transaction (race-condition guard per T-25-03-07)
-        const newEntry = await app.prisma.$transaction(async (tx) => {
-          // Re-check inside transaction to guard against concurrent requests
-          const concurrent = await tx.timeEntry.findFirst({
-            where: { employeeId: employee.id, date: today, deletedAt: null },
-          });
-          if (concurrent) return null; // lost race — let the other request win
+        // No existing entry seen by the adapter pre-check — route through
+        // resolver to create one inside the pessimistic row lock.
+        //
+        // intent='IN' (NOT 'AUTO'): for WIFI the connected event is a "start
+        // presence" signal — never a toggle. Using AUTO would cause same-source
+        // OPEN_ENTRY to STOP (clock-out) inside the resolver under race, since
+        // the adapter pre-check above could miss a row created by a concurrent
+        // request whose write committed between our read and our resolver call.
+        // With IN, the lost-race path produces a typed CONFLICT
+        // (ALREADY_CLOCKED_IN) which the adapter maps to the existing
+        // idempotent WIFI_PRESENCE_CONFIRMED contract (Pitfall 4 in RESEARCH.md).
+        // Sub-req C step 4 (race generalization) holds: 5 concurrent connected
+        // events → exactly 1 created WIFI row + 4× WIFI_PRESENCE_CONFIRMED.
+        const event: ClockEvent = {
+          employeeId: employee.id,
+          tenantId,
+          source: "WIFI",
+          intent: "IN",
+          timestamp: eventTime,
+          date: today,
+          dateStr,
+          actor: { type: "SYSTEM" },
+        };
 
-          return tx.timeEntry.create({
-            data: {
-              employeeId: employee.id,
-              date: today,
-              startTime: eventTime,
-              source: "WIFI",
-            },
-          });
-        });
+        const resolution = await resolveClockEvent(app, event);
 
-        if (newEntry) {
+        if (resolution.kind === "CONFLICT") {
+          if (resolution.reason === "ALREADY_CLOCKED_IN") {
+            // Lost race: a concurrent connected request created the entry
+            // between our pre-check and our resolver call. Emit
+            // WIFI_PRESENCE_CONFIRMED on the existing entry (preserves the
+            // pre-Plan-5 idempotent contract).
+            const winnerEntry = await app.prisma.timeEntry.findFirst({
+              where: {
+                employeeId: employee.id,
+                date: today,
+                deletedAt: null,
+                endTime: null,
+                isInvalid: false,
+              },
+            });
+            if (winnerEntry) {
+              await app.prisma.auditLog.create({
+                data: {
+                  userId: null,
+                  action: "WIFI_PRESENCE_CONFIRMED",
+                  entity: "TimeEntry",
+                  entityId: winnerEntry.id,
+                  newValue: { mac, timestamp: body.timestamp },
+                  purgeable: false,
+                },
+              });
+            }
+            return reply.code(200).send({ ok: true });
+          }
+          // Other CONFLICTs (LEAVE_APPROVED, MONTH_LOCKED, NOT_CLOCKED_IN —
+          // shouldn't fire on IN) — log + still return 200 to preserve the
+          // adapter's idempotent contract (Pitfall 4 — never 409 on /events).
+          app.log.warn(
+            { employeeId: employee.id, mac, reason: resolution.reason },
+            "WIFI_CONNECTED_UNEXPECTED_CONFLICT",
+          );
+        }
+        return reply.code(200).send({ ok: true });
+      }
+
+      // ── 9. eventType === "disconnected" via resolver ───────────────────────
+      // The resolver's STOP branch closes the open entry + emits CLOCK_OUT audit.
+      // Pre-Plan-5 inline transaction + WIFI_CLOCK_OUT audit GONE.
+      const disconnectEvent: ClockEvent = {
+        employeeId: employee.id,
+        tenantId,
+        source: "WIFI",
+        intent: "OUT",
+        timestamp: eventTime,
+        date: today,
+        dateStr,
+        actor: { type: "SYSTEM" },
+      };
+
+      const disconnectResolution = await resolveClockEvent(app, disconnectEvent);
+
+      if (disconnectResolution.kind === "CONFLICT") {
+        if (disconnectResolution.reason === "NOT_CLOCKED_IN") {
+          // No open entry to close — emit WIFI_NO_OPEN_ENTRY (purgeable, idempotent
+          // contract preserved verbatim from pre-Plan-5 lines 285-296). Fritzbox
+          // adapter sees the same {ok: true} + 200.
           await app.prisma.auditLog.create({
             data: {
               userId: null,
-              action: "WIFI_CLOCK_IN",
-              entity: "TimeEntry",
-              entityId: newEntry.id,
-              newValue: { mac, startTime: eventTime.toISOString(), source: "WIFI" },
-              purgeable: false,
+              action: "WIFI_NO_OPEN_ENTRY",
+              entity: "PresenceEvent",
+              entityId: employee.id,
+              newValue: { mac, timestamp: body.timestamp },
+              purgeable: true,
             },
           });
+          return reply.code(200).send({ ok: true });
         }
-
+        if (disconnectResolution.reason === "MONTH_LOCKED") {
+          // Locked month — silent 200 (preserves pre-Plan-5 line 301-306 behavior;
+          // no user-facing error for the adapter poll loop).
+          app.log.warn({ employeeId: employee.id, mac }, "WIFI_DISCONNECTED_BLOCKED_BY_MONTH_LOCK");
+          return reply.code(200).send({ ok: true });
+        }
+        // Other CONFLICT reasons (LEAVE_APPROVED, ALREADY_CLOCKED_IN — shouldn't
+        // fire on OUT intent): also return 200 to preserve idempotent contract.
         return reply.code(200).send({ ok: true });
       }
 
-      // ── 9. eventType === "disconnected" ───────────────────────────────────
-      const openWifiEntry = await app.prisma.timeEntry.findFirst({
-        where: {
-          employeeId: employee.id,
-          date: today,
-          deletedAt: null,
-          source: "WIFI",
-          endTime: null,
-          isInvalid: false,
-        },
-      });
-
-      if (!openWifiEntry) {
-        // No open WIFI entry to close — idempotent, log purgeable event
-        await app.prisma.auditLog.create({
-          data: {
-            userId: null,
-            action: "WIFI_NO_OPEN_ENTRY",
-            entity: "PresenceEvent",
-            entityId: employee.id,
-            newValue: { mac, timestamp: body.timestamp },
-            purgeable: true,
-          },
-        });
-        return reply.code(200).send({ ok: true });
-      }
-
-      // CLAUDE.md audit-proof rule: locked months must not be modified.
-      // TimeEntry.isLocked is the field to check (no ClosedMonth model exists in schema).
-      if (openWifiEntry.isLocked) {
-        app.log.warn(
-          { entryId: openWifiEntry.id },
-          "WIFI clock-out blocked: TimeEntry is locked (month is closed)",
-        );
-        return reply.code(200).send({ ok: true }); // silent — no user-facing error for adapter
-      }
-
-      await app.prisma.$transaction(async (tx) => {
-        await tx.timeEntry.update({
-          where: { id: openWifiEntry.id },
-          data: { endTime: eventTime },
-        });
-      });
-
-      // Write audit log outside transaction (not purgeable — 10-year retention per §147 AO / T-25-03-03)
-      await app.prisma.auditLog.create({
-        data: {
-          userId: null,
-          action: "WIFI_CLOCK_OUT",
-          entity: "TimeEntry",
-          entityId: openWifiEntry.id,
-          oldValue: { endTime: null },
-          newValue: { mac, endTime: eventTime.toISOString() },
-          purgeable: false,
-        },
-      });
-
+      // CLOCKED_OUT or CONSOLIDATED — resolver already emitted CLOCK_OUT audit.
       return reply.code(200).send({ ok: true });
     },
   });

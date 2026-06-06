@@ -15,6 +15,7 @@
     applyDefaults,
     isOverridden,
   } from "$lib/employee-classification";
+  import { isWorkDay } from "$lib/utils/work-schedule";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -399,13 +400,25 @@
     eFri = sched ? Number(sched.fridayHours) : 8;
     eSat = sched ? Number(sched.saturdayHours) : 0;
     eSun = sched ? Number(sched.sundayHours) : 0;
-    eMonWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.mondayHours) > 0 : true;
-    eTueWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.tuesdayHours) > 0 : true;
-    eWedWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.wednesdayHours) > 0 : true;
-    eThuWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.thursdayHours) > 0 : true;
-    eFriWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.fridayHours) > 0 : true;
-    eSatWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.saturdayHours) > 0 : false;
-    eSunWd = sched?.type === "MONTHLY_HOURS" ? Number(sched.sundayHours) > 0 : false;
+    // Phase 76.3 (SALDO-V19-01): derive weekday booleans via the shared
+    // work-schedule helper so workDays (Phase 61) wins over per-day-hours.
+    // Reference week: 2026-06-01 (Mon) ... 2026-06-07 (Sun). Stub dates are
+    // only used to call isWorkDay() — the helper looks at date.getDay()
+    // (0=Sun..6=Sat) and never reads year/month.
+    const refMon = new Date(2026, 5, 1);
+    const refTue = new Date(2026, 5, 2);
+    const refWed = new Date(2026, 5, 3);
+    const refThu = new Date(2026, 5, 4);
+    const refFri = new Date(2026, 5, 5);
+    const refSat = new Date(2026, 5, 6);
+    const refSun = new Date(2026, 5, 7);
+    eMonWd = isWorkDay(sched, refMon);
+    eTueWd = isWorkDay(sched, refTue);
+    eWedWd = isWorkDay(sched, refWed);
+    eThuWd = isWorkDay(sched, refThu);
+    eFriWd = isWorkDay(sched, refFri);
+    eSatWd = isWorkDay(sched, refSat);
+    eSunWd = isWorkDay(sched, refSun);
     eThreshold = sched ? Number(sched.overtimeThreshold) : 60;
     ePayout = sched ? sched.allowOvertimePayout : false;
     eOvertimeMode = sched?.overtimeMode ?? "CARRY_FORWARD";

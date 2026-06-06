@@ -156,6 +156,8 @@ model TenantConfig {
   // ArbZG-Floor is HARD-CODED in apps/api/src/utils/break-constants.ts (NOT here) — these are defaults, not the legal minimum.
   defaultBreakOver6h             Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
   defaultBreakOver9h             Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
+  // Phase 76.2 (ARCH-V19-01, D-04) — Cross-source same-day consolidation gap (NFC/MOBILE/WIFI). Default 4h widens 76.1's NFC-only 2h to all sources.
+  consolidationGapHours          Int      @default(4)
   // Überstunden-Jahresübertrag
   overtimeCarryOverMode          String   @default("FULL") // FULL | CAPPED | RESET
   overtimeCarryOverCap           Int? // Max. Übertrag in Minuten (nur bei CAPPED)

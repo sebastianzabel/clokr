@@ -409,9 +409,10 @@ describe("Time Entry Validation Rules", () => {
         // Should NOT be blocked — invalid entries must not count as "already clocked in".
         // Note: /clock-in returns 200 (default Fastify success) not 201; the conflict-check
         // filter (isInvalid: false) is the actual claim under test here.
+        // Phase 76.2 D-03 unified response: { resolution: { kind: 'CLOCKED_IN', entry }, audit }
         expect(res.statusCode).toBe(200);
         const body = JSON.parse(res.body);
-        expect(body.success).toBe(true);
+        expect(body.resolution.kind).toBe("CLOCKED_IN");
 
         // Clean up the new clock-in entry
         await app.prisma.timeEntry.deleteMany({
@@ -423,14 +424,21 @@ describe("Time Entry Validation Rules", () => {
     });
 
     it("blocks POST /clock-in with 409 when a valid open entry exists (isInvalid: false)", async () => {
-      const today = new Date();
-      const todayDate = new Date(today.toISOString().split("T")[0] + "T00:00:00.000Z");
+      // Phase 76.2: resolver filters open-entry lookup by tenant-tz date (matches /nfc-punch's
+      // long-standing contract). Compute "today" in tenant tz the same way the resolver does
+      // (was: naive UTC date — a latent bug exposed by the resolver's tighter contract).
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: data.tenant.id },
+      });
+      const tz = tenantConfig?.timezone ?? "Europe/Berlin";
+      const { todayInTz } = await import("../../utils/timezone");
+      const todayDate = todayInTz(tz);
 
       const validOpenEntry = await app.prisma.timeEntry.create({
         data: {
           employeeId: data.employee.id,
           date: todayDate,
-          startTime: new Date(today.toISOString().split("T")[0] + "T08:00:00.000Z"),
+          startTime: new Date(todayDate.getTime() + 8 * 3600000), // 08:00 today UTC
           endTime: null,
           isInvalid: false,
           source: "MANUAL",

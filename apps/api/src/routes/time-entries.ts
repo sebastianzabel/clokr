@@ -17,6 +17,10 @@ import {
   getDayHoursFromSchedule,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { hasApprovedLeaveOnDate } from "../utils/leave-check";
+import { resolveClockEvent } from "../services/clock/resolver";
+import { resolveActor } from "../services/clock/audit-actor";
+import type { ClockEvent } from "../services/clock/types";
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -171,45 +175,6 @@ async function checkOverlap(
   return `Überschneidung mit bestehendem Eintrag (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
 }
 
-/** § 8 BUrlG: Prüft ob aktiver Urlaub an dem Tag vorliegt */
-async function hasApprovedLeaveOnDate(
-  prisma: Prisma.TransactionClient,
-  employeeId: string,
-  dateStr: string,
-): Promise<{ type: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null> {
-  const leave = await prisma.leaveRequest.findFirst({
-    where: {
-      employeeId,
-      status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
-      startDate: { lte: new Date(dateStr + "T23:59:59Z") },
-      endDate: { gte: new Date(dateStr + "T00:00:00Z") },
-    },
-    include: { leaveType: { select: { name: true } } },
-  });
-  if (leave)
-    return {
-      type: leave.leaveType.name,
-      status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
-    };
-
-  const absence = await prisma.absence.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      startDate: { lte: new Date(dateStr + "T23:59:59Z") },
-      endDate: { gte: new Date(dateStr + "T00:00:00Z") },
-      type: { in: ["MATERNITY", "PARENTAL"] },
-    },
-  });
-  if (absence)
-    return {
-      type: absence.type === "MATERNITY" ? "Mutterschutz" : "Elternzeit",
-      status: "APPROVED" as const,
-    };
-
-  return null;
-}
-
 export async function timeEntryRoutes(app: FastifyInstance) {
   // POST /api/v1/time-entries/nfc-punch  (kein JWT – Terminal-Gerät)
   const isTest = process.env.NODE_ENV === "test";
@@ -217,171 +182,68 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: { tags: ["Zeiterfassung"] },
     config: { rateLimit: { max: isTest ? 1000 : 10, timeWindow: "1 minute" } },
     handler: async (req, reply) => {
+      // Phase 76.2 (ARCH-V19-01) Plan 4 — thin adapter. Resolver owns lock + leave check + state
+      // machine + audit + cross-source consolidation. Auto-break stays as post-resolution side effect.
       const body = nfcPunchSchema.parse(req.body);
 
-      // Extract API key from Authorization header
+      // Terminal API key auth (NFC-specific — bypasses requireAuth; firmware uses raw Bearer)
       const authHeader = req.headers.authorization;
       if (!authHeader?.startsWith("Bearer ")) {
         return reply.code(401).send({ error: "Terminal API Key erforderlich" });
       }
       const rawKey = authHeader.slice(7);
       const keyHash = createHash("sha256").update(rawKey).digest("hex");
-
-      const apiKey = await app.prisma.terminalApiKey.findUnique({
-        where: { keyHash },
-      });
+      const apiKey = await app.prisma.terminalApiKey.findUnique({ where: { keyHash } });
       if (!apiKey || apiKey.revokedAt) {
         return reply.code(401).send({ error: "Ungültiger oder widerrufener API Key" });
       }
-
-      const tenantId = apiKey.tenantId;
-
-      // Update lastUsedAt (fire and forget)
       app.prisma.terminalApiKey
-        .update({
-          where: { id: apiKey.id },
-          data: { lastUsedAt: new Date() },
-        })
-        .catch((err) => app.log.error({ err }, "Failed to update NFC card lastUsedAt"));
+        .update({ where: { id: apiKey.id }, data: { lastUsedAt: new Date() } })
+        .catch((err) => app.log.error({ err }, "Failed to update NFC API key lastUsedAt"));
 
-      // Mitarbeiter anhand NFC-Karten-ID ermitteln
+      // Employee resolution from nfcCardId
       const employee = await app.prisma.employee.findFirst({
-        where: { nfcCardId: body.nfcCardId, tenantId },
+        where: { nfcCardId: body.nfcCardId, tenantId: apiKey.tenantId },
         include: { tenant: true, user: true },
       });
-      if (!employee) {
-        return reply.code(404).send({ error: "Unbekannte Karte" });
-      }
+      if (!employee) return reply.code(404).send({ error: "Unbekannte Karte" });
       if (!employee.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
 
+      // Build ClockEvent { intent: 'AUTO' (toggle), source: 'NFC', actor: TERMINAL }
       const now = new Date();
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
-      const today = todayInTz(tz);
-      const todayStr = dateStrInTz(now, tz);
+      const event: ClockEvent = {
+        employeeId: employee.id,
+        tenantId: employee.tenantId,
+        source: "NFC",
+        intent: "AUTO",
+        timestamp: now,
+        date: todayInTz(tz),
+        dateStr: dateStrInTz(now, tz),
+        actor: { type: "TERMINAL", terminalApiKeyId: apiKey.id },
+      };
 
-      // Offenen Eintrag suchen + clock-in/out in einer Transaktion (Race-Condition vermeiden)
-      const txResult = await app.prisma.$transaction(async (tx) => {
-        // TIME-V19-03: serialize concurrent clock-in via pessimistic Employee row lock (prod incident 2026-06-04 — two NFC punches 3 ms apart created duplicate open entries)
-        await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employee.id} FOR UPDATE`;
-        const openEntry = await tx.timeEntry.findFirst({
-          where: {
-            employeeId: employee.id,
-            deletedAt: null,
-            date: today,
-            endTime: null,
-            isInvalid: false,
-          },
-        });
+      const resolution = await resolveClockEvent(app, event, req);
 
-        if (openEntry) {
-          // Ausstempeln
-          const updated = await tx.timeEntry.update({
-            where: { id: openEntry.id },
-            data: { endTime: now },
-            include: { breaks: { orderBy: { startTime: "asc" } } },
+      if (resolution.kind === "CONFLICT") {
+        if (resolution.reason === "LEAVE_APPROVED") {
+          return reply.code(409).send({
+            error: "§ 8 BUrlG: Heute ist Urlaub genehmigt. Bitte zuerst stornieren.",
+            action: "BLOCKED",
+            resolution,
           });
-
-          // Check for break gap: if there was a previous completed entry today
-          // that ended within 2h of when this open entry started, treat the gap as a break
-          const previousEntry = await tx.timeEntry.findFirst({
-            where: {
-              employeeId: employee.id,
-              deletedAt: null,
-              date: today,
-              id: { not: openEntry.id },
-              endTime: { not: null },
-            },
-            orderBy: { endTime: "desc" },
+        }
+        if (resolution.reason === "MONTH_LOCKED") {
+          return reply.code(409).send({
+            error: "Eintrag ist gesperrt und kann nicht bearbeitet werden",
+            resolution,
           });
-
-          if (previousEntry && previousEntry.endTime) {
-            const gapMs = openEntry.startTime.getTime() - previousEntry.endTime.getTime();
-            const gapHours = gapMs / 3600000;
-            if (gapHours > 0 && gapHours <= 2) {
-              // Merge: extend the previous entry to cover the current one,
-              // create a break for the gap, and delete the current entry
-              const breakStart = previousEntry.endTime;
-              const breakEnd = openEntry.startTime;
-
-              await tx.break.create({
-                data: {
-                  timeEntryId: previousEntry.id,
-                  startTime: breakStart,
-                  endTime: breakEnd,
-                },
-              });
-
-              // Update previous entry to extend endTime to current entry's endTime
-              const allBreaks = await tx.break.findMany({
-                where: { timeEntryId: previousEntry.id },
-              });
-              const totalBreakMins = Math.round(calcBreakMinutes(allBreaks));
-
-              await tx.timeEntry.update({
-                where: { id: previousEntry.id },
-                data: {
-                  endTime: now,
-                  breakMinutes: totalBreakMins,
-                },
-              });
-
-              // Soft delete the current (short) entry (merged into previous)
-              await tx.timeEntry.update({
-                where: { id: openEntry.id },
-                data: { deletedAt: new Date() },
-              });
-
-              return {
-                action: "OUT" as const,
-                merged: true as const,
-                auditEntityId: previousEntry.id,
-                auditOldValue: previousEntry,
-                auditNewValue: { ...previousEntry, endTime: now, breakMinutes: totalBreakMins },
-                auditDeletedEntryId: openEntry.id,
-                auditDeletedEntry: openEntry,
-              };
-            }
-          }
-
-          return {
-            action: "OUT" as const,
-            merged: false as const,
-            updated,
-            openEntry,
-          };
         }
-
-        // § 8 BUrlG: Check for active leave on this day
-        const leaveCheck = await hasApprovedLeaveOnDate(tx, employee.id, todayStr);
-        if (leaveCheck?.status === "APPROVED") {
-          return { action: "BLOCKED" as const, leaveReason: leaveCheck.type };
-        }
-
-        // Einstempeln — if CANCELLATION_REQUESTED, mark as invalid until cancellation approved
-        const entry = await tx.timeEntry.create({
-          data: {
-            employeeId: employee.id,
-            date: today,
-            startTime: now,
-            source: "NFC",
-            isInvalid: leaveCheck?.status === "CANCELLATION_REQUESTED",
-            invalidReason: leaveCheck ? "Urlaubsstornierung ausstehend" : null,
-          },
-        });
-
-        return { action: "IN" as const, entry };
-      });
-
-      if (txResult.action === "BLOCKED") {
-        return reply.code(409).send({
-          error: `§ 8 BUrlG: Heute ist ${txResult.leaveReason} genehmigt. Bitte zuerst stornieren.`,
-          action: "BLOCKED",
-        });
+        return reply.code(409).send({ error: "Konflikt", resolution });
       }
 
-      // Load overtime balance for response
       const getBalance = async () => {
         const account = await app.prisma.overtimeAccount.findFirst({
           where: { employeeId: employee.id },
@@ -389,140 +251,104 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return account ? Number(account.balanceHours) : 0;
       };
 
-      if (txResult.action === "OUT") {
-        // Auto-break after NFC clock-out (if no breaks exist)
-        const clockedOutEntryId = txResult.merged ? txResult.auditEntityId : txResult.updated.id;
-        const existingBreaks = await app.prisma.break.findMany({
-          where: { timeEntryId: clockedOutEntryId },
+      const employeeBlock = {
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        employeeNumber: employee.employeeNumber,
+      };
+
+      if (resolution.kind === "CLOCKED_IN") {
+        const balanceHours = await getBalance();
+        return reply.code(200).send({
+          action: "IN" as const,
+          employee: employeeBlock,
+          time: now.toISOString(),
+          balanceHours,
+          resolution,
         });
-        const manualBreakMin = existingBreaks.reduce(
-          (s, b) => s + Math.round((b.endTime.getTime() - b.startTime.getTime()) / 60000),
-          0,
-        );
+      }
 
-        if (manualBreakMin === 0) {
-          const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-          if (tenantConfig?.autoBreakEnabled) {
-            const entryForBreak = await app.prisma.timeEntry.findUnique({
-              where: { id: clockedOutEntryId },
+      if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {
+        app.log.error({ resolution }, "nfc_punch_unexpected_resolution_kind");
+        return reply.code(500).send({ error: "Interner Serverfehler" });
+      }
+
+      // CLOCKED_OUT or CONSOLIDATED — post-resolution side effects (auto-break — Phase 64 preserved)
+      const clockedOutEntryId = resolution.entry.id;
+      const existingBreaks = await app.prisma.break.findMany({
+        where: { timeEntryId: clockedOutEntryId },
+      });
+      const manualBreakMin = existingBreaks.reduce(
+        (s, b) => s + Math.round((b.endTime.getTime() - b.startTime.getTime()) / 60000),
+        0,
+      );
+      if (manualBreakMin === 0) {
+        const tenantConfig = await app.prisma.tenantConfig.findUnique({
+          where: { tenantId: employee.tenantId },
+        });
+        if (tenantConfig?.autoBreakEnabled) {
+          const entryForBreak = await app.prisma.timeEntry.findUnique({
+            where: { id: clockedOutEntryId },
+          });
+          if (entryForBreak?.startTime && entryForBreak?.endTime) {
+            const workDurationMin =
+              (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 60000;
+            const employeeBreakFields = await app.prisma.employee.findUnique({
+              where: { id: entryForBreak.employeeId },
+              select: { breakOver6hOverride: true, breakOver9hOverride: true },
             });
-            if (entryForBreak?.startTime && entryForBreak?.endTime) {
-              const workDurationMin =
-                (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 60000;
-              // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
-              // Local fetch of the two override fields keeps the line-247 employee load untouched.
-              const employeeBreakFields = await app.prisma.employee.findUnique({
-                where: { id: entryForBreak.employeeId },
-                select: { breakOver6hOverride: true, breakOver9hOverride: true },
-              });
-              const autoBreakMin = getEffectiveBreakDuration(
-                employeeBreakFields ?? { breakOver6hOverride: null, breakOver9hOverride: null },
-                tenantConfig,
-                workDurationMin,
-              );
-
-              if (autoBreakMin > 0) {
-                let breakStartTime: Date;
-                if (tenantConfig.defaultBreakStart) {
-                  const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
-                  breakStartTime = new Date(entryForBreak.startTime);
-                  breakStartTime.setHours(hh, mm, 0, 0);
-                  if (
-                    breakStartTime <= entryForBreak.startTime ||
-                    breakStartTime >= entryForBreak.endTime
-                  ) {
-                    const midMs =
-                      entryForBreak.startTime.getTime() +
-                      (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 2;
-                    breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
-                  }
-                } else {
+            const autoBreakMin = getEffectiveBreakDuration(
+              employeeBreakFields ?? { breakOver6hOverride: null, breakOver9hOverride: null },
+              tenantConfig,
+              workDurationMin,
+            );
+            if (autoBreakMin > 0) {
+              let breakStartTime: Date;
+              if (tenantConfig.defaultBreakStart) {
+                const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+                breakStartTime = new Date(entryForBreak.startTime);
+                breakStartTime.setHours(hh, mm, 0, 0);
+                if (
+                  breakStartTime <= entryForBreak.startTime ||
+                  breakStartTime >= entryForBreak.endTime
+                ) {
                   const midMs =
                     entryForBreak.startTime.getTime() +
                     (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 2;
                   breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
                 }
-                const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
-
-                await app.prisma.break.create({
-                  data: {
-                    timeEntryId: clockedOutEntryId,
-                    startTime: breakStartTime,
-                    endTime: breakEndTime,
-                  },
-                });
-                await app.prisma.timeEntry.update({
-                  where: { id: clockedOutEntryId },
-                  data: { breakMinutes: autoBreakMin },
-                });
+              } else {
+                const midMs =
+                  entryForBreak.startTime.getTime() +
+                  (entryForBreak.endTime.getTime() - entryForBreak.startTime.getTime()) / 2;
+                breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
               }
+              const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+              await app.prisma.break.create({
+                data: {
+                  timeEntryId: clockedOutEntryId,
+                  startTime: breakStartTime,
+                  endTime: breakEndTime,
+                },
+              });
+              await app.prisma.timeEntry.update({
+                where: { id: clockedOutEntryId },
+                data: { breakMinutes: autoBreakMin },
+              });
             }
           }
         }
-
-        await updateOvertimeAccount(app, employee.id);
-
-        if (txResult.merged) {
-          await app.audit({
-            action: "NFC_CLOCK_OUT",
-            entity: "TimeEntry",
-            entityId: txResult.auditEntityId,
-            oldValue: txResult.auditOldValue,
-            newValue: txResult.auditNewValue,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-          // Audit the soft-deleted merged entry separately
-          await app.audit({
-            action: "DELETE",
-            entity: "TimeEntry",
-            entityId: txResult.auditDeletedEntryId,
-            oldValue: txResult.auditDeletedEntry,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-        } else {
-          await app.audit({
-            action: "NFC_CLOCK_OUT",
-            entity: "TimeEntry",
-            entityId: txResult.updated.id,
-            oldValue: txResult.openEntry,
-            newValue: txResult.updated,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-        }
-
-        const balanceHours = await getBalance();
-        return {
-          action: "OUT" as const,
-          employee: {
-            firstName: employee.firstName,
-            lastName: employee.lastName,
-            employeeNumber: employee.employeeNumber,
-          },
-          time: now.toISOString(),
-          balanceHours,
-        };
       }
 
-      // action === "IN"
-      await app.audit({
-        action: "NFC_CLOCK_IN",
-        entity: "TimeEntry",
-        entityId: txResult.entry.id,
-        newValue: txResult.entry,
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
-
+      await updateOvertimeAccount(app, employee.id);
       const balanceHours = await getBalance();
-      return {
-        action: "IN" as const,
-        employee: {
-          firstName: employee.firstName,
-          lastName: employee.lastName,
-          employeeNumber: employee.employeeNumber,
-        },
+      return reply.code(200).send({
+        action: "OUT" as const,
+        employee: employeeBlock,
         time: now.toISOString(),
         balanceHours,
-      };
+        resolution,
+      });
     },
   });
 
@@ -531,89 +357,60 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
+      // Phase 76.2 (ARCH-V19-01) Plan 2 — thin adapter. Resolver owns lock + BUrlG + state machine + audit + consolidation.
       const body = clockInSchema.parse(req.body);
       const user = req.user;
-
-      // NFC: Mitarbeiter anhand Karten-ID ermitteln
       let employeeId = body.employeeId ?? user.employeeId;
       if (body.nfcCardId) {
-        const emp = await app.prisma.employee.findUnique({
-          where: { nfcCardId: body.nfcCardId },
-        });
+        const emp = await app.prisma.employee.findUnique({ where: { nfcCardId: body.nfcCardId } });
         if (!emp) return reply.code(404).send({ error: "NFC Karte nicht gefunden" });
         employeeId = emp.id;
       }
-
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
-
-      // Prüfen ob Mitarbeiter aktiv ist
       const employeeRecord = await app.prisma.employee.findUnique({
         where: { id: employeeId },
         include: { user: true },
       });
-      if (employeeRecord && !employeeRecord.user.isActive) {
+      if (!employeeRecord) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (!employeeRecord.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
-
-      // § 8 BUrlG: Check for active leave
-      let clockLeaveCheck: { type: string; status: "APPROVED" | "CANCELLATION_REQUESTED" } | null =
-        null;
-      const empTenantId = employeeRecord?.tenantId;
-      if (empTenantId) {
-        const clockTz = await getTenantTimezone(app.prisma, empTenantId);
-        const clockTodayStr = dateStrInTz(new Date(), clockTz);
-        clockLeaveCheck = await hasApprovedLeaveOnDate(app.prisma, employeeId, clockTodayStr);
-        if (clockLeaveCheck?.status === "APPROVED") {
+      const now = new Date();
+      const tz = await getTenantTimezone(app.prisma, employeeRecord.tenantId);
+      const event: ClockEvent = {
+        employeeId,
+        tenantId: employeeRecord.tenantId,
+        source: body.source,
+        intent: "IN",
+        timestamp: now,
+        date: todayInTz(tz),
+        dateStr: dateStrInTz(now, tz),
+        note: body.note,
+        actor: resolveActor(req),
+      };
+      const resolution = await resolveClockEvent(app, event, req);
+      if (resolution.kind === "CLOCKED_IN") {
+        return reply.code(200).send({ resolution, audit: resolution.audit });
+      }
+      if (resolution.kind === "CONFLICT") {
+        if (resolution.reason === "ALREADY_CLOCKED_IN") {
+          return reply.code(409).send({ error: "Bereits eingestempelt", resolution });
+        }
+        if (resolution.reason === "LEAVE_APPROVED") {
           return reply.code(409).send({
-            error: `§ 8 BUrlG: Heute ist ${clockLeaveCheck.type} genehmigt. Bitte zuerst stornieren.`,
+            error: "§ 8 BUrlG: Heute ist Urlaub genehmigt. Bitte zuerst stornieren.",
+            resolution,
           });
         }
-      }
-
-      // Prüfen ob bereits eingestempelt + erstellen in einer Transaktion (Race-Condition vermeiden)
-      const now = new Date();
-      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
-
-      const txResult = await app.prisma.$transaction(async (tx) => {
-        // TIME-V19-03: serialize concurrent clock-in via pessimistic Employee row lock (prod incident 2026-06-04 — two NFC punches 3 ms apart created duplicate open entries)
-        await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${employeeId} FOR UPDATE`;
-        const activeEntry = await tx.timeEntry.findFirst({
-          where: { employeeId, deletedAt: null, endTime: null, isInvalid: false },
-        });
-        if (activeEntry) {
-          return { conflict: true as const, entryId: activeEntry.id };
+        if (resolution.reason === "MONTH_LOCKED") {
+          return reply
+            .code(409)
+            .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden", resolution });
         }
-
-        const entry = await tx.timeEntry.create({
-          data: {
-            employeeId,
-            date: todayInTz(tz),
-            startTime: now,
-            source: body.source,
-            note: body.note,
-            isInvalid: clockLeaveCheck?.status === "CANCELLATION_REQUESTED",
-            invalidReason: clockLeaveCheck ? "Urlaubsstornierung ausstehend" : null,
-          },
-        });
-        return { conflict: false as const, entry };
-      });
-
-      if (txResult.conflict) {
-        return reply.code(409).send({ error: "Bereits eingestempelt", entryId: txResult.entryId });
+        return reply.code(409).send({ error: "Konflikt", resolution });
       }
-
-      const entry = txResult.entry;
-
-      await app.audit({
-        userId: user.sub,
-        action: "CLOCK_IN",
-        entity: "TimeEntry",
-        entityId: entry.id,
-        newValue: entry,
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
-
-      return { success: true, entry };
+      app.log.error({ resolution }, "clock_in_unexpected_resolution_kind");
+      return reply.code(500).send({ error: "Interner Serverfehler" });
     },
   });
 
@@ -622,28 +419,66 @@ export async function timeEntryRoutes(app: FastifyInstance) {
     schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req, reply) => {
+      // Phase 76.2 (ARCH-V19-01) Plan 3 — thin adapter. Resolver owns lock + state machine + audit.
+      // Post-resolution side effects (auto-break / ArbZG / dismissByRelated) stay at the adapter.
       const { id } = req.params as { id: string };
       const body = clockOutSchema.parse(req.body);
 
-      const entry = await app.prisma.timeEntry.findUnique({ where: { id } });
-      if (!entry || entry.deletedAt)
-        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      // Fetch entry to derive ClockEvent fields (/:id/clock-out is per-entry input — RESEARCH.md Pitfall 8).
+      const entry = await app.prisma.timeEntry.findFirst({
+        where: { id, deletedAt: null },
+        include: { employee: true },
+      });
+      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Pre-guard: already-closed entry shortcuts to 409 without paying the lock cost.
       if (entry.endTime) return reply.code(409).send({ error: "Bereits ausgestempelt" });
 
+      // Build ClockEvent { intent: 'OUT' }.
       const now = new Date();
+      const tz = await getTenantTimezone(app.prisma, entry.employee.tenantId);
+      const event: ClockEvent = {
+        employeeId: entry.employeeId,
+        tenantId: entry.employee.tenantId,
+        source: entry.source,
+        intent: "OUT",
+        timestamp: now,
+        date: entry.date,
+        dateStr: dateStrInTz(now, tz),
+        note: body.note,
+        actor: resolveActor(req),
+      };
+
+      const resolution = await resolveClockEvent(app, event, req);
+
+      if (resolution.kind === "CONFLICT") {
+        if (resolution.reason === "MONTH_LOCKED") {
+          return reply
+            .code(409)
+            .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden", resolution });
+        }
+        if (resolution.reason === "NOT_CLOCKED_IN") {
+          return reply.code(409).send({ error: "Bereits ausgestempelt", resolution });
+        }
+        return reply.code(409).send({ error: "Konflikt", resolution });
+      }
+
+      if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {
+        app.log.error({ resolution }, "clock_out_unexpected_resolution_kind");
+        return reply.code(500).send({ error: "Interner Serverfehler" });
+      }
+
+      const closedEntryId = resolution.entry.id;
+
+      // ── Post-resolution side effects (adapter — explicitly out of resolver scope per CONTEXT D-05) ──
       const initialBreakMinutes = body.breakMinutes ?? 0;
-
-      await app.prisma.timeEntry.update({
-        where: { id },
-        data: {
-          endTime: now,
-          breakMinutes: initialBreakMinutes,
-          note: body.note,
-        },
-      });
-
-      // Auto-break on clock-out if no manual breaks provided
-      if (initialBreakMinutes === 0) {
+      if (initialBreakMinutes > 0) {
+        await app.prisma.timeEntry.update({
+          where: { id: closedEntryId },
+          data: { breakMinutes: initialBreakMinutes, note: body.note },
+        });
+      } else {
+        // Auto-break (Phase 64 contract — preserved verbatim).
         const targetEmployee = await app.prisma.employee.findUnique({
           where: { id: entry.employeeId },
         });
@@ -653,40 +488,53 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             })
           : null;
 
-        if (tenantConfig?.autoBreakEnabled) {
-          const workDurationMin = (now.getTime() - entry.startTime.getTime()) / 60000;
-          // Phase 64 (D-04, BREAK-03): effective break = employee override → tenant default → 0.
-          // targetEmployee is loaded above without `select` → carries the two override fields.
-          const autoBreakMin = targetEmployee
-            ? getEffectiveBreakDuration(targetEmployee, tenantConfig, workDurationMin)
-            : 0;
-
-          if (autoBreakMin > 0) {
-            let breakStartTime: Date;
-            if (tenantConfig.defaultBreakStart) {
-              const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
-              breakStartTime = new Date(entry.startTime);
-              breakStartTime.setHours(hh, mm, 0, 0);
-              if (breakStartTime <= entry.startTime || breakStartTime >= now) {
+        if (tenantConfig?.autoBreakEnabled && targetEmployee) {
+          const closedEntry = await app.prisma.timeEntry.findUnique({
+            where: { id: closedEntryId },
+          });
+          if (closedEntry?.startTime && closedEntry?.endTime) {
+            const workDurationMin =
+              (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 60000;
+            const autoBreakMin = getEffectiveBreakDuration(
+              targetEmployee,
+              tenantConfig,
+              workDurationMin,
+            );
+            if (autoBreakMin > 0) {
+              let breakStartTime: Date;
+              if (tenantConfig.defaultBreakStart) {
+                const [hh, mm] = tenantConfig.defaultBreakStart.split(":").map(Number);
+                breakStartTime = new Date(closedEntry.startTime);
+                breakStartTime.setHours(hh, mm, 0, 0);
+                if (
+                  breakStartTime <= closedEntry.startTime ||
+                  breakStartTime >= closedEntry.endTime
+                ) {
+                  const midMs =
+                    closedEntry.startTime.getTime() +
+                    (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 2;
+                  breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
+                }
+              } else {
                 const midMs =
-                  entry.startTime.getTime() + (now.getTime() - entry.startTime.getTime()) / 2;
+                  closedEntry.startTime.getTime() +
+                  (closedEntry.endTime.getTime() - closedEntry.startTime.getTime()) / 2;
                 breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
               }
-            } else {
-              const midMs =
-                entry.startTime.getTime() + (now.getTime() - entry.startTime.getTime()) / 2;
-              breakStartTime = new Date(midMs - (autoBreakMin / 2) * 60000);
-            }
-            const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
+              const breakEndTime = new Date(breakStartTime.getTime() + autoBreakMin * 60000);
 
-            await app.prisma.break.create({
-              data: { timeEntryId: id, startTime: breakStartTime, endTime: breakEndTime },
-            });
-            await app.prisma.timeEntry.update({
-              where: { id },
-              data: { breakMinutes: autoBreakMin },
-            });
-            // breakMinutes updated in DB above
+              await app.prisma.break.create({
+                data: {
+                  timeEntryId: closedEntryId,
+                  startTime: breakStartTime,
+                  endTime: breakEndTime,
+                },
+              });
+              await app.prisma.timeEntry.update({
+                where: { id: closedEntryId },
+                data: { breakMinutes: autoBreakMin },
+              });
+            }
           }
         }
       }
@@ -695,32 +543,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const warnings = await checkArbZG(app.prisma, entry.employeeId, entry.date);
 
-      // Re-fetch with breaks for response
-      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
-        where: { id },
-        include: { breaks: { orderBy: { startTime: "asc" } } },
-      });
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "CLOCK_OUT",
-        entity: "TimeEntry",
-        entityId: id,
-        oldValue: entry,
-        newValue: entryWithBreaks,
-      });
-
-      // Auto-dismiss CLOCK_OUT_REMINDER notifications for this entry
+      // Auto-dismiss CLOCK_OUT_REMINDER notifications for this entry (Phase 70 contract — preserved verbatim).
       try {
-        await app.dismissByRelated("TimeEntry", id);
+        await app.dismissByRelated("TimeEntry", closedEntryId);
       } catch (err) {
         app.log.warn(
-          { err, timeEntryId: id },
+          { err, timeEntryId: closedEntryId },
           "Failed to auto-dismiss CLOCK_OUT_REMINDER on clock-out",
         );
       }
 
-      return { success: true, entry: entryWithBreaks, warnings };
+      // Re-fetch with breaks for response (auto-break may have added one).
+      const entryWithBreaks = await app.prisma.timeEntry.findUnique({
+        where: { id: closedEntryId },
+        include: { breaks: { orderBy: { startTime: "asc" } } },
+      });
+
+      return reply
+        .code(200)
+        .send({ resolution, audit: resolution.audit, warnings, entry: entryWithBreaks });
     },
   });
 

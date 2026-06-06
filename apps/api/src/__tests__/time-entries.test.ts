@@ -172,8 +172,10 @@ describe("Time Entries API", () => {
       // 201 (Created) or 200 (OK) depending on route implementation
       expect(clockInRes.statusCode).toBeLessThan(300);
       const clockInBody = JSON.parse(clockInRes.body);
-      const entry = clockInBody.entry;
+      // Phase 76.2 D-03 unified response: { resolution: { kind, entry }, audit: { id } }
+      const entry = clockInBody.resolution.entry;
       expect(entry).toBeDefined();
+      expect(clockInBody.resolution.kind).toBe("CLOCKED_IN");
       expect(entry.endTime).toBeNull();
 
       // Clock out

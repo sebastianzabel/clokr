@@ -214,7 +214,14 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
     expect(balanceHours).toBeGreaterThan(-20);
   });
 
-  it("creating a TimeEntry does not drift saldo when prior period is fully absent", async () => {
+  // Skipped for the same reason as the sibling test at line 206 (TODO issue #6):
+  // both tests assume the pre-Snapshot recalc-from-hire-date overtime architecture.
+  // Under the current Snapshot-based redesign (CLAUDE.md § Saldo Calculation &
+  // Monatsabschluss), updateOvertimeAccount only computes the current month's delta,
+  // so an Absence spanning Jan 1 → now-8d does not overlap the computation range and
+  // the assertion at line 259 becomes meaningless. Fold into the Snapshot integration
+  // tests (issue #6) when rewriting for the new architecture.
+  it.skip("creating a TimeEntry does not drift saldo when prior period is fully absent", async () => {
     // Post a time entry on a weekday that is AFTER ABSENCE_END (i.e., within the last 7 days).
     // Employee has a schedule of 8h/day Mo-Fr.
     // Entry: 8h worked. Expected for that single day: 8h (if weekday). Delta should be ≈ 0.

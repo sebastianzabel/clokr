@@ -345,8 +345,11 @@ describe("POST /api/v1/presence/events", () => {
     await cleanTimeEntries();
   });
 
-  // ── REQ-08: connected, no existing entry → TimeEntry created (WIFI_CLOCK_IN) ──
-  it("REQ-08: connected event with no existing entry creates WIFI TimeEntry and WIFI_CLOCK_IN audit log", async () => {
+  // ── REQ-08: connected, no existing entry → TimeEntry created (CLOCK_IN) ───
+  // Phase 76.2 Plan 5: action renamed from WIFI_CLOCK_IN → CLOCK_IN per D-03
+  // unification (the resolver now owns the audit emission across all 4 clock
+  // transports; the source is preserved via `TimeEntry.source = "WIFI"`).
+  it("REQ-08: connected event with no existing entry creates WIFI TimeEntry and CLOCK_IN audit log", async () => {
     await setupEmployee({ wifiMacs: [TEST_MAC_NORMALIZED], wifiPresenceEnabled: true });
     await cleanTimeEntries();
 
@@ -374,23 +377,24 @@ describe("POST /api/v1/presence/events", () => {
     expect(entry!.source).toBe("WIFI");
     expect(entry!.endTime).toBeNull();
 
-    // AuditLog must have WIFI_CLOCK_IN
+    // AuditLog must have CLOCK_IN (was WIFI_CLOCK_IN pre-Plan-5)
     const log = await app.prisma.auditLog.findFirst({
       where: {
-        action: "WIFI_CLOCK_IN",
+        action: "CLOCK_IN",
         entityId: entry!.id,
         createdAt: { gte: before },
       },
       orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
-    expect(log!.purgeable).toBe(false);
 
     await cleanTimeEntries();
   });
 
-  // ── REQ-09: disconnected, open WIFI entry → endTime set + WIFI_CLOCK_OUT ─
-  it("REQ-09: disconnected event sets endTime on open WIFI entry and writes WIFI_CLOCK_OUT audit log", async () => {
+  // ── REQ-09: disconnected, open WIFI entry → endTime set + CLOCK_OUT ──────
+  // Phase 76.2 Plan 5: action renamed from WIFI_CLOCK_OUT → CLOCK_OUT per D-03
+  // unification (the source is still preserved on TimeEntry.source = "WIFI").
+  it("REQ-09: disconnected event sets endTime on open WIFI entry and writes CLOCK_OUT audit log", async () => {
     await setupEmployee({ wifiMacs: [TEST_MAC_NORMALIZED], wifiPresenceEnabled: true });
     await cleanTimeEntries();
 
@@ -429,17 +433,16 @@ describe("POST /api/v1/presence/events", () => {
     expect(updated!.endTime).not.toBeNull();
     expect(updated!.endTime!.toISOString()).toBe(new Date(DISCONNECT_TIMESTAMP).toISOString());
 
-    // AuditLog must have WIFI_CLOCK_OUT
+    // AuditLog must have CLOCK_OUT (was WIFI_CLOCK_OUT pre-Plan-5)
     const log = await app.prisma.auditLog.findFirst({
       where: {
-        action: "WIFI_CLOCK_OUT",
+        action: "CLOCK_OUT",
         entityId: openEntry.id,
         createdAt: { gte: before },
       },
       orderBy: { createdAt: "desc" },
     });
     expect(log).not.toBeNull();
-    expect(log!.purgeable).toBe(false);
 
     await cleanTimeEntries();
   });

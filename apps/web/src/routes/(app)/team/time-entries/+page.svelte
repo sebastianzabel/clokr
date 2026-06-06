@@ -10,6 +10,11 @@
   import Modal from "$components/ui/Modal.svelte";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
+  import {
+    isWorkDay,
+    getDayExpectedHours,
+    countWorkingDaysInMonth,
+  } from "$lib/utils/work-schedule";
 
   interface Break {
     id?: string;
@@ -42,6 +47,7 @@
     fridayHours: string | number;
     saturdayHours: string | number;
     sundayHours: string | number;
+    workDays?: number[];
   }
 
   type CalStatus =
@@ -374,7 +380,7 @@
         // Identify qualifying holiday dates (holidays falling on configured workdays)
         const qualifyingHolidayDates = [...hols.keys()].filter((dateStr) => {
           const d = new Date(dateStr + "T12:00:00");
-          if (hasPerDayHours) return isConfiguredWorkday(sched, d);
+          if (hasPerDayHours) return isWorkDay(sched, d);
           const dow = d.getDay();
           return dow >= 1 && dow <= 5;
         });
@@ -385,7 +391,7 @@
 
         let workingDays: number;
         if (hasPerDayHours) {
-          workingDays = countWorkingDaysInMonth(monthStart, sched, excludeForDenom);
+          workingDays = countWorkingDaysInMonth(sched, monthStart, excludeForDenom);
         } else {
           // Flexible Minijobber: count Mon-Fri days in month
           const excludeSet = new Set(excludeForDenom);
@@ -499,11 +505,11 @@
     let expectedMin: number;
     if (monthly) {
       const isWorkday = hasPerDayHours
-        ? dailySollMin > 0 && sched && isConfiguredWorkday(sched, date)
+        ? dailySollMin > 0 && sched && isWorkDay(sched, date)
         : dailySollMin > 0 && dow >= 1 && dow <= 5;
       expectedMin = isWorkday ? dailySollMin : 0;
     } else {
-      expectedMin = sched ? getDayExpected(sched, date) * 60 : 0;
+      expectedMin = sched ? getDayExpectedHours(sched, date) * 60 : 0;
     }
     if (isBeforeHire) expectedMin = 0;
     if (isHoliday) expectedMin = 0;
@@ -555,62 +561,6 @@
         (e.breakMinutes ?? 0)
       );
     }, 0);
-  }
-
-  function getDayExpected(s: WorkSchedule, date: Date): number {
-    const keys = [
-      "sundayHours",
-      "mondayHours",
-      "tuesdayHours",
-      "wednesdayHours",
-      "thursdayHours",
-      "fridayHours",
-      "saturdayHours",
-    ] as const;
-    return Number(s[keys[date.getDay()] as keyof WorkSchedule] ?? 0);
-  }
-
-  function isConfiguredWorkday(sched: WorkSchedule, date: Date): boolean {
-    const keys = [
-      "sundayHours",
-      "mondayHours",
-      "tuesdayHours",
-      "wednesdayHours",
-      "thursdayHours",
-      "fridayHours",
-      "saturdayHours",
-    ] as const;
-    return Number(sched[keys[date.getDay()] as keyof WorkSchedule] ?? 0) > 0;
-  }
-
-  function countWorkingDaysInMonth(
-    monthStart: Date,
-    sched: WorkSchedule,
-    excludeHolidayDates?: string[],
-  ): number {
-    const keys = [
-      "sundayHours",
-      "mondayHours",
-      "tuesdayHours",
-      "wednesdayHours",
-      "thursdayHours",
-      "fridayHours",
-      "saturdayHours",
-    ] as const;
-    const excludeSet = new Set(excludeHolidayDates ?? []);
-    let count = 0;
-    const end = endOfMonth(monthStart);
-    const cur = new Date(monthStart);
-    while (cur <= end) {
-      if (
-        Number(sched[keys[cur.getDay()] as keyof WorkSchedule] ?? 0) > 0 &&
-        !excludeSet.has(format(cur, "yyyy-MM-dd"))
-      ) {
-        count++;
-      }
-      cur.setDate(cur.getDate() + 1);
-    }
-    return count;
   }
 
   function fmtTime(iso: string | null): string {

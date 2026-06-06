@@ -98,6 +98,30 @@
     team: TeamMember[];
   }
 
+  // Phase 76.2 (ARCH-V19-01) — D-03 unified clock response shapes.
+  // Backend adapters land in Plans 2 (/clock-in) + 3 (/:id/clock-out).
+  // Successful /clock-in responses always carry resolution.kind === "CLOCKED_IN";
+  // CONFLICT branches surface as thrown ApiError (HTTP 409) and never reach here.
+  type ClockInResponse = {
+    resolution: {
+      kind: "CLOCKED_IN";
+      entry: { id: string; employeeId: string; source: string; startTime: string };
+    };
+    audit?: { id: string };
+  };
+
+  // /:id/clock-out resolves to CLOCKED_OUT (normal close) or CONSOLIDATED (merged
+  // into a prior same-day entry inside `tenant.consolidationGapHours`).
+  type ClockOutResponse = {
+    resolution: {
+      kind: "CLOCKED_OUT" | "CONSOLIDATED";
+      entry: { id: string; endTime: string };
+    };
+    audit?: { id: string };
+    warnings?: unknown[];
+    entry?: { id: string; endTime: string };
+  };
+
   // ── State ──────────────────────────────────────────────────────────────────
   let clockedIn = $state(false);
   let activeEntryId = $state<string | null>(null);
@@ -685,10 +709,17 @@
     clockLoading = true;
     try {
       if (!clockedIn) {
-        const res = await api.post<{ entry: { id: string } }>("/time-entries/clock-in", {
+        const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
           source: "MOBILE",
         });
-        activeEntryId = res.entry.id;
+        // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
+        // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
+        // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
+        // check guards against any unexpected resolver shape drift.
+        if (res.resolution.kind !== "CLOCKED_IN") {
+          throw new Error("Unerwartete Antwort beim Einstempeln");
+        }
+        activeEntryId = res.resolution.entry.id;
         clockedIn = true;
         clockStart = new Date();
       } else if (activeEntryId) {
@@ -703,7 +734,12 @@
             return; // abort clock-out — user can retry
           }
         }
-        await api.post(`/time-entries/${activeEntryId}/clock-out`, { breakMinutes });
+        // Phase 76.2 D-03 — explicit generic. We don't currently consume the
+        // response (the dashboard state below is unconditional on success);
+        // CONFLICT branches surface as thrown ApiError, caught below.
+        await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {
+          breakMinutes,
+        });
         clockedIn = false;
         activeEntryId = null;
         clockStart = null;
