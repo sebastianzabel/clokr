@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { fromZonedTime } from "date-fns-tz";
 import {
   todayInTz,
   dateStrInTz,
@@ -150,119 +151,133 @@ describe("calcExpectedMinutesTz", () => {
   });
 });
 
-describe("calcExpectedMinutesTz — SHIFT_BASED", () => {
+// Phase 76.12: SHIFT_BASED + FLEXTIME branches now use BAG-konforme Ø-Methode
+// (`weeklyHours × workdaysInRange ÷ workDaysPerWeek`) instead of the old
+// broken `weeklyHours × Kalendertage ÷ 7` formula. The old tests below have
+// been updated to reflect Ø-Methode semantics:
+//   - workDaysPerWeek is now derived from {day}Hours > 0 (D-02/D-03).
+//     Tests that previously omitted {day}Hours now include them.
+//   - 3-day partial-range expectation changes (1029 → 1440) because the
+//     old formula was mathematically wrong for non-7-divisible ranges.
+//   - Dates are constructed via fromZonedTime so the UTC instant maps
+//     exactly to the named Berlin calendar day (avoids midnight-boundary
+//     bleed into the next day).
+describe("calcExpectedMinutesTz — SHIFT_BASED (Ø-Methode)", () => {
   const tz = "Europe/Berlin";
+  // Mo-Fr 8h fixture: workDaysPerWeek=5, weeklyHours=40 → Ø=8h per workday.
+  const moFr = {
+    type: "SHIFT_BASED",
+    weeklyHours: 40,
+    sundayHours: 0,
+    mondayHours: 8,
+    tuesdayHours: 8,
+    wednesdayHours: 8,
+    thursdayHours: 8,
+    fridayHours: 8,
+    saturdayHours: 0,
+  };
 
-  it("returns weeklyHours × 60 for a full 7-day week", () => {
-    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z"); // Mo
-    const to = new Date("2026-01-11T23:59:59Z"); // So
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  it("returns weeklyHours × 60 for a full Mo-So week (Ø-Methode)", () => {
+    // Mo-So in Berlin: 5 workdays (Mo-Fr) × 60min × 40/5 = 2400.
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz); // Mo
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz); // So
+    expect(calcExpectedMinutesTz(moFr, from, to, tz)).toBe(2400);
   });
 
   it("scales proportionally for 14-day range (2 weeks)", () => {
-    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-18T23:59:59Z");
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(4800);
+    // Mo-So × 2 = 10 workdays. 40×60×10/5 = 4800.
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-18T23:59:59.999"), tz);
+    expect(calcExpectedMinutesTz(moFr, from, to, tz)).toBe(4800);
   });
 
-  it("scales proportionally for a 3-day partial range", () => {
-    const sched = { type: "SHIFT_BASED", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-07T23:59:59Z");
-    // 40 × 60 × 3 / 7 = 1028.57 → 1029
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(1029);
+  it("scales proportionally for a 3-day partial range Mo-Mi (Ø-Methode)", () => {
+    // 3 workdays in range. 40 × 60 × 3 / 5 = 1440 (NOT 1029 — that was the
+    // broken `× Kalendertage ÷ 7` formula).
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-07T23:59:59.999"), tz);
+    expect(calcExpectedMinutesTz(moFr, from, to, tz)).toBe(1440);
   });
 
   it("returns 0 when weeklyHours is null", () => {
-    const sched = { type: "SHIFT_BASED", weeklyHours: null };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
+    const sched = { ...moFr, weeklyHours: null };
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
     expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
   });
 
   it("returns 0 when weeklyHours is 0", () => {
-    const sched = { type: "SHIFT_BASED", weeklyHours: 0 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
+    const sched = { ...moFr, weeklyHours: 0 };
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
     expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
   });
 
-  it("ignores per-day hours for SHIFT_BASED (only weeklyHours matters)", () => {
-    // mondayHours..sundayHours present but type=SHIFT_BASED → ignored
-    const sched = {
-      type: "SHIFT_BASED",
-      weeklyHours: 40,
-      mondayHours: 8,
-      tuesdayHours: 8,
-      wednesdayHours: 8,
-      thursdayHours: 8,
-      fridayHours: 8,
-      saturdayHours: 0,
-      sundayHours: 0,
-    };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  it("uses {day}Hours > 0 only for workDaysPerWeek (Soll = weeklyHours-driven Ø)", () => {
+    // Per-day hours = 8 (Mo-Fr), weeklyHours=40 → Ø-Methode result for
+    // Mo-So week: 40×60×5/5 = 2400. The {day}Hours values define which
+    // weekdays count as Arbeitstage (D-02), not the per-day Soll.
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
+    expect(calcExpectedMinutesTz(moFr, from, to, tz)).toBe(2400);
   });
 });
 
-describe("calcExpectedMinutesTz — FLEXTIME", () => {
+describe("calcExpectedMinutesTz — FLEXTIME (Ø-Methode)", () => {
   const tz = "Europe/Berlin";
+  const moFrFlex = {
+    type: "FLEXTIME",
+    weeklyHours: 40,
+    sundayHours: 0,
+    mondayHours: 8,
+    tuesdayHours: 8,
+    wednesdayHours: 8,
+    thursdayHours: 8,
+    fridayHours: 8,
+    saturdayHours: 0,
+  };
 
   it("40h FLEXTIME over 7 days (Mon-Sun, Europe/Berlin) returns 2400 minutes", () => {
-    const sched = { type: "FLEXTIME", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z"); // Monday
-    const to = new Date("2026-01-11T23:59:59Z"); // Sunday
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz); // Mo
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz); // So
+    expect(calcExpectedMinutesTz(moFrFlex, from, to, tz)).toBe(2400);
   });
 
   it("40h FLEXTIME over 14 days returns 4800 minutes", () => {
-    const sched = { type: "FLEXTIME", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-18T23:59:59Z");
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(4800);
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-18T23:59:59.999"), tz);
+    expect(calcExpectedMinutesTz(moFrFlex, from, to, tz)).toBe(4800);
   });
 
-  it("40h FLEXTIME over 3 days returns 1029 minutes (Math.round(40*60*3/7))", () => {
-    const sched = { type: "FLEXTIME", weeklyHours: 40 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-07T23:59:59Z");
-    // 40 × 60 × 3 / 7 = 1028.57 → 1029
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(1029);
+  it("40h FLEXTIME over 3 days Mo-Mi returns 1440 minutes (Ø-Methode)", () => {
+    // 40×60×3/5 = 1440 (was 1029 under the old broken formula).
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-07T23:59:59.999"), tz);
+    expect(calcExpectedMinutesTz(moFrFlex, from, to, tz)).toBe(1440);
   });
 
   it("FLEXTIME with weeklyHours=null returns 0", () => {
-    const sched = { type: "FLEXTIME", weeklyHours: null };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
+    const sched = { ...moFrFlex, weeklyHours: null };
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
     expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
   });
 
   it("FLEXTIME with weeklyHours=0 returns 0", () => {
-    const sched = { type: "FLEXTIME", weeklyHours: 0 };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
+    const sched = { ...moFrFlex, weeklyHours: 0 };
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
     expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(0);
   });
 
-  it("FLEXTIME ignores per-day hours (only weeklyHours matters)", () => {
-    // mondayHours..sundayHours present but type=FLEXTIME → ignored; should still return 2400 for 7 days
-    const sched = {
-      type: "FLEXTIME",
-      weeklyHours: 40,
-      mondayHours: 10,
-      tuesdayHours: 10,
-      wednesdayHours: 10,
-      thursdayHours: 10,
-      fridayHours: 10,
-      saturdayHours: 0,
-      sundayHours: 0,
-    };
-    const from = new Date("2026-01-05T00:00:00Z");
-    const to = new Date("2026-01-11T23:59:59Z");
-    expect(calcExpectedMinutesTz(sched, from, to, tz)).toBe(2400);
+  it("FLEXTIME parity with SHIFT_BASED (shared avgWorkMinutesCore)", () => {
+    // Same schedule shape, different type label — must yield identical result.
+    const from = fromZonedTime(new Date("2026-01-05T00:00:00"), tz);
+    const to = fromZonedTime(new Date("2026-01-11T23:59:59.999"), tz);
+    const flexResult = calcExpectedMinutesTz(moFrFlex, from, to, tz);
+    const shiftResult = calcExpectedMinutesTz({ ...moFrFlex, type: "SHIFT_BASED" }, from, to, tz);
+    expect(flexResult).toBe(shiftResult);
+    expect(flexResult).toBe(2400);
   });
 });
 

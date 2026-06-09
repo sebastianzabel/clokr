@@ -33,12 +33,44 @@
   }: Props = $props();
 
   let pending = $state(false);
+  // Phase 76.13 (UI-V19-05): `confirming` is set inside handleConfirm AFTER the
+  // awaited onConfirm() resolves, so a successful confirm path does NOT
+  // double-fire onCancel via the open-transition $effect below.
+  let confirming = $state(false);
+  // Snapshot of the previous `open` value so $effect can detect a true→false
+  // transition (Modal.svelte sets `open = false` directly on ESC + backdrop
+  // click without invoking any callback — we observe that change here).
+  let prevOpen = $state(open);
+
+  // M-01 fix (Phase 76.13 UI-V19-05): Modal.svelte sets open=false directly on
+  // ESC / backdrop click without invoking any cancel callback. We observe the
+  // open transition here so parent state (e.g. /admin/employees/[id] tracking-
+  // exemption toggle) can revert. `confirming` is set in handleConfirm AFTER
+  // the awaited onConfirm() resolves, so a successful confirm path does NOT
+  // double-fire onCancel. `pending` guard: if Modal closes while a confirm is
+  // in-flight (ESC at the same instant as click), the confirm semantically
+  // "wins" and we suppress onCancel — the parent only learns the outcome via
+  // its own onConfirm resolution path.
+  $effect(() => {
+    if (prevOpen && !open) {
+      if (!confirming && !pending) {
+        onCancel?.();
+      }
+      // Reset for the next open cycle so re-opening does not carry stale state.
+      confirming = false;
+    }
+    prevOpen = open;
+  });
 
   async function handleConfirm() {
     if (pending) return;
     pending = true;
     try {
       await onConfirm();
+      // Order matters: only set `confirming` on a successful onConfirm — if
+      // onConfirm throws, the dialog stays open and the next dismiss should
+      // behave like a normal cancel (i.e. fire onCancel).
+      confirming = true;
       open = false;
     } finally {
       pending = false;
@@ -47,7 +79,8 @@
 
   function handleCancel() {
     if (pending) return;
-    onCancel?.();
+    // onCancel is invoked by the $effect on the open transition (covers Cancel
+    // button, ESC, backdrop — all three paths converge on `open = false`).
     open = false;
   }
 </script>

@@ -149,10 +149,75 @@ export function iterateDaysInTz(
 }
 
 /**
+ * Internal: Ø-Methode math used for SHIFT_BASED + FLEXTIME schedules.
+ *
+ * Returns weeklyHours / workDaysPerWeek × workdaysInRange × 60, rounded to integer minutes.
+ *   - workDaysPerWeek = count of {day}Hours fields where > 0 (D-03)
+ *   - workdaysInRange = count of days in [from, to] where {day}Hours[dow] > 0 (D-02)
+ *
+ * Returns 0 if weeklyHours <= 0 or workDaysPerWeek === 0 (defensive guard).
+ *
+ * Single source of truth for the Ø-Methode math — consumed by both
+ * `calcExpectedMinutesTz` (full Soll) and `calcLeaveAbsenceMinutesTz`
+ * (leave/absence subtraction). Eliminates drift risk (threat T-76.12-01).
+ *
+ * Legal basis: BAG 9 AZR 406/17 (Urlaubs- und Abwesenheits-Soll-Reduktion
+ * folgt der Durchschnittsmethode).
+ */
+function avgWorkMinutesCore(
+  schedule: Record<string, unknown>,
+  from: Date,
+  to: Date,
+  tz: string,
+): number {
+  const wh = Number(schedule.weeklyHours ?? 0);
+  if (wh <= 0) return 0;
+
+  const DOW_KEYS = [
+    "sundayHours",
+    "mondayHours",
+    "tuesdayHours",
+    "wednesdayHours",
+    "thursdayHours",
+    "fridayHours",
+    "saturdayHours",
+  ];
+
+  // workDaysPerWeek = count of {day}Hours > 0 (do NOT consult workDays array —
+  // robust against legacy drift from pre-Phase-61 rows, per CONTEXT.md D-02).
+  let workDaysPerWeek = 0;
+  for (const key of DOW_KEYS) {
+    if (Number(schedule[key] ?? 0) > 0) workDaysPerWeek++;
+  }
+  if (workDaysPerWeek === 0) return 0;
+
+  // workdaysInRange = count of calendar days in [from, to] where the
+  // corresponding {day}Hours value is > 0.
+  let workdaysInRange = 0;
+  iterateDaysInTz(from, to, tz, (dow) => {
+    if (Number(schedule[DOW_KEYS[dow]] ?? 0) > 0) workdaysInRange++;
+  });
+
+  return Math.round((wh * 60 * workdaysInRange) / workDaysPerWeek);
+}
+
+/**
  * Calculate expected working minutes between two UTC dates in a given timezone,
  * using a schedule object that maps day-of-week to hours.
  * Supports MONTHLY_HOURS schedules (Minijobber): prorates the monthly budget
  * based on working days in [from, to] relative to working days in the full calendar month.
+ *
+ * Per schedule type:
+ *   - SHIFT_BASED + FLEXTIME: Ø-Methode via `avgWorkMinutesCore`
+ *     (BAG 9 AZR 406/17 — weeklyHours / workDaysPerWeek × workdaysInRange).
+ *     The prior `weeklyHours × Kalendertage ÷ 7` formula was mathematically
+ *     wrong for ranges not divisible by 7 (Phase 76.12 fix).
+ *   - MONTHLY_HOURS: prorate monthly budget by working-day fraction (unchanged).
+ *   - FIXED_SCHEDULE: per-day sum from {day}Hours (unchanged).
+ *
+ * For Leave/Absence Soll-reduction (BAG 9 AZR 406/17), callers MUST use the
+ * idiomatic entry point `calcLeaveAbsenceMinutesTz` (same math, plus halfDay
+ * support + MONTHLY_HOURS-hart-0 semantics).
  */
 export function calcExpectedMinutesTz(
   schedule: Record<string, unknown>,
@@ -160,25 +225,21 @@ export function calcExpectedMinutesTz(
   to: Date,
   tz: string,
 ): number {
-  // SHIFT_BASED: Schichtplan ist führend. weeklyHours is the flat weekly target;
-  // expected minutes are proportional to calendar days in [from, to] / 7.
-  // Leave/Holiday/Absence days are excluded by the caller in time-entries.ts
-  // (the caller passes a range that already excludes non-working periods).
+  // SHIFT_BASED: Schichtplan ist führend. Soll = Ø-Methode (BAG 9 AZR 406/17):
+  // weeklyHours × workdaysInRange ÷ workDaysPerWeek. For Leave/Absence
+  // subtraction, callers MUST use `calcLeaveAbsenceMinutesTz` (same math
+  // plus halfDay support). This branch is the full-range Soll-Berechner.
   if (String(schedule.type ?? "") === "SHIFT_BASED") {
-    const wh = Number(schedule.weeklyHours ?? 0);
-    if (wh <= 0) return 0; // no target configured
-    const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
-    return Math.round((wh * 60 * rangeDays) / 7);
+    return avgWorkMinutesCore(schedule, from, to, tz);
   }
 
-  // FLEXTIME: Gleitzeit — Wochenstundensoll, freie Tagesverteilung. Same formula as SHIFT_BASED:
-  // proportional to calendar days in [from, to] / 7. coreStart/coreEnd/coreDays are UI-only metadata
-  // and do NOT affect the saldo calculation (per Phase 49.1 CONTEXT.md locked decision).
+  // FLEXTIME: Gleitzeit — Wochenstundensoll, freie Tagesverteilung. Identical
+  // formula to SHIFT_BASED. coreStart/coreEnd/coreDays are UI-only metadata
+  // and do NOT affect the saldo calculation (per Phase 49.1 CONTEXT.md locked
+  // decision). Routed through `avgWorkMinutesCore` so SHIFT_BASED + FLEXTIME
+  // cannot drift apart (single source of truth).
   if (String(schedule.type ?? "") === "FLEXTIME") {
-    const wh = Number(schedule.weeklyHours ?? 0);
-    if (wh <= 0) return 0;
-    const rangeDays = Math.floor((to.getTime() - from.getTime()) / 86400000) + 1;
-    return Math.round((wh * 60 * rangeDays) / 7);
+    return avgWorkMinutesCore(schedule, from, to, tz);
   }
 
   // Minijobber / flexible monthly hours: prorate monthly budget by working-day fraction
@@ -260,4 +321,77 @@ export function getDayHoursFromSchedule(schedule: Record<string, unknown>, dow: 
     "saturdayHours",
   ];
   return Number(schedule[DOW_KEYS[dow]] ?? 0);
+}
+
+/**
+ * Calculate leave/absence Soll-reduction minutes between two UTC dates in a
+ * given timezone.
+ *
+ * Replaces the prior usage of `calcExpectedMinutesTz` for Leave/Absence
+ * subtraction. Legal basis: BAG 9 AZR 406/17 + Markt-Konvention
+ * (Clockodo/Personio/Kenjo/DATEV LODAS): Urlaubs-/Abwesenheits-Soll-Reduktion
+ * folgt der Durchschnittsmethode
+ *   weeklyHours ÷ workDaysPerWeek × workdaysInRange.
+ *
+ * Per schedule type:
+ *   - SHIFT_BASED + FLEXTIME: `avgWorkMinutesCore` (Ø-Methode).
+ *   - FIXED_SCHEDULE: Σ over [from, to] of {day}Hours[dow] × 60 (per-day sum,
+ *     identical to the default branch in `calcExpectedMinutesTz`).
+ *   - MONTHLY_HOURS: returns 0 hard (CLAUDE.md "Schedule Types" —
+ *     "Holiday/absence deductions do NOT apply").
+ *
+ * `opts.halfDay` applies to the TOTAL (not per-day): returns
+ * `Math.round(rawMinutes / 2)`. Single halfDay-Boolean per LeaveRequest
+ * applies to ALL days of the request (schema convention).
+ *
+ * Callers MUST pre-filter (this helper is pure math and does no DB access):
+ *   - LeaveRequest.status IN ('APPROVED', 'CANCELLATION_REQUESTED')
+ *   - LeaveRequest.deletedAt = null
+ *   - Absence.deletedAt = null
+ *   - Absence.type != 'VOCATIONAL_SCHOOL' (BBiG §15 — BS-Tag ist Arbeitstag)
+ *   - Absence.source != 'PATTERN' (auto-generated, not an approved request)
+ *
+ * @param schedule WorkSchedule shape (type, weeklyHours, {day}Hours fields)
+ * @param from inclusive UTC start of range
+ * @param to inclusive UTC end of range
+ * @param tz tenant IANA timezone
+ * @param opts.halfDay if true, return Math.round(rawMinutes / 2)
+ * @returns integer minutes (Soll-reduction)
+ */
+export function calcLeaveAbsenceMinutesTz(
+  schedule: Record<string, unknown>,
+  from: Date,
+  to: Date,
+  tz: string,
+  opts?: { halfDay?: boolean },
+): number {
+  const type = String(schedule.type ?? "");
+
+  let raw: number;
+  if (type === "SHIFT_BASED" || type === "FLEXTIME") {
+    raw = avgWorkMinutesCore(schedule, from, to, tz);
+  } else if (type === "MONTHLY_HOURS") {
+    // CLAUDE.md "Schedule Types": Holiday/absence deductions do NOT apply for
+    // MONTHLY_HOURS (flexible Minijobber budget). Hart 0.
+    return 0;
+  } else {
+    // FIXED_SCHEDULE (and any unknown type): per-day sum from {day}Hours.
+    const DOW_KEYS = [
+      "sundayHours",
+      "mondayHours",
+      "tuesdayHours",
+      "wednesdayHours",
+      "thursdayHours",
+      "fridayHours",
+      "saturdayHours",
+    ];
+    let total = 0;
+    iterateDaysInTz(from, to, tz, (dow) => {
+      total += Number(schedule[DOW_KEYS[dow]] ?? 0) * 60;
+    });
+    raw = Math.round(total);
+  }
+
+  if (opts?.halfDay) return Math.round(raw / 2);
+  return raw;
 }

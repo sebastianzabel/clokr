@@ -11,6 +11,7 @@ import {
   getTenantTimezone,
   dateStrInTz,
   calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "./timezone";
@@ -249,13 +250,20 @@ export async function recalculateSnapshots(
         const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
         const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
         if (leaveStart > leaveEnd) return sum;
-        return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+        // Phase 76.12 D-15 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
+        return (
+          sum +
+          calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+            halfDay: Boolean(lr.halfDay),
+          })
+        );
       }, 0);
 
       // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
       // Note: this file does not currently subtract absences (v1.6.3 deliberately scoped
       // absence-subtraction out of recalculateSnapshots). We preserve that decision —
       // only leaveMinutes is gated here. (#192)
+      // Phase 76.12 D-15 — this scope is RESPECTED: leave-only refactor in this file.
       if (scheduleType === "MONTHLY_HOURS") {
         leaveMinutes = 0;
       }

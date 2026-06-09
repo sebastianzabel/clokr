@@ -69,17 +69,29 @@ jobs:
         uses: imjasonh/setup-crane@59c71e96a00b28651f10369ba3359a6d730740a0 # v0.6
 
       - name: Promote ${{ matrix.image }}
+        env:
+          # WR-03 (Phase 76.14): hoist GitHub Actions expressions into env so the
+          # shell sees them as plain variables, not as YAML-template substitutions
+          # that splice arbitrary characters straight into the script. Even though
+          # all four values are currently safe (repo-owner, matrix literal, 7-char
+          # SHA prefix, sanitized version), the env-indirection pattern is the
+          # GitHub-recommended hardening for `run:` blocks with `packages: write`.
+          OWNER: ${{ steps.meta.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          SHA_TAG: ${{ steps.meta.outputs.sha }}
+          VERSION_TAG: ${{ steps.meta.outputs.version }}
+          MAJOR_MINOR_TAG: ${{ steps.meta.outputs.major_minor }}
         run: |
           # Fail-fast on any error, undefined variable, or pipe failure (WR-02).
-          # Without -u a typo'd ${{ steps.meta.outputs.* }} would expand to empty
+          # Without -u a typo'd $OWNER / $IMAGE / $SHA_TAG would expand to empty
           # and crane would push to an unintended tag (e.g. :latest with garbage).
           set -euo pipefail
-          SRC="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:sha-${{ steps.meta.outputs.sha }}"
+          SRC="${REGISTRY}/${OWNER}/${IMAGE}:sha-${SHA_TAG}"
           # Loop so per-tag failure semantics are explicit. `latest` is last so a
           # mid-loop failure leaves an inconsistent-but-recoverable state where
           # the version-pinned tag may already point at the new digest.
-          for TAG in "${{ steps.meta.outputs.version }}" "${{ steps.meta.outputs.major_minor }}" "latest"; do
-            DST="${REGISTRY}/${{ steps.meta.outputs.owner }}/${{ matrix.image }}:${TAG}"
+          for TAG in "${VERSION_TAG}" "${MAJOR_MINOR_TAG}" "latest"; do
+            DST="${REGISTRY}/${OWNER}/${IMAGE}:${TAG}"
             echo "Promoting ${SRC} -> ${DST}"
             crane copy "${SRC}" "${DST}"
           done
@@ -97,32 +109,33 @@ jobs:
   # provisions the int cluster + sets the INT_BASE_URL repository variable
   # (`gh variable set INT_BASE_URL --body "https://int.clokr.example/"`).
   # The if-guard makes this a no-op for releases cut before int is live.
+  #
+  # Phase 76.14: the prior /health probe was removed. The int Ingress
+  # only routes /api/v1/* to the API; the bare /health route is registered
+  # without that prefix and is therefore unreachable from the public URL.
+  # The /api/v1/version probe below is the canonical smoke-test — it returns
+  # HTTP 200 only when the service is up AND it returns the version string
+  # for comparison against ${TAG}. One probe, two assertions.
   smoke-test:
     needs: promote
     runs-on: ubuntu-latest
     if: ${{ vars.INT_BASE_URL != '' }}
     steps:
-      - name: Health check
+      - name: Version match assertion
+        env:
+          # WR-03 (Phase 76.14): hoist the repo variable into env so it never
+          # gets spliced into the script at YAML-template time. Repository
+          # variables can be edited via the GitHub UI; an env-indirection makes
+          # the dataflow auditable and matches the pattern in the promote step.
+          INT_BASE_URL: ${{ vars.INT_BASE_URL }}
         run: |
           # Fail-fast on any error, undefined variable, or pipe failure (memory:
           # release.yml comment WR-02 documents the rationale).
-          set -euo pipefail
-          # WR-fix v1.8.2: health route is mounted at /health (no /api/v1 prefix).
-          # See apps/api/src/app.ts:322 — app.get("/health", ...). The /api/v1
-          # prefix is only applied to route plugins registered with that prefix;
-          # /health is registered directly on the app instance.
-          STATUS=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/health" | jq -r '.status')
-          if [ "$STATUS" != "ok" ]; then
-            echo "Health check failed: status=$STATUS (expected: ok)" >&2
-            exit 1
-          fi
-          echo "Health check OK"
-
-      - name: Version match assertion
-        run: |
+          # curl -sfS exits non-zero on HTTP >= 400 — so reaching the jq parse
+          # step already implies the service is up.
           set -euo pipefail
           EXPECTED="${GITHUB_REF_NAME#v}"
-          ACTUAL=$(curl -sfS --max-time 10 "${{ vars.INT_BASE_URL }}/api/v1/version" | jq -r '.version')
+          ACTUAL=$(curl -sfS --max-time 10 "${INT_BASE_URL}/api/v1/version" | jq -r '.version')
           if [ "$ACTUAL" != "$EXPECTED" ]; then
             echo "Version mismatch: expected $EXPECTED, got $ACTUAL" >&2
             echo "This usually means the promoted image did not roll out — check the int cluster." >&2

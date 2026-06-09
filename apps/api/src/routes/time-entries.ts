@@ -13,6 +13,7 @@ import {
   dateStrInTz,
   monthRangeUtc,
   calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
@@ -1598,7 +1599,13 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const lrEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
       if (lrStart > lrEnd) continue;
       for (const seg of splitRangeByMonth(lrStart, lrEnd, tz)) {
-        leaveMinutes += calcExpectedMinutesTz(schedule, seg.start, seg.end, tz);
+        // Phase 76.12 — Ø-Methode (BAG 9 AZR 406/17). MONTHLY_HOURS branch will
+        // zero this out at the end (#192), but using the new helper keeps the
+        // intent consistent with the default branch and prevents drift if the
+        // zero-out is ever lifted (D-12 carry-forward).
+        leaveMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz, {
+          halfDay: Boolean(lr.halfDay),
+        });
       }
     }
 
@@ -1606,6 +1613,8 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       where: {
         employeeId,
         deletedAt: null, // required by soft-delete convention
+        type: { not: "VOCATIONAL_SCHOOL" }, // Phase 76.12 D-12: BBiG §15 — BS = Arbeitstag
+        source: { not: "PATTERN" }, // Phase 76.12 D-12: auto-generated, not approved
         startDate: { lte: effectiveEnd },
         endDate: { gte: rangeStart },
       },
@@ -1615,7 +1624,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const abEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       if (abStart > abEnd) continue;
       for (const seg of splitRangeByMonth(abStart, abEnd, tz)) {
-        absenceMinutes += calcExpectedMinutesTz(schedule, seg.start, seg.end, tz);
+        absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz);
       }
     }
 
@@ -1643,14 +1652,24 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const leaveStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
       const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
       if (leaveStart > leaveEnd) return sum;
-      return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+      // Phase 76.12 D-13 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
+      return (
+        sum +
+        calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+          halfDay: Boolean(lr.halfDay),
+        })
+      );
     }, 0);
 
-    // Approved/recorded absences (Krank, Sonderurlaub, etc.) — abziehen wie Urlaub
+    // Approved/recorded absences (Krank, Sonderurlaub, etc.) — abziehen wie Urlaub.
+    // Phase 76.12 D-13 — filter VOCATIONAL_SCHOOL + PATTERN at Prisma layer
+    // (BBiG §15: BS-Tag = Arbeitstag, not abwesend; PATTERN-source is auto-gen).
     const absences = await app.prisma.absence.findMany({
       where: {
         employeeId,
         deletedAt: null, // required by soft-delete convention
+        type: { not: "VOCATIONAL_SCHOOL" },
+        source: { not: "PATTERN" },
         startDate: { lte: effectiveEnd },
         endDate: { gte: rangeStart },
       },
@@ -1659,7 +1678,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
       const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       if (absStart > absEnd) return sum;
-      return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
+      return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
     }, 0);
 
     // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.

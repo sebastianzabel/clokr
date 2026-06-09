@@ -4,7 +4,11 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
-import { getTenantTimezone, calcExpectedMinutesTz } from "../utils/timezone";
+import {
+  getTenantTimezone,
+  calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
+} from "../utils/timezone";
 import { updateOvertimeAccount } from "./time-entries";
 // ARBZG_MARKER_47_4_01
 
@@ -1201,12 +1205,32 @@ export async function shiftRoutes(app: FastifyInstance) {
           employeeId: true,
           startDate: true,
           endDate: true,
+          halfDay: true,
         },
       });
 
-      // `absences` is already loaded above with the exact filter we need
-      // (employee tenant scope + deletedAt:null + overlap [monday,sunday]).
-      // Reuse it for the aggregation — no second DB round-trip needed.
+      // Phase 76.12 — Separate Absence query for Soll-subtraction. EXCLUDES
+      // VOCATIONAL_SCHOOL (BBiG §15: BS-Tag = Arbeitstag, NOT abwesend) and
+      // PATTERN-source (auto-generated, not an approved absence). Filtered at
+      // the Prisma where-clause per CONTEXT D-11 (not post-hoc in JS) so intent
+      // is visible in code review. The general `absences` array loaded at L809
+      // remains UNFILTERED for the availability/calendar display — there a BS
+      // day MUST still show as "absent".
+      const absencesForSoll = await app.prisma.absence.findMany({
+        where: {
+          employee: { tenantId },
+          deletedAt: null,
+          type: { not: "VOCATIONAL_SCHOOL" },
+          source: { not: "PATTERN" },
+          startDate: { lte: sunday },
+          endDate: { gte: monday },
+        },
+        select: {
+          employeeId: true,
+          startDate: true,
+          endDate: true,
+        },
+      });
 
       const leaveMinutesByEmp: Record<string, number> = {};
       const absenceMinutesByEmp: Record<string, number> = {};
@@ -1233,17 +1257,21 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (!sched) continue;
         const clip = clipToWeek(lr.startDate, lr.endDate);
         if (!clip) continue;
-        const minutes = calcExpectedMinutesTz(sched, clip.start, clip.end, tenantTz);
+        // Phase 76.12 — Ø-Methode (BAG 9 AZR 406/17). Honors lr.halfDay per D-11.
+        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+          halfDay: Boolean(lr.halfDay),
+        });
         if (minutes <= 0) continue;
         leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
       }
 
-      for (const ab of absences) {
+      for (const ab of absencesForSoll) {
         const sched = scheduleByEmp.get(ab.employeeId);
         if (!sched) continue;
         const clip = clipToWeek(ab.startDate, ab.endDate);
         if (!clip) continue;
-        const minutes = calcExpectedMinutesTz(sched, clip.start, clip.end, tenantTz);
+        // Phase 76.12 — Ø-Methode. Absence has no halfDay field (schema-confirmed).
+        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz);
         if (minutes <= 0) continue;
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }

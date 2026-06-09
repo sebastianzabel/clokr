@@ -183,7 +183,12 @@ export function countWorkDaysInRange(
 
   while (current <= endDate) {
     const dow = current.getDay();
-    const dateStr = current.toISOString().split("T")[0];
+    // Build dateStr from LOCAL components — toISOString() would shift to UTC and break
+    // the holidays Set lookup in any timezone with non-zero offset (Phase 76.15 fix).
+    const yyyy = current.getFullYear();
+    const mm = String(current.getMonth() + 1).padStart(2, "0");
+    const dd = String(current.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
     if (workDaySet.has(dow) && !holidays.has(dateStr)) {
       count++;
     }

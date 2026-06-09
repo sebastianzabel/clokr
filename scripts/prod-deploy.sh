@@ -40,6 +40,18 @@ command -v ssh >/dev/null || { echo "ERROR: ssh required on operator machine"; e
 # ── Arg parsing ──────────────────────────────────────────────────────────────
 TARGET_VERSION="${1:-}"   # optional: pin to a specific version
 
+# WR-02: Validate TARGET_VERSION against a strict semver allowlist BEFORE it is
+# interpolated into the remote `.env` mutation. Without this guard a typo-ed arg
+# containing `&`, `|`, or `'` would break the sed substitution or, worse, inject
+# shell tokens into the remote command. Realistic threat is operator fat-finger,
+# not network attacker — but defense-in-depth keeps `.env` from silent corruption.
+if [[ -n "$TARGET_VERSION" ]]; then
+  if [[ ! "$TARGET_VERSION" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+    echo "ERROR: TARGET_VERSION '${TARGET_VERSION}' is not a valid semver tag (e.g. v1.8.4 or 1.8.4-rc1)" >&2
+    exit 1
+  fi
+fi
+
 echo "→ prod-deploy.sh — manual deploy (D-04: not invoked by CI)"
 echo "  host:        ${DMZ_HOST}"
 echo "  dir:         ${CLOKR_DIR}"
@@ -49,14 +61,36 @@ echo "  target ver:  ${TARGET_VERSION:-<keep current>}"
 echo ""
 
 if [[ -n "$TARGET_VERSION" ]]; then
-  echo "→ Setting CLOKR_VERSION=${TARGET_VERSION} in ${DMZ_HOST}:${CLOKR_DIR}/.env"
-  # If CLOKR_VERSION already present, replace it; otherwise append it.
+  # Determine the image references for this release.
+  # The owner segment comes from the GHCR registry path established in .github/workflows/release.yml
+  # (env.REGISTRY=ghcr.io, owner derived from github.repository_owner).
+  # Hardcode the owner to keep the script self-contained — adjust if the GHCR owner ever changes.
+  API_IMAGE="ghcr.io/sebastianz84/clokr-api:${TARGET_VERSION}"
+  WEB_IMAGE="ghcr.io/sebastianz84/clokr-web:${TARGET_VERSION}"
+
+  echo "→ Setting CLOKR_API_IMAGE=${API_IMAGE} and CLOKR_WEB_IMAGE=${WEB_IMAGE} in ${DMZ_HOST}:${CLOKR_DIR}/.env"
+
+  # The prod docker-compose.yml on prod-host references ${CLOKR_API_IMAGE} and ${CLOKR_WEB_IMAGE}
+  # (NOT ${CLOKR_VERSION}). Writing CLOKR_VERSION here was a dead-letter that never updated the
+  # running image tag — v1.8.3 required a manual SSH fix on prod-host. See Phase 76.14.
+  #
+  # WR-01: Write both image refs atomically via a single awk pass that emits the
+  # full new file, then `mv` it into place (atomic rename(2)). This prevents the
+  # half-update scenario where API gets the new tag but WEB doesn't — leaving the
+  # subsequent `docker compose pull` to fetch a mismatched pair.
+  # IN-01 co-fix: drop the stale CLOKR_VERSION= line (legacy dead-letter from
+  # pre-Phase-76.14 deploys) so debugging operators don't get misled by it.
   ssh "$DMZ_HOST" "cd ${CLOKR_DIR} && \
-    if grep -q '^CLOKR_VERSION=' .env; then \
-      sed -i 's|^CLOKR_VERSION=.*|CLOKR_VERSION=${TARGET_VERSION}|' .env; \
-    else \
-      echo 'CLOKR_VERSION=${TARGET_VERSION}' >> .env; \
-    fi"
+    awk -v api='CLOKR_API_IMAGE=${API_IMAGE}' -v web='CLOKR_WEB_IMAGE=${WEB_IMAGE}' '
+      /^CLOKR_API_IMAGE=/ { print api; api_seen=1; next }
+      /^CLOKR_WEB_IMAGE=/ { print web; web_seen=1; next }
+      /^CLOKR_VERSION=/   { next }
+      { print }
+      END {
+        if (!api_seen) print api
+        if (!web_seen) print web
+      }
+    ' .env > .env.new && mv .env.new .env"
 fi
 
 # ── Deploy ───────────────────────────────────────────────────────────────────

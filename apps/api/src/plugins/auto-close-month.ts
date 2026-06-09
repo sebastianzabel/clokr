@@ -5,6 +5,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
   dateStrInTz,
 } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
@@ -307,7 +308,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
               const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
               if (leaveStart > leaveEnd) return sum;
-              return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+              // Phase 76.12 D-14 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
+              return (
+                sum +
+                calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+                  halfDay: Boolean(lr.halfDay),
+                })
+              );
             }, 0);
           }
 
