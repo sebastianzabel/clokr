@@ -126,6 +126,7 @@ export async function cleanupShiftsForBSAbsence(
       employeeId: params.employeeId,
       periodType: "MONTHLY",
       periodStart: { in: monthStarts },
+      superseded: false,
     },
     select: { periodStart: true },
   });

@@ -1851,6 +1851,79 @@ textarea.form-input {
   background: var(--brand-soft);
 }
 
+/* ─── Combined Calendar Month-Bar (v1.5 canonical) ──────────────────────
+   Shared by /leave + /team/leave calendar / list views. Sits as its own
+   .card above the calendar grid card. The eyebrow + serif title pattern
+   matches /time-entries MonthBar. Per-page scoped overrides of these
+   classes are forbidden (see CLAUDE.md UI Consistency Rules). */
+.cal-monthbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+  padding: 18px 24px;
+  /* Allow the month-picker dropdown to escape the .card overflow:clip + lift
+     above sibling .card stacking contexts (each .card creates its own via
+     backdrop-filter). Without these three lines the dropdown is invisible. */
+  overflow: visible;
+  position: relative;
+  z-index: 30;
+}
+.cal-monthbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.cal-monthbar-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 200px;
+  text-align: center;
+  position: relative;
+}
+.cal-monthbar-eyebrow {
+  font-size: 13px;
+  line-height: 1;
+  margin-bottom: 4px;
+}
+.cal-monthbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: 0.005em;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+  text-transform: capitalize;
+}
+.cal-monthbar-title:hover {
+  color: var(--brand-light);
+}
+.cal-monthbar-title svg {
+  color: var(--text-muted);
+}
+.cal-monthbar-title--static {
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+}
+.cal-monthbar-title--static:hover {
+  color: var(--text);
+}
+.cal-monthbar-today {
+  margin-left: 4px;
+}
+
 /* ── Widget Action Links (Phase 9) ──────────────────────────────── */
 .widget-action {
   font-size: 0.8125rem;

@@ -37,6 +37,7 @@ export async function recalculateSnapshots(
       employeeId,
       periodType: "MONTHLY",
       periodStart: { gte: fromDate },
+      superseded: false,
     },
     orderBy: { periodStart: "asc" },
   });
@@ -45,9 +46,16 @@ export async function recalculateSnapshots(
 
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
+    select: {
+      tenantId: true,
+      hireDate: true,
+      isTimeTrackingExempt: true, // Phase 76.7 (D-06, SALDO-V19-04b)
+      tenant: { select: { federalState: true } },
+    },
   });
   if (!employee) return;
+  // Phase 76.7 (D-06) — exempt employees never get snapshot recalcs.
+  if (employee.isTimeTrackingExempt) return;
 
   const tz = await getTenantTimezone(app.prisma, employee.tenantId);
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
@@ -60,6 +68,7 @@ export async function recalculateSnapshots(
       employeeId,
       periodType: "MONTHLY",
       periodStart: { lt: snapshots[0].periodStart },
+      superseded: false,
     },
     orderBy: { periodStart: "desc" },
   });

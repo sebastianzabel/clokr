@@ -42,6 +42,7 @@ export async function checkArbZG(
     where: { id: employeeId },
     select: {
       tenantId: true,
+      isTimeTrackingExempt: true, // Phase 76.7 (D-05, ARBZG-V19-01)
       workSchedules: {
         orderBy: { validFrom: "desc" },
         take: 1,
@@ -49,6 +50,11 @@ export async function checkArbZG(
       },
     },
   });
+
+  // Phase 76.7 (D-05) — § 18 ArbZG-exempt employees skip every ArbZG check
+  // (§ 3 daily max, § 4 breaks, § 5 rest period). BUrlG (vacation) still applies.
+  if (employee.isTimeTrackingExempt) return warnings; // already []
+
   const tz = await getTenantTimezone(prisma, employee.tenantId);
   const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_SCHEDULE";
 

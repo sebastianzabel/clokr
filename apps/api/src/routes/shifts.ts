@@ -4,6 +4,8 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
+import { getTenantTimezone, calcExpectedMinutesTz } from "../utils/timezone";
+import { updateOvertimeAccount } from "./time-entries";
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -384,12 +386,23 @@ async function findUnavailability(
  * Phase 47.4-01 — ArbZG § 3 (Tägliche Höchstarbeitszeit).
  *
  * Computes gross shift duration in hours (handles cross-midnight via +24h).
- * Returns a violation payload if grossHours > 10 (strict); otherwise null.
+ * Returns a violation payload if netHours > 10 (strict); otherwise null.
  * Exactly 10.0h is legal (boundary OK).
+ *
+ * Phase 76.10 — `effectiveBreakMinutes` MUST be the resolved Employee +
+ * TenantConfig override (compute it via `getEffectiveBreakDuration` at the
+ * call site BEFORE invoking this function). This function does NOT enforce
+ * the ArbZG § 4 floor itself — it trusts the resolved value. The TenantConfig
+ * defaults (`defaultBreakOver6h: 30`, `defaultBreakOver9h: 45`) act as the
+ * floor source of truth for tenants without an employee override.
  *
  * No DB access — pure HH:MM math.
  */
-function assertArbZGDailyMax(start: string, end: string): { violationHours: number } | null {
+function assertArbZGDailyMax(
+  start: string,
+  end: string,
+  effectiveBreakMinutes: number,
+): { violationHours: number } | null {
   const toMin = (s: string): number => {
     const [h, m] = s.split(":").map(Number);
     return h * 60 + m;
@@ -400,10 +413,8 @@ function assertArbZGDailyMax(start: string, end: string): { violationHours: numb
   if (grossMin <= 0) grossMin += 24 * 60; // cross-midnight
   const grossHours = grossMin / 60;
   // ArbZG § 3 limits ARBEITSZEIT (net), not Anwesenheit (gross).
-  // Subtract the § 4 mandatory break: >9h → 45 min, >6h → 30 min, else 0.
-  let breakHours = 0;
-  if (grossHours > 9) breakHours = 0.75;
-  else if (grossHours > 6) breakHours = 0.5;
+  // Caller resolved the § 4 break via getEffectiveBreakDuration; trust it.
+  const breakHours = effectiveBreakMinutes / 60;
   const netHours = grossHours - breakHours;
   if (netHours > 10) return { violationHours: netHours };
   return null;
@@ -754,7 +765,24 @@ export async function shiftRoutes(app: FastifyInstance) {
               where: { validFrom: { lte: new Date() } },
               orderBy: { validFrom: "desc" as const },
               take: 1,
-              select: { type: true, weeklyHours: true },
+              // Phase 76.11 — per-day hours + monthlyHours included so
+              // `calcExpectedMinutesTz` can compute leave/absence minutes for
+              // FIXED_WEEKLY / FLEXTIME / MONTHLY_HOURS schedules too. SHIFT_BASED
+              // only needs type + weeklyHours, but the aggregation loop runs for
+              // every employee (planner UI currently consumes the map only for
+              // SHIFT_BASED rows, but downstream consumers may want the rest).
+              select: {
+                type: true,
+                weeklyHours: true,
+                monthlyHours: true,
+                mondayHours: true,
+                tuesdayHours: true,
+                wednesdayHours: true,
+                thursdayHours: true,
+                fridayHours: true,
+                saturdayHours: true,
+                sundayHours: true,
+              },
             },
           },
           orderBy: { lastName: "asc" },
@@ -1142,6 +1170,84 @@ export async function shiftRoutes(app: FastifyInstance) {
         shiftBreakMinutesByEmp[s.employeeId] = (shiftBreakMinutesByEmp[s.employeeId] ?? 0) + brk;
       }
 
+      // ── Phase 76.11 — Leave + Absence minute aggregation per visible week ──
+      // The Schichtplaner Soll-Korrelation row must subtract genehmigten Urlaub
+      // und Abwesenheit (Krank/Sonderurlaub/…) vom Wochen-Soll. Same pattern as
+      // `updateOvertimeAccount` in time-entries.ts (L1601 / L1618):
+      // `calcExpectedMinutesTz(schedule, intersectStart, intersectEnd, tz)` per
+      // overlapping leave/absence row, clipped to the visible Mon-Sun week.
+      //
+      // Filters mirror CLAUDE.md rules:
+      //  - Leave: APPROVED + CANCELLATION_REQUESTED count (CANCELLATION_REQUESTED
+      //    leave remains active until cancellation is approved — § "Leave
+      //    Cancellation Flow"). PENDING/REJECTED/CANCELLED do NOT reduce Soll.
+      //    Separate query from the availability merge above (which only loads
+      //    APPROVED) to avoid coupling the two semantics.
+      //  - Absence: deletedAt: null (soft-delete query rule).
+      //
+      // Map values are MINUTES (integers, matching `vocationalSchoolMinutesByEmp`
+      // and `shiftBreakMinutesByEmp`). Client divides by 60 for hours.
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+
+      const leaveForSoll = await app.prisma.leaveRequest.findMany({
+        where: {
+          employee: { tenantId },
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          deletedAt: null,
+          startDate: { lte: sunday },
+          endDate: { gte: monday },
+        },
+        select: {
+          employeeId: true,
+          startDate: true,
+          endDate: true,
+        },
+      });
+
+      // `absences` is already loaded above with the exact filter we need
+      // (employee tenant scope + deletedAt:null + overlap [monday,sunday]).
+      // Reuse it for the aggregation — no second DB round-trip needed.
+
+      const leaveMinutesByEmp: Record<string, number> = {};
+      const absenceMinutesByEmp: Record<string, number> = {};
+
+      // Per-employee schedule index for O(1) lookup.
+      const scheduleByEmp = new Map<string, Record<string, unknown>>();
+      for (const emp of employees) {
+        const sched = emp.workSchedules?.[0];
+        if (sched) scheduleByEmp.set(emp.id, sched as unknown as Record<string, unknown>);
+      }
+
+      // Clip helper: intersect [startDate, endDate] with [monday, sunday].
+      // Returns null if no overlap (shouldn't happen given the SQL filter, but
+      // defence in depth for edge timezones).
+      function clipToWeek(startDate: Date, endDate: Date): { start: Date; end: Date } | null {
+        const start = startDate < monday ? monday : startDate;
+        const end = endDate > sunday ? sunday : endDate;
+        if (start > end) return null;
+        return { start, end };
+      }
+
+      for (const lr of leaveForSoll) {
+        const sched = scheduleByEmp.get(lr.employeeId);
+        if (!sched) continue;
+        const clip = clipToWeek(lr.startDate, lr.endDate);
+        if (!clip) continue;
+        const minutes = calcExpectedMinutesTz(sched, clip.start, clip.end, tenantTz);
+        if (minutes <= 0) continue;
+        leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
+      }
+
+      for (const ab of absences) {
+        const sched = scheduleByEmp.get(ab.employeeId);
+        if (!sched) continue;
+        const clip = clipToWeek(ab.startDate, ab.endDate);
+        if (!clip) continue;
+        const minutes = calcExpectedMinutesTz(sched, clip.start, clip.end, tenantTz);
+        if (minutes <= 0) continue;
+        absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
+      }
+
       // v1.7.4 hotfix — per-(employee × day) SchoolHolidayPeriod info. Emitted
       // only for AZUBI employees: Schulferien are governed by BBiG §15 and are
       // only relevant for apprentices. Non-AZUBI employees (REGULAR, MINIJOB,
@@ -1177,6 +1283,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         coverage,
         vocationalSchoolMinutesByEmp,
         shiftBreakMinutesByEmp,
+        // Phase 76.11 — per-employee Urlaub/Abwesenheit minutes in the visible
+        // week. Consumed by the shift-planner Soll-Korrelation row so
+        // wh_effective = wh − (leaveH + absenceH). Empty record when no
+        // overlapping leave/absence exists for any employee.
+        leaveMinutesByEmp,
+        absenceMinutesByEmp,
         schoolHoliday,
       };
     },
@@ -1289,10 +1401,11 @@ export async function shiftRoutes(app: FastifyInstance) {
       const body = shiftSchema.parse(req.body);
       const force = (req.query as { force?: string }).force === "true";
 
-      // Verify the target employee belongs to the tenant (defence in depth)
+      // Verify the target employee belongs to the tenant (defence in depth).
+      // Phase 76.10 — also load break overrides for ArbZG § 3 daily-max check.
       const targetEmp = await app.prisma.employee.findFirst({
         where: { id: body.employeeId, tenantId: req.user.tenantId },
-        select: { id: true },
+        select: { id: true, breakOver6hOverride: true, breakOver9hOverride: true },
       });
       if (!targetEmp) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
@@ -1337,7 +1450,33 @@ export async function shiftRoutes(app: FastifyInstance) {
 
       // Phase 47.4 — ArbZG § 3 Hart-Block: max 10h Tagesarbeitszeit.
       // Not overridable — force flag is ignored here.
-      const dailyMaxHit = assertArbZGDailyMax(body.startTime, body.endTime);
+      // Phase 76.10 — break duration is resolved via Employee + TenantConfig
+      // override chain (getEffectiveBreakDuration), not a hardcoded 30/45 floor.
+      const arbzgTenantCfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+      });
+      const arbzgGrossMin = (() => {
+        const toMin = (s: string): number => {
+          const [h, m] = s.split(":").map(Number);
+          return h * 60 + m;
+        };
+        let g = toMin(body.endTime) - toMin(body.startTime);
+        if (g <= 0) g += 24 * 60; // cross-midnight
+        return g;
+      })();
+      const arbzgEffectiveBreakMin = getEffectiveBreakDuration(
+        {
+          breakOver6hOverride: targetEmp.breakOver6hOverride ?? null,
+          breakOver9hOverride: targetEmp.breakOver9hOverride ?? null,
+        },
+        {
+          defaultBreakOver6h: arbzgTenantCfg?.defaultBreakOver6h ?? 30,
+          defaultBreakOver9h: arbzgTenantCfg?.defaultBreakOver9h ?? 45,
+        },
+        arbzgGrossMin,
+      );
+      const dailyMaxHit = assertArbZGDailyMax(body.startTime, body.endTime, arbzgEffectiveBreakMin);
       if (dailyMaxHit) {
         return reply.code(422).send({
           error: "ArbZG-Verstoß",
@@ -1511,6 +1650,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 76.5 (D-01, D-02) — refresh OvertimeAccount.balanceHours immediately
+      // for SHIFT_BASED employees. Audit-log was already written above; recompute
+      // runs after the DB commit and BEFORE the HTTP reply. Failures propagate as
+      // HTTP 500 (no silent swallow — saldo divergence is audit-relevant).
+      await updateOvertimeAccount(app, body.employeeId);
+
       return reply.code(201).send(shift);
     },
   });
@@ -1578,7 +1723,40 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Phase 47.4 — ArbZG § 3 Hart-Block: max 10h Tagesarbeitszeit (effective values).
-      const dailyMaxHit = assertArbZGDailyMax(effStartTime, effEndTime);
+      // Phase 76.10 — break duration is resolved via Employee + TenantConfig
+      // override chain (getEffectiveBreakDuration), not a hardcoded 30/45 floor.
+      // Use the effective (post-update) employee id so a body.employeeId change
+      // honors the NEW employee's override, not the existing record's owner.
+      const arbzgEmp = await app.prisma.employee.findFirst({
+        where: { id: effEmployeeId, tenantId: req.user.tenantId },
+        select: { breakOver6hOverride: true, breakOver9hOverride: true },
+      });
+      if (!arbzgEmp) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      const arbzgTenantCfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+      });
+      const arbzgGrossMin = (() => {
+        const toMin = (s: string): number => {
+          const [h, m] = s.split(":").map(Number);
+          return h * 60 + m;
+        };
+        let g = toMin(effEndTime) - toMin(effStartTime);
+        if (g <= 0) g += 24 * 60; // cross-midnight
+        return g;
+      })();
+      const arbzgEffectiveBreakMin = getEffectiveBreakDuration(
+        {
+          breakOver6hOverride: arbzgEmp.breakOver6hOverride ?? null,
+          breakOver9hOverride: arbzgEmp.breakOver9hOverride ?? null,
+        },
+        {
+          defaultBreakOver6h: arbzgTenantCfg?.defaultBreakOver6h ?? 30,
+          defaultBreakOver9h: arbzgTenantCfg?.defaultBreakOver9h ?? 45,
+        },
+        arbzgGrossMin,
+      );
+      const dailyMaxHit = assertArbZGDailyMax(effStartTime, effEndTime, arbzgEffectiveBreakMin);
       if (dailyMaxHit) {
         return reply.code(422).send({
           error: "ArbZG-Verstoß",
@@ -1744,6 +1922,15 @@ export async function shiftRoutes(app: FastifyInstance) {
             request: { ip: req.ip, headers: req.headers as Record<string, string> },
           });
         }
+      }
+
+      // Phase 76.5 (D-01, D-02) — refresh OvertimeAccount.balanceHours immediately.
+      // The PUT body schema allows employeeId reassignment (body.employeeId may
+      // differ from existing.employeeId), so recompute BOTH the old and new
+      // employee when reassigned. No try/catch — saldo divergence must be loud.
+      await updateOvertimeAccount(app, existing.employeeId);
+      if (body.employeeId && body.employeeId !== existing.employeeId) {
+        await updateOvertimeAccount(app, body.employeeId);
       }
 
       return updated;
@@ -2041,6 +2228,23 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
+      // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if generate-week regresses >10%.
+      const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
+      const settled = await Promise.allSettled(
+        uniqueIds.map((id) => updateOvertimeAccount(app, id)),
+      );
+      const saldoRefreshFailures: string[] = [];
+      settled.forEach((res, i) => {
+        if (res.status === "rejected") {
+          app.log.error(
+            { employeeId: uniqueIds[i], err: res.reason },
+            "shift_saldo_refresh_failed",
+          );
+          saldoRefreshFailures.push(uniqueIds[i]);
+        }
+      });
+
       return {
         weekStart: weekStartIso,
         create: created.map((c) => ({
@@ -2054,6 +2258,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         })),
         skip,
         committed: true,
+        saldoRefreshFailures,
       };
     },
   });
@@ -2340,6 +2545,23 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
+      // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if copy-week regresses >10%.
+      const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
+      const settled = await Promise.allSettled(
+        uniqueIds.map((id) => updateOvertimeAccount(app, id)),
+      );
+      const saldoRefreshFailures: string[] = [];
+      settled.forEach((res, i) => {
+        if (res.status === "rejected") {
+          app.log.error(
+            { employeeId: uniqueIds[i], err: res.reason },
+            "shift_saldo_refresh_failed",
+          );
+          saldoRefreshFailures.push(uniqueIds[i]);
+        }
+      });
+
       return {
         sourceWeekStart: sourceStartIso,
         targetWeekStart: targetStartIso,
@@ -2356,6 +2578,7 @@ export async function shiftRoutes(app: FastifyInstance) {
         })),
         skip,
         committed: true,
+        saldoRefreshFailures,
       };
     },
   });
@@ -2384,7 +2607,25 @@ export async function shiftRoutes(app: FastifyInstance) {
         ),
       );
 
-      return reply.code(201).send({ created: created.length });
+      // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
+      // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if /bulk regresses >10%.
+      // D-10: Audit-log loop intentionally absent (separate audit-proof gap; out of 76.5 scope).
+      const uniqueIds = Array.from(new Set(created.map((r) => r.employeeId)));
+      const settled = await Promise.allSettled(
+        uniqueIds.map((id) => updateOvertimeAccount(app, id)),
+      );
+      const saldoRefreshFailures: string[] = [];
+      settled.forEach((res, i) => {
+        if (res.status === "rejected") {
+          app.log.error(
+            { employeeId: uniqueIds[i], err: res.reason },
+            "shift_saldo_refresh_failed",
+          );
+          saldoRefreshFailures.push(uniqueIds[i]);
+        }
+      });
+
+      return reply.code(201).send({ created: created.length, saldoRefreshFailures });
     },
   });
 
@@ -2416,6 +2657,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         oldValue: existing,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+      // Phase 76.5 (D-01, D-02) — refresh OvertimeAccount.balanceHours immediately.
+      // `existing` was captured before delete; its employeeId is still valid here.
+      await updateOvertimeAccount(app, existing.employeeId);
       return reply.code(204).send();
     },
   });
@@ -2512,6 +2756,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           employeeId: shift.employeeId,
           periodType: "MONTHLY",
           periodStart: monthStart,
+          superseded: false,
         },
         select: { id: true },
       });
@@ -2549,6 +2794,11 @@ export async function shiftRoutes(app: FastifyInstance) {
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      // Phase 76.5 (D-01, D-02, D-08) — refresh OvertimeAccount.balanceHours.
+      // Both restore branches (soft-delete restore + conflictsWithLeave clear)
+      // re-include the shift in expected-minutes for SHIFT_BASED employees.
+      await updateOvertimeAccount(app, shift.employeeId);
 
       return reply.code(200).send({
         ...updated,

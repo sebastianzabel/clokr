@@ -193,6 +193,7 @@ async function runOrPreview(
       employeeId: { in: employeeIds },
       periodType: "MONTHLY",
       periodStart: { gte: monthStartUtc(windowStart), lte: monthStartUtc(windowEnd) },
+      superseded: false,
     },
     select: { employeeId: true, periodStart: true },
   });

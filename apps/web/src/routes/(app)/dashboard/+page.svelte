@@ -240,6 +240,14 @@
 
   const isManager = $derived(["ADMIN", "MANAGER"].includes($authStore.user?.role ?? ""));
 
+  // Phase 76.7 (D-15, UI-V19-04) — § 18 ArbZG-exempt: when the current
+  // employee's `isTimeTrackingExempt` flag is true, fully HIDE the Timer-Card
+  // (no Stempeluhr CTA) and render the Saldo-KPI value as "—" instead of a
+  // misleading number. Default false so a fetch failure does not lock an
+  // exempt user OUT — but it does mean a non-exempt user is never falsely
+  // hidden from clocking in. The personal Time-Entries page mirrors this.
+  let isExempt = $state(false);
+
   // ── Load ───────────────────────────────────────────────────────────────────
   onMount(async () => {
     await loadData();
@@ -330,6 +338,20 @@
         openItems = await api.get<typeof openItems>("/dashboard/open-items");
       } catch {
         /* ignore */
+      }
+
+      // Phase 76.7 (D-15, UI-V19-04) — fetch § 18 ArbZG exemption flag.
+      // Failure is fail-SAFE to false so a network blip never locks a
+      // non-exempt user out of the Timer-Card; the backend skip paths
+      // (Phase 76.7 Plan 01) are the source of truth for saldo/ArbZG.
+      try {
+        const employeeId = $authStore.user?.employeeId;
+        if (employeeId) {
+          const me = await api.get<{ isTimeTrackingExempt?: boolean }>(`/employees/${employeeId}`);
+          isExempt = me.isTimeTrackingExempt === true;
+        }
+      } catch {
+        isExempt = false;
       }
 
       // Today's entry breakdown (row 2 / col-7)
@@ -1041,92 +1063,99 @@
     <!-- LEFT column (col-7) -->
     <div class="dashboard-stack dashboard-stack--left">
       <!-- Timer Card Hero (EMP-01) -->
-      <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-        <div class="timer-hd">
-          <div>
-            <div class="timer-hd-title">
-              {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+      <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt users (Inhaber/
+           Geschäftsführer/leitende Angestellte) MUST NOT see the Stempeluhr
+           CTA. Full HIDE the entire Timer-Card hero — not a disabled button.
+           Rationale: don't teach exempt users to interact with disabled
+           controls. -->
+      {#if !isExempt}
+        <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
+          <div class="timer-hd">
+            <div>
+              <div class="timer-hd-title">
+                {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+              </div>
+              <div class="timer-status">
+                {#if clockedIn && clockStart}
+                  <span class="live-dot" aria-hidden="true"></span>
+                  <span>gestartet um {format(clockStart, "HH:mm")}</span>
+                {:else}
+                  <span class="timer-status-idle">Bereit zum Einstempeln</span>
+                {/if}
+              </div>
             </div>
-            <div class="timer-status">
-              {#if clockedIn && clockStart}
-                <span class="live-dot" aria-hidden="true"></span>
-                <span>gestartet um {format(clockStart, "HH:mm")}</span>
-              {:else}
-                <span class="timer-status-idle">Bereit zum Einstempeln</span>
-              {/if}
+            <div class="timer-hd-right">
+              <div class="timer-hd-title timer-hd-date">
+                {format(currentTime, "EEEE, d. MMMM", { locale: de })}
+              </div>
+              <div class="timer-now">
+                {format(currentTime, "HH:mm")}
+              </div>
             </div>
-          </div>
-          <div class="timer-hd-right">
-            <div class="timer-hd-title timer-hd-date">
-              {format(currentTime, "EEEE, d. MMMM", { locale: de })}
-            </div>
-            <div class="timer-now">
-              {format(currentTime, "HH:mm")}
-            </div>
-          </div>
-        </div>
-
-        <div class="clock timer-display">
-          {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
-        </div>
-        {#if stats?.scheduleType === "FIXED_SCHEDULE"}
-          <div class="timer-sub">
-            {clockedIn
-              ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
-              : "Bereit für deinen Tag"}
           </div>
 
-          <div class="timer-progress">
-            <div class="timer-progress-track">
-              <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
-            </div>
-            <div class="timer-progress-labels">
-              <span>{fmtHours(workedHoursLive)} gearbeitet</span>
-              <span>Tagesziel 8:00</span>
-            </div>
+          <div class="clock timer-display">
+            {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
           </div>
-        {:else}
-          <div class="timer-sub">
-            {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
-          </div>
-        {/if}
+          {#if stats?.scheduleType === "FIXED_SCHEDULE"}
+            <div class="timer-sub">
+              {clockedIn
+                ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
+                : "Bereit für deinen Tag"}
+            </div>
 
-        <div class="card-foot timer-foot">
-          <button
-            onclick={handleClock}
-            disabled={clockLoading}
-            class="btn btn-primary timer-cta-primary"
-            type="button"
-          >
-            {#if clockLoading}<span class="btn-spinner"></span>{/if}
-            {clockedIn ? "Ausstempeln" : "Einstempeln"}
-          </button>
-          {#if clockedIn}
-            <button
-              type="button"
-              class="btn btn-ghost timer-cta-ghost"
-              class:timer-cta-ghost--active={breakStartedAt}
-              disabled={clockLoading || breakLoading}
-              onclick={handleBreakToggle}
-              title={breakStartedAt
-                ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
-                : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
-            >
-              {#if breakLoading}<span class="btn-spinner"></span>{/if}
-              {breakStartedAt ? "Pause beenden" : "Pause starten"}
-            </button>
+            <div class="timer-progress">
+              <div class="timer-progress-track">
+                <div class="timer-progress-fill" style="width: {pctTarget}%;"></div>
+              </div>
+              <div class="timer-progress-labels">
+                <span>{fmtHours(workedHoursLive)} gearbeitet</span>
+                <span>Tagesziel 8:00</span>
+              </div>
+            </div>
+          {:else}
+            <div class="timer-sub">
+              {clockedIn ? "Zeiterfassung läuft" : "Bereit für deinen Tag"}
+            </div>
           {/if}
-        </div>
 
-        {#if todayShift}
-          <div class="timer-shift">
-            <span class="timer-shift-label">
-              {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
-            </span>
+          <div class="card-foot timer-foot">
+            <button
+              onclick={handleClock}
+              disabled={clockLoading}
+              class="btn btn-primary timer-cta-primary"
+              type="button"
+            >
+              {#if clockLoading}<span class="btn-spinner"></span>{/if}
+              {clockedIn ? "Ausstempeln" : "Einstempeln"}
+            </button>
+            {#if clockedIn}
+              <button
+                type="button"
+                class="btn btn-ghost timer-cta-ghost"
+                class:timer-cta-ghost--active={breakStartedAt}
+                disabled={clockLoading || breakLoading}
+                onclick={handleBreakToggle}
+                title={breakStartedAt
+                  ? "Aktive Pause beenden — die Zeit wird als Pause vom Eintrag abgezogen"
+                  : "Pause starten — die Zeit wird als Pause vom Eintrag abgezogen"}
+              >
+                {#if breakLoading}<span class="btn-spinner"></span>{/if}
+                {breakStartedAt ? "Pause beenden" : "Pause starten"}
+              </button>
+            {/if}
           </div>
-        {/if}
-      </Card>
-      <!-- /timer-card -->
+
+          {#if todayShift}
+            <div class="timer-shift">
+              <span class="timer-shift-label">
+                {todayShift.label ?? "Schicht"}: {todayShift.startTime} – {todayShift.endTime}
+              </span>
+            </div>
+          {/if}
+        </Card>
+      {/if}
+      <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
 
       <!-- Heutiger Eintrag (moved into left stack — Phase 49.4 rearrange) -->
       <Card animate class="today-entry-card" style="--card-idx: 3;">
@@ -1236,20 +1265,26 @@
             unit={`/ ${stats.vacation.total}`}
             delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
           />
-          <KPIStat
-            label="Überstundenkonto"
-            value={fmtBalanceHours(stats.overtime.balanceHours)}
-            delta={stats.overtime.balanceHours === 0
-              ? "ausgeglichen"
-              : stats.overtime.balanceHours > 0
-                ? "↗ Guthaben"
-                : "↘ offen"}
-            deltaTone={stats.overtime.balanceHours === 0
-              ? "neutral"
-              : stats.overtime.balanceHours > 0
-                ? "good"
-                : "warn"}
-          />
+          <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
+               an em-dash "—" instead of a numeric saldo + no delta cue. -->
+          {#if isExempt}
+            <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
+          {:else}
+            <KPIStat
+              label="Überstundenkonto"
+              value={fmtBalanceHours(stats.overtime.balanceHours)}
+              delta={stats.overtime.balanceHours === 0
+                ? "ausgeglichen"
+                : stats.overtime.balanceHours > 0
+                  ? "↗ Guthaben"
+                  : "↘ offen"}
+              deltaTone={stats.overtime.balanceHours === 0
+                ? "neutral"
+                : stats.overtime.balanceHours > 0
+                  ? "good"
+                  : "warn"}
+            />
+          {/if}
           {#if stats.scheduleType === "FLEXTIME"}
             {@const weekDiff = stats.week.workedHours - stats.week.targetHours}
             <KPIStat

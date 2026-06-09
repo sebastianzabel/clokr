@@ -180,6 +180,11 @@
     cursorYear = today.getFullYear();
     cursorMonth = today.getMonth();
   }
+  function gotoMonthYear(m: number, y: number) {
+    // MonthBar emits m as 1-12; cursorMonth is 0-11.
+    cursorMonth = m - 1;
+    cursorYear = y;
+  }
 
   function initials(f: string, l: string): string {
     return ((f?.[0] ?? "") + (l?.[0] ?? "")).toUpperCase();
@@ -205,6 +210,7 @@
     onPrev={prevMonth}
     onNext={nextMonth}
     onToday={goToToday}
+    onSelectMonth={gotoMonthYear}
   >
     {#snippet extraActions()}
       <div class="legend">
@@ -272,7 +278,12 @@
   :global(.teamcal-monthbar-card) {
     padding: 0;
     margin-bottom: 18px;
-    overflow: hidden;
+    /* Allow month-picker dropdown to escape .card overflow:clip and lift
+       above sibling .card stacking contexts — same fix as .cal-monthbar
+       and .te-monthbar-card. */
+    overflow: visible;
+    position: relative;
+    z-index: 30;
   }
   .legend {
     display: flex;

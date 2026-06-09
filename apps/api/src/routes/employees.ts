@@ -142,6 +142,11 @@ const updateEmployeeSchema = z.object({
     )
     .nullable()
     .optional(),
+  // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. ADMIN-only (route
+  // already gated by requireRole("ADMIN")). Boolean — null is NOT a valid value.
+  // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
+  // actual value change (see PATCH handler below).
+  isTimeTrackingExempt: z.boolean().optional(),
 });
 
 function deriveInvitationStatus(
@@ -433,6 +438,13 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (body.breakOver9hOverride !== undefined) {
         updates.breakOver9hOverride = body.breakOver9hOverride;
       }
+      // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. undefined = no
+      // change, true/false = explicit set. Audit row SET_TIME_TRACKING_EXEMPT
+      // fires only when the value actually changes (see Phase 76.7 audit block
+      // below, modeled on the Phase 64 break-override pattern).
+      if (body.isTimeTrackingExempt !== undefined) {
+        updates.isTimeTrackingExempt = body.isTimeTrackingExempt;
+      }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
 
@@ -528,6 +540,34 @@ export async function employeeRoutes(app: FastifyInstance) {
           },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
+      }
+
+      // Phase 76.7 (D-13, AUDIT-V19-02) — Dedicated AuditLog row for the
+      // § 18 ArbZG exemption toggle. Only emit when the body actually changed
+      // the value (no-op suppression mirrors Phase 64 break-override pattern).
+      // The generic UPDATE audit row above still fires for any PATCH so the
+      // overall update trail is preserved.
+      const changedExempt =
+        body.isTimeTrackingExempt !== undefined &&
+        body.isTimeTrackingExempt !== employee.isTimeTrackingExempt;
+      if (changedExempt) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "SET_TIME_TRACKING_EXEMPT",
+          entity: "Employee",
+          entityId: id,
+          oldValue: { isTimeTrackingExempt: employee.isTimeTrackingExempt },
+          newValue: { isTimeTrackingExempt: body.isTimeTrackingExempt! },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        app.log.info(
+          {
+            employeeId: id,
+            exempt: body.isTimeTrackingExempt,
+            actorId: req.user.sub,
+          },
+          "Employee time-tracking exemption toggled",
+        );
       }
 
       return reply.send({ ...updated, ...(proRataWarning ? { proRataWarning } : {}) });

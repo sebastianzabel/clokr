@@ -84,6 +84,13 @@
     // Computed server-side via getEffectiveBreakDuration, honors Employee
     // Pausen-Override + tenant defaults. Used by the Soll-Korrelation row.
     shiftBreakMinutesByEmp?: Record<string, number>;
+    // Phase 76.11 — per-employee Urlaub/Abwesenheit minutes in the visible
+    // week. Subtracted from `wh` in sollRowByEmp so vacation/sick weeks don't
+    // show a phantom Soll-Diff. Filter: APPROVED + CANCELLATION_REQUESTED for
+    // leave, deletedAt:null for absences (mirrors CLAUDE.md soft-delete rule
+    // and the Leave Cancellation Flow).
+    leaveMinutesByEmp?: Record<string, number>;
+    absenceMinutesByEmp?: Record<string, number>;
     // v1.7.4 hotfix — SchoolHolidayPeriod cells for the visible week.
     schoolHoliday?: SchoolHolidayEntry[];
   }
@@ -606,6 +613,14 @@
         bsH: number;
         assignedH: number;
         weeklyH: number;
+        // Phase 76.11 — Urlaub/Abwesenheit hours in the visible week. Surfaced
+        // in the Soll label so managers see the reduction transparently.
+        leaveH: number;
+        absenceH: number;
+        // `effectiveWeeklyH = max(0, weeklyH - leaveH - absenceH)`. This is the
+        // value `diff` is calculated against — vacation weeks no longer show a
+        // phantom -40h Diff.
+        effectiveWeeklyH: number;
         diff: number;
         klass: "ok" | "warn" | "bad";
       }
@@ -617,6 +632,12 @@
     // TenantConfig.defaultBreakOver6h/9h. Replaces the legacy
     // shiftNetHours() hardcoded 30/45-min deduction.
     const breakMap = week.shiftBreakMinutesByEmp ?? {};
+    // Phase 76.11 — Urlaub/Abwesenheit-Minuten je Mitarbeiter im sichtbaren
+    // Mon-So-Fenster. Server filtert APPROVED + CANCELLATION_REQUESTED
+    // (CANCELLATION_REQUESTED bleibt aktiv bis Stornierung genehmigt; vgl.
+    // CLAUDE.md "Leave Cancellation Flow") und Absence.deletedAt:null.
+    const leaveMap = week.leaveMinutesByEmp ?? {};
+    const absenceMap = week.absenceMinutesByEmp ?? {};
     for (const emp of week.employees) {
       const sched = emp.workSchedules?.[0];
       if (!sched || sched.type !== "SHIFT_BASED") continue;
@@ -628,12 +649,18 @@
       const shiftH = Math.max(0, grossH - breakH);
       const bsH = (bsMap[emp.id] ?? 0) / 60;
       const assignedH = shiftH + bsH;
-      const diff = assignedH - wh;
+      const leaveH = (leaveMap[emp.id] ?? 0) / 60;
+      const absenceH = (absenceMap[emp.id] ?? 0) / 60;
+      const effectiveWeeklyH = Math.max(0, wh - leaveH - absenceH);
+      const diff = assignedH - effectiveWeeklyH;
       out.set(emp.id, {
         shiftH,
         bsH,
         assignedH,
         weeklyH: wh,
+        leaveH,
+        absenceH,
+        effectiveWeeklyH,
         diff,
         klass: diffClass(diff),
       });
@@ -1303,27 +1330,62 @@
 
   <!-- Week nav + grid card -->
   <Card animate class="week-card">
+    <!-- Header dimensions/typography mirror .cal-monthbar / MonthBar
+         (Buchungsmonat-Header auf /leave, /team/leave, /teamcal,
+         /time-entries, /team/time-entries). -->
     <div class="week-header">
-      <div class="serif-eyebrow week-label">
-        Woche {fmtRange()}
+      <div class="week-header-nav">
+        <button
+          type="button"
+          class="nav-btn"
+          aria-label="Vorherige Woche"
+          title="Vorherige Woche"
+          onclick={prevWeek}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
+          >
+        </button>
+        <div class="week-header-center">
+          <div class="serif-eyebrow week-header-eyebrow">Schichtwoche</div>
+          <div class="week-header-title">{fmtRange()}</div>
+        </div>
+        <button
+          type="button"
+          class="nav-btn"
+          aria-label="Nächste Woche"
+          title="Nächste Woche"
+          onclick={nextWeek}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+          >
+        </button>
+        <button type="button" class="btn btn-ghost btn-sm week-header-today" onclick={goToToday}
+          >Heute</button
+        >
       </div>
-      <div class="spacer"></div>
-      <button type="button" class="btn btn-ghost sm" aria-label="Vorherige Woche" onclick={prevWeek}
-        >‹</button
-      >
-      <button type="button" class="btn btn-ghost sm" onclick={goToToday}>Heute</button>
-      <button type="button" class="btn btn-ghost sm" aria-label="Nächste Woche" onclick={nextWeek}
-        >›</button
-      >
-      <!-- Phase 43-05: "Letzte Woche kopieren" is now the primary action;
-           "Aus Mustern generieren" stays as a secondary/ghost button for tenants
-           that have EmployeeShiftPattern rows configured. -->
-      <button type="button" class="btn btn-primary sm" onclick={openCopy}>
-        Letzte Woche kopieren
-      </button>
-      <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
-        Aus Mustern generieren
-      </button>
+      <div class="week-header-actions">
+        <!-- Phase 43-05: "Letzte Woche kopieren" is the primary action;
+             "Aus Mustern generieren" stays as a secondary/ghost button for
+             tenants that have EmployeeShiftPattern rows configured. -->
+        <button type="button" class="btn btn-primary sm" onclick={openCopy}>
+          Letzte Woche kopieren
+        </button>
+        <button type="button" class="btn btn-ghost sm" onclick={openGenerate}>
+          Aus Mustern generieren
+        </button>
+      </div>
     </div>
 
     <div class="week-body">
@@ -1504,6 +1566,7 @@
             {/each}
             {#if sollRowByEmp.has(u.id)}
               {@const sr = sollRowByEmp.get(u.id)!}
+              {@const reductionH = sr.leaveH + sr.absenceH}
               <div
                 class="sp-soll-label"
                 aria-label="Soll-Korrelation für {u.firstName} {u.lastName}"
@@ -1516,12 +1579,23 @@
                   sr.shiftH,
                 )}h Schicht{sr.bsH > 0
                   ? ` + ${formatHours(sr.bsH)}h Berufsschule`
-                  : ''}), Soll {formatHours(sr.weeklyH)}h, Abweichung {sr.diff >= 0
-                  ? '+'
-                  : ''}{formatHours(sr.diff)}h"
+                  : ''}), Soll {formatHours(sr.effectiveWeeklyH)}h{reductionH > 0
+                  ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
+                      reductionH,
+                    )}h Urlaub/Abwesenheit)`
+                  : ''}, Abweichung {sr.diff >= 0 ? '+' : ''}{formatHours(sr.diff)}h"
               >
                 <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
-                <span class="sp-soll-soll">/ Soll {formatHours(sr.weeklyH)}h</span>
+                {#if reductionH > 0}
+                  <span class="sp-soll-soll">
+                    / Soll {formatHours(sr.effectiveWeeklyH)}h
+                    <small class="sp-soll-reduction">
+                      ({formatHours(sr.weeklyH)}h − {formatHours(reductionH)}h Urlaub/Abwesenheit)
+                    </small>
+                  </span>
+                {:else}
+                  <span class="sp-soll-soll">/ Soll {formatHours(sr.weeklyH)}h</span>
+                {/if}
                 <span class="sp-soll-diff">
                   {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
                 </span>
@@ -1854,18 +1928,56 @@
     color: var(--text-muted);
     margin-top: 4px;
   }
+  /* Card-Wrapper-Padding ist auf 0 gesetzt, damit der Header sein eigenes
+     18px/24px-Padding besitzt — identisch zu .cal-monthbar / .month-bar. */
+  :global(.week-card) {
+    padding: 0;
+  }
   .week-header {
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
-    gap: 14px;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
   }
-  .week-header .spacer {
-    flex: 1;
+  .week-header-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
   }
-  .week-label {
-    font-size: 15px;
+  .week-header-center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 200px;
+    text-align: center;
+  }
+  .week-header-eyebrow {
+    font-size: 13px;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+  .week-header-title {
+    font-family: var(--font-serif);
+    font-weight: 400;
+    font-size: 26px;
+    line-height: 1.1;
+    letter-spacing: 0.005em;
+    color: var(--text);
+    text-transform: capitalize;
+    white-space: nowrap;
+  }
+  .week-header-today {
+    margin-left: 4px;
+  }
+  .week-header-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
   }
   .week-body {
     padding: 18px;

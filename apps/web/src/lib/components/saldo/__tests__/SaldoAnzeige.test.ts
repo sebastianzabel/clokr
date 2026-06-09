@@ -93,3 +93,44 @@ describe("SaldoAnzeige — formatting", () => {
     expect(screen.getByTestId("saldo-anzeige")).not.toHaveClass("saldo--zero");
   });
 });
+
+// Phase 76.7 (D-16, D-24, UI-V19-04) — § 18 ArbZG exempt rendering.
+// When `exempt={true}`, the SaldoAnzeige hides the numeric saldo behind
+// an em-dash "—" (U+2014) and tags the root with `saldo--exempt` so admin
+// pages can later style it distinctly. Sign + locked modifiers are still
+// allowed to co-render (exempt is orthogonal to those modifiers); the
+// sign-state is collapsed to "exempt" so no misleading colour applies.
+describe("SaldoAnzeige — exempt state (Phase 76.7 D-24, UI-V19-04)", () => {
+  it('renders "—" (em-dash) when exempt=true regardless of saldoMinutes', () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120, exempt: true });
+    const root = screen.getByTestId("saldo-anzeige");
+    expect(root).toHaveClass("saldo--exempt");
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("—");
+    // Must NOT leak through the numeric or signed render branch
+    expect(screen.getByTestId("saldo-value")).not.toHaveTextContent("+2:00");
+    expect(screen.getByTestId("saldo-value")).not.toHaveTextContent("0:00");
+  });
+
+  it('renders "—" when exempt=true even with saldoMinutes=null', () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: null, exempt: true });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("—");
+    expect(screen.getByTestId("saldo-value")).not.toHaveTextContent("Kein Stundenplan");
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--exempt");
+    expect(screen.getByTestId("saldo-anzeige")).not.toHaveClass("saldo--no-schedule");
+  });
+
+  it("preserves isLocked badge when exempt=true", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 60, exempt: true, isLocked: true });
+    expect(screen.getByTestId("saldo-locked-badge")).toBeInTheDocument();
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--exempt");
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--locked");
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("—");
+  });
+
+  it("regression: exempt=false (default) renders saldo number as today", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120 });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("+2:00");
+    expect(screen.getByTestId("saldo-anzeige")).not.toHaveClass("saldo--exempt");
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--positive");
+  });
+});

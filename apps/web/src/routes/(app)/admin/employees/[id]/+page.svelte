@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api } from "$api/client";
   import { toasts } from "$stores/toast";
+  import { authStore } from "$stores/auth";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { onMount } from "svelte";
@@ -64,6 +65,8 @@
     birthDate?: string | null; // ISO date or null
     breakOver6hOverride?: number | null; // null = use tenant default
     breakOver9hOverride?: number | null;
+    // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption flag (ADMIN-only toggle).
+    isTimeTrackingExempt?: boolean;
     user?: {
       role: Role;
       email: string;
@@ -317,6 +320,17 @@
   let pausendauerError = $state("");
   let pausendauerSaved = $state(false);
 
+  // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only).
+  // `eIsTimeTrackingExempt` mirrors the checkbox UI state. `preChangeExempt`
+  // is the last server-confirmed value used to revert when the user cancels
+  // the ConfirmDialog. `intendedExempt` snapshots the requested new value so
+  // the modal description can render the correct verb.
+  let eIsTimeTrackingExempt = $state<boolean>(false);
+  let preChangeExempt = $state<boolean>(false);
+  let intendedExempt = $state<boolean>(false);
+  let exemptConfirmOpen = $state<boolean>(false);
+  let exemptSaving = $state<boolean>(false);
+
   let eCoverageOverridden = $derived(
     isOverridden(eClassification, "coverageWeight", eCoverageWeight),
   );
@@ -378,6 +392,13 @@
       employee.breakOver9hOverride !== undefined && employee.breakOver9hOverride !== null
         ? String(employee.breakOver9hOverride)
         : "";
+
+    // Phase 76.7 (UI-V19-04a) — hydrate § 18 ArbZG exemption flag.
+    // `preChangeExempt` tracks the last server-confirmed value so a Abbrechen
+    // click on the ConfirmDialog can revert the visual toggle.
+    eIsTimeTrackingExempt = employee.isTimeTrackingExempt === true;
+    preChangeExempt = eIsTimeTrackingExempt;
+    intendedExempt = eIsTimeTrackingExempt;
 
     const sched = workSchedule;
     eType = sched?.type ?? "FIXED_SCHEDULE";
@@ -528,6 +549,52 @@
   function applyAzubiSuggestion() {
     eBreakOver6hOverride = "30";
     eBreakOver9hOverride = "60";
+  }
+
+  // ── Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle handlers ─────────
+  // The toggle is bind:checked={eIsTimeTrackingExempt}. We intercept the change
+  // via `onchange`, snapshot the requested value into `intendedExempt`, and open
+  // the ConfirmDialog. The PATCH only fires from `confirmExemptToggle()`; an
+  // Abbrechen click invokes `cancelExemptToggle()` via the ConfirmDialog's
+  // `onCancel` prop, which reverts the visual checkbox to its pre-change state.
+  function onExemptToggleChange(ev: Event) {
+    const target = ev.currentTarget as HTMLInputElement;
+    const newValue = target.checked;
+    if (newValue === preChangeExempt) {
+      // No-op (user re-clicked back to the original) — do nothing.
+      return;
+    }
+    intendedExempt = newValue;
+    exemptConfirmOpen = true;
+  }
+
+  async function confirmExemptToggle() {
+    if (!employee) return;
+    exemptSaving = true;
+    try {
+      await api.patch(`/employees/${employee.id}`, {
+        isTimeTrackingExempt: intendedExempt,
+      });
+      preChangeExempt = intendedExempt;
+      eIsTimeTrackingExempt = intendedExempt;
+      // Reflect new value on the cached employee record so subsequent reverts
+      // resolve to the new server-confirmed baseline.
+      employee = { ...employee, isTimeTrackingExempt: intendedExempt };
+      toasts.success("Befreiung aktualisiert");
+    } catch (e: unknown) {
+      // Roll back the visual toggle to the last server-confirmed state.
+      eIsTimeTrackingExempt = preChangeExempt;
+      const msg = e instanceof Error ? e.message : "Speichern fehlgeschlagen";
+      toasts.error(msg);
+    } finally {
+      exemptSaving = false;
+    }
+  }
+
+  function cancelExemptToggle() {
+    // Revert the checkbox to the last server-confirmed value.
+    eIsTimeTrackingExempt = preChangeExempt;
+    intendedExempt = preChangeExempt;
   }
 
   // ── BS-Pattern editor helpers (Phase 67 Plan 02, BERSCH-15) ───────────────
@@ -965,6 +1032,14 @@
 
   // ── Derived display ────────────────────────────────────────────────────────
   let displayName = $derived(`${eFirstName} ${eLastName}`.trim());
+
+  // Phase 76.7 (UI-V19-04a) — verb for the ConfirmDialog description.
+  // OFF→ON (`intendedExempt === true`) = "befreien" (exempting the employee)
+  // ON→OFF (`intendedExempt === false`) = "unterstellen" (re-subjecting to tracking)
+  let exemptActionVerb = $derived(intendedExempt ? "befreien" : "unterstellen");
+  let exemptDialogDescription = $derived(
+    `Sie sind im Begriff, die Zeiterfassungs-Pflicht für ${employee?.firstName ?? ""} ${employee?.lastName ?? ""} zu ${exemptActionVerb}. Diese Änderung wird im Audit-Log protokolliert. Hinweis: Urlaubsanspruch nach BUrlG bleibt unverändert.`,
+  );
 </script>
 
 {#if loading}
@@ -1065,6 +1140,29 @@
                 </div>
               {/if}
             </div>
+
+            <!-- Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only) -->
+            {#if $authStore.user?.role === "ADMIN"}
+              <div class="form-group form-group--full form-subhead">
+                <h4 class="form-subhead-title">Zeiterfassungs-Pflicht</h4>
+              </div>
+              <div class="form-group form-group--full" data-testid="exemption-toggle-row">
+                <label class="toggle-label">
+                  <input
+                    type="checkbox"
+                    bind:checked={eIsTimeTrackingExempt}
+                    onchange={onExemptToggleChange}
+                    disabled={exemptSaving}
+                    data-testid="exemption-toggle"
+                  />
+                  <span>Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)</span>
+                </label>
+                <p class="hint">
+                  Inhaber, Geschäftsführer und leitende Angestellte sind nach § 18 ArbZG von der
+                  Arbeitszeiterfassung befreit. Urlaubsanspruch nach BUrlG bleibt bestehen.
+                </p>
+              </div>
+            {/if}
 
             <!-- Weitere Stammdaten -->
             <div class="form-group form-group--full form-subhead">
@@ -2057,6 +2155,18 @@
     danger
     onConfirm={hardDelete}
   />
+
+  <!-- Phase 76.7 (UI-V19-04a, D-18, D-20) — § 18 ArbZG exemption confirmation -->
+  {#if $authStore.user?.role === "ADMIN"}
+    <ConfirmDialog
+      bind:open={exemptConfirmOpen}
+      title="§ 18 ArbZG — Zeiterfassungs-Befreiung"
+      description={exemptDialogDescription}
+      confirmLabel="Bestätigen"
+      onConfirm={confirmExemptToggle}
+      onCancel={cancelExemptToggle}
+    />
+  {/if}
 {/if}
 
 <style>

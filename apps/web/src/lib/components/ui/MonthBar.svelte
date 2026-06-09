@@ -22,6 +22,12 @@
     onNext: () => void;
     /** Optional "Heute" jump — button only renders when provided. */
     onToday?: () => void;
+    /**
+     * Optional month/year picker callback. When provided, the month label
+     * renders as a clickable button (with chevron) that opens a grid dropdown
+     * matching the `.cal-monthbar` pattern used on /leave + /team/leave.
+     */
+    onSelectMonth?: (month: number, year: number) => void;
     /** Optional extra trailing actions slot (e.g. PDF export button). */
     extraActions?: Snippet;
     /**
@@ -40,6 +46,7 @@
     onPrev,
     onNext,
     onToday,
+    onSelectMonth,
     extraActions,
     testIdPrefix = "month-bar",
   }: Props = $props();
@@ -47,6 +54,39 @@
   const monthLabel = $derived(
     new Intl.DateTimeFormat("de-DE", { month: "long", year: "numeric" }).format(date),
   );
+
+  // ── Optional month-picker dropdown (matches .cal-monthbar pattern) ──
+  const MONTH_NAMES_SHORT = [
+    "Jan",
+    "Feb",
+    "Mär",
+    "Apr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Okt",
+    "Nov",
+    "Dez",
+  ];
+  let showPicker = $state(false);
+  let pickerYear = $state(date.getFullYear());
+  const currentMonth = $derived(date.getMonth() + 1);
+  const currentYear = $derived(date.getFullYear());
+
+  function togglePicker() {
+    pickerYear = currentYear;
+    showPicker = !showPicker;
+  }
+  function selectMonth(m: number, y: number) {
+    showPicker = false;
+    onSelectMonth?.(m, y);
+  }
+  function todayClicked() {
+    showPicker = false;
+    onToday?.();
+  }
 </script>
 
 <!-- Month navigation bar primitive (D-02). Encapsulates the v1.5 .month-bar recipe.
@@ -74,7 +114,52 @@
       {#if eyebrow}
         <div class="month-bar-eyebrow">{eyebrow}</div>
       {/if}
-      <div class="month-bar-label" data-testid={`${testIdPrefix}-label`}>{monthLabel}</div>
+      {#if onSelectMonth}
+        <button
+          type="button"
+          class="month-bar-label month-bar-label--picker"
+          onclick={togglePicker}
+          title="Monat/Jahr wählen"
+          data-testid={`${testIdPrefix}-label`}
+        >
+          {monthLabel}
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg
+          >
+        </button>
+        {#if showPicker}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="month-picker-backdrop" onclick={() => (showPicker = false)}></div>
+          <div class="month-picker" data-testid={`${testIdPrefix}-picker`}>
+            <div class="month-picker-year">
+              <button type="button" onclick={() => pickerYear--} aria-label="Jahr zurück">‹</button>
+              <span>{pickerYear}</span>
+              <button type="button" onclick={() => pickerYear++} aria-label="Jahr vor">›</button>
+            </div>
+            <div class="month-picker-grid">
+              {#each MONTH_NAMES_SHORT as name, i (i)}
+                <button
+                  type="button"
+                  class="month-picker-btn"
+                  class:active={i + 1 === currentMonth && pickerYear === currentYear}
+                  onclick={() => selectMonth(i + 1, pickerYear)}>{name}</button
+                >
+              {/each}
+            </div>
+            {#if onToday}
+              <button type="button" class="month-picker-today" onclick={todayClicked}>Heute</button>
+            {/if}
+          </div>
+        {/if}
+      {:else}
+        <div class="month-bar-label" data-testid={`${testIdPrefix}-label`}>{monthLabel}</div>
+      {/if}
     </div>
     <button
       class="nav-btn"
@@ -118,13 +203,18 @@
 </div>
 
 <style>
-  /* ── Combined Month-Bar (v1.5 — nav + mini-stats in one .card) ───── */
+  /* ── Combined Month-Bar (v1.5 — nav + mini-stats in one .card) ─────
+     Dimensions kept in lockstep with .cal-monthbar (app.css) so /leave,
+     /team/leave, /teamcal, /time-entries and /team/time-entries share
+     the same header height + serif title. Consumers must set the wrapping
+     .card padding to 0 so the primitive owns the inner spacing. */
   .month-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: 24px;
     flex-wrap: nowrap;
+    padding: 18px 24px;
   }
 
   .month-bar > .month-bar-nav {
@@ -147,7 +237,7 @@
   .month-bar-nav {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     flex-wrap: nowrap;
   }
 
@@ -155,7 +245,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    min-width: 140px;
+    min-width: 200px;
     text-align: center;
     position: relative;
   }
@@ -172,7 +262,7 @@
   .month-bar-label {
     font-family: var(--font-serif);
     font-weight: 400;
-    font-size: 22px;
+    font-size: 26px;
     line-height: 1.1;
     letter-spacing: 0.005em;
     color: var(--text);
@@ -180,6 +270,25 @@
     min-width: 9ch;
     text-align: center;
     white-space: nowrap;
+  }
+
+  /* Picker-trigger variant: matches .cal-monthbar-title look — chevron, hover. */
+  .month-bar-label--picker {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: 0;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--r-sm);
+    transition: color 0.15s ease;
+  }
+  .month-bar-label--picker:hover {
+    color: var(--brand-light, var(--brand));
+  }
+  .month-bar-label--picker :global(svg) {
+    color: var(--text-muted);
   }
 
   .month-bar-today {

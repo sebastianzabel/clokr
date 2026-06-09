@@ -1342,13 +1342,29 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
+    select: {
+      tenantId: true,
+      hireDate: true,
+      isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
+      tenant: { select: { federalState: true } },
+    },
   });
+
+  // Phase 76.7 (D-04, D-10) — exempt employees never compute saldo.
+  // We do NOT reset balanceHours to 0 (preserve audit-trail of prior value).
+  if (employee?.isTimeTrackingExempt) {
+    app.log.info(
+      { employeeId, exempt: true },
+      "updateOvertimeAccount skipped (isTimeTrackingExempt)",
+    );
+    return;
+  }
+
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
 
   // Letzten Snapshot suchen (Basis für die Berechnung)
   const lastSnapshot = await app.prisma.saldoSnapshot.findFirst({
-    where: { employeeId, periodType: "MONTHLY" },
+    where: { employeeId, periodType: "MONTHLY", superseded: false },
     orderBy: { periodStart: "desc" },
   });
 

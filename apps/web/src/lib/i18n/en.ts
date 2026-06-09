@@ -9,7 +9,7 @@ export const en: Record<keyof typeof de, string | readonly string[]> = {
   appSub: "Time tracking",
   nav_dashboard: "Overview",
   nav_time: "Time tracking",
-  nav_leave: "Leave",
+  nav_leave: "Absences",
   nav_reports: "Reports",
   nav_my: "My area",
   nav_team: "Team",

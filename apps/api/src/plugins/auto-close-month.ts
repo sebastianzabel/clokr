@@ -101,7 +101,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
       for (const emp of employees) {
         // Check if already closed — use unique index on (employeeId, periodType, periodStart)
-        // so months with 29/30/31 days are correctly detected (periodEnd-based check misses them)
+        // so months with 29/30/31 days are correctly detected (periodEnd-based check misses them).
+        // Composite key — superseded filter unnecessary (unique constraint guarantees specificity).
         const existingSnapshot = await app.prisma.saldoSnapshot.findUnique({
           where: {
             employeeId_periodType_periodStart: {
@@ -360,6 +361,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               employeeId: emp.id,
               periodType: "MONTHLY",
               periodStart: { lt: monthStart },
+              superseded: false,
             },
             orderBy: { periodStart: "desc" },
           });
@@ -444,6 +446,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   gte: new Date(`${prevYear}-01-01`),
                   lte: new Date(`${prevYear}-01-02`),
                 },
+                superseded: false,
               },
             });
             if (yearlyExists) continue;
@@ -456,6 +459,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 employeeId: emp.id,
                 periodType: "MONTHLY",
                 periodStart: { gte: yearStart, lte: yearEnd },
+                superseded: false,
               },
               orderBy: { periodStart: "asc" },
             });

@@ -8,6 +8,13 @@
   //   - locked (Monatsabschluss-Badge co-occurrence)
   //   - no-schedule (saldoMinutes === null → "Kein Stundenplan")
   //
+  // Phase 76.7 (D-16, UI-V19-04) — added `exempt` prop. When true, the
+  // numeric saldo is replaced with an em-dash "—" (U+2014) so § 18 ArbZG
+  // exempt employees (Inhaber/Geschäftsführer/leitende Angestellte) don't
+  // see a misleading number. The sign-state collapses to "exempt" → no
+  // green/red colour cue. BUrlG vacation tracking is unaffected by this
+  // flag (see CONTEXT D-15..D-16).
+  //
   // Like CalendarCell, this lives alongside (not replacing) the existing
   // form-context-bound "Überstundensaldo-Info" block in
   // routes/(app)/leave/+page.svelte. See 76-02-SUMMARY.md for context.
@@ -17,6 +24,8 @@
     isLocked?: boolean;
     variant?: "compact" | "expanded";
     label?: string;
+    /** Phase 76.7 (D-16) — § 18 ArbZG-exempt: render "—" instead of saldo number. */
+    exempt?: boolean;
   }
 
   let {
@@ -24,16 +33,19 @@
     isLocked = false,
     variant = "expanded",
     label = "Saldo",
+    exempt = false,
   }: SaldoAnzeigeProps = $props();
 
   const sign = $derived(
-    saldoMinutes === null
-      ? "no-schedule"
-      : saldoMinutes === 0
-        ? "zero"
-        : saldoMinutes > 0
-          ? "positive"
-          : "negative",
+    exempt
+      ? "exempt"
+      : saldoMinutes === null
+        ? "no-schedule"
+        : saldoMinutes === 0
+          ? "zero"
+          : saldoMinutes > 0
+            ? "positive"
+            : "negative",
   );
 
   const classes = $derived.by(() => {
@@ -58,7 +70,10 @@
     <div class="saldo__label" data-testid="saldo-label">{label}</div>
   {/if}
 
-  {#if saldoMinutes === null}
+  {#if exempt}
+    <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG exempt: em-dash, no number. -->
+    <div class="saldo__value" data-testid="saldo-value">—</div>
+  {:else if saldoMinutes === null}
     <div class="saldo__value" data-testid="saldo-value">Kein Stundenplan</div>
   {:else}
     <div class="saldo__value" data-testid="saldo-value">{fmt(saldoMinutes)}</div>

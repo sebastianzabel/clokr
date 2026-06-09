@@ -9,7 +9,7 @@ export const de = {
   // nav
   nav_dashboard: "Übersicht",
   nav_time: "Zeiterfassung",
-  nav_leave: "Urlaub",
+  nav_leave: "Abwesenheiten",
   nav_reports: "Berichte",
   nav_my: "Mein Bereich",
   nav_team: "Team",

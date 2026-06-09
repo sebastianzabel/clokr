@@ -285,6 +285,11 @@ model Employee {
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
   breakOver6hOverride Int? // null = TenantConfig.defaultBreakOver6h verwenden
   breakOver9hOverride Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  // Phase 76.7 (D-01, EMP-V19-01) — § 18 ArbZG-Befreiung für Inhaber/Geschäftsführer/leitende
+  // Angestellte. Wenn true: SKIP updateOvertimeAccount + checkArbZG + recalculateSnapshots
+  // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
+  // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
+  isTimeTrackingExempt Boolean                @default(false)
   createdAt           DateTime               @default(now()) @db.Timestamptz
   updatedAt           DateTime               @updatedAt @db.Timestamptz
 
@@ -410,6 +415,11 @@ model SaldoSnapshot {
   closedAt        DateTime        @db.Timestamptz
   closedBy        String? // userId wer abgeschlossen hat (null = SYSTEM)
   note            String?
+  // Phase 76.6 — TZ-duplicate cleanup. `superseded` rows are excluded from
+  // production findFirst/findMany via `where: { superseded: false }`. Never
+  // hard-deleted (Revisionssicherheit). See .planning/phases/76.6-*/76.6-NOTES.md.
+  superseded       Boolean @default(false)
+  supersededReason String?
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 

@@ -177,7 +177,7 @@ export async function activityRoutes(app: FastifyInstance) {
 
         // Own monthly close snapshots
         const snapshots = await app.prisma.saldoSnapshot.findMany({
-          where: { employeeId, periodType: "MONTHLY" },
+          where: { employeeId, periodType: "MONTHLY", superseded: false },
           orderBy: { closedAt: "desc" },
           take: fetchLimit,
         });

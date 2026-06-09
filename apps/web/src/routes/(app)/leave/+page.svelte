@@ -2027,73 +2027,9 @@
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
 
-  /* ── Combined Calendar Month-Bar (v1.5 — picker variant, no primitive fit) */
-  .cal-monthbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    flex-wrap: wrap;
-    margin-bottom: 18px;
-    padding: 18px 24px;
-  }
-
-  .cal-monthbar-nav {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-
-  .cal-monthbar-center {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 200px;
-    text-align: center;
-    position: relative;
-  }
-
-  .cal-monthbar-eyebrow {
-    font-size: 13px;
-    line-height: 1;
-    margin-bottom: 4px;
-  }
-
-  .cal-monthbar-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: none;
-    border: 0;
-    cursor: pointer;
-    color: var(--text);
-    font-family: var(--font-serif);
-    font-weight: 400;
-    font-size: 26px;
-    line-height: 1.1;
-    letter-spacing: 0.005em;
-    padding: 2px 4px;
-    border-radius: var(--r-sm);
-    text-transform: capitalize;
-  }
-  .cal-monthbar-title:hover {
-    color: var(--brand-light);
-  }
-  .cal-monthbar-title svg {
-    color: var(--text-muted);
-  }
-  .cal-monthbar-title--static {
-    cursor: default;
-    font-variant-numeric: tabular-nums;
-  }
-  .cal-monthbar-title--static:hover {
-    color: var(--text);
-  }
-
-  .cal-monthbar-today {
-    margin-left: 4px;
-  }
+  /* ── Combined Calendar Month-Bar ─────────────────────────────────────
+     .cal-monthbar* recipe lives in app.css (v1.5 canonical, shared with
+     /team/leave). Per-page overrides are forbidden. */
 
   .vac-stats {
     display: flex;

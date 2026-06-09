@@ -682,6 +682,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           employeeId: { in: employeeIds },
           periodType: "MONTHLY",
           periodStart: { gte: sixMonthsAgo },
+          superseded: false,
         },
         orderBy: { periodStart: "asc" },
         select: {
@@ -873,90 +874,101 @@ export async function dashboardRoutes(app: FastifyInstance) {
       let invalidEntriesCount = 0;
 
       if (employeeId) {
-        // 1. Missing time entries (workdays without entries in last 7 days)
-        const schedule = await getEffectiveSchedule(app, employeeId);
-        const recentEntries = await app.prisma.timeEntry.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            type: "WORK",
-            date: { gte: sevenDaysAgo, lt: today },
-          },
-          select: { date: true },
+        // Phase 76.7 (D-08, UI-V19-04 supporting backend) — exempt employees never
+        // get "missing dates" surfaced on their personal dashboard. The Stempeluhr
+        // CTA is also hidden client-side (Plan 03), but we short-circuit here so the
+        // open-items query stays cheap. BUrlG signals (pendingRequests +
+        // invalidEntries) stay outside this guard — vacation tracking still applies.
+        const meExempt = await app.prisma.employee.findUnique({
+          where: { id: employeeId },
+          select: { isTimeTrackingExempt: true },
         });
-        const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
+        if (!meExempt?.isTimeTrackingExempt) {
+          // 1. Missing time entries (workdays without entries in last 7 days)
+          const schedule = await getEffectiveSchedule(app, employeeId);
+          const recentEntries = await app.prisma.timeEntry.findMany({
+            where: {
+              employeeId,
+              deletedAt: null,
+              type: "WORK",
+              date: { gte: sevenDaysAgo, lt: today },
+            },
+            select: { date: true },
+          });
+          const entryDates = new Set(recentEntries.map((e) => dateStrInTz(e.date, tz)));
 
-        // Fetch holidays for the 7-day window (window can span two years near Jan 1)
-        const openItemsTenant = await app.prisma.tenant.findUnique({
-          where: { id: tenantId },
-          select: { federalState: true },
-        });
-        const openItemsStateCode = openItemsTenant?.federalState
-          ? (STATE_MAP[openItemsTenant.federalState] ?? null)
-          : null;
-        const startYear = sevenDaysAgo.getFullYear();
-        const endYear = today.getFullYear();
-        const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
-        if (endYear !== startYear)
-          openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
-        const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
+          // Fetch holidays for the 7-day window (window can span two years near Jan 1)
+          const openItemsTenant = await app.prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { federalState: true },
+          });
+          const openItemsStateCode = openItemsTenant?.federalState
+            ? (STATE_MAP[openItemsTenant.federalState] ?? null)
+            : null;
+          const startYear = sevenDaysAgo.getFullYear();
+          const endYear = today.getFullYear();
+          const openItemsHolidays = getHolidays(startYear, openItemsStateCode);
+          if (endYear !== startYear)
+            openItemsHolidays.push(...getHolidays(endYear, openItemsStateCode));
+          const openItemsHolidaySet = new Set(openItemsHolidays.map((h) => h.date));
 
-        // Approved leave + Absences in the 7-day window cover the day too
-        // (mirrors overtime.ts close-month/status logic — a day is only "missing"
-        // if no entry, no holiday, no leave, no absence covers it)
-        const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            status: "APPROVED",
-            startDate: { lte: today },
-            endDate: { gte: sevenDaysAgo },
-          },
-          select: { startDate: true, endDate: true },
-        });
-        const absencesInWindow = await app.prisma.absence.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            startDate: { lte: today },
-            endDate: { gte: sevenDaysAgo },
-          },
-          select: { startDate: true, endDate: true },
-        });
-        const coveredDates = new Set<string>();
-        for (const range of [...approvedLeaveInWindow, ...absencesInWindow]) {
-          const s = range.startDate < sevenDaysAgo ? sevenDaysAgo : range.startDate;
-          const e = range.endDate > today ? today : range.endDate;
-          const cur = new Date(s);
-          while (cur <= e) {
-            coveredDates.add(dateStrInTz(cur, tz));
-            cur.setDate(cur.getDate() + 1);
+          // Approved leave + Absences in the 7-day window cover the day too
+          // (mirrors overtime.ts close-month/status logic — a day is only "missing"
+          // if no entry, no holiday, no leave, no absence covers it)
+          const approvedLeaveInWindow = await app.prisma.leaveRequest.findMany({
+            where: {
+              employeeId,
+              deletedAt: null,
+              status: "APPROVED",
+              startDate: { lte: today },
+              endDate: { gte: sevenDaysAgo },
+            },
+            select: { startDate: true, endDate: true },
+          });
+          const absencesInWindow = await app.prisma.absence.findMany({
+            where: {
+              employeeId,
+              deletedAt: null,
+              startDate: { lte: today },
+              endDate: { gte: sevenDaysAgo },
+            },
+            select: { startDate: true, endDate: true },
+          });
+          const coveredDates = new Set<string>();
+          for (const range of [...approvedLeaveInWindow, ...absencesInWindow]) {
+            const s = range.startDate < sevenDaysAgo ? sevenDaysAgo : range.startDate;
+            const e = range.endDate > today ? today : range.endDate;
+            const cur = new Date(s);
+            while (cur <= e) {
+              coveredDates.add(dateStrInTz(cur, tz));
+              cur.setDate(cur.getDate() + 1);
+            }
           }
-        }
 
-        const cursor = new Date(sevenDaysAgo);
-        while (cursor < today) {
-          const dateStr = dateStrInTz(cursor, tz);
-          if (openItemsHolidaySet.has(dateStr) || coveredDates.has(dateStr)) {
+          const cursor = new Date(sevenDaysAgo);
+          while (cursor < today) {
+            const dateStr = dateStrInTz(cursor, tz);
+            if (openItemsHolidaySet.has(dateStr) || coveredDates.has(dateStr)) {
+              cursor.setDate(cursor.getDate() + 1);
+              continue;
+            }
+            const dow = getDayOfWeekInTz(cursor, tz);
+            const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
+            if (expectedH > 0 && !entryDates.has(dateStr)) {
+              missingDays.push(dateStr);
+            }
             cursor.setDate(cursor.getDate() + 1);
-            continue;
           }
-          const dow = getDayOfWeekInTz(cursor, tz);
-          const expectedH = schedule ? getDayHoursFromSchedule(schedule, dow) : 0;
-          if (expectedH > 0 && !entryDates.has(dateStr)) {
-            missingDays.push(dateStr);
-          }
-          cursor.setDate(cursor.getDate() + 1);
         }
 
-        // 2. Own pending leave requests
+        // 2. Own pending leave requests — BUrlG still applies for exempt employees
         const pendingRequests = await app.prisma.leaveRequest.findMany({
           where: { employeeId, deletedAt: null, status: "PENDING" },
           select: { id: true },
         });
         pendingRequestsCount = pendingRequests.length;
 
-        // 3. Invalidated time entries
+        // 3. Invalidated time entries — leave signal also applies for exempt employees
         const invalidEntries = await app.prisma.timeEntry.findMany({
           where: { employeeId, deletedAt: null, isInvalid: true },
           select: { id: true },

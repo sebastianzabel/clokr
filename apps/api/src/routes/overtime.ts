@@ -26,6 +26,10 @@ const payoutSchema = z.object({
   note: z.string().optional(),
 });
 
+// Phase 76.7 (D-07) — § 18 ArbZG exempt employees never appear in close-month*
+// status responses or snapshot creation. Single source of truth for the filter.
+const EXCLUDE_EXEMPT_EMPLOYEE_FILTER = { isTimeTrackingExempt: false } as const;
+
 export async function overtimeRoutes(app: FastifyInstance) {
   // GET /api/v1/overtime/:employeeId  – Kontostand
   app.get("/:employeeId", {
@@ -196,6 +200,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         where: {
           tenantId,
           user: { isActive: true },
+          ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
         },
         include: {
           user: { select: { isActive: true } },
@@ -402,6 +407,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         where: {
           tenantId,
           user: { isActive: true },
+          ...EXCLUDE_EXEMPT_EMPLOYEE_FILTER, // Phase 76.7 (D-07, SALDO-V19-04a)
         },
         include: {
           user: { select: { isActive: true } },
@@ -465,6 +471,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
               periodType: "MONTHLY",
               periodStart: monthStart,
               employeeId: { in: relevantEmployees.map((e) => e.id) },
+              superseded: false,
             },
           });
           months.push({
@@ -483,6 +490,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             periodType: "MONTHLY",
             periodStart: monthStart,
             employeeId: { in: relevantEmployees.map((e) => e.id) },
+            superseded: false,
           },
         });
         const closedIds = new Set(closedSnapshots.map((s) => s.employeeId));
@@ -674,9 +682,25 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
-        select: { tenantId: true, hireDate: true, tenant: { select: { federalState: true } } },
+        select: {
+          tenantId: true,
+          hireDate: true,
+          isTimeTrackingExempt: true, // Phase 76.7 (D-07, SALDO-V19-04a)
+          tenant: { select: { federalState: true } },
+        },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 76.7 (D-07) — exempt employees never get SaldoSnapshots created.
+      // Return 200 with skipped flag so the bulk-close UI can short-circuit silently
+      // without surfacing an error for the Inhaberin.
+      if (employee.isTimeTrackingExempt) {
+        app.log.info(
+          { employeeId, year, month, exempt: true },
+          "POST /close-month skipped (isTimeTrackingExempt)",
+        );
+        return reply.code(200).send({ skipped: true, reason: "isTimeTrackingExempt" });
+      }
 
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
@@ -1032,7 +1056,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // Get previous month's carry-over
       const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
-        where: { employeeId, periodType: "MONTHLY", periodStart: { lt: monthStart } },
+        where: {
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: { lt: monthStart },
+          superseded: false,
+        },
         orderBy: { periodStart: "desc" },
       });
       const prevCarryOver = prevSnapshot?.carryOver ?? 0;
@@ -1199,7 +1228,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
 
       const snapshots = await app.prisma.saldoSnapshot.findMany({
-        where: { employeeId },
+        where: { employeeId, superseded: false },
         orderBy: { periodStart: "desc" },
       });
       return snapshots;
@@ -1242,6 +1271,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           employeeId,
           periodType: "YEARLY",
           periodStart: { gte: new Date(`${year}-01-01`), lte: new Date(`${year}-01-02`) },
+          superseded: false,
         },
       });
       if (existing) {
@@ -1254,6 +1284,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           employeeId,
           periodType: "MONTHLY",
           periodStart: { gte: yearStart, lte: yearEnd },
+          superseded: false,
         },
         orderBy: { periodStart: "asc" },
       });

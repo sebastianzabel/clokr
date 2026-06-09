@@ -708,10 +708,15 @@
 
 <!-- ── Kalender-Ansicht ──────────────────────────────────────────────────── -->
 {#if view === "calendar"}
-  <div class="cal-section card card-animate">
-    <!-- Navigation -->
-    <div class="cal-nav">
-      <button class="nav-btn" onclick={prevMonth} title="Vorheriger Monat">
+  <!-- Combined month bar (v1.5 — identisch zu /leave + Zeiterfassung, with picker dropdown) -->
+  <div class="card cal-monthbar card-animate">
+    <div class="cal-monthbar-nav">
+      <button
+        class="nav-btn"
+        onclick={prevMonth}
+        title="Vorheriger Monat"
+        aria-label="Vorheriger Monat"
+      >
         <svg
           width="18"
           height="18"
@@ -721,9 +726,10 @@
           stroke-width="2.5"><polyline points="15 18 9 12 15 6" /></svg
         >
       </button>
-      <div class="cal-nav-center">
+      <div class="cal-nav-center cal-monthbar-center">
+        <div class="serif-eyebrow cal-monthbar-eyebrow">Buchungsmonat</div>
         <button
-          class="cal-nav-title"
+          class="cal-monthbar-title"
           onclick={() => {
             pickerYear = calYear;
             showMonthPicker = !showMonthPicker;
@@ -763,20 +769,26 @@
           </div>
         {/if}
       </div>
-      <div class="cal-nav-right">
-        <button class="nav-btn" onclick={nextMonth} title="Nächster Monat">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
-          >
-        </button>
-      </div>
+      <button
+        class="nav-btn"
+        onclick={nextMonth}
+        title="Nächster Monat"
+        aria-label="Nächster Monat"
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"><polyline points="9 18 15 12 9 6" /></svg
+        >
+      </button>
+      <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
     </div>
+  </div>
 
+  <div class="cal-section card card-animate">
     <!-- Wochentag-Header -->
     <div class="cal-grid cal-header-row">
       {#each ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"] as wd (wd)}
@@ -1769,12 +1781,6 @@
   .cal-year-select:focus-visible {
     background-color: var(--brand-soft);
     outline: none;
-  }
-  .cal-nav-right {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    justify-self: end;
   }
 
   /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).

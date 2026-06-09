@@ -18,7 +18,7 @@
   const primaryTabs: NavItem[] = [
     { href: "/dashboard", label: "Übersicht", icon: "dashboard" },
     { href: "/time-entries", label: "Zeit", icon: "clock" },
-    { href: "/leave", label: "Urlaub", icon: "umbrella" },
+    { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
   ];
 
   // Mehr-sheet content per role — mirrors Sidebar.svelte sections exactly.
@@ -35,8 +35,10 @@
   ];
 
   const managerMore: NavItem[] = [
+    // Phase 76.9 (NAV-V19-01): /team/leave restored — was removed by Phase 30-04 commit 70912731.
     { href: "/inbox", label: "Anträge", icon: "inbox" },
     { href: "/team/time-entries", label: "Team-Zeiten", icon: "clock" },
+    { href: "/team/leave", label: "Team-Abwesenheiten", icon: "umbrella" },
     { href: "/teamcal", label: "Team-Kalender", icon: "calendar" },
     { href: "/shifts", label: "Schichtplanung", icon: "grid" },
     { href: "/reports", label: "Berichte", icon: "chart" },

@@ -1051,6 +1051,7 @@
       onPrev={() => gotoMonth(-1)}
       onNext={() => gotoMonth(1)}
       onToday={gotoToday}
+      onSelectMonth={gotoMonthYear}
     >
       {#snippet extraActions()}
         {#if monthIsLocked}
@@ -1458,9 +1459,17 @@
 </Modal>
 
 <style>
-  /* ── MonthBar card spacing (primitive itself has no margin) ────────── */
+  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
+       same as .cal-monthbar — so header height matches /leave et al.) ──── */
   :global(.te-monthbar-card) {
+    padding: 0;
     margin-bottom: 18px;
+    /* Allow month-picker dropdown to escape .card overflow:clip and lift
+       above sibling .card stacking contexts (each .card creates its own via
+       backdrop-filter). Without these three lines the dropdown is invisible. */
+    overflow: visible;
+    position: relative;
+    z-index: 30;
   }
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */

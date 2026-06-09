@@ -133,6 +133,11 @@
   let absences: Absence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
+  // Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt: hide the
+  // "+ Neuer Eintrag" CTA + the per-day calendar-cell add handler.
+  // Existing entries (if any) continue to display normally. Read from
+  // the existing GET /employees/:id payload (Plan 02 exposed the field).
+  let isExempt = $state(false);
   let teView = $state<"calendar" | "list">("calendar");
 
   // Modal
@@ -210,7 +215,12 @@
           ? api.get<{ balanceHours: number }>(`/overtime/${activeEmpId}`).catch(() => null)
           : Promise.resolve(null),
         activeEmpId
-          ? api.get<{ hireDate?: string }>(`/employees/${activeEmpId}`).catch(() => null)
+          ? api
+              .get<{
+                hireDate?: string;
+                isTimeTrackingExempt?: boolean;
+              }>(`/employees/${activeEmpId}`)
+              .catch(() => null)
           : Promise.resolve(null),
         api
           .get<{
@@ -226,6 +236,11 @@
       absences = rawAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
+      // Phase 76.7 (D-16) — read isTimeTrackingExempt from the SAME fetch
+      // (no extra round-trip). Fail-SAFE to false on missing field so a
+      // stale cache or pre-Plan-02 backend never accidentally locks a
+      // non-exempt user out of time-entry creation.
+      isExempt = rawEmployee?.isTimeTrackingExempt === true;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
       monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
@@ -976,9 +991,16 @@
 
 <PageHead eyebrow="Mein Bereich" title="Zeiterfassung">
   {#snippet actions()}
-    <button class="btn btn-primary btn-sm" onclick={() => openAdd()} data-testid="time-entries-add"
-      >+ Neuer Eintrag</button
-    >
+    <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
+         "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
+         exempt users to click a disabled control. -->
+    {#if !isExempt}
+      <button
+        class="btn btn-primary btn-sm"
+        onclick={() => openAdd()}
+        data-testid="time-entries-add">+ Neuer Eintrag</button
+      >
+    {/if}
   {/snippet}
 </PageHead>
 
@@ -1017,6 +1039,7 @@
         onPrev={() => gotoMonth(-1)}
         onNext={() => gotoMonth(1)}
         onToday={gotoToday}
+        onSelectMonth={gotoMonthYear}
         testIdPrefix="calendar-month-header"
       >
         {#snippet extraActions()}
@@ -1076,15 +1099,17 @@
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
               class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
-              disabled={day.isBeforeHire || !day.isCurrentMonth}
+              disabled={day.isBeforeHire || !day.isCurrentMonth || isExempt}
               title={day.isBeforeHire
                 ? "Vor Eintrittsdatum"
-                : day.isHoliday
-                  ? day.holidayName
-                  : day.absenceType
-                    ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                    : undefined}
-              onclick={() => openAdd(day.dateStr)}
+                : isExempt
+                  ? "Keine Zeiterfassungs-Pflicht (§ 18 ArbZG)"
+                  : day.isHoliday
+                    ? day.holidayName
+                    : day.absenceType
+                      ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
+                      : undefined}
+              onclick={isExempt ? undefined : () => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
               {#if day.isHoliday && day.isCurrentMonth}
@@ -1459,9 +1484,17 @@
 <!-- /data-testid="time-entries-page" -->
 
 <style>
-  /* ── MonthBar card spacing (primitive itself has no margin) ────────── */
+  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
+       same as .cal-monthbar — so header height matches /leave et al.) ──── */
   :global(.te-monthbar-card) {
+    padding: 0;
     margin-bottom: 18px;
+    /* Allow month-picker dropdown to escape .card overflow:clip and lift
+       above sibling .card stacking contexts (each .card creates its own via
+       backdrop-filter). Without these three lines the dropdown is invisible. */
+    overflow: visible;
+    position: relative;
+    z-index: 30;
   }
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */

@@ -35,15 +35,17 @@
   const employeeNav: NavItem[] = [
     { href: "/dashboard", label: "Übersicht", icon: "dashboard" },
     { href: "/time-entries", label: "Zeiterfassung", icon: "clock" },
-    { href: "/leave", label: "Urlaub", icon: "umbrella" },
+    { href: "/leave", label: "Abwesenheiten", icon: "umbrella" },
     { href: "/availability", label: "Verfügbarkeit", icon: "calendar-check" },
   ];
 
   const managerNav: NavItem[] = [
     // v1.5 Phase 30 manager screens — replaces the prior team-page hrefs.
     // Labels match docs/design/reference/i18n.js DE entries (nav_inbox / nav_team_cal / nav_shifts).
+    // Phase 76.9 (NAV-V19-01): /team/leave restored — was removed by Phase 30-04 commit 70912731.
     { href: "/inbox", label: "Anträge", icon: "inbox" },
     { href: "/team/time-entries", label: "Team-Zeiten", icon: "clock" },
+    { href: "/team/leave", label: "Team-Abwesenheiten", icon: "umbrella" },
     { href: "/teamcal", label: "Team-Kalender", icon: "calendar" },
     { href: "/shifts", label: "Schichtplanung", icon: "grid" },
     { href: "/reports", label: "Berichte", icon: "chart" },
