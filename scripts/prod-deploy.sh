@@ -61,12 +61,16 @@ echo "  target ver:  ${TARGET_VERSION:-<keep current>}"
 echo ""
 
 if [[ -n "$TARGET_VERSION" ]]; then
+  # Strip the leading `v` if present so the image tag matches what release.yml pushes:
+  # release.yml computes `VERSION=${GITHUB_REF_NAME#v}` and tags the image without the v
+  # prefix (e.g. `1.8.4`, not `v1.8.4`). Both `v1.8.4` and `1.8.4` are accepted as input.
+  IMAGE_TAG="${TARGET_VERSION#v}"
+
   # Determine the image references for this release.
-  # The owner segment comes from the GHCR registry path established in .github/workflows/release.yml
-  # (env.REGISTRY=ghcr.io, owner derived from github.repository_owner).
-  # Hardcode the owner to keep the script self-contained — adjust if the GHCR owner ever changes.
-  API_IMAGE="ghcr.io/sebastianz84/clokr-api:${TARGET_VERSION}"
-  WEB_IMAGE="ghcr.io/sebastianz84/clokr-web:${TARGET_VERSION}"
+  # Owner = github.com/sebastianzabel — release.yml lowercases this to `sebastianzabel`
+  # (env.REGISTRY=ghcr.io). Hardcoded here to keep the script self-contained.
+  API_IMAGE="ghcr.io/sebastianzabel/clokr-api:${IMAGE_TAG}"
+  WEB_IMAGE="ghcr.io/sebastianzabel/clokr-web:${IMAGE_TAG}"
 
   echo "→ Setting CLOKR_API_IMAGE=${API_IMAGE} and CLOKR_WEB_IMAGE=${WEB_IMAGE} in ${DMZ_HOST}:${CLOKR_DIR}/.env"
 
@@ -95,11 +99,11 @@ fi
 
 # ── Deploy ───────────────────────────────────────────────────────────────────
 echo "→ Pulling api + web images on ${DMZ_HOST}"
-ssh "$DMZ_HOST" "cd ${CLOKR_DIR} && docker compose -f ${COMPOSE_FILE} pull api web" \
+ssh "$DMZ_HOST" "cd ${CLOKR_DIR} && docker compose -f ${COMPOSE_FILE} pull clokr-api clokr-web" \
   || { echo "ERROR: docker compose pull failed"; exit 2; }
 
 echo "→ Restarting api + web on ${DMZ_HOST}"
-ssh "$DMZ_HOST" "cd ${CLOKR_DIR} && docker compose -f ${COMPOSE_FILE} up -d api web" \
+ssh "$DMZ_HOST" "cd ${CLOKR_DIR} && docker compose -f ${COMPOSE_FILE} up -d clokr-api clokr-web" \
   || { echo "ERROR: docker compose up -d failed"; exit 2; }
 
 echo "→ Waiting 20s for containers to become healthy..."
