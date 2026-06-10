@@ -80,15 +80,26 @@ export async function authRoutes(app: FastifyInstance) {
 
       const valid = await bcrypt.compare(password, user.passwordHash);
       if (!valid) {
-        const attempts = user.failedLoginAttempts + 1;
+        // Reset counter (and clear the stale lockedUntil) if the previous lock window
+        // has expired — keeps the policy time-windowed instead of permanently sticky
+        // after the first lockout.
+        let baseCount = user.failedLoginAttempts;
+        const lockExpired = user.lockedUntil != null && user.lockedUntil <= new Date();
+        if (lockExpired) {
+          baseCount = 0;
+        }
+        const attempts = baseCount + 1;
         const lockData: {
           failedLoginAttempts: number;
           lastFailedLoginAt: Date;
-          lockedUntil?: Date;
+          lockedUntil?: Date | null;
         } = {
           failedLoginAttempts: attempts,
           lastFailedLoginAt: new Date(),
         };
+        if (lockExpired) {
+          lockData.lockedUntil = null;
+        }
 
         // Lock account if max attempts reached
         if (attempts >= maxAttempts) {
@@ -415,10 +426,15 @@ export async function authRoutes(app: FastifyInstance) {
 
       const passwordHash = await bcrypt.hash(password, 12);
 
-      // Update password
+      // Update password and clear any active lock state so the user can log in immediately
       await app.prisma.user.update({
         where: { id: otpToken.userId },
-        data: { passwordHash },
+        data: {
+          passwordHash,
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          lastFailedLoginAt: null,
+        },
       });
 
       // Mark token as used
