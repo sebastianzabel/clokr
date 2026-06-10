@@ -1522,7 +1522,15 @@ textarea.form-input {
    .cal-grid are forbidden (see CLAUDE.md UI Consistency Rules). */
 .cal-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0, 1fr) (not bare 1fr) — bare 1fr resolves to minmax(auto, 1fr),
+     where the `auto` minimum is the cell's min-content. With nowrap holiday
+     labels like "Christi Himmelfahrt", min-content equals the full text width
+     and one column expands beyond 1/7 of the container — pushing the
+     remaining cells right and clipping the Sunday column off-screen on mobile
+     viewports. minmax(0, 1fr) forces strictly equal columns and lets the
+     existing text-overflow: ellipsis on .cal-holiday-label / .cal-abs-type
+     finally kick in. */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 3px;
   padding: 3px;
 }
