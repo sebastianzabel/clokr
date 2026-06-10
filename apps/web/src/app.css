@@ -1544,6 +1544,13 @@ textarea.form-input {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   min-height: 86px;
+  /* Override the browser default `min-width: min-content` on <button> so the
+     cell can shrink below its content's natural width. Without this the v1.8.6
+     `minmax(0, 1fr)` grid-track floor is defeated whenever a holiday label
+     (e.g. "Christi Himmelfahrt") makes the button's intrinsic min-width exceed
+     1/7 of the container — which expanded the column and pushed Sunday off
+     mobile viewports. Pairs with .cal-grid grid-template-columns above. */
+  min-width: 0;
   padding: 8px;
   display: flex;
   flex-direction: column;
