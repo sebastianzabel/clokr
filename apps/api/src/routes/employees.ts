@@ -168,7 +168,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
       const employees = await app.prisma.employee.findMany({
-        where: { tenantId: req.user.tenantId },
+        where: {
+          tenantId: req.user.tenantId,
+          // v1.8.8 — hide DSGVO-anonymized rows from the team picker.
+          // Anonymization marker (per CLAUDE.md DSGVO Employee Deletion):
+          //   firstName='Gelöscht' AND lastName starts with 'GELÖSCHT-'.
+          // GET /:id (audit view) is NOT filtered — anonymized rows must remain
+          // resolvable by UUID for audit-trail traceability (T-188-06).
+          NOT: {
+            AND: [{ firstName: "Gelöscht" }, { lastName: { startsWith: "GELÖSCHT-" } }],
+          },
+        },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
           workSchedules: { orderBy: { validFrom: "desc" }, take: 1 },

@@ -1418,6 +1418,82 @@ export async function shiftRoutes(app: FastifyInstance) {
     },
   });
 
+  // GET /range?from=YYYY-MM-DD&to=YYYY-MM-DD&employeeId=<uuid>
+  // Phase v1.8.8 — calendar Soll display for SHIFT_BASED employees.
+  // Returns one row per Shift (multi-shift days surface as multiple rows — caller sums).
+  // Auth: requireAuth applied globally via addHook above. Tenant scope via relation.
+  // EMPLOYEE role: defaults to req.user.employeeId (own shifts only, ignores any passed employeeId).
+  // MANAGER/ADMIN: employeeId param required; must belong to same tenant.
+  app.get("/range", {
+    schema: { tags: ["Schichtplanung"], security: [{ bearerAuth: [] }] },
+    handler: async (req, reply) => {
+      const {
+        from,
+        to,
+        employeeId: queryEmployeeId,
+      } = req.query as {
+        from?: string;
+        to?: string;
+        employeeId?: string;
+      };
+      if (!from || !to) {
+        return reply.code(400).send({ error: "from und to erforderlich (YYYY-MM-DD)" });
+      }
+      // Validate ISO date shape
+      const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRe.test(from) || !dateRe.test(to)) {
+        return reply.code(400).send({ error: "Ungültiges Datumsformat (YYYY-MM-DD)" });
+      }
+
+      // EMPLOYEE role: force own employeeId — ignore any passed param (T-188-02 IDOR guard).
+      let targetEmployeeId: string | undefined;
+      if (req.user.role === "EMPLOYEE") {
+        targetEmployeeId = req.user.employeeId ?? undefined;
+        if (!targetEmployeeId) {
+          return reply.code(410).send({ error: "Kein Mitarbeiter-Profil verknüpft" });
+        }
+      } else {
+        // MANAGER / ADMIN: employeeId param is required
+        if (!queryEmployeeId) {
+          return reply.code(400).send({ error: "employeeId erforderlich" });
+        }
+        targetEmployeeId = queryEmployeeId;
+      }
+
+      const fromDate = new Date(from + "T00:00:00Z");
+      const toDate = new Date(to + "T23:59:59Z");
+
+      const shifts = await app.prisma.shift.findMany({
+        where: {
+          employeeId: targetEmployeeId,
+          employee: { tenantId: req.user.tenantId }, // T-188-01 tenant guard via relation
+          date: { gte: fromDate, lte: toDate },
+          deletedAt: null, // Phase 67.2 soft-delete contract
+        },
+        select: { date: true, startTime: true, endTime: true },
+        orderBy: [{ date: "asc" }, { startTime: "asc" }],
+      });
+
+      const toMin = (s: string): number => {
+        const [h, m] = s.split(":").map(Number);
+        return h * 60 + m;
+      };
+      const durationMinutes = (start: string, end: string): number => {
+        const s = toMin(start);
+        const e = toMin(end);
+        // Cross-midnight: end < start ⇒ add 24h. Mirrors assertArbZGDailyMax convention.
+        return e >= s ? e - s : e + 24 * 60 - s;
+      };
+
+      return shifts.map((s) => ({
+        date: s.date.toISOString().slice(0, 10),
+        startTime: s.startTime,
+        endTime: s.endTime,
+        durationMin: durationMinutes(s.startTime, s.endTime),
+      }));
+    },
+  });
+
   // POST / — create single shift (MANAGER/ADMIN)
   // Phase 43-03: returns 409 with conflict info when the employee has APPROVED
   // leave / non-deleted Absence on the shift's date. Pass ?force=true to override

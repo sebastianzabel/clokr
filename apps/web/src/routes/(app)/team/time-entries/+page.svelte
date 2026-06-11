@@ -131,6 +131,7 @@
   let absences: Absence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
+  let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
 
   // Modal
@@ -211,6 +212,7 @@
       absences = [];
       overtimeTotalHours = null;
       hireDate = null;
+      shiftMinByDate = new Map();
       calendarDays = [];
       return;
     }
@@ -253,6 +255,23 @@
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
       monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
+      // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
+      // Other schedule types compute expectedMin via getDayExpectedHours (D-03 returns 0
+      // for SHIFT_BASED — this page-level wiring fills the gap).
+      if (schedule?.type === "SHIFT_BASED") {
+        const rawShifts = await api
+          .get<
+            Array<{ date: string; durationMin: number }>
+          >(`/shifts/range?from=${fromDate}&to=${toDate}&employeeId=${empId}`)
+          .catch(() => [] as Array<{ date: string; durationMin: number }>);
+        const m = new Map<string, number>();
+        for (const s of rawShifts) {
+          m.set(s.date, (m.get(s.date) ?? 0) + s.durationMin);
+        }
+        shiftMinByDate = m;
+      } else {
+        shiftMinByDate = new Map();
+      }
       calendarDays = buildCalendarDays(
         calMonth,
         entries,
@@ -261,6 +280,7 @@
         absences,
         hireDate,
         schedule?.type === "MONTHLY_HOURS",
+        shiftMinByDate,
       );
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -330,6 +350,7 @@
     absenceList: Absence[],
     hireDateStr: string | null = null,
     monthly: boolean = false,
+    shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — sum of durationMin per dateStr for SHIFT_BASED
   ): CalDay[] {
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
@@ -428,6 +449,7 @@
           monthly,
           dailySollMin,
           hasPerDayHours,
+          shiftMinByDate,
         ),
       );
     }
@@ -445,6 +467,7 @@
           monthly,
           dailySollMin,
           hasPerDayHours,
+          shiftMinByDate,
         ),
       );
       cur.setDate(cur.getDate() + 1);
@@ -465,6 +488,7 @@
           monthly,
           dailySollMin,
           hasPerDayHours,
+          shiftMinByDate,
         ),
       );
     }
@@ -482,6 +506,7 @@
     monthly: boolean = false,
     dailySollMin: number = 0,
     hasPerDayHours: boolean = true,
+    shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — SHIFT_BASED Soll override
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -502,12 +527,17 @@
     // Soll-Stunden: Feiertage + ganztägige Abwesenheiten zählen nicht; Tage vor hireDate = 0
     // Bei MONTHLY_HOURS: dailySollMin auf konfigurierten Arbeitstagen setzen.
     // Flexible Minijobber (keine per-day Stunden): Mo-Fr als Arbeitstage annehmen.
+    // v1.8.8 — SHIFT_BASED: expectedMin comes from Shift rows (D-03 returns 0 intentionally).
     let expectedMin: number;
     if (monthly) {
       const isWorkday = hasPerDayHours
         ? dailySollMin > 0 && sched && isWorkDay(sched, date)
         : dailySollMin > 0 && dow >= 1 && dow <= 5;
       expectedMin = isWorkday ? dailySollMin : 0;
+    } else if (sched?.type === "SHIFT_BASED") {
+      // Soll for SHIFT_BASED comes from Shift rows (D-03). Sum already done
+      // when building the map (multi-shift days).
+      expectedMin = shiftMinByDate.get(dateStr) ?? 0;
     } else {
       expectedMin = sched ? getDayExpectedHours(sched, date) * 60 : 0;
     }
@@ -2020,7 +2050,7 @@
   .employee-selector {
     margin-bottom: 0.75rem;
     position: relative;
-    z-index: 10;
+    z-index: 60; /* v1.8.8 — must beat sibling .te-monthbar-card (z=30) so dropdown is clickable */
   }
 
   .emp-combobox {
