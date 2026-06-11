@@ -253,15 +253,21 @@
             monthlyHoursHolidayDeduction?: boolean;
           }>("/settings/work")
           .catch(() => null),
-        // 260611-ly6 — own Berufsschultage (BS) for the current window.
-        // The backend (vocational-school.ts) forces self-scope for EMPLOYEE callers
-        // from req.user.employeeId — we deliberately omit ?employeeId here as belt
-        // and suspenders. Failure tolerated (empty array) so the rest of the page
-        // renders. Skipped entirely when activeEmpId is null (user without
-        // linked employee row).
+        // 260611-ly6 / bs-tage-cross-employee-leak — own Berufsschultage (BS) for
+        // the current window. The backend (vocational-school.ts) forces self-scope
+        // ONLY for role=EMPLOYEE; for ADMIN/MANAGER the endpoint defaults to
+        // tenant-wide and requires an explicit ?employeeId= filter to scope to a
+        // single person. The self-view is open to every role (including the tenant
+        // owner / ADMIN), so we MUST always send activeEmpId — otherwise an ADMIN
+        // viewing their own /time-entries receives every tenant BS-Tag and they
+        // get painted in their calendar + listed under "Liste". Failure tolerated
+        // (empty array) so the rest of the page renders. Skipped entirely when
+        // activeEmpId is null (user without linked employee row).
         activeEmpId
           ? api
-              .get<BsAbsence[]>(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}`)
+              .get<
+                BsAbsence[]
+              >(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${activeEmpId}`)
               .catch(() => [] as BsAbsence[])
           : Promise.resolve([] as BsAbsence[]),
       ]);
