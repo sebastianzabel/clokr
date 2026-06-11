@@ -78,6 +78,10 @@
     absenceType: string | null;
     absenceHalf: boolean;
     isBeforeHire: boolean;
+    // bs-tage-in-calendar — Berufsschultag marker for the visible day. Mutually
+    // exclusive in the cell label with absenceType (regular absence wins), but
+    // both can be true in data (e.g. half-day vacation falling on a BS day).
+    isVocationalSchool: boolean;
   }
 
   interface PublicHoliday {
@@ -311,6 +315,7 @@
         hireDate,
         schedule?.type === "MONTHLY_HOURS",
         shiftMinByDate,
+        bsAbsences,
       );
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
@@ -381,6 +386,7 @@
     hireDateStr: string | null = null,
     monthly: boolean = false,
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — sum of durationMin per dateStr for SHIFT_BASED
+    bsAbsenceList: BsAbsence[] = [], // bs-tage-in-calendar — Berufsschultage to mark in the calendar
   ): CalDay[] {
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
@@ -400,6 +406,11 @@
         cur.setDate(cur.getDate() + 1);
       }
     }
+
+    // bs-tage-in-calendar — Berufsschultage als Set<dateStr> für O(1) Lookup
+    // im makeCalDay-Loop. BsAbsence ist per definitionem single-day; kein
+    // Range-Walk wie bei regular Absences nötig.
+    const bsByDate = new Set<string>(bsAbsenceList.map((b) => b.date));
 
     // For MONTHLY_HOURS: detect whether any per-day hours are configured.
     // When none are set (pure flexible Minijobber), treat Mon-Fri as workdays.
@@ -480,6 +491,7 @@
           dailySollMin,
           hasPerDayHours,
           shiftMinByDate,
+          bsByDate,
         ),
       );
     }
@@ -498,6 +510,7 @@
           dailySollMin,
           hasPerDayHours,
           shiftMinByDate,
+          bsByDate,
         ),
       );
       cur.setDate(cur.getDate() + 1);
@@ -519,6 +532,7 @@
           dailySollMin,
           hasPerDayHours,
           shiftMinByDate,
+          bsByDate,
         ),
       );
     }
@@ -537,6 +551,7 @@
     dailySollMin: number = 0,
     hasPerDayHours: boolean = true,
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — SHIFT_BASED Soll override
+    bsByDate: Set<string> = new Set(), // bs-tage-in-calendar — set of yyyy-MM-dd that are Berufsschultage
   ): CalDay {
     const dateStr = format(date, "yyyy-MM-dd");
     const isToday = dateStr === todayStr;
@@ -591,6 +606,12 @@
     else if (workedMin >= expectedMin && expectedMin > 0) status = "ok";
     else if (workedMin > 0) status = "partial";
 
+    // bs-tage-in-calendar — Berufsschultag flag for this day. Single Set lookup;
+    // independent of regular absenceType so half-day vacations on a BS day still
+    // surface the BS marker for the cell when the regular absence does not paint
+    // the cell (e.g. weekend BS, half-day vacation).
+    const isVocationalSchool = bsByDate.has(dateStr);
+
     return {
       date,
       dateStr,
@@ -608,6 +629,7 @@
       absenceType,
       absenceHalf,
       isBeforeHire,
+      isVocationalSchool,
     };
   }
 
@@ -1200,7 +1222,9 @@
               data-date={day.dateStr}
               class="cal-cell cal-cell--{day.status}{day.absenceType && !day.isWeekend
                 ? ' cal-abs cal-abs-' + day.absenceType.toLowerCase()
-                : ''}"
+                : day.isVocationalSchool && !day.absenceType && !day.isHoliday
+                  ? ' cal-abs cal-abs-vocational_school'
+                  : ''}"
               class:cal-other={!day.isCurrentMonth}
               class:cal-current={day.isCurrentMonth}
               class:cal-today={day.isToday}
@@ -1216,7 +1240,9 @@
                   ? day.holidayName
                   : day.absenceType
                     ? absenceLabel(day.absenceType) + (day.absenceHalf ? " (halber Tag)" : "")
-                    : undefined}
+                    : day.isVocationalSchool
+                      ? "Berufsschule"
+                      : undefined}
               onclick={() => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
@@ -1226,6 +1252,8 @@
                 <span class="cal-abs-type"
                   >{absenceLabel(day.absenceType)}{day.absenceHalf ? " ½" : ""}</span
                 >
+              {:else if day.isVocationalSchool && day.isCurrentMonth}
+                <span class="cal-abs-type">Berufsschule</span>
               {/if}
               {#if day.isBeforeHire}
                 <span class="day-before-hire">—</span>
@@ -1272,6 +1300,7 @@
         <span class="leg leg-abs-sick">Krank</span>
         <span class="leg leg-abs-special">Sonderurlaub</span>
         <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
+        <span class="leg leg-abs-vocational_school">Berufsschule</span>
       </div>
     </div>
   {/if}
@@ -1710,6 +1739,23 @@
   .leg-abs-overtime_comp::before {
     background: var(--leave-type-overtime);
     border: none;
+  }
+  /* bs-tage-in-calendar — Berufsschultag legend swatch. Mirrors the brand-tinted
+     /shifts canonical BS treatment (sp-avail-badge--vocational-school). v1.5
+     tokens only; no legacy color/gray namespaces. */
+  .leg-abs-vocational_school::before {
+    background: var(--brand);
+    border: none;
+  }
+
+  /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
+     same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
+     page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
+     --leave-type-vocational-school would be the long-term home if BS gets
+     promoted to a first-class leave type. */
+  :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
+    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
+    opacity: 1;
   }
 
   /* ── Tagesdetail ──────────────────────────────────────────────────── */
