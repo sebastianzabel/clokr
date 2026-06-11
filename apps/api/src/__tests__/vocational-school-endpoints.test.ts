@@ -8,7 +8,10 @@
 //   T-63-15: Information Disclosure  — response shape contains no birthDate/email/classification
 //   T-63-16: Spoofing               — cross-tenant employeeId returns 404
 //   T-63-17: Tampering              — duplicate (employeeId, date) returns 409 (Prisma P2002)
-//   T-63-19: Elevation              — EMPLOYEE role returns 403
+//   T-63-19: Elevation              — EMPLOYEE role returns 403 (still enforced on /generate,
+//                                    /preview, /manual-insert, DELETE /:absenceId)
+//   260611-ly6: GET /upcoming now allows EMPLOYEE with server-enforced self-scope;
+//               cross-employee leak guarded by regression tests below.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
@@ -225,13 +228,105 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     });
   });
 
-  it("GET /upcoming returns 403 for EMPLOYEE role (T-63-19)", async () => {
+  // 260611-ly6 — GET /upcoming now accepts EMPLOYEE role with server-enforced self-scope.
+  // The 403 guard from T-63-19 no longer applies to this endpoint (still enforced on
+  // /generate, /preview, /manual-insert, DELETE /:absenceId).
+
+  it("GET /upcoming as EMPLOYEE without BS-Absences returns empty array (260611-ly6)", async () => {
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/vocational-school/upcoming?from=2026-07-01&to=2026-07-31",
       headers: { authorization: `Bearer ${data.empToken}` },
     });
-    expect(res.statusCode).toBe(403);
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual([]);
+  });
+
+  it("GET /upcoming as EMPLOYEE returns OWN BS-Absence, NEVER another employee's row in the same tenant (260611-ly6, cross-employee leak guard)", async () => {
+    // Seed two BS-Absences in the SAME tenant for two DIFFERENT employees.
+    const selfDate = new Date(Date.UTC(2026, 6, 8)); // 2026-07-08
+    const otherDate = new Date(Date.UTC(2026, 6, 9)); // 2026-07-09
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: selfDate,
+        endDate: selfDate,
+        days: 1.0,
+        createdBy: "SYSTEM",
+      },
+    });
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.adminEmployee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: otherDate,
+        endDate: otherDate,
+        days: 1.0,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/vocational-school/upcoming?from=2026-07-01&to=2026-07-31",
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveLength(1);
+    expect(body[0].employeeId).toBe(data.employee.id);
+    expect(body[0].date).toBe("2026-07-08");
+    // Defensive: under no circumstances should the admin's BS-row appear.
+    expect(
+      body.find((r: { employeeId: string }) => r.employeeId === data.adminEmployee.id),
+    ).toBeUndefined();
+  });
+
+  it("GET /upcoming as EMPLOYEE passing ?employeeId=<other-uuid> is server-overridden to self (260611-ly6, defense-in-depth)", async () => {
+    // Same seed shape as the cross-employee leak guard above.
+    const selfDate = new Date(Date.UTC(2026, 6, 8));
+    const otherDate = new Date(Date.UTC(2026, 6, 9));
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: selfDate,
+        endDate: selfDate,
+        days: 1.0,
+        createdBy: "SYSTEM",
+      },
+    });
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.adminEmployee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        startDate: otherDate,
+        endDate: otherDate,
+        days: 1.0,
+        createdBy: "SYSTEM",
+      },
+    });
+
+    // Caller is the EMPLOYEE but explicitly asks for the admin's BS-rows.
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/vocational-school/upcoming?from=2026-07-01&to=2026-07-31&employeeId=${data.adminEmployee.id}`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    // Server MUST override the client-supplied employeeId back to req.user.employeeId.
+    expect(body).toHaveLength(1);
+    expect(body[0].employeeId).toBe(data.employee.id);
+    expect(body[0].date).toBe("2026-07-08");
+    expect(
+      body.find((r: { employeeId: string }) => r.employeeId === data.adminEmployee.id),
+    ).toBeUndefined();
   });
 
   it("GET /upcoming returns 401 unauthenticated", async () => {

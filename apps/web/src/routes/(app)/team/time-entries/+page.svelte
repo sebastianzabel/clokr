@@ -94,6 +94,20 @@
     halfDay: boolean;
   }
 
+  // 260611-ly6 — BS-Absences (Berufsschultage) from GET /vocational-school/upcoming.
+  // Rendered as read-only rows in the list view; lifecycle stays on /shifts.
+  interface BsAbsence {
+    id: string;
+    employeeId: string;
+    date: string; // YYYY-MM-DD
+    source: "PATTERN" | "MANUAL";
+  }
+
+  // Discriminated union for the merged list view (TimeEntry + BsAbsence).
+  type ListRow =
+    | (TimeEntry & { kind: "TE" })
+    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
+
   interface ArbZGWarning {
     code: string;
     severity: "warning" | "error";
@@ -129,6 +143,8 @@
 
   let deleteConfirmId = $state("");
   let absences: Absence[] = $state([]);
+  // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
+  let bsAbsences: BsAbsence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
@@ -210,6 +226,7 @@
       schedule = null;
       holidays = new Map();
       absences = [];
+      bsAbsences = [];
       overtimeTotalHours = null;
       hireDate = null;
       shiftMinByDate = new Map();
@@ -229,6 +246,7 @@
         rawOvertime,
         rawEmployee,
         rawConfig,
+        rawBsAbsences,
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}&employeeId=${empId}`),
         api.get<WorkSchedule>(`/settings/work/${empId}`).catch(() => null),
@@ -245,11 +263,19 @@
             monthlyHoursHolidayDeduction?: boolean;
           }>("/settings/work")
           .catch(() => null),
+        // 260611-ly6 — Berufsschultage (BS) for the selected employee in the current
+        // window. Failure tolerated (empty array) so the rest of the page renders.
+        api
+          .get<
+            BsAbsence[]
+          >(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${empId}`)
+          .catch(() => [] as BsAbsence[]),
       ]);
       entries = rawEntries;
       schedule = rawSchedule;
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
+      bsAbsences = rawBsAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
@@ -981,15 +1007,31 @@
     return map;
   });
 
-  // All entries for the current month, sorted by date descending then start time descending
-  let allEntries = $derived(
-    [...entries].sort((a, b) => {
-      const dA = (a.date ?? a.startTime).split("T")[0];
-      const dB = (b.date ?? b.startTime).split("T")[0];
-      if (dA !== dB) return dB.localeCompare(dA);
-      return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
-    }),
-  );
+  // All entries for the current month, sorted by date descending then start time descending.
+  // 260611-ly6 — merges TimeEntries (kind="TE") with BS-Absences (kind="BS") for the
+  // list view. BS rows are read-only synthetic rows; lifecycle stays on /shifts.
+  let allEntries = $derived.by<ListRow[]>(() => {
+    const teRows: ListRow[] = entries.map((e) => ({ ...e, kind: "TE" as const }));
+    const bsRows: ListRow[] = bsAbsences.map((b) => ({
+      kind: "BS" as const,
+      // Prefix with "bs-" so the {#each} key cannot collide with a TimeEntry UUID.
+      id: `bs-${b.id}`,
+      date: b.date,
+      source: b.source,
+    }));
+    return [...teRows, ...bsRows].sort((a, b) => {
+      const dA = a.kind === "TE" ? (a.date ?? a.startTime).split("T")[0] : a.date;
+      const dB = b.kind === "TE" ? (b.date ?? b.startTime).split("T")[0] : b.date;
+      if (dA !== dB) return dB.localeCompare(dA); // desc by date
+      // Tiebreak: TE before BS so a working day stays grouped; within TE, descending
+      // by startTime.
+      if (a.kind !== b.kind) return a.kind === "TE" ? -1 : 1;
+      if (a.kind === "TE" && b.kind === "TE") {
+        return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
+      }
+      return 0;
+    });
+  });
 </script>
 
 <svelte:head><title>Team-Zeiten – Clokr</title></svelte:head>
@@ -1253,69 +1295,97 @@
           </thead>
           <tbody>
             {#each allEntries as slot (slot.id)}
-              {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
-              {@const slotArbzg = arbzgDayMap.get(slotDate)}
-              <tr class:row-invalid={slot.isInvalid}>
-                <td class="font-mono"
-                  >{new Date(slot.startTime).toLocaleDateString("de-DE", {
-                    day: "2-digit",
-                    month: "2-digit",
-                    year: "numeric",
-                  })}{#if slotArbzg}
-                    <span class="list-arbzg-hint"
-                      >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
-                        class="arbzg-tooltip"
-                        >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
-                            />{/if}{/each}</span
-                      ></span
+              {#if slot.kind === "TE"}
+                {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
+                {@const slotArbzg = arbzgDayMap.get(slotDate)}
+                <tr class:row-invalid={slot.isInvalid}>
+                  <td class="font-mono"
+                    >{new Date(slot.startTime).toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                    })}{#if slotArbzg}
+                      <span class="list-arbzg-hint"
+                        >{slotArbzg.some((w) => w.severity === "error") ? "⛔" : "⚠️"}<span
+                          class="arbzg-tooltip"
+                          >{#each slotArbzg as w, i (i)}{w.message}{#if i < slotArbzg.length - 1}<br
+                              />{/if}{/each}</span
+                        ></span
+                      >
+                    {/if}</td
+                  >
+                  <td class="font-mono">{fmtTime(slot.startTime)}</td>
+                  <td class="font-mono">
+                    {#if slot.endTime}{fmtTime(slot.endTime)}
+                    {:else}<span class="badge badge-green">Aktiv</span>{/if}
+                  </td>
+                  <td>{fmtBreaks(slot)}</td>
+                  <td class="font-mono font-medium">{slotNet(slot)}</td>
+                  <td
+                    ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
+                    ></td
+                  >
+                  <td class="note-cell text-muted">
+                    {#if slot.isInvalid && slot.invalidReason}
+                      <span class="invalid-reason">{slot.invalidReason}</span>
+                    {:else}
+                      {slot.note ?? "---"}
+                    {/if}
+                  </td>
+                  <td class="action-cell">
+                    {#if slot.isLocked}
+                      <!-- locked entries are read-only; no actions shown (D-08) -->
+                    {:else if deleteConfirmId === slot.id}
+                      <span class="del-confirm">
+                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
+                        <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
+                          >Ja</button
+                        >
+                        <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
+                          >Nein</button
+                        >
+                      </span>
+                    {:else}
+                      <span class="row-actions row-actions--visible">
+                        <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
+                          >✏️</button
+                        >
+                        <button
+                          class="btn-icon btn-icon-danger"
+                          onclick={() => (deleteConfirmId = slot.id)}
+                          title="Löschen">🗑</button
+                        >
+                      </span>
+                    {/if}
+                  </td>
+                </tr>
+              {:else}
+                <!-- 260611-ly6 — BS row: read-only, single-day, no times, no breaks, no actions. -->
+                <tr class="row-bs" data-testid={`bs-row-${slot.id}`}>
+                  <td class="font-mono"
+                    >{new Date(slot.date + "T12:00:00").toLocaleDateString("de-DE", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                    })}</td
+                  >
+                  <td class="font-mono text-muted">—</td>
+                  <td class="font-mono text-muted">—</td>
+                  <td class="text-muted">—</td>
+                  <td class="font-mono font-medium text-muted">—</td>
+                  <td><span class="badge badge-blue">Berufsschule</span></td>
+                  <td class="note-cell text-muted"
+                    >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</td
+                  >
+                  <td class="action-cell">
+                    <span
+                      class="text-muted"
+                      style="font-size: 0.75rem;"
+                      title="Berufsschultage werden unter Schichten verwaltet">Schichten →</span
                     >
-                  {/if}</td
-                >
-                <td class="font-mono">{fmtTime(slot.startTime)}</td>
-                <td class="font-mono">
-                  {#if slot.endTime}{fmtTime(slot.endTime)}
-                  {:else}<span class="badge badge-green">Aktiv</span>{/if}
-                </td>
-                <td>{fmtBreaks(slot)}</td>
-                <td class="font-mono font-medium">{slotNet(slot)}</td>
-                <td
-                  ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
-                  ></td
-                >
-                <td class="note-cell text-muted">
-                  {#if slot.isInvalid && slot.invalidReason}
-                    <span class="invalid-reason">{slot.invalidReason}</span>
-                  {:else}
-                    {slot.note ?? "---"}
-                  {/if}
-                </td>
-                <td class="action-cell">
-                  {#if slot.isLocked}
-                    <!-- locked entries are read-only; no actions shown (D-08) -->
-                  {:else if deleteConfirmId === slot.id}
-                    <span class="del-confirm">
-                      <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                      <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                        >Ja</button
-                      >
-                      <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                        >Nein</button
-                      >
-                    </span>
-                  {:else}
-                    <span class="row-actions row-actions--visible">
-                      <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
-                        >✏️</button
-                      >
-                      <button
-                        class="btn-icon btn-icon-danger"
-                        onclick={() => (deleteConfirmId = slot.id)}
-                        title="Löschen">🗑</button
-                      >
-                    </span>
-                  {/if}
-                </td>
-              </tr>
+                  </td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -1779,6 +1849,11 @@
     font-size: 0.8rem;
     font-weight: 500;
     text-decoration: none;
+  }
+
+  /* 260611-ly6 — Berufsschultag list-row tint. UI Style Guide v1.5: only var(--brand) via color-mix; no legacy tokens. */
+  .row-bs td {
+    background: color-mix(in srgb, var(--brand) 6%, transparent);
   }
 
   .btn-xs {

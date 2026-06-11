@@ -29,9 +29,16 @@ const previewQuerySchema = z.object({
 
 // Phase 63 D-18 — date-range filter for /upcoming. Both bounds are required (the manager UI
 // supplies both); a default-window fallback can be added later without breaking the schema.
+//
+// 260611-ly6 — optional employeeId narrows the result to a single employee. ADMIN/MANAGER
+// callers can use it to limit the response to one team member (the /team/time-entries page
+// always sends it). EMPLOYEE callers are server-side overridden to self-scope and the
+// param is therefore ignored for them (defense in depth — never trust client input for
+// self-query scoping).
 const upcomingQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "from muss im Format YYYY-MM-DD sein"),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "to muss im Format YYYY-MM-DD sein"),
+  employeeId: z.string().uuid("employeeId muss eine UUID sein").optional(),
 });
 
 // Phase 63 D-23 — body shape for /manual-insert. UUID enforced server-side so the cross-tenant
@@ -102,20 +109,47 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── Phase 63 D-18: GET /upcoming ───────────────────────────────────────────
+  // ── Phase 63 D-18 + 260611-ly6: GET /upcoming ──────────────────────────────
   // Returns BS Absences within [from, to] for the caller's tenant. Response shape is
   // explicit-allowlist (T-63-15) — no birthDate/email/classification leak. Soft-deleted
   // rows are excluded (deletedAt: null), and the dataset is scoped to the caller's
-  // tenant via employee.tenantId. ADMIN + MANAGER both see all employees in the
-  // tenant — the Employee model has no managerId field, so a team-level filter is not
-  // available in this code base; tenant-scope is the established convention (see
-  // apps/api/src/routes/leave.ts:1345 for the same pattern).
+  // tenant via employee.tenantId.
+  //
+  // Role-branched scoping (260611-ly6):
+  //   - ADMIN / MANAGER: tenant-scoped (all employees in the tenant). Optional
+  //     ?employeeId=UUID narrows the result to a single employee. The Employee model
+  //     has no managerId field, so a team-level filter is not available in this code
+  //     base; tenant-scope is the established convention (see
+  //     apps/api/src/routes/leave.ts:1345 for the same pattern).
+  //   - EMPLOYEE: server forces employeeId = req.user.employeeId. Any ?employeeId=
+  //     query param is IGNORED (defense in depth — never trust client input for a
+  //     self-query scope). Mirrors the role-branched scoping in
+  //     apps/api/src/routes/time-entries.ts:663-696 (`GET /` returns own entries for
+  //     EMPLOYEE, optional employeeId for managers). If req.user.employeeId is falsy
+  //     (e.g. user without linked employee row), an empty array is returned — no rows
+  //     visible, no error noise.
   app.get("/upcoming", {
     schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requireRole("ADMIN", "MANAGER", "EMPLOYEE"),
     handler: async (req, reply) => {
       const tenantId = req.user.tenantId;
       const q = upcomingQuerySchema.parse(req.query);
+
+      // Role-branched employeeId scoping (260611-ly6).
+      // EMPLOYEE callers are forced to self-scope; any client-supplied ?employeeId is
+      // dropped. ADMIN/MANAGER may optionally narrow the result via ?employeeId.
+      let employeeIdFilter: string | undefined;
+      if (req.user.role === "EMPLOYEE") {
+        if (!req.user.employeeId) {
+          // User without linked employee row — nothing they can see. Return empty
+          // rather than 4xx so the frontend renders an empty list without an error
+          // toast.
+          return reply.code(200).send([]);
+        }
+        employeeIdFilter = req.user.employeeId;
+      } else {
+        employeeIdFilter = q.employeeId;
+      }
 
       // Inclusive [from..to] in UTC. startDate is a DATE column, so a >= fromIso AND
       // <= toIso comparison is sufficient — no T00:00 / T23:59 fudge needed.
@@ -128,6 +162,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
           type: "VOCATIONAL_SCHOOL",
           startDate: { gte: fromDate, lte: toDate },
           employee: { tenantId },
+          ...(employeeIdFilter ? { employeeId: employeeIdFilter } : {}),
         },
         select: {
           id: true,
