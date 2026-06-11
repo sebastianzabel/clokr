@@ -5,20 +5,21 @@ classified by lifecycle.
 
 ## Classification
 
-| Script                                  | Date       | Purpose                                                                                           | Classification                   |
-| --------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- | -------------------------------- |
-| diagnose-saldo.ts                       | 2026-06-08 | Read-only diagnostic of updateOvertimeAccount inputs for one employee                             | Migration artifact (Phase 76.5)  |
-| fix-bogus-reset-snapshots.ts            | 2026-06-08 | One-off cleanup of pre-tracking-reset SaldoSnapshot rows leaking carryOver                        | Migration artifact (Phase 76.5)  |
-| backfill-mai-shifts.ts                  | 2026-06-08 | Backfill past-dated Shift rows for one employee from a JSON spec                                  | Migration artifact (Phase 76.5)  |
-| set-opening-balance.ts                  | 2026-06-08 | Set opening saldo carryOver on a pre-cutoff SaldoSnapshot                                         | Migration artifact (Phase 76.5)  |
-| cleanup-tz-duplicate-snapshots.ts       | 2026-06-08 | Soft-supersede TZ-duplicate SaldoSnapshot rows; AuditLog trail + idempotent re-run                | Migration artifact (Phase 76.6)  |
-| set-time-tracking-exempt.ts             | 2026-06-08 | Toggle Employee.isTimeTrackingExempt + AuditLog (§ 18 ArbZG)                                      | Migration artifact (Phase 76.7)  |
-| recalculate-snapshots-after-soll-fix.ts | 2026-06-09 | Recompute SaldoSnapshots under v1.8.4 Ø-Methode (BAG 9 AZR 406/17); locked-month-safe; idempotent | Migration artifact (Phase 76.12) |
-| anonymize-dump.ts                       | 2026-04    | Batch DSGVO anonymization across all employees in a connected DB (CronJob entry)                  | Operator tool                    |
-| validate-anonymization.ts               | 2026-04    | Companion verifier for anonymize-dump.ts — asserts the post-condition holds                       | Operator tool                    |
-| audit-workdays-vs-day-hours.ts          | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                             | Audit tool                       |
-| audit-workschedule-non-month1.ts        | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                | Audit tool                       |
-| backfill-auto-revalidate.ts             | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                             | Migration artifact (Phase 67.2)  |
+| Script                                         | Date       | Purpose                                                                                           | Classification                        |
+| ---------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| diagnose-saldo.ts                              | 2026-06-08 | Read-only diagnostic of updateOvertimeAccount inputs for one employee                             | Migration artifact (Phase 76.5)       |
+| fix-bogus-reset-snapshots.ts                   | 2026-06-08 | One-off cleanup of pre-tracking-reset SaldoSnapshot rows leaking carryOver                        | Migration artifact (Phase 76.5)       |
+| backfill-mai-shifts.ts                         | 2026-06-08 | Backfill past-dated Shift rows for one employee from a JSON spec                                  | Migration artifact (Phase 76.5)       |
+| set-opening-balance.ts                         | 2026-06-08 | Set opening saldo carryOver on a pre-cutoff SaldoSnapshot                                         | Migration artifact (Phase 76.5)       |
+| cleanup-tz-duplicate-snapshots.ts              | 2026-06-08 | Soft-supersede TZ-duplicate SaldoSnapshot rows; AuditLog trail + idempotent re-run                | Migration artifact (Phase 76.6)       |
+| set-time-tracking-exempt.ts                    | 2026-06-08 | Toggle Employee.isTimeTrackingExempt + AuditLog (§ 18 ArbZG)                                      | Migration artifact (Phase 76.7)       |
+| recalculate-snapshots-after-soll-fix.ts        | 2026-06-09 | Recompute SaldoSnapshots under v1.8.4 Ø-Methode (BAG 9 AZR 406/17); locked-month-safe; idempotent | Migration artifact (Phase 76.12)      |
+| recalculate-snapshots-after-shift-netto-fix.ts | 2026-06-11 | Recompute SHIFT_BASED SaldoSnapshots after v1.8.9 brutto→netto fix; locked-month-safe; idempotent | Migration artifact (quick-260611-gap) |
+| anonymize-dump.ts                              | 2026-04    | Batch DSGVO anonymization across all employees in a connected DB (CronJob entry)                  | Operator tool                         |
+| validate-anonymization.ts                      | 2026-04    | Companion verifier for anonymize-dump.ts — asserts the post-condition holds                       | Operator tool                         |
+| audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                             | Audit tool                            |
+| audit-workschedule-non-month1.ts               | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                | Audit tool                            |
+| backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                             | Migration artifact (Phase 67.2)       |
 
 ## Migration artifacts
 

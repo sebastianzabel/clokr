@@ -1463,6 +1463,25 @@ export async function shiftRoutes(app: FastifyInstance) {
       const fromDate = new Date(from + "T00:00:00Z");
       const toDate = new Date(to + "T23:59:59Z");
 
+      // v1.8.9 — load break policy once per request for netto computation.
+      // Two lightweight PK lookups (sub-ms). /range is hit once per calendar-month-view, not in a hot loop.
+      const tenantCfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { defaultBreakOver6h: true, defaultBreakOver9h: true },
+      });
+      const employeeBreakRow = await app.prisma.employee.findUnique({
+        where: { id: targetEmployeeId },
+        select: { breakOver6hOverride: true, breakOver9hOverride: true },
+      });
+      const employeeBreakShape = {
+        breakOver6hOverride: employeeBreakRow?.breakOver6hOverride ?? null,
+        breakOver9hOverride: employeeBreakRow?.breakOver9hOverride ?? null,
+      };
+      const tenantConfigShape = {
+        defaultBreakOver6h: tenantCfg?.defaultBreakOver6h ?? 30,
+        defaultBreakOver9h: tenantCfg?.defaultBreakOver9h ?? 45,
+      };
+
       const shifts = await app.prisma.shift.findMany({
         where: {
           employeeId: targetEmployeeId,
@@ -1485,12 +1504,17 @@ export async function shiftRoutes(app: FastifyInstance) {
         return e >= s ? e - s : e + 24 * 60 - s;
       };
 
-      return shifts.map((s) => ({
-        date: s.date.toISOString().slice(0, 10),
-        startTime: s.startTime,
-        endTime: s.endTime,
-        durationMin: durationMinutes(s.startTime, s.endTime),
-      }));
+      return shifts.map((s) => {
+        const brutto = durationMinutes(s.startTime, s.endTime);
+        const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
+        return {
+          date: s.date.toISOString().slice(0, 10),
+          startTime: s.startTime,
+          endTime: s.endTime,
+          durationMin: brutto, // unchanged — brutto for TeamCalendar weekly-overview consumers
+          durationMinNetto: Math.max(0, brutto - breakMin), // v1.8.9: netto for saldo Soll comparison
+        };
+      });
     },
   });
 

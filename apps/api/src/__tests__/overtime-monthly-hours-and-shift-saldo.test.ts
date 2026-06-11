@@ -406,7 +406,9 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
   });
 
   it("SHIFT_BASED: expectedMinutes equals sum of Shift durations in range", async () => {
-    // No leave, no absence; 3 (or fewer if the month just started) 8h shifts.
+    // No leave, no absence; 3 (or fewer if the month just started) 8h shifts (08:00–16:00).
+    // v1.8.9: expectedMinutes is now NETTO = brutto − getEffectiveBreakDuration().
+    // Default tenant config: defaultBreakOver6h=30. 480 brutto − 30 = 450 netto = 7.5h per shift.
     await updateOvertimeAccount(app, shiftEmpAId);
 
     const account = await app.prisma.overtimeAccount.findUnique({
@@ -414,14 +416,15 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
     });
     const balanceHours = Number(account?.balanceHours ?? 0);
 
-    // Expected = shiftDates.length × 8h. balanceHours = -expected (worked 0).
-    const expectedHours = shiftDates.length * 8;
+    // Expected = shiftDates.length × 7.5h (netto: 480 brutto − 30 min default break).
+    // balanceHours = -expected (worked 0).
+    const expectedHours = shiftDates.length * 7.5; // v1.8.9 — netto: 480 brutto − 30 min default break
     expect(Math.abs(balanceHours - -expectedHours)).toBeLessThan(0.5);
   });
 
   it("SHIFT_BASED: Shifts on APPROVED-leave days are excluded from expected", async () => {
     // Same 3 shifts; the first shift's date is covered by an APPROVED leave.
-    // Expected = (shiftDates.length - 1) × 8h.
+    // v1.8.9: Expected = (shiftDates.length - 1) × 7.5h (netto, not brutto).
     await updateOvertimeAccount(app, shiftEmpBId);
 
     const account = await app.prisma.overtimeAccount.findUnique({
@@ -435,7 +438,8 @@ describe("updateOvertimeAccount — MONTHLY_HOURS multi-month pro-rata + SHIFT_B
       expect(balanceHours).toBe(0);
       return;
     }
-    const expectedHours = (shiftDates.length - 1) * 8;
+    // v1.8.9 — netto: 480 brutto − 30 min default break = 450 min = 7.5h per shift
+    const expectedHours = (shiftDates.length - 1) * 7.5;
     expect(Math.abs(balanceHours - -expectedHours)).toBeLessThan(0.5);
   });
 });

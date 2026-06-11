@@ -1341,12 +1341,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const schedule = await getEffectiveSchedule(app, employeeId);
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
+  // v1.8.9: also fetch break overrides for SHIFT_BASED netto calculation.
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
     select: {
       tenantId: true,
       hireDate: true,
       isTimeTrackingExempt: true, // Phase 76.7 (D-04, SALDO-V19-04)
+      breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
+      breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
       tenant: { select: { federalState: true } },
     },
   });
@@ -1562,10 +1565,26 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       return (h ?? 0) * 60 + (m ?? 0);
     };
 
+    // v1.8.9 — SHIFT_BASED netto: subtract configured break from brutto shift duration.
+    // Fixes brutto-vs-netto mismatch (workedMinutes already subtracts breakMinutes).
+    // Uses getEffectiveBreakDuration — single source of truth from Phase 64 (break-effective.ts).
+    // Cross-midnight fix: if brutto < 0, add 1440 (mirrors shifts.ts /range endpoint).
+    const employeeBreakShape = {
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+    };
+    const tenantConfigShape = {
+      defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
+      defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
+    };
     for (const sh of shifts) {
       if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
-      const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-      if (dur > 0) expectedMinutes += dur;
+      let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+      if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
+      if (brutto <= 0) continue;
+      const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
+      const netto = Math.max(0, brutto - breakMin);
+      expectedMinutes += netto;
     }
 
     // Leave/absence already excluded above; manager-assigned shifts on Feiertagen

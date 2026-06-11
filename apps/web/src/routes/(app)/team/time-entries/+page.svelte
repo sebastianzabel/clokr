@@ -261,12 +261,16 @@
       if (schedule?.type === "SHIFT_BASED") {
         const rawShifts = await api
           .get<
-            Array<{ date: string; durationMin: number }>
+            Array<{ date: string; durationMin: number; durationMinNetto: number }>
           >(`/shifts/range?from=${fromDate}&to=${toDate}&employeeId=${empId}`)
-          .catch(() => [] as Array<{ date: string; durationMin: number }>);
+          .catch(
+            () => [] as Array<{ date: string; durationMin: number; durationMinNetto: number }>,
+          );
         const m = new Map<string, number>();
         for (const s of rawShifts) {
-          m.set(s.date, (m.get(s.date) ?? 0) + s.durationMin);
+          // v1.8.9 — Soll = netto (brutto − getEffectiveBreakDuration on the server).
+          // Compares apples-to-apples against IST (worked minutes already netto in sumWorked).
+          m.set(s.date, (m.get(s.date) ?? 0) + s.durationMinNetto);
         }
         shiftMinByDate = m;
       } else {

@@ -12,6 +12,7 @@ import {
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+import { getEffectiveBreakDuration } from "../utils/break-effective"; // v1.8.9 — SHIFT_BASED netto
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -686,6 +687,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
           tenantId: true,
           hireDate: true,
           isTimeTrackingExempt: true, // Phase 76.7 (D-07, SALDO-V19-04a)
+          breakOver6hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
+          breakOver9hOverride: true, // v1.8.9 — SHIFT_BASED netto saldo
           tenant: { select: { federalState: true } },
         },
       });
@@ -903,11 +906,25 @@ export async function overtimeRoutes(app: FastifyInstance) {
           const [h, m] = hm.split(":").map(Number);
           return (h ?? 0) * 60 + (m ?? 0);
         };
+        // v1.8.9 — SHIFT_BASED netto: subtract configured break from brutto shift duration.
+        // Fixes brutto-vs-netto mismatch in SaldoSnapshot.expectedMinutes.
+        // Cross-midnight fix: if brutto < 0, add 1440 (mirrors shifts.ts /range endpoint).
+        const employeeBreakShape = {
+          breakOver6hOverride: employee.breakOver6hOverride ?? null,
+          breakOver9hOverride: employee.breakOver9hOverride ?? null,
+        };
+        const tenantConfigShape = {
+          defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
+          defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
+        };
         let shiftMinutes = 0;
         for (const sh of shifts) {
           if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
-          const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-          if (dur > 0) shiftMinutes += dur;
+          let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+          if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
+          if (brutto <= 0) continue;
+          const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
+          shiftMinutes += Math.max(0, brutto - breakMin);
         }
         expectedMinutes = shiftMinutes + bsExpectedMinutes;
         workedMinutesBs += bsWorkedMinutes;
