@@ -9,6 +9,11 @@
 // Allowed sites (whitelist):
 //   - apps/api/src/utils/work-event*.ts (canonical adapter — comment-only literal allowed)
 //   - apps/api/scripts/migrate-bs-to-work-event.ts (Phase 80 migration script — forward-compat)
+//   - apps/api/src/__tests__/work-event-type-boundary.test.ts (Phase 79-05 — the
+//     literal type union `"VOCATIONAL_SCHOOL" | ...` IS the canonical type
+//     contract being asserted via expectTypeOf; runtime payload values use
+//     literals because `WorkEventType` in `@clokr/types` is a type alias,
+//     not a runtime enum)
 //
 // This file constructs the forbidden literal via string concatenation so the test
 // source itself does not contain the literal (which would self-trip the gate).
@@ -38,6 +43,7 @@ describe("D-03 Zero-hits gate (CONTEXT Phase 78) — TEST-V19-01", () => {
       `--include="*.ts"`,
       `| grep -v "src/utils/work-event"`,
       `| grep -v "src/__tests__/zero-hits-vocational-school-gate.test.ts"`,
+      `| grep -v "src/__tests__/work-event-type-boundary.test.ts"`,
       `; true`,
     ].join(" ");
     const output = safeGrep(cmd, repoRoot).trim();
@@ -47,7 +53,8 @@ describe("D-03 Zero-hits gate (CONTEXT Phase 78) — TEST-V19-01", () => {
         `Use the enum form instead: \`AbsenceType.VOCATIONAL_SCHOOL\` or \`WorkEventType.VOCATIONAL_SCHOOL\`.\n\n` +
         `Whitelisted sites (ONLY):\n` +
         `  - apps/api/src/utils/work-event*.ts (canonical adapter)\n` +
-        `  - apps/api/scripts/migrate-bs-to-work-event.ts (Phase 80, forward-compat)\n\n` +
+        `  - apps/api/scripts/migrate-bs-to-work-event.ts (Phase 80, forward-compat)\n` +
+        `  - apps/api/src/__tests__/work-event-type-boundary.test.ts (Phase 79-05 type contract)\n\n` +
         `Offending lines:\n${output}\n`,
     ).toBe("");
   });

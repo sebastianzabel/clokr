@@ -48,7 +48,7 @@
 //   - apps/api/src/utils/jarbschg.ts (Phase 78 — JArbSchG cap)
 
 import type { PrismaClient } from "@clokr/db";
-import { AbsenceType } from "@clokr/db";
+import { AbsenceType, WorkEventType } from "@clokr/db";
 import {
   getVocationalSchoolMinutesForDate,
   countBsDaysInIsoWeek as countBsDaysInIsoWeekFromAbsence,
@@ -89,7 +89,7 @@ export async function loadWorkEventsForRange(
   rangeStart: Date,
   rangeEnd: Date,
 ): Promise<WorkEventAggregate> {
-  const routing = await resolveCompatRouting(prisma, employeeId);
+  const routing = await getRoutingConfig(prisma, employeeId);
   if (routing.workEventModelLive) {
     return aggregateWorkEvents(prisma, employeeId, rangeStart, rangeEnd);
   }
@@ -131,13 +131,17 @@ export async function getBsMinutesForDate(
   employeeId: string,
   date: Date,
 ): Promise<number> {
-  const routing = await resolveCompatRouting(prisma, employeeId);
+  const routing = await getRoutingConfig(prisma, employeeId);
   if (routing.workEventModelLive) {
     const { start, next } = dateRangeUtc(date);
     const row = await prisma.workEvent.findFirst({
       where: {
         employeeId,
-        type: AbsenceType.VOCATIONAL_SCHOOL,
+        // WR-01 (Phase 79 review): WorkEvent.type is a WorkEventType column
+        // at the Prisma layer. Filter with the typed enum that matches the
+        // column to avoid a silent break the day either enum's literal value
+        // diverges (both currently share the string "VOCATIONAL_SCHOOL").
+        type: WorkEventType.VOCATIONAL_SCHOOL,
         deletedAt: null,
         date: { gte: start, lt: next },
       },
@@ -160,13 +164,14 @@ export async function countBsDaysInIsoWeek(
   employeeId: string,
   dateInWeek: Date,
 ): Promise<number> {
-  const routing = await resolveCompatRouting(prisma, employeeId);
+  const routing = await getRoutingConfig(prisma, employeeId);
   if (routing.workEventModelLive) {
     const { monday, nextMonday } = isoWeekBoundsUtc(dateInWeek);
     const rows = await prisma.workEvent.findMany({
       where: {
         employeeId,
-        type: AbsenceType.VOCATIONAL_SCHOOL,
+        // WR-01 (Phase 79 review): typed-enum match — see getBsMinutesForDate.
+        type: WorkEventType.VOCATIONAL_SCHOOL,
         deletedAt: null,
         date: { gte: monday, lt: nextMonday },
       },
@@ -187,13 +192,14 @@ export async function hasBsOnDate(
   employeeId: string,
   date: Date,
 ): Promise<boolean> {
-  const routing = await resolveCompatRouting(prisma, employeeId);
+  const routing = await getRoutingConfig(prisma, employeeId);
   const { start, next } = dateRangeUtc(date);
   if (routing.workEventModelLive) {
     const row = await prisma.workEvent.findFirst({
       where: {
         employeeId,
-        type: AbsenceType.VOCATIONAL_SCHOOL,
+        // WR-01 (Phase 79 review): typed-enum match — see getBsMinutesForDate.
+        type: WorkEventType.VOCATIONAL_SCHOOL,
         deletedAt: null,
         date: { gte: start, lt: next },
       },
@@ -213,9 +219,63 @@ export async function hasBsOnDate(
   return ab !== null;
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── Compat routing helpers (REVISION W6: promoted to public export) ─────────
 
-interface CompatRouting {
+// ── Tenant-level workEventModelLive cache (WR-02, Phase 79 review) ─────────
+// Mirrors the tzCache pattern in utils/timezone.ts. Used by tenant-level
+// endpoints (e.g. /vocational-school/upcoming) that can't naturally pass an
+// employeeId to getRoutingConfig. 5-minute TTL matches the rest of the
+// tenantConfig-cached helpers in this codebase.
+const tenantFlagCache = new Map<string, { live: boolean; exp: number }>();
+const TENANT_FLAG_TTL_MS = 5 * 60_000;
+
+/**
+ * Resolve `tenantConfig.workEventModelLive` for a tenant. Cached for 5
+ * minutes to avoid hot per-request reads on tenant-level listing endpoints.
+ *
+ * Use this when you have a tenantId but no employeeId — e.g. /upcoming list
+ * routes that scope by tenant. When you have an employeeId, prefer
+ * `getRoutingConfig` which returns the same flag plus per-tenant BS minute
+ * config in a single round-trip.
+ *
+ * Default for missing tenantConfig row: `false` — i.e. the Absence-branch
+ * (legacy / unmigrated tenant) is used. Matches `getRoutingConfig`'s default
+ * AND the Prisma schema default (`@default(false)` on
+ * TenantConfig.workEventModelLive).
+ */
+export async function getTenantWorkEventModelLive(
+  prisma: PrismaClient,
+  tenantId: string,
+): Promise<boolean> {
+  const cached = tenantFlagCache.get(tenantId);
+  if (cached && cached.exp > Date.now()) return cached.live;
+
+  const tc = await prisma.tenantConfig.findUnique({
+    where: { tenantId },
+    select: { workEventModelLive: true },
+  });
+  const live = tc?.workEventModelLive ?? false;
+  tenantFlagCache.set(tenantId, { live, exp: Date.now() + TENANT_FLAG_TTL_MS });
+  return live;
+}
+
+/**
+ * Test-only cache invalidation hook for `getTenantWorkEventModelLive`. Called
+ * from `beforeEach` in tests that flip `tenantConfig.workEventModelLive` mid-
+ * test so the next request observes the new flag value. NOT for production
+ * use — the cache is intentionally 5 minutes so the BC-proxy hot paths do not
+ * hit the DB per request. When `tenantId` is omitted, the entire cache is
+ * cleared.
+ */
+export function invalidateTenantWorkEventModelLiveCache(tenantId?: string): void {
+  if (tenantId === undefined) {
+    tenantFlagCache.clear();
+    return;
+  }
+  tenantFlagCache.delete(tenantId);
+}
+
+export interface CompatRouting {
   workEventModelLive: boolean;
   vocationalSchoolMinutesPerDay: number | null;
   vocationalSchoolBlockMinutesPerWeek: number | null;
@@ -239,8 +299,12 @@ interface CompatRouting {
  * DO NOT change the missing-tenantConfig default to `true` — that would silently
  * flip every legacy tenant onto an empty WorkEvent table → saldo collapses to
  * zero for any production tenant whose TenantConfig row is missing fields.
+ *
+ * REVISION (W6, Phase 79 Plan 04): renamed from the previous internal compat
+ * helper and EXPORTED so apps/api/src/routes/vocational-school.ts can reuse the
+ * same cached lookup pattern instead of rolling its own private helper.
  */
-async function resolveCompatRouting(
+export async function getRoutingConfig(
   prisma: PrismaClient,
   employeeId: string,
 ): Promise<CompatRouting> {

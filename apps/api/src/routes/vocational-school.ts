@@ -13,16 +13,58 @@
 //                                                    AZUBI-only (server-enforced), locked-month
 //                                                    gate, DB-level dedupe via @@unique([employeeId,
 //                                                    startDate, type]) → P2002 → HTTP 409.
+//
+// Phase 79 Plan 04 — BC PROXY LAYER.
+//
+// This file is the deprecation runway for the v1.8 Berufsschule API. New code MUST
+// target /api/v1/work-events/* (Plans 79-02 + 79-03). Every response from this file
+// carries `Deprecation: true` + `Sunset: Wed, 31 Dec 2026 23:59:59 GMT` (RFC 8594).
+//
+// Internal routing depends on `tenantConfig.workEventModelLive`:
+//   - false (default): legacy path → Absence rows (preserved verbatim, Phase 80 retires)
+//   - true            : new path → WorkEvent rows (Plan 79-01/02/03 utilities)
+//
+// DELETE additionally falls through from WorkEvent → Absence on id-miss to support
+// stale client ids during the post-migration grace window. The fall-through still
+// honors the legacy type guard (DR8) and soft-delete invariant (DR7).
+//
+// /generate + /preview (PATTERN-generation triggers) intentionally stay on Absence —
+// those are rewritten by Phase 80's PATTERN engine, NOT here.
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AbsenceType } from "@clokr/db";
+import { AbsenceType, WorkEventType, ScheduleType } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
   dispatchShiftCleanupForCreatedAbsences,
 } from "../utils/vocational-school-generator";
+import {
+  assertMonthNotLocked,
+  LockedMonthError,
+  LOCKED_MONTH_ERROR_DE,
+} from "../utils/locked-month";
+import {
+  assertClassificationAllowed,
+  ClassificationNotAllowedError,
+} from "../utils/work-event-rules";
+import { getTenantTimezone } from "../utils/timezone";
+// REVISION (W6): reuse the EXPORTED routing helper from work-event.ts instead of
+// rolling our own private compat-routing helper. Same cached TTL pattern.
+// REVISION (WR-02, Phase 79 review): use getTenantWorkEventModelLive for ALL
+// BC-proxy endpoints (/upcoming, /manual-insert, /:absenceId DELETE) so they
+// share the 5-minute cache. The BC-proxy surface only needs the flag, not the
+// per-tenant BS minute config that getRoutingConfig also returns.
+import { getTenantWorkEventModelLive } from "../utils/work-event";
+
+// ── Phase 79 Plan 04 — RFC 8594 deprecation headers ───────────────────────
+// Surface on EVERY response from this route file (success + error — INCLUDING
+// the global Zod-error-handler short-circuit path; see B4 below).
+// Removal slated for v1.10 (per ROADMAP + 79-CONTEXT.md). New code should target
+// /api/v1/work-events/* (Plans 79-02 + 79-03).
+const DEPRECATION_HEADER_VALUE = "true";
+const SUNSET_HEADER_VALUE = "Wed, 31 Dec 2026 23:59:59 GMT";
 
 const previewQuerySchema = z.object({
   weeks: z.coerce.number().int().min(1).max(26).optional(),
@@ -60,7 +102,78 @@ function monthStartUtc(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
 }
 
+/**
+ * Compute workedMinutes for a BC-proxy live-branch BS-Tag write.
+ *
+ * REVISION (B3, Phase 79 Plan 04): writing `workedMinutes: 0` would silently
+ * break the Phase 78 saldo adapter (loadWorkEventsForRange sums this field).
+ * Instead: read the employee's effective WorkSchedule at `dateString`, map
+ * weekday → per-day hours, × 60 → minutes.
+ *
+ * MONTHLY_HOURS schedules (no daily Soll, no per-day target) default to 480
+ * minutes (pauschal 8h) per Phase 78 D-08 adapter parity invariant and D-11
+ * Variante B max-merge convention. Same default applies when no WorkSchedule
+ * row exists for the employee (mirrors Phase 78 D-08 conservative default).
+ *
+ * Anchor the weekday lookup at UTC noon to dodge any DST quirks at midnight.
+ */
+async function computeBsWorkedMinutes(
+  prisma: FastifyInstance["prisma"],
+  employeeId: string,
+  dateString: string,
+): Promise<number> {
+  const [y, m, d] = dateString.split("-").map(Number);
+  const day = new Date(Date.UTC(y, m - 1, d, 12, 0, 0, 0));
+  const dow = day.getUTCDay(); // 0=Sun..6=Sat
+
+  const schedule = await prisma.workSchedule.findFirst({
+    where: { employeeId, validFrom: { lte: day } },
+    orderBy: { validFrom: "desc" },
+    select: {
+      type: true,
+      mondayHours: true,
+      tuesdayHours: true,
+      wednesdayHours: true,
+      thursdayHours: true,
+      fridayHours: true,
+      saturdayHours: true,
+      sundayHours: true,
+    },
+  });
+  if (!schedule) {
+    // No WorkSchedule row → conservative pauschal 8h. Mirrors Phase 78 D-08 default.
+    return 480;
+  }
+  if (schedule.type === ScheduleType.MONTHLY_HOURS) {
+    // MONTHLY_HOURS: no daily target → pauschal 8h per Phase 78 D-11 Variante B.
+    return 480;
+  }
+  const dailyHours = [
+    Number(schedule.sundayHours),
+    Number(schedule.mondayHours),
+    Number(schedule.tuesdayHours),
+    Number(schedule.wednesdayHours),
+    Number(schedule.thursdayHours),
+    Number(schedule.fridayHours),
+    Number(schedule.saturdayHours),
+  ][dow];
+  return Math.round(dailyHours * 60);
+}
+
 export async function vocationalSchoolRoutes(app: FastifyInstance) {
+  // REVISION (B4): Set RFC 8594 deprecation headers via onRequest (NOT onSend) so
+  // they survive the global Zod error-handler short-circuit at apps/api/src/app.ts.
+  // onSend is NOT guaranteed to run when a 4xx is produced by setErrorHandler —
+  // onRequest IS guaranteed to run before any handler or error handler fires.
+  //
+  // addHook registered on the route plugin (i.e. inside vocationalSchoolRoutes)
+  // is scoped to routes registered in that plugin only. This is the correct
+  // scope — the headers MUST NOT leak to /work-events/* or other routes.
+  app.addHook("onRequest", async (_req, reply) => {
+    reply.header("Deprecation", DEPRECATION_HEADER_VALUE);
+    reply.header("Sunset", SUNSET_HEADER_VALUE);
+  });
+
   app.addHook("preHandler", requireAuth);
 
   // POST /api/v1/vocational-school/generate — manual trigger (ADMIN/MANAGER)
@@ -157,6 +270,48 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       const fromDate = new Date(q.from + "T00:00:00.000Z");
       const toDate = new Date(q.to + "T00:00:00.000Z");
 
+      // BC proxy: routes to WorkEvent when tenantConfig.workEventModelLive=true
+      // (Phase 79 Plan 04); else preserves legacy Absence path until Phase 80
+      // retires it. The list endpoint operates across the tenant, so we read
+      // the flag at the tenant level. REVISION (WR-02, Phase 79 review): use
+      // the cached getTenantWorkEventModelLive helper so this list endpoint
+      // shares the 5-minute cache with /manual-insert instead of incurring a
+      // per-request DB round-trip on every paged listing.
+      const live = await getTenantWorkEventModelLive(app.prisma, tenantId);
+
+      if (live) {
+        const events = await app.prisma.workEvent.findMany({
+          where: {
+            deletedAt: null,
+            type: WorkEventType.VOCATIONAL_SCHOOL,
+            date: { gte: fromDate, lte: toDate },
+            employee: { tenantId },
+            ...(employeeIdFilter ? { employeeId: employeeIdFilter } : {}),
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            date: true,
+            source: true,
+            employee: {
+              select: { firstName: true, lastName: true, employeeNumber: true },
+            },
+          },
+          orderBy: { date: "asc" },
+        });
+
+        return reply.code(200).send(
+          events.map((e) => ({
+            id: e.id,
+            employeeId: e.employeeId,
+            date: e.date.toISOString().slice(0, 10),
+            source: e.source,
+            employee: e.employee,
+          })),
+        );
+      }
+
+      // LEGACY PATH (preserved verbatim) — Absence-backed read.
       const absences = await app.prisma.absence.findMany({
         where: {
           deletedAt: null,
@@ -220,6 +375,129 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // BC proxy: routes to WorkEvent when tenantConfig.workEventModelLive=true
+      // (Phase 79 Plan 04); else preserves legacy Absence path until Phase 80
+      // retires it.
+      // REVISION (W6): reuse the routing helper from utils/work-event.ts.
+      // REVISION (WR-02, Phase 79 review): /manual-insert only needs the flag
+      // (not the per-tenant BS minute config), so use the cached tenant-level
+      // helper to share the 5-minute cache with /upcoming and the DELETE
+      // handler. getRoutingConfig (per-employee) is reserved for callers that
+      // need the additional BS minute config fields it returns.
+      const live = await getTenantWorkEventModelLive(app.prisma, tenantId);
+
+      if (live) {
+        // NEW PATH — route to WorkEvent. Same gates as Plan 79-03 POST handler.
+        // The classification gate (Plan 79-01 data-driven AZUBI rule) surfaces the
+        // canonical message "Berufsschule ist nur für Azubis zulässig" — distinct
+        // from the legacy branch's longer wording "Berufsschultage sind nur für
+        // Auszubildende vorgesehen." so reviewers can tell which branch produced
+        // the 400.
+        try {
+          assertClassificationAllowed(WorkEventType.VOCATIONAL_SCHOOL, employee.classification);
+        } catch (err) {
+          if (err instanceof ClassificationNotAllowedError) {
+            return reply.code(err.statusCode).send({ error: err.message });
+          }
+          throw err;
+        }
+
+        // REVISION (B2): pass body.date STRING to the helper, not dateUtc.
+        const tz = await getTenantTimezone(app.prisma, tenantId);
+        try {
+          await assertMonthNotLocked(app.prisma, employee.id, body.date, tz);
+        } catch (err) {
+          if (err instanceof LockedMonthError) {
+            return reply.code(err.statusCode).send({ error: LOCKED_MONTH_ERROR_DE });
+          }
+          throw err;
+        }
+
+        // REVISION (B3): compute workedMinutes from the employee's WorkSchedule.
+        // Writing 0 would silently zero out the BS-Tag saldo credit once Phase 80
+        // flips workEventModelLive=true. See Phase 78 D-08 adapter parity invariant.
+        const workedMinutes = await computeBsWorkedMinutes(app.prisma, employee.id, body.date);
+
+        // REVISION (CR-01, Phase 79 review): honor schedule type when writing
+        // expectedMinutes. aggregateLegacyAbsences (utils/work-event.ts:375) only
+        // ADDs the expected-side amount when scheduleType !== MONTHLY_HOURS, and
+        // aggregateWorkEvents sums row.expectedMinutes unconditionally. To preserve
+        // strict 0-tolerance saldo parity across flag flip (CONTEXT D-08), we MUST
+        // write expectedMinutes=NULL for MONTHLY_HOURS — matching Phase 63 D-04
+        // ("expectedMinutes is NULL for MONTHLY_HOURS"). Otherwise the BC-proxy
+        // live branch would contribute 480 to the Soll while the legacy branch
+        // contributes 0 for the same scenario.
+        const schedule = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: employee.id, validFrom: { lte: dateUtc } },
+          orderBy: { validFrom: "desc" },
+          select: { type: true },
+        });
+        const isMonthlyHours = schedule?.type === ScheduleType.MONTHLY_HOURS;
+        const expectedMinutes = isMonthlyHours ? null : workedMinutes;
+
+        try {
+          const created = await app.prisma.workEvent.create({
+            data: {
+              employeeId: employee.id,
+              type: WorkEventType.VOCATIONAL_SCHOOL,
+              source: "MANUAL",
+              date: dateUtc,
+              workedMinutes,
+              expectedMinutes,
+              createdBy: req.user.sub,
+            },
+          });
+
+          // REVISION (B6): dual AuditLog. The primary action matches Plan 79-03's
+          // canonical WORK_EVENT_CREATED so reviewers see consistent action strings
+          // across the migration; the breadcrumb says "this mutation came via the
+          // legacy /vocational-school surface" so reviewers can trace it back.
+          await app.audit({
+            userId: req.user.sub,
+            action: "WORK_EVENT_CREATED",
+            entity: "WorkEvent",
+            entityId: created.id,
+            newValue: {
+              employeeId: created.employeeId,
+              date: body.date,
+              type: created.type,
+              source: created.source,
+              workedMinutes: created.workedMinutes,
+              expectedMinutes: created.expectedMinutes,
+              viaBcProxy: true, // breadcrumb on newValue
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          await app.audit({
+            userId: req.user.sub,
+            action: "VOCATIONAL_SCHOOL_MANUAL_INSERTED_VIA_BC_PROXY",
+            entity: "WorkEvent",
+            entityId: created.id,
+            newValue: {
+              employeeId: created.employeeId,
+              date: body.date,
+              note: "Created via BC proxy /vocational-school/manual-insert (Phase 79 Plan 04). Primary action: WORK_EVENT_CREATED.",
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+
+          return reply.code(201).send(created);
+        } catch (err: unknown) {
+          if (
+            typeof err === "object" &&
+            err !== null &&
+            "code" in err &&
+            (err as { code: unknown }).code === "P2002"
+          ) {
+            return reply.code(409).send({
+              error: "Berufsschultag existiert bereits für diesen Tag.",
+            });
+          }
+          throw err;
+        }
+      }
+
+      // LEGACY PATH — preserved verbatim from Phase 63 D-23. Phase 80 retires this branch.
       // (4) AZUBI gate — server is the source of truth even when the UI hides the
       // action for non-AZUBI rows (defense in depth).
       if (employee.classification !== "AZUBI") {
@@ -336,6 +614,86 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const { absenceId } = deleteParamsSchema.parse(req.params);
 
+      // BC proxy: routes to WorkEvent when tenantConfig.workEventModelLive=true
+      // (Phase 79 Plan 04). The id might match a WorkEvent OR an Absence row;
+      // the LIVE branch tries WorkEvent first and falls through to Absence on
+      // miss (supports stale client ids during the post-migration grace window).
+      // REVISION (WR-02, Phase 79 review): use the cached tenant-level helper.
+      const live = await getTenantWorkEventModelLive(app.prisma, tenantId);
+
+      if (live) {
+        // Try WorkEvent first. REVISION (W3 DR7): filters deletedAt: null so a
+        // soft-deleted WorkEvent id falls through to the Absence lookup, which
+        // won't find it either → 404 (correct semantic, never resurrect a
+        // soft-deleted row).
+        const we = await app.prisma.workEvent.findFirst({
+          where: {
+            id: absenceId,
+            deletedAt: null,
+            type: WorkEventType.VOCATIONAL_SCHOOL,
+            employee: { tenantId },
+          },
+          select: {
+            id: true,
+            employeeId: true,
+            type: true,
+            source: true,
+            date: true,
+            workedMinutes: true,
+            expectedMinutes: true,
+            payload: true,
+            note: true,
+          },
+        });
+        if (we) {
+          // Locked-month gate.
+          // REVISION (B2): convert we.date to YYYY-MM-DD string for the helper.
+          const tz = await getTenantTimezone(app.prisma, tenantId);
+          const weDateStr = we.date.toISOString().slice(0, 10);
+          try {
+            await assertMonthNotLocked(app.prisma, we.employeeId, weDateStr, tz);
+          } catch (err) {
+            if (err instanceof LockedMonthError) {
+              return reply.code(err.statusCode).send({ error: LOCKED_MONTH_ERROR_DE });
+            }
+            throw err;
+          }
+          await app.prisma.workEvent.update({
+            where: { id: we.id },
+            data: { deletedAt: new Date() },
+          });
+          await app.audit({
+            userId: req.user.sub,
+            action: "WORK_EVENT_DELETED",
+            entity: "WorkEvent",
+            entityId: we.id,
+            oldValue: {
+              employeeId: we.employeeId,
+              date: weDateStr,
+              type: we.type,
+              source: we.source,
+              workedMinutes: we.workedMinutes,
+              expectedMinutes: we.expectedMinutes,
+              payload: we.payload,
+              note: we.note,
+              viaBcProxy: true,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          return reply.code(204).send();
+        }
+        // Fall through to Absence lookup — supports stale ids in the grace window
+        // after migration. (Continues into the legacy block below.)
+        // REVISION (W3 DR7): the WorkEvent findFirst above already filters
+        // deletedAt: null, so a soft-deleted WorkEvent id falls through to the
+        // Absence lookup, which won't find it either → 404 (correct semantic).
+      }
+
+      // LEGACY PATH (or post-fall-through) — preserved verbatim from Phase 63 /
+      // 260601-g8l. Tenant-scoped Absence lookup, type guard (REVISION W3 DR8:
+      // SICK absences fail this cleanly), idempotency, locked-month gate,
+      // AuditLog VOCATIONAL_SCHOOL_MANUAL_DELETED.
+
       // (3) cross-tenant Absence lookup. We select the columns we need for the audit
       // snapshot in the same query — no second round trip on the happy path.
       const absence = await app.prisma.absence.findFirst({
@@ -354,6 +712,9 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       }
 
       // (4) type guard — only BS-Tage are removable via this route.
+      // REVISION (W3 DR8): when flag=true and the id matches a SICK/UNPAID
+      // absence in the same tenant, the fall-through still produces the correct
+      // 400 here. Test DR8 confirms.
       if (absence.type !== AbsenceType.VOCATIONAL_SCHOOL) {
         return reply.code(400).send({ error: "Eintrag ist kein Berufsschultag." });
       }

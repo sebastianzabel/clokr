@@ -100,63 +100,76 @@ describe("WorkEvent endpoint stubs (Phase 77 Plan 04)", () => {
 
   // ── 501 stubs (tests 6, 12, 13, 14) — ADMIN/MANAGER get Not Implemented ──────
 
-  it("GET /work-events as ADMIN returns 501 Not Implemented with German message", async () => {
+  it("GET /work-events as ADMIN returns 200 (wired in Phase 79 Plan 02)", async () => {
+    // Phase 79 Plan 02 wired the GET / handler. Stays in this file as a
+    // belt-and-suspenders ADMIN-reachability smoke test — the comprehensive
+    // contract suite lives in work-events-get.test.ts (T1-T10).
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/work-events",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
-    expect(body.error).toMatch(/[a-zA-ZäöüÄÖÜß]/); // German message present
-    expect(body.message).toMatch(/Phase 79/);
+    expect(Array.isArray(body)).toBe(true);
   });
 
-  it("POST /work-events as ADMIN returns 501 Not Implemented", async () => {
+  it("POST /work-events as ADMIN with empty body returns 400 (Zod validation; wired in Phase 79 Plan 03)", async () => {
+    // Phase 79 Plan 03 wired the POST handler. Empty body fails the Zod parse
+    // (missing employeeId/date/type/workedMinutes) → 400. Belt-and-suspenders
+    // smoke test that the endpoint is reachable with ADMIN auth; comprehensive
+    // contract in work-events-mutations.test.ts (P1-P13).
     const res = await app.inject({
       method: "POST",
       url: "/api/v1/work-events",
       headers: { authorization: `Bearer ${data.adminToken}` },
       payload: {},
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(400);
     const body = JSON.parse(res.body);
     expect(body.error).toMatch(/[a-zA-ZäöüÄÖÜß]/);
   });
 
-  it("PATCH /work-events/:id as MANAGER returns 501 Not Implemented", async () => {
+  it("PATCH /work-events/:id as MANAGER returns 404 for nonexistent id (wired in Phase 79 Plan 03)", async () => {
+    // Phase 79 Plan 03 wired the PATCH handler. SAMPLE_ID is the zero UUID — no
+    // matching row exists → 404. Comprehensive contract in
+    // work-events-mutations.test.ts (U1-U10).
     const res = await app.inject({
       method: "PATCH",
       url: `/api/v1/work-events/${SAMPLE_ID}`,
       headers: { authorization: `Bearer ${managerToken}` },
-      payload: {},
+      payload: { note: "stub-smoke" },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(404);
     const body = JSON.parse(res.body);
     expect(body.error).toMatch(/[a-zA-ZäöüÄÖÜß]/);
   });
 
-  it("DELETE /work-events/:id as MANAGER returns 501 Not Implemented", async () => {
+  it("DELETE /work-events/:id as MANAGER returns 404 for nonexistent id (wired in Phase 79 Plan 03)", async () => {
+    // Phase 79 Plan 03 wired the DELETE handler. SAMPLE_ID is the zero UUID —
+    // no matching row exists → 404. Comprehensive contract in
+    // work-events-mutations.test.ts (D1-D8).
     const res = await app.inject({
       method: "DELETE",
       url: `/api/v1/work-events/${SAMPLE_ID}`,
       headers: { authorization: `Bearer ${managerToken}` },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(404);
   });
 
   // ── Structural separation (tests 7, 8, 15) — /mine vs management ────────────
 
-  it("GET /work-events/mine as EMPLOYEE returns 501 (any authenticated user can call /mine)", async () => {
+  it("GET /work-events/mine as EMPLOYEE returns 200 (any authenticated user can call /mine)", async () => {
     // E-1/E-2 mitigation: /mine is structurally separate from the management
     // surface and is NOT role-gated. Any authenticated user gets self-scoped
     // behavior. Returning 403 here would be a false positive against this design.
+    // Wired in Phase 79 Plan 02 — comprehensive contract in work-events-get.test.ts (M1-M10).
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/work-events/mine",
       headers: { authorization: `Bearer ${data.empToken}` },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(200);
   });
 
   it("GET /work-events as EMPLOYEE returns 403 Forbidden (management endpoint is role-gated)", async () => {
@@ -171,17 +184,20 @@ describe("WorkEvent endpoint stubs (Phase 77 Plan 04)", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("GET /work-events/mine as ADMIN returns 501 (ADMIN gets self-scoped /mine — no role-branched leak)", async () => {
+  it("GET /work-events/mine as ADMIN returns 200 (ADMIN gets self-scoped /mine — no role-branched leak)", async () => {
     // T-77-16 mitigation: ADMIN-with-Employee-row hitting /mine MUST land in the
     // self-scoped handler — NOT a tenant-wide branch. The split makes the
     // v1.8.12 leak class structurally impossible: there is no role check on
     // /mine because /mine is always self-scoped by design.
+    // Wired in Phase 79 Plan 02. The headline leak-class REGRESSION assertion
+    // (admin self-view never returns other employees' rows) lives in
+    // work-events-get.test.ts → Test M2.
     const res = await app.inject({
       method: "GET",
       url: "/api/v1/work-events/mine",
       headers: { authorization: `Bearer ${data.adminToken}` },
     });
-    expect(res.statusCode).toBe(501);
+    expect(res.statusCode).toBe(200);
   });
 
   // ── Role gating (tests 9, 10, 11) — management endpoints reject EMPLOYEE ────
