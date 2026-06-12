@@ -40,6 +40,7 @@ import { shiftRoutes } from "./routes/shifts";
 import { shiftPatternRoutes, shiftPatternTenantRoutes } from "./routes/shift-patterns";
 import { vocationalSchoolPatternRoutes } from "./routes/vocational-school-pattern";
 import { vocationalSchoolRoutes } from "./routes/vocational-school";
+import { workEventRoutes } from "./routes/work-events";
 import { availabilityRoutes } from "./routes/availability";
 import { integrationRoutes } from "./routes/integrations";
 import { importRoutes } from "./routes/imports";
@@ -277,6 +278,9 @@ export async function buildApp() {
   // Phase 62 — Berufsschultag manual trigger + preview
   // (POST /api/v1/vocational-school/generate, GET /api/v1/vocational-school/preview)
   await app.register(vocationalSchoolRoutes, { prefix: "/api/v1/vocational-school" });
+  // Phase 77 — v1.9 WorkEvent stubs (Phase 79 fills bodies).
+  // Self-view /mine + management surface structurally separated per PITFALLS.md E-1/E-2/E-3.
+  await app.register(workEventRoutes, { prefix: "/api/v1/work-events" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });

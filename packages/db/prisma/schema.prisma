@@ -261,37 +261,37 @@ model Invitation {
 // ─────────────────────────────────────────────
 
 model Employee {
-  id                  String                 @id @default(uuid())
-  tenantId            String
-  userId              String                 @unique
-  employeeNumber      String
-  firstName           String
-  lastName            String
-  nfcCardId           String?                @unique // NFC Karten-ID
-  wifiMacs            String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
-  wifiPresenceEnabled Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
-  wifiOptInAt         DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
-  avatarPath          String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
+  id                   String                 @id @default(uuid())
+  tenantId             String
+  userId               String                 @unique
+  employeeNumber       String
+  firstName            String
+  lastName             String
+  nfcCardId            String?                @unique // NFC Karten-ID
+  wifiMacs             String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled  Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt          DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  avatarPath           String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
-  classification      EmployeeClassification @default(VOLLZEIT)
-  coverageWeight      Decimal                @default(1.00) @db.Decimal(3, 2)
-  requiresSupervision Boolean                @default(false)
-  hireDate            DateTime               @db.Timestamptz
-  exitDate            DateTime?              @db.Timestamptz
+  classification       EmployeeClassification @default(VOLLZEIT)
+  coverageWeight       Decimal                @default(1.00) @db.Decimal(3, 2)
+  requiresSupervision  Boolean                @default(false)
+  hireDate             DateTime               @db.Timestamptz
+  exitDate             DateTime?              @db.Timestamptz
   // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
   // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
-  birthDate           DateTime?              @db.Date
+  birthDate            DateTime?              @db.Date
   // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
-  breakOver6hOverride Int? // null = TenantConfig.defaultBreakOver6h verwenden
-  breakOver9hOverride Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  breakOver6hOverride  Int? // null = TenantConfig.defaultBreakOver6h verwenden
+  breakOver9hOverride  Int? // null = TenantConfig.defaultBreakOver9h verwenden
   // Phase 76.7 (D-01, EMP-V19-01) — § 18 ArbZG-Befreiung für Inhaber/Geschäftsführer/leitende
   // Angestellte. Wenn true: SKIP updateOvertimeAccount + checkArbZG + recalculateSnapshots
   // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
   // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
   isTimeTrackingExempt Boolean                @default(false)
-  createdAt           DateTime               @default(now()) @db.Timestamptz
-  updatedAt           DateTime               @updatedAt @db.Timestamptz
+  createdAt            DateTime               @default(now()) @db.Timestamptz
+  updatedAt            DateTime               @updatedAt @db.Timestamptz
 
   tenant                   Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user                     User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -308,6 +308,7 @@ model Employee {
   shifts                   Shift[]
   shiftPatterns            EmployeeShiftPattern[]
   vocationalSchoolPatterns EmployeeVocationalSchoolPattern[]
+  workEvents               WorkEvent[]
   availabilities           EmployeeAvailability[]
   presenceDevices          PresenceDevice[]
 
@@ -403,22 +404,22 @@ model Break {
 // ─────────────────────────────────────────────
 
 model SaldoSnapshot {
-  id              String          @id @default(uuid())
-  employeeId      String
-  periodType      SaldoPeriodType
-  periodStart     DateTime        @db.Date
-  periodEnd       DateTime        @db.Date
-  workedMinutes   Int // Ist-Arbeitszeit im Zeitraum
-  expectedMinutes Int // Soll-Arbeitszeit im Zeitraum
-  balanceMinutes  Int // Differenz (worked - expected)
-  carryOver       Int // Kumulierter Übertrag bis periodEnd
-  closedAt        DateTime        @db.Timestamptz
-  closedBy        String? // userId wer abgeschlossen hat (null = SYSTEM)
-  note            String?
+  id               String          @id @default(uuid())
+  employeeId       String
+  periodType       SaldoPeriodType
+  periodStart      DateTime        @db.Date
+  periodEnd        DateTime        @db.Date
+  workedMinutes    Int // Ist-Arbeitszeit im Zeitraum
+  expectedMinutes  Int // Soll-Arbeitszeit im Zeitraum
+  balanceMinutes   Int // Differenz (worked - expected)
+  carryOver        Int // Kumulierter Übertrag bis periodEnd
+  closedAt         DateTime        @db.Timestamptz
+  closedBy         String? // userId wer abgeschlossen hat (null = SYSTEM)
+  note             String?
   // Phase 76.6 — TZ-duplicate cleanup. `superseded` rows are excluded from
   // production findFirst/findMany via `where: { superseded: false }`. Never
   // hard-deleted (Revisionssicherheit). See .planning/phases/76.6-*/76.6-NOTES.md.
-  superseded       Boolean @default(false)
+  superseded       Boolean         @default(false)
   supersededReason String?
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
@@ -596,6 +597,59 @@ model Absence {
 
   @@unique([employeeId, startDate, type]) // Phase 63 (Pitfall #5): DB-level idempotency for D-23 manual-insert race
   @@index([employeeId])
+}
+
+// ─────────────────────────────────────────────
+// WORK EVENTS (v1.9 — generic day-event model)
+// ─────────────────────────────────────────────
+//
+// Replaces Absence.type=VOCATIONAL_SCHOOL semantics with a dedicated table
+// for "present-but-non-clocked" time (BS-Tag initial; FIELD_SERVICE / BUSINESS_TRIP /
+// TRAINING / OTHER reserved for future types — adding them is a data-only change).
+//
+// Phase 63 D-01..D-04 invariant baked into the row:
+//   - FIXED_SCHEDULE / SHIFT_BASED / FLEXTIME → workedMinutes == expectedMinutes (netto-neutral)
+//   - MONTHLY_HOURS                            → workedMinutes only, expectedMinutes NULL
+//
+// Adapter: apps/api/src/utils/work-event.ts (Plan 02) — single read path for all saldo sites.
+// Zod payload: apps/api/src/routes/work-events/payload-schema.ts (Plan 03).
+// Endpoints:    apps/api/src/routes/work-events.ts (Plan 04 stubs → Phase 79 bodies).
+// Migration:    apps/api/scripts/migrate-vocational-school-to-work-event.ts (Phase 80).
+model WorkEvent {
+  id              String          @id @default(uuid())
+  employeeId      String
+  type            WorkEventType
+  source          WorkEventSource @default(MANUAL)
+  date            DateTime        @db.Date
+  // Resolved at write time (Phase 63 invariant becomes a property of the row,
+  // not a recomputation per call site). Always set — never null.
+  workedMinutes   Int
+  // NULL for MONTHLY_HOURS schedule type (D-04: BS contributes to IST only,
+  // never to Soll). Equal to workedMinutes for FIXED_SCHEDULE / SHIFT_BASED / FLEXTIME.
+  expectedMinutes Int?
+  // Discriminated-union payload — Zod validates per-type at API boundary (Plan 03).
+  payload         Json?           @db.JsonB
+  note            String?
+  // Migration provenance — links back to the originating Absence.id when this row
+  // was created by the Phase 80 migration script. Allows AuditLog joins across the
+  // model boundary (PITFALLS.md M-2). Unique so re-running the migration is a no-op
+  // for already-migrated rows.
+  legacyAbsenceId String?         @unique
+  // Audit + soft-delete (Revisionssicherheit) — identical convention to Absence.
+  deletedAt       DateTime?       @db.Timestamptz
+  createdAt       DateTime        @default(now()) @db.Timestamptz
+  createdBy       String?
+  updatedAt       DateTime        @updatedAt @db.Timestamptz
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  // Idempotency at DB layer — mirrors Absence's @@unique([employeeId, startDate, type]).
+  // P2002 on duplicate (employeeId, date, type) → caught by Phase 79 endpoints + Phase 80
+  // migration script → returned as HTTP 409 or skipped-and-counted.
+  @@unique([employeeId, date, type])
+  @@index([employeeId, date])
+  @@index([date])
+  @@index([employeeId, type])
 }
 
 // ─────────────────────────────────────────────
@@ -829,6 +883,27 @@ enum AbsenceType {
 enum AbsenceSource {
   PATTERN
   MANUAL
+}
+
+// v1.9 — Reserve future types up-front to avoid Postgres `ALTER TYPE ... ADD VALUE`
+// in prod (STACK.md §Schema-Model-Strategy). Only VOCATIONAL_SCHOOL is wired in v1.9;
+// FIELD_SERVICE / BUSINESS_TRIP / TRAINING / OTHER ship as enum values but no payload
+// schema, no endpoint logic.
+enum WorkEventType {
+  VOCATIONAL_SCHOOL // BBiG §15 BS-Tag (initial type — Phase 62/63 logic replaced)
+  FIELD_SERVICE // Außendienst (reserved for v1.10+)
+  BUSINESS_TRIP // Dienstreise (reserved for v1.10+)
+  TRAINING // Schulung / Fortbildung (reserved for v1.10+)
+  OTHER // Catch-all (reserved for v1.10+)
+}
+
+// PATTERN  = auto-generated by a pattern engine (e.g. vocational-school-generator cron)
+// MANUAL   = human-created (manager UI, employee request)
+// AUTO     = generated by another system rule (e.g. scheduler, future imports)
+enum WorkEventSource {
+  PATTERN
+  MANUAL
+  AUTO
 }
 
 enum ScheduleType {
