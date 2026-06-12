@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { AbsenceType } from "@clokr/db";
 
 // UTC 00:00 of the 1st of `d`'s month — matches SaldoSnapshot.periodStart semantics.
 function monthStartUtc(d: Date): Date {
@@ -85,7 +86,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: inWindow,
         endDate: inWindow,
@@ -96,7 +97,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: outWindow,
         endDate: outWindow,
@@ -107,7 +108,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: otherTenantData.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: inWindow,
         endDate: inWindow,
@@ -145,7 +146,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: otherTenantData.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: sharedDate,
         endDate: sharedDate,
@@ -180,7 +181,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: inWindow,
         endDate: inWindow,
@@ -249,7 +250,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: selfDate,
         endDate: selfDate,
@@ -260,7 +261,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.adminEmployee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: otherDate,
         endDate: otherDate,
@@ -292,7 +293,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: selfDate,
         endDate: selfDate,
@@ -303,7 +304,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.adminEmployee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: otherDate,
         endDate: otherDate,
@@ -360,7 +361,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
     const body = JSON.parse(res.body);
     expect(body.id).toBeTruthy();
     expect(body.source).toBe("MANUAL");
-    expect(body.type).toBe("VOCATIONAL_SCHOOL");
+    expect(body.type).toBe(AbsenceType.VOCATIONAL_SCHOOL);
 
     // Audit log entry was written.
     const audit = await app.prisma.auditLog.findFirst({
@@ -484,7 +485,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
   //   1. AuthN/AuthZ via requireRole ADMIN/MANAGER.
   //   2. Zod path-param parse (UUID) → 400 via global error handler.
   //   3. Cross-tenant Absence lookup → 404 if employee.tenantId !== caller.
-  //   4. Type guard: type !== "VOCATIONAL_SCHOOL" → 400.
+  //   4. Type guard: type !== AbsenceType.VOCATIONAL_SCHOOL → 400.
   //   5. Idempotency: deletedAt !== null → 404 (soft-deleted rows are invisible).
   //   6. Locked-month gate via SaldoSnapshot → 403.
   // On success: soft delete (deletedAt = now) + VOCATIONAL_SCHOOL_MANUAL_DELETED audit
@@ -497,7 +498,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "MANUAL",
           startDate: date,
           endDate: date,
@@ -539,7 +540,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: otherTenantData.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "MANUAL",
           startDate: date,
           endDate: date,
@@ -563,7 +564,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "MANUAL",
           startDate: date,
           endDate: date,
@@ -610,7 +611,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "MANUAL",
           startDate: date,
           endDate: date,
@@ -647,7 +648,7 @@ describe("Berufsschule endpoints (Phase 63 Plan 04)", () => {
       const absence = await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "MANUAL",
           startDate: date,
           endDate: date,

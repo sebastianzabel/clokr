@@ -6,6 +6,7 @@
 // happy paths and at the boundaries).
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { AbsenceType } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { ageAtDate, checkJArbSchG } from "../utils/jarbschg";
@@ -25,7 +26,7 @@ async function seedBsAbsence(
   return app.prisma.absence.create({
     data: {
       employeeId,
-      type: "VOCATIONAL_SCHOOL",
+      type: AbsenceType.VOCATIONAL_SCHOOL,
       source: "PATTERN",
       startDate: date,
       endDate: date,

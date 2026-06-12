@@ -15,6 +15,7 @@
 //   - Every Absence query MUST include deletedAt: null.
 
 import type { PrismaClient } from "@clokr/db";
+import { AbsenceType } from "@clokr/db";
 import {
   BS_BLOCK_WEEKLY_DEFAULT_MIN,
   BS_DAILY_DEFAULT_MIN,
@@ -82,7 +83,7 @@ export async function countBsDaysInIsoWeek(
     where: {
       employeeId,
       deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
+      type: AbsenceType.VOCATIONAL_SCHOOL,
       startDate: { gte: monday, lt: nextMonday },
     },
     select: { startDate: true },
@@ -124,7 +125,7 @@ export async function getVocationalSchoolMinutesForDate(
     where: {
       employeeId,
       deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
+      type: AbsenceType.VOCATIONAL_SCHOOL,
       startDate: { gte: start, lt: next },
     },
     select: { id: true },

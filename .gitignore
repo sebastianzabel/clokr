@@ -73,3 +73,4 @@ backups/
 .cache/
 tmp/
 apps/nfc-client/src-tauri/target/
+.pnpm-store/

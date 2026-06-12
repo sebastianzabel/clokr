@@ -8,6 +8,7 @@
 // given an employee + tenant config + a date, what BS minutes does the day contribute?
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { AbsenceType } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import {
@@ -27,12 +28,12 @@ async function seedAbsence(
   app: FastifyInstance,
   employeeId: string,
   date: Date,
-  opts: { type?: "VOCATIONAL_SCHOOL" | "SICK"; deleted?: boolean } = {},
+  opts: { type?: AbsenceType; deleted?: boolean } = {},
 ) {
   return app.prisma.absence.create({
     data: {
       employeeId,
-      type: opts.type ?? "VOCATIONAL_SCHOOL",
+      type: opts.type ?? AbsenceType.VOCATIONAL_SCHOOL,
       source: "PATTERN",
       startDate: date,
       endDate: date,

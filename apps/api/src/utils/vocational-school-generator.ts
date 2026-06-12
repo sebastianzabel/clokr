@@ -15,7 +15,7 @@
 //                   action VOCATIONAL_SCHOOL_AUTO_GENERATED.
 
 import type { PrismaClient } from "@clokr/db";
-import { FederalState } from "@clokr/db";
+import { FederalState, AbsenceType } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
 
@@ -420,7 +420,7 @@ async function runOrPreview(
           absence = await prisma.absence.create({
             data: {
               employeeId: employee.id,
-              type: "VOCATIONAL_SCHOOL",
+              type: AbsenceType.VOCATIONAL_SCHOOL,
               source: "PATTERN", // Phase 63 D-22: distinguishes auto-generated rows from MANUAL (D-23) inserts
               startDate: date,
               endDate: date,
@@ -446,7 +446,7 @@ async function runOrPreview(
                 employeeId_startDate_type: {
                   employeeId: employee.id,
                   startDate: date,
-                  type: "VOCATIONAL_SCHOOL",
+                  type: AbsenceType.VOCATIONAL_SCHOOL,
                 },
               },
             });
@@ -489,7 +489,7 @@ async function runOrPreview(
             origin: "SYSTEM",
             employeeId: employee.id,
             date: toIsoDate(date),
-            type: "VOCATIONAL_SCHOOL",
+            type: AbsenceType.VOCATIONAL_SCHOOL,
             patternId: pattern.id,
           },
         });
@@ -585,7 +585,7 @@ async function runOrPreview(
     const orphanCandidates = await prisma.absence.findMany({
       where: {
         employeeId: { in: employeeIds },
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         deletedAt: null,
         startDate: { gte: windowStart, lte: windowEnd },

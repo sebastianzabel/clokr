@@ -2,10 +2,12 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { createHash } from "crypto";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { TimeEntrySource, Prisma } from "@clokr/db";
+import { TimeEntrySource, Prisma, AbsenceType } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
 import { checkJArbSchG } from "../utils/jarbschg";
-import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+// Phase 78 — adapter (compat-routed via tenant.workEventModelLive). Replaces inline
+// VOCATIONAL_SCHOOL Absence query + per-Schedule-Type doubling.
+import { loadWorkEventsForRange } from "../utils/work-event";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
@@ -1632,7 +1634,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       where: {
         employeeId,
         deletedAt: null, // required by soft-delete convention
-        type: { not: "VOCATIONAL_SCHOOL" }, // Phase 76.12 D-12: BBiG §15 — BS = Arbeitstag
+        type: { not: AbsenceType.VOCATIONAL_SCHOOL }, // Phase 76.12 D-12: BBiG §15 — BS = Arbeitstag
         source: { not: "PATTERN" }, // Phase 76.12 D-12: auto-generated, not approved
         startDate: { lte: effectiveEnd },
         endDate: { gte: rangeStart },
@@ -1687,7 +1689,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       where: {
         employeeId,
         deletedAt: null, // required by soft-delete convention
-        type: { not: "VOCATIONAL_SCHOOL" },
+        type: { not: AbsenceType.VOCATIONAL_SCHOOL },
         source: { not: "PATTERN" },
         startDate: { lte: effectiveEnd },
         endDate: { gte: rangeStart },
@@ -1708,41 +1710,20 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     }
   }
 
-  // Phase 63 — Berufsschule (BS) doubling for the LIVE saldo path.
-  // Mirrors the doubling in overtime.ts (close-month) and auto-close-month.ts
-  // (snapshot). Per D-01..D-04: VOCATIONAL_SCHOOL absences add the same minutes to
-  // BOTH workedMinutes AND expectedMinutes (FIXED_SCHEDULE / SHIFT_BASED) or to
-  // workedMinutes only (MONTHLY_HOURS, D-04). Live and snapshot must agree
-  // (RESEARCH Pitfall #2 — live/snapshot drift).
-  const bsAbsencesUpdate = await app.prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { lte: effectiveEnd },
-      endDate: { gte: rangeStart },
-    },
-  });
-  let bsWorkedMinutes = 0;
-  let bsExpectedMinutes = 0;
-  for (const ab of bsAbsencesUpdate) {
-    const start = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-    const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-    const cur = new Date(start);
-    while (cur <= end) {
-      const bsMin = await getVocationalSchoolMinutesForDate(
-        app.prisma,
-        employeeId,
-        cur,
-        tenantConfig,
-      );
-      bsWorkedMinutes += bsMin;
-      if (scheduleType !== "MONTHLY_HOURS") {
-        bsExpectedMinutes += bsMin;
-      }
-      cur.setUTCDate(cur.getUTCDate() + 1);
-    }
-  }
+  // Phase 78 — adapter-routed BS doubling (CONTEXT D-04). The adapter encodes
+  // Phase 63 D-01..D-04 per-Schedule-Type contribution internally: FIXED_SCHEDULE /
+  // SHIFT_BASED add to BOTH worked AND expected; MONTHLY_HOURS adds to worked only.
+  // Per-BS-date schedule resolution (D-12 accept-stale) lives inside the adapter,
+  // mitigating PITFALLS.md S-4. Live + snapshot paths now agree (Pitfall #2 closed).
+  const bsAggregate = await loadWorkEventsForRange(
+    app.prisma,
+    employeeId,
+    rangeStart,
+    // half-open [start, end+1day) preserves the inclusive <= effectiveEnd semantic.
+    new Date(effectiveEnd.getTime() + 24 * 60 * 60 * 1000),
+  );
+  const bsWorkedMinutes = bsAggregate.workedMinutes;
+  const bsExpectedMinutes = bsAggregate.expectedMinutes;
 
   // Saldo = Snapshot-CarryOver + offener Zeitraum
   const openPeriodBalance =

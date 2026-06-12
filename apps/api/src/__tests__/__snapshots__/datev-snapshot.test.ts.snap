@@ -1,0 +1,25 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`DATEV LODAS byte-equivalence snapshot (Phase 78 Plan 04) — TEST-V19-01 > DATEV LODAS export bytes match snapshot for Azubi+BS May 2026 scenario 1`] = `
+{
+  "byteLength": 431,
+  "contentDisposition": "attachment; filename="datev-2026-5.txt"",
+  "contentType": "application/octet-stream",
+  "decoded": "[Allgemein]
+Ziel=LODAS
+Version_SST=1.0
+BeraterNr=0
+MandantenNr=0
+Datumsangaben=DDMMJJJJ
+Abrechnungszeitraum=052026
+
+[Satzbeschreibung]
+20;u_lod_bwd_buchung_kst;pnr#bwd;name#bwd;datum#bwd;ausfallkennzeichen#bwd;u_lod_lna_nr#bwd;stunden#bwd;tage#bwd;betrag#bwd;faktor#bwd;kuerzung#bwd;kostenstelle#bwd;kostentraeger#bwd
+
+[Bewegungsdaten]
+ADM-datev-snap;D. A.;31052026;;100;;;;;;;
+AZ-001;Z. A.;31052026;;100;64,00;;;;;;
+",
+  "sha256": "42ce32bee2250895286402d52bef2561d867a5eb81315388c75e9ee05a48f6d4",
+}
+`;

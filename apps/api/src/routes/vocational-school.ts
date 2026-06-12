@@ -16,6 +16,7 @@
 
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { AbsenceType } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
   runVocationalSchoolGeneration,
@@ -159,7 +160,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       const absences = await app.prisma.absence.findMany({
         where: {
           deletedAt: null,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           startDate: { gte: fromDate, lte: toDate },
           employee: { tenantId },
           ...(employeeIdFilter ? { employeeId: employeeIdFilter } : {}),
@@ -250,7 +251,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         const created = await app.prisma.absence.create({
           data: {
             employeeId: employee.id,
-            type: "VOCATIONAL_SCHOOL",
+            type: AbsenceType.VOCATIONAL_SCHOOL,
             source: "MANUAL",
             startDate: dateUtc,
             endDate: dateUtc,
@@ -318,7 +319,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
   //   2. Zod path-param parse (UUID) → 400 via global error handler.
   //   3. Cross-tenant Absence lookup (T-g8l-01) — 404 if employee.tenantId !== caller.
   //      Same 404 shape as already-deleted (gate 5) to avoid leaking existence.
-  //   4. Type guard: type !== "VOCATIONAL_SCHOOL" → 400. Protects against id-guessing
+  //   4. Type guard: type !== AbsenceType.VOCATIONAL_SCHOOL → 400. Protects against id-guessing
   //      across Absence subtypes — the route is BS-only.
   //   5. Idempotency / already-deleted guard (T-g8l-08) — 404 if deletedAt !== null.
   //      Soft-deleted rows are invisible to the API surface.
@@ -353,7 +354,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       }
 
       // (4) type guard — only BS-Tage are removable via this route.
-      if (absence.type !== "VOCATIONAL_SCHOOL") {
+      if (absence.type !== AbsenceType.VOCATIONAL_SCHOOL) {
         return reply.code(400).send({ error: "Eintrag ist kein Berufsschultag." });
       }
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
+import { AbsenceType } from "@clokr/db";
 
 /**
  * v1.7.4 hotfix — GET /api/v1/shifts/week emits schoolHoliday[] per cell.
@@ -130,7 +131,7 @@ describe("GET /shifts/week — SchoolHolidayPeriod (v1.7.4 hotfix)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: new Date(HOLIDAY_TUESDAY + "T00:00:00Z"),
         endDate: new Date(HOLIDAY_TUESDAY + "T00:00:00Z"),
         days: 1,

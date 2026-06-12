@@ -13,6 +13,7 @@
 // Test date: 2026-05-15 (Friday). Past relative to system today = 2026-06-01.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { AbsenceType } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -33,7 +34,7 @@ async function seedBsAbsence(app: FastifyInstance, employeeId: string, date: Dat
   return app.prisma.absence.create({
     data: {
       employeeId,
-      type: "VOCATIONAL_SCHOOL",
+      type: AbsenceType.VOCATIONAL_SCHOOL,
       source: "PATTERN",
       startDate: date,
       endDate: date,

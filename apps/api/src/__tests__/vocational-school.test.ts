@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { AbsenceType } from "@clokr/db";
 
 // Compute the next occurrence of a Mo-based weekday (0=Mo..6=So) strictly in the future.
 function nextDow(targetDow: number): Date {
@@ -230,7 +231,7 @@ describe("Berufsschule (Phase 62)", () => {
     const absences = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         deletedAt: null,
       },
     });
@@ -387,7 +388,7 @@ describe("Berufsschule (Phase 62)", () => {
     const absences = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         deletedAt: null,
       },
     });
@@ -448,7 +449,7 @@ describe("Berufsschule (Phase 62)", () => {
     expect(body2.skipped.existing).toBeGreaterThan(0);
 
     const absences = await app.prisma.absence.findMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+      where: { employeeId: data.employee.id, type: AbsenceType.VOCATIONAL_SCHOOL, deletedAt: null },
     });
     expect(absences.length).toBe(firstCount); // No duplicates.
   });
@@ -484,7 +485,7 @@ describe("Berufsschule (Phase 62)", () => {
     expect(body.created).toBe(5);
 
     const absences = await app.prisma.absence.findMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+      where: { employeeId: data.employee.id, type: AbsenceType.VOCATIONAL_SCHOOL, deletedAt: null },
       orderBy: { startDate: "asc" },
     });
     expect(absences).toHaveLength(5);
@@ -522,14 +523,14 @@ describe("Berufsschule (Phase 62)", () => {
 
     // After the first run, there must be at least one VOCATIONAL_SCHOOL Absence.
     const count = await app.prisma.absence.count({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+      where: { employeeId: data.employee.id, type: AbsenceType.VOCATIONAL_SCHOOL, deletedAt: null },
     });
     expect(count).toBeGreaterThan(0);
 
     // Re-running must be idempotent.
     await app.runVocationalSchoolGeneration!();
     const countAfter = await app.prisma.absence.count({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+      where: { employeeId: data.employee.id, type: AbsenceType.VOCATIONAL_SCHOOL, deletedAt: null },
     });
     expect(countAfter).toBe(count);
   });
@@ -543,7 +544,7 @@ describe("Berufsschule (Phase 62)", () => {
     const manual = await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: nextTuesday,
         endDate: nextTuesday,
         days: 1.0,
@@ -613,7 +614,7 @@ describe("Berufsschule (Phase 62)", () => {
     const vsOnSickDay = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: nextTuesday,
         deletedAt: null,
       },
@@ -685,7 +686,7 @@ describe("Berufsschule (Phase 62)", () => {
     const inLockedMonth = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: { gte: lockMonthStart, lte: lockMonthEnd },
         deletedAt: null,
       },
@@ -763,7 +764,7 @@ describe("Berufsschule (Phase 62)", () => {
     const onFerienDay = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: nextTuesday,
         deletedAt: null,
       },
@@ -813,7 +814,7 @@ describe("Berufsschule (Phase 62)", () => {
     const onFerienDay = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: nextTuesday,
         deletedAt: null,
       },
@@ -863,7 +864,7 @@ describe("Berufsschule (Phase 62)", () => {
     const onFerienDay = await app.prisma.absence.findMany({
       where: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         startDate: nextTuesday,
         deletedAt: null,
       },
@@ -946,7 +947,7 @@ describe("Berufsschule (Phase 62)", () => {
     expect(r2.skipped.existing).toBeGreaterThanOrEqual(firstCount);
 
     const absences = await app.prisma.absence.findMany({
-      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+      where: { employeeId: data.employee.id, type: AbsenceType.VOCATIONAL_SCHOOL, deletedAt: null },
     });
     expect(absences.length).toBe(firstCount);
 

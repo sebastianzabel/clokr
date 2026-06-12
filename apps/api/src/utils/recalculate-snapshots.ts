@@ -16,6 +16,8 @@ import {
   getDayHoursFromSchedule,
 } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
+// Phase 78 — adapter (compat-routed). Closes ARCHITECTURE §1.6.1 BS-doubling drift gap.
+import { loadWorkEventsForRange } from "./work-event";
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -269,8 +271,26 @@ export async function recalculateSnapshots(
       }
     }
 
-    const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
-    const balanceMinutes = Math.round(workedMinutes - netExpected);
+    // Phase 78 — close BS-doubling drift gap (ARCHITECTURE §1.6.1).
+    // Before this fix, recalculateSnapshots wrote snapshots WITHOUT BS doubling,
+    // causing drift vs the live updateOvertimeAccount path by N × bsMin per BS day.
+    // Adapter routes via tenant.workEventModelLive (compat) so legacy + post-migration
+    // tenants are both correct. Per Phase 63 D-01..D-04: FIXED/SHIFT_BASED double
+    // (BS adds to BOTH worked AND expected); MONTHLY_HOURS adds to worked only —
+    // encoded inside the adapter via per-BS-date schedule resolution (D-12).
+    const bsAggregate = await loadWorkEventsForRange(
+      app.prisma,
+      employeeId,
+      monthStart,
+      // half-open [start, end+1day) preserves the inclusive endDate semantics
+      // used by monthEnd elsewhere in this loop.
+      new Date(monthEnd.getTime() + 24 * 60 * 60 * 1000),
+    );
+    const totalWorked = workedMinutes + bsAggregate.workedMinutes;
+    const totalExpected = expectedMinutes + bsAggregate.expectedMinutes;
+
+    const netExpected = Math.max(0, totalExpected - holidayMinutes - leaveMinutes);
+    const balanceMinutes = Math.round(totalWorked - netExpected);
     const isTrackOnly = schedule.overtimeMode === "TRACK_ONLY";
     const carryOver = isTrackOnly ? 0 : runningCarryOver + balanceMinutes;
 
@@ -278,7 +298,7 @@ export async function recalculateSnapshots(
     await app.prisma.saldoSnapshot.update({
       where: { id: snapshot.id },
       data: {
-        workedMinutes: Math.round(workedMinutes),
+        workedMinutes: Math.round(totalWorked),
         expectedMinutes: Math.round(netExpected),
         balanceMinutes,
         carryOver,
@@ -293,7 +313,7 @@ export async function recalculateSnapshots(
       entityId: snapshot.id,
       oldValue: oldValues,
       newValue: {
-        workedMinutes: Math.round(workedMinutes),
+        workedMinutes: Math.round(totalWorked),
         expectedMinutes: Math.round(netExpected),
         balanceMinutes,
         carryOver,

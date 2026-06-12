@@ -7,7 +7,7 @@
 //   D-10 — Hard block when ALL hold:
 //     1. Employee classification === "AZUBI"
 //     2. birthDate set AND age at `date` < 18 (JArbSchG §9 Abs. 1 Nr. 2)
-//     3. VOCATIONAL_SCHOOL Absence exists for (employeeId, date), not soft-deleted
+//     3. Berufsschule-Absence exists for (employeeId, date), not soft-deleted
 //     4. plannedNetWorkMin > 225 (= 5 UStd × 45 min)
 //   D-11 — Verbatim German error message (UStd vocabulary + statute reference)
 //   D-12 — Soft-warn when AZUBI ≥ 18 on a BS-day with > 225 net work min:
@@ -26,6 +26,8 @@ import {
   JARBSCHG_MAX_WORK_ON_BS_DAY_MIN,
   JARBSCHG_MINOR_AGE_THRESHOLD,
 } from "./vocational-school-constants.js";
+// Phase 78 — adapter helper (compat-routed via tenant.workEventModelLive).
+import { hasBsOnDate } from "./work-event.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -82,15 +84,6 @@ export function ageAtDate(birthDate: Date, atDate: Date): number {
   return years;
 }
 
-/** Compute [start, next) UTC midnight range for the calendar date of `date`. */
-function dateRangeUtc(date: Date): { start: Date; next: Date } {
-  const start = new Date(
-    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0),
-  );
-  const next = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-  return { start, next };
-}
-
 // ── Core helper ──────────────────────────────────────────────────────────────
 
 /**
@@ -101,7 +94,7 @@ function dateRangeUtc(date: Date): { start: Date; next: Date } {
  * is missing:
  *   - Employee not found
  *   - Classification !== AZUBI
- *   - No VOCATIONAL_SCHOOL Absence on `date` (or soft-deleted)
+ *   - No Berufsschule-Absence on `date` (or soft-deleted)
  *   - Planned net work ≤ 225 min
  *   - birthDate is null (fail-open per RESEARCH A1)
  */
@@ -121,18 +114,9 @@ export async function checkJArbSchG(
   if (employee.classification !== "AZUBI") return { blocked: false, message: null };
 
   // 2. Check that the day is a BS-day (soft-delete-aware). Without a BS Absence the
-  //    rule simply doesn't apply.
-  const { start, next } = dateRangeUtc(args.date);
-  const bs = await prisma.absence.findFirst({
-    where: {
-      employeeId: args.employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { gte: start, lt: next },
-    },
-    select: { id: true },
-  });
-  if (!bs) return { blocked: false, message: null };
+  //    rule simply doesn't apply. Phase 78 — adapter-routed BS detection.
+  const hasBs = await hasBsOnDate(prisma, args.employeeId, args.date);
+  if (!hasBs) return { blocked: false, message: null };
 
   // 3. JArbSchG only fires above the 225-min threshold. Below that, both AZUBI < 18
   //    and AZUBI ≥ 18 are silently allowed (the route's existing ArbZG check may still

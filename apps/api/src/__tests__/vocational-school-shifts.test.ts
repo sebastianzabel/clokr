@@ -10,6 +10,7 @@
 //   T-63-20: Tampering — shift creation on BS day is rejected by existing conflict path
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { AbsenceType } from "@clokr/db";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -81,7 +82,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: targetDate,
         endDate: targetDate,
@@ -112,7 +113,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: targetDate,
         endDate: targetDate,
@@ -148,7 +149,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: targetDate,
         endDate: targetDate,
@@ -181,7 +182,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: targetDate,
         endDate: targetDate,
@@ -228,7 +229,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: monday,
         endDate: monday,
@@ -273,7 +274,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
       await app.prisma.absence.create({
         data: {
           employeeId: data.employee.id,
-          type: "VOCATIONAL_SCHOOL",
+          type: AbsenceType.VOCATIONAL_SCHOOL,
           source: "PATTERN",
           startDate: day,
           endDate: day,
@@ -299,7 +300,7 @@ describe("Berufsschule shifts (Phase 63 Plan 04 Task 3)", () => {
     await app.prisma.absence.create({
       data: {
         employeeId: data.employee.id,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: monday,
         endDate: monday,

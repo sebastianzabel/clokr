@@ -1,8 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { AbsenceType } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
-import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+// Phase 78 — adapter helper (compat-routed via tenant.workEventModelLive).
+import { getBsMinutesForDate } from "../utils/work-event";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
@@ -65,7 +67,7 @@ interface CoverageInfo {
 }
 
 // Availability classification per employee × day
-// Phase 63 D-20 — added "vocational_school" for VOCATIONAL_SCHOOL absences. Sits
+// Phase 63 D-20 — added "vocational_school" for Berufsschule-Absences. Sits
 // between "special" (rank 4, tie) and "other" semantically; rank function below
 // places it at 4 alongside "special" so sick (6) and vacation (5) still win ties.
 type Availability =
@@ -100,10 +102,10 @@ function classifyAbsenceType(type: string): Availability {
       return "sick";
     case "SPECIAL_LEAVE":
       return "special";
-    // Phase 63 D-20 — VOCATIONAL_SCHOOL routes to its own bucket. Without this case
+    // Phase 63 D-20 — Berufsschule routes to its own bucket. Without this case
     // it would fall through to "other" (rank 3), losing the lock-icon semantic in
     // the shift planner and the dedicated badge in the frontend (Plan 05).
-    case "VOCATIONAL_SCHOOL":
+    case AbsenceType.VOCATIONAL_SCHOOL:
       return "vocational_school";
     case "MATERNITY":
     case "PARENTAL":
@@ -1108,19 +1110,13 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      // Phase 63 follow-up (post-v1.7) — Soll-Korrelation must count BS days as
-      // worked minutes (D-01..D-04). The /shifts/week Soll-Korrelation row was
-      // missed in Plan 03 (which patched overtime, auto-close, arbzg, time-entries
-      // but not shifts.ts). Aggregate per employee using the same
-      // `getVocationalSchoolMinutesForDate` helper so block-week cap (D-02) and
-      // tenant-config (vocationalSchoolMinutesPerDay) semantics stay in lockstep
-      // with the saldo math. CLAUDE.md soft-delete rule is enforced inside the
-      // helper (deletedAt: null).
+      // Phase 78 — Soll-Korrelation uses adapter helper (compat-routed via
+      // tenant.workEventModelLive). The adapter encodes Phase 63 D-01..D-04
+      // doubling rule + tenant-config (vocationalSchoolMinutesPerDay) +
+      // block-week cap (D-02) internally — caller no longer threads tenantConfig.
       const tenantConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId },
         select: {
-          vocationalSchoolMinutesPerDay: true,
-          vocationalSchoolBlockMinutesPerWeek: true,
           // v1.7.3: needed for Soll-Korrelation break deduction
           defaultBreakOver6h: true,
           defaultBreakOver9h: true,
@@ -1135,12 +1131,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           // round-trips on weeks without any BS data.
           const av = availabilityMap.get(keyOf(emp.id, iso))?.availability;
           if (av !== "vocational_school") continue;
-          const min = await getVocationalSchoolMinutesForDate(
-            app.prisma,
-            emp.id,
-            new Date(iso + "T00:00:00Z"),
-            tenantConfig,
-          );
+          const min = await getBsMinutesForDate(app.prisma, emp.id, new Date(iso + "T00:00:00Z"));
           total += min;
         }
         if (total > 0) vocationalSchoolMinutesByEmp[emp.id] = total;
@@ -1210,17 +1201,18 @@ export async function shiftRoutes(app: FastifyInstance) {
       });
 
       // Phase 76.12 — Separate Absence query for Soll-subtraction. EXCLUDES
-      // VOCATIONAL_SCHOOL (BBiG §15: BS-Tag = Arbeitstag, NOT abwesend) and
+      // Berufsschule (BBiG §15: BS-Tag = Arbeitstag, NOT abwesend) and
       // PATTERN-source (auto-generated, not an approved absence). Filtered at
       // the Prisma where-clause per CONTEXT D-11 (not post-hoc in JS) so intent
       // is visible in code review. The general `absences` array loaded at L809
       // remains UNFILTERED for the availability/calendar display — there a BS
       // day MUST still show as "absent".
+      // Phase 78 D-03 — use AbsenceType enum (banned string literal).
       const absencesForSoll = await app.prisma.absence.findMany({
         where: {
           employee: { tenantId },
           deletedAt: null,
-          type: { not: "VOCATIONAL_SCHOOL" },
+          type: { not: AbsenceType.VOCATIONAL_SCHOOL },
           source: { not: "PATTERN" },
           startDate: { lte: sunday },
           endDate: { gte: monday },

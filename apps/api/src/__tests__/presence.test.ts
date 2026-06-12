@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolvePresenceState } from "../utils/presence";
+import { AbsenceType } from "@clokr/db";
 
 // Helpers
 const future = true;
@@ -147,7 +148,7 @@ describe("resolvePresenceState", () => {
     const result = resolvePresenceState({
       entries: [],
       leave: null,
-      absence: { type: "VOCATIONAL_SCHOOL" },
+      absence: { type: AbsenceType.VOCATIONAL_SCHOOL },
       isWorkday: workday,
       isFuture: past,
       hasShift: noShift,

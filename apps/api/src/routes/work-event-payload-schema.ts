@@ -33,6 +33,7 @@
 // Strictness is added in v1.10 when the actual payload shape stabilizes per-type owner.
 
 import { z } from "zod";
+import { WorkEventType } from "@clokr/db";
 
 // ── VOCATIONAL_SCHOOL — v1.9 strict variant ────────────────────────────────────
 // Fields map to BBiG §15 Abs. 2 Nr. 1/2/3 slot model (FEATURES.md L86-99):
@@ -45,7 +46,7 @@ import { z } from "zod";
 // All fields optional — the payload may be {} for legacy / unresolved rows.
 // Phase 83 (BVaDiG 2024 conformance) tightens this further per the extensions pattern.
 export const vocationalSchoolPayloadSchema = z.object({
-  type: z.literal("VOCATIONAL_SCHOOL"),
+  type: z.literal(WorkEventType.VOCATIONAL_SCHOOL),
   ordinalInWeek: z.number().int().min(1).max(3).optional(),
   isBlockWeek: z.boolean().optional(),
   capWeekly: z.number().int().min(0).optional(),

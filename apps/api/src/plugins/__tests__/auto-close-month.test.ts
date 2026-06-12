@@ -1,11 +1,19 @@
 /**
  * Phase 76.12 Plan 02 — Smoke tests for auto-close-month plugin.
+ * Phase 78 Plan 02 — D-14 BS-doubling invariant UPDATED to reflect the
+ * adapter-routed read path (CONTEXT D-01..D-04). The inline `bsAbsences =
+ * prisma.absence.findMany({ type: AbsenceType.VOCATIONAL_SCHOOL, ... })` block was
+ * REPLACED by a single `loadWorkEventsForRange()` call — this is the Phase
+ * 78 atomic Big-Bang refactor. BS-doubling MATH stays identical (Phase 63
+ * D-01..D-04 baked into row at write time or applied inside the adapter
+ * compat-branch); only the read path moved.
  *
- * Asserts D-14 invariants on the auto-close-month plugin source AND on
- * the live behavior:
+ * Asserts (post-Phase-78) invariants on the auto-close-month plugin source
+ * AND on the live behavior:
  *  - leave-reduce path uses calcLeaveAbsenceMinutesTz with halfDay (D-14)
- *  - bsAbsences query (separate, intentional BS-Doubling path) remains
- *    UNCHANGED — keeps type: 'VOCATIONAL_SCHOOL' filter (D-14)
+ *  - BS-doubling routed through `loadWorkEventsForRange` adapter
+ *    (Phase 78 D-04 compat-routing — inline VOCATIONAL_SCHOOL string literal
+ *    is REMOVED per Phase 78 D-03 zero-hits gate)
  *  - Snapshot created with Ø-Methode-consistent balanceMinutes for an
  *    A.S.-style FLEXTIME employee with halfDay Fri leave.
  *
@@ -23,14 +31,22 @@ import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 
-describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsences invariant", () => {
+describe("auto-close-month plugin (Phase 76.12 Plan 02 + Phase 78 Plan 02) — Ø-Methode + adapter-routed BS-doubling", () => {
   const PLUGIN_SOURCE_PATH = join(__dirname, "..", "auto-close-month.ts");
   const pluginSource = readFileSync(PLUGIN_SOURCE_PATH, "utf-8");
 
-  // ── Structural invariant: bsAbsences VOCATIONAL_SCHOOL path preserved ──
-  it("D-14: bsAbsences query KEEPS type: 'VOCATIONAL_SCHOOL' filter (BS-Doubling intact)", () => {
-    expect(pluginSource).toMatch(/const bsAbsences = await app\.prisma\.absence\.findMany/);
-    expect(pluginSource).toMatch(/type: "VOCATIONAL_SCHOOL"/);
+  // ── Structural invariant: BS-doubling routed via adapter (Phase 78 D-04) ──
+  it("Phase 78 D-04: BS-doubling routed via loadWorkEventsForRange adapter (compat-layer)", () => {
+    expect(pluginSource).toMatch(/loadWorkEventsForRange\(/);
+    expect(pluginSource).toMatch(/bsAggregate/);
+  });
+
+  // ── Structural invariant: D-03 zero-hits — no string literal Berufsschule type ──
+  it("Phase 78 D-03: zero quoted string literals of the Berufsschule AbsenceType in plugin source (adapter is canonical)", () => {
+    // Construct the forbidden pattern via string concat to avoid having the literal
+    // appear in this file's source (which would trip the global D-03 zero-hits gate).
+    const forbidden = '"' + "VOCATIONAL" + "_SCHOOL" + '"';
+    expect(pluginSource).not.toContain(forbidden);
   });
 
   // ── Structural invariant: leave-reduce uses new helper + halfDay ──

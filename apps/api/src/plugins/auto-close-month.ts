@@ -10,7 +10,8 @@ import {
 } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
-import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+// Phase 78 — adapter (compat-routed via tenant.workEventModelLive).
+import { loadWorkEventsForRange } from "../utils/work-event";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -318,43 +319,21 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             }, 0);
           }
 
-          // Phase 63 — Berufsschule (BS) doubling for the auto-snapshot path.
-          // Per D-01..D-04: VOCATIONAL_SCHOOL absences contribute the same minutes to
-          // BOTH workedMinutes AND expectedMinutes for FIXED_SCHEDULE / SHIFT_BASED
-          // (balance neutral). MONTHLY_HOURS only adds to workedMinutes (D-04).
-          // Note: this snapshot path historically does not subtract general absences from
-          // expected (unlike close-month in overtime.ts) — but BS-doubling stays
-          // consistent across both paths so live + snapshot saldo agree (RESEARCH Pitfall #2).
-          const bsAbsences = await app.prisma.absence.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null, // CLAUDE.md soft-delete rule
-              type: "VOCATIONAL_SCHOOL",
-              startDate: { lte: monthEnd },
-              endDate: { gte: effectiveStart },
-            },
-          });
-          let bsWorkedMinutes = 0;
-          let bsExpectedMinutes = 0;
-          const acmScheduleType = String(schedule.type ?? "");
-          for (const ab of bsAbsences) {
-            const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-            const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-            const cur = new Date(start);
-            while (cur <= end) {
-              const bsMin = await getVocationalSchoolMinutesForDate(
-                app.prisma,
-                emp.id,
-                cur,
-                tenant.config,
-              );
-              bsWorkedMinutes += bsMin;
-              if (acmScheduleType !== "MONTHLY_HOURS") {
-                bsExpectedMinutes += bsMin;
-              }
-              cur.setUTCDate(cur.getUTCDate() + 1);
-            }
-          }
+          // Phase 78 — adapter-routed BS doubling (CONTEXT D-04). The adapter
+          // encodes Phase 63 D-01..D-04 per-Schedule-Type contribution internally:
+          // FIXED_SCHEDULE / SHIFT_BASED add to BOTH workedMinutes AND expectedMinutes;
+          // MONTHLY_HOURS adds to workedMinutes only (D-04). Per-BS-date schedule
+          // resolution (D-12 accept-stale) happens inside the adapter; caller no
+          // longer branches on acmScheduleType. Closes RESEARCH Pitfall #2 drift.
+          const bsAggregate = await loadWorkEventsForRange(
+            app.prisma,
+            emp.id,
+            effectiveStart,
+            // half-open [start, end+1day) preserves the inclusive endDate semantic.
+            new Date(monthEnd.getTime() + 24 * 60 * 60 * 1000),
+          );
+          const bsWorkedMinutes = bsAggregate.workedMinutes;
+          const bsExpectedMinutes = bsAggregate.expectedMinutes;
 
           const totalWorked = workedMinutes + bsWorkedMinutes;
           const totalExpected = expectedMinutes + bsExpectedMinutes;

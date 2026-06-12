@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
+import { AbsenceType } from "@clokr/db";
 
 /**
  * Phase 76.12 Plan 02 — Smoke tests for GET /api/v1/shifts/week
@@ -119,7 +120,7 @@ describe("GET /shifts/week — Ø-Methode leave/absence aggregation (Phase 76.12
     const ab = await app.prisma.absence.create({
       data: {
         employeeId: asEmployeeId,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: new Date("2026-06-02"),
         endDate: new Date("2026-06-02"),

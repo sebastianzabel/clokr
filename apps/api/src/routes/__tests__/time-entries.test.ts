@@ -18,6 +18,7 @@ import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup
 import { updateOvertimeAccount } from "../time-entries";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+import { AbsenceType } from "@clokr/db";
 
 describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtraction", () => {
   let app: FastifyInstance;
@@ -222,7 +223,7 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
     await app.prisma.absence.create({
       data: {
         employeeId: asFlexId,
-        type: "VOCATIONAL_SCHOOL",
+        type: AbsenceType.VOCATIONAL_SCHOOL,
         source: "PATTERN",
         startDate: new Date("2026-06-02"),
         endDate: new Date("2026-06-02"),

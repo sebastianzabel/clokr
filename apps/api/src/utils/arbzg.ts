@@ -2,7 +2,8 @@ import { PrismaClient } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
 import { BS_DAILY_DEFAULT_MIN } from "./vocational-school-constants";
-import { countBsDaysInIsoWeek } from "./vocational-school-saldo";
+// Phase 78 — adapter helpers (compat-routed via tenant.workEventModelLive).
+import { hasBsOnDate, countBsDaysInIsoWeek, loadWorkEventsForRange } from "./work-event";
 
 export interface ArbZGWarning {
   code:
@@ -20,7 +21,7 @@ export interface ArbZGWarning {
  * Gibt eine Liste von Warnungen zurück (blockiert NICHT das Speichern).
  *
  * Phase 63 — Berufsschule integration (D-05..D-08):
- *   - VOCATIONAL_SCHOOL Absences contribute their `vocationalSchoolMinutesPerDay`
+ *   - Berufsschule Absences contribute their `vocationalSchoolMinutesPerDay`
  *     (per tenant, default 480) to every ArbZG branch:
  *       § 3 Tageshöchst (MAX_DAILY_EXCEEDED, mixed-day check)
  *       § 3 Wochensumme (MAX_WEEKLY_EXCEEDED)
@@ -71,20 +72,10 @@ export async function checkArbZG(
 
   const dateStr = dateStrInTz(changedDate, tz);
 
-  // Phase 63 — Is the changed date itself a BS day? Looked up once and reused by
-  // the §3 daily mixed-day branch + §5 rest-period BS-end heuristic.
-  const dayRangeStart = new Date(dateStr + "T00:00:00.000Z");
-  const dayRangeEnd = new Date(dateStr + "T23:59:59.999Z");
-  const bsAbsenceToday = await prisma.absence.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { lte: dayRangeEnd },
-      endDate: { gte: dayRangeStart },
-    },
-    select: { id: true, startDate: true },
-  });
+  // Phase 78 — adapter-routed BS-day detection (compat: Absence-branch for legacy
+  // tenants, WorkEvent-branch for migrated tenants). Reused by §3 daily mixed-day
+  // branch + §5 rest-period BS-end heuristic.
+  const bsAbsenceToday = await hasBsOnDate(prisma, employeeId, changedDate);
   const bsMinutesToday = bsAbsenceToday ? bsDailyMin : 0;
 
   // ── 1. Tagessicht: alle abgeschlossenen Slots des Tages ────────────────────
@@ -272,7 +263,7 @@ export async function checkArbZG(
     return sum + slotMin - Number(e.breakMinutes ?? 0);
   }, 0);
 
-  // Phase 63 D-05/D-08 — Add BS minutes for every VOCATIONAL_SCHOOL day in this
+  // Phase 63 D-05/D-08 — Add BS minutes for every Berufsschule-day in this
   // ISO week. countBsDaysInIsoWeek already honors `deletedAt: null`. We multiply
   // by the tenant's daily BS minutes; this MATCHES the daily contribution used
   // in §3 mixed-day. For block-weeks the per-day value already represents the
@@ -323,23 +314,19 @@ export async function checkArbZG(
       return sum + slotMin - Number(e.breakMinutes ?? 0);
     }, 0);
 
-    // Phase 63 D-05 — Count VOCATIONAL_SCHOOL absence days in the same 168-day
-    // window and multiply by bsDailyMin. We use a simple `count × daily` even on
-    // block weeks here because the 24-week denominator (144 Werktage) is so
-    // large that block-week capping vs. uncapped contribution makes a
-    // negligible difference (max delta over 24 weeks ≈ a few minutes/Werktag).
-    const bsAvgAbsences = await prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // CLAUDE.md soft-delete rule
-        type: "VOCATIONAL_SCHOOL",
-        startDate: { gte: windowStart, lte: changedDate },
-      },
-      select: { startDate: true },
-    });
-    const bsDistinctDaysInWindow = new Set(
-      bsAvgAbsences.map((a) => a.startDate.toISOString().slice(0, 10)),
-    ).size;
+    // Phase 78 — adapter-routed: coveredDates is canonical BS-day set (compat-routed
+    // for legacy tenants via Absence-branch). The 24-week denominator (144 Werktage)
+    // is large enough that block-week capping vs uncapped makes negligible difference
+    // — keep the simple `count × daily` calculation.
+    const bsAvg = await loadWorkEventsForRange(
+      prisma,
+      employeeId,
+      windowStart,
+      // loadWorkEventsForRange is half-open [start, end); add 1 day to changedDate
+      // so the inclusive `<= changedDate` semantic of the legacy code is preserved.
+      new Date(changedDate.getTime() + 86400000),
+    );
+    const bsDistinctDaysInWindow = bsAvg.coveredDates.size;
     const totalWithBsMin = totalNetMin + bsDistinctDaysInWindow * bsDailyMin;
 
     // 24 weeks × 6 Werktage (Mon–Sat) = 144 Werktage

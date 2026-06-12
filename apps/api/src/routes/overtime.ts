@@ -11,7 +11,9 @@ import {
   getDayHoursFromSchedule,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
-import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+// Phase 78 — adapter (compat-routed via tenant.workEventModelLive). Replaces inline
+// VOCATIONAL_SCHOOL Absence query + per-Schedule-Type doubling in close-month branches.
+import { loadWorkEventsForRange } from "../utils/work-event";
 import { getEffectiveBreakDuration } from "../utils/break-effective"; // v1.8.9 — SHIFT_BASED netto
 
 const createPlanSchema = z.object({
@@ -815,7 +817,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // declaration was removed because no other site in this file consults it.
 
       // Phase 63 — Berufsschule (BS) doubling accumulator. Each branch (SHIFT_BASED,
-      // standard) sets this from VOCATIONAL_SCHOOL absences; we add to workedMinutes
+      // standard) sets this from the Phase 78 adapter; we add to workedMinutes
       // once at the end so both paths share a single integration point.
       let workedMinutesBs = 0;
 
@@ -855,33 +857,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
 
-        // Phase 63 — Berufsschule (BS) doubling for the SHIFT_BASED close-month path.
-        // Per D-01..D-04: a VOCATIONAL_SCHOOL Absence on a workday adds the same minutes
-        // to BOTH workedMinutes AND expectedMinutes (FIXED_SCHEDULE / SHIFT_BASED) so the
-        // balance stays neutral. Block-week cap (D-02 revised) is enforced inside
-        // getVocationalSchoolMinutesForDate. MONTHLY_HOURS (D-04) adds to worked only.
-        let bsWorkedMinutes = 0;
-        let bsExpectedMinutes = 0;
-        for (const ab of absences) {
-          if (ab.type !== "VOCATIONAL_SCHOOL") continue;
-          // VOCATIONAL_SCHOOL Absences from Phase 62 generator are single-day rows
-          // (startDate === endDate). Defensive fallback: iterate the date range.
-          const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-          const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-          const cur = new Date(start);
-          while (cur <= end) {
-            const bsMin = await getVocationalSchoolMinutesForDate(
-              app.prisma,
-              employeeId,
-              cur,
-              tenantConfig,
-            );
-            bsWorkedMinutes += bsMin;
-            // SHIFT_BASED behaves like FIXED_SCHEDULE for BS doubling — both Soll-bearing.
-            bsExpectedMinutes += bsMin;
-            cur.setUTCDate(cur.getUTCDate() + 1);
-          }
-        }
+        // Phase 78 — adapter-routed BS doubling (CONTEXT D-04). The adapter
+        // encodes Phase 63 D-01..D-04 per-Schedule-Type contribution + block-week
+        // cap + tenant-config internally. Per-BS-date schedule resolution (D-12
+        // accept-stale) lives inside the adapter.
+        const bsAggregate = await loadWorkEventsForRange(
+          app.prisma,
+          employeeId,
+          effectiveStart,
+          new Date(monthEnd.getTime() + 24 * 60 * 60 * 1000),
+        );
+        const bsWorkedMinutes = bsAggregate.workedMinutes;
+        const bsExpectedMinutes = bsAggregate.expectedMinutes;
 
         const coveredDates = new Set<string>();
         const addRange = (s: Date, e: Date) => {
@@ -1024,40 +1011,22 @@ export async function overtimeRoutes(app: FastifyInstance) {
           }, 0);
         }
 
-        // Phase 63 — Berufsschule (BS) doubling for the standard close-month path.
-        // Per D-01..D-04 the BS day contributes the same minutes to BOTH workedMinutes
-        // AND expectedMinutes for FIXED_SCHEDULE / FLEXTIME (balance neutral).
-        // MONTHLY_HOURS (D-04) only adds to workedMinutes — the Phase 58 rule already
-        // skips absence-deduction from expected, so we mirror that with skip-on-expected.
-        // The absenceMinutes subtractor is left unchanged: BS days are normal absences
-        // that subtract the schedule's daily target; adding bsExpectedMinutes restores
-        // the same magnitude, achieving the D-01 net-zero on saldo.
-        let bsWorkedMinutes = 0;
-        let bsExpectedMinutes = 0;
-        for (const ab of absences) {
-          if (ab.type !== "VOCATIONAL_SCHOOL") continue;
-          const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-          const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-          const cur = new Date(start);
-          while (cur <= end) {
-            const bsMin = await getVocationalSchoolMinutesForDate(
-              app.prisma,
-              employeeId,
-              cur,
-              tenantConfig,
-            );
-            bsWorkedMinutes += bsMin;
-            if (scheduleType !== "MONTHLY_HOURS") {
-              bsExpectedMinutes += bsMin;
-            }
-            cur.setUTCDate(cur.getUTCDate() + 1);
-          }
-        }
-        expectedMinutes += bsExpectedMinutes;
-        // bsWorkedMinutes is added to workedMinutes below (post-branch) so both
-        // SHIFT_BASED and standard paths share a single accumulator update.
-        // Stash on a function-scoped binding via direct mutation of workedMinutesBs:
-        workedMinutesBs += bsWorkedMinutes;
+        // Phase 78 — adapter-routed BS doubling (CONTEXT D-04). The adapter
+        // encodes Phase 63 D-01..D-04 per-Schedule-Type contribution internally.
+        // For MONTHLY_HOURS the adapter returns expectedMinutes=0; for FIXED_SCHEDULE
+        // / FLEXTIME / SHIFT_BASED expectedMinutes == workedMinutes (Soll-bearing).
+        // The absenceMinutes subtractor (above) already subtracts BS days as normal
+        // absences; adding bsAggregate.expectedMinutes here restores the same magnitude,
+        // achieving the D-01 net-zero on saldo for Soll-bearing schedules. The
+        // workedMinutesBs accumulator (post-branch) absorbs bsAggregate.workedMinutes.
+        const bsAggregate = await loadWorkEventsForRange(
+          app.prisma,
+          employeeId,
+          effectiveStart,
+          new Date(monthEnd.getTime() + 24 * 60 * 60 * 1000),
+        );
+        expectedMinutes += bsAggregate.expectedMinutes;
+        workedMinutesBs += bsAggregate.workedMinutes;
       }
 
       const netExpected = Math.max(
