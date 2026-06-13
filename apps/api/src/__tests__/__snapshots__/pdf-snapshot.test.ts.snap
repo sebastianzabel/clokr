@@ -1,0 +1,8 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Stundennachweis PDF snapshot (Phase 84 Plan 01) — DATEV-V19-01 > Stundennachweis PDF bytes match snapshot for Azubi+BS May 2026 scenario 1`] = `
+{
+  "byteLength": 2782,
+  "sha256": "36f7bca932ebb34b7528901efcf6d792ef4ba684a81083d6e54979c0649dba9c",
+}
+`;

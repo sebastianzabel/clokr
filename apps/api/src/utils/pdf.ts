@@ -4,7 +4,7 @@ import PDFDocument from "pdfkit";
 const BRAND_COLOR = "#4f46e5";
 const HEADER_H = 44;
 
-interface MonthlyReportData {
+export interface MonthlyReportData {
   tenantName: string;
   employeeName: string;
   employeeNumber: string;
@@ -111,7 +111,21 @@ function drawSmallFooter(doc: PDFKit.PDFDocument): void {
 }
 
 // ── generateMonthlyReportPdf (PDF-04: improved layout, same signature) ────────
-export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffer> {
+
+/**
+ * Phase 84 Plan 01 — DATEV-V19-01.
+ * Optional injection point so snapshot tests can pin the footer date and
+ * eliminate the only source of non-determinism in the rendered PDF.
+ * Backwards-compatible: omitted = current behavior (new Date()).
+ */
+export interface GenerateMonthlyReportPdfOptions {
+  createdAt?: string;
+}
+
+export function generateMonthlyReportPdf(
+  data: MonthlyReportData,
+  options?: GenerateMonthlyReportPdfOptions,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: "A4", margin: 50, bufferPages: true });
     const chunks: Buffer[] = [];
@@ -218,7 +232,7 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
         .font("Helvetica")
         .fillColor("#6b7280")
         .text(
-          `Erstellt am ${new Date().toLocaleDateString("de-DE")}  \u00b7  Seite ${i + 1} von ${range.count}  \u00b7  Clokr`,
+          `Erstellt am ${options?.createdAt ?? new Date().toLocaleDateString("de-DE")}  \u00b7  Seite ${i + 1} von ${range.count}  \u00b7  Clokr`,
           50,
           doc.page.height - 40,
           { align: "center", width: doc.page.width - 100 },

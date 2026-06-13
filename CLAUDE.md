@@ -568,6 +568,44 @@ When GSD executor worktrees merge back into the main branch, **the merge can sil
 
 **When merging a PR to main:** always run `git diff <branch>..main` before the PR is considered complete to catch any regressions introduced by the merge commit itself (e.g. reviewer edits on GitHub that don't flow back to the local branch).
 
+## Work-Event Modell
+
+A Berufsschultag (BS-Tag) is stored as a `WorkEvent` row (Prisma model `WorkEvent`, type VOCATIONAL_SCHOOL), NOT as an `Absence`. The same structure applies to the four reserved future event types FIELD_SERVICE, BUSINESS_TRIP, TRAINING, OTHER — data-only additions via the reserved enum values established in Phase 77 (no Prisma migration churn when new types are added). Do NOT create `Absence` rows with the VOCATIONAL_SCHOOL type in new code.
+
+Legacy Absence VS rows are migrated to `WorkEvent` in Phase 80 via the operator script at `apps/api/scripts/migrate-bs-to-work-event.ts`. The migration soft-deletes the original Absence rows (Revisionssicherheit per CLAUDE.md § Audit-Proof).
+
+Legacy `/api/v1/vocational-school/*` endpoints remain available as BC proxies through v1.10 (Deprecation + Sunset headers per RFC 8594; see `apps/api/src/routes/vocational-school.ts` and `docs/work-event-model.md` § BC Proxy Endpoints). Removal is deferred to the v1.10 milestone — do not consume these endpoints in new code.
+
+For model details, see `docs/work-event-model.md`. For per-tenant migration operations, see `docs/work-event-migration-runbook.md`.
+
+## Saldo Invariant (Work-Event Adapter)
+
+`workedMinutes` and `expectedMinutes` for BS-Tage are loaded EXCLUSIVELY via the canonical adapter `loadWorkEventsForRange(prisma, employeeId, from, to)` from `apps/api/src/utils/work-event.ts`:
+
+```typescript
+import { loadWorkEventsForRange } from "../utils/work-event";
+const result = await loadWorkEventsForRange(prisma, employeeId, from, to);
+```
+
+The adapter handles legacy/new routing internally via `TenantConfig.workEventModelLive` (false → reads legacy Absence; true → reads WorkEvent). No consumer code may bypass this.
+
+**Prohibition:** no inline filter on the VOCATIONAL_SCHOOL type literal and no direct `prisma.workEvent.findMany` call outside `apps/api/src/utils/work-event*.ts`.
+
+**Enforcer:** `apps/api/src/__tests__/zero-hits-vocational-school-gate.test.ts` (shipped in Phase 78) fails the test suite if the double-quoted form of the VOCATIONAL_SCHOOL literal appears in `apps/api/src/` outside the adapter + migration script allowlist.
+
+**Slot resolver rule:** any new BBiG §15 slot resolution MUST go through `resolveBsTagSlot()` in `apps/api/src/utils/bs-slot-resolver.ts` (Phase 83). Direct reads of `bsSlot*` fields on Employee, VocationalSchoolPattern, or TenantConfig outside the resolver are caught by the `lint:bs-slot-callers` script (`pnpm --filter @clokr/api lint:bs-slot-callers`, Phase 83 Plan 05).
+
+## Endpoint Design Rule — No Role-Branched Scoping
+
+API endpoints that return employee-scoped data MUST split self-view and management-view into separate endpoints. Never branch on `req.user.role` INSIDE a single endpoint handler to return different sets of employee records — this is the structural fix for the v1.8.12 cross-employee data leak class.
+
+Canonical split pattern (from `apps/api/src/routes/work-events.ts`):
+
+- `/work-events/mine` — always self-scoped (`req.user.employeeId`); role-independent; `preHandler: requireAuth`
+- `/work-events?employeeId=` — management view (ADMIN/MANAGER only); `employeeId` filter applied within the caller's tenant; `preHandler: requireRole("ADMIN", "MANAGER")`
+
+The type-level separation in `@clokr/types` (`WorkEventListMine` vs `WorkEventListTenant`) enforces this at compile time. Any future endpoint that returns employee records MUST follow this split pattern — one endpoint per scope, zero role branches inside a handler.
+
 <!-- GSD:workflow-end -->
 
 <!-- GSD:profile-start -->

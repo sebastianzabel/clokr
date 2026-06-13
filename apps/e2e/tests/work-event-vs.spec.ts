@@ -530,3 +530,236 @@ test.describe("Phase 82 — Consumer UI Touchpoints", () => {
     await expect(bsCalCell.first()).toBeVisible({ timeout: 10_000 });
   });
 });
+
+// ── Phase 84 test describe block ─────────────────────────────────────────────
+
+test.describe("Phase 84 — Milestone wrap-up E2E", () => {
+  /**
+   * Seed an EMPLOYEE-role user with a known password. Returns employeeId and
+   * email so the test can mint a JWT via real login later. The helper uses
+   * FIXED_WEEKLY (simplest schedule type — /mine endpoint is schedule-agnostic).
+   *
+   * Response key for login is `accessToken` (verified from auth.ts line 615).
+   */
+  async function createAzubiWithPassword(
+    tenant: WorkEventVsTenant,
+    firstName: string,
+    password: string = "test1234",
+  ): Promise<{ employeeId: string; email: string }> {
+    const stamp = Date.now().toString().slice(-8) + Math.floor(Math.random() * 1000);
+    const email = `azubi-${firstName.toLowerCase()}-${stamp}@${tenant.tenantId}.test`;
+    const body = {
+      firstName,
+      lastName: "Azubi",
+      email,
+      employeeNumber: `AZB-${stamp}`,
+      hireDate: new Date().toISOString(),
+      role: "EMPLOYEE",
+      password,
+      classification: "AZUBI",
+      scheduleType: "FIXED_WEEKLY",
+      weeklyHours: 40,
+      workDays: [1, 2, 3, 4, 5],
+    };
+    const res = await fetch(`${API_BASE}/api/v1/employees`, {
+      method: "POST",
+      headers: authHeaders(tenant),
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `createAzubiWithPassword (${firstName}): ${res.status} (tenant=${tenant.tenantId}) — ${await res.text().catch(() => "<no body>")}`,
+      );
+    }
+    const e = (await res.json()) as { id: string };
+    return { employeeId: e.id, email };
+  }
+
+  /**
+   * Mint an EMPLOYEE-role JWT via POST /api/v1/auth/login.
+   * API response shape: { accessToken: string, refreshToken: string, user: {...} }
+   * (verified from apps/api/src/routes/auth.ts line 614-615).
+   */
+  async function loginAsEmployee(email: string, password: string): Promise<string> {
+    const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!res.ok) {
+      throw new Error(
+        `loginAsEmployee (${email}): ${res.status} — ${await res.text().catch(() => "<no body>")}`,
+      );
+    }
+    const data = (await res.json()) as { accessToken?: string };
+    const token = data.accessToken;
+    if (!token) throw new Error(`loginAsEmployee (${email}): no accessToken in response`);
+    return token;
+  }
+
+  /**
+   * TEST-V19-03 — self-scope leak guard.
+   *
+   * Seeds two EMPLOYEE-role Azubis (A and B). Each has one BS WorkEvent.
+   * Asserts that GET /work-events/mine with Azubi A's JWT returns ONLY
+   * Azubi A's rows. Also asserts that ?employeeId=<B.id> on /mine is
+   * silently ignored (Phase 79 structural fix contract).
+   */
+  test("TEST-V19-03 — self-scope leak guard: EMPLOYEE-role /work-events/mine returns only own data", async ({
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+
+    // Seed two distinct Azubis with a known password.
+    const a = await createAzubiWithPassword(we, "Anton");
+    const b = await createAzubiWithPassword(we, "Berta");
+
+    // Seed one BS WorkEvent per Azubi so their rows are distinguishable.
+    const bsDate = yesterdayIso();
+    await createWorkEventBs(we, a.employeeId, bsDate);
+    await createWorkEventBs(we, b.employeeId, bsDate);
+
+    // Mint a real JWT for Azubi A via the login endpoint.
+    const aToken = await loginAsEmployee(a.email, "test1234");
+
+    const fromIso = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+    const toIso = new Date(Date.now() + 1 * 86400_000).toISOString().slice(0, 10);
+
+    // Plain /mine call — must return only Azubi A's rows.
+    const mineRes = await fetch(
+      `${API_BASE}/api/v1/work-events/mine?from=${fromIso}&to=${toIso}`,
+      { headers: { authorization: `Bearer ${aToken}` } },
+    );
+    expect(mineRes.status, `GET /mine should return 200, got ${mineRes.status}`).toBe(200);
+    const mineRows = (await mineRes.json()) as Array<{ employeeId: string }>;
+
+    // Self-scope assertion: exactly one row, belonging to Azubi A.
+    expect(mineRows.length, "Expected exactly 1 row for Azubi A").toBe(1);
+    expect(mineRows[0].employeeId, "Row must belong to Azubi A").toBe(a.employeeId);
+    expect(
+      mineRows.find((r) => r.employeeId === b.employeeId),
+      "Azubi B's row MUST NOT appear in Azubi A's /mine response (T-84-01 leak guard)",
+    ).toBeUndefined();
+
+    // Phase 79 contract: ?employeeId= on /mine is IGNORED (server overrides with
+    // req.user.employeeId regardless of what the query string says).
+    const mineWithSpoofRes = await fetch(
+      `${API_BASE}/api/v1/work-events/mine?from=${fromIso}&to=${toIso}&employeeId=${b.employeeId}`,
+      { headers: { authorization: `Bearer ${aToken}` } },
+    );
+    expect(mineWithSpoofRes.status).toBe(200);
+    const spoofRows = (await mineWithSpoofRes.json()) as Array<{ employeeId: string }>;
+    expect(
+      spoofRows.length,
+      "?employeeId= spoof on /mine MUST be ignored — still returns only Azubi A's rows",
+    ).toBe(1);
+    expect(spoofRows[0].employeeId).toBe(a.employeeId);
+  });
+
+  /**
+   * TEST-V19-03 — management endpoint role gate.
+   *
+   * An EMPLOYEE-role JWT must receive 403 on GET /work-events (no /mine suffix).
+   * 403 (not 200, not 401) is the precise contract: the route uses requireRole()
+   * which short-circuits at the authorization layer, not the authentication layer.
+   */
+  test("TEST-V19-03 — management endpoint role gate: EMPLOYEE GET /work-events returns 403", async ({
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+    const a = await createAzubiWithPassword(we, "Caesar");
+    const aToken = await loginAsEmployee(a.email, "test1234");
+
+    const fromIso = new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10);
+    const toIso = new Date(Date.now() + 1 * 86400_000).toISOString().slice(0, 10);
+
+    const res = await fetch(`${API_BASE}/api/v1/work-events?from=${fromIso}&to=${toIso}`, {
+      headers: { authorization: `Bearer ${aToken}` },
+    });
+
+    // Primary assertion: role gate fires with 403.
+    expect(res.status, "EMPLOYEE on /work-events MUST be 403 (T-84-02 role gate)").toBe(403);
+    // Negative regression guards:
+    expect(res.status, "200 would be the v1.8.12 leak class (role-branched scoping)").not.toBe(200);
+    expect(res.status, "401 would indicate auth-only failure, not role gate").not.toBe(401);
+  });
+
+  /**
+   * TEST-V19-03 — management view employee-switch re-fetch.
+   *
+   * On /team/time-entries, switching from employee C to employee D must fire
+   * a NEW GET /work-events?employeeId=<D.id> (not reuse cached data from C).
+   * This guards T-84-03: silent misattribution where the UI shows C's data
+   * under D's name after the switch.
+   */
+  test("TEST-V19-03 — management view: /team/time-entries re-fetches /work-events?employeeId= on employee switch", async ({
+    page,
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+
+    // Seed two Azubis with BS WorkEvents so they appear in the management calendar.
+    const c = await createAzubiWithPassword(we, "ChristineFoo");
+    const d = await createAzubiWithPassword(we, "DorisBar");
+
+    const bsDate = yesterdayIso();
+    await createWorkEventBs(we, c.employeeId, bsDate);
+    await createWorkEventBs(we, d.employeeId, bsDate);
+
+    // Capture every /work-events?employeeId= GET before navigation starts.
+    const empIdRequests: string[] = [];
+    page.on("request", (req) => {
+      const url = req.url();
+      if (
+        url.includes("/api/v1/work-events") &&
+        url.includes("employeeId=") &&
+        req.method() === "GET"
+      ) {
+        empIdRequests.push(url);
+      }
+    });
+
+    await loginWithToken(page, tenant.adminToken);
+    await page.goto("/team/time-entries");
+
+    // Open the employee combobox and select ChristineFoo.
+    const empInputWrap = page.locator(".emp-input-wrap").first();
+    await empInputWrap.click();
+    const listbox = page.locator("[role='listbox'].emp-dropdown");
+    await expect(listbox).toBeVisible({ timeout: 5_000 });
+    await page.locator("[role='option']").filter({ hasText: "ChristineFoo" }).click();
+
+    // Wait for the first ?employeeId=<C.id> GET to confirm selection fired a fetch.
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events") &&
+        r.url().includes(`employeeId=${c.employeeId}`) &&
+        r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // Now switch to DorisBar.
+    await empInputWrap.click();
+    await expect(listbox).toBeVisible({ timeout: 5_000 });
+    await page.locator("[role='option']").filter({ hasText: "DorisBar" }).click();
+
+    // Wait for the ?employeeId=<D.id> GET — proves the page re-fetched (not cached C's data).
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events") &&
+        r.url().includes(`employeeId=${d.employeeId}`) &&
+        r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // Final assertions on captured URLs.
+    expect(
+      empIdRequests.some((u) => u.includes(`employeeId=${c.employeeId}`)),
+      "Expected at least one /work-events?employeeId=<C.id> GET (T-84-03: initial selection)",
+    ).toBe(true);
+    expect(
+      empIdRequests.some((u) => u.includes(`employeeId=${d.employeeId}`)),
+      "Expected at least one /work-events?employeeId=<D.id> GET (T-84-03: re-fetch on switch)",
+    ).toBe(true);
+  });
+});
