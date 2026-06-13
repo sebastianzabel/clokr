@@ -14,6 +14,7 @@
 <script lang="ts">
   import { api } from "$api/client";
   import Icon from "$lib/components/Icon.svelte";
+  import { workEvents } from "$stores/workEvents";
 
   // Phase 49.4 — Dashboard week view for non-SHIFT_BASED users.
   // Shows Mo–So with worked vs expected hours per AZ-Modell, holidays, leave, sickness.
@@ -35,6 +36,11 @@
     leaveType: string | null;
     absenceType: string | null;
     shift: MyWeekShift | null;
+    // Phase 82 (UI-V19-09): injected client-side from a parallel
+    // /work-events/mine fetch. Present iff a VOCATIONAL_SCHOOL WorkEvent
+    // exists for this date. Server NEVER sets this field — the
+    // /dashboard/my-week response omits it.
+    isVocationalSchool?: boolean;
   }
   interface MyWeekResponse {
     weekDays: string[];
@@ -90,7 +96,41 @@
     error = "";
     try {
       const date = ymd(cursorMonday);
-      data = await api.get<MyWeekResponse>(`/dashboard/my-week?date=${date}`);
+      // Week-end = Monday + 6 days. Matches the 7-day Mo–So strip rendered
+      // by the existing days[] grid.
+      const weekEndDate = ymd(new Date(cursorMonday.getTime() + 6 * 86400000));
+      // Phase 82 (UI-V19-09): parallel fetch. /dashboard/my-week is the
+      // primary data source; /work-events/mine is additive — failure here
+      // never blocks the week strip from rendering. Promise.allSettled
+      // lets each leg fail independently. Both calls are self-scoped:
+      // /dashboard/my-week → req.user.employeeId; workEvents.loadMine
+      // signature has no employeeId param (T-82-01 leak-class block).
+      const [weekResult, workEventResult] = await Promise.allSettled([
+        api.get<MyWeekResponse>(`/dashboard/my-week?date=${date}`),
+        workEvents.loadMine(date, weekEndDate),
+      ]);
+      if (weekResult.status === "rejected") {
+        throw weekResult.reason;
+      }
+      let merged = weekResult.value;
+      if (workEventResult.status === "fulfilled") {
+        // Filter to VOCATIONAL_SCHOOL only — future WorkEvent types
+        // (FIELD_SERVICE, BUSINESS_TRIP, …) will get their own indicators
+        // in future phases (RESEARCH.md Open Question 2 decision).
+        const bsDates = new Set(
+          workEventResult.value.filter((e) => e.type === "VOCATIONAL_SCHOOL").map((e) => e.date),
+        );
+        merged = {
+          ...merged,
+          days: merged.days.map((d) => ({
+            ...d,
+            isVocationalSchool: bsDates.has(d.date),
+          })),
+        };
+      }
+      // workEventResult.status === "rejected" → fall through silently;
+      // data renders without isVocationalSchool flags. Acceptable degrade.
+      data = merged;
     } catch (e) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -113,6 +153,13 @@
   }
   function isToday(iso: string): boolean {
     return iso === ymd(new Date());
+  }
+  // Phase 82 (UI-V19-09 PITFALLS.md Pitfall 3): gate the BS chip on past+today
+  // only. A PATTERN-source WorkEvent for a future BS day is valid data (the
+  // schedule is set) but should NOT render as "attended" — wait until the day
+  // arrives. ISO YYYY-MM-DD strings compare correctly via lexicographic order.
+  function isFuture(iso: string): boolean {
+    return iso > ymd(new Date());
   }
 
   // Trim trailing :00 seconds → 07:45:00 → 07:45
@@ -278,6 +325,9 @@
             {#if hours}
               <div class="hours" title="Arbeitszeit">{hours}</div>
             {/if}
+            {#if day.isVocationalSchool && !isFuture(day.date)}
+              <span class="bs-chip" title="Berufsschule" aria-label="Berufsschultag">BS</span>
+            {/if}
           </div>
         </div>
       {/each}
@@ -440,6 +490,25 @@
     color: var(--text);
     font-size: 0.875rem;
     white-space: nowrap;
+  }
+
+  /* Phase 82 (UI-V19-09): BS-Tag chip on the dashboard week strip. Uses
+     --brand at 15% mix on --bg-card to match the /time-entries calendar
+     cell tint (single brand color across both surfaces per UI-SPEC 82
+     §BS-Tag Token Decision). PITFALLS.md U-2 (multi-surface drift)
+     eliminated structurally — see also the global .cal-abs-vocational_school
+     rule in app.css. */
+  .bs-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px var(--s-2);
+    border-radius: var(--r-pill);
+    border: 1px solid var(--brand);
+    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card));
+    font-size: 10px;
+    color: var(--brand);
+    font-weight: 600;
+    line-height: 1.4;
   }
 
   .alert {

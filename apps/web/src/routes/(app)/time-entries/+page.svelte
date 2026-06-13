@@ -23,6 +23,9 @@
     getDayExpectedHours,
     countWorkingDaysInMonth,
   } from "$lib/utils/work-schedule";
+  import type { WorkEventListMine, WorkEventListMineItem, WorkEventSource } from "@clokr/types";
+  import { workEvents } from "$stores/workEvents";
+  import { bsSourceLabel } from "$lib/utils/bsSourceLabel";
 
   interface Break {
     id?: string;
@@ -106,20 +109,19 @@
     halfDay: boolean;
   }
 
-  // 260611-ly6 — BS-Absences (Berufsschultage) from GET /vocational-school/upcoming.
-  // Rendered as read-only rows in the list view; lifecycle stays on /shifts. Backend
-  // (route handler) enforces self-scope for EMPLOYEE callers — no ?employeeId param.
-  interface BsAbsence {
-    id: string;
-    employeeId: string;
-    date: string; // YYYY-MM-DD
-    source: "PATTERN" | "MANUAL";
-  }
+  // Phase 82 (UI-V19-07): BS-Absences (Berufsschultage) now read via
+  // workEvents.loadMine() returning WorkEventListMine from @clokr/types.
+  // Self-scope is structurally enforced: the server-side /work-events/mine handler
+  // ignores any forged employeeId query param AND the loadMine(from, to) signature
+  // does not accept an employeeId argument (compile-time block on T-82-01 leak class).
 
-  // Discriminated union for the merged list view (TimeEntry + BsAbsence).
+  // Discriminated union for the merged list view (TimeEntry + WorkEvent BS rows).
+  // The BS arm's source covers the full WorkEventSource union ("PATTERN" |
+  // "MANUAL" | "AUTO"). The legacy VS endpoint never emitted "AUTO", but
+  // Phase 79 /work-events does (e.g. future automation rows).
   type ListRow =
     | (TimeEntry & { kind: "TE" })
-    | { kind: "BS"; id: string; date: string; source: "PATTERN" | "MANUAL" };
+    | { kind: "BS"; id: string; date: string; source: WorkEventSource };
 
   interface ArbZGWarning {
     code: string;
@@ -150,9 +152,9 @@
 
   let deleteConfirmId = $state("");
   let absences: Absence[] = $state([]);
-  // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
-  // Self-scope is enforced server-side from req.user.employeeId.
-  let bsAbsences: BsAbsence[] = $state([]);
+  // Phase 82 (UI-V19-07) — BS-Tage (Berufsschultage) merged into the list view
+  // client-side. Self-scope is structurally enforced via workEvents.loadMine().
+  let bsAbsences: WorkEventListMine = $state([]);
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
@@ -253,23 +255,18 @@
             monthlyHoursHolidayDeduction?: boolean;
           }>("/settings/work")
           .catch(() => null),
-        // 260611-ly6 / bs-tage-cross-employee-leak — own Berufsschultage (BS) for
-        // the current window. The backend (vocational-school.ts) forces self-scope
-        // ONLY for role=EMPLOYEE; for ADMIN/MANAGER the endpoint defaults to
-        // tenant-wide and requires an explicit ?employeeId= filter to scope to a
-        // single person. The self-view is open to every role (including the tenant
-        // owner / ADMIN), so we MUST always send activeEmpId — otherwise an ADMIN
-        // viewing their own /time-entries receives every tenant BS-Tag and they
-        // get painted in their calendar + listed under "Liste". Failure tolerated
-        // (empty array) so the rest of the page renders. Skipped entirely when
-        // activeEmpId is null (user without linked employee row).
+        // Phase 82 (UI-V19-07) — own Berufsschultage (BS) for the visible window.
+        // workEvents.loadMine signature does NOT accept employeeId — the v1.8.12
+        // ADMIN-as-Employee leak class is now structurally impossible at the type
+        // level (T-82-01). Server-side /work-events/mine self-scopes via
+        // req.user.employeeId and ignores any forged ?employeeId= param. Failure
+        // tolerated (empty array) so the rest of the page renders. Skipped entirely
+        // when activeEmpId is null (user without linked employee row — fetching
+        // /mine would 401 because the server-side handler requires an employeeId
+        // on req.user; safer to skip).
         activeEmpId
-          ? api
-              .get<
-                BsAbsence[]
-              >(`/vocational-school/upcoming?from=${fromDate}&to=${toDate}&employeeId=${activeEmpId}`)
-              .catch(() => [] as BsAbsence[])
-          : Promise.resolve([] as BsAbsence[]),
+          ? workEvents.loadMine(fromDate, toDate).catch(() => [] as WorkEventListMine)
+          : Promise.resolve([] as WorkEventListMine),
       ]);
       entries = rawEntries;
       schedule = rawSchedule;
@@ -382,7 +379,7 @@
     hireDateStr: string | null = null,
     monthly: boolean = false,
     shiftMinByDate: Map<string, number> = new Map(), // v1.8.8 — sum of durationMin per dateStr for SHIFT_BASED
-    bsAbsenceList: BsAbsence[] = [], // bs-tage-in-calendar — Berufsschultage to mark in the calendar
+    bsAbsenceList: WorkEventListMineItem[] = [], // bs-tage-in-calendar — Berufsschultage to mark in the calendar
   ): CalDay[] {
     const byDate = new Map<string, TimeEntry[]>();
     for (const e of entries) {
@@ -1415,9 +1412,7 @@
                   <td class="text-muted">—</td>
                   <td class="font-mono font-medium text-muted">—</td>
                   <td><span class="badge badge-blue">Berufsschule</span></td>
-                  <td class="note-cell text-muted"
-                    >{slot.source === "PATTERN" ? "Automatisch (Muster)" : "Manuell eingefügt"}</td
-                  >
+                  <td class="note-cell text-muted">{bsSourceLabel(slot.source)}</td>
                   <td class="action-cell">
                     <span
                       class="text-muted"
@@ -1877,15 +1872,14 @@
     border: none;
   }
 
-  /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
-     same 15% mix as the other .cal-abs-* recipes in app.css. Scoped to this
-     page (mirrors the 260611-ly6 .row-bs scoped CSS pattern); a token-level
-     --leave-type-vocational-school would be the long-term home if BS gets
-     promoted to a first-class leave type. */
-  :global(.cal-cell.cal-abs-vocational_school:not(.cal-selected)) {
-    background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
-    opacity: 1;
-  }
+  /* Phase 82 (UI-V19-07): BS calendar cell tint is now a global rule in
+     app.css (see "WorkEvent type — uses --brand at 15% mix"). The scoped
+     :global() block here was removed because (a) both /time-entries pages
+     need the same rule, (b) app.css is the canonical home for absence cell
+     backgrounds (sibling rules for .cal-abs-vacation, .cal-abs-sick, etc.),
+     and (c) keeping it scoped here while Plan 04 also adds it globally
+     would duplicate the rule (CSS no-op but DRY-violation). Plan 04
+     (depends_on guarantees merge order) lands the global rule first. */
 
   /* ── Tagesdetail ──────────────────────────────────────────────────── */
   .day-detail {

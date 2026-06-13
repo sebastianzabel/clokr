@@ -1477,6 +1477,18 @@ textarea.form-input {
   opacity: 1;
 }
 
+/* Phase 82 (UI-V19-09): BS-Tag (Berufsschule) calendar cell tint. Sibling
+   to the .cal-abs-* recipes above but uses --brand directly (NOT a
+   --leave-type-* token) because Berufsschule is a WorkEvent type (v1.9
+   Work-Event-Modell), NOT a LeaveType. See 82-UI-SPEC.md §BS-Tag Token
+   Decision. Promoted from per-page :global() rules (Phase 82-03 removed
+   the duplicate in /team/time-entries). /time-entries inherits this
+   global rule automatically. */
+.cal-cell.cal-abs-vocational_school:not(.cal-selected) {
+  background: color-mix(in srgb, var(--brand) 15%, var(--bg-card)) !important;
+  opacity: 1;
+}
+
 /* ─── Calendar shared: base layout + typography ─────────────────────────────── */
 .cal-section {
   padding: 0;

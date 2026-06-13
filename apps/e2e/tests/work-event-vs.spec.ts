@@ -34,6 +34,7 @@
 
 import { test, expect } from "../fixtures";
 import type { TestTenant } from "../fixtures";
+import type { Page } from "@playwright/test";
 import {
   createWorkEventBs,
   fetchWorkEventsForEmployee,
@@ -242,5 +243,290 @@ test.describe("Phase 81 — /shifts BS-Tag lifecycle on /work-events", () => {
       [409, 422],
       `Expected 409/422 for POST /shifts on BS day, got ${res.status}`,
     ).toContain(res.status);
+  });
+});
+
+// ── Phase 82 helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Sign the bootstrapped admin token into the browser session via localStorage.
+ * Mirrors the loginWithToken pattern from time-entries-flow.spec.ts.
+ */
+async function loginWithToken(page: Page, token: string): Promise<void> {
+  await page.goto("/");
+  await page.evaluate(({ t }) => {
+    window.localStorage.setItem("clokr.auth.token", t);
+  }, { t: token });
+}
+
+/**
+ * Returns yesterday as YYYY-MM-DD (UTC). Ensures isFuture() guard in
+ * MyWeekView returns false so the BS chip renders without suppression.
+ */
+function yesterdayIso(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Returns the Monday of the current week (UTC) as YYYY-MM-DD.
+ * Always in the past or today — never future — and always visible in the
+ * MyWeekView week-strip whose cursorMonday starts at mondayOfWeek(new Date()).
+ */
+function thisWeekMondayIso(): string {
+  const d = new Date();
+  const dow = d.getUTCDay(); // 0=Sun
+  const offset = dow === 0 ? -6 : 1 - dow;
+  const monday = new Date(d);
+  monday.setUTCDate(monday.getUTCDate() + offset);
+  return monday.toISOString().slice(0, 10);
+}
+
+/**
+ * Short label for the day-row anchor in MyWeekView (matches fmtShort(iso)).
+ * Uses LOCAL time (same as the component) to build the "DD.MM." label.
+ */
+function fmtShort(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${d}.${m}.`;
+}
+
+/**
+ * Returns the admin employee's ID for the bootstrapped tenant.
+ * The bootstrap always seeds firstName="Admin", lastName="Test".
+ */
+async function getAdminEmployeeId(
+  tenant: WorkEventVsTenant,
+): Promise<string> {
+  const res = await fetch(`${API_BASE}/api/v1/employees`, {
+    headers: { authorization: `Bearer ${tenant.adminToken}` },
+  });
+  if (!res.ok) throw new Error(`GET /employees failed: ${res.status}`);
+  const list = (await res.json()) as Array<{ id: string; firstName: string; lastName: string }>;
+  const admin = list.find((e) => e.firstName === "Admin" && e.lastName === "Test");
+  if (!admin) throw new Error("Admin employee not found in bootstrap tenant");
+  return admin.id;
+}
+
+// ── Phase 82 test describe block ─────────────────────────────────────────────
+
+test.describe("Phase 82 — Consumer UI Touchpoints", () => {
+  /**
+   * UI-V19-07: /time-entries page does NOT call /vocational-school/* anymore.
+   *
+   * After Plan 82-02 lands, the page uses workEvents.loadMine() →
+   * GET /api/v1/work-events/mine. This test asserts:
+   *  1. Zero /vocational-school/* network requests during page load.
+   *  2. At least one /work-events/mine GET fires (proves the URL swap landed).
+   *  3. The BS cell is present in the calendar (cal-abs-vocational_school class).
+   */
+  test("UI-V19-07: /time-entries does NOT call /vocational-school/* (uses /work-events/mine)", async ({
+    page,
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+    const adminEmpId = await getAdminEmployeeId(we);
+    // Seed a BS WorkEvent for yesterday so the calendar cell renders without
+    // isFuture() suppression. Use yesterdayIso() for consistency — the
+    // /time-entries calendar renders the current month so yesterday is visible.
+    const bsDate = yesterdayIso();
+    await createWorkEventBs(we, adminEmpId, bsDate);
+
+    // Attach network listener BEFORE navigation to catch all requests.
+    const vsRequests: string[] = [];
+    const workEventsMineUrls: string[] = [];
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.includes("/api/v1/vocational-school/")) {
+        vsRequests.push(`${req.method()} ${url}`);
+      }
+      if (url.includes("/api/v1/work-events/mine")) {
+        workEventsMineUrls.push(url);
+      }
+    });
+
+    await loginWithToken(page, tenant.adminToken);
+    await page.goto("/time-entries");
+
+    // Wait for the /work-events/mine GET to confirm the URL swap is live.
+    // (If Plan 82-02 has NOT landed yet, this waitForResponse will timeout —
+    //  intentional: the test gates on the post-plan-02 state.)
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events/mine") && r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // Network guard: no /vocational-school/* requests.
+    expect(
+      vsRequests,
+      "Expected ZERO /vocational-school/* requests — UI-V19-07 regression guard",
+    ).toEqual([]);
+
+    // Positive guard: /work-events/mine was called.
+    expect(
+      workEventsMineUrls.length,
+      "Expected at least one /work-events/mine GET",
+    ).toBeGreaterThan(0);
+
+    // Visual guard: the BS calendar cell is visible (cal-abs-vocational_school).
+    // The cell appears in the month view for bsDate. Since yesterday is in the
+    // current month, navigate to the current month (default view).
+    const bsCell = page.locator(".cal-cell.cal-abs-vocational_school");
+    await expect(bsCell.first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * UI-V19-08: /team/time-entries calls /work-events?employeeId= (not /mine).
+   *
+   * After Plan 82-03 lands, the management page uses workEvents.loadByEmployee()
+   * → GET /api/v1/work-events?employeeId=<selected>. This test asserts:
+   *  1. At least one /work-events?employeeId= GET fires after employee selection.
+   *  2. Zero /work-events/mine URLs fire on this management page.
+   *  3. The BS cell is present in the management calendar after employee selection.
+   */
+  test("UI-V19-08: /team/time-entries calls /work-events?employeeId= (not /mine)", async ({
+    page,
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+    // Create a FIXED_SCHEDULE Azubi for the management view.
+    const stamp = Date.now().toString().slice(-8);
+    const createRes = await fetch(`${API_BASE}/api/v1/employees`, {
+      method: "POST",
+      headers: authHeaders(we),
+      body: JSON.stringify({
+        firstName: "KlausBS",
+        lastName: "Azubi",
+        email: `azubi-v08-${stamp}@${we.tenantId}.test`,
+        employeeNumber: `AZ-V08-${stamp}`,
+        hireDate: new Date().toISOString(),
+        role: "EMPLOYEE",
+        classification: "AZUBI",
+        scheduleType: "FIXED_WEEKLY",
+        weeklyHours: 40,
+        workDays: [1, 2, 3, 4, 5],
+      }),
+    });
+    if (!createRes.ok) throw new Error(`Create employee failed: ${createRes.status}`);
+    const { id: azubiId } = (await createRes.json()) as { id: string };
+
+    const bsDate = yesterdayIso();
+    await createWorkEventBs(we, azubiId, bsDate);
+
+    // Attach network listener BEFORE navigation.
+    const workEventsMineUrls: string[] = [];
+    const workEventsByEmpUrls: string[] = [];
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.includes("/api/v1/work-events/mine")) {
+        workEventsMineUrls.push(url);
+      }
+      if (url.includes("/api/v1/work-events") && url.includes("employeeId=")) {
+        workEventsByEmpUrls.push(url);
+      }
+    });
+
+    await loginWithToken(page, tenant.adminToken);
+    await page.goto("/team/time-entries");
+
+    // The employee combobox uses .emp-input-wrap to open; .emp-dropdown-item
+    // to pick (role="option" inside role="listbox" .emp-dropdown). Select the
+    // Azubi named "KlausBS Azubi".
+    const empInputWrap = page.locator(".emp-input-wrap").first();
+    await empInputWrap.click();
+    // Wait for the dropdown to open (listbox appears).
+    const listbox = page.locator("[role='listbox'].emp-dropdown");
+    await expect(listbox).toBeVisible({ timeout: 5_000 });
+    // Select the Azubi option.
+    const azubiOption = page.locator("[role='option']").filter({ hasText: "KlausBS" });
+    await azubiOption.click();
+
+    // After employee selection, the page fetches /work-events?employeeId=<azubiId>.
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events") &&
+        r.url().includes(`employeeId=${azubiId}`) &&
+        r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // Guard: /work-events?employeeId= was called (management endpoint).
+    expect(
+      workEventsByEmpUrls.some((u) => u.includes(`employeeId=${azubiId}`)),
+      "Expected /work-events?employeeId= GET on /team/time-entries — UI-V19-08",
+    ).toBe(true);
+
+    // Guard: /work-events/mine was NOT called (self-view endpoint must not appear).
+    expect(
+      workEventsMineUrls,
+      "Expected ZERO /work-events/mine on the management page — UI-V19-08 regression guard",
+    ).toEqual([]);
+
+    // Visual guard: BS cell is visible in the management calendar.
+    const bsCell = page.locator(".cal-cell.cal-abs-vocational_school");
+    await expect(bsCell.first()).toBeVisible({ timeout: 10_000 });
+  });
+
+  /**
+   * UI-V19-09: Dashboard ↔ /time-entries calendar parity (PITFALLS.md U-2).
+   *
+   * The same seeded BS date must appear as:
+   *  (a) a .bs-chip in the MyWeekView week-strip on /dashboard
+   *  (b) a .cal-abs-vocational_school cell in the /time-entries calendar
+   *
+   * Both surfaces share the same data source (/work-events/mine) after Phase 82.
+   * This test structurally prevents the multi-surface drift described in
+   * PITFALLS.md U-2: "calendar shows BS but dashboard doesn't, or vice versa."
+   */
+  test("UI-V19-09: dashboard BS chip and /time-entries BS cell match for the same date", async ({
+    page,
+    tenant,
+  }) => {
+    const we = asWeTenant(tenant);
+    const adminEmpId = await getAdminEmployeeId(we);
+
+    // Use the Monday of the current week — always visible in the dashboard
+    // week-strip (cursorMonday defaults to mondayOfWeek(new Date())) and
+    // never suppressed by isFuture() since Monday ≤ today.
+    const bsDate = thisWeekMondayIso();
+    await createWorkEventBs(we, adminEmpId, bsDate);
+
+    // ── Step 1: Dashboard ────────────────────────────────────────────
+    await loginWithToken(page, tenant.adminToken);
+    await page.goto("/dashboard");
+
+    // Wait for the /work-events/mine GET from MyWeekView (Task 1 of this plan).
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events/mine") && r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // The BS chip (.bs-chip) should be visible in the day-row matching bsDate.
+    // Selector: find the .day-row whose .date span contains the short label
+    // "DD.MM." matching bsDate, then assert .bs-chip is inside it.
+    // fmtShort replicates the component's fmtShort helper (DD.MM. format).
+    const dayLabel = fmtShort(bsDate);
+    const bsDayRow = page.locator(".day-row").filter({ hasText: dayLabel });
+    const bsChip = bsDayRow.locator(".bs-chip");
+    await expect(bsChip).toBeVisible({ timeout: 10_000 });
+    await expect(bsChip).toHaveText("BS");
+
+    // ── Step 2: /time-entries calendar ───────────────────────────────
+    await page.goto("/time-entries");
+
+    // Wait for the /work-events/mine GET from /time-entries (Plan 82-02).
+    await page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/work-events/mine") && r.request().method() === "GET",
+      { timeout: 15_000 },
+    );
+
+    // The calendar cell for bsDate must have the cal-abs-vocational_school class.
+    // bsDate is in the current month so the default calendar view shows it.
+    const bsCalCell = page.locator(".cal-cell.cal-abs-vocational_school");
+    await expect(bsCalCell.first()).toBeVisible({ timeout: 10_000 });
   });
 });
