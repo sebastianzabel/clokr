@@ -58,6 +58,11 @@
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
     // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
     vocationalSchoolAutoCleanupShifts?: boolean;
+    // Phase 83 (Plan 05 CD-5) — per-slot Berufsschulzeit-Konfiguration
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
   }
 
   interface StoreHourEntry {
@@ -201,6 +206,20 @@
   // Phase 67.2 (Plan 05) — Auto-Cleanup für Berufsschultag-Schichten Toggle
   let vocationalSchoolAutoCleanupShifts = $state(true);
   let vsAutoCleanupSaving = $state(false);
+
+  // Phase 83 (Plan 05 CD-5) — per-slot Berufsschulzeit-Konfiguration state for banner
+  let bsSlotFirstLongDayMinutes = $state<number | null>(null);
+  let bsSlotSecondLongDayMinutes = $state<number | null>(null);
+  let bsSlotShortDayMinutes = $state<number | null>(null);
+  let bsSlotBlockWeekMinutes = $state<number | null>(null);
+
+  // CD-5: visible when ALL four bsSlot* fields are null. Hides as soon as ANY override is set.
+  let showBsSlotFallbackBanner = $derived(
+    bsSlotFirstLongDayMinutes === null &&
+      bsSlotSecondLongDayMinutes === null &&
+      bsSlotShortDayMinutes === null &&
+      bsSlotBlockWeekMinutes === null,
+  );
 
   // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
   let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
@@ -405,6 +424,11 @@
 
       // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
       vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
+      // Phase 83 (Plan 05 CD-5) — hydrate bsSlot* fields for fallback banner
+      bsSlotFirstLongDayMinutes = cfg.bsSlotFirstLongDayMinutes ?? null;
+      bsSlotSecondLongDayMinutes = cfg.bsSlotSecondLongDayMinutes ?? null;
+      bsSlotShortDayMinutes = cfg.bsSlotShortDayMinutes ?? null;
+      bsSlotBlockWeekMinutes = cfg.bsSlotBlockWeekMinutes ?? null;
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
       defaultCoreStart = cfg.defaultCoreStart ?? "";
       defaultCoreEnd = cfg.defaultCoreEnd ?? "";
@@ -1195,6 +1219,21 @@
             </label>
           </div>
         </Section>
+
+        <!-- ── Phase 83 CD-5: Berufsschulzeit Slot-Konfiguration Fallback-Banner ── -->
+        {#if showBsSlotFallbackBanner}
+          <div class="bs-slot-fallback-banner" role="status" aria-live="polite">
+            <p>
+              <strong>Berufsschulzeit-Konfiguration:</strong>
+              Pauschale 8h (Standard) — per-Slot-Konfiguration noch nicht eingerichtet.
+            </p>
+            <p class="bs-slot-fallback-banner__hint">
+              Die neuen BBiG §15 Abs. 2 Slot-Felder (Erster Langtag, Zweiter Langtag, Kurztag,
+              Blockwoche) sind für diesen Mandanten nicht gesetzt. Bis zur Konfiguration werden alle
+              Berufsschultage mit der gesetzlichen Pauschale von 480 Minuten gutgeschrieben.
+            </p>
+          </div>
+        {/if}
 
         <!-- ── Features (Phase 47.3 / 49.4) ─────────────────────────────────── -->
         <Section title="Features" sub="Tenant-weite Feature-Toggles">
@@ -2884,5 +2923,25 @@
     .inline-create {
       flex-direction: column;
     }
+  }
+
+  /* Phase 83 (Plan 05 CD-5) — Berufsschulzeit Slot-Konfiguration Fallback-Banner.
+   * Brand-tinted informational banner (v1.5 tokens only — no --color-*, no --glass-*,
+   * no --radius-*, no --gray-*). Visible when all four bsSlot* tenant-config fields
+   * are null (legacy pauschal-480min fallback active). */
+  .bs-slot-fallback-banner {
+    background: var(--bg-card);
+    border: 1px solid var(--brand);
+    border-left: 4px solid var(--brand);
+    border-radius: 0.5rem;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    color: var(--text);
+  }
+  .bs-slot-fallback-banner__hint {
+    font-size: 0.875rem;
+    opacity: 0.8;
+    margin-top: 0.5rem;
+    margin-bottom: 0;
   }
 </style>

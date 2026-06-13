@@ -113,6 +113,15 @@ model TenantConfig {
   // Phase 63 — Berufsschule Saldo/ArbZG (D-02): per-tenant configurable BS-day duration
   vocationalSchoolMinutesPerDay       Int     @default(480) // Net Anrechnung per single BS-day (default 8h = 480 min, BERSCH-03)
   vocationalSchoolBlockMinutesPerWeek Int     @default(2400) // Total Anrechnung per block-week (default 40h = 2400 min, BERSCH-04)
+  // Phase 83 — BVaDiG 2024 conformant per-slot BS duration config (BBIG-V19-01).
+  // NULL = fall through to vocationalSchoolMinutesPerDay (pauschal 480) for FIRST_LONG_DAY
+  //        and vocationalSchoolBlockMinutesPerWeek (pauschal 2400) for BLOCK_WEEK.
+  // NULL on SECOND_LONG_DAY/SHORT_DAY = netto from payload.instructionMinutes (Phase 83 default 0).
+  // Bounds enforced server-side by Zod at API boundary (see settings.ts route).
+  bsSlotFirstLongDayMinutes          Int?
+  bsSlotSecondLongDayMinutes         Int?
+  bsSlotShortDayMinutes              Int?
+  bsSlotBlockWeekMinutes             Int?
   // Phase 78 — Adapter compat-routing flag for WorkEvent migration.
   // false (default) = loadWorkEventsForRange reads Absence type=VOCATIONAL_SCHOOL with legacy Phase 63 D-01..D-04 doubling.
   // true = loadWorkEventsForRange reads WorkEvent rows (Phase 77 pre-resolved sums).
@@ -295,6 +304,12 @@ model Employee {
   // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
   // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
   isTimeTrackingExempt Boolean                @default(false)
+  // Phase 83 — per-employee BS slot override (BBIG-V19-03; highest precedence in hierarchy).
+  // Hierarchy: Employee.bsSlot* > Pattern.bsSlot* > TenantConfig.bsSlot* > vocationalSchoolMinutesPerDay > BS_DAILY_DEFAULT_MIN.
+  bsSlotFirstLongDayMinutes  Int?
+  bsSlotSecondLongDayMinutes Int?
+  bsSlotShortDayMinutes      Int?
+  bsSlotBlockWeekMinutes     Int?
   createdAt            DateTime               @default(now()) @db.Timestamptz
   updatedAt            DateTime               @updatedAt @db.Timestamptz
 
@@ -1110,6 +1125,12 @@ model EmployeeVocationalSchoolPattern {
   // Phase 67.2 — Pendler-Azubi-Support: BS in anderem Bundesland als Betrieb.
   // NULL = verwende Tenant.federalState (Default).
   federalStateOverride  FederalState?
+  // Phase 83 — per-pattern slot override (BBIG-V19-02; higher precedence than TenantConfig).
+  // Same semantics as TenantConfig.bsSlot* — NULL means delegate to TenantConfig.
+  bsSlotFirstLongDayMinutes   Int?
+  bsSlotSecondLongDayMinutes  Int?
+  bsSlotShortDayMinutes       Int?
+  bsSlotBlockWeekMinutes      Int?
   createdAt             DateTime      @default(now()) @db.Timestamptz
   updatedAt             DateTime      @updatedAt @db.Timestamptz
 

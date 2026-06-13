@@ -53,6 +53,18 @@ import {
   getVocationalSchoolMinutesForDate,
   countBsDaysInIsoWeek as countBsDaysInIsoWeekFromAbsence,
 } from "./vocational-school-saldo.js";
+import type { SlotType } from "./bs-slot-resolver.js";
+
+// Phase 83 — Re-export resolver symbols so Plan 04 (operator script) and
+// jarbschg.ts can import them from a single adapter entry point.
+export type { SlotType } from "./bs-slot-resolver.js";
+export { resolveBsTagSlot, buildSlotOverrideHierarchy } from "./bs-slot-resolver.js";
+export type {
+  WeekContext,
+  SlotResolution,
+  SlotOverrideHierarchy,
+  SlotLayerInputs,
+} from "./bs-slot-resolver.js";
 
 export interface WorkEventAggregate {
   /** Σ of workedMinutes across all matching rows. */
@@ -97,29 +109,42 @@ export async function loadWorkEventsForRange(
 }
 
 /**
- * Phase 78 D-11 LOCKED default: Variante B max-merge.
- * Phase 83 replaces this constant with a `tenantConfig.combineBsAndWorkOnSameDay`
- * lookup (1-line swap target).
+ * @deprecated Phase 83 — use `combineBsAndWorkOnSameDay(..., slotType)` directly.
+ * Retained as `true` so the legacy Absence-branch (workEventModelLive=false)
+ * callers that haven't been migrated to slotType-aware calls yet still apply
+ * Variante B semantics. The boolean value itself is no longer read inside
+ * combineBsAndWorkOnSameDay — slotType parameter drives the branch.
  */
 export const VARIANT_B_MAX_MERGE = true;
 
 /**
- * Combine same-day BS pauschal credit with TimeEntry instruction+work per D-11
- * Variante B. Default: max(pauschal, instruction+work) — Azubi gets at least the
- * BS-Tag pauschal, but if real work-day exceeds pauschal, real wins.
+ * Phase 83 — Slot-type-aware same-day BS + TimeEntry combination (BBIG-V19-05).
  *
- * Phase 83 will swap the constant for a per-tenant config (SUM_CAPPED_BY_ARBZG).
+ * Pauschal slots (FIRST_LONG_DAY, BLOCK_WEEK): Variante B max-merge so the
+ * BS-Tag credit never falls below the legally guaranteed pauschal even if
+ * actual instruction+work was shorter. Per BBiG §15 Abs.2 Satz 1.
+ *
+ * Netto slots (SECOND_LONG_DAY, SHORT_DAY): instruction+work directly — there
+ * is no pauschal floor for these slots per BBiG §15 Abs.2 Nr.1.
+ *
+ * The slotType parameter is optional with FIRST_LONG_DAY default so existing
+ * callers (Phase 78 saldo paths not yet migrated to slotType) continue to
+ * apply Variante B semantics unchanged. Plan 03 wires explicit slotType in
+ * all new resolve paths.
  */
 export function combineBsAndWorkOnSameDay(
   pauschalCredit: number,
   instructionMin: number,
   workedMin: number,
+  slotType: SlotType = "FIRST_LONG_DAY",
 ): number {
-  if (!VARIANT_B_MAX_MERGE) {
-    // Phase 83 SUM_CAPPED_BY_ARBZG branch — sum, capped by ArbZG §3 daily 10h.
-    return Math.min(pauschalCredit + workedMin, 10 * 60);
+  if (slotType === "FIRST_LONG_DAY" || slotType === "BLOCK_WEEK") {
+    // Pauschal slots: Variante B max-merge — Azubi gets at least the pauschal
+    // but actual instruction+work wins if it exceeds the pauschal.
+    return Math.max(pauschalCredit, instructionMin + workedMin);
   }
-  return Math.max(pauschalCredit, instructionMin + workedMin);
+  // SECOND_LONG_DAY, SHORT_DAY: netto sum — no pauschal floor (per BBiG §15 Abs.2 Nr.1)
+  return instructionMin + workedMin;
 }
 
 /**
@@ -452,8 +477,12 @@ async function aggregateLegacyAbsences(
  *
  * Falls back to "FIXED_SCHEDULE" if no WorkSchedule exists (matches the route
  * helper's default-schedule branch).
+ *
+ * Phase 83 — exported unconditionally so jarbschg.ts (Plan 03) and the
+ * operator script (Plan 04) can resolve the schedule type at a given date
+ * without duplicating this logic.
  */
-async function resolveScheduleTypeAt(
+export async function resolveScheduleTypeAt(
   prisma: PrismaClient,
   employeeId: string,
   date: Date,
@@ -466,8 +495,13 @@ async function resolveScheduleTypeAt(
   return schedule?.type ?? "FIXED_SCHEDULE";
 }
 
-/** YYYY-MM-DD of a Date in UTC (WorkEvent.date is `@db.Date` — UTC midnight). */
-function toIsoDate(d: Date): string {
+/**
+ * YYYY-MM-DD of a Date in UTC (WorkEvent.date is `@db.Date` — UTC midnight).
+ *
+ * Phase 83 — exported unconditionally so jarbschg.ts (Plan 03) and Plan 04
+ * operator script can derive ISO date strings without reimplementing this.
+ */
+export function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
@@ -488,8 +522,11 @@ function dateRangeUtc(date: Date): { start: Date; next: Date } {
  * the ISO week containing `dateInWeek`. Returns [monday, nextMonday).
  *
  * Mirrors apps/api/src/utils/vocational-school-saldo.ts isoWeekBoundsUtc.
+ *
+ * Phase 83 — exported unconditionally so jarbschg.ts (Plan 03) and Plan 04
+ * operator script can derive ISO week bounds without reimplementing this.
  */
-function isoWeekBoundsUtc(dateInWeek: Date): { monday: Date; nextMonday: Date } {
+export function isoWeekBoundsUtc(dateInWeek: Date): { monday: Date; nextMonday: Date } {
   const d = new Date(
     Date.UTC(dateInWeek.getUTCFullYear(), dateInWeek.getUTCMonth(), dateInWeek.getUTCDate()),
   );

@@ -16,6 +16,12 @@ import {
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
 } from "../utils/break-constants";
+import {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../utils/vocational-school-constants";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -136,6 +142,38 @@ const tenantConfigSchema = z
       .int()
       .min(1200, "Berufsschul-Block pro Woche muss mindestens 1200 Min (20h) sein")
       .max(3000, "Berufsschul-Block pro Woche darf höchstens 3000 Min (50h) sein")
+      .optional(),
+    // Phase 83 — Per-slot BS duration overrides (BBIG-V19-01).
+    // NULL = delegate to vocationalSchoolMinutesPerDay (FIRST_LONG_DAY/BLOCK_WEEK)
+    // or to netto 0 (SECOND_LONG_DAY/SHORT_DAY). Bounds match existing legacy fields.
+    // T-83-02 mitigation: prevents admin tampering to manufacture overtime.
+    bsSlotFirstLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND, "BS Langtag-Pauschal muss mindestens 240 Min (4h) sein")
+      .max(BS_DAILY_MAX_BOUND, "BS Langtag-Pauschal darf höchstens 600 Min (10h) sein")
+      .nullable()
+      .optional(),
+    bsSlotSecondLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND, "BS zweiter Langtag muss mindestens 240 Min (4h) sein")
+      .max(BS_DAILY_MAX_BOUND, "BS zweiter Langtag darf höchstens 600 Min (10h) sein")
+      .nullable()
+      .optional(),
+    bsSlotShortDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND, "BS Kurztag muss mindestens 240 Min (4h) sein")
+      .max(BS_DAILY_MAX_BOUND, "BS Kurztag darf höchstens 600 Min (10h) sein")
+      .nullable()
+      .optional(),
+    bsSlotBlockWeekMinutes: z
+      .number()
+      .int()
+      .min(BS_BLOCK_WEEKLY_MIN_BOUND, "BS Blockwoche muss mindestens 1200 Min (20h) sein")
+      .max(BS_BLOCK_WEEKLY_MAX_BOUND, "BS Blockwoche darf höchstens 3000 Min (50h) sein")
+      .nullable()
       .optional(),
     // Phase 64 — Pausendauer (D-07, BREAK-04): per-tenant default auto-break duration.
     // Floor enforces ArbZG §4 Pflichtpause (30/45 Min); cap is a sane upper bound

@@ -22,6 +22,8 @@ classified by lifecycle.
 | backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                             | Migration artifact (Phase 67.2)       |
 | migrate-bs-to-work-event.ts                    | 2026-06-12 | Per-tenant atomic migration of Absence type=VOCATIONAL_SCHOOL → WorkEvent; flips workEventModelLive flag at end of tx; idempotent; AuditLog summary row per run; requires --operator-user-id | Migration artifact (Phase 80)         |
 | rollback-work-event-to-bs.ts                   | 2026-06-12 | Inverse of migrate-bs-to-work-event.ts; reactivates Absence rows + soft-deletes WorkEvent + clears workEventModelLive flag; restores Absence.note byte-equivalence; requires --operator-user-id | Migration artifact (Phase 80)         |
+| reresolve-work-event-minutes.ts                | 2026-06-13 | Re-computes WorkEvent.workedMinutes + expectedMinutes for VOCATIONAL_SCHOOL rows via Phase 83 slot resolver; locked-month-safe; idempotent; snapshot to .snapshots/ for rollback; requires --operator-user-id | Migration artifact (Phase 83)         |
+| rollback-reresolve-work-event.ts               | 2026-06-13 | Inverse of reresolve-work-event-minutes.ts; restores workedMinutes/expectedMinutes from .snapshots/ JSON by --run-id; locked-month re-check; AuditLog RERESOLVE_WORK_EVENT_MINUTES_ROLLBACK_V19; requires --operator-user-id | Migration artifact (Phase 83)         |
 
 ## Migration artifacts
 
@@ -384,3 +386,101 @@ operators target ONE tenant per run.
 For the full operator playbook (pre-flight checklist, recovery
 scenarios, rollback procedure with W8 cache-wait detail), see
 `docs/work-event-migration-runbook.md`.
+
+## Phase 83 — Slot-Aware WorkEvent Re-Resolution
+
+### reresolve-work-event-minutes.ts
+
+Re-computes `WorkEvent.workedMinutes` + `expectedMinutes` for all VOCATIONAL_SCHOOL rows in a tenant using the Phase 83 slot-aware resolver (`resolveBsTagSlot`). Run AFTER Phase 83 ships and BEFORE relying on saldo readings for the affected tenant.
+
+Tenants migrated under Phase 80 (`workEventModelLive=true`) may have WorkEvent rows with stale `workedMinutes`/`expectedMinutes` from the Phase-78 pauschal-placeholder logic. After Phase 83, the same BS-Tag may resolve to a different slot (e.g. `SECOND_LONG_DAY` with `creditedMinutes=0`). This script closes that gap.
+
+### When to run
+
+**AFTER** the Phase 83 image is deployed AND the new code is serving traffic. Run per tenant — there is no `--all-tenants` flag.
+
+### Usage
+
+Dry-run (default — no writes):
+
+```bash
+DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+  scripts/reresolve-work-event-minutes.ts \
+  --tenant-id <uuid> \
+  --operator-user-id <uuid>
+```
+
+Prints JSON summary: `{ runId, tenantId, affectedRows, unchangedRows, lockedSkipped, sampleDiff }`. Writes nothing.
+
+Apply:
+
+```bash
+DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+  scripts/reresolve-work-event-minutes.ts \
+  --tenant-id <uuid> \
+  --operator-user-id <uuid> \
+  --apply
+```
+
+Per-tenant `prisma.$transaction`. ONE summary `AuditLog` entry per run (`RERESOLVE_WORK_EVENT_MINUTES_V19`). Pre-update originals snapshotted to `apps/api/scripts/.snapshots/reresolve-{tenantId}-{runId}.json` for rollback.
+
+Optional: `--before-date <YYYY-MM-DD>` limits scope to WorkEvent rows before the given date.
+
+### Rollback
+
+```bash
+DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+  scripts/rollback-reresolve-work-event.ts \
+  --tenant-id <uuid> \
+  --run-id <uuid-from-snapshot-filename> \
+  --operator-user-id <uuid> \
+  --apply
+```
+
+Restores `workedMinutes`/`expectedMinutes` from the snapshot file. Writes `RERESOLVE_WORK_EVENT_MINUTES_ROLLBACK_V19` AuditLog. Skips rows in newly-locked months (Monatsabschluss that ran between Phase-83-deploy and rollback). Snapshot file is NOT deleted (Revisionssicherheit).
+
+### Post-deploy sequence (per tenant)
+
+1. Confirm Phase 83 schema changes shipped (`prisma db push` ran on prod).
+2. Dry-run `reresolve-work-event-minutes.ts` — review `affectedRows` count.
+3. Spot-check `sampleDiff` in the dry-run JSON: verify `newWorked`/`newExpected` values are plausible for the tenant's slot config.
+4. Apply: `reresolve-work-event-minutes.ts --apply`.
+5. Verify AuditLog row exists: `SELECT * FROM "AuditLog" WHERE action = 'RERESOLVE_WORK_EVENT_MINUTES_V19' AND "entityId" = '<tenant-uuid>';`.
+6. Spot-check 1-2 affected WorkEvent rows in DB to confirm new values match the slot config.
+7. If wrong: `rollback-reresolve-work-event.ts --run-id <id> --apply`. Re-run the forward script after fixing config.
+
+### Safety guarantees
+
+- **Locked months never modified**: rows whose month has `TimeEntry.isLocked = true` are skipped + counted in `lockedSkipped` (T-83-01 mitigation).
+- **D-04 invariant**: `expectedMinutes` is only set when `slot.contributesToExpected = true` (i.e. scheduleType !== MONTHLY_HOURS).
+- **Per-tenant atomic transaction**: all `WorkEvent.update` calls + AuditLog run inside one `$transaction`. Rollback on any throw.
+- **Idempotent**: re-run produces `affectedRows=0` (pure resolver gives identical output for identical inputs).
+- **Snapshot before writes**: originals persisted to `.snapshots/` BEFORE the tx opens, so rollback data is available even if tx fails.
+- **`--operator-user-id` REQUIRED**: B2 pattern — AuditLog.userId is never null.
+- **Snapshot files are gitignored**: `.snapshots/` is in `.gitignore`; never commit tenant data.
+
+### Sample dry-run output
+
+```json
+{
+  "runId": "00000000-0000-0000-0000-0000000000aa",
+  "tenantId": "00000000-0000-0000-0000-000000000001",
+  "dryRun": true,
+  "affectedRows": 12,
+  "unchangedRows": 30,
+  "lockedSkipped": 2,
+  "snapshotPath": null,
+  "sampleDiff": [
+    {
+      "id": "...",
+      "employeeId": "...",
+      "date": "2026-05-12",
+      "oldWorked": 480,
+      "oldExpected": 480,
+      "newWorked": 0,
+      "newExpected": 0
+    }
+  ],
+  "durationMs": 142
+}
+```

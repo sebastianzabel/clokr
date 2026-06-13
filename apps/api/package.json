@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src",
+    "lint:bs-slot-callers": "node scripts/lint-bs-slot-resolver-callers.mjs",
     "typecheck": "tsc --noEmit",
     "pretest": "sh -c 'set -a; . ./.env.test; set +a; DATABASE_URL=$TEST_DATABASE_URL pnpm --filter @clokr/db exec prisma db push --accept-data-loss'",
     "test": "vitest run",

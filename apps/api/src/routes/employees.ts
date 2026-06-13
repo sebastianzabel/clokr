@@ -15,6 +15,12 @@ import {
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
 } from "../utils/break-constants";
+import {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../utils/vocational-school-constants";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
@@ -96,6 +102,36 @@ const createEmployeeSchema = z.object({
     )
     .nullable()
     .optional(),
+  // Phase 83 — Per-employee BS slot override (BBIG-V19-03 highest precedence).
+  // T-83-02 mitigation: bounded so admins cannot manufacture overtime via inflated slot config.
+  bsSlotFirstLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotSecondLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotShortDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotBlockWeekMinutes: z
+    .number()
+    .int()
+    .min(BS_BLOCK_WEEKLY_MIN_BOUND, "BS Blockwoche muss mindestens 1200 Min sein")
+    .max(BS_BLOCK_WEEKLY_MAX_BOUND, "BS Blockwoche darf höchstens 3000 Min sein")
+    .nullable()
+    .optional(),
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -147,6 +183,36 @@ const updateEmployeeSchema = z.object({
   // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
   // actual value change (see PATCH handler below).
   isTimeTrackingExempt: z.boolean().optional(),
+  // Phase 83 — Per-employee BS slot override (BBIG-V19-03 highest precedence).
+  // T-83-02 mitigation: bounded so admins cannot manufacture overtime via inflated slot config.
+  bsSlotFirstLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotSecondLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotShortDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND, "BS-Slot muss mindestens 240 Min (4h) sein")
+    .max(BS_DAILY_MAX_BOUND, "BS-Slot darf höchstens 600 Min (10h) sein")
+    .nullable()
+    .optional(),
+  bsSlotBlockWeekMinutes: z
+    .number()
+    .int()
+    .min(BS_BLOCK_WEEKLY_MIN_BOUND, "BS Blockwoche muss mindestens 1200 Min sein")
+    .max(BS_BLOCK_WEEKLY_MAX_BOUND, "BS Blockwoche darf höchstens 3000 Min sein")
+    .nullable()
+    .optional(),
 });
 
 function deriveInvitationStatus(
@@ -310,6 +376,12 @@ export async function employeeRoutes(app: FastifyInstance) {
               // undefined / omitted → null (fall back to tenant default).
               breakOver6hOverride: body.breakOver6hOverride ?? null,
               breakOver9hOverride: body.breakOver9hOverride ?? null,
+              // Phase 83 — per-employee BS slot overrides (BBIG-V19-03).
+              // undefined / omitted → null (delegates to Pattern → TenantConfig → fallback).
+              bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
+              bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
+              bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
+              bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
             },
           });
 
@@ -454,6 +526,20 @@ export async function employeeRoutes(app: FastifyInstance) {
       // below, modeled on the Phase 64 break-override pattern).
       if (body.isTimeTrackingExempt !== undefined) {
         updates.isTimeTrackingExempt = body.isTimeTrackingExempt;
+      }
+      // Phase 83 — per-employee BS slot overrides (BBIG-V19-03).
+      // undefined = no change, null = clear override (delegates to lower layer).
+      if (body.bsSlotFirstLongDayMinutes !== undefined) {
+        updates.bsSlotFirstLongDayMinutes = body.bsSlotFirstLongDayMinutes;
+      }
+      if (body.bsSlotSecondLongDayMinutes !== undefined) {
+        updates.bsSlotSecondLongDayMinutes = body.bsSlotSecondLongDayMinutes;
+      }
+      if (body.bsSlotShortDayMinutes !== undefined) {
+        updates.bsSlotShortDayMinutes = body.bsSlotShortDayMinutes;
+      }
+      if (body.bsSlotBlockWeekMinutes !== undefined) {
+        updates.bsSlotBlockWeekMinutes = body.bsSlotBlockWeekMinutes;
       }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });

@@ -180,4 +180,81 @@ describe("Berufsschule TenantConfig (Phase 63 Plan 04 Task 2)", () => {
     });
     expect(res.statusCode).toBe(400);
   });
+
+  // ── Phase 83 — bsSlot* bounds + AuditLog diff (T-83-02 mitigation) ──────────
+
+  it("Phase 83: PUT rejects bsSlotFirstLongDayMinutes above 600 (out-of-bound)", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: 1440 },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body);
+    // German error message must mention the 600-min upper bound
+    expect(JSON.stringify(body)).toMatch(/600/);
+  });
+
+  it("Phase 83: PUT with valid bsSlotFirstLongDayMinutes=540 persists + AuditLog newValue captures field", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: 540 },
+    });
+    expect(res.statusCode).toBe(200);
+
+    // Confirm DB persisted the value
+    const cfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: data.tenant.id },
+      select: { bsSlotFirstLongDayMinutes: true },
+    });
+    expect(cfg?.bsSlotFirstLongDayMinutes).toBe(540);
+
+    // AuditLog assertion: latest AuditLog row for TenantConfig entity must have
+    // newValue.bsSlotFirstLongDayMinutes === 540 — proves the new field flows
+    // through the audit pipeline (checker dimension-9 evidence).
+    const audit = await app.prisma.auditLog.findFirst({
+      where: { entity: "TenantConfig" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+    const newValue = audit!.newValue as Record<string, unknown>;
+    expect(newValue.bsSlotFirstLongDayMinutes).toBe(540);
+  });
+
+  it("Phase 83: PUT with bsSlotFirstLongDayMinutes=null persists as NULL (delegates to lower layer)", async () => {
+    // First set a value, then clear it
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: 480 },
+    });
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const cfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: data.tenant.id },
+      select: { bsSlotFirstLongDayMinutes: true },
+    });
+    expect(cfg?.bsSlotFirstLongDayMinutes).toBeNull();
+  });
+
+  it("Phase 83: PUT rejects bsSlotBlockWeekMinutes below 1200", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotBlockWeekMinutes: 600 },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body);
+    expect(JSON.stringify(body)).toMatch(/1200/);
+  });
 });

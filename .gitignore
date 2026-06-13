@@ -74,3 +74,6 @@ backups/
 tmp/
 apps/nfc-client/src-tauri/target/
 .pnpm-store/
+
+# Operator-script per-tenant snapshot files (PII — never commit)
+apps/api/scripts/.snapshots/

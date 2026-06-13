@@ -938,3 +938,27 @@ describe("combineBsAndWorkOnSameDay (D-11 Variante B max-merge)", () => {
     expect(combineBsAndWorkOnSameDay(480, 240, 300)).toBe(540);
   });
 });
+
+// ── Phase 83 — slotType-aware combineBsAndWorkOnSameDay (BBIG-V19-05) ────────
+describe("Phase 83 — slotType-aware combineBsAndWorkOnSameDay (BBIG-V19-05)", () => {
+  it("FIRST_LONG_DAY: max(pauschal=480, instr+work=300) → 480 (pauschal wins)", () => {
+    expect(combineBsAndWorkOnSameDay(480, 200, 100, "FIRST_LONG_DAY")).toBe(480);
+  });
+
+  it("FIRST_LONG_DAY: max(pauschal=480, instr+work=600) → 600 (real work wins)", () => {
+    expect(combineBsAndWorkOnSameDay(480, 400, 200, "FIRST_LONG_DAY")).toBe(600);
+  });
+
+  it("BLOCK_WEEK: max(pauschal=480, instr+work=420) → 480 (pauschal wins)", () => {
+    expect(combineBsAndWorkOnSameDay(480, 360, 60, "BLOCK_WEEK")).toBe(480);
+  });
+
+  it("SECOND_LONG_DAY: instr+work=300 (netto, no pauschal floor) → 300", () => {
+    // No Math.max — netto slot returns instruction+work directly per BBiG §15 Abs.2 Nr.1
+    expect(combineBsAndWorkOnSameDay(480, 240, 60, "SECOND_LONG_DAY")).toBe(300);
+  });
+
+  it("SHORT_DAY: instr+work=180 (netto, no pauschal floor) → 180", () => {
+    expect(combineBsAndWorkOnSameDay(480, 180, 0, "SHORT_DAY")).toBe(180);
+  });
+});
