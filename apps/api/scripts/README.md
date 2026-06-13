@@ -20,6 +20,8 @@ classified by lifecycle.
 | audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                             | Audit tool                            |
 | audit-workschedule-non-month1.ts               | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                | Audit tool                            |
 | backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                             | Migration artifact (Phase 67.2)       |
+| migrate-bs-to-work-event.ts                    | 2026-06-12 | Per-tenant atomic migration of Absence type=VOCATIONAL_SCHOOL → WorkEvent; flips workEventModelLive flag at end of tx; idempotent; AuditLog summary row per run; requires --operator-user-id | Migration artifact (Phase 80)         |
+| rollback-work-event-to-bs.ts                   | 2026-06-12 | Inverse of migrate-bs-to-work-event.ts; reactivates Absence rows + soft-deletes WorkEvent + clears workEventModelLive flag; restores Absence.note byte-equivalence; requires --operator-user-id | Migration artifact (Phase 80)         |
 
 ## Migration artifacts
 
@@ -190,3 +192,195 @@ Locked months were never modified in the first place.
 - **Requires `--tenant-id` OR `--all-tenants`** — no silent default.
   The script throws "Tenant-Auswahl erforderlich…" (German per D-17)
   and exits non-zero otherwise.
+
+## Phase 80 — WorkEvent Migration
+
+### Purpose
+
+v1.9 promotes BS-Tag (Berufsschule) from `Absence type=VOCATIONAL_SCHOOL`
+to a dedicated `WorkEvent` table so future day-event types
+(FIELD_SERVICE, BUSINESS_TRIP, TRAINING, OTHER) become data-only
+additions. `migrate-bs-to-work-event.ts` performs the per-tenant atomic
+flag flip; `rollback-work-event-to-bs.ts` ships in the same PR as the
+inverse operation. NO dual-write — the coexistence window is closed by
+transactional semantics (per-tenant `prisma.$transaction` commits the
+soft-delete + WorkEvent insert + `TenantConfig.workEventModelLive=true`
+flag flip in one atomic step).
+
+The migration produces a SUMMARY-only `AuditLog` row per tenant per run
+during the bulk import — operator userId is REQUIRED via
+`--operator-user-id <uuid>` (Revisionssicherheit per CLAUDE.md;
+operator-attributable). Runtime CRUD on WorkEvent post-migration remains
+audit-proof in the usual per-row sense.
+
+The inverse rollback exists in the same PR (M-6 mitigation — never ship
+forward without rollback). It reconstructs the original `Absence` state
+byte-equivalently using the `legacyAbsenceId` link as source of truth.
+
+### When to run
+
+**AFTER** the v1.9 image is deployed AND the new code is serving
+traffic. **AFTER** int verification passes. Per-tenant big-bang —
+operators target ONE tenant per run.
+
+### Deploy sequence
+
+1. Merge the v1.9 PR (Phase 80) to `main`.
+2. Wait for the `main` CI pipeline to publish
+   `ghcr.io/.../clokr-api:sha-<SHA>` and the `v1.9` tag artifact.
+3. Deploy to **int** and verify `GET /api/v1/version` returns `v1.9`.
+4. **W6 — Scale API to EXACTLY 1 replica** (CRITICAL — the in-process
+   pause set is single-replica only; on 2+ replicas the other replicas
+   keep generating during the migration window):
+   ```bash
+   # k3s / k8s (int):
+   kubectl scale deployment clokr-api --replicas=1
+   kubectl rollout status deployment clokr-api --timeout=60s
+   # docker compose (local dev):
+   docker compose up --scale api=1 -d
+   ```
+   Verify with `kubectl get pods -l app=clokr-api` (exactly 1 Running
+   pod) or `docker compose ps api` (exactly 1 container) BEFORE the
+   next step.
+5. **Pre-flight safety query** on int (dry-run is the default — no
+   `--apply` flag):
+   ```bash
+   DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+     scripts/migrate-bs-to-work-event.ts \
+     --tenant-id <tenant-uuid> \
+     --operator-user-id <operator-uuid>
+   ```
+   Review the JSON summary: `sourceCount`, `nonAzubiLegacyCount`,
+   `existingWorkEventCount`, `wouldCreate`, `wouldSkip`.
+6. If `nonAzubiLegacyCount > 0`: investigate the legacy rows first
+   (M-5 — Absence VS rows whose employee is NOT classified AZUBI).
+   Either fix the rows OR re-run with `--allow-non-azubi-legacy`
+   after a deliberate operator decision (the flag value is recorded
+   in `AuditLog.newValue.allowNonAzubiLegacy`).
+7. If `existingWorkEventCount > 0` (W5 — Phase 79 operator-created
+   WorkEvent VS rows without `legacyAbsenceId`): investigate. Either
+   reconcile manually OR proceed with `--allow-existing-work-events`
+   (count recorded in
+   `AuditLog.newValue.dataQualityIssues.existingWorkEventsWithoutLegacyLink`).
+8. Run `--apply` on int:
+   ```bash
+   DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+     scripts/migrate-bs-to-work-event.ts \
+     --tenant-id <tenant-uuid> \
+     --operator-user-id <operator-uuid> \
+     --apply
+   ```
+   Verify the AuditLog row:
+   `SELECT * FROM "AuditLog" WHERE action = 'WORK_EVENT_MIGRATION_V19'
+   AND "entityId" = '<tenant-uuid>' ORDER BY "createdAt" DESC LIMIT 1;`
+   The `userId` MUST equal the `--operator-user-id` you passed
+   (B2 — never null). Verify
+   `tenantConfig.workEventModelLive = true` for the tenant.
+9. **W8 — Wait 1-2 seconds before saldo spot-check**. In-flight
+   requests started BEFORE the migration commit may still observe
+   the old flag value via the 5-min `getTenantWorkEventModelLive`
+   cache until they complete. The wait gives them time to drain.
+   Then spot-check `GET /api/v1/overtime/<employeeId>` — saldo must
+   match the pre-migration value byte-for-byte (the precompute phase
+   mirrors the legacy aggregator output).
+10. **Scale API back to normal replica count** AFTER the migration
+    commits AND verification passes:
+    ```bash
+    kubectl scale deployment clokr-api --replicas=2  # or prod count
+    kubectl rollout status deployment clokr-api --timeout=60s
+    ```
+11. If an anomaly is detected (saldo drift, DATEV PDF byte mismatch,
+    or any production incident attributable to the migration) →
+    run rollback IMMEDIATELY. Scale back to 1 replica FIRST:
+    ```bash
+    kubectl scale deployment clokr-api --replicas=1
+    DATABASE_URL=... pnpm --filter @clokr/api exec tsx \
+      scripts/rollback-work-event-to-bs.ts \
+      --tenant-id <tenant-uuid> \
+      --operator-user-id <operator-uuid> \
+      --apply
+    ```
+    Verify `tenantConfig.workEventModelLive = false`; AuditLog row
+    with `action = 'WORK_EVENT_ROLLBACK_V19'` exists; `Absence.note`
+    round-trips byte-for-byte (B4 — `MIGRATION_NOTE_PATTERN` regex
+    strips the migration suffix, pre-existing notes survive
+    unchanged).
+12. Promote the v1.9 image to **prod** via the tag-as-source-of-truth
+    workflow (sha-pinned, never env-var-driven).
+13. Repeat steps 4-10 on prod for each tenant individually
+    (per-tenant big-bang per 80-CONTEXT.md decision; `--all-tenants`
+    is explicitly OUT OF SCOPE).
+
+### Sample dry-run output
+
+```json
+{
+  "tenantId": "00000000-0000-0000-0000-000000000001",
+  "operatorUserId": "00000000-0000-0000-0000-000000000002",
+  "dryRun": true,
+  "runId": "00000000-0000-0000-0000-0000000000aa",
+  "sourceCount": 42,
+  "nonAzubiLegacyCount": 0,
+  "existingWorkEventCount": 0,
+  "wouldCreate": 42,
+  "wouldSkip": 0,
+  "durationMs": 350
+}
+```
+
+- `sourceCount`: candidate Absence VS rows (filtered by `tenantId`,
+  `type=VOCATIONAL_SCHOOL`, `deletedAt=null`).
+- `nonAzubiLegacyCount`: subset whose employee is NOT classified
+  AZUBI — operator must opt in via `--allow-non-azubi-legacy`.
+- `existingWorkEventCount`: WorkEvent VS rows without
+  `legacyAbsenceId` (Phase 79 operator-created) — operator must opt
+  in via `--allow-existing-work-events` (W5).
+- `wouldCreate`: net new WorkEvent rows the apply step will insert.
+- `wouldSkip`: source rows already mapped via `legacyAbsenceId` link
+  (idempotent re-run signal).
+
+### Safety guarantees
+
+- **Per-tenant atomic transaction** — the entire migration
+  (soft-delete source Absence rows + insert WorkEvent rows + flag
+  flip) runs inside a single `prisma.$transaction(async (tx) => …,
+  { timeout: 60_000 })`. On any failure the whole tenant rolls back
+  (C-2 mitigation — no partial state at tenant boundary).
+- **Pre-migration safety query** halts on non-AZUBI Absence VS rows
+  unless `--allow-non-azubi-legacy` is passed (M-5).
+- **Existing-WorkEvent safety query** halts on Phase 79
+  operator-created WorkEvent VS rows lacking `legacyAbsenceId`
+  unless `--allow-existing-work-events` is passed (W5).
+- **Generator paused per-tenant** during the migration window via
+  `pauseTenantGeneration(tenantId)` (M-4 — cron will NOT insert
+  fresh Absence rows mid-migration). REQUIRES single-replica
+  scaling (W6) because the pause set is in-process only.
+- **Idempotent** — re-running `--apply` produces
+  `createdCount: 0, skipped: <prior createdCount>`. The
+  `@@unique([employeeId, date, type])` constraint on `WorkEvent`
+  surfaces a `P2002`; the script catches it (W7 type-narrowing on
+  the unique target — `P2002` on `legacyAbsenceId` is treated as a
+  concurrent-run signal and rethrown, rolling back the whole tx).
+- **Precompute phase resolves all `workedMinutes` +
+  `expectedMinutes` BEFORE any soft-delete** (B1 — prevents
+  block-week minute corruption mid-migration).
+- **Summary-only AuditLog** — ONE row per tenant per run with
+  operator userId attribution (M-2 + B2). NOT per-source-row
+  (would be ~thousands of rows; audit-trail noise).
+- **Inverse rollback ships in the same PR** (M-6).
+- **`Absence.note` byte-equivalence** guaranteed by
+  `preserveOriginalNote` (forward) and the `MIGRATION_NOTE_PATTERN`
+  regex strip (rollback) — B4.
+- **NEVER hard-deletes rows** — every source row is soft-deleted
+  via `deletedAt = now()` with a `legacyAbsenceId` link to the new
+  WorkEvent row (Revisionssicherheit per CLAUDE.md).
+- **`--operator-user-id <uuid>` is REQUIRED** on BOTH forward and
+  rollback scripts. The script validates the UUID exists in the
+  `User` table before opening the transaction (fail-fast). The
+  AuditLog row's `userId` field carries this value — never null.
+
+### Reference
+
+For the full operator playbook (pre-flight checklist, recovery
+scenarios, rollback procedure with W8 cache-wait detail), see
+`docs/work-event-migration-runbook.md`.

@@ -552,11 +552,18 @@ describe("Reports API", () => {
       });
       managerToken = JSON.parse(mgrLogin.body).accessToken;
 
-      // Today (UTC midnight) for entry creation
+      // Today in the TENANT timezone (Europe/Berlin), NOT UTC — the
+      // today-attendance endpoint resolves "today" via tenant-local date.
+      // UTC-today and Berlin-today diverge in the 22:00–00:00 UTC window,
+      // causing dashboard tests to flake on TZ-edge CI runs.
       const now = new Date();
-      const todayUtc = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-      );
+      const tenantDateStr = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Berlin",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(now);
+      const todayUtc = new Date(tenantDateStr + "T00:00:00Z");
 
       // Helper to create a Mon-Fri schedule for an employee
       async function makeWorkSchedule(empId: string) {
@@ -843,10 +850,14 @@ describe("Reports API", () => {
     });
 
     it("Case 5: employee on workday with no entries or absences has status missing", async () => {
-      // Only valid for weekdays — skip on weekend
-      const dow = new Date().getUTCDay();
-      if (dow === 0 || dow === 6) {
-        // Saturday or Sunday — employee has Mon-Fri schedule → status would be "none"
+      // Only valid for weekdays — skip on weekend. Use TENANT timezone (Europe/Berlin)
+      // because the dashboard endpoint resolves the day-of-week via tenant TZ.
+      // UTC and Berlin can disagree on the weekday at 22:00–00:00 UTC.
+      const weekdayStr = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Europe/Berlin",
+        weekday: "short",
+      }).format(new Date());
+      if (weekdayStr === "Sat" || weekdayStr === "Sun") {
         return;
       }
       const res = await app.inject({

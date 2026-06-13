@@ -24,9 +24,19 @@ import { createHash } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 
-// Use today's date in UTC; shift covers "now" wall-clock in Europe/Berlin
+// Use today's date in the TENANT timezone (Europe/Berlin), NOT UTC — because
+// `getCurrentShift()` resolves shifts via tenant-local "today" (not UTC-today).
+// At UTC 22:00–00:00 (= Berlin 00:00–02:00 next day), UTC-today and Berlin-today
+// diverge. Seeding the shift for UTC-today caused 'WIFI_NO_SHIFT' on test runs
+// happening to cross the TZ-edge — the pre-existing CI flakiness Phase 80
+// observed in PR #292.
 const TODAY = new Date();
-const TODAY_DATE_STR = TODAY.toISOString().slice(0, 10);
+const TODAY_DATE_STR = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Berlin",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(TODAY);
 const TODAY_UTC_MIDNIGHT = new Date(TODAY_DATE_STR + "T00:00:00Z");
 const NOW_ISO = TODAY.toISOString();
 

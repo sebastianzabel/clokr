@@ -806,6 +806,11 @@ export async function reportRoutes(app: FastifyInstance) {
 
       const employees = await app.prisma.employee.findMany({
         where: { tenantId: req.user.tenantId, exitDate: null, user: { isActive: true } },
+        // Stable ORDER BY employeeNumber so DATEV LODAS export bytes are
+        // deterministic across environments. Without this, Postgres can return
+        // rows in different orders between local and CI, causing the
+        // byte-equivalence snapshot to fail (#292 / TEST-V19-01).
+        orderBy: { employeeNumber: "asc" },
         include: {
           workSchedules: { orderBy: { validFrom: "asc" } },
           timeEntries: {

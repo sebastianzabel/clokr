@@ -22,8 +22,16 @@ import { createHash } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 
+// TZ-edge fix: resolve "today" in TENANT timezone (Europe/Berlin), not UTC.
+// `getCurrentShift()` looks up shifts via tenant-local date; UTC-today and
+// Berlin-today diverge in the 22:00–00:00 UTC window, causing 'WIFI_NO_SHIFT'.
 const TODAY = new Date();
-const TODAY_DATE_STR = TODAY.toISOString().slice(0, 10);
+const TODAY_DATE_STR = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Europe/Berlin",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(TODAY);
 const TODAY_UTC_MIDNIGHT = new Date(TODAY_DATE_STR + "T00:00:00Z");
 const NOW_ISO = TODAY.toISOString();
 

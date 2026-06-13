@@ -19,6 +19,43 @@ import { FederalState, AbsenceType } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
 
+// ── Phase 80 — Per-tenant generator pause (M-4 mitigation) ───────────────────
+// Migration scripts (apps/api/scripts/migrate-bs-to-work-event.ts +
+// rollback-work-event-to-bs.ts) call pauseTenantGeneration(tenantId) BEFORE
+// opening their migration transaction and resumeTenantGeneration(tenantId)
+// AFTER it commits (in a finally block).
+//
+// Without this hook, the daily 02:30 cron could insert fresh Absence
+// VOCATIONAL_SCHOOL rows AFTER the migration's pre-flight count but BEFORE
+// the per-tenant transaction commits — those rows would be silently missed.
+//
+// In-memory only — single-replica execution is the current assumption
+// (deferred multi-replica coordination per 80-CONTEXT.md deferred list).
+// The runbook (docs/work-event-migration-runbook.md) MANDATES scaling the
+// API deployment to 1 replica before --apply runs (W6).
+const PAUSED_TENANTS = new Set<string>();
+
+export function pauseTenantGeneration(tenantId: string): void {
+  PAUSED_TENANTS.add(tenantId);
+}
+
+export function resumeTenantGeneration(tenantId: string): void {
+  PAUSED_TENANTS.delete(tenantId);
+}
+
+export function isTenantPaused(tenantId: string): boolean {
+  return PAUSED_TENANTS.has(tenantId);
+}
+
+/**
+ * Test-only — reset the pause set between unit tests so suite ordering does
+ * not leak state. NOT for production use. Called from `beforeEach` in Plan
+ * 80-01 + Plan 80-02 test suites (IN-11).
+ */
+export function _resetPausedTenantsForTests(): void {
+  PAUSED_TENANTS.clear();
+}
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 export interface GeneratorResult {
@@ -694,6 +731,24 @@ export async function runVocationalSchoolGeneration(
   audit: AuditFn,
   opts: RunOpts,
 ): Promise<GeneratorResult> {
+  // Phase 80 M-4 mitigation — tenant is mid-migration (the script holds the
+  // pause boundary). Skip silently; the migration script logs the pause
+  // boundary, spamming generator logs adds noise without diagnostic value.
+  // The plugin's per-tenant `app.log.info` summary will report `0 erstellt`
+  // for paused tenants, which is the operator-visible signal.
+  if (isTenantPaused(opts.tenantId)) {
+    return {
+      created: 0,
+      skipped: {
+        schoolHoliday: 0,
+        existing: 0,
+        locked: 0,
+        preHire: 0,
+        postExit: 0,
+        outOfWindow: 0,
+      },
+    };
+  }
   return runOrPreview(prisma, audit, { ...opts, dryRun: opts.dryRun ?? false });
 }
 
