@@ -9,6 +9,10 @@
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
+  // Phase 81 UI-V19-06: typed shapes for the management /work-events GET response.
+  // Phase 79-05 ships the bidirectional `__brand` discriminant so mixing this up
+  // with the /mine surface is caught at compile time.
+  import type { WorkEventListTenant } from "@clokr/types";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   interface Employee {
@@ -161,8 +165,11 @@
   };
   // v1.7.4 — Berufsschule chip removed from the strip. The canonical BS source
   // is now `EmployeeVocationalSchoolPattern` + auto-generator. Manual one-off
-  // BS-days are still supported via the POST /vocational-school/manual-insert
-  // endpoint (used by future UX), just no longer via drag-and-drop.
+  // BS-days are written via the BS-Pattern editor in /admin/employees/[id]
+  // (canonical writer) — this page only owns click-to-delete of existing BS
+  // rows (no POST surface). Phase 81 UI-V19-06 cut the DELETE + read-resolve
+  // off the legacy /vocational-school/* URLs and onto the Phase-79
+  // /work-events* endpoints.
   type DragItem = TemplateDragItem | ShiftDragItem;
 
   type DropTargetKey = string; // `${employeeId}::${iso}`
@@ -191,9 +198,11 @@
     closeAfter: false,
   });
 
-  // 260601-g8l — BS-Tag removal confirmation. absenceId is resolved at click time
-  // via GET /vocational-school/upcoming (no client-side cache of absence ids), then
-  // a ConfirmDialog gates the DELETE call.
+  // 260601-g8l — BS-Tag removal confirmation. The id is resolved at click time
+  // via GET /work-events?from=&to=&employeeId= (Phase 81 UI-V19-06; was
+  // /vocational-school/upcoming pre-Phase-81), then a ConfirmDialog gates the
+  // DELETE call. Field name `absenceId` is preserved for diff minimization —
+  // semantically the id is a WorkEvent id (rename deferred to v1.10 cleanup).
   let vsRemoveConfirm = $state<{
     open: boolean;
     absenceId: string | null;
@@ -1052,25 +1061,27 @@
     $authStore.user?.role === "ADMIN" || $authStore.user?.role === "MANAGER",
   );
 
-  // 260601-g8l — Click on a vocational_school cell → resolve absenceId via
-  // /vocational-school/upcoming (the canonical read endpoint), then open the
-  // ConfirmDialog. The shifts /api/v1/shifts response does NOT carry absence ids,
-  // so this extra round-trip is unavoidable but cheap (the result set is a single
-  // day window).
+  // 260601-g8l + Phase 81 UI-V19-06 — Click on a vocational_school cell →
+  // resolve the WorkEvent id via GET /api/v1/work-events?from=&to=&employeeId=
+  // (Phase-79 management surface; was /vocational-school/upcoming pre-Phase-81),
+  // then open the ConfirmDialog. The shifts /api/v1/shifts response does NOT
+  // carry WorkEvent ids, so this extra round-trip is unavoidable but cheap
+  // (a single-day window narrowed to a single employee).
+  //
+  // The Phase-79 listQuerySchema accepts only from/to/employeeId — server-side
+  // type filtering is NOT supported, so we client-side narrow to
+  // r.type === "VOCATIONAL_SCHOOL". The result set is bounded by the
+  // single-day + per-employee window, so the filter cost is negligible.
   async function onVocationalSchoolCellClick(employeeId: string, iso: string): Promise<void> {
     if (!canRemoveVs) return; // defense-in-depth; the cell stays readable for EMPLOYEE
     if (vsRemovePending) return; // avoid double-firing while a previous DELETE is in flight
     try {
-      type UpcomingRow = {
-        id: string;
-        employeeId: string;
-        date: string;
-        source: "MANUAL" | "PATTERN";
-      };
-      const rows = await api.get<UpcomingRow[]>(
-        `/vocational-school/upcoming?from=${iso}&to=${iso}`,
+      const rows = await api.get<WorkEventListTenant>(
+        `/work-events?from=${iso}&to=${iso}&employeeId=${employeeId}`,
       );
-      const match = rows.find((r) => r.employeeId === employeeId && r.date === iso);
+      const match = rows.find(
+        (r) => r.employeeId === employeeId && r.date === iso && r.type === "VOCATIONAL_SCHOOL",
+      );
       if (!match) {
         toasts.error("Berufsschultag konnte nicht entfernt werden.");
         return;
@@ -1078,6 +1089,8 @@
       const emp = week?.employees.find((e) => e.id === employeeId);
       vsRemoveConfirm = {
         open: true,
+        // WorkEvent id (Phase 81): the field name `absenceId` is preserved
+        // here for diff minimization; semantic rename is a v1.10 cleanup.
         absenceId: match.id,
         employeeId,
         date: iso,
@@ -1222,15 +1235,20 @@
     }
   }
 
-  // 260601-g8l — Confirm handler for the BS-removal ConfirmDialog. Posts the
-  // DELETE, surfaces the standard 403 (locked-month) / 404 (cross-tenant or
-  // already-deleted) toasts, and refreshes the week on success.
+  // 260601-g8l + Phase 81 UI-V19-06 — Confirm handler for the BS-removal
+  // ConfirmDialog. Sends DELETE /api/v1/work-events/:id (Phase-79 management
+  // endpoint; was /vocational-school/:absenceId pre-Phase-81), surfaces the
+  // standard 403 (locked-month) / 404 (cross-tenant or already-deleted)
+  // toasts (German strings unchanged — Phase 79 preserved the error
+  // contract), and refreshes the week on success.
   async function confirmRemoveVocationalSchool(): Promise<void> {
+    // WorkEvent id (Phase 81); field name `absenceId` retained — see comment
+    // at the vsRemoveConfirm declaration.
     const id = vsRemoveConfirm.absenceId;
     if (!id) return;
     vsRemovePending = true;
     try {
-      await api.delete(`/vocational-school/${id}`);
+      await api.delete(`/work-events/${id}`);
       toasts.success("Berufsschultag entfernt");
       await load();
     } catch (e) {
