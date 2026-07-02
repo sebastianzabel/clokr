@@ -81,6 +81,83 @@ describe("Time Entries API", () => {
       expect(res.statusCode).toBe(409);
     });
 
+    // v1.8.13 — a stale open entry (forgotten clock-out) must NOT be treated as
+    // running until year 9999 and block entries on later days / months.
+    it("open entry on an earlier day does not block a NEW entry on a later day (v1.8.13)", async () => {
+      // Stale open entry (no endTime) on day N.
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-02-10"),
+          startTime: new Date("2026-02-10T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: true,
+          invalidReason: "Ausstempeln fehlt",
+          source: "MOBILE",
+        },
+      });
+
+      // New closed entry on a LATER day → must succeed (pre-fix this was 409).
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: "2026-02-12",
+          startTime: "2026-02-12T08:00:00.000Z",
+          endTime: "2026-02-12T16:00:00.000Z",
+          breakMinutes: 0,
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+    });
+
+    // v1.8.13 — reproduces the Lilav case: an open entry in a PRIOR month blocked
+    // correcting (PUT) an open entry in a later month via a cross-month false overlap.
+    it("open entry in a prior month does not block editing an entry in a later month (v1.8.13)", async () => {
+      // Stale open entry in month A.
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-01-05"),
+          startTime: new Date("2026-01-05T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: true,
+          invalidReason: "Ausstempeln fehlt",
+          source: "MOBILE",
+        },
+      });
+
+      // Open entry in month B — the one we want to correct.
+      const target = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-02-05"),
+          startTime: new Date("2026-02-05T08:00:00.000Z"),
+          endTime: null,
+          isInvalid: true,
+          invalidReason: "Ausstempeln fehlt",
+          source: "MOBILE",
+        },
+      });
+
+      // Correcting the month-B entry must succeed even though the month-A entry
+      // is still open (pre-fix this was 409 "Überschneidung … – läuft").
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${target.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          startTime: "2026-02-05T08:00:00.000Z",
+          endTime: "2026-02-05T16:00:00.000Z",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+    });
+
     it("returns ArbZG warnings when daily hours exceed 10h", async () => {
       const d = pastDate(5);
       // Clean any existing entries for this day
