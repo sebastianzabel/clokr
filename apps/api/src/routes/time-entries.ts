@@ -148,15 +148,35 @@ function validateBreakSlots(
 }
 
 // ── Überlappungsprüfung ────────────────────────────────────────────────────────
+//
+// entryDate (optional): the calendar date of the entry being created/updated.
+// When provided, the "still-running" open-entry check is scoped to the same
+// calendar date. Without date scoping an open entry from a previous day would
+// be treated as running until year 9999, incorrectly blocking entries on any
+// subsequent day (cross-day overlap false positive, v1.8.12 fix).
+// Closed entries that physically span midnight (nightshift) are still caught by
+// the { endTime: { gt: startTime } } branch, which is not date-scoped.
 async function checkOverlap(
   app: FastifyInstance,
   employeeId: string,
   startTime: Date,
   endTime: Date | null,
   excludeId?: string,
+  entryDate?: Date,
+  tz?: string,
 ): Promise<string | null> {
   // Kein endTime = offener Eintrag → als "läuft noch" behandeln
   const effectiveEnd = endTime ?? new Date("9999-12-31");
+
+  // Open-entry conflict condition:
+  // • When entryDate is known, only entries on the SAME calendar date are
+  //   considered "still running" — an open entry from a prior day must not
+  //   block subsequent days.
+  // • Without entryDate (no callers currently omit it, but kept for safety):
+  //   fall back to the original broad match.
+  const openEntryCondition: Prisma.TimeEntryWhereInput = entryDate
+    ? { endTime: null, date: entryDate }
+    : { endTime: null };
 
   const overlapping = await app.prisma.timeEntry.findFirst({
     where: {
@@ -165,7 +185,7 @@ async function checkOverlap(
       id: excludeId ? { not: excludeId } : undefined,
       startTime: { lt: effectiveEnd },
       OR: [
-        { endTime: null }, // aktiver Eintrag läuft noch
+        openEntryCondition, // offener Eintrag auf demselben Tag läuft noch
         { endTime: { gt: startTime } }, // abgeschlossener Eintrag endet nach neuem Start
       ],
     },
@@ -173,9 +193,25 @@ async function checkOverlap(
 
   if (!overlapping) return null;
 
-  const fmt = (d: Date | null) =>
-    d ? d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" }) : "läuft";
-  return `Überschneidung mit bestehendem Eintrag (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
+  // Include the date in the error message so the user can identify which entry
+  // is conflicting (especially important for cross-day stale open entries).
+  // Format in the tenant tz — the server container runs in UTC, so without it
+  // the times printed in UTC and the conflict was impossible to place.
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    ...(tz ? { timeZone: tz } : {}),
+  };
+  const timeOpts: Intl.DateTimeFormatOptions = {
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(tz ? { timeZone: tz } : {}),
+  };
+  const fmtDate = (d: Date) => d.toLocaleDateString("de-DE", dateOpts);
+  const fmtTime = (d: Date | null) => (d ? d.toLocaleTimeString("de-DE", timeOpts) : "läuft");
+  const dateLabel = fmtDate(overlapping.startTime);
+  return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmtTime(overlapping.startTime)} – ${fmtTime(overlapping.endTime)})`;
 }
 
 export async function timeEntryRoutes(app: FastifyInstance) {
@@ -811,8 +847,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" });
       }
 
-      // Überlappungsprüfung
-      const overlap = await checkOverlap(app, employeeId, newStart, newEnd);
+      // Überlappungsprüfung — date-scoped so open entries from prior days do not
+      // block new entries on subsequent days (v1.8.12 cross-day overlap fix).
+      const overlap = await checkOverlap(
+        app,
+        employeeId,
+        newStart,
+        newEnd,
+        undefined,
+        new Date(body.date),
+        tz,
+      );
       if (overlap) return reply.code(409).send({ error: overlap });
 
       // Determine breakMinutes from break slots or body
@@ -1058,7 +1103,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
       }
 
-      const overlap = await checkOverlap(app, existing.employeeId, updatedStart, updatedEnd, id);
+      // date-scoped: open entries from other days must not block this edit (v1.8.12).
+      const effectiveDateForEdit = body.date ? new Date(body.date) : existing.date;
+      const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+      const overlap = await checkOverlap(
+        app,
+        existing.employeeId,
+        updatedStart,
+        updatedEnd,
+        id,
+        effectiveDateForEdit,
+        overlapTz,
+      );
       if (overlap) return reply.code(409).send({ error: overlap });
 
       // Phase 63 D-09..D-13 — JArbSchG §9 pre-check for PUT.
@@ -1256,8 +1312,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
         }
 
-        // Overlap check
-        const overlap = await checkOverlap(app, existing.employeeId, newStart, newEnd, id);
+        // Overlap check — date-scoped so open entries from prior days do not
+        // block revalidation of entries on subsequent days (v1.8.12).
+        const revalidateTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+        const overlap = await checkOverlap(
+          app,
+          existing.employeeId,
+          newStart,
+          newEnd,
+          id,
+          existing.date,
+          revalidateTz,
+        );
         if (overlap) return reply.code(409).send({ error: overlap });
       }
       if ("note" in body) updateData.note = body.note ?? null;

@@ -81,6 +81,120 @@ describe("Time Entries API", () => {
       expect(res.statusCode).toBe(409);
     });
 
+    it("open entry from prior day does not block new entry on the next day (v1.8.12)", async () => {
+      // Regression test: an open entry (endTime: null) on day N must not prevent
+      // creation of a new entry on day N+1. The cross-day overlap false positive
+      // was caused by checkOverlap treating endTime:null as running until 9999.
+      const dayN = "2026-04-14";
+      const dayN1 = "2026-04-15";
+
+      // Clean up any leftovers from other tests for these dates
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [new Date(dayN + "T00:00:00Z"), new Date(dayN1 + "T00:00:00Z")] },
+        },
+      });
+
+      // Create an open entry (no endTime) on day N via direct DB insert to avoid
+      // date-in-future validation noise and to simulate a stale clock-in exactly.
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(dayN + "T00:00:00Z"),
+          startTime: new Date(dayN + "T07:00:00.000Z"),
+          endTime: null, // intentionally open
+          breakMinutes: 0,
+          source: "MANUAL",
+          createdBy: data.adminEmployee.userId,
+        },
+      });
+
+      // Creating an entry on day N+1 must succeed despite the day-N open entry.
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          date: dayN1,
+          startTime: `${dayN1}T07:00:00.000Z`,
+          endTime: `${dayN1}T15:00:00.000Z`,
+          breakMinutes: 0,
+        },
+      });
+
+      expect(res.statusCode).toBe(201);
+
+      // Cleanup
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [new Date(dayN + "T00:00:00Z"), new Date(dayN1 + "T00:00:00Z")] },
+        },
+      });
+    });
+
+    it("open entry in a prior month does not block editing an entry in a later month (v1.8.12)", async () => {
+      // Regression test for the cross-MONTH edit case: an open entry (endTime:null)
+      // in month A must not block correcting (PUT) an open entry in month B. Pre-fix
+      // this failed with "Überschneidung … – läuft" formatted in UTC with no date.
+      const monthA = "2026-01-05";
+      const monthB = "2026-02-05";
+
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [new Date(monthA + "T00:00:00Z"), new Date(monthB + "T00:00:00Z")] },
+        },
+      });
+
+      // Stale open entry in month A.
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(monthA + "T00:00:00Z"),
+          startTime: new Date(monthA + "T08:00:00.000Z"),
+          endTime: null,
+          breakMinutes: 0,
+          source: "MANUAL",
+          createdBy: data.adminEmployee.userId,
+        },
+      });
+
+      // Open entry in month B — the one we correct.
+      const target = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(monthB + "T00:00:00Z"),
+          startTime: new Date(monthB + "T08:00:00.000Z"),
+          endTime: null,
+          breakMinutes: 0,
+          source: "MANUAL",
+          createdBy: data.adminEmployee.userId,
+        },
+      });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${target.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          startTime: `${monthB}T08:00:00.000Z`,
+          endTime: `${monthB}T16:00:00.000Z`,
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      await app.prisma.timeEntry.deleteMany({
+        where: {
+          employeeId: data.employee.id,
+          date: { in: [new Date(monthA + "T00:00:00Z"), new Date(monthB + "T00:00:00Z")] },
+        },
+      });
+    });
+
     it("returns ArbZG warnings when daily hours exceed 10h", async () => {
       const d = pastDate(5);
       // Clean any existing entries for this day
