@@ -27,6 +27,11 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      # Do NOT cancel a sibling image build when one fails. The images push
+      # BEFORE the Trivy gate runs; with fail-fast (default true) a Trivy
+      # failure in one image cancels the other mid-push, leaving its :sha image
+      # only partially uploaded and unusable for release promotion.
+      fail-fast: false
       matrix:
         include:
           - image: clokr-api
