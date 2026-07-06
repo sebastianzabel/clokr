@@ -303,14 +303,14 @@ describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => 
 
     // Inject a failure for tenant1's per-tenant publicHoliday lookup (first query
     // after the grace check). Any other tenant returns [] so it processes normally.
-    const holidaySpy = vi
-      .spyOn(app.prisma.publicHoliday, "findMany")
-      .mockImplementation((args?: { where?: { tenantId?: string } }) => {
-        if (args?.where?.tenantId === tenant1Id) {
-          return Promise.reject(new Error("injected tenant1 failure")) as never;
-        }
-        return Promise.resolve([]) as never;
-      });
+    const holidaySpy = vi.spyOn(app.prisma.publicHoliday, "findMany").mockImplementation(((args: {
+      where?: { tenantId?: string };
+    }) => {
+      if (args?.where?.tenantId === tenant1Id) {
+        return Promise.reject(new Error("injected tenant1 failure"));
+      }
+      return Promise.resolve([]);
+    }) as never);
     // Observe that tenant2 is still processed (its employees are looked up).
     const employeeFindManySpy = vi.spyOn(app.prisma.employee, "findMany");
 

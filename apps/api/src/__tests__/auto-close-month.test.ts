@@ -52,7 +52,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     spy: ReturnType<typeof vi.spyOn>,
     employeeIds: string[],
   ): boolean {
-    return spy.mock.calls.some((call) => {
+    return spy.mock.calls.some((call: unknown[]) => {
       const where = (
         call[0] as { where?: { employeeId_periodType_periodStart?: { employeeId?: string } } }
       )?.where?.employeeId_periodType_periodStart;
