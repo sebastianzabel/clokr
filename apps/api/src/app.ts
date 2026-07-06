@@ -52,6 +52,7 @@ import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
 import { testBootstrapRoutes } from "./routes/test-bootstrap";
+import { requireAuth } from "./middleware/auth";
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
 // Image content is the source of truth per Memory feedback_image_content_is_source_of_truth.
@@ -290,9 +291,12 @@ export async function buildApp() {
   await app.register(testBootstrapRoutes, { prefix: "/api/v1/test" });
 
   // ── Client Error Logging ─────────────────────────────────
+  // SEC-V1814-04: requireAuth gate (T-76.16-19/21), JWT-bound userId (T-76.16-18),
+  // payload length caps (T-76.16-20), rate limit tightened 20→5/min (T-76.16-19).
   app.post("/api/v1/logs/client", {
-    config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+    config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
     schema: { tags: ["Logs"] },
+    preHandler: requireAuth,
     handler: async (req) => {
       const body = req.body as {
         level?: string;
@@ -300,17 +304,16 @@ export async function buildApp() {
         stack?: string;
         url?: string;
         userAgent?: string;
-        userId?: string;
         extra?: Record<string, unknown>;
       };
-      const level = body.level === "error" || body.level === "warn" ? body.level : "warn";
+      const level = body.level === "error" ? "error" : "warn";
       app.log[level]({
-        msg: `[CLIENT] ${body.message ?? "Unknown error"}`,
+        msg: `[CLIENT] ${String(body.message ?? "Unknown error").slice(0, 1000)}`,
         client: {
-          stack: body.stack,
+          stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
           url: body.url,
           userAgent: body.userAgent,
-          userId: body.userId,
+          userId: req.user.sub, // JWT-bound; body.userId ignored to prevent attribution forgery
           ...body.extra,
         },
       });
