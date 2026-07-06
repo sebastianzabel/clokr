@@ -595,6 +595,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       await app.prisma.user.update({
         where: { id: employee.userId },
@@ -626,6 +636,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
       if (!employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits deaktiviert" });
 
@@ -674,6 +694,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
       if (employee.user.isActive)
         return reply.code(409).send({ error: "Mitarbeiter ist bereits aktiv" });
 
@@ -725,6 +755,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
       if (employee.user.isActive) {
         return reply.code(409).send({ error: "Mitarbeiter hat Einladung bereits akzeptiert" });
       }
@@ -775,6 +815,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         include: { user: true, overtimeAccount: true },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       await app.audit({
         userId: req.user.sub,
