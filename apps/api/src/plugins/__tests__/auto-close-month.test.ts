@@ -239,3 +239,93 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
     });
   });
 });
+
+// ── D-04: per-tenant try/catch — one tenant's failure must not abort the run ──
+describe("auto-close-month plugin — per-tenant fault isolation (D-04)", () => {
+  let app: FastifyInstance;
+  let tenant1Id: string;
+  let tenant2Id: string;
+
+  // Day 16 of Feb 2024 (Berlin) → past the grace threshold for both tenants.
+  const PINNED_NOW = new Date("2024-02-16T06:00:00Z");
+
+  async function seedMinimalTenant(label: string) {
+    const prisma = app.prisma;
+    const s =
+      `acm-fault-${label}-` + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+    const tenant = await prisma.tenant.create({
+      data: { name: `Fault ${label} ${s}`, slug: `fault-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    await prisma.tenantConfig.create({
+      data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+    const user = await prisma.user.create({
+      data: {
+        email: `u-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: user.id,
+        employeeNumber: `E-${s}`,
+        firstName: "F.",
+        lastName: label,
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    return tenant.id;
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenant1Id = await seedMinimalTenant("one");
+    tenant2Id = await seedMinimalTenant("two");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenant1Id);
+      await cleanupTestData(app, tenant2Id);
+    } catch (err) {
+      console.error("auto-close-month D-04 test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  it("continues to subsequent tenants when one tenant's processing throws", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(PINNED_NOW);
+
+    // Inject a failure for tenant1's per-tenant publicHoliday lookup (first query
+    // after the grace check). Any other tenant returns [] so it processes normally.
+    const holidaySpy = vi
+      .spyOn(app.prisma.publicHoliday, "findMany")
+      .mockImplementation((args?: { where?: { tenantId?: string } }) => {
+        if (args?.where?.tenantId === tenant1Id) {
+          return Promise.reject(new Error("injected tenant1 failure")) as never;
+        }
+        return Promise.resolve([]) as never;
+      });
+    // Observe that tenant2 is still processed (its employees are looked up).
+    const employeeFindManySpy = vi.spyOn(app.prisma.employee, "findMany");
+
+    try {
+      // Must NOT throw — the per-tenant catch swallows tenant1's failure and continues.
+      await expect(app.tryAutoCloseMonth()).resolves.toBeUndefined();
+
+      const processedTenant2 = employeeFindManySpy.mock.calls.some(
+        (call) => (call[0] as { where?: { tenantId?: string } })?.where?.tenantId === tenant2Id,
+      );
+      expect(processedTenant2).toBe(true);
+    } finally {
+      holidaySpy.mockRestore();
+      employeeFindManySpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});

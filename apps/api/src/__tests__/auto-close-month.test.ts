@@ -45,50 +45,73 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     vi.useRealTimers();
   });
 
-  it("D-11: exits early without querying any tenants when dayOfMonth < 15", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2024-02-05T06:00:00.000Z")); // day 5 < 15
+  // Helper: did the per-employee snapshot lookup fire for THIS tenant's employees?
+  // saldoSnapshot.findUnique runs inside the tenant loop only AFTER the grace check
+  // passes, so its presence/absence is a reliable "was this tenant processed?" probe.
+  function findUniqueFiredForSeededTenant(
+    spy: ReturnType<typeof vi.spyOn>,
+    employeeIds: string[],
+  ): boolean {
+    return spy.mock.calls.some((call) => {
+      const where = (
+        call[0] as { where?: { employeeId_periodType_periodStart?: { employeeId?: string } } }
+      )?.where?.employeeId_periodType_periodStart;
+      return where?.employeeId != null && employeeIds.includes(where.employeeId);
+    });
+  }
 
-    // Spy on tenant.findMany — must NOT be called when guard fires.
-    // auto-close-month signature: `tenant.findMany({ include: { config: true } })`.
-    // We match that exact shape so any unrelated tenant.findMany from other code
-    // paths doesn't accidentally satisfy the assertion.
-    const tenantFindManySpy = vi.spyOn(app.prisma.tenant, "findMany");
+  it("D-11: grace check skips the tenant (no processing) when the tenant-local day < 15", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    // 2024-02-05T06:00Z → Europe/Berlin local day 5 (< 15) → tenant skipped via continue.
+    vi.setSystemTime(new Date("2024-02-05T06:00:00.000Z"));
+
+    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
     const snapshotCreateSpy = vi.spyOn(app.prisma.saldoSnapshot, "create");
+    const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
-      const autoCloseCalls = tenantFindManySpy.mock.calls.filter(
-        (call) =>
-          call[0] !== undefined &&
-          typeof call[0] === "object" &&
-          "include" in call[0] &&
-          (call[0] as { include?: { config?: boolean } }).include?.config === true,
-      );
-      expect(autoCloseCalls).toHaveLength(0);
+      // Grace fired → this tenant's employees were never looked up or closed.
+      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(false);
       expect(snapshotCreateSpy).not.toHaveBeenCalled();
     } finally {
-      tenantFindManySpy.mockRestore();
+      findUniqueSpy.mockRestore();
       snapshotCreateSpy.mockRestore();
       vi.useRealTimers();
     }
   });
 
-  it("D-11: does NOT exit early when dayOfMonth >= 15 (proceeds to tenant lookup)", async () => {
+  it("D-11: grace check is TENANT-TZ-aware — UTC day 14 but Berlin-local day 15 proceeds", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // day 16 >= 15
+    // 2024-02-14T23:30Z is UTC day 14 (< 15) but Europe/Berlin local day 15 (>= 15).
+    // A UTC-based guard would wrongly SKIP; the per-tenant dateStrInTz guard PROCEEDS.
+    vi.setSystemTime(new Date("2024-02-14T23:30:00.000Z"));
 
-    const tenantFindManySpy = vi.spyOn(app.prisma.tenant, "findMany");
+    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
-      expect(tenantFindManySpy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          include: expect.objectContaining({ config: true }),
-        }),
-      );
+      // Local day 15 → the Berlin tenant IS processed (employees looked up).
+      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(true);
     } finally {
-      tenantFindManySpy.mockRestore();
+      findUniqueSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("D-11: proceeds to process the tenant when the tenant-local day >= 15", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= 15
+
+    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const seededIds = [data.adminEmployee.id, data.employee.id];
+
+    try {
+      await app.tryAutoCloseMonth();
+      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(true);
+    } finally {
+      findUniqueSpy.mockRestore();
       vi.useRealTimers();
     }
   });
