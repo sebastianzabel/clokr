@@ -13,8 +13,10 @@
 - `pnpm dev` — start all dev servers
 - `pnpm --filter @clokr/api dev` — API only
 - `pnpm --filter @clokr/web dev` — Web only
-- `pnpm --filter @clokr/db exec prisma db push` — sync schema to DB
+- `pnpm --filter @clokr/db exec prisma migrate dev --name <desc>` — create + apply a migration (dev)
+- `pnpm --filter @clokr/db exec prisma migrate deploy` — apply pending migrations (every env)
 - `pnpm --filter @clokr/db exec prisma generate` — regenerate Prisma client
+- Schema changes go through **versioned migrations**, not `db push`. Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
 - `docker compose up --build -d` — rebuild and restart all containers
 
 ## Path Aliases (SvelteKit)
