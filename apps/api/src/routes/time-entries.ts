@@ -401,11 +401,27 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         employeeId = emp.id;
       }
       if (!employeeId) return reply.code(400).send({ error: "Mitarbeiter nicht gefunden" });
+      // D-04: EMPLOYEE may only clock themselves in (not on behalf of others)
+      const isOnBehalfOf = !!body.employeeId && body.employeeId !== user.employeeId;
+      if (isOnBehalfOf && user.role === "EMPLOYEE") {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
       const employeeRecord = await app.prisma.employee.findUnique({
         where: { id: employeeId },
         include: { user: true },
       });
       if (!employeeRecord) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      // D-02/D-07: Reject cross-tenant access and emit security audit event (fetch-then-compare per D-02)
+      if (employeeRecord.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: employeeId!,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
       if (!employeeRecord.user.isActive) {
         return reply.code(403).send({ error: "Mitarbeiter ist deaktiviert" });
       }
@@ -464,6 +480,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         include: { employee: true },
       });
       if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      // D-02/D-07: Reject cross-tenant access and emit security audit event (fetch-then-compare per D-02)
+      if (entry.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "TimeEntry",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
 
       // Pre-guard: already-closed entry shortcuts to 409 without paying the lock cost.
       if (entry.endTime) return reply.code(409).send({ error: "Bereits ausgestempelt" });
