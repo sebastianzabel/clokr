@@ -90,6 +90,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           where: {
             tenantId: tenant.id,
             user: { isActive: true },
+            isTimeTrackingExempt: false, // D-02: §18 ArbZG-exempt employees are not snapshotted (parity with manual close)
           },
           include: {
             user: true,
@@ -361,9 +362,36 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               }
             }
 
+            // D-02: subtract general absences from expected (parity with manual overtime.ts close).
+            // Exclude VOCATIONAL_SCHOOL (balance-neutral via BS-doubling above) and PATTERN-source
+            // (auto-generated). Mirrors the leave day-sum (no holiday exclusion — auto-close is out
+            // of D-06 scope; keeps this path internally consistent).
+            const generalAbsences = await app.prisma.absence.findMany({
+              where: {
+                employeeId: emp.id,
+                deletedAt: null,
+                type: { not: "VOCATIONAL_SCHOOL" },
+                source: { not: "PATTERN" },
+                startDate: { lte: monthEnd },
+                endDate: { gte: effectiveStart },
+              },
+            });
+            let absenceMinutes = 0;
+            if (!isPureTracking) {
+              absenceMinutes = generalAbsences.reduce((sum, ab) => {
+                const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+                const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+                if (absStart > absEnd) return sum;
+                return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+              }, 0);
+            }
+
             const totalWorked = workedMinutes + bsWorkedMinutes;
             const totalExpected = expectedMinutes + bsExpectedMinutes;
-            const netExpected = Math.max(0, totalExpected - holidayMinutes - leaveMinutes);
+            const netExpected = Math.max(
+              0,
+              totalExpected - holidayMinutes - leaveMinutes - absenceMinutes,
+            );
             const balanceMinutes = Math.round(totalWorked - netExpected);
 
             // Note: if months are not contiguous (gap in snapshots), carryOver from the most recent

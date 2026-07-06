@@ -115,4 +115,102 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       vi.useRealTimers();
     }
   });
+
+  // ── Plan 76.19-04: absence subtraction + §18-exempt exclusion (DATA-V1814-02) ──
+
+  async function createFixedEmployee(
+    tenantId: string,
+    exempt: boolean,
+  ): Promise<{ id: string; userId: string }> {
+    const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const user = await app.prisma.user.create({
+      data: {
+        email: `acm2-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await app.prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `ACM2-${s}`,
+        firstName: "Auto",
+        lastName: "Close",
+        hireDate: new Date("2024-01-01"),
+        isTimeTrackingExempt: exempt,
+      },
+    });
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({
+      data: { employeeId: emp.id, balanceHours: 0 },
+    });
+    return { id: emp.id, userId: user.id };
+  }
+
+  it("D-02: excludes §18 time-tracking-exempt employees from the snapshot loop", async () => {
+    const exempt = await createFixedEmployee(data.tenant.id, true);
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= 15
+
+    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    try {
+      await app.tryAutoCloseMonth();
+      // Non-exempt seeded employee IS looked up; exempt employee is NOT.
+      expect(findUniqueFiredForSeededTenant(findUniqueSpy, [data.employee.id])).toBe(true);
+      expect(findUniqueFiredForSeededTenant(findUniqueSpy, [exempt.id])).toBe(false);
+    } finally {
+      findUniqueSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("D-02: subtracts general Absence minutes from netExpected (parity with manual close)", async () => {
+    const emp = await createFixedEmployee(data.tenant.id, false);
+    // A general absence (Sonderurlaub) covering all of February 2024 → the whole
+    // month is covered (reaches readyToClose) and expected must be reduced to ~0.
+    await app.prisma.absence.create({
+      data: {
+        employeeId: emp.id,
+        type: "SPECIAL_LEAVE",
+        source: "MANUAL",
+        startDate: new Date("2024-02-01"),
+        endDate: new Date("2024-02-29"),
+        days: 21,
+        createdBy: data.adminEmployee.id,
+      },
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-03-16T06:00:00.000Z")); // closes Feb 2024
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const snapshot = await app.prisma.saldoSnapshot.findFirst({
+      where: { employeeId: emp.id, periodType: "MONTHLY" },
+    });
+    expect(snapshot).not.toBeNull();
+    // Without the fix, netExpected would be the full month Soll (~10080 min);
+    // with the absence subtracted it is ~0 (worked 0 − expected ~0 → balance ~0).
+    expect(snapshot!.expectedMinutes).toBeLessThan(480);
+    expect(snapshot!.balanceMinutes).toBeGreaterThan(-480);
+  });
 });
