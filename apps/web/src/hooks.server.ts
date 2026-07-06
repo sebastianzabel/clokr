@@ -26,13 +26,24 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (event.url.pathname.startsWith("/api")) {
     try {
       const targetUrl = `${API_BACKEND}${event.url.pathname}${event.url.search}`;
+      // OPS-V1814-04 (F-H8): forward the real client IP to the API. Append
+      // getClientAddress() to any inbound X-Forwarded-For chain and overwrite
+      // X-Real-IP on a mutable Headers copy, so Fastify (trustProxy) reads the
+      // real client IP for AuditLog + per-IP rate limiting.
+      const headers = new Headers(event.request.headers);
+      const clientIP = event.getClientAddress();
+      const existingXFF = event.request.headers.get("x-forwarded-for");
+      headers.set("x-forwarded-for", existingXFF ? `${existingXFF}, ${clientIP}` : clientIP);
+      headers.set("x-real-ip", clientIP);
       const response = await fetch(targetUrl, {
         method: event.request.method,
-        headers: event.request.headers,
+        headers,
         body:
           event.request.method !== "GET" && event.request.method !== "HEAD"
             ? await event.request.arrayBuffer()
             : undefined,
+        // OPS-V1814-05 (F-M10): bound the wait on a hung API; abort → 503 catch path.
+        signal: AbortSignal.timeout(30_000),
         // @ts-expect-error -- duplex needed for streaming request bodies
         duplex: "half",
       });

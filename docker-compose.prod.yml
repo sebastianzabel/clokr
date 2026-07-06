@@ -116,6 +116,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://0.0.0.0:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   backup:
     image: postgres:18-alpine

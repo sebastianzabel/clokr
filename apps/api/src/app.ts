@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { readFileSync } from "fs";
 import { resolve } from "path";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import jwt from "@fastify/jwt";
@@ -107,6 +107,12 @@ export async function buildApp() {
     ignoreTrailingSlash: true,
     logger: loggerConfig,
     genReqId: () => crypto.randomUUID(), // Consistent request IDs
+    // OPS-V1814-04 (F-H8): trust the SvelteKit proxy's X-Forwarded-For so req.ip
+    // resolves to the real client IP (AuditLog + per-IP rate limiting) instead of
+    // the Docker container IP. The proxy overwrites x-real-ip and appends the real
+    // getClientAddress() to XFF on every request, so a client-forged XFF cannot
+    // masquerade as the last hop. Residual (direct-API exposure) is an infra concern.
+    trustProxy: true,
   });
 
   // ── Content-Type Parser ───────────────────────────────────
@@ -324,10 +330,27 @@ export async function buildApp() {
   });
 
   // ── Health ────────────────────────────────────────────────
-  app.get("/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
+  // OPS-V1814-05 (F-M10): a real DB ping so a wedged DB/pool yields 503 (degraded)
+  // instead of a phantom-healthy 200. Bounded by a short timeout so a slow/hung DB
+  // does not hang the probe. The orchestrator can then restart/deschedule the container.
+  const DB_PING_TIMEOUT_MS = 2_000;
+  async function dbPingHandler(_req: FastifyRequest, reply: FastifyReply) {
+    try {
+      await Promise.race([
+        app.prisma.$queryRaw`SELECT 1`,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("DB ping timed out")), DB_PING_TIMEOUT_MS),
+        ),
+      ]);
+      return { status: "ok", timestamp: new Date().toISOString() };
+    } catch {
+      return reply.code(503).send({ status: "degraded", timestamp: new Date().toISOString() });
+    }
+  }
+  app.get("/health", dbPingHandler);
   // /api/v1/health — non-breaking alias of /health (D-05). Phase 70 smoke tests use this path.
   // Identical payload; keep /health for Docker/k8s healthcheck + prod-host LB backwards compat.
-  app.get("/api/v1/health", async () => ({ status: "ok", timestamp: new Date().toISOString() }));
+  app.get("/api/v1/health", dbPingHandler);
 
   // ── Version (Phase 69 / DEVOPS-V8-02) ─────────────────────
   // Public endpoint (no requireAuth — same posture as /health per D-04).
