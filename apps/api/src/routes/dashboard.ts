@@ -300,6 +300,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const leaveRequests = await app.prisma.leaveRequest.findMany({
         where: {
           employee: { tenantId },
+          deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
           status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
@@ -757,6 +758,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
       const myWeekLeaves = await app.prisma.leaveRequest.findMany({
         where: {
           employeeId,
+          deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
           status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
           startDate: { lte: end },
           endDate: { gte: start },

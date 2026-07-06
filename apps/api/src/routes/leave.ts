@@ -553,8 +553,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = reviewSchema.parse(req.body);
 
-      const existing = await app.prisma.leaveRequest.findUnique({
-        where: { id },
+      const existing = await app.prisma.leaveRequest.findFirst({
+        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
         include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
@@ -605,6 +605,8 @@ export async function leaveRoutes(app: FastifyInstance) {
               date: { gte: existing.startDate, lte: existing.endDate },
               isInvalid: true,
               invalidReason: "Urlaubsstornierung ausstehend",
+              deletedAt: null, // D-08: never touch soft-deleted entries
+              isLocked: false, // D-08: never mutate locked-month entries (Revisionssicherheit)
             },
             data: { isInvalid: false, invalidReason: null },
           });
@@ -1013,8 +1015,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = updateSchema.parse(req.body);
 
-      const existing = await app.prisma.leaveRequest.findUnique({
-        where: { id },
+      const existing = await app.prisma.leaveRequest.findFirst({
+        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
         include: { leaveType: true },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
@@ -1069,8 +1071,8 @@ export async function leaveRoutes(app: FastifyInstance) {
     preHandler: requireAuth,
     handler: async (req, reply) => {
       const { id } = req.params as { id: string };
-      const existing = await app.prisma.leaveRequest.findUnique({
-        where: { id },
+      const existing = await app.prisma.leaveRequest.findFirst({
+        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
         include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
@@ -1135,8 +1137,8 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const body = attestSchema.parse(req.body);
 
-      const existing = await app.prisma.leaveRequest.findUnique({
-        where: { id },
+      const existing = await app.prisma.leaveRequest.findFirst({
+        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
         include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
@@ -1810,7 +1812,7 @@ async function getScheduledHours(
 
   // Stunden pro Wochentag (0=So, 1=Mo … 6=Sa)
   const h: Record<number, number> = {
-    0: 0,
+    0: ws ? Number(ws.sundayHours) : Number(cfg?.defaultSundayHours ?? 0), // D-07: was hardcoded 0 (Sunday workers)
     1: ws ? Number(ws.mondayHours) : Number(cfg?.defaultMondayHours ?? 8),
     2: ws ? Number(ws.tuesdayHours) : Number(cfg?.defaultTuesdayHours ?? 8),
     3: ws ? Number(ws.wednesdayHours) : Number(cfg?.defaultWednesdayHours ?? 8),

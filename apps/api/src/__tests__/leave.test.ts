@@ -785,4 +785,195 @@ describe("Leave / Absence API", () => {
       expect(newValue?.source).toBeUndefined();
     });
   });
+
+  // ── Plan 76.19-05: Sunday hours + revalidation guard + deletedAt filters ──────
+
+  describe("D-07: getScheduledHours reads ws.sundayHours (DATA-V1814-06)", () => {
+    let sundayEmpToken = "";
+
+    beforeAll(async () => {
+      const s = "sun-" + Date.now().toString(36);
+      const user = await app.prisma.user.create({
+        data: {
+          email: `${s}@test.de`,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: `SUN-${s}`,
+          firstName: "Sunday",
+          lastName: "Worker",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 6,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 6, // Sunday worker
+          workDays: [0],
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      // balance 4h < the 6h a Sunday costs → request must be rejected once Sunday is read
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: emp.id, balanceHours: 4 },
+      });
+      const login = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `${s}@test.de`, password: "test1234" },
+      });
+      sundayEmpToken = JSON.parse(login.body).accessToken;
+    });
+
+    it("computes 6h (not 0) for a Sunday OVERTIME_COMP request", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${sundayEmpToken}` },
+        payload: {
+          type: "OVERTIME_COMP",
+          startDate: "2026-07-12", // Sunday
+          endDate: "2026-07-12",
+        },
+      });
+      // Before the fix Sunday=0h → request would pass (0 <= 4). Now 6h > 4h balance → rejected.
+      expect(res.statusCode).toBe(400);
+      const body = JSON.parse(res.body);
+      expect(body.error).toBe("Nicht genug Überstunden");
+      expect(body.requested).toBeCloseTo(6, 1);
+    });
+  });
+
+  describe("D-08: cancellation-revalidation respects soft-delete + lock (DATA-V1814-07)", () => {
+    it("does not clear isInvalid on soft-deleted or locked entries", async () => {
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          status: "CANCELLATION_REQUESTED",
+          startDate: new Date("2026-05-04T00:00:00Z"),
+          endDate: new Date("2026-05-08T00:00:00Z"),
+          days: 5,
+        },
+      });
+
+      const mkEntry = (day: string, extra: Record<string, unknown>) =>
+        app.prisma.timeEntry.create({
+          data: {
+            employeeId: data.employee.id,
+            date: new Date(day),
+            startTime: new Date(`${day}T08:00:00Z`),
+            endTime: new Date(`${day}T16:00:00Z`),
+            breakMinutes: 30,
+            source: "MANUAL",
+            isInvalid: true,
+            invalidReason: "Urlaubsstornierung ausstehend",
+            ...extra,
+          },
+        });
+      const live = await mkEntry("2026-05-04", {});
+      const deleted = await mkEntry("2026-05-05", { deletedAt: new Date() });
+      const locked = await mkEntry("2026-05-06", { isLocked: true });
+
+      // Approve the cancellation as a DIFFERENT manager (admin).
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${leave.id}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const liveAfter = await app.prisma.timeEntry.findUnique({ where: { id: live.id } });
+      const deletedAfter = await app.prisma.timeEntry.findUnique({ where: { id: deleted.id } });
+      const lockedAfter = await app.prisma.timeEntry.findUnique({ where: { id: locked.id } });
+
+      expect(liveAfter!.isInvalid).toBe(false); // live+unlocked → revalidated
+      expect(deletedAfter!.isInvalid).toBe(true); // soft-deleted → untouched
+      expect(lockedAfter!.isInvalid).toBe(true); // locked → untouched
+
+      await app.prisma.timeEntry.deleteMany({
+        where: { id: { in: [live.id, deleted.id, locked.id] } },
+      });
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+  });
+
+  describe("D-09: soft-deleted leave excluded from mutate + dashboard reads (DATA-V1814-08)", () => {
+    it("PATCH /review on a soft-deleted leave request → 404", async () => {
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          status: "PENDING",
+          startDate: new Date("2026-05-20T00:00:00Z"),
+          endDate: new Date("2026-05-20T00:00:00Z"),
+          days: 1,
+          deletedAt: new Date(), // soft-deleted
+        },
+      });
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${leave.id}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+      expect(res.statusCode).toBe(404);
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+
+    it("a soft-deleted APPROVED leave does not appear in my-week or team-week", async () => {
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          status: "APPROVED",
+          startDate: new Date("2026-07-13T00:00:00Z"),
+          endDate: new Date("2026-07-17T00:00:00Z"),
+          days: 5,
+          deletedAt: new Date(), // soft-deleted
+        },
+      });
+
+      // my-week (dashboard.ts:758) — employee's own view
+      const myWeek = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/my-week?date=2026-07-13",
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(myWeek.statusCode).toBe(200);
+      const myWeekBody = JSON.parse(myWeek.body);
+      expect(
+        myWeekBody.days.some((d: { leaveType: string | null }) => d.leaveType === "Urlaub"),
+      ).toBe(false);
+
+      // team-week (dashboard.ts:300) — manager view
+      const teamWeek = await app.inject({
+        method: "GET",
+        url: "/api/v1/dashboard/team-week?date=2026-07-13",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(teamWeek.statusCode).toBe(200);
+      const teamBody = JSON.parse(teamWeek.body);
+      const empRow = teamBody.team.find((t: { id: string }) => t.id === data.employee.id);
+      expect(empRow).toBeDefined();
+      expect(empRow.days.some((d: { reason: string | null }) => d.reason === "Urlaub")).toBe(false);
+
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+  });
 });
