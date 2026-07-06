@@ -739,4 +739,52 @@ describe("Tenant Isolation", () => {
       expect(res.statusCode).toBe(200);
     });
   });
+
+  // ── SEC-V1814-04: client-log endpoint auth ────────────────────────────────
+
+  describe("SEC-V1814-04: client-log endpoint auth", () => {
+    // T-76.16-19 + T-76.16-21: unauthenticated callers must be rejected with 401.
+    // Previously, /api/v1/logs/client had no preHandler → any caller could write logs.
+    it("unauthenticated POST /api/v1/logs/client → 401", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/logs/client",
+        // No authorization header — intentionally unauthenticated
+        payload: {
+          level: "error",
+          message: "test error",
+          stack: "Error: test\n  at Object.<anonymous>",
+          url: "/some/page",
+          userAgent: "test-agent",
+          // T-76.16-18: caller tries to forge attribution by supplying a userId;
+          // after the fix, body.userId is ignored — logged userId is bound to JWT sub.
+          userId: "attacker-forged-id",
+        },
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    // T-76.16-18: authenticated caller with body.userId set → endpoint returns 200 { ok: true }.
+    // The log field userId is bound to req.user.sub (JWT), not the caller-supplied body.userId.
+    // Log-field inspection is not practical in an inject-based test; JWT-binding is verified
+    // by code review of `req.user.sub` usage in the route handler (app.ts).
+    it("authenticated POST /api/v1/logs/client (body.userId ignored) → 200 { ok: true }", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/logs/client",
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+        payload: {
+          level: "error",
+          message: "real error from browser",
+          stack: "Error: real\n  at Component.svelte:42",
+          url: "/dashboard",
+          userAgent: "Mozilla/5.0",
+          // T-76.16-18: this userId should be ignored; handler must use req.user.sub
+          userId: "forged-attribution-id",
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ ok: true });
+    });
+  });
 });
