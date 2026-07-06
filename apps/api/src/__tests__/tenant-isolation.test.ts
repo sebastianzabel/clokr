@@ -263,25 +263,8 @@ describe("Tenant Isolation", () => {
         url: `/api/v1/overtime/${tenantB.employee.id}`,
         headers: { authorization: `Bearer ${tenantA.adminToken}` },
       });
-      // The overtime route uses findUnique without tenantId — potential gap.
-      // We assert that if data is returned it does NOT belong to tenantA.
-      if (res.statusCode === 200) {
-        const body = JSON.parse(res.body);
-        // employeeId in response should be tenantB employee's
-        if (body.employeeId) {
-          expect(body.employeeId).toBe(tenantB.employee.id);
-          // Confirm tenantA has its own separate overtime account
-          const ownRes = await app.inject({
-            method: "GET",
-            url: `/api/v1/overtime/${tenantA.employee.id}`,
-            headers: { authorization: `Bearer ${tenantA.adminToken}` },
-          });
-          expect(ownRes.statusCode).toBe(200);
-          expect(JSON.parse(ownRes.body).employeeId).toBe(tenantA.employee.id);
-        }
-      } else {
-        expect([403, 404]).toContain(res.statusCode);
-      }
+      // SEC-V1814-03: cross-tenant GET must return 404 (tenant isolation enforced)
+      expect(res.statusCode).toBe(404);
     });
   });
 
@@ -580,6 +563,177 @@ describe("Tenant Isolation", () => {
       const res = await app.inject({
         method: "PATCH",
         url: `/api/v1/employees/${tenantA.employee.id}/unlock`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // ── SEC-V1814-03: leave + overtime tenant scoping ─────────────────────────
+
+  describe("SEC-V1814-03: leave + overtime tenant scoping", () => {
+    // Fresh tenantA leave request for own-tenant regression (admin reviews employee's leave)
+    let tenantALeaveRequestId: string;
+
+    beforeAll(async () => {
+      // Create a tenantA SICK leave request for the regression (review) test.
+      // SICK leave is auto-approved by ensureLeaveType; we still test the review path.
+      const leaveRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2025-09-15",
+          endDate: "2025-09-15",
+        },
+      });
+      if (leaveRes.statusCode === 201) {
+        tenantALeaveRequestId = JSON.parse(leaveRes.body).id;
+      }
+    });
+
+    // ── Leave cross-tenant ─────────────────────────────────────────────────
+
+    it("tenantA admin reviewing tenantB leave request → 404", async () => {
+      if (!tenantBLeaveRequestId) {
+        console.warn("Skipping: tenantB leave request was not created");
+        return;
+      }
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${tenantBLeaveRequestId}/review`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("tenantA admin deleting tenantB leave request → 404", async () => {
+      if (!tenantBLeaveRequestId) {
+        console.warn("Skipping: tenantB leave request was not created");
+        return;
+      }
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/leave/requests/${tenantBLeaveRequestId}`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("tenantA admin attesting tenantB sick leave → 404", async () => {
+      if (!tenantBLeaveRequestId) {
+        console.warn("Skipping: tenantB leave request was not created");
+        return;
+      }
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${tenantBLeaveRequestId}/attest`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: { attestPresent: true },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Overtime cross-tenant ──────────────────────────────────────────────
+
+    it("tenantA admin reading tenantB overtime account (GET) → 404", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${tenantB.employee.id}`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── D-03: EMPLOYEE ownership gate ─────────────────────────────────────
+
+    it("EMPLOYEE reading another employee's overtime in own tenant → 403", async () => {
+      // tenantA.empToken is the regular employee; target is tenantA admin employee (different id)
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${tenantA.adminEmployee.id}`,
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it("EMPLOYEE reading own overtime account → 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${tenantA.employee.id}`,
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    // ── Overtime cross-tenant mutations ────────────────────────────────────
+
+    it("tenantA admin creating overtime plan for tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/plans",
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {
+          employeeId: tenantB.employee.id,
+          hoursToReduce: 5,
+          deadline: "2026-12-31T00:00:00.000Z",
+        },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("tenantA admin paying out tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/payout",
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {
+          employeeId: tenantB.employee.id,
+          hours: 1,
+        },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("tenantA admin closing tenantB employee's month → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {
+          employeeId: tenantB.employee.id,
+          year: 2025,
+          month: 1,
+        },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Own-tenant regression (leave) ──────────────────────────────────────
+
+    it("tenantA admin reviewing own-tenant leave request → 200 or 409", async () => {
+      if (!tenantALeaveRequestId) {
+        console.warn("Skipping: tenantA leave request was not created");
+        return;
+      }
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${tenantALeaveRequestId}/review`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+      // 200 = reviewed; 409 = status already changed in a prior run
+      expect([200, 409]).toContain(res.statusCode);
+    });
+
+    // ── Own-tenant regression (overtime) ──────────────────────────────────
+
+    it("tenantA admin reading own-tenant overtime account → 200", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${tenantA.employee.id}`,
         headers: { authorization: `Bearer ${tenantA.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
