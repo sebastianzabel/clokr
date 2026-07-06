@@ -555,9 +555,20 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.leaveRequest.findUnique({
         where: { id },
-        include: { leaveType: true },
+        include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      // Tenant isolation check (SEC-V1814-03 / D-02): fetch-then-compare via employee.tenantId
+      if (existing.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
       if (!["PENDING", "CANCELLATION_REQUESTED"].includes(existing.status)) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
       }
@@ -1060,9 +1071,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string };
       const existing = await app.prisma.leaveRequest.findUnique({
         where: { id },
-        include: { leaveType: true },
+        include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      // Tenant isolation check (SEC-V1814-03 / D-02): tenant BEFORE isOwner/isManager (D-05)
+      if (existing.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
 
       const isOwner = existing.employeeId === req.user.employeeId;
       const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
@@ -1115,9 +1137,20 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.leaveRequest.findUnique({
         where: { id },
-        include: { leaveType: true },
+        include: { leaveType: true, employee: { select: { tenantId: true } } },
       });
       if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      // Tenant isolation check (SEC-V1814-03 / D-02): fetch-then-compare via employee.tenantId
+      if (existing.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
 
       const typeCode = TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name);
       if (typeCode !== "SICK" && typeCode !== "SICK_CHILD") {
