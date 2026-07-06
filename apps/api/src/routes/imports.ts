@@ -3,8 +3,10 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { Prisma } from "@clokr/db";
+import { fromZonedTime } from "date-fns-tz";
 import { requireRole } from "../middleware/auth";
-import { updateOvertimeAccount } from "./time-entries";
+import { updateOvertimeAccount, validateTimeEntryInvariants } from "./time-entries";
+import { getTenantTimezone } from "../utils/timezone";
 
 const employeeRowSchema = z.object({
   email: z.string().email(),
@@ -178,6 +180,9 @@ export async function importRoutes(app: FastifyInstance) {
       });
       const empMap = new Map(employees.map((e) => [e.employeeNumber, e.id]));
 
+      // Wall-clock times in the CSV are in the tenant timezone, not UTC. Resolve once.
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+
       const results: { row: number; status: "ok" | "error"; error?: string }[] = [];
       const affectedEmployeeIds = new Set<string>();
 
@@ -204,12 +209,26 @@ export async function importRoutes(app: FastifyInstance) {
             throw new Error(`Mitarbeiter-Nr. "${data.employeeNumber}" nicht gefunden`);
 
           const dateStr = data.date;
-          const startTime = new Date(`${dateStr}T${data.startTime}:00.000Z`);
-          const endTime = new Date(`${dateStr}T${data.endTime}:00.000Z`);
+          // Parse wall-clock "HH:mm" as tenant-local time → correct UTC instant
+          // (was `${dateStr}T${time}:00.000Z`, which wrongly treated it as UTC).
+          const startTime = fromZonedTime(`${dateStr}T${data.startTime}:00`, tz);
+          const endTime = fromZonedTime(`${dateStr}T${data.endTime}:00`, tz);
 
           if (endTime <= startTime) throw new Error("Endzeit muss nach Startzeit liegen");
 
-          await app.prisma.timeEntry.create({
+          // Enforce the SAME invariants as POST /time-entries: month-lock (no writes
+          // into a closed month), one-entry-per-day, and overlap. Per-row error on fail.
+          const invariantError = await validateTimeEntryInvariants(app, {
+            employeeId,
+            date: new Date(dateStr),
+            dateStr,
+            newStart: startTime,
+            newEnd: endTime,
+            tz,
+          });
+          if (invariantError) throw new Error(invariantError.error);
+
+          const created = await app.prisma.timeEntry.create({
             data: {
               employeeId,
               date: new Date(dateStr),
@@ -220,6 +239,16 @@ export async function importRoutes(app: FastifyInstance) {
               type: "WORK",
               source: "MANUAL",
             },
+          });
+
+          // Per-entry audit (Revisionssicherheit) — one AuditLog row per imported entry,
+          // not a single summary row.
+          await app.audit({
+            userId: req.user.sub,
+            action: "CREATE",
+            entity: "TimeEntry",
+            entityId: created.id,
+            newValue: created,
           });
 
           affectedEmployeeIds.add(employeeId);
