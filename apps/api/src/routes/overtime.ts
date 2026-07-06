@@ -58,6 +58,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
           include: { tenant: { include: { config: true } } },
         }),
       ]);
+
+      // Tenant isolation check (SEC-V1814-03 / D-02): compare via employee.tenantId
+      if (!employee) return reply.code(404).send({ error: "Konto nicht gefunden" });
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "OvertimeAccount",
+          entityId: account.id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Konto nicht gefunden" });
+      }
+      // D-03: EMPLOYEE may only read their own overtime account
+      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Forbidden" });
+      }
+
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
       const balance = Number(account.balanceHours);
       const balanceMinutes = Math.round(balance * 60);
@@ -85,6 +103,23 @@ export async function overtimeRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const body = createPlanSchema.parse(req.body);
+
+      // Tenant isolation check (SEC-V1814-03 / D-02): OvertimePlan has no tenantId — go via employee
+      const planEmployee = await app.prisma.employee.findUnique({
+        where: { id: body.employeeId },
+        select: { tenantId: true },
+      });
+      if (!planEmployee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (planEmployee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: body.employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       const plan = await app.prisma.overtimePlan.create({
         data: {
@@ -114,6 +149,23 @@ export async function overtimeRoutes(app: FastifyInstance) {
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
       const body = payoutSchema.parse(req.body);
+
+      // Tenant isolation check (SEC-V1814-03 / D-02): OvertimeAccount has no tenantId — go via employee
+      const payoutEmployee = await app.prisma.employee.findUnique({
+        where: { id: body.employeeId },
+        select: { tenantId: true },
+      });
+      if (!payoutEmployee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      if (payoutEmployee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: body.employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       const schedule = await app.prisma.workSchedule.findFirst({
         where: { employeeId: body.employeeId, validFrom: { lte: new Date() } },
@@ -693,6 +745,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
         },
       });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      // Tenant isolation check (SEC-V1814-03 / D-02): tenantId already selected above
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Employee",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       // Phase 76.7 (D-07) — exempt employees never get SaldoSnapshots created.
       // Return 200 with skipped flag so the bulk-close UI can short-circuit silently
