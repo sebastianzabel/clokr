@@ -209,6 +209,67 @@ async function checkOverlap(
   return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
 }
 
+// Shared time-entry invariants enforced by POST /time-entries, PUT /time-entries/:id
+// and the CSV import (POST /imports/time-entries). Extracting them here (D-01/D-03)
+// guarantees the three write paths cannot drift: one-entry-per-day, month-lock via
+// SaldoSnapshot, and overlap — all with self-exclusion for edits.
+// Returns { error } (German, byte-identical to the POST handler's messages) or null.
+// Callers map the "abgeschlossen" (month-lock) error to HTTP 403 and everything else to 409.
+export async function validateTimeEntryInvariants(
+  app: FastifyInstance,
+  params: {
+    employeeId: string;
+    date: Date; // calendar date (midnight) used for one-per-day + month key
+    dateStr: string; // YYYY-MM-DD in tenant TZ, used for logging/consistency
+    newStart: Date;
+    newEnd: Date | null;
+    tz: string;
+    excludeEntryId?: string;
+  },
+): Promise<{ error: string } | null> {
+  const { employeeId, date, newStart, newEnd, tz, excludeEntryId } = params;
+
+  // 1. one-per-day (mirror POST) — exclude self when editing
+  const existingEntry = await app.prisma.timeEntry.findFirst({
+    where: {
+      employeeId,
+      deletedAt: null,
+      date,
+      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+    },
+  });
+  if (existingEntry) {
+    return {
+      error:
+        "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
+    };
+  }
+
+  // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
+  const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
+  const lockedSnapshot = await app.prisma.saldoSnapshot.findUnique({
+    where: {
+      employeeId_periodType_periodStart: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: lockedMonthStart,
+      },
+    },
+    select: { id: true },
+  });
+  if (lockedSnapshot) {
+    return { error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" };
+  }
+
+  // 3. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message
+  const overlap = await checkOverlap(app, employeeId, newStart, newEnd, excludeEntryId, date, tz);
+  if (overlap) {
+    return { error: overlap };
+  }
+
+  return null;
+}
+
 export async function timeEntryRoutes(app: FastifyInstance) {
   // POST /api/v1/time-entries/nfc-punch  (kein JWT – Terminal-Gerät)
   const isTest = process.env.NODE_ENV === "test";
@@ -820,9 +881,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
-      // § 8 BUrlG: Check for active leave
-      const manualEmployeeId = body.employeeId ?? req.user.employeeId ?? "";
-      const manualLeave = await hasApprovedLeaveOnDate(app.prisma, manualEmployeeId, entryDateStr);
+      // § 8 BUrlG: Check for active leave (DATA-V1814-09). Use the already-resolved
+      // employeeId (honors the isManager gate at :768-769) — NOT body.employeeId, which
+      // a non-manager could set to a foreign UUID to bypass the leave block.
+      const manualLeave = await hasApprovedLeaveOnDate(app.prisma, employeeId, entryDateStr);
       if (manualLeave?.status === "APPROVED") {
         return reply.code(409).send({
           error: `§ 8 BUrlG: An diesem Tag ist ${manualLeave.type} genehmigt. Bitte zuerst stornieren.`,
@@ -834,53 +896,22 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
       }
 
-      // Nur ein Eintrag pro Tag erlaubt
-      const existingEntry = await app.prisma.timeEntry.findFirst({
-        where: { employeeId, deletedAt: null, date: new Date(body.date) },
-      });
-      if (existingEntry) {
-        return reply.code(409).send({
-          error:
-            "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
-        });
-      }
-
-      // D-04: Check if the target month is locked via SaldoSnapshot (authoritative — works even when
-      // no entries exist yet for the month; querying entries directly would miss this case).
-      const { start: lockedMonthStart } = monthRangeUtc(
-        new Date(body.date).getFullYear(),
-        new Date(body.date).getMonth() + 1,
-        tz,
-      );
-      const lockedSnapshot = await app.prisma.saldoSnapshot.findUnique({
-        where: {
-          employeeId_periodType_periodStart: {
-            employeeId,
-            periodType: "MONTHLY",
-            periodStart: lockedMonthStart,
-          },
-        },
-        select: { id: true },
-      });
-      if (lockedSnapshot) {
-        // D-05: Return same German error pattern as PUT/DELETE/PATCH lock guards
-        return reply
-          .code(403)
-          .send({ error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" });
-      }
-
-      // Überlappungsprüfung — scope open-entry conflicts to this calendar day so a
-      // stale open entry on an earlier day does not block new entries (v1.8.13).
-      const overlap = await checkOverlap(
-        app,
+      // Shared invariants (D-01/D-03): one-entry-per-day, month-lock via SaldoSnapshot,
+      // and overlap — extracted into validateTimeEntryInvariants so the CSV import and
+      // PUT enforce the identical guards. Month-lock → 403, everything else → 409
+      // (preserves the exact HTTP codes and German messages this handler used inline).
+      const invariantError = await validateTimeEntryInvariants(app, {
         employeeId,
+        date: new Date(body.date),
+        dateStr: entryDateStr,
         newStart,
         newEnd,
-        undefined,
-        new Date(body.date),
         tz,
-      );
-      if (overlap) return reply.code(409).send({ error: overlap });
+      });
+      if (invariantError) {
+        const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
+        return reply.code(code).send({ error: invariantError.error });
+      }
 
       // Determine breakMinutes from break slots or body
       let finalBreakMinutes = body.breakMinutes;

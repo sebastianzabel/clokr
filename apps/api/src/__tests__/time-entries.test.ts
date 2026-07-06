@@ -606,4 +606,42 @@ describe("Time Entries API", () => {
       expect([403, 409, 422]).toContain(deleteRes.statusCode);
     });
   });
+
+  describe("DATA-V1814-09: §8 leave check uses the resolved employee, not body.employeeId", () => {
+    it("evaluates §8 leave against user.employeeId when a non-manager passes a foreign body.employeeId", async () => {
+      // Approved leave for the EMPLOYEE (the actual entry owner) on the target day.
+      const leave = await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          status: "APPROVED",
+          startDate: new Date("2026-06-13T00:00:00Z"),
+          endDate: new Date("2026-06-13T00:00:00Z"),
+          days: 1,
+        },
+      });
+
+      // Non-manager posts with a FOREIGN body.employeeId (the admin employee).
+      // The entry is created for user.employeeId, so the §8 block must fire on the
+      // employee's own approved leave — the foreign UUID must not bypass it.
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          employeeId: data.adminEmployee.id, // foreign — must be ignored for non-manager
+          date: "2026-06-13",
+          startTime: "2026-06-13T08:00:00.000Z",
+          endTime: "2026-06-13T16:00:00.000Z",
+          breakMinutes: 30,
+        },
+      });
+
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      expect(body.error).toContain("§ 8 BUrlG");
+
+      await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    });
+  });
 });
