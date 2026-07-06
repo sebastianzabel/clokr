@@ -786,5 +786,34 @@ describe("Tenant Isolation", () => {
       expect(res.statusCode).toBe(200);
       expect(JSON.parse(res.body)).toEqual({ ok: true });
     });
+
+    // Security fix (76.16 review): body.extra must NOT be able to override the JWT-bound
+    // userId. Capture the emitted log record and assert the forged extra.userId loses.
+    it("body.extra.userId cannot override JWT-bound userId (attribution forgery blocked)", async () => {
+      const originalError = app.log.error.bind(app.log);
+      let captured: { client?: { userId?: unknown } } | null = null;
+      (app.log as unknown as { error: (o: unknown) => void }).error = (obj: unknown) => {
+        captured = obj as { client?: { userId?: unknown } };
+      };
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/logs/client",
+          headers: { authorization: `Bearer ${tenantA.empToken}` },
+          payload: {
+            level: "error",
+            message: "forge attempt",
+            extra: { userId: "forged-via-extra", stack: "evil-override" },
+          },
+        });
+        expect(res.statusCode).toBe(200);
+      } finally {
+        (app.log as unknown as { error: (o: unknown) => void }).error = originalError;
+      }
+      expect(captured).not.toBeNull();
+      // The logged userId must be the JWT sub, never the attacker-supplied extra.userId.
+      expect(captured!.client?.userId).not.toBe("forged-via-extra");
+      expect(typeof captured!.client?.userId).toBe("string");
+    });
   });
 });

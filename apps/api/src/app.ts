@@ -307,14 +307,16 @@ export async function buildApp() {
         extra?: Record<string, unknown>;
       };
       const level = body.level === "error" ? "error" : "warn";
+      // Spread caller-supplied `extra` FIRST so the trusted fields below always win —
+      // otherwise `extra: { userId }` would override the JWT-bound userId (attribution forgery).
       app.log[level]({
         msg: `[CLIENT] ${String(body.message ?? "Unknown error").slice(0, 1000)}`,
         client: {
-          stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
-          url: body.url,
-          userAgent: body.userAgent,
-          userId: req.user.sub, // JWT-bound; body.userId ignored to prevent attribution forgery
           ...body.extra,
+          stack: typeof body.stack === "string" ? body.stack.slice(0, 2000) : undefined,
+          url: typeof body.url === "string" ? body.url.slice(0, 500) : undefined,
+          userAgent: typeof body.userAgent === "string" ? body.userAgent.slice(0, 500) : undefined,
+          userId: req.user.sub, // JWT-bound; wins over any body.extra.userId to prevent attribution forgery
         },
       });
       return { ok: true };
