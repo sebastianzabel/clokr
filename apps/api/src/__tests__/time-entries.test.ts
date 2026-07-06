@@ -644,4 +644,116 @@ describe("Time Entries API", () => {
       await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
     });
   });
+
+  describe("DATA-V1814-03: PUT immutability guards (soft-delete + target-month lock)", () => {
+    const cleanupIds: string[] = [];
+
+    afterAll(async () => {
+      await app.prisma.saldoSnapshot.deleteMany({ where: { employeeId: data.employee.id } });
+      if (cleanupIds.length > 0) {
+        await app.prisma.timeEntry.deleteMany({ where: { id: { in: cleanupIds } } });
+      }
+    });
+
+    it("D-03(a): PUT on a soft-deleted entry → 404", async () => {
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-06-25"),
+          startTime: new Date("2026-06-25T08:00:00Z"),
+          endTime: new Date("2026-06-25T16:00:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+          deletedAt: new Date(),
+        },
+      });
+      cleanupIds.push(entry.id);
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { breakMinutes: 45 },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it("D-03(b): re-dating an entry into a snapshot-locked target month → 403", async () => {
+      // Lock February 2026: Feb 1 00:00 Berlin (winter, UTC+1) = Jan 31 23:00 UTC
+      await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: new Date("2026-01-31T23:00:00Z"),
+          periodEnd: new Date("2026-02-28T22:59:59Z"),
+          workedMinutes: 0,
+          expectedMinutes: 9600,
+          balanceMinutes: -9600,
+          carryOver: 0,
+          closedAt: new Date(),
+          closedBy: data.adminEmployee.id,
+        },
+      });
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date("2026-06-26"),
+          startTime: new Date("2026-06-26T08:00:00Z"),
+          endTime: new Date("2026-06-26T16:00:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+        },
+      });
+      cleanupIds.push(entry.id);
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { date: "2026-02-16" },
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body).error).toContain("abgeschlossen");
+
+      await app.prisma.saldoSnapshot.deleteMany({ where: { employeeId: data.employee.id } });
+    });
+
+    it("D-03(b): saving an entry unchanged is not blocked by its own one-per-day check", async () => {
+      // Dedicated employee — data.employee is polluted with long-spanning stress-test
+      // entries; the self-exclusion behavior is what we assert here, in isolation.
+      const s = "put-" + Date.now().toString(36);
+      const user = await app.prisma.user.create({
+        data: { email: `${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          employeeNumber: `PUT-${s}`,
+          firstName: "Put",
+          lastName: "Solo",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date("2026-06-27"),
+          startTime: new Date("2026-06-27T08:00:00Z"),
+          endTime: new Date("2026-06-27T16:00:00Z"),
+          breakMinutes: 30,
+          source: "MANUAL",
+        },
+      });
+      cleanupIds.push(entry.id);
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { breakMinutes: 45 },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
 });

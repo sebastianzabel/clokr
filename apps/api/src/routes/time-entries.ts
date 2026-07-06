@@ -1084,6 +1084,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Eintrag nicht gefunden" });
       }
 
+      // D-03(a): soft-deleted entries are immutable (findUnique cannot carry deletedAt:null
+      // — Prisma unique-key restriction — so guard the fetched row instead).
+      if (existing.deletedAt) {
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
       // Nur eigene Einträge für normale Mitarbeiter
       if (!isManager && existing.employeeId !== user.employeeId) {
         return reply.code(403).send({ error: "Kein Zugriff" });
@@ -1156,20 +1162,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
       }
 
-      // Scope open-entry conflicts to the edited entry's calendar day so a stale
-      // open entry on another day cannot block correcting this one (v1.8.13).
+      // D-03(b): moving/editing an entry must enforce the SAME invariants POST enforces —
+      // target-month snapshot-lock (so an open entry cannot be re-dated into a closed month),
+      // one-entry-per-day, and overlap — excluding this entry itself. Open-entry conflicts stay
+      // scoped to the edited entry's calendar day (v1.8.13).
       const overlapDate = body.date ? new Date(body.date) : existing.date;
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
-      const overlap = await checkOverlap(
-        app,
-        existing.employeeId,
-        updatedStart,
-        updatedEnd,
-        id,
-        overlapDate,
-        overlapTz,
-      );
-      if (overlap) return reply.code(409).send({ error: overlap });
+      const invalid = await validateTimeEntryInvariants(app, {
+        employeeId: existing.employeeId,
+        date: overlapDate,
+        dateStr: dateStrInTz(overlapDate, overlapTz),
+        newStart: updatedStart,
+        newEnd: updatedEnd,
+        tz: overlapTz,
+        excludeEntryId: id,
+      });
+      if (invalid) {
+        const code = invalid.error.includes("abgeschlossen") ? 403 : 409;
+        return reply.code(code).send({ error: invalid.error });
+      }
 
       // Phase 63 D-09..D-13 — JArbSchG §9 pre-check for PUT.
       // Runs AFTER existing.isLocked gate (D-13: locked-month immutability wins).
