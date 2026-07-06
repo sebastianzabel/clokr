@@ -237,6 +237,24 @@ describe("Shift Planning API", () => {
   });
 
   describe("Shift assignment (MANAGER+ADMIN)", () => {
+    // Date-relative anchors: shift creation rejects past dates, so hardcoded calendar
+    // dates rot the moment they fall into the past (these were 2026-06-* and broke once
+    // June 2026 passed). Anchor everything to a Monday ~5 weeks out, computed at run time.
+    const _base = new Date();
+    _base.setUTCHours(0, 0, 0, 0);
+    _base.setUTCDate(_base.getUTCDate() + 35);
+    _base.setUTCDate(_base.getUTCDate() + ((8 - _base.getUTCDay()) % 7)); // snap forward to Monday
+    const _iso = (offset: number): string => {
+      const d = new Date(_base);
+      d.setUTCDate(d.getUTCDate() + offset);
+      return d.toISOString().slice(0, 10);
+    };
+    const MON = _iso(0); // shift + week anchor (was 2026-06-15)
+    const TUE = _iso(1); // leave day 1 / bulk shift (was 2026-06-16)
+    const WED = _iso(2); // leave day 2 / bulk shift (was 2026-06-17)
+    const SAT = _iso(5); // delete-test shift (was 2026-06-20)
+    const NEXT_MON = _iso(7); // EMPLOYEE-403 test (was 2026-06-22)
+
     it("MANAGER creates a shift", async () => {
       const res = await app.inject({
         method: "POST",
@@ -244,7 +262,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${managerToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-06-15",
+          date: MON,
           startTime: "08:00",
           endTime: "16:00",
           label: "Normalschicht",
@@ -258,7 +276,7 @@ describe("Shift Planning API", () => {
     it("ADMIN gets week view with availability + coverage", async () => {
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/shifts/week?date=2026-06-15",
+        url: `/api/v1/shifts/week?date=${MON}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
 
@@ -297,8 +315,8 @@ describe("Shift Planning API", () => {
         data: {
           employeeId: data.employee.id,
           leaveTypeId: data.vacationType.id,
-          startDate: new Date("2026-06-16"),
-          endDate: new Date("2026-06-17"),
+          startDate: new Date(TUE),
+          endDate: new Date(WED),
           days: 2,
           status: "APPROVED",
         },
@@ -306,7 +324,7 @@ describe("Shift Planning API", () => {
 
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/shifts/week?date=2026-06-15",
+        url: `/api/v1/shifts/week?date=${MON}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
@@ -314,7 +332,7 @@ describe("Shift Planning API", () => {
 
       const avEntry = body.availability.find(
         (a: { employeeId: string; date: string }) =>
-          a.employeeId === data.employee.id && a.date.startsWith("2026-06-16"),
+          a.employeeId === data.employee.id && a.date.startsWith(TUE),
       );
       expect(avEntry).toBeDefined();
       expect(avEntry.availability).toBe("vacation");
@@ -337,7 +355,7 @@ describe("Shift Planning API", () => {
 
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/shifts/week?date=2026-06-15",
+        url: `/api/v1/shifts/week?date=${MON}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const body = JSON.parse(res.body);
@@ -346,7 +364,7 @@ describe("Shift Planning API", () => {
         expect(c.minStaff).toBe(5);
       }
       // Most days will be "under" since we have only one shift on 2026-06-15
-      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith("2026-06-15"));
+      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith(MON));
       expect(monday.coverageStatus).toBe("under");
 
       // Cleanup
@@ -377,11 +395,11 @@ describe("Shift Planning API", () => {
 
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/shifts/week?date=2026-06-15",
+        url: `/api/v1/shifts/week?date=${MON}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const body = JSON.parse(res.body);
-      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith("2026-06-15"));
+      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith(MON));
       // Single Azubi with coverageWeight=0.5 → effectiveStaff = 0.5 (>= 0.25 minStaff)
       // but no supervisor → supervision-missing
       expect(monday.coverageStatus).toBe("supervision-missing");
@@ -415,11 +433,11 @@ describe("Shift Planning API", () => {
 
       const res = await app.inject({
         method: "GET",
-        url: "/api/v1/shifts/week?date=2026-06-15",
+        url: `/api/v1/shifts/week?date=${MON}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
       });
       const body = JSON.parse(res.body);
-      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith("2026-06-15"));
+      const monday = body.coverage.find((c: { date: string }) => c.date.startsWith(MON));
       // We have one shift on 2026-06-15 for this employee
       expect(monday.effectiveStaff).toBe(0.75);
 
@@ -441,13 +459,13 @@ describe("Shift Planning API", () => {
           shifts: [
             {
               employeeId: data.employee.id,
-              date: "2026-06-16",
+              date: TUE,
               startTime: "08:00",
               endTime: "16:00",
             },
             {
               employeeId: data.employee.id,
-              date: "2026-06-17",
+              date: WED,
               startTime: "08:00",
               endTime: "16:00",
             },
@@ -467,7 +485,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${managerToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-06-20",
+          date: SAT,
           startTime: "06:00",
           endTime: "14:00",
         },
@@ -490,7 +508,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-06-22",
+          date: NEXT_MON,
           startTime: "08:00",
           endTime: "16:00",
         },
