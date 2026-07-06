@@ -29,7 +29,11 @@ for i in $(seq 1 $RETRIES); do
     echo "📦 Running migrations (attempt $i)..."
     $PRISMA_BIN migrate deploy && break
   else
-    echo "📦 No migrations found, using db push (attempt $i)..."
+    if [ "${NODE_ENV}" = "production" ]; then
+      echo "❌ FATAL: no migrations found and NODE_ENV=production — refusing to db push. Deploy a baseline migration first."
+      exit 1
+    fi
+    echo "📦 No migrations found (non-prod), using db push (attempt $i)..."
     $PRISMA_BIN db push && break
   fi
   if [ "$i" -eq "$RETRIES" ]; then
