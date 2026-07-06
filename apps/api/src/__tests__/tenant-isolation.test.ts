@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import bcrypt from "bcryptjs";
 
 describe("Tenant Isolation", () => {
   let app: FastifyInstance;
@@ -309,6 +310,159 @@ describe("Tenant Isolation", () => {
       // returned to tenantA (userId in AuditLog is the actor's userId, not
       // the target employeeId, so cross-tenant leakage via userId is limited).
       // This test documents current behavior as a baseline.
+    });
+  });
+
+  // ── SEC-V1814-01: clock-in / clock-out tenant scoping ────────────────────
+
+  describe("SEC-V1814-01: clock-in / clock-out tenant scoping", () => {
+    // Inline MANAGER provisioned for this describe block (D-04 gate test).
+    // Do NOT move to seedTestData() — other suites depend on its fixed shape.
+    let managerToken: string;
+    let mgrEmployee: { id: string };
+    // Open (endTime=null) entry for tenantB — required for cross-tenant clock-out probe
+    let tenantBOpenEntryId: string;
+    // Open entry in tenantA for the own-tenant clock-out regression test
+    let ownTenantOpenEntryId: string;
+
+    beforeAll(async () => {
+      const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+      // Provision MANAGER user + employee in tenantA
+      const passwordHash = await bcrypt.hash("test1234", 10);
+      const mgrUser = await app.prisma.user.create({
+        data: {
+          email: `mgr-sec01-${s}@test.de`,
+          passwordHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgr = await app.prisma.employee.create({
+        data: {
+          tenantId: tenantA.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: `MG-${s}`,
+          firstName: "Manager",
+          lastName: "Sec01",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      mgrEmployee = mgr;
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: mgr.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({ data: { employeeId: mgr.id, balanceHours: 0 } });
+
+      const mgrLoginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: mgrUser.email, password: "test1234" },
+      });
+      managerToken = JSON.parse(mgrLoginRes.body).accessToken;
+
+      // Open (no endTime) entry for tenantB employee — for cross-tenant clock-out probe
+      const bOpen = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: tenantB.employee.id,
+          date: new Date("2024-11-20"),
+          startTime: new Date("2024-11-20T08:00:00.000Z"),
+          source: "MANUAL",
+        },
+      });
+      tenantBOpenEntryId = bOpen.id;
+
+      // Open entry for tenantA admin employee — own-tenant clock-out baseline
+      const aOpen = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: tenantA.adminEmployee.id,
+          date: new Date("2024-11-21"),
+          startTime: new Date("2024-11-21T08:00:00.000Z"),
+          source: "MANUAL",
+        },
+      });
+      ownTenantOpenEntryId = aOpen.id;
+    });
+
+    // ── Cross-tenant clock-in ───────────────────────────────────────────────
+
+    it("tenantA admin clocking in tenantB employee (body.employeeId) → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: { employeeId: tenantB.employee.id },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── D-04: EMPLOYEE on-behalf-of gate ────────────────────────────────────
+
+    it("EMPLOYEE clocking in another employee (body.employeeId != own) → 403", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+        payload: { employeeId: tenantA.adminEmployee.id },
+      });
+      expect(res.statusCode).toBe(403);
+    });
+
+    // ── Happy paths (regression) ────────────────────────────────────────────
+
+    it("MANAGER clocking in own-tenant employee on behalf of → 200 or 409", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${managerToken}` },
+        payload: { employeeId: tenantA.employee.id },
+      });
+      expect([200, 409]).toContain(res.statusCode);
+    });
+
+    it("EMPLOYEE clocking in themselves (no body.employeeId) → 200 or 409", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/time-entries/clock-in",
+        headers: { authorization: `Bearer ${tenantA.empToken}` },
+        payload: {},
+      });
+      expect([200, 409]).toContain(res.statusCode);
+    });
+
+    // ── Cross-tenant clock-out ──────────────────────────────────────────────
+
+    it("tenantA admin clocking out tenantB open entry → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${tenantBOpenEntryId}/clock-out`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Own-tenant clock-out baseline ───────────────────────────────────────
+
+    it("tenantA admin clocking out own-tenant open entry → 200 or 409", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${ownTenantOpenEntryId}/clock-out`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {},
+      });
+      expect([200, 409]).toContain(res.statusCode);
     });
   });
 });
