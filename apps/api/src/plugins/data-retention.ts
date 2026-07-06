@@ -1,5 +1,6 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -30,94 +31,102 @@ export const dataRetentionPlugin = fp(async (app) => {
     });
 
     for (const tenant of tenants) {
-      const retentionYears = tenant.config?.dataRetentionYears ?? 10;
-      if (retentionYears <= 0) continue; // Disabled
+      try {
+        const retentionYears = tenant.config?.dataRetentionYears ?? 10;
+        if (retentionYears <= 0) continue; // Disabled
 
-      // Cutoff: end of calendar year that is retentionYears ago
-      // e.g., retentionYears=10, now=2026 → cutoff = 2015-12-31
-      const now = new Date();
-      const cutoffYear = now.getFullYear() - retentionYears;
-      const cutoffDate = new Date(`${cutoffYear}-12-31T23:59:59.999Z`);
+        // Cutoff: end of calendar year that is retentionYears ago
+        // e.g., retentionYears=10, now=2026 → cutoff = 2015-12-31
+        const now = new Date();
+        const cutoffYear = now.getFullYear() - retentionYears;
+        const cutoffDate = new Date(`${cutoffYear}-12-31T23:59:59.999Z`);
 
-      const employees = await app.prisma.employee.findMany({
-        where: { tenantId: tenant.id },
-        select: { id: true },
-      });
-      const employeeIds = employees.map((e) => e.id);
+        const employees = await app.prisma.employee.findMany({
+          where: { tenantId: tenant.id },
+          select: { id: true },
+        });
+        const employeeIds = employees.map((e) => e.id);
 
-      if (employeeIds.length === 0) continue;
+        if (employeeIds.length === 0) continue;
 
-      // Verify snapshots exist for the cutoff period
-      // We only archive if there are snapshots covering the data we're about to soft-delete
-      const snapshotCount = await app.prisma.saldoSnapshot.count({
-        where: {
-          employeeId: { in: employeeIds },
-          periodEnd: { lte: cutoffDate },
-        },
-      });
-
-      if (snapshotCount === 0) {
-        app.log.warn(
-          `Data-Retention: Tenant ${tenant.name} — keine Snapshots vor ${cutoffYear}, überspringe Archivierung`,
-        );
-        continue;
-      }
-
-      // Soft-delete time entries older than retention period
-      const archivedEntries = await app.prisma.timeEntry.updateMany({
-        where: {
-          employeeId: { in: employeeIds },
-          deletedAt: null,
-          date: { lte: cutoffDate },
-        },
-        data: { deletedAt: new Date() },
-      });
-
-      // Soft-delete leave requests older than retention period
-      const archivedLeave = await app.prisma.leaveRequest.updateMany({
-        where: {
-          employeeId: { in: employeeIds },
-          deletedAt: null,
-          endDate: { lte: cutoffDate },
-        },
-        data: { deletedAt: new Date() },
-      });
-
-      // Soft-delete absences older than retention period
-      const archivedAbsences = await app.prisma.absence.updateMany({
-        where: {
-          employeeId: { in: employeeIds },
-          deletedAt: null,
-          endDate: { lte: cutoffDate },
-        },
-        data: { deletedAt: new Date() },
-      });
-
-      const total = archivedEntries.count + archivedLeave.count + archivedAbsences.count;
-
-      if (total > 0) {
-        app.log.info(
-          `Data-Retention: Tenant ${tenant.name} — ${archivedEntries.count} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
-        );
-
-        await app.audit({
-          userId: undefined,
-          action: "ARCHIVE",
-          entity: "DataRetention",
-          newValue: {
-            origin: "SYSTEM",
-            tenantId: tenant.id,
-            cutoffDate: cutoffDate.toISOString(),
-            retentionYears,
-            archivedEntries: archivedEntries.count,
-            archivedLeave: archivedLeave.count,
-            archivedAbsences: archivedAbsences.count,
+        // Verify snapshots exist for the cutoff period
+        // We only archive if there are snapshots covering the data we're about to soft-delete
+        const snapshotCount = await app.prisma.saldoSnapshot.count({
+          where: {
+            employeeId: { in: employeeIds },
+            periodEnd: { lte: cutoffDate },
           },
         });
-      } else {
-        app.log.info(
-          `Data-Retention: Tenant ${tenant.name} — keine Daten älter als ${retentionYears} Jahre`,
+
+        if (snapshotCount === 0) {
+          app.log.warn(
+            `Data-Retention: Tenant ${tenant.name} — keine Snapshots vor ${cutoffYear}, überspringe Archivierung`,
+          );
+          continue;
+        }
+
+        // Soft-delete time entries older than retention period
+        const archivedEntries = await app.prisma.timeEntry.updateMany({
+          where: {
+            employeeId: { in: employeeIds },
+            deletedAt: null,
+            date: { lte: cutoffDate },
+          },
+          data: { deletedAt: new Date() },
+        });
+
+        // Soft-delete leave requests older than retention period
+        const archivedLeave = await app.prisma.leaveRequest.updateMany({
+          where: {
+            employeeId: { in: employeeIds },
+            deletedAt: null,
+            endDate: { lte: cutoffDate },
+          },
+          data: { deletedAt: new Date() },
+        });
+
+        // Soft-delete absences older than retention period
+        const archivedAbsences = await app.prisma.absence.updateMany({
+          where: {
+            employeeId: { in: employeeIds },
+            deletedAt: null,
+            endDate: { lte: cutoffDate },
+          },
+          data: { deletedAt: new Date() },
+        });
+
+        const total = archivedEntries.count + archivedLeave.count + archivedAbsences.count;
+
+        if (total > 0) {
+          app.log.info(
+            `Data-Retention: Tenant ${tenant.name} — ${archivedEntries.count} Zeiteinträge, ${archivedLeave.count} Urlaubsanträge, ${archivedAbsences.count} Abwesenheiten archiviert (vor ${cutoffYear})`,
+          );
+
+          await app.audit({
+            userId: undefined,
+            action: "ARCHIVE",
+            entity: "DataRetention",
+            newValue: {
+              origin: "SYSTEM",
+              tenantId: tenant.id,
+              cutoffDate: cutoffDate.toISOString(),
+              retentionYears,
+              archivedEntries: archivedEntries.count,
+              archivedLeave: archivedLeave.count,
+              archivedAbsences: archivedAbsences.count,
+            },
+          });
+        } else {
+          app.log.info(
+            `Data-Retention: Tenant ${tenant.name} — keine Daten älter als ${retentionYears} Jahre`,
+          );
+        }
+      } catch (err) {
+        app.log.error(
+          { err, tenant: tenant.id },
+          "Data-Retention: Tenant fehlgeschlagen, fahre fort",
         );
+        continue;
       }
     }
   }
@@ -171,16 +180,34 @@ export const dataRetentionPlugin = fp(async (app) => {
   }
 
   // Schedule: January 2nd at 03:00
-  const task = cron.schedule("0 3 2 1 *", () => {
-    runRetention().catch((err) => app.log.error({ err }, "Data-Retention fehlgeschlagen"));
-  });
+  const task = cron.schedule(
+    "0 3 2 1 *",
+    () => {
+      withAdvisoryLock(
+        app.prisma,
+        ADVISORY_LOCK_KEYS.DATA_RETENTION,
+        () => runRetention(),
+        app.log,
+      ).catch((err) => app.log.error({ err }, "Data-Retention fehlgeschlagen"));
+    },
+    { timezone: "Europe/Berlin", noOverlap: true },
+  );
   tasks.push(task);
   app.log.info("Data-Retention: Jährliche Archivierung geplant (2. Januar, 03:00)");
 
-  // Daily purgeable AuditLog purge — 03:00 every day
-  const purgeTask = cron.schedule("0 3 * * *", () => {
-    runPurgeableAuditLogs().catch((err) => app.log.error({ err }, "AuditLog-Purge fehlgeschlagen"));
-  });
+  // Daily purgeable AuditLog purge — 03:00 every day (no tenant loop → no per-tenant catch)
+  const purgeTask = cron.schedule(
+    "0 3 * * *",
+    () => {
+      withAdvisoryLock(
+        app.prisma,
+        ADVISORY_LOCK_KEYS.DATA_RETENTION_PURGE,
+        () => runPurgeableAuditLogs(),
+        app.log,
+      ).catch((err) => app.log.error({ err }, "AuditLog-Purge fehlgeschlagen"));
+    },
+    { timezone: "Europe/Berlin", noOverlap: true },
+  );
   tasks.push(purgeTask);
   app.log.info("AuditLog-Purge: Tägl. Bereinigung geplant (03:00)");
 
