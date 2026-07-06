@@ -465,4 +465,124 @@ describe("Tenant Isolation", () => {
       expect([200, 409]).toContain(res.statusCode);
     });
   });
+
+  // ── SEC-V1814-02: employee lifecycle tenant scoping ──────────────────────
+
+  describe("SEC-V1814-02: employee lifecycle tenant scoping", () => {
+    // Inline pending-invitation tenantB employee — used for resend-invitation clean RED.
+    // tenantB.employee is active (isActive=true), which would trigger a 409 in the
+    // resend-invitation handler's own-tenant check. We seed isActive=false so that
+    // current code (no tenant check) proceeds past the 409 branch → 200 or 502,
+    // and the RED assertion toBe(404) fails cleanly. After the tenant fix lands → 404.
+    let pendingInviteEmployeeId: string;
+
+    beforeAll(async () => {
+      const s = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+      // Provision pending-invitation user (isActive=false) in tenantB
+      const pendingUser = await app.prisma.user.create({
+        data: {
+          email: `pending-sec02-${s}@test.de`,
+          passwordHash: "PENDING",
+          role: "EMPLOYEE",
+          isActive: false,
+        },
+      });
+      const pendingEmp = await app.prisma.employee.create({
+        data: {
+          tenantId: tenantB.tenant.id,
+          userId: pendingUser.id,
+          employeeNumber: `PE-${s}`,
+          firstName: "Pending",
+          lastName: "Sec02",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: pendingEmp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: pendingEmp.id, balanceHours: 0 },
+      });
+      pendingInviteEmployeeId = pendingEmp.id;
+    });
+
+    // ── Cross-tenant unlock ─────────────────────────────────────────────────
+
+    it("tenantA admin unlocking tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${tenantB.employee.id}/unlock`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Cross-tenant deactivate ─────────────────────────────────────────────
+
+    it("tenantA admin deactivating tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${tenantB.employee.id}/deactivate`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+        payload: {},
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Cross-tenant reactivate ─────────────────────────────────────────────
+
+    it("tenantA admin reactivating tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${tenantB.employee.id}/reactivate`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Cross-tenant resend-invitation ──────────────────────────────────────
+
+    it("tenantA admin re-inviting tenantB pending employee → 404", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/employees/${pendingInviteEmployeeId}/resend-invitation`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Cross-tenant anonymize (DELETE) ─────────────────────────────────────
+
+    it("tenantA admin anonymizing (DELETE) tenantB employee → 404", async () => {
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${tenantB.employee.id}`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    // ── Own-tenant unlock baseline (regression) ─────────────────────────────
+
+    it("tenantA admin unlocking own-tenant employee → 200", async () => {
+      const res = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/employees/${tenantA.employee.id}/unlock`,
+        headers: { authorization: `Bearer ${tenantA.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
 });
