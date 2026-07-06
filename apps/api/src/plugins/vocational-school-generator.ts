@@ -9,6 +9,7 @@
 
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
 
 declare module "fastify" {
@@ -74,10 +75,19 @@ export const vocationalSchoolGeneratorPlugin = fp(async (app) => {
     }
   }
 
-  // Schedule: daily at 02:30
-  const task = cron.schedule("30 2 * * *", () => {
-    runAllTenants().catch((err) => app.log.error({ err }, "Berufsschule-Auto-Gen fehlgeschlagen"));
-  });
+  // Schedule: daily at 02:30 Berlin time
+  const task = cron.schedule(
+    "30 2 * * *",
+    () => {
+      withAdvisoryLock(
+        app.prisma,
+        ADVISORY_LOCK_KEYS.VOCATIONAL_SCHOOL_GEN,
+        () => runAllTenants(),
+        app.log,
+      ).catch((err) => app.log.error({ err }, "Berufsschule-Auto-Gen fehlgeschlagen"));
+    },
+    { timezone: "Europe/Berlin", noOverlap: true },
+  );
   tasks.push(task);
   app.log.info("Berufsschule-Auto-Gen: Täglich 02:30 geplant");
 

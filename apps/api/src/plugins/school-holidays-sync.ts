@@ -20,6 +20,7 @@
 
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
+import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import type { FastifyInstance, FastifyBaseLogger } from "fastify";
 import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
@@ -205,10 +206,19 @@ export const schoolHolidaysSyncPlugin = fp(
 
     app.decorate("runSchoolHolidaysSync", runAllTenants);
 
-    // Weekly: Saturday 03:00 server time.
-    const task = cron.schedule("0 3 * * 6", () => {
-      runAllTenants().catch((err) => app.log.error({ err }, "school-holidays cron failed"));
-    });
+    // Weekly: Saturday 03:00 Berlin time.
+    const task = cron.schedule(
+      "0 3 * * 6",
+      () => {
+        withAdvisoryLock(
+          app.prisma,
+          ADVISORY_LOCK_KEYS.SCHOOL_HOLIDAYS_SYNC,
+          () => runAllTenants(),
+          app.log,
+        ).catch((err) => app.log.error({ err }, "school-holidays cron failed"));
+      },
+      { timezone: "Europe/Berlin", noOverlap: true },
+    );
     tasks.push(task);
     app.log.info("school-holidays sync: weekly Sa 03:00 scheduled");
 

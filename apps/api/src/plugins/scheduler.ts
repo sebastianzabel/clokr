@@ -1,6 +1,7 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { decryptSafe } from "../utils/crypto";
+import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
 
 interface PhorestApiResponse {
   _embedded?: { staff?: PhorestStaffItem[]; staffWorkTimeTables?: PhorestWorkTimeItem[] };
@@ -154,11 +155,19 @@ export const schedulerPlugin = fp(async (app) => {
         continue;
       }
 
-      const task = cron.schedule(cronExpr, () => {
-        syncPhorestForTenant(cfg.tenantId).catch((err) =>
-          app.log.error({ err, tenantId: cfg.tenantId }, "Scheduler-Fehler"),
-        );
-      });
+      const task = cron.schedule(
+        cronExpr,
+        () => {
+          // Per-tenant leader lock — each tenant's Phorest sync is independently locked.
+          withAdvisoryLock(
+            app.prisma,
+            tenantAdvisoryKey(cfg.tenantId),
+            () => syncPhorestForTenant(cfg.tenantId),
+            app.log,
+          ).catch((err) => app.log.error({ err, tenantId: cfg.tenantId }, "Scheduler-Fehler"));
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
       tasks.push(task);
       app.log.info({ tenantId: cfg.tenantId, cronExpr }, "Phorest Auto-Sync geplant");
     }
