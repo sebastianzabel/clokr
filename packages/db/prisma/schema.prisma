@@ -382,7 +382,7 @@ model TimeEntry {
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   breaks   Break[]
 
-  @@index([employeeId, date])
+  @@unique([employeeId, date], map: "TimeEntry_employeeId_date_unique_not_deleted")
   @@index([date])
 }
 
