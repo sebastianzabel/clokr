@@ -178,39 +178,78 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Auszahlung für diesen Mitarbeiter nicht erlaubt" });
       }
 
-      const account = await app.prisma.overtimeAccount.findUnique({
-        where: { employeeId: body.employeeId },
-      });
+      // PERF-V1814-02: SELECT … FOR UPDATE row lock inside interactive $transaction.
+      // Prevents two concurrent payouts from both passing the balance check and both
+      // decrementing, which would leave a negative balance (classic TOCTOU race).
+      // Non-negative floor guard after the decrement provides defense-in-depth.
+      // Audit stays OUTSIDE the transaction (COMP-V1814-05, deferred to 76.21).
+      let result: { updatedAccount: { balanceHours: unknown; id: string }; txn: { id: string } };
+      try {
+        result = await app.prisma.$transaction(async (tx) => {
+          // Lock the OvertimeAccount row — blocks any concurrent payout for this employee
+          const [locked] = await tx.$queryRaw<Array<{ id: string; balanceHours: string }>>`
+            SELECT id, "balanceHours"
+            FROM "OvertimeAccount"
+            WHERE "employeeId" = ${body.employeeId}
+            FOR UPDATE
+          `;
 
-      if (!account || Number(account.balanceHours) < body.hours) {
-        return reply.code(400).send({ error: "Nicht genug Überstunden auf dem Konto" });
+          if (!locked) {
+            throw Object.assign(new Error("ACCOUNT_NOT_FOUND"), {
+              httpStatus: 400,
+              msg: "Nicht genug Überstunden auf dem Konto",
+            });
+          }
+
+          if (Number(locked.balanceHours) < body.hours) {
+            throw Object.assign(new Error("INSUFFICIENT_BALANCE"), {
+              httpStatus: 400,
+              msg: "Nicht genug Überstunden auf dem Konto",
+            });
+          }
+
+          const updatedAccount = await tx.overtimeAccount.update({
+            where: { employeeId: body.employeeId },
+            data: { balanceHours: { decrement: body.hours } },
+          });
+
+          // Non-negative floor guard — REJECT (audit-proof), never clamp silently (CLAUDE.md)
+          if (Number(updatedAccount.balanceHours) < 0) {
+            throw Object.assign(new Error("OVERDRAW_PREVENTED"), {
+              httpStatus: 400,
+              msg: "Nicht genug Überstunden auf dem Konto",
+            });
+          }
+
+          const txn = await tx.overtimeTransaction.create({
+            data: {
+              overtimeAccountId: locked.id,
+              hours: -body.hours,
+              type: "PAYOUT",
+              description: body.note ?? `Auszahlung ${body.hours}h`,
+              createdBy: req.user.sub,
+            },
+          });
+
+          return { updatedAccount: { ...updatedAccount, id: updatedAccount.id }, txn };
+        });
+      } catch (err: unknown) {
+        const e = err as { httpStatus?: number; msg?: string };
+        if (e.httpStatus) {
+          return reply.code(e.httpStatus).send({ error: e.msg });
+        }
+        throw err;
       }
-
-      const [updatedAccount, transaction] = await app.prisma.$transaction([
-        app.prisma.overtimeAccount.update({
-          where: { employeeId: body.employeeId },
-          data: { balanceHours: { decrement: body.hours } },
-        }),
-        app.prisma.overtimeTransaction.create({
-          data: {
-            overtimeAccountId: account.id,
-            hours: -body.hours,
-            type: "PAYOUT",
-            description: body.note ?? `Auszahlung ${body.hours}h`,
-            createdBy: req.user.sub,
-          },
-        }),
-      ]);
 
       await app.audit({
         userId: req.user.sub,
         action: "PAYOUT",
         entity: "OvertimeAccount",
-        entityId: account.id,
-        newValue: { hours: body.hours, transaction },
+        entityId: result.updatedAccount.id,
+        newValue: { hours: body.hours, transactionId: result.txn.id },
       });
 
-      return { success: true, newBalance: Number(updatedAccount.balanceHours) };
+      return { success: true, newBalance: Number(result.updatedAccount.balanceHours) };
     },
   });
 
