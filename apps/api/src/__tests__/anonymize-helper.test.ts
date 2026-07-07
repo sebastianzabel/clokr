@@ -18,7 +18,7 @@
  *   7. Retention-relevant row counts unchanged
  *      (TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount)
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -240,6 +240,157 @@ describe("anonymizeEmployeeData (helper)", () => {
     expect(after.absences).toBe(before.absences);
     expect(after.schedules).toBe(before.schedules);
     expect(after.overtimeAccounts).toBe(before.overtimeAccounts);
+  });
+
+  /**
+   * PII-residue tests (COMP-V1814-01)
+   *
+   * Proves all four residual PII vectors are eliminated after DSGVO anonymization:
+   *   1. AuditLog oldValue/newValue JSON no longer contains the real email/name
+   *   2. The ANONYMIZE audit row itself stores no clear-text email
+   *   3. Notification.title/message → "ANONYMIZED"
+   *   4. MinIO avatar + absence-document objects deleted (app.storage.delete spy)
+   *
+   * Uses the HTTP DELETE /:id route (not the bare helper) so that the MinIO
+   * deletion path in employees.ts is also exercised.
+   */
+  describe("anonymize PII", () => {
+    let piiEmployeeId: string;
+    let piiUserId: string;
+    let piiNotificationId: string;
+    let piiRealEmail: string;
+    let piiAvatarPath: string;
+    let piiDocPath: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let deleteSpy: ReturnType<typeof vi.spyOn<any, "delete">>;
+
+    beforeAll(async () => {
+      const suffix = crypto.randomUUID().slice(0, 8);
+      piiRealEmail = `pii-${suffix}@test.local`;
+      piiAvatarPath = `avatars/pii/${suffix}.webp`;
+      piiDocPath = `attests/pii/${suffix}.pdf`;
+
+      // Create user + employee with PII
+      const user = await app.prisma.user.create({
+        data: {
+          email: piiRealEmail,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      piiUserId = user.id;
+
+      const employee = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: piiUserId,
+          firstName: "Max",
+          lastName: "Mustermann",
+          employeeNumber: `PII-${suffix}`,
+          hireDate: new Date("2024-01-01"),
+          avatarPath: piiAvatarPath,
+        },
+      });
+      piiEmployeeId = employee.id;
+
+      // OvertimeAccount (required by findUnique include in DELETE route)
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: piiEmployeeId, balanceHours: 0 },
+      });
+
+      // Prior AuditLog row with PII in oldValue (entity=Employee) — the main PII vector
+      await app.prisma.auditLog.create({
+        data: {
+          userId: piiUserId,
+          action: "CREATE",
+          entity: "Employee",
+          entityId: piiEmployeeId,
+          oldValue: { email: piiRealEmail, name: "Max Mustermann" },
+          newValue: { email: piiRealEmail },
+        },
+      });
+
+      // Notification with real name in title/message
+      const notif = await app.prisma.notification.create({
+        data: {
+          userId: piiUserId,
+          type: "LEAVE_REQUEST",
+          title: `Hallo Max Mustermann (${piiRealEmail})`,
+          message: `Ihr Antrag wurde bearbeitet — ${piiRealEmail}`,
+        },
+      });
+      piiNotificationId = notif.id;
+
+      // Absence with documentPath (pre-fetched + deleted by route after tx)
+      await app.prisma.absence.create({
+        data: {
+          employeeId: piiEmployeeId,
+          type: "SICK",
+          startDate: new Date("2025-09-01"),
+          endDate: new Date("2025-09-03"),
+          days: 3,
+          documentPath: piiDocPath,
+          createdBy: data.adminUser.id,
+        },
+      });
+
+      // Spy on app.storage.delete — prevents live MinIO calls and lets us assert paths
+      deleteSpy = vi.spyOn(app.storage, "delete").mockResolvedValue(undefined);
+
+      // Trigger anonymization via the HTTP route (exercises helper + MinIO deletion)
+      await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${piiEmployeeId}`,
+        headers: { Authorization: `Bearer ${data.adminToken}` },
+      });
+    });
+
+    afterAll(() => {
+      deleteSpy.mockRestore();
+    });
+
+    it("no AuditLog row for the employee retains clear-text email after anonymize PII", async () => {
+      const rows = await app.prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { entity: "Employee", entityId: piiEmployeeId },
+            { entity: "User", entityId: piiUserId },
+          ],
+        },
+      });
+      for (const row of rows) {
+        const serialized =
+          JSON.stringify(row.oldValue ?? "") + " " + JSON.stringify(row.newValue ?? "");
+        expect(serialized).not.toContain(piiRealEmail);
+      }
+    });
+
+    it("ANONYMIZE audit row stores no clear-text email after anonymize PII", async () => {
+      const rows = await app.prisma.auditLog.findMany({
+        where: { entity: "Employee", entityId: piiEmployeeId, action: "ANONYMIZE" },
+      });
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      for (const row of rows) {
+        const serialized =
+          JSON.stringify(row.oldValue ?? "") + " " + JSON.stringify(row.newValue ?? "");
+        expect(serialized).not.toContain(piiRealEmail);
+      }
+    });
+
+    it("Notification title and message are ANONYMIZED after anonymize PII", async () => {
+      const notif = await app.prisma.notification.findUnique({
+        where: { id: piiNotificationId },
+      });
+      expect(notif).not.toBeNull();
+      expect(notif!.title).toBe("ANONYMIZED");
+      expect(notif!.message).toBe("ANONYMIZED");
+    });
+
+    it("app.storage.delete called for avatar and absence doc paths after anonymize PII", () => {
+      expect(deleteSpy).toHaveBeenCalledWith(piiAvatarPath);
+      expect(deleteSpy).toHaveBeenCalledWith(piiDocPath);
+    });
   });
 });
 
