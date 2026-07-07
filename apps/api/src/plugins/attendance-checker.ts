@@ -247,6 +247,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
               endTime: null,
               startTime: { lt: cutoff },
               isInvalid: false,
+              isLocked: false, // COMP-V1814-08: never invalidate locked entries (Revisionssicherheit)
               employee: { tenantId: tenant.id },
             },
             include: {
