@@ -14,6 +14,7 @@ import {
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { getEffectiveBreakDuration } from "../utils/break-effective"; // v1.8.9 — SHIFT_BASED netto
+import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -231,25 +232,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
 
-      // Fetch tenant federalState once for holiday computation
-      const statusTenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const statusStateCode = statusTenant ? (STATE_MAP[statusTenant.federalState] ?? "NI") : "NI";
-      // Pre-compute all holiday date strings for this month (computed + manual DB)
-      const statusComputedHolidays = new Set<string>(
-        getHolidays(year, statusStateCode).map((h) => h.date),
-      );
-      const statusDbHolidays = await app.prisma.publicHoliday.findMany({
-        where: { tenantId, date: { gte: monthStart, lte: monthEnd } },
-      });
-      for (const h of statusDbHolidays) {
-        statusComputedHolidays.add(dateStrInTz(h.date, tz));
-      }
-      const holidayDateStrings = statusComputedHolidays;
-
-      // Get all active employees for this tenant
+      // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
@@ -259,9 +242,26 @@ export async function overtimeRoutes(app: FastifyInstance) {
         include: {
           user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
+          tenant: { select: { federalState: true } }, // fold tenant.findUnique (PERF-V1814-01)
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
+
+      // PERF-V1814-01: bulk-fetch all per-employee data in 5 parallel queries (replaces N+1)
+      const stateCode = STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
+      const holidayDateStrings = new Set<string>(getHolidays(year, stateCode).map((h) => h.date));
+      const employeeIds = employees.map((e) => e.id);
+      const {
+        snapshotsByEmp,
+        entriesByEmp,
+        leaveByEmp,
+        absencesByEmp,
+        holidays: statusHolidays,
+      } = await fetchCloseMonthData(app.prisma, tenantId, employeeIds, monthStart, monthEnd);
+      // Add tenant-specific DB holidays to the computed holiday set
+      for (const h of statusHolidays) {
+        holidayDateStrings.add(dateStrInTz(h.date, tz));
+      }
 
       const result: {
         employeeId: string;
@@ -278,16 +278,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
           continue;
         }
 
-        // Check if snapshot already exists (= closed)
-        const existingSnapshot = await app.prisma.saldoSnapshot.findUnique({
-          where: {
-            employeeId_periodType_periodStart: {
-              employeeId: emp.id,
-              periodType: "MONTHLY",
-              periodStart: monthStart,
-            },
-          },
-        });
+        // Check if snapshot already exists (= closed) — PERF-V1814-01: Map lookup, no DB call
+        const existingSnapshot = (snapshotsByEmp.get(emp.id) ?? [])[0] ?? null;
 
         if (existingSnapshot) {
           result.push({
@@ -321,37 +313,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
           continue;
         }
 
+        // PERF-V1814-01: in-memory lookups from bulk-fetched Maps (no per-employee DB calls)
         // Find workdays without time entries
-        const entries = await app.prisma.timeEntry.findMany({
-          where: {
-            employeeId: emp.id,
-            deletedAt: null,
-            date: { gte: monthStart, lte: monthEnd },
-            endTime: { not: null },
-            type: "WORK",
-          },
-          select: { date: true },
-        });
+        const entries = entriesByEmp.get(emp.id) ?? [];
         const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
         // Check approved leave and absences
-        const approvedLeave = await app.prisma.leaveRequest.findMany({
-          where: {
-            employeeId: emp.id,
-            deletedAt: null,
-            status: "APPROVED",
-            startDate: { lte: monthEnd },
-            endDate: { gte: monthStart },
-          },
-        });
-        const absences = await app.prisma.absence.findMany({
-          where: {
-            employeeId: emp.id,
-            deletedAt: null,
-            startDate: { lte: monthEnd },
-            endDate: { gte: monthStart },
-          },
-        });
+        const approvedLeave = leaveByEmp.get(emp.id) ?? [];
+        const absences = absencesByEmp.get(emp.id) ?? [];
 
         // Build set of leave/absence dates (TZ-aware)
         const coveredDates = new Set<string>();
@@ -447,16 +416,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const now = new Date();
 
-      // Fetch tenant federalState once for holiday computation
-      const yearStatusTenant = await app.prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { federalState: true },
-      });
-      const yearStatusStateCode = yearStatusTenant
-        ? (STATE_MAP[yearStatusTenant.federalState] ?? "NI")
-        : "NI";
-
-      // Get all active employees for this tenant
+      // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId,
@@ -466,9 +426,24 @@ export async function overtimeRoutes(app: FastifyInstance) {
         include: {
           user: { select: { isActive: true } },
           workSchedules: { orderBy: { validFrom: "desc" } },
+          tenant: { select: { federalState: true } }, // fold tenant.findUnique (PERF-V1814-01)
         },
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
+
+      // PERF-V1814-01: derive state code from joined tenant; bulk-fetch full-year data in 5 queries
+      const yearStatusStateCode =
+        STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
+      const { start: yearStart } = monthRangeUtc(year, 1, tz);
+      const { end: yearEnd } = monthRangeUtc(year, 12, tz);
+      const yearEmployeeIds = employees.map((e) => e.id);
+      const {
+        snapshotsByEmp,
+        entriesByEmp,
+        leaveByEmp,
+        absencesByEmp,
+        holidays: yearHolidays,
+      } = await fetchCloseMonthData(app.prisma, tenantId, yearEmployeeIds, yearStart, yearEnd);
 
       // Build month statuses
       const months: {
@@ -519,35 +494,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         // If a previous month is still open, this month is blocked
         if (previousOpen) {
-          // Still count how many are closed
-          const closedSnapshots = await app.prisma.saldoSnapshot.findMany({
-            where: {
-              periodType: "MONTHLY",
-              periodStart: monthStart,
-              employeeId: { in: relevantEmployees.map((e) => e.id) },
-              superseded: false,
-            },
-          });
+          // PERF-V1814-01: count closed employees via pre-fetched snapshot Map (no DB call)
+          const closedCount = relevantEmployees.filter((e) =>
+            (snapshotsByEmp.get(e.id) ?? []).some(
+              (s) => s.periodStart.getTime() === monthStart.getTime(),
+            ),
+          ).length;
           months.push({
             month: m,
             name: MONTH_NAMES_DE[m - 1],
             status: "blocked",
-            closedCount: closedSnapshots.length,
+            closedCount,
             totalCount,
           });
           continue;
         }
 
-        // Check snapshots for all relevant employees
-        const closedSnapshots = await app.prisma.saldoSnapshot.findMany({
-          where: {
-            periodType: "MONTHLY",
-            periodStart: monthStart,
-            employeeId: { in: relevantEmployees.map((e) => e.id) },
-            superseded: false,
-          },
-        });
-        const closedIds = new Set(closedSnapshots.map((s) => s.employeeId));
+        // PERF-V1814-01: determine closed employees via pre-fetched snapshot Map (no DB call)
+        const closedIds = new Set(
+          relevantEmployees
+            .filter((e) =>
+              (snapshotsByEmp.get(e.id) ?? []).some(
+                (s) => s.periodStart.getTime() === monthStart.getTime(),
+              ),
+            )
+            .map((e) => e.id),
+        );
         const closedCount = closedIds.size;
 
         if (closedCount === totalCount && totalCount > 0) {
@@ -579,37 +551,20 @@ export async function overtimeRoutes(app: FastifyInstance) {
             continue;
           }
 
-          // Find workdays without time entries (reuses logic from close-month/status)
-          const entries = await app.prisma.timeEntry.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              date: { gte: monthStart, lte: monthEnd },
-              endTime: { not: null },
-              type: "WORK",
-            },
-            select: { date: true },
-          });
+          // PERF-V1814-01: in-memory lookups from bulk-fetched Maps, filtered to this month
+          // Find workdays without time entries
+          const entries = (entriesByEmp.get(emp.id) ?? []).filter(
+            (e) => e.date >= monthStart && e.date <= monthEnd,
+          );
           const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
           // Check approved leave and absences
-          const approvedLeave = await app.prisma.leaveRequest.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { lte: monthEnd },
-              endDate: { gte: monthStart },
-            },
-          });
-          const absences = await app.prisma.absence.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              startDate: { lte: monthEnd },
-              endDate: { gte: monthStart },
-            },
-          });
+          const approvedLeave = (leaveByEmp.get(emp.id) ?? []).filter(
+            (lr) => lr.startDate <= monthEnd && lr.endDate >= monthStart,
+          );
+          const absences = (absencesByEmp.get(emp.id) ?? []).filter(
+            (ab) => ab.startDate <= monthEnd && ab.endDate >= monthStart,
+          );
 
           // Build set of leave/absence dates (TZ-aware)
           const coveredDates = new Set<string>();
@@ -632,18 +587,16 @@ export async function overtimeRoutes(app: FastifyInstance) {
             }
           }
 
-          // Check holidays: merge computed German Feiertage with DB-stored manual holidays
+          // Check holidays: merge computed German Feiertage with pre-fetched DB holidays
           const computedHolidaysYS = getHolidays(year, yearStatusStateCode);
           for (const h of computedHolidaysYS) {
             coveredDates.add(h.date);
           }
-          const dbHolidaysYS = await app.prisma.publicHoliday.findMany({
-            where: {
-              tenantId,
-              date: { gte: monthStart, lte: monthEnd },
-            },
-          });
-          for (const h of dbHolidaysYS) {
+          // PERF-V1814-01: filter year-range holidays to this month in memory (no DB call)
+          const monthHolidays = yearHolidays.filter(
+            (h) => h.date >= monthStart && h.date <= monthEnd,
+          );
+          for (const h of monthHolidays) {
             coveredDates.add(dateStrInTz(h.date, tz));
           }
 
@@ -709,13 +662,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // Auto-close deadline: retry until 10th of following month
       const autoCloseDeadline = 10;
 
-      // Earliest year with time entries for this tenant
-      const oldest = await app.prisma.timeEntry.findFirst({
-        where: { employee: { tenantId }, deletedAt: null },
-        orderBy: { date: "asc" },
-        select: { date: true },
-      });
-      const earliestYear = oldest ? oldest.date.getFullYear() : year;
+      // PERF-V1814-01: derive earliestYear from employee hire dates — no extra DB query.
+      // hireDate is a reliable proxy: employees hired in year X started tracking time in X.
+      const earliestYear =
+        employees.length > 0
+          ? Math.min(...employees.map((e) => new Date(e.hireDate).getFullYear()))
+          : year;
 
       return { year, months, autoCloseDeadline, earliestYear };
     },
