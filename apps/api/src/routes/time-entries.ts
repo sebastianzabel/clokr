@@ -610,7 +610,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             })
           : null;
 
-        if (tenantConfig?.autoBreakEnabled && targetEmployee) {
+        // D-01 Pitfall 1 guard: skip auto-break when Break records already exist on this entry.
+        // A reopened entry carries a gap Break — auto-break must not overwrite its breakMinutes.
+        const existingBreakCount = await app.prisma.break.count({
+          where: { timeEntryId: closedEntryId },
+        });
+        if (tenantConfig?.autoBreakEnabled && targetEmployee && existingBreakCount === 0) {
           const closedEntry = await app.prisma.timeEntry.findUnique({
             where: { id: closedEntryId },
           });

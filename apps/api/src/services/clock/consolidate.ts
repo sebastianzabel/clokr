@@ -8,7 +8,7 @@
 import type { Prisma, TimeEntry } from "@clokr/db";
 import type { FastifyBaseLogger } from "fastify";
 
-function calcBreakMinutesLocal(breaks: { startTime: Date; endTime: Date }[]): number {
+export function calcBreakMinutesLocal(breaks: { startTime: Date; endTime: Date }[]): number {
   return breaks.reduce((sum, b) => sum + (b.endTime.getTime() - b.startTime.getTime()) / 60000, 0);
 }
 

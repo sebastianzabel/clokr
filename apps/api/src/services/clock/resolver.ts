@@ -7,7 +7,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ClockEvent, ClockResolution, ClockState } from "./types";
 import { decide } from "./state-machine";
 import { emitClockAudit } from "./audit-actor";
-import { consolidateSameDayEntries } from "./consolidate";
+import { consolidateSameDayEntries, calcBreakMinutesLocal } from "./consolidate";
 import { hasApprovedLeaveOnDate } from "../../utils/leave-check";
 
 export async function resolveClockEvent(
@@ -51,9 +51,31 @@ export async function resolveClockEvent(
       },
     });
 
+    // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
+    // Query WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
+    const closedEntry = !openEntry
+      ? await tx.timeEntry.findFirst({
+          where: {
+            employeeId: event.employeeId,
+            deletedAt: null,
+            date: event.date,
+            endTime: { not: null },
+            isInvalid: false,
+          },
+          orderBy: { endTime: "desc" },
+        })
+      : null;
+
     const state: ClockState = openEntry
       ? { kind: "OPEN_ENTRY", entryId: openEntry.id, source: openEntry.source }
-      : { kind: "NO_OPEN_ENTRY" };
+      : closedEntry
+        ? {
+            kind: "CLOSED_SAME_DAY_ENTRY",
+            entryId: closedEntry.id,
+            endTime: closedEntry.endTime!,
+            isLocked: closedEntry.isLocked,
+          }
+        : { kind: "NO_OPEN_ENTRY" };
 
     const decision = decide(state, event.intent, event.source);
 
@@ -88,6 +110,55 @@ export async function resolveClockEvent(
           "clock_event_resolved",
         );
         return { kind: "CLOCKED_IN", entry, audit } as const;
+      }
+
+      case "REOPEN": {
+        // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
+        if (closedEntry!.isLocked) {
+          app.log.warn(
+            { employeeId: event.employeeId, entryId: closedEntry!.id, reason: "MONTH_LOCKED" },
+            "clock_event_conflict",
+          );
+          return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+        }
+        const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
+        // 1. Reopen (endTime → null)
+        await tx.timeEntry.update({ where: { id: decision.entryId }, data: { endTime: null } });
+        // 2. Create Break for the gap (old endTime → new START timestamp)
+        const breakRow = await tx.break.create({
+          data: {
+            timeEntryId: decision.entryId,
+            startTime: gapBreakStart,
+            endTime: event.timestamp,
+          },
+        });
+        // 3. Recompute breakMinutes from ALL Break rows (single source of truth — reuse helper)
+        const allBreaks = await tx.break.findMany({ where: { timeEntryId: decision.entryId } });
+        const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
+        const reopened = await tx.timeEntry.update({
+          where: { id: decision.entryId },
+          data: { breakMinutes: totalBreakMins },
+        });
+        // D-01c: audit the reopen with the dedicated CLOCK_REOPEN action
+        const audit = await emitClockAudit(tx, {
+          action: "CLOCK_REOPEN",
+          entity: "TimeEntry",
+          entityId: reopened.id,
+          oldValue: { endTime: gapBreakStart.toISOString() },
+          newValue: { endTime: null, gapBreakId: breakRow.id, breakMinutes: totalBreakMins },
+          actor: event.actor,
+          req,
+        });
+        app.log.info(
+          {
+            employeeId: event.employeeId,
+            source: event.source,
+            kind: "REOPENED",
+            entryId: reopened.id,
+          },
+          "clock_event_resolved",
+        );
+        return { kind: "CLOCKED_IN", entry: reopened, audit } as const;
       }
 
       case "STOP": {
