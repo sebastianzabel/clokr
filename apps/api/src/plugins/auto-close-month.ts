@@ -447,13 +447,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 },
                 data: { isLocked: true, lockedAt: new Date() },
               });
-            });
 
-            // effectiveCarryOver=0 for TRACK_ONLY employees
-            await app.prisma.overtimeAccount.upsert({
-              where: { employeeId: emp.id },
-              create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
-              update: { balanceHours: effectiveCarryOver / 60 },
+              // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
+              // A crash between snapshot commit and upsert can no longer leave a stale live balance.
+              // effectiveCarryOver=0 for TRACK_ONLY employees.
+              await tx.overtimeAccount.upsert({
+                where: { employeeId: emp.id },
+                create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
+                update: { balanceHours: effectiveCarryOver / 60 },
+              });
             });
 
             await app.audit({
@@ -535,31 +537,36 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 appliedCarryOver = cap;
               }
 
-              await app.prisma.saldoSnapshot.create({
-                data: {
-                  employeeId: emp.id,
-                  periodType: "YEARLY",
-                  periodStart: yearStart,
-                  periodEnd: yearEnd,
-                  workedMinutes: yearWorked,
-                  expectedMinutes: yearExpected,
-                  balanceMinutes: yearBalance,
-                  carryOver: appliedCarryOver,
-                  closedAt: new Date(),
-                  closedBy: null,
-                  note:
-                    mode === "RESET"
-                      ? "Automatischer Jahresübertrag: Reset auf 0"
-                      : mode === "CAPPED" && cap != null && finalCarryOver > cap
-                        ? `Automatischer Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h`
-                        : `Automatischer Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
-                },
-              });
+              // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
+              // A crash between snapshot commit and balance upsert can no longer leave stale data
+              // (previously there was NO transaction at all around these two writes).
+              await app.prisma.$transaction(async (tx) => {
+                await tx.saldoSnapshot.create({
+                  data: {
+                    employeeId: emp.id,
+                    periodType: "YEARLY",
+                    periodStart: yearStart,
+                    periodEnd: yearEnd,
+                    workedMinutes: yearWorked,
+                    expectedMinutes: yearExpected,
+                    balanceMinutes: yearBalance,
+                    carryOver: appliedCarryOver,
+                    closedAt: new Date(),
+                    closedBy: null,
+                    note:
+                      mode === "RESET"
+                        ? "Automatischer Jahresübertrag: Reset auf 0"
+                        : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                          ? `Automatischer Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h`
+                          : `Automatischer Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
+                  },
+                });
 
-              await app.prisma.overtimeAccount.upsert({
-                where: { employeeId: emp.id },
-                create: { employeeId: emp.id, balanceHours: appliedCarryOver / 60 },
-                update: { balanceHours: appliedCarryOver / 60 },
+                await tx.overtimeAccount.upsert({
+                  where: { employeeId: emp.id },
+                  create: { employeeId: emp.id, balanceHours: appliedCarryOver / 60 },
+                  update: { balanceHours: appliedCarryOver / 60 },
+                });
               });
 
               await app.audit({

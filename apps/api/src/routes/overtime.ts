@@ -1192,14 +1192,16 @@ export async function overtimeRoutes(app: FastifyInstance) {
           data: { isLocked: true, lockedAt: new Date() },
         });
 
-        return snap;
-      });
+        // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
+        // A crash between snapshot commit and upsert can no longer leave a stale live balance.
+        // effectiveCarryOver=0 for TRACK_ONLY employees.
+        await tx.overtimeAccount.upsert({
+          where: { employeeId },
+          create: { employeeId, balanceHours: effectiveCarryOver / 60 },
+          update: { balanceHours: effectiveCarryOver / 60 },
+        });
 
-      // Update overtime account with new carry-over (effectiveCarryOver=0 for TRACK_ONLY)
-      await app.prisma.overtimeAccount.upsert({
-        where: { employeeId },
-        create: { employeeId, balanceHours: effectiveCarryOver / 60 },
-        update: { balanceHours: effectiveCarryOver / 60 },
+        return snap;
       });
 
       await app.audit({
@@ -1416,32 +1418,38 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
       // FULL: keep everything
 
-      const snapshot = await app.prisma.saldoSnapshot.create({
-        data: {
-          employeeId,
-          periodType: "YEARLY",
-          periodStart: yearStart,
-          periodEnd: yearEnd,
-          workedMinutes: yearWorked,
-          expectedMinutes: yearExpected,
-          balanceMinutes: yearBalance,
-          carryOver: appliedCarryOver,
-          closedAt: new Date(),
-          closedBy: req.user.sub,
-          note:
-            mode === "RESET"
-              ? "Jahresübertrag: Reset auf 0"
-              : mode === "CAPPED" && cap != null && finalCarryOver > cap
-                ? `Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h (${Math.round(finalCarryOver / 60)}h verfallen)`
-                : `Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
-        },
-      });
+      // PERF-V1814-02: saldoSnapshot.create + overtimeAccount.upsert in ONE $transaction.
+      // A crash between the snapshot commit and the balance upsert can no longer leave
+      // the live OvertimeAccount balance stale (previously no transaction at all here).
+      const snapshot = await app.prisma.$transaction(async (tx) => {
+        const snap = await tx.saldoSnapshot.create({
+          data: {
+            employeeId,
+            periodType: "YEARLY",
+            periodStart: yearStart,
+            periodEnd: yearEnd,
+            workedMinutes: yearWorked,
+            expectedMinutes: yearExpected,
+            balanceMinutes: yearBalance,
+            carryOver: appliedCarryOver,
+            closedAt: new Date(),
+            closedBy: req.user.sub,
+            note:
+              mode === "RESET"
+                ? "Jahresübertrag: Reset auf 0"
+                : mode === "CAPPED" && cap != null && finalCarryOver > cap
+                  ? `Jahresübertrag: gedeckelt auf ${Math.round(cap / 60)}h (${Math.round(finalCarryOver / 60)}h verfallen)`
+                  : `Jahresübertrag: ${Math.round(appliedCarryOver / 60)}h`,
+          },
+        });
 
-      // Update overtime account with the applied carry-over
-      await app.prisma.overtimeAccount.upsert({
-        where: { employeeId },
-        create: { employeeId, balanceHours: appliedCarryOver / 60 },
-        update: { balanceHours: appliedCarryOver / 60 },
+        await tx.overtimeAccount.upsert({
+          where: { employeeId },
+          create: { employeeId, balanceHours: appliedCarryOver / 60 },
+          update: { balanceHours: appliedCarryOver / 60 },
+        });
+
+        return snap;
       });
 
       await app.audit({
