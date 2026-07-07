@@ -26,6 +26,20 @@ describe("Auto-Break on Clock-out", () => {
     await closeTestApp();
   });
 
+  // 76.19.1 D-04: partial unique index (employeeId, date) WHERE deletedAt IS NULL
+  // means only one non-deleted entry per employee-day. Each test here creates its own
+  // entry for "today", so previous tests' entries must be removed first.
+  beforeEach(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    await app.prisma.break.deleteMany({
+      where: { timeEntry: { employeeId: data.employee.id, date: today } },
+    });
+    await app.prisma.timeEntry.deleteMany({
+      where: { employeeId: data.employee.id, date: today },
+    });
+  });
+
   it("auto-inserts 30min break on clock-out after >6h work", async () => {
     // Create an entry that started 7h ago
     const startTime = new Date(Date.now() - 7 * 60 * 60 * 1000);

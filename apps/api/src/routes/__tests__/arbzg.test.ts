@@ -123,31 +123,64 @@ describe("ArbZG Compliance Checks", () => {
   });
 
   describe("Gap-as-break logic", () => {
-    it("gap > 2h between entries is NOT counted as break", async () => {
+    // 76.19.1 D-01: the resolver now REUSES the existing entry and creates a Break
+    // for any same-day gap (no split-shift threshold). There is exactly ONE non-deleted
+    // TimeEntry per day; the gap is stored as a Break record and reflected in breakMinutes.
+    // These tests were rewritten from "two separate entries" to "one entry + Break" to match
+    // the new model. checkArbZG reads breakMinutes, so the §4 outcome is correct.
+
+    it("gap > 2h: stored as Break (D-01) — 7h net + 150 min break, no BREAK_TOO_SHORT", async () => {
       const date = "2025-01-13"; // Monday
       await cleanDate(date);
-      // Slot 1: 06:00 - 09:30 = 3.5h
-      await createEntry(date, 6, 9, 0, 0, 30);
-      // Gap: 09:30 - 12:00 = 2.5h (> 2h, NOT counted as break)
-      // Slot 2: 12:00 - 15:30 = 3.5h
-      await createEntry(date, 12, 15, 0, 0, 30);
-      // Total net = 7h, break from gap = 0 (gap > 2h not counted)
-      // > 6h and < 30min break → BREAK_TOO_SHORT warning expected
+      // D-01 model: one entry 06:00–15:30 with a Break spanning the 2.5h midday gap (09:30–12:00).
+      // Net work = 570 min − 150 min = 420 min (7h); 150 min break satisfies §4 30-min requirement.
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(date),
+          startTime: new Date(`${date}T06:00:00.000Z`),
+          endTime: new Date(`${date}T15:30:00.000Z`),
+          breakMinutes: 150, // 2.5h gap stored as break (76.19.1 D-01)
+          source: "MANUAL",
+        },
+      });
+      await app.prisma.break.create({
+        data: {
+          timeEntryId: entry.id,
+          startTime: new Date(`${date}T09:30:00.000Z`),
+          endTime: new Date(`${date}T12:00:00.000Z`),
+        },
+      });
 
       const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(date));
       const breakWarn = warnings.find((w) => w.code === "BREAK_TOO_SHORT");
-      expect(breakWarn).toBeDefined();
+      // Pre-76.19.1: a >2h inter-entry gap was NOT counted as break → warning was present.
+      // Post-76.19.1 D-01: the gap IS stored as a Break → 150 min break > 30 min → no warning.
+      expect(breakWarn).toBeUndefined();
     });
 
-    it("gap < 2h between entries IS counted as break", async () => {
+    it("gap < 2h: stored as Break (D-01) — 8h net + 45 min break, no BREAK_TOO_SHORT", async () => {
       const date = "2025-01-14"; // Tuesday
       await cleanDate(date);
-      // Slot 1: 08:00 - 12:00 = 4h
-      await createEntry(date, 8, 12, 0);
-      // Gap: 12:00 - 12:45 = 45min (< 2h, counted as break)
-      // Slot 2: 12:45 - 16:45 = 4h
-      await createEntry(date, 12, 16, 0, 45, 45);
-      // Total net = 8h, gap break = 45min → no break warning expected
+      // D-01 model: one entry 08:00–16:45 with a Break for the 45-min midday gap (12:00–12:45).
+      // Net work = 525 min − 45 min = 480 min (8h); 45 min break satisfies §4 30-min requirement.
+      const entry = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(date),
+          startTime: new Date(`${date}T08:00:00.000Z`),
+          endTime: new Date(`${date}T16:45:00.000Z`),
+          breakMinutes: 45, // 45-min gap stored as break (76.19.1 D-01)
+          source: "MANUAL",
+        },
+      });
+      await app.prisma.break.create({
+        data: {
+          timeEntryId: entry.id,
+          startTime: new Date(`${date}T12:00:00.000Z`),
+          endTime: new Date(`${date}T12:45:00.000Z`),
+        },
+      });
 
       const warnings = await checkArbZG(app.prisma, data.employee.id, new Date(date));
       const breakWarn = warnings.find((w) => w.code === "BREAK_TOO_SHORT");
