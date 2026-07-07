@@ -97,39 +97,37 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
     }
   }
 
-  // ── Block B — Gap > consolidationGapHours skips merge ─────────────────────
-  it("Block B — gap 4.5h > 4h consolidationGapHours → no merge (2 separate TimeEntries)", async () => {
-    // Ensure tenant config has default 4h
+  // ── Block B — D-01 REOPEN: same-day re-clock-in after large gap reopens entry with gap Break ──
+  // NOTE (76.19.1-02 Rule-1 fix): D-01 REOPEN (Plan 01) changed the START path — a MOBILE IN
+  // on the same day as a closed NFC entry now REOPENs the NFC entry (one entry + gap Break)
+  // instead of creating a second row (pre-D-01 behavior). The consolidation gap threshold
+  // applies only to cross-source STOP merges (Block A), not to REOPEN at START time.
+  it("Block B — D-01 REOPEN on same-day MOBILE IN after NFC OUT: exactly 1 active entry + gap Break", async () => {
     await app.prisma.tenantConfig.update({
       where: { tenantId: data.tenant.id },
       data: { consolidationGapHours: 4 },
     });
 
-    // NFC IN at 9h ago, NFC OUT at 5h ago, MOBILE IN at 0.5h ago
-    // gap between NFC OUT and MOBILE IN = 4.5h > 4h → no merge
+    // NFC IN at 9h ago, NFC OUT at 5h ago, MOBILE IN at 0.5h ago (gap = 4.5h)
+    // D-01: MOBILE IN finds the closed NFC entry (same date) → REOPENs it + creates gap Break.
+    // One active entry with endTime=null; no second MOBILE row created.
     await resolveClockEvent(app, buildEvent({ source: "NFC", intent: "IN", hoursAgo: 9 }));
     await resolveClockEvent(app, buildEvent({ source: "NFC", intent: "OUT", hoursAgo: 5 }));
     await resolveClockEvent(app, buildEvent({ source: "MOBILE", intent: "IN", hoursAgo: 0.5 }));
 
-    const closedNfc = await app.prisma.timeEntry.findFirst({
-      where: {
-        employeeId: data.employee.id,
-        deletedAt: null,
-        source: "NFC",
-        endTime: { not: null },
-      },
+    const allActive = await app.prisma.timeEntry.findMany({
+      where: { employeeId: data.employee.id, deletedAt: null },
     });
-    const openMobile = await app.prisma.timeEntry.findFirst({
-      where: {
-        employeeId: data.employee.id,
-        deletedAt: null,
-        source: "MOBILE",
-        endTime: null,
-      },
+    // D-01 invariant: exactly one non-deleted entry (the reopened NFC entry)
+    expect(allActive.length).toBe(1);
+    // Entry must be open (employee is currently clocked in via REOPEN)
+    expect(allActive[0].endTime).toBeNull();
+
+    // Gap Break must have been created (old endTime → new MOBILE IN timestamp)
+    const breaks = await app.prisma.break.findMany({
+      where: { timeEntryId: allActive[0].id },
     });
-    expect(closedNfc).toBeDefined();
-    expect(openMobile).toBeDefined();
-    expect(closedNfc?.id).not.toBe(openMobile?.id);
+    expect(breaks.length).toBeGreaterThanOrEqual(1);
   });
 
   // ── Block C — 2026-06-04 prod incident regression ─────────────────────────
