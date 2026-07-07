@@ -700,4 +700,126 @@ describe("Overtime Saldo Calculation", () => {
       expect(Number(account!.balanceHours)).toBe(0);
     });
   });
+
+  // ── D-06 regression: SHIFT_BASED close-month — holiday inside leave ────────
+  // DATA-V1814-05 / Task 3 (76.19-03): the non-SHIFT_BASED path switches from
+  // calcExpectedMinutesTz to calcLeaveAbsenceMinutesTz so a holiday inside leave
+  // is deducted only once.  SHIFT_BASED uses coveredDates (different mechanism —
+  // holiday is implicitly excluded by being part of the leave range), so its
+  // expectedMinutes must NOT change after the Task-3 switch.  This test pins the
+  // correct value so any accidental breakage is immediately visible.
+  //
+  // Scenario (January 2024, Europe/Berlin, NIEDERSACHSEN):
+  //   Shifts:  Jan 2 Tue 08:00-16:00  → covered by leave → NOT counted
+  //            Jan 3 Wed 08:00-16:00  → covered by leave → NOT counted
+  //            Jan 8 Mon 08:00:16:00  → not covered      → counted
+  //   Leave:   Jan 1-3 APPROVED (includes New Year's public holiday Jan 1)
+  //
+  //   Jan 8 netto = 480 min brutto − 30 min default break (>6 h threshold) = 450 min
+  //   expected snapshot.expectedMinutes = 450
+  describe("D-06 regression: SHIFT_BASED close-month — holiday inside leave (single deduction via coveredDates)", () => {
+    let shiftEmpId: string;
+    let shiftEmpUserId: string;
+
+    beforeAll(async () => {
+      const suffix = "sb-d06-" + Date.now().toString(36);
+      const empUser = await app.prisma.user.create({
+        data: {
+          email: `${suffix}@test.de`,
+          passwordHash: "not-used-in-test",
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      shiftEmpUserId = empUser.id;
+
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: empUser.id,
+          employeeNumber: `SB-${suffix}`,
+          firstName: "Shift",
+          lastName: "D06Reg",
+          hireDate: new Date("2024-01-01T00:00:00Z"),
+        },
+      });
+      shiftEmpId = emp.id;
+
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: shiftEmpId,
+          type: "SHIFT_BASED",
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01T00:00:00Z"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: shiftEmpId, balanceHours: 0 },
+      });
+
+      // 3 shifts in January 2024: Jan 2 + Jan 3 covered by leave, Jan 8 not covered
+      for (const d of ["2024-01-02", "2024-01-03", "2024-01-08"]) {
+        await app.prisma.shift.create({
+          data: {
+            employeeId: shiftEmpId,
+            date: new Date(d + "T00:00:00Z"),
+            startTime: "08:00",
+            endTime: "16:00",
+          },
+        });
+      }
+
+      // Leave Jan 1-3 APPROVED (covers New Year's public holiday + two shifts)
+      await app.prisma.leaveRequest.create({
+        data: {
+          employeeId: shiftEmpId,
+          leaveTypeId: data.vacationType.id,
+          startDate: new Date("2024-01-01T00:00:00Z"),
+          endDate: new Date("2024-01-03T00:00:00Z"),
+          days: 3,
+          status: "APPROVED",
+          reviewedBy: "system",
+          reviewedAt: new Date(),
+        },
+      });
+    });
+
+    afterAll(async () => {
+      // Clean up in dependency order (no TimeEntries or Absences created)
+      await app.prisma.saldoSnapshot.deleteMany({ where: { employeeId: shiftEmpId } });
+      await app.prisma.shift.deleteMany({ where: { employeeId: shiftEmpId } });
+      await app.prisma.leaveRequest.deleteMany({ where: { employeeId: shiftEmpId } });
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: shiftEmpId } });
+      await app.prisma.workSchedule.deleteMany({ where: { employeeId: shiftEmpId } });
+      await app.prisma.employee.delete({ where: { id: shiftEmpId } });
+      await app.prisma.user.delete({ where: { id: shiftEmpUserId } });
+    });
+
+    it("SHIFT_BASED: leave covering a holiday excludes shifts via coveredDates; uncovered shift is netto 450 min (D-06 regression)", async () => {
+      // Close January 2024 — hireDate = Jan 1, so no prior month required
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { employeeId: shiftEmpId, year: 2024, month: 1 },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const snapshot = JSON.parse(res.body);
+
+      // Jan 8 shift: 480 min brutto − 30 min break (>6 h, no employee override) = 450 min netto.
+      // Jan 2 + Jan 3 shifts are in the leave's coveredDates → not summed into expectedMinutes.
+      // Jan 1 (New Year's) is also in coveredDates (part of the approved leave range) — the
+      // SHIFT_BASED path sets holidayMinutes=0, so there is NO double-deduction risk here.
+      // Value 450 is pinned: if this changes, the SHIFT_BASED coveredDates path was broken.
+      expect(snapshot.expectedMinutes).toBe(450);
+    });
+  });
 });

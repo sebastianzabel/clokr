@@ -7,6 +7,7 @@ import {
   dateStrInTz,
   monthRangeUtc,
   calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
 } from "../utils/timezone";
@@ -1016,6 +1017,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           ...closeMonthComputedHolidays.map((h) => ({ date: new Date(h.date + "T00:00:00Z") })),
           ...closeMonthDbHolidays.filter((h) => !holidayDateSet.has(dateStrInTz(h.date, tz))),
         ];
+        // D-06: holiday dates as tenant-TZ strings, passed to calcLeaveAbsenceMinutesTz so a
+        // holiday inside approved leave/absence is NOT double-deducted (holidayMinutes already
+        // subtracts it separately). Brings overtime.ts manual close into parity with time-entries.ts
+        // and recalculate-snapshots.ts (all three saldo paths now use the same single-deduction fix).
+        const closeHolidayDateStrSet = new Set(
+          allCloseMonthHolidays.map((h) => dateStrInTz(h.date, tz)),
+        );
 
         // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
         const isMonthlyHoursDeduction =
@@ -1064,7 +1072,15 @@ export async function overtimeRoutes(app: FastifyInstance) {
             const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
             const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
             if (leaveStart > leaveEnd) return sum;
-            return sum + calcExpectedMinutesTz(schedule, leaveStart, leaveEnd, tz);
+            // D-06: use calcLeaveAbsenceMinutesTz (not calcExpectedMinutesTz) to skip holidays
+            // already counted in holidayMinutes — single-deduction parity with time-entries.ts.
+            return (
+              sum +
+              calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+                halfDay: Boolean(lr.halfDay),
+                excludeHolidays: closeHolidayDateStrSet, // D-06: holiday inside leave deducted once
+              })
+            );
           }, 0);
         }
 
@@ -1083,7 +1099,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
             const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
             const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
             if (absStart > absEnd) return sum;
-            return sum + calcExpectedMinutesTz(schedule, absStart, absEnd, tz);
+            // D-06: use calcLeaveAbsenceMinutesTz to skip holidays already in holidayMinutes.
+            return (
+              sum +
+              calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+                excludeHolidays: closeHolidayDateStrSet, // D-06: holiday inside absence deducted once
+              })
+            );
           }, 0);
         }
 
