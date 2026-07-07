@@ -584,6 +584,19 @@ export async function leaveRoutes(app: FastifyInstance) {
           .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
       }
 
+      // 4-eyes: block cancellation-approval by the person who requested the cancellation (COMP-V1814-02)
+      if (existing.cancellationRequestedBy && req.user.sub === existing.cancellationRequestedBy) {
+        return reply
+          .code(403)
+          .send({ error: "Stornierung kann nicht vom Antragsteller genehmigt werden" });
+      }
+      // 4-eyes: block cancellation-approval by the manager who originally approved the leave (COMP-V1814-02)
+      if (existing.reviewedBy && req.user.sub === existing.reviewedBy) {
+        return reply
+          .code(403)
+          .send({ error: "Stornierung kann nicht vom ursprünglichen Genehmiger genehmigt werden" });
+      }
+
       // ── Stornierungsantrag prüfen ────────────────────────────────────────────
       if (existing.status === "CANCELLATION_REQUESTED") {
         if (body.status === "APPROVED") {
@@ -1100,7 +1113,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         // Until approved, the leave remains active (blocks time tracking, shown in calendar)
         await app.prisma.leaveRequest.update({
           where: { id },
-          data: { status: "CANCELLATION_REQUESTED" },
+          data: { status: "CANCELLATION_REQUESTED", cancellationRequestedBy: req.user.sub },
         });
         await app.audit({
           userId: req.user.sub,
