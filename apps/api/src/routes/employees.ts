@@ -828,17 +828,17 @@ export async function employeeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      await app.audit({
-        userId: req.user.sub,
-        action: "ANONYMIZE",
-        entity: "Employee",
-        entityId: id,
-        oldValue: { email: employee.user.email, employeeNumber: employee.employeeNumber },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
-
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await anonymizeEmployeeData({ tx, employeeId: id });
+        await app.audit({
+          userId: req.user.sub,
+          action: "ANONYMIZE",
+          entity: "Employee",
+          entityId: id,
+          oldValue: { employeeNumber: employee.employeeNumber },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
       });
 
       return reply.code(204).send();
