@@ -563,6 +563,7 @@ model LeaveRequest {
   reviewedBy         String?
   reviewedAt         DateTime?          @db.Timestamptz
   reviewNote         String?
+  cancellationRequestedBy String?        // userId who requested cancellation (for 4-eyes COMP-V1814-02)
   // Attest (nur für SICK / SICK_CHILD)
   attestPresent      Boolean            @default(false)
   attestValidFrom    DateTime?          @db.Date
