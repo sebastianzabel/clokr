@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -222,6 +222,48 @@ describe("Time Entries API", () => {
       expect(res.statusCode).toBe(201);
       const body = JSON.parse(res.body);
       expect(body.entry.employeeId).toBe(data.employee.id);
+    });
+
+    // ── Plan 76.19-06 Task 2: DB partial-unique index → P2002 → 409 ────────────
+    // The partial-unique index (WHERE deletedAt IS NULL) catches a concurrent
+    // same-day create that raced past the app-level one-per-day check. The DB
+    // constraint cannot be reproduced against the `db push` test schema (Prisma
+    // cannot express partial unique indexes), so we simulate the driver-level
+    // P2002 the index raises and assert the handler maps it to 409, not 500.
+    it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {
+      const d = pastDate(40);
+      const createSpy = vi
+        .spyOn(app.prisma.timeEntry, "create")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+        );
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: {
+            employeeId: data.employee.id,
+            date: d,
+            startTime: `${d}T08:00:00.000Z`,
+            endTime: `${d}T16:00:00.000Z`,
+            breakMinutes: 30,
+          },
+        });
+
+        expect(createSpy).toHaveBeenCalledTimes(1);
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.body).error).toBe("Es existiert bereits ein Eintrag für diesen Tag.");
+      } finally {
+        createSpy.mockRestore();
+      }
+
+      // No row leaked for that day (create was rejected).
+      const count = await app.prisma.timeEntry.count({
+        where: { employeeId: data.employee.id, date: new Date(d), deletedAt: null },
+      });
+      expect(count).toBe(0);
     });
   });
 

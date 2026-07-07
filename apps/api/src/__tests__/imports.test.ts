@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -235,6 +235,47 @@ ${empNo};08.06.2026;08:00;12:00;0`;
         },
       });
       expect(auditCount).toBe(2);
+    });
+
+    // ── Plan 76.19-06 Task 2: DB partial-unique → P2002 reported per-row ───────
+    // A DB-level duplicate (partial-unique index, WHERE deletedAt IS NULL) raises
+    // P2002 during the per-row create. The import loop must report that row as an
+    // error with the German 409-equivalent message and keep going — never abort.
+    // The partial index cannot exist in the `db push` test schema, so we simulate
+    // the driver-level P2002 on the first row's create.
+    it("DATA-V1814-04: a P2002 on a row → per-row error, loop continues", async () => {
+      const empNo = data.employee.employeeNumber;
+      const csv = `nr;datum;von;bis;pause
+${empNo};17.06.2026;08:00;12:00;0
+${empNo};18.06.2026;13:00;17:00;0`;
+
+      const createSpy = vi
+        .spyOn(app.prisma.timeEntry, "create")
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+        );
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/imports/time-entries",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+          payload: { csv },
+        });
+
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        // first row rejected with P2002, second row imported → loop did not abort
+        expect(body.total).toBe(2);
+        expect(body.imported).toBe(1);
+        expect(body.errors).toBe(1);
+        const dupRow = body.details.find(
+          (d: { status: string; error?: string }) => d.status === "error",
+        );
+        expect(dupRow.error).toBe("Es existiert bereits ein Eintrag für diesen Tag.");
+      } finally {
+        createSpy.mockRestore();
+      }
     });
   });
 });
