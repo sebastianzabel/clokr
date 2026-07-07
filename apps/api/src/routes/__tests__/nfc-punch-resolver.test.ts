@@ -114,6 +114,19 @@ describe("POST /nfc-punch — Phase 76.2 resolver migration", () => {
       headers: { authorization: `Bearer ${terminalApiKey}` },
       payload: { nfcCardId: NFC_CARD_ID },
     });
+
+    // 76.19.1 D-02: a STOP within 60s of START is a debounced NOOP. Backdate the open
+    // entry so the second punch is treated as a valid STOP (>60s after start).
+    const openEntry = await app.prisma.timeEntry.findFirst({
+      where: { employeeId: data.employee.id, endTime: null, deletedAt: null },
+    });
+    if (openEntry) {
+      await app.prisma.timeEntry.update({
+        where: { id: openEntry.id },
+        data: { startTime: new Date(Date.now() - 70_000) },
+      });
+    }
+
     // Second punch — OUT
     const res = await app.inject({
       method: "POST",
@@ -139,7 +152,11 @@ describe("POST /nfc-punch — Phase 76.2 resolver migration", () => {
   // the resolver's FOR UPDATE row lock, the action sequence alternates strictly starting
   // with IN. 5 requests → IN/OUT/IN/OUT/IN → 3 IN + 2 OUT (same contract as 76.1's
   // nfc-punch-race.test.ts:106-110). The CORE prod-incident invariant is the open-row count.
-  it("Block C — race: 5 concurrent /nfc-punch → 5× 200, alternating IN/OUT toggle, at most 1 open TimeEntry (76.1 contract via resolver)", async () => {
+  // 76.19.1 D-02: rapid concurrent punches now produce IN + NOOP (not IN/OUT alternation).
+  // The first transaction to acquire the FOR UPDATE lock creates the entry (IN); all
+  // subsequent STOP attempts arrive within the 60s debounce window and are NOOPs.
+  // The pre-76.19.1 comment "5 → IN/OUT/IN/OUT/IN → 3 IN + 2 OUT" no longer applies.
+  it("Block C — race: 5 concurrent /nfc-punch → 5× 200, at most 1 open TimeEntry (76.1 core invariant via resolver)", async () => {
     const headers = { authorization: `Bearer ${terminalApiKey}` };
     const payload = { nfcCardId: NFC_CARD_ID };
     const responses = await Promise.all(
@@ -150,8 +167,8 @@ describe("POST /nfc-punch — Phase 76.2 resolver migration", () => {
     for (const r of responses) expect(r.statusCode).toBe(200);
     const bodies = responses.map((r) => JSON.parse(r.body) as { action: string });
     const inCount = bodies.filter((b) => b.action === "IN").length;
-    const outCount = bodies.filter((b) => b.action === "OUT").length;
-    expect(inCount + outCount).toBe(5);
+    // 76.19.1 D-02: outCount may be 0 — rapid STOPs within the 60s window become NOOPs.
+    // Pre-76.19.1 assertion `inCount + outCount === 5` removed; NOOP responses are expected.
     expect(inCount).toBeGreaterThanOrEqual(1);
 
     // CORE PROD-INCIDENT INVARIANT (76.1): at most ONE TimeEntry has endTime=null after

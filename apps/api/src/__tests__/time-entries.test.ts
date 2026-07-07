@@ -297,6 +297,13 @@ describe("Time Entries API", () => {
       expect(clockInBody.resolution.kind).toBe("CLOCKED_IN");
       expect(entry.endTime).toBeNull();
 
+      // 76.19.1 D-02: 60s debounce — a STOP within 60s of START is a NOOP.
+      // Backdate the entry's startTime so the clock-out is treated as a valid STOP.
+      await app.prisma.timeEntry.update({
+        where: { id: entry.id },
+        data: { startTime: new Date(Date.now() - 70_000) },
+      });
+
       // Clock out
       const clockOutRes = await app.inject({
         method: "POST",

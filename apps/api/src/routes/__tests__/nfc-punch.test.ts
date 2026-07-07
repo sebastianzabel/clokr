@@ -82,6 +82,19 @@ describe("NFC Punch API", () => {
     });
 
     it("clock out with second NFC punch (action: OUT)", async () => {
+      // 76.19.1 D-02: a STOP within 60s of START is a debounced NOOP. The open entry was
+      // created by the previous test just ms ago, so we backdate its startTime to >60s ago
+      // before the second punch, preserving the test's intent (verify the OUT toggle path).
+      const openEntry = await app.prisma.timeEntry.findFirst({
+        where: { employeeId: data.employee.id, endTime: null, deletedAt: null },
+      });
+      if (openEntry) {
+        await app.prisma.timeEntry.update({
+          where: { id: openEntry.id },
+          data: { startTime: new Date(Date.now() - 70_000) },
+        });
+      }
+
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries/nfc-punch",
