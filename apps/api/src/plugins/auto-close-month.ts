@@ -519,7 +519,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 orderBy: { periodStart: "asc" },
               });
 
-              if (monthSnapshots.length < 12) continue; // Not all months closed yet
+              // COMP-V1814-08: mid-year hires only need their share of months.
+              // A July hire has 6 months in the year (Jul-Dec); requiring 12 would
+              // prevent their yearly carry-over from ever running.
+              const hireYear = emp.hireDate ? new Date(emp.hireDate).getFullYear() : null;
+              const hireMonth = emp.hireDate ? new Date(emp.hireDate).getMonth() + 1 : 1; // 1-12
+              const firstMonth = hireYear === prevYear ? hireMonth : 1;
+              const expectedMonths = 12 - firstMonth + 1;
+              if (monthSnapshots.length < expectedMonths) continue; // Not all expected months closed yet
 
               const yearWorked = monthSnapshots.reduce((s, m) => s + m.workedMinutes, 0);
               const yearExpected = monthSnapshots.reduce((s, m) => s + m.expectedMinutes, 0);
