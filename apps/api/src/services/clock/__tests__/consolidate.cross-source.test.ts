@@ -5,12 +5,13 @@ import { resolveClockEvent } from "../resolver";
 import type { ClockEvent, ClockIntent } from "../types";
 
 // Phase 76.2 (ARCH-V19-01 sub-req B / TIME-V19-04) — Cross-source same-day consolidation.
+// Phase 76.19.1 (SC3) — tightened to =1 invariant now that D-01 (REOPEN) is in place.
 //
 // Block A: parameterized matrix — each (sourceA, sourceB) pair in (NFC, MOBILE, WIFI) clocks
-//          in + out same day with gap < tenant.consolidationGapHours → 1 TimeEntry + 1 Break.
-// Block B: gap > threshold → no merge; merge_skipped { reason: 'gap_exceeded' }.
-// Block C: 2026-06-04 prod incident regression — NFC×3 + MOBILE×1 → at most 2 active TimeEntries
-//          (post-resolver collapses cross-source same-day rows; pre-resolver left 3+).
+//          in + out same day → D-01 REOPENs the closed entry → exactly 1 TimeEntry + ≥ 1 Break.
+// Block B: D-01 REOPEN with large gap (>consolidationGapHours) → still exactly 1 entry + gap Break.
+// Block C: 2026-06-04 prod incident regression — NFC×3 + MOBILE×1 → exactly 1 active TimeEntry
+//          (D-01: every subsequent IN REOPENs the same entry; pre-resolver left 3+ rows).
 
 describe("services/clock/consolidate — cross-source same-day consolidation", () => {
   let app: FastifyInstance;
@@ -77,8 +78,9 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
   for (const sourceA of sources) {
     for (const sourceB of sources) {
       if (sourceA === sourceB) continue;
-      it(`Block A — ${sourceA} clock-in/out then ${sourceB} clock-in/out, gap 30 min < 4h → ≤ 1 active TimeEntry + ≥ 1 Break`, async () => {
+      it(`Block A — ${sourceA} clock-in/out then ${sourceB} clock-in/out, gap 30 min < 4h → exactly 1 active TimeEntry + ≥ 1 Break`, async () => {
         // Sequence: A IN (4h ago) → A OUT (3h ago) → B IN (2.5h ago, gap=30min) → B OUT (1h ago)
+        // D-01: B IN finds the closed A entry (same date) → REOPENs it; no 2nd row created.
         await resolveClockEvent(app, buildEvent({ source: sourceA, intent: "IN", hoursAgo: 4 }));
         await resolveClockEvent(app, buildEvent({ source: sourceA, intent: "OUT", hoursAgo: 3 }));
         await resolveClockEvent(app, buildEvent({ source: sourceB, intent: "IN", hoursAgo: 2.5 }));
@@ -87,7 +89,7 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
         const active = await app.prisma.timeEntry.findMany({
           where: { employeeId: data.employee.id, deletedAt: null },
         });
-        expect(active.length).toBeLessThanOrEqual(1);
+        expect(active.length).toBe(1);
 
         const breaks = await app.prisma.break.findMany({
           where: { timeEntryId: { in: active.map((e) => e.id) } },
@@ -131,7 +133,7 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
   });
 
   // ── Block C — 2026-06-04 prod incident regression ─────────────────────────
-  it("Block C — 2026-06-04 prod incident regression: NFC×3 + MOBILE×1 same day, all gap < 4h → resolver collapses to ≤ 2 active TimeEntries via cross-source merge", async () => {
+  it("Block C — 2026-06-04 prod incident regression: NFC×3 + MOBILE×1 same day → D-01 REOPEN collapses to exactly 1 active TimeEntry", async () => {
     // Force gap window = 4h (default per CONTEXT D-04)
     await app.prisma.tenantConfig.update({
       where: { tenantId: data.tenant.id },
@@ -139,11 +141,11 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
     });
 
     // Reproduce the 2026-06-04 prod incident shape:
-    //   NFC IN at  8.5h ago  → NFC OUT at 7h ago     (1.5h work)
-    //   NFC IN at  6.5h ago  → NFC OUT at 5h ago     (gap 0.5h, 1.5h work)
-    //   MOBILE IN at 4h ago  → MOBILE OUT at 2h ago  (gap 1h, 2h work)
+    //   NFC AUTO at 8.5h ago  → NFC AUTO at 7h ago    (1.5h work → STOP; entry_1 closed)
+    //   NFC AUTO at 6.5h ago  → NFC AUTO at 5h ago    (D-01 REOPEN entry_1 + gap Break; then STOP)
+    //   MOBILE IN at 4h ago   → MOBILE OUT at 2h ago  (D-01 REOPEN entry_1 + gap Break; then STOP)
     // Pre-resolver: 3 separate TimeEntry rows (the bug — un-merged cross-source).
-    // Post-resolver: cross-source merges collapse to 1 (or rarely 2) active row.
+    // Post-resolver (D-01): every subsequent IN hits CLOSED_SAME_DAY_ENTRY → REOPEN → exactly 1 row.
     await resolveClockEvent(app, buildEvent({ source: "NFC", intent: "AUTO", hoursAgo: 8.5 }));
     await resolveClockEvent(app, buildEvent({ source: "NFC", intent: "AUTO", hoursAgo: 7 }));
     await resolveClockEvent(app, buildEvent({ source: "NFC", intent: "AUTO", hoursAgo: 6.5 }));
@@ -154,9 +156,8 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
     const active = await app.prisma.timeEntry.findMany({
       where: { employeeId: data.employee.id, deletedAt: null },
     });
-    // Post-resolver invariant: dramatic reduction from prod's 3-row shape.
-    // Multiple consecutive consolidations across NFC+MOBILE → ≤ 2 active rows.
-    expect(active.length).toBeLessThanOrEqual(2);
+    // Post-resolver (D-01) invariant: exactly 1 active row (single entry reopened in place).
+    expect(active.length).toBe(1);
 
     // Verify Break rows exist (merge created at least one Break per consolidation).
     const breaks = await app.prisma.break.findMany({
