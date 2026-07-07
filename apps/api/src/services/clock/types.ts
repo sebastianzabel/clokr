@@ -33,11 +33,13 @@ export type ConflictReason =
 
 export type ClockState =
   | { kind: "NO_OPEN_ENTRY" }
-  | { kind: "OPEN_ENTRY"; entryId: string; source: string };
+  | { kind: "OPEN_ENTRY"; entryId: string; source: string }
+  | { kind: "CLOSED_SAME_DAY_ENTRY"; entryId: string; endTime: Date; isLocked: boolean }; // D-01
 
 export type ClockDecision =
   | { kind: "START" }
   | { kind: "STOP"; entryId: string }
+  | { kind: "REOPEN"; entryId: string } // D-01
   | { kind: "CONFIRM"; entryId: string }
   | { kind: "CONFLICT"; reason: ConflictReason };
 

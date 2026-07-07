@@ -56,4 +56,34 @@ describe("services/clock/state-machine — decide()", () => {
       expect(decide(state, "AUTO", "SYNTHETIC")).toEqual({ kind: "START" });
     });
   });
+
+  describe("CLOSED_SAME_DAY_ENTRY (D-01 reopen)", () => {
+    const closedState: ClockState = {
+      kind: "CLOSED_SAME_DAY_ENTRY",
+      entryId: "entry-1",
+      endTime: new Date(),
+      isLocked: false,
+    };
+
+    it("CLOSED_SAME_DAY_ENTRY + IN → REOPEN", () => {
+      expect(decide(closedState, "IN", "MOBILE")).toEqual({
+        kind: "REOPEN",
+        entryId: "entry-1",
+      });
+    });
+
+    it("CLOSED_SAME_DAY_ENTRY + AUTO → REOPEN (NFC tap on day with closed entry)", () => {
+      expect(decide(closedState, "AUTO", "NFC")).toEqual({
+        kind: "REOPEN",
+        entryId: "entry-1",
+      });
+    });
+
+    it("CLOSED_SAME_DAY_ENTRY + OUT → CONFLICT NOT_CLOCKED_IN (Pitfall 4)", () => {
+      expect(decide(closedState, "OUT", "MOBILE")).toEqual({
+        kind: "CONFLICT",
+        reason: "NOT_CLOCKED_IN",
+      });
+    });
+  });
 });
