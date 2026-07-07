@@ -2,6 +2,14 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 
+declare module "fastify" {
+  interface FastifyInstance {
+    /** Phase 76.21-08 (COMP-V1814-08): exposed for integration tests — invokes the
+     *  auto-invalidate scan synchronously without the cron/advisory-lock wrapper. */
+    tryAutoInvalidate: () => Promise<void>;
+  }
+}
+
 /**
  * Background scheduler for attendance-related notifications:
  * 1. Clock-out reminder: hourly check for open time entries
@@ -537,6 +545,11 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       app.log.error({ err }, "Reminder: Fehler bei Urlaubsverfall-Prüfung");
     }
   }
+
+  // Phase 76.21-08: expose autoInvalidateOpenEntries as a Fastify decorator so
+  // integration tests can invoke the scan directly without cron/advisory-lock overhead.
+  // Pattern mirrors tryAutoCloseMonth in auto-close-month.ts.
+  app.decorate("tryAutoInvalidate", autoInvalidateOpenEntries);
 
   app.addHook("onReady", async () => {
     try {
