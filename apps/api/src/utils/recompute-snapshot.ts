@@ -279,6 +279,9 @@ export async function recomputeSnapshotValues(
         endDate: { gte: monthStart },
       },
     });
+    // D-06: exclude holidays inside leave so a holiday-in-leave day is deducted once
+    // (holidayMinutes subtracts it separately — same holiday source as above).
+    const recomputeHolidayStrs = new Set(allHolidays.map((h) => dateStrInTz(h.date, tz)));
     leaveMinutes = approvedLeave.reduce((sum, lr) => {
       const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
       const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
@@ -287,6 +290,7 @@ export async function recomputeSnapshotValues(
         sum +
         calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
           halfDay: Boolean(lr.halfDay),
+          excludeHolidays: recomputeHolidayStrs,
         })
       );
     }, 0);

@@ -207,6 +207,10 @@ export async function recalculateSnapshots(
           .filter((h) => !computedDateSet.has(dateStrInTz(h.date, tz)))
           .map((h) => ({ date: h.date })),
       ];
+      // D-06: holiday dates (tenant-TZ YYYY-MM-DD) so a holiday inside approved leave is
+      // NOT double-deducted (holidayMinutes subtracts it separately). Identical to the
+      // time-entries.ts + overtime.ts saldo paths.
+      const holidayDateStrSet = new Set(allHolidays.map((h) => dateStrInTz(h.date, tz)));
 
       // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
       const isMonthlyHoursDeduction =
@@ -255,6 +259,7 @@ export async function recalculateSnapshots(
           sum +
           calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
             halfDay: Boolean(lr.halfDay),
+            excludeHolidays: holidayDateStrSet,
           })
         );
       }, 0);

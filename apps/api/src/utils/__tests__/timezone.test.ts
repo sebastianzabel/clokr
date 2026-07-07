@@ -8,6 +8,7 @@ import {
   weekRangeUtc,
   iterateDaysInTz,
   calcExpectedMinutesTz,
+  calcLeaveAbsenceMinutesTz,
   getDayHoursFromSchedule,
 } from "../timezone";
 
@@ -115,6 +116,71 @@ describe("iterateDaysInTz", () => {
     const dows: number[] = [];
     iterateDaysInTz(d, d, "UTC", (dow) => dows.push(dow));
     expect(dows).toEqual([1]); // Monday
+  });
+
+  it("yields the tenant-local dateStr alongside dow (D-06)", () => {
+    const from = new Date("2026-03-23T00:00:00Z"); // Monday
+    const to = new Date("2026-03-25T23:59:59Z"); // Wednesday
+    const dates: string[] = [];
+    iterateDaysInTz(from, to, "UTC", (_dow, dateStr) => dates.push(dateStr));
+    expect(dates).toEqual(["2026-03-23", "2026-03-24", "2026-03-25"]);
+  });
+});
+
+describe("calcLeaveAbsenceMinutesTz — D-06 holiday exclusion", () => {
+  const fixed = {
+    type: "FIXED_SCHEDULE",
+    weeklyHours: 40,
+    sundayHours: 0,
+    mondayHours: 8,
+    tuesdayHours: 8,
+    wednesdayHours: 8,
+    thursdayHours: 8,
+    fridayHours: 8,
+    saturdayHours: 0,
+  };
+  // Mon 2026-03-23 .. Fri 2026-03-27 (5 workdays, 8h each)
+  const from = new Date("2026-03-23T00:00:00Z");
+  const to = new Date("2026-03-27T23:59:59Z");
+
+  it("FIXED: no opts → full 5-day sum (backward compatible)", () => {
+    expect(calcLeaveAbsenceMinutesTz(fixed, from, to, "UTC")).toBe(5 * 8 * 60);
+  });
+
+  it("FIXED: a holiday inside the range is deducted once → 4 days, not 5", () => {
+    const holidays = new Set(["2026-03-25"]); // the Wednesday
+    expect(calcLeaveAbsenceMinutesTz(fixed, from, to, "UTC", { excludeHolidays: holidays })).toBe(
+      4 * 8 * 60,
+    );
+  });
+
+  it("FIXED: halfDay applies AFTER holiday exclusion", () => {
+    const holidays = new Set(["2026-03-25"]);
+    expect(
+      calcLeaveAbsenceMinutesTz(fixed, from, to, "UTC", {
+        excludeHolidays: holidays,
+        halfDay: true,
+      }),
+    ).toBe(Math.round((4 * 8 * 60) / 2));
+  });
+
+  it("SHIFT_BASED: excluding a holiday drops one workday from the Ø-Methode count", () => {
+    const shift = { ...fixed, type: "SHIFT_BASED" };
+    const full = calcLeaveAbsenceMinutesTz(shift, from, to, "UTC");
+    const withHoliday = calcLeaveAbsenceMinutesTz(shift, from, to, "UTC", {
+      excludeHolidays: new Set(["2026-03-25"]),
+    });
+    // weeklyHours/workDaysPerWeek = 40/5 = 8h per workday → one fewer workday = 8h less
+    expect(full - withHoliday).toBe(8 * 60);
+  });
+
+  it("MONTHLY_HOURS: returns 0 regardless of excludeHolidays", () => {
+    const monthly = { ...fixed, type: "MONTHLY_HOURS", monthlyHours: 80 };
+    expect(
+      calcLeaveAbsenceMinutesTz(monthly, from, to, "UTC", {
+        excludeHolidays: new Set(["2026-03-25"]),
+      }),
+    ).toBe(0);
   });
 });
 

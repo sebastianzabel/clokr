@@ -134,7 +134,7 @@ export function iterateDaysInTz(
   from: Date,
   to: Date,
   tz: string,
-  callback: (dow: number) => void,
+  callback: (dow: number, dateStr: string) => void,
 ): void {
   // Work with zoned copies to iterate by calendar day
   const current = toZonedTime(from, tz);
@@ -143,7 +143,12 @@ export function iterateDaysInTz(
   endZoned.setHours(23, 59, 59, 999);
 
   while (current <= endZoned) {
-    callback(current.getDay());
+    // `current` is zoned, so its Y/M/D are the tenant-local calendar day — this
+    // matches dateStrInTz() semantics for the same instant (D-06 holiday exclusion).
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const d = String(current.getDate()).padStart(2, "0");
+    callback(current.getDay(), `${y}-${m}-${d}`);
     current.setDate(current.getDate() + 1);
   }
 }
@@ -169,6 +174,7 @@ function avgWorkMinutesCore(
   from: Date,
   to: Date,
   tz: string,
+  excludeHolidays?: Set<string>,
 ): number {
   const wh = Number(schedule.weeklyHours ?? 0);
   if (wh <= 0) return 0;
@@ -192,9 +198,11 @@ function avgWorkMinutesCore(
   if (workDaysPerWeek === 0) return 0;
 
   // workdaysInRange = count of calendar days in [from, to] where the
-  // corresponding {day}Hours value is > 0.
+  // corresponding {day}Hours value is > 0. D-06: a holiday inside the range is
+  // excluded so it is not double-deducted (holiday minutes are subtracted separately).
   let workdaysInRange = 0;
-  iterateDaysInTz(from, to, tz, (dow) => {
+  iterateDaysInTz(from, to, tz, (dow, dateStr) => {
+    if (excludeHolidays?.has(dateStr)) return;
     if (Number(schedule[DOW_KEYS[dow]] ?? 0) > 0) workdaysInRange++;
   });
 
@@ -363,19 +371,21 @@ export function calcLeaveAbsenceMinutesTz(
   from: Date,
   to: Date,
   tz: string,
-  opts?: { halfDay?: boolean },
+  opts?: { halfDay?: boolean; excludeHolidays?: Set<string> },
 ): number {
   const type = String(schedule.type ?? "");
 
   let raw: number;
   if (type === "SHIFT_BASED" || type === "FLEXTIME") {
-    raw = avgWorkMinutesCore(schedule, from, to, tz);
+    raw = avgWorkMinutesCore(schedule, from, to, tz, opts?.excludeHolidays);
   } else if (type === "MONTHLY_HOURS") {
     // CLAUDE.md "Schedule Types": Holiday/absence deductions do NOT apply for
     // MONTHLY_HOURS (flexible Minijobber budget). Hart 0.
     return 0;
   } else {
     // FIXED_SCHEDULE (and any unknown type): per-day sum from {day}Hours.
+    // D-06: skip holidays inside the range so the holiday is deducted ONCE
+    // (holiday minutes are subtracted separately by the caller).
     const DOW_KEYS = [
       "sundayHours",
       "mondayHours",
@@ -386,7 +396,8 @@ export function calcLeaveAbsenceMinutesTz(
       "saturdayHours",
     ];
     let total = 0;
-    iterateDaysInTz(from, to, tz, (dow) => {
+    iterateDaysInTz(from, to, tz, (dow, dateStr) => {
+      if (opts?.excludeHolidays?.has(dateStr)) return;
       total += Number(schedule[DOW_KEYS[dow]] ?? 0) * 60;
     });
     raw = Math.round(total);

@@ -1606,6 +1606,10 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       allHolidays.push({ date: h.date });
     }
   }
+  // D-06: holiday dates as tenant-TZ YYYY-MM-DD, passed to calcLeaveAbsenceMinutesTz so a
+  // holiday inside approved leave/absence is NOT double-deducted (holidayMinutes already
+  // subtracts it separately).
+  const holidayDateStrSet = new Set(allHolidays.map((h) => dateStrInTz(h.date, tz)));
 
   const isMonthlyHoursDeduction =
     scheduleType === "MONTHLY_HOURS" &&
@@ -1756,6 +1760,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         // zero-out is ever lifted (D-12 carry-forward).
         leaveMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz, {
           halfDay: Boolean(lr.halfDay),
+          excludeHolidays: holidayDateStrSet, // D-06 (no-op here — zeroed below — kept for parity)
         });
       }
     }
@@ -1775,7 +1780,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const abEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       if (abStart > abEnd) continue;
       for (const seg of splitRangeByMonth(abStart, abEnd, tz)) {
-        absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz);
+        absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz, {
+          excludeHolidays: holidayDateStrSet, // D-06 (no-op here — zeroed below — kept for parity)
+        });
       }
     }
 
@@ -1808,6 +1815,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         sum +
         calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
           halfDay: Boolean(lr.halfDay),
+          excludeHolidays: holidayDateStrSet, // D-06: holiday inside leave deducted once
         })
       );
     }, 0);
@@ -1829,7 +1837,12 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
       const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       if (absStart > absEnd) return sum;
-      return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+      return (
+        sum +
+        calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+          excludeHolidays: holidayDateStrSet, // D-06: holiday inside absence deducted once
+        })
+      );
     }, 0);
 
     // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.

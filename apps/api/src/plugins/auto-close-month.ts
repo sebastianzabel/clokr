@@ -296,6 +296,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               return sum + getDayHoursFromSchedule(schedule, dow) * 60;
             }, 0);
 
+            // D-06: exclude holidays inside leave/absence so a holiday-in-leave day is
+            // deducted once (holidayMinutes subtracts it separately — same source).
+            const snapHolidayStrs = new Set(allSnapHolidays.map((h) => dateStrInTz(h, tz)));
+
             const approvedLeave = await app.prisma.leaveRequest.findMany({
               where: {
                 employeeId: emp.id,
@@ -319,6 +323,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   sum +
                   calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
                     halfDay: Boolean(lr.halfDay),
+                    excludeHolidays: snapHolidayStrs,
                   })
                 );
               }, 0);
@@ -382,7 +387,12 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
                 const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
                 if (absStart > absEnd) return sum;
-                return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+                return (
+                  sum +
+                  calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+                    excludeHolidays: snapHolidayStrs,
+                  })
+                );
               }, 0);
             }
 
