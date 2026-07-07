@@ -93,18 +93,21 @@ describe("TIME-V19-03 — NFC double-tap + clock-in race", () => {
     const inCount = bodies.filter((b) => b.action === "IN").length;
     const outCount = bodies.filter((b) => b.action === "OUT").length;
 
-    // The /nfc-punch handler is a strict per-tx toggle: each transaction sees the
-    // current open-entry state and INSERTs (IN) or UPDATEs (OUT). Under serial
-    // execution enforced by the FOR UPDATE row lock, the action sequence must
-    // alternate strictly starting with IN. 5 requests → IN/OUT/IN/OUT/IN → 3 IN + 2 OUT
-    // (with potential post-OUT auto-merge of adjacent short entries — see merge logic
-    // at apps/api/src/routes/time-entries.ts:286-345 which can soft-delete merged rows).
+    // 76.19.1 D-02: the 60s double-tap debounce changes the race outcome. Under serial
+    // execution enforced by the FOR UPDATE row lock, the first transaction INSERTs (IN)
+    // and subsequent STOP attempts arrive within the 60s debounce window → NOOP (not OUT).
+    // Pre-76.19.1 behavior was IN/OUT/IN/OUT/IN (3 IN + 2 OUT = 5). Post-76.19.1: the
+    // first rapid concurrent punch is IN; the rest are NOOPed → inCount ≥ 1, outCount
+    // may be 0.  The assertion `inCount + outCount === 5` is removed because NOOP
+    // responses are now the expected outcome for sub-60s concurrent punches.
     //
-    // Without the row lock, the prod incident shape is reproducible: multiple
+    // Without the row lock, the prod incident shape is still reproducible: multiple
     // concurrent transactions all read "no open entry" and all INSERT, producing
-    // 2+ rows with endTime=null simultaneously (the 2026-06-04 incident).
-    expect(inCount + outCount).toBe(5);
+    // 2+ rows with endTime=null simultaneously (the 2026-06-04 incident). The CORE
+    // INVARIANT below still detects this.
     expect(inCount).toBeGreaterThanOrEqual(1);
+    // outCount may be 0 under D-02 — not asserted here.
+    void outCount;
 
     // CORE INVARIANT (prod bug detector): after all 5 requests resolve, at most
     // ONE TimeEntry has endTime=null. Without the lock, 2+ concurrent INs leave
