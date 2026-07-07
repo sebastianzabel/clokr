@@ -122,9 +122,7 @@ export async function resolveClockEvent(
           return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
         }
         const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
-        // 1. Reopen (endTime → null)
-        await tx.timeEntry.update({ where: { id: decision.entryId }, data: { endTime: null } });
-        // 2. Create Break for the gap (old endTime → new START timestamp)
+        // 1. Create Break for the gap (old endTime → new START timestamp)
         const breakRow = await tx.break.create({
           data: {
             timeEntryId: decision.entryId,
@@ -132,12 +130,12 @@ export async function resolveClockEvent(
             endTime: event.timestamp,
           },
         });
-        // 3. Recompute breakMinutes from ALL Break rows (single source of truth — reuse helper)
+        // 2. Recompute breakMinutes from ALL Break rows, then reopen + update in one round-trip
         const allBreaks = await tx.break.findMany({ where: { timeEntryId: decision.entryId } });
         const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
         const reopened = await tx.timeEntry.update({
           where: { id: decision.entryId },
-          data: { breakMinutes: totalBreakMins },
+          data: { endTime: null, breakMinutes: totalBreakMins },
         });
         // D-01c: audit the reopen with the dedicated CLOCK_REOPEN action
         const audit = await emitClockAudit(tx, {
