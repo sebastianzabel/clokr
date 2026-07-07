@@ -728,6 +728,7 @@
 
   // ── Clock In/Out ───────────────────────────────────────────────────────────
   async function handleClock() {
+    if (clockLoading) return; // D-02a: idempotency guard — touch events can fire before disabled={clockLoading} applies
     clockLoading = true;
     try {
       if (!clockedIn) {
@@ -771,6 +772,13 @@
       await loadData();
     } catch (err) {
       toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
+      // D-02a: if the request succeeded but the response was lost, re-sync so clockedIn reflects
+      // the server and the user cannot fire a spurious second clock-in.
+      try {
+        await loadData();
+      } catch {
+        /* ignore reload error */
+      }
     } finally {
       clockLoading = false;
     }
