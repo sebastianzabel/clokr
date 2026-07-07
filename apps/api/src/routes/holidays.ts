@@ -124,6 +124,15 @@ export async function holidayRoutes(app: FastifyInstance) {
         },
       });
 
+      await app.audit({
+        userId: req.user.sub,
+        action: "CREATE",
+        entity: "PublicHoliday",
+        entityId: holiday.id,
+        newValue: { date: holiday.date, name: holiday.name, tenantId: holiday.tenantId },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
       // Retroactive recalculation: find affected employees and recalculate
       const holidayDate = new Date(body.date);
       const employees = await app.prisma.employee.findMany({
