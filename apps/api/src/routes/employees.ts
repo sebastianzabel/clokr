@@ -828,6 +828,15 @@ export async function employeeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // Pre-fetch MinIO object paths BEFORE the tx (anonymizeEmployeeData nulls documentPath
+      // inside the tx; after commit those paths are gone from Postgres).
+      // MinIO deletes MUST happen AFTER the tx commits — MinIO is not transactional with
+      // Postgres. A rolled-back tx must not have deleted the actual files.
+      const absenceDocs = await app.prisma.absence.findMany({
+        where: { employeeId: id, documentPath: { not: null } },
+        select: { documentPath: true },
+      });
+
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await anonymizeEmployeeData({ tx, employeeId: id });
         await app.audit({
@@ -840,6 +849,25 @@ export async function employeeRoutes(app: FastifyInstance) {
           tx,
         });
       });
+
+      // Delete MinIO objects after the Postgres tx has committed successfully.
+      // Failures are non-fatal — legal anonymization is already committed.
+      if (employee.avatarPath) {
+        await app.storage
+          .delete(employee.avatarPath)
+          .catch((err: unknown) =>
+            app.log.warn({ err }, "Anonymize: avatar delete failed (non-fatal)"),
+          );
+      }
+      for (const d of absenceDocs) {
+        if (d.documentPath) {
+          await app.storage
+            .delete(d.documentPath)
+            .catch((err: unknown) =>
+              app.log.warn({ err }, "Anonymize: absence document delete failed (non-fatal)"),
+            );
+        }
+      }
 
       return reply.code(204).send();
     },
