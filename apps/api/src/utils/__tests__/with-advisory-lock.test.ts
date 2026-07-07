@@ -70,10 +70,10 @@ describe("withAdvisoryLock", () => {
     expect(opts.timeout).toBe(10 * 60 * 1000);
   });
 
-  it("registry exposes 12 distinct keys and tenantAdvisoryKey derives a bigint", () => {
+  it("registry exposes 13 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
-    expect(values).toHaveLength(12);
-    expect(new Set(values).size).toBe(12);
+    expect(values).toHaveLength(13);
+    expect(new Set(values).size).toBe(13);
     const key = tenantAdvisoryKey("123e4567-e89b-12d3-a456-426614174000");
     expect(typeof key).toBe("bigint");
     // Deterministic + stable across calls.
