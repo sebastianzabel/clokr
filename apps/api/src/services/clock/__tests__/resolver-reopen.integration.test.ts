@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
 import { resolveClockEvent } from "../resolver";
+import { consolidateSameDayEntries } from "../consolidate";
 import type { ClockEvent, ClockIntent } from "../types";
 
 describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integration)", () => {
@@ -181,5 +182,79 @@ describe("services/clock/resolver — D-01 reopen path (resolver-reopen.integrat
       // auto-break must NOT have overwritten the gap Break's contribution
       expect(active[0].breakMinutes).toBeGreaterThanOrEqual(100);
     }
+  });
+
+  // ── Test 5: WR-01 regression — zero-duration artifact skipped as consolidation predecessor ─
+  it("WR-01 regression: zero-duration artifact in DB is NOT picked as consolidation predecessor", async () => {
+    // Context: before the partial unique index existed, NFC double-taps could create a
+    // zero-duration artifact (startTime == endTime). Once the real entry is reopened
+    // (endTime → null), the artifact becomes the sole closed predecessor candidate.
+    // Without the WR-01 guard, consolidateSameDayEntries would extend the artifact
+    // (preserving the wrong startTime) and soft-delete the real entry — a Revisionssicherheit
+    // violation. The partial unique index prevents *creating* this state in a post-migration
+    // test DB, so we seed only the artifact in the real DB and pass the real entry as a
+    // TypeScript-only fake openEntry directly to consolidateSameDayEntries.
+
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10);
+    const dateOnly = new Date(`${dateStr}T00:00:00.000Z`);
+
+    // Zero-duration artifact: simulates a legacy NFC double-tap (startTime == endTime)
+    const t1 = new Date(now.getTime() - 8 * 3600_000); // 8h ago
+    const artifact = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date: dateOnly,
+        startTime: t1,
+        endTime: t1, // zero duration
+        source: "NFC" as never,
+        breakMinutes: 0,
+      },
+    });
+
+    // Fake "real entry" that was just closed by STOP (not inserted — DB unique constraint
+    // prevents two non-deleted rows on the same date; the consolidation function only reads
+    // openEntry fields as TypeScript values during the predecessor-lookup query).
+    const t2 = new Date(now.getTime() - 6 * 3600_000); // 6h ago — real startTime
+    const t3 = new Date(now.getTime() - 0.1 * 3600_000); // 6 min ago — just closed
+    const fakeOpenEntry = {
+      id: "ffffffff-ffff-ffff-ffff-ffffffffffff", // not in DB
+      employeeId: data.employee.id,
+      date: dateOnly,
+      startTime: t2,
+      endTime: t3,
+      breakMinutes: 0,
+      type: "WORK",
+      source: "MOBILE",
+      note: null,
+      isLocked: false,
+      lockedAt: null,
+      isInvalid: false,
+      invalidReason: null,
+      deletedAt: null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: null,
+    };
+
+    // Invoke consolidation directly in a real Prisma transaction.
+    // gap = t2 - t1 = 2h → within the default 4h gapHoursMax, so the artifact
+    // would be selected as predecessor — the WR-01 guard must reject it.
+    const result = await app.prisma.$transaction(async (tx) => {
+      return consolidateSameDayEntries(
+        tx,
+        fakeOpenEntry as never,
+        4, // gapHoursMax
+        app.log,
+      );
+    });
+
+    // WR-01 fix: artifact has duration 0ms < 60s → merge skipped, NOT merged into artifact
+    expect(result.merged).toBe(false);
+
+    // Artifact must be untouched (not extended, not soft-deleted)
+    const artifactAfter = await app.prisma.timeEntry.findUnique({ where: { id: artifact.id } });
+    expect(artifactAfter?.endTime?.getTime()).toBe(t1.getTime()); // still zero-duration
+    expect(artifactAfter?.deletedAt).toBeNull(); // not soft-deleted
   });
 });

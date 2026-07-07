@@ -56,6 +56,20 @@ export async function consolidateSameDayEntries(
     return { merged: false };
   }
 
+  // WR-01: reject zero/sub-minute artifacts as predecessor. An NFC double-tap can produce a
+  // startTime == endTime row that pre-dates the real entry. Once the real entry is reopened
+  // (endTime → null), only the artifact has a closed endTime ≤ real entry's startTime, making
+  // it the sole predecessor candidate. Extending the artifact would carry the wrong startTime
+  // into the canonical record — a Revisionssicherheit violation. Prefer no-merge over that.
+  const prevDurationMs = previousEntry.endTime.getTime() - previousEntry.startTime.getTime();
+  if (prevDurationMs < 60_000) {
+    log.warn(
+      { previousEntryId: previousEntry.id, prevDurationMs, reason: "artifact_sub_minute" },
+      "merge_skipped_artifact",
+    );
+    return { merged: false };
+  }
+
   const gapMs = openEntry.startTime.getTime() - previousEntry.endTime.getTime();
   const gapHours = gapMs / 3600000;
 
