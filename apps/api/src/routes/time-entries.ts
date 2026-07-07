@@ -951,20 +951,37 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPost.message });
       }
 
-      const entry = await app.prisma.timeEntry.create({
-        data: {
-          employeeId,
-          date: new Date(body.date),
-          startTime: newStart,
-          endTime: newEnd,
-          breakMinutes: finalBreakMinutes,
-          note: body.note,
-          source: "MANUAL",
-          createdBy: user.sub,
-          isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-          invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
-        },
-      });
+      let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
+      try {
+        entry = await app.prisma.timeEntry.create({
+          data: {
+            employeeId,
+            date: new Date(body.date),
+            startTime: newStart,
+            endTime: newEnd,
+            breakMinutes: finalBreakMinutes,
+            note: body.note,
+            source: "MANUAL",
+            createdBy: user.sub,
+            isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+            invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
+          },
+        });
+      } catch (err: unknown) {
+        // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
+        // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
+        if (
+          typeof err === "object" &&
+          err !== null &&
+          "code" in err &&
+          (err as { code: unknown }).code === "P2002"
+        ) {
+          return reply
+            .code(409)
+            .send({ error: "Es existiert bereits ein Eintrag für diesen Tag." });
+        }
+        throw err;
+      }
 
       // Create break slot records
       if (breakSlots.length > 0) {

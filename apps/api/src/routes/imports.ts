@@ -254,10 +254,21 @@ export async function importRoutes(app: FastifyInstance) {
           affectedEmployeeIds.add(employeeId);
           results.push({ row: i + 1, status: "ok" });
         } catch (e: unknown) {
+          // DATA-V1814-04: a DB-level duplicate (partial-unique index) surfaces as P2002 —
+          // report a clear per-row error and keep the import loop going (no abort).
+          const isP2002 =
+            typeof e === "object" &&
+            e !== null &&
+            "code" in e &&
+            (e as { code: unknown }).code === "P2002";
           results.push({
             row: i + 1,
             status: "error",
-            error: e instanceof Error ? e.message.slice(0, 200) : "Unknown error",
+            error: isP2002
+              ? "Es existiert bereits ein Eintrag für diesen Tag."
+              : e instanceof Error
+                ? e.message.slice(0, 200)
+                : "Unknown error",
           });
         }
       }
