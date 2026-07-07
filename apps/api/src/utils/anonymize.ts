@@ -21,6 +21,9 @@
  *   - Absence.note             → null AND Absence.documentPath → null
  *   - Invitation, OtpToken, RefreshToken: hard-deleted (not retention-relevant)
  *   - AuditLog.userId          → null (for rows owned by that user)
+ *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
+ *     (prevents name/email from surviving in historical JSON — COMP-V1814-01)
+ *   - Notification.title/message → "ANONYMIZED" (for the user's own notifications)
  *
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
@@ -31,6 +34,8 @@
  *   - Emit the AuditLog entry — this helper does NOT log itself.
  *     The route emits action="ANONYMIZE" (per-employee).
  *     The batch script emits action="ANONYMIZATION_RUN" (whole-DB sweep).
+ *   - Delete MinIO avatar + absence-document objects AFTER the tx commits
+ *     (MinIO is not transactional with Postgres; pre-fetch paths before calling).
  *
  * The helper assumes the employee exists and has a non-null userId. Callers
  * are expected to validate that before opening the transaction.
@@ -100,6 +105,27 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   await tx.absence.updateMany({
     where: { employeeId },
     data: { note: null, documentPath: null },
+  });
+
+  // AuditLog JSON-Felder (oldValue/newValue) für Employee- und User-Einträge redigieren.
+  // Verhindert, dass Name/E-Mail in historischen JSON-Blobs erhalten bleiben (COMP-V1814-01).
+  await tx.auditLog.updateMany({
+    where: {
+      OR: [
+        { entity: "Employee", entityId: employeeId },
+        { entity: "User", entityId: userId },
+      ],
+    },
+    data: {
+      oldValue: { anonymized: true, redacted: "COMP-V1814-01" },
+      newValue: { anonymized: true, redacted: "COMP-V1814-01" },
+    },
+  });
+
+  // Benachrichtigungen des Nutzers anonymisieren (können Namen/Informationen enthalten)
+  await tx.notification.updateMany({
+    where: { userId },
+    data: { title: "ANONYMIZED", message: "ANONYMIZED" },
   });
 
   // Auth-Tokens löschen (nicht aufbewahrungspflichtig)
