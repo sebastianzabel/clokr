@@ -16,6 +16,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { monthRangeUtc } from "../utils/timezone";
 
 describe("auto-close-month plugin — grace period guard (D-11)", () => {
   let app: FastifyInstance;
@@ -212,5 +213,145 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     // with the absence subtracted it is ~0 (worked 0 − expected ~0 → balance ~0).
     expect(snapshot!.expectedMinutes).toBeLessThan(480);
     expect(snapshot!.balanceMinutes).toBeGreaterThan(-480);
+  });
+
+  // ── Plan 76.21-08: COMP-V1814-08 mid-year hire yearly snapshot threshold ──
+
+  describe("edge cases", () => {
+    /**
+     * Create a minimal employee in an isolated tenant with a standard work schedule
+     * and overtime account. The tenant is fresh per test call to prevent cross-test
+     * interference when tryAutoCloseMonth() iterates ALL tenants.
+     */
+    async function createEdgeTenant(suffix: string) {
+      const s = `edge-${suffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+      const tenant = await app.prisma.tenant.create({
+        data: { name: `Edge Tenant ${s}`, slug: `edge-${s}`, federalState: "NIEDERSACHSEN" },
+      });
+      await app.prisma.tenantConfig.create({
+        data: { tenantId: tenant.id, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+      });
+      return tenant;
+    }
+
+    async function createEdgeEmployee(tenantId: string, hireDate: Date) {
+      const s = `emp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+      const user = await app.prisma.user.create({
+        data: { email: `${s}@edge.test`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+      });
+      const emp = await app.prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: s,
+          firstName: "Edge",
+          lastName: "Tester",
+          hireDate,
+          isTimeTrackingExempt: false,
+        },
+      });
+      await app.prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: hireDate,
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: emp.id, balanceHours: 0 },
+      });
+      return { empId: emp.id, userId: user.id };
+    }
+
+    /**
+     * Seed MONTHLY SaldoSnapshots for the given employee for each month in `months`.
+     * Uses monthRangeUtc with Europe/Berlin so periodStart matches exactly what
+     * tryAutoCloseMonth() expects for the findUnique(employeeId_periodType_periodStart) lookup.
+     */
+    async function seedMonthlySnapshots(employeeId: string, year: number, months: number[]) {
+      const tz = "Europe/Berlin";
+      for (const month of months) {
+        const { start, end } = monthRangeUtc(year, month, tz);
+        await app.prisma.saldoSnapshot.create({
+          data: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: start,
+            periodEnd: end,
+            workedMinutes: 8 * 60 * 21, // placeholder: 21 working days × 8h
+            expectedMinutes: 8 * 60 * 21,
+            balanceMinutes: 0,
+            carryOver: 0,
+            closedAt: new Date(),
+            closedBy: "test-system",
+            superseded: false,
+          },
+        });
+      }
+    }
+
+    it("edge cases — mid-year hire yearly snapshot", async () => {
+      // COMP-V1814-08: employee hired July 2024 → only 6 months in 2024 (Jul-Dec).
+      // With the bug (< 12 check) the YEARLY snapshot is never created.
+      // After the fix (< expectedMonths = 6), it IS created.
+      const tenant = await createEdgeTenant("myr");
+      const { empId, userId } = await createEdgeEmployee(tenant.id, new Date("2024-07-01"));
+
+      // Pre-seed all 6 monthly snapshots (Jul-Dec 2024) so that Dec is already "closed"
+      // and the monthly loop skips our employee — leaving only the yearly check to run.
+      await seedMonthlySnapshots(empId, 2024, [7, 8, 9, 10, 11, 12]);
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // Jan 16, 2025 → prevYear=2024, prevMonth=12 → triggers yearly snapshot loop
+      vi.setSystemTime(new Date("2025-01-16T06:00:00.000Z"));
+
+      try {
+        await app.tryAutoCloseMonth();
+
+        const yearly = await app.prisma.saldoSnapshot.findFirst({
+          where: { employeeId: empId, periodType: "YEARLY", superseded: false },
+        });
+        // BUG (before fix): yearly is null (6 < 12 → skipped)
+        // PASS (after fix): yearly is not null (6 >= expectedMonths=6 → created)
+        expect(yearly).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+        await cleanupTestData(app, tenant.id);
+      }
+    });
+
+    it("edge cases — full-year hire still needs all months", async () => {
+      // Sanity check: full-year employee with only 11 closed months must NOT get a
+      // YEARLY snapshot (regardless of hireDate-aware fix). This ensures the fix
+      // doesn't accidentally lower the bar for full-year employees.
+      const tenant = await createEdgeTenant("fyr");
+      const { empId, userId } = await createEdgeEmployee(tenant.id, new Date("2024-01-01"));
+
+      // Seed only 11 months — December 2024 intentionally missing.
+      await seedMonthlySnapshots(empId, 2024, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2025-01-16T06:00:00.000Z"));
+
+      try {
+        await app.tryAutoCloseMonth();
+
+        const yearly = await app.prisma.saldoSnapshot.findFirst({
+          where: { employeeId: empId, periodType: "YEARLY", superseded: false },
+        });
+        // 11 months < expectedMonths=12 → no YEARLY snapshot yet
+        expect(yearly).toBeNull();
+      } finally {
+        vi.useRealTimers();
+        await cleanupTestData(app, tenant.id);
+      }
+    });
   });
 });
