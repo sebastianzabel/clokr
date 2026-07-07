@@ -813,6 +813,15 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const user = req.user;
       const isManager = ["ADMIN", "MANAGER"].includes(user.role);
 
+      // PERF-V1814-03: cap + defaulted 90d window (non-breaking; web callers always pass bounds)
+      const defaultFrom = from
+        ? new Date(from)
+        : (() => {
+            const d = new Date();
+            d.setDate(d.getDate() - 90);
+            return d;
+          })();
+
       const entries = await app.prisma.timeEntry.findMany({
         where: {
           // Tenant isolation: always scope to the requesting user's tenant via employee.tenantId
@@ -820,7 +829,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           employeeId: isManager && employeeId ? employeeId : (user.employeeId ?? undefined),
           deletedAt: null,
           date: {
-            gte: from ? new Date(from) : undefined,
+            gte: defaultFrom,
             lte: to ? new Date(to) : undefined,
           },
         },
@@ -828,6 +837,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           employee: { select: { firstName: true, lastName: true } },
           breaks: { orderBy: { startTime: "asc" } },
         },
+        take: 1000,
         orderBy: { date: "desc" },
       });
 

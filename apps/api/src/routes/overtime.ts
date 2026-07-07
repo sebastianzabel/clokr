@@ -1322,9 +1322,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
+      // PERF-V1814-03: cap at 120 (10 years × 12 monthly snapshots — defense-in-depth)
       const snapshots = await app.prisma.saldoSnapshot.findMany({
         where: { employeeId, superseded: false },
         orderBy: { periodStart: "desc" },
+        take: 120,
       });
       return snapshots;
     },

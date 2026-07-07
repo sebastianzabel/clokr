@@ -186,6 +186,8 @@ export async function employeeRoutes(app: FastifyInstance) {
           invitations: { orderBy: { createdAt: "desc" }, take: 1 },
         },
         orderBy: { lastName: "asc" },
+        // PERF-V1814-03: defense-in-depth cap (tenant scope already limits naturally)
+        take: 1000,
       });
 
       return employees.map((e) => ({
