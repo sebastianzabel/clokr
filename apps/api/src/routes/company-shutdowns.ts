@@ -64,6 +64,15 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
       include: { exceptions: true },
     });
 
+    await app.audit({
+      userId: req.user.sub,
+      action: "CREATE",
+      entity: "CompanyShutdown",
+      entityId: shutdown.id,
+      newValue: { name: shutdown.name, startDate: shutdown.startDate, endDate: shutdown.endDate },
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+
     return reply.status(201).send(shutdown);
   });
 
@@ -98,6 +107,16 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
       },
     });
 
+    await app.audit({
+      userId: req.user.sub,
+      action: "UPDATE",
+      entity: "CompanyShutdown",
+      entityId: id,
+      oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
+      newValue: { name: updated.name, startDate: updated.startDate, endDate: updated.endDate },
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+
     return updated;
   });
 
@@ -110,6 +129,16 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
     if (!existing) return reply.status(404).send({ message: "Nicht gefunden" });
 
     await app.prisma.companyShutdown.delete({ where: { id } });
+
+    await app.audit({
+      userId: req.user.sub,
+      action: "DELETE",
+      entity: "CompanyShutdown",
+      entityId: id,
+      oldValue: { name: existing.name, startDate: existing.startDate, endDate: existing.endDate },
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+
     return reply.status(204).send();
   });
 
