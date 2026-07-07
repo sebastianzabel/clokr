@@ -231,6 +231,8 @@ model RefreshToken {
   revokedAt DateTime? @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model OtpToken {
@@ -242,6 +244,8 @@ model OtpToken {
   createdAt DateTime  @default(now()) @db.Timestamptz
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Invitation {
@@ -360,6 +364,8 @@ model WorkSchedule {
 // ZEITERFASSUNG
 // ─────────────────────────────────────────────
 
+// Partial index (hand-authored in migration — Prisma cannot express WHERE):
+// CREATE INDEX "TimeEntry_employeeId_open_idx" ON "TimeEntry"("employeeId") WHERE "endTime" IS NULL
 model TimeEntry {
   id            String          @id @default(uuid())
   employeeId    String
@@ -572,6 +578,7 @@ model LeaveRequest {
   @@index([employeeId])
   @@index([employeeId, status])
   @@index([leaveTypeId])
+  @@index([startDate, endDate])
 }
 
 // ─────────────────────────────────────────────
@@ -664,6 +671,8 @@ model AuditLog {
   @@index([entity, entityId])
   @@index([userId])
   @@index([createdAt])
+  @@index([purgeable])
+  @@index([action])
 }
 
 // ─────────────────────────────────────────────
