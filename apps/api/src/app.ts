@@ -25,6 +25,7 @@ import { schedulerPlugin } from "./plugins/scheduler";
 import { attendanceCheckerPlugin } from "./plugins/attendance-checker";
 import { carryoverWarningPlugin } from "./plugins/carryover-warning";
 import { dataRetentionPlugin } from "./plugins/data-retention";
+import { tokenCleanupPlugin } from "./plugins/token-cleanup";
 import { vocationalSchoolGeneratorPlugin } from "./plugins/vocational-school-generator";
 import { schoolHolidaysSyncPlugin } from "./plugins/school-holidays-sync";
 import { autoCloseMonthPlugin } from "./plugins/auto-close-month";
@@ -243,6 +244,7 @@ export async function buildApp() {
   await app.register(attendanceCheckerPlugin);
   await app.register(carryoverWarningPlugin);
   await app.register(dataRetentionPlugin);
+  await app.register(tokenCleanupPlugin);
   await app.register(vocationalSchoolGeneratorPlugin);
   await app.register(schoolHolidaysSyncPlugin);
   await app.register(autoCloseMonthPlugin);
