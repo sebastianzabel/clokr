@@ -1,4 +1,5 @@
 import fp from "fastify-plugin";
+import type { Prisma } from "@clokr/db";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -10,6 +11,7 @@ declare module "fastify" {
       oldValue?: unknown;
       newValue?: unknown;
       request?: { ip: string; headers: Record<string, string | string[] | undefined> };
+      tx?: Prisma.TransactionClient;
     }) => Promise<void>;
   }
 }
@@ -25,8 +27,10 @@ export const auditPlugin = fp(async (app) => {
       oldValue?: unknown;
       newValue?: unknown;
       request?: { ip: string; headers: Record<string, string | string[] | undefined> };
+      tx?: Prisma.TransactionClient;
     }) => {
-      await app.prisma.auditLog.create({
+      const client = params.tx ?? app.prisma;
+      await client.auditLog.create({
         data: {
           userId: params.userId,
           action: params.action,
