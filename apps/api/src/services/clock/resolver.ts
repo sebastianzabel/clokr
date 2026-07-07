@@ -166,6 +166,16 @@ export async function resolveClockEvent(
         // deletedAt: null and isInvalid: false). The previous redundant findUnique omitted
         // the deletedAt filter — replaced by direct reference to the already-locked row.
         const target = openEntry!;
+        // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
+        // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.
+        const gapMs = event.timestamp.getTime() - target.startTime.getTime();
+        if (gapMs < 60_000) {
+          app.log.info(
+            { entryId: target.id, gapMs, source: event.source, reason: "DEBOUNCE_NOOP" },
+            "clock_event_noop",
+          );
+          return { kind: "DEBOUNCE_NOOP" } as const;
+        }
         if (target.isLocked) {
           app.log.warn(
             { employeeId: event.employeeId, entryId: target.id, reason: "MONTH_LOCKED" },

@@ -363,6 +363,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         });
       }
 
+      // D-02: DEBOUNCE_NOOP — STOP within 60s of START is a double-tap NO-OP; return 200.
+      if (resolution.kind === "DEBOUNCE_NOOP") {
+        return reply
+          .code(200)
+          .send({
+            action: "NOOP" as const,
+            employee: employeeBlock,
+            time: now.toISOString(),
+            resolution,
+          });
+      }
+
       if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {
         app.log.error({ resolution }, "nfc_punch_unexpected_resolution_kind");
         return reply.code(500).send({ error: "Interner Serverfehler" });
@@ -583,6 +595,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           return reply.code(409).send({ error: "Bereits ausgestempelt", resolution });
         }
         return reply.code(409).send({ error: "Konflikt", resolution });
+      }
+
+      // D-02: DEBOUNCE_NOOP — STOP within 60s of START is a double-tap NO-OP; return 200.
+      if (resolution.kind === "DEBOUNCE_NOOP") {
+        return reply.code(200).send({ action: "NOOP" as const, resolution });
       }
 
       if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {

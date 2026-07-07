@@ -48,4 +48,5 @@ export type ClockResolution =
   | { kind: "CLOCKED_OUT"; entry: TimeEntry; audit: { id: string } }
   | { kind: "CONSOLIDATED"; entry: TimeEntry; breakId: string; audit: { id: string } }
   | { kind: "CONFIRMED"; entryId: string; audit: { id: string } }
+  | { kind: "DEBOUNCE_NOOP" } // D-02: 60s double-tap guard — STOP within 60s of START is a NO-OP
   | { kind: "CONFLICT"; reason: ConflictReason };
