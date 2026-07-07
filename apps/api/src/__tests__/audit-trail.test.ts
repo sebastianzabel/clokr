@@ -366,6 +366,40 @@ describe("Audit Trail Completeness", () => {
     });
   });
 
+  // ── PublicHoliday mutations ───────────────────────────────────────────────
+
+  describe("PublicHoliday mutations", () => {
+    it("audit coverage — POST /api/v1/holidays writes AuditLog with action CREATE", async () => {
+      const beforeTs = new Date();
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/holidays",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { date: "2025-11-20", name: "Testfeiertag Audit" },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const body = JSON.parse(res.body);
+
+      const logs = await app.prisma.auditLog.findMany({
+        where: {
+          entity: "PublicHoliday",
+          action: "CREATE",
+          entityId: body.id,
+          createdAt: { gte: beforeTs },
+        },
+      });
+
+      expect(logs.length).toBeGreaterThanOrEqual(1);
+      const log = logs[0];
+      expect(log.userId).toBe(data.adminUser.id);
+      expect(log.action).toBe("CREATE");
+      expect(log.entity).toBe("PublicHoliday");
+      expect(log.newValue).toBeDefined();
+    });
+  });
+
   // ── Settings mutations ────────────────────────────────────────────────────
 
   describe("Settings mutations", () => {
