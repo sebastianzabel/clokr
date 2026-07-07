@@ -822,6 +822,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             return d;
           })();
 
+      // PERF-V1814-03: hard cap. WR-01 — the cap can silently truncate for callers that
+      // omit tight bounds (batch scripts / external API consumers). Web callers always pass
+      // a from/to window so they never hit it, but we log a warning when the cap IS reached so
+      // truncation is observable server-side (a caller receiving exactly TIME_ENTRIES_MAX rows
+      // should narrow its date window or paginate).
+      const TIME_ENTRIES_MAX = 1000;
       const entries = await app.prisma.timeEntry.findMany({
         where: {
           // Tenant isolation: always scope to the requesting user's tenant via employee.tenantId
@@ -837,9 +843,22 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           employee: { select: { firstName: true, lastName: true } },
           breaks: { orderBy: { startTime: "asc" } },
         },
-        take: 1000,
+        take: TIME_ENTRIES_MAX,
         orderBy: { date: "desc" },
       });
+
+      if (entries.length === TIME_ENTRIES_MAX) {
+        req.log.warn(
+          {
+            tenantId: user.tenantId,
+            employeeId: isManager && employeeId ? employeeId : user.employeeId,
+            from: defaultFrom,
+            to,
+            cap: TIME_ENTRIES_MAX,
+          },
+          "GET /time-entries hit the result cap — response may be truncated; caller should narrow the date window",
+        );
+      }
 
       return entries;
     },
