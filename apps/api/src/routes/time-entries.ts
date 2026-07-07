@@ -365,14 +365,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // D-02: DEBOUNCE_NOOP — STOP within 60s of START is a double-tap NO-OP; return 200.
       if (resolution.kind === "DEBOUNCE_NOOP") {
-        return reply
-          .code(200)
-          .send({
-            action: "NOOP" as const,
-            employee: employeeBlock,
-            time: now.toISOString(),
-            resolution,
-          });
+        return reply.code(200).send({
+          action: "NOOP" as const,
+          employee: employeeBlock,
+          time: now.toISOString(),
+          resolution,
+        });
       }
 
       if (resolution.kind !== "CLOCKED_OUT" && resolution.kind !== "CONSOLIDATED") {
@@ -382,14 +380,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // CLOCKED_OUT or CONSOLIDATED — post-resolution side effects (auto-break — Phase 64 preserved)
       const clockedOutEntryId = resolution.entry.id;
-      const existingBreaks = await app.prisma.break.findMany({
+      // D-01 Pitfall 1 guard (aligned with clock-out route): skip auto-break when Break records
+      // already exist. A reopened entry carries a gap Break — auto-break must not overwrite it.
+      // Use count (not findMany+sum) to match the clock-out route guard at line ~635.
+      const existingBreakCount = await app.prisma.break.count({
         where: { timeEntryId: clockedOutEntryId },
       });
-      const manualBreakMin = existingBreaks.reduce(
-        (s, b) => s + Math.round((b.endTime.getTime() - b.startTime.getTime()) / 60000),
-        0,
-      );
-      if (manualBreakMin === 0) {
+      if (existingBreakCount === 0) {
         const tenantConfig = await app.prisma.tenantConfig.findUnique({
           where: { tenantId: employee.tenantId },
         });
