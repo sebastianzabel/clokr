@@ -165,6 +165,9 @@ export async function holidayRoutes(app: FastifyInstance) {
       const existing = await app.prisma.publicHoliday.findFirst({
         where: { id, tenantId: req.user.tenantId },
       });
+      // IN-02: return 404 when not found so the caller is not misled into thinking
+      // a deletion occurred and to avoid writing a no-op audit entry with null oldValue.
+      if (!existing) return reply.code(404).send({ error: "Feiertag nicht gefunden" });
       await app.prisma.publicHoliday.deleteMany({
         where: { id, tenantId: req.user.tenantId },
       });
