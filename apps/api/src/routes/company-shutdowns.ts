@@ -164,6 +164,17 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
       },
     });
 
+    // IN-01: exceptions affect which employees are exempt from a shutdown (leave deduction /
+    // payroll impact) — they are audit-relevant (Revisionssicherheit).
+    await app.audit({
+      userId: req.user.sub,
+      action: "CREATE",
+      entity: "CompanyShutdownException",
+      entityId: `${id}_${employeeId}`,
+      newValue: { shutdownId: id, employeeId, reason: reason ?? null },
+      request: { ip: req.ip, headers: req.headers as Record<string, string> },
+    });
+
     return reply.status(201).send(exception);
   });
 
@@ -179,8 +190,24 @@ export async function companyShutdownRoutes(app: FastifyInstance) {
       const shutdown = await app.prisma.companyShutdown.findFirst({ where: { id, tenantId } });
       if (!shutdown) return reply.status(404).send({ message: "Betriebsurlaub nicht gefunden" });
 
+      // Fetch before delete so oldValue is available for the audit log
+      const existing = await app.prisma.companyShutdownException.findUnique({
+        where: { shutdownId_employeeId: { shutdownId: id, employeeId } },
+      });
+
       await app.prisma.companyShutdownException.deleteMany({
         where: { shutdownId: id, employeeId },
+      });
+
+      // IN-01: audit the removal even when the exception didn't exist (no-op delete);
+      // the oldValue will be null in that case, which is the correct audit trail.
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "CompanyShutdownException",
+        entityId: `${id}_${employeeId}`,
+        oldValue: existing ? { shutdownId: id, employeeId, reason: existing.reason } : null,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return reply.status(204).send();
