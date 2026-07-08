@@ -876,9 +876,43 @@ export async function employeeRoutes(app: FastifyInstance) {
   // DELETE /api/v1/employees/:id/hard-delete — Endgültige Löschung nach Ablauf der Aufbewahrungsfrist
   // Darf nur auf bereits anonymisierte Mitarbeiter angewendet werden (firstName === "Gelöscht").
   // Gesetzliche Aufbewahrungsfrist: §147 AO / §257 HGB — 10 Jahre nach Austritt/Anlage.
-  // Optional body: { forceDelete?: boolean } — bypasses retention check when true (admin override).
-  // Every force-delete is flagged in the audit log for auditor traceability.
+  // §16 Abs. 2 ArbZG: unconditional 2-year minimum floor — forceDelete cannot bypass.
+  // forceDelete inside retention window: requires 4-eyes (second ADMIN via POST /:id/hard-delete/authorize).
   const forceDeleteBodySchema = z.object({ forceDelete: z.boolean().optional() }).optional();
+
+  // POST /api/v1/employees/:id/hard-delete/authorize — Second-admin authorization for in-window force-delete (4-eyes)
+  // Writes a HARD_DELETE_AUTHORIZED AuditLog row with a 15-minute TTL; the DELETE /:id/hard-delete handler
+  // checks for a valid row by a DIFFERENT admin before proceeding when forceDelete=true inside the window.
+  app.post("/:id/hard-delete/authorize", {
+    schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id, tenantId: req.user.tenantId },
+      });
+      if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Must already be anonymized to be eligible for force-delete authorization
+      if (employee.firstName !== "Gelöscht") {
+        return reply.code(409).send({ error: "Mitarbeiter muss zuerst anonymisiert werden" });
+      }
+
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "HARD_DELETE_AUTHORIZED",
+        entity: "Employee",
+        entityId: id,
+        newValue: { authorizedBy: req.user.sub, expiresAt },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(200).send({ authorized: true, expiresAt });
+    },
+  });
 
   // ── WiFi self-service schemas ───────────────────────────────────────────────
   const meWifiPatchSchema = z.object({
@@ -940,6 +974,28 @@ export async function employeeRoutes(app: FastifyInstance) {
           error: "Aufbewahrungsfrist noch nicht abgelaufen",
           retentionExpiresAt: retentionExpires.toISOString(),
         });
+      }
+
+      // 4-eyes gate: forceDelete inside retention window requires a second admin's authorization
+      // (COMP-V1814-07 T-76.21-20 — T-76.21-22). The authorization must be authored by a DIFFERENT
+      // admin (userId != caller) within the last 15 minutes.
+      if (forceDelete && new Date() < retentionExpires) {
+        const authRow = await app.prisma.auditLog.findFirst({
+          where: {
+            action: "HARD_DELETE_AUTHORIZED",
+            entity: "Employee",
+            entityId: id,
+            userId: { not: req.user.sub }, // different admin required
+            createdAt: { gte: new Date(Date.now() - 15 * 60 * 1000) },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (!authRow) {
+          return reply.code(409).send({
+            error:
+              "Force-Delete erfordert Freigabe durch einen zweiten Administrator (4-Augen-Prinzip)",
+          });
+        }
       }
 
       // Audit log BEFORE deletion (entity will be gone after).

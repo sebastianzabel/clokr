@@ -61,7 +61,7 @@ entrypoint does on first boot.
 ## ⚠️ One-time int/prod baseline runbook — SAFETY-CRITICAL, HUMAN-EXECUTED
 
 The int and prod databases **already contain the full schema** (created by prior
-`db push`) but have **no `_prisma_migrations` table yet** — they are *un-baselined*.
+`db push`) but have **no `_prisma_migrations` table yet** — they are _un-baselined_.
 You must tell Prisma that `0_init` is already applied, **without executing its DDL**.
 
 **This is NOT automated by any code in this repo.** An operator runs it deliberately,
@@ -102,7 +102,7 @@ If `migrate deploy` reports:
 P3005: The database schema is not empty.
 ```
 
-…the database was **not baselined**. This is the *safe* failure — Prisma applied
+…the database was **not baselined**. This is the _safe_ failure — Prisma applied
 nothing and dropped nothing. **Do not** force it and **do not** `db push`. Run the
 `migrate resolve --applied 0_init` step from the runbook above instead.
 
@@ -137,3 +137,36 @@ URL from `packages/db/prisma.config.ts`). It is **not** a purely offline check.
 Phases that add columns/indexes (e.g. 76.19/76.20/76.21) create a **new** `migrate dev`
 migration on top of `0_init`. They **must never regenerate `0_init`** — that baseline is
 frozen.
+
+## Retention EOL policy (COMP-V1814-07)
+
+Clokr uses a **two-stage retention lifecycle** for employee data:
+
+**Stage 1 — Soft-delete / documented archive** (`data-retention.ts`)
+
+The `dataRetentionPlugin` runs annually (Jan 2nd, 03:00 Europe/Berlin) and soft-deletes
+time entries, leave requests, and absences older than the tenant's `dataRetentionYears`
+configuration (default 10, minimum 2). Soft-delete sets `deletedAt` — the rows are
+preserved for audit trail but hidden from normal queries. This IS the documented archive:
+it satisfies §147 AO / §257 HGB retention requirements.
+
+**Stage 2 — Hard-delete** (`DELETE /api/v1/employees/:id/hard-delete`)
+
+Irreversible erasure of the employee record and all related data, invoked only when DSGVO
+Art. 17 requires it after the longest applicable retention period. Hard-delete is gated by
+**two unconditional guards**:
+
+1. **§16 Abs. 2 ArbZG 2-year floor** — The employee's `exitDate` (or `createdAt` if no
+   exit date is recorded) must be more than 2 full calendar years in the past. No
+   `forceDelete` flag or admin override can bypass this floor. Returns HTTP 409 with
+   `floorExpiresAt`.
+
+2. **4-eyes gate inside the retention window** — If the full retention period has not yet
+   expired but an ADMIN requests `forceDelete: true`, a second ADMIN must first call
+   `POST /api/v1/employees/:id/hard-delete/authorize`. This writes a
+   `HARD_DELETE_AUTHORIZED` AuditLog entry (TTL 15 minutes). The hard-delete then checks
+   for a valid authorization authored by a **different** admin (`userId ≠ caller`) within
+   the last 15 minutes. Self-authorization is rejected. Returns HTTP 409 with
+   `"4-Augen-Prinzip"` message if no valid token is found.
+
+Only after both guards pass does the `$transaction` delete cascade proceed.
