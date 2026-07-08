@@ -910,9 +910,12 @@ export async function employeeRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Mitarbeiter muss zuerst anonymisiert werden" });
       }
 
-      // Retention check — default 10 years (§147 AO), configurable per tenant
-      // TODO(types): retentionYears is not yet in TenantConfig schema; using hardcoded default
-      const retentionYears = DEFAULT_RETENTION_YEARS;
+      // Retention check — read years from tenant config (§147 AO default 10 years)
+      const tenantConfig = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { dataRetentionYears: true },
+      });
+      const retentionYears = tenantConfig?.dataRetentionYears ?? DEFAULT_RETENTION_YEARS;
       const retentionStart: Date = employee.exitDate ?? employee.createdAt;
       const retentionExpires = new Date(
         retentionStart.getFullYear() + retentionYears,
@@ -922,6 +925,16 @@ export async function employeeRoutes(app: FastifyInstance) {
         59,
         59,
       );
+
+      // §16 Abs. 2 ArbZG: unconditional 2-year minimum floor — forceDelete cannot bypass this
+      const twoYearFloor = new Date(retentionStart.getFullYear() + 2, 11, 31, 23, 59, 59);
+      if (new Date() < twoYearFloor) {
+        return reply.code(409).send({
+          error: "Mindestaufbewahrungsfrist (§ 16 Abs. 2 ArbZG: 2 Jahre) noch nicht abgelaufen",
+          floorExpiresAt: twoYearFloor.toISOString(),
+        });
+      }
+
       if (new Date() < retentionExpires && !forceDelete) {
         return reply.code(409).send({
           error: "Aufbewahrungsfrist noch nicht abgelaufen",

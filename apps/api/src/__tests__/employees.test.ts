@@ -538,7 +538,8 @@ describe("Employees API", () => {
       return { emp, user };
     }
 
-    it("Test 1 — without forceDelete, returns 409 with retentionExpiresAt inside retention window", async () => {
+    it("Test 1 — without forceDelete, returns 409 inside retention window (blocked by floor for recent employee)", async () => {
+      // Recent employee (no exitDate → retentionStart = createdAt) hits the 2-year floor first
       const { emp } = await createAnonymizedEmployee("t1");
 
       const res = await app.inject({
@@ -549,17 +550,22 @@ describe("Employees API", () => {
 
       expect(res.statusCode).toBe(409);
       const body = JSON.parse(res.body);
-      expect(body.retentionExpiresAt).toBeDefined();
-      expect(new Date(body.retentionExpiresAt).getTime()).toBeGreaterThan(Date.now());
+      // Recent employees hit the §16 ArbZG floor first; older ones hit the retention window.
+      // Either floorExpiresAt or retentionExpiresAt proves deletion is blocked.
+      const expiryField = body.floorExpiresAt ?? body.retentionExpiresAt;
+      expect(expiryField).toBeDefined();
+      expect(new Date(expiryField).getTime()).toBeGreaterThan(Date.now());
 
       // Cleanup — employee still exists, clean via prisma
       await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
-      await app.prisma.employee.delete({ where: { id: emp.id } });
-      await app.prisma.user.delete({ where: { id: emp.userId } });
+      await app.prisma.employee.deleteMany({ where: { id: emp.id } });
+      await app.prisma.user.deleteMany({ where: { id: emp.userId } });
     });
 
-    it("Test 2 — with forceDelete: true, returns 204 and employee row is deleted", async () => {
-      const { emp } = await createAnonymizedEmployee("t2");
+    it("Test 2 — forceDelete: true is still blocked by §16 ArbZG 2-year floor (recently created employee)", async () => {
+      // createAnonymizedEmployee uses hireDate=2024-01-01 but no exitDate, so retentionStart = createdAt (recent)
+      // The 2-year floor = Dec 31 of (createdAt.year + 2) — always in the future for recently created employees
+      const { emp, user } = await createAnonymizedEmployee("t2");
 
       const res = await app.inject({
         method: "DELETE",
@@ -571,15 +577,21 @@ describe("Employees API", () => {
         payload: { forceDelete: true },
       });
 
-      expect(res.statusCode).toBe(204);
+      // Cleanup — employee not deleted (blocked by floor)
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.deleteMany({ where: { id: emp.id } });
+      await app.prisma.user.deleteMany({ where: { id: user.id } });
 
-      // Employee row must be gone
-      const found = await app.prisma.employee.findUnique({ where: { id: emp.id } });
-      expect(found).toBeNull();
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      // Must be blocked by the ArbZG floor, not just the retention window
+      expect(body.error).toContain("§ 16 Abs. 2 ArbZG");
+      expect(body.floorExpiresAt).toBeDefined();
     });
 
-    it("Test 3 — audit entry contains forceDelete: true and retentionExpiresAt after force-delete", async () => {
-      const { emp } = await createAnonymizedEmployee("t3");
+    it("Test 3 — forceDelete inside floor: no HARD_DELETE audit entry is written (floor check is pre-audit)", async () => {
+      // The floor check runs before the audit log write, so a blocked attempt must leave no trace
+      const { emp, user } = await createAnonymizedEmployee("t3");
 
       await app.inject({
         method: "DELETE",
@@ -596,12 +608,12 @@ describe("Employees API", () => {
         orderBy: { createdAt: "desc" },
       });
 
-      expect(log).not.toBeNull();
-      const newVal = log!.newValue as Record<string, unknown>;
-      expect(newVal.forceDelete).toBe(true);
-      expect(typeof newVal.retentionExpiresAt).toBe("string");
-      // retentionExpiresAt should be in the future (proof of override)
-      expect(new Date(newVal.retentionExpiresAt as string).getTime()).toBeGreaterThan(Date.now());
+      // Cleanup — employee still exists (blocked)
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.deleteMany({ where: { id: emp.id } });
+      await app.prisma.user.deleteMany({ where: { id: user.id } });
+
+      expect(log).toBeNull(); // No audit entry for a pre-audit blocked attempt
     });
 
     it("Test 4 — anonymize-first guard still blocks forceDelete on non-anonymized employee", async () => {
