@@ -1233,14 +1233,16 @@ export async function overtimeRoutes(app: FastifyInstance) {
     employeeId: z.string().uuid(),
     year: z.number().int().min(2020).max(2099),
     month: z.number().int().min(1).max(12),
+    reason: z.string().min(1), // COMP-V1814-04: mandatory reason for supersede (Revisionssicherheit)
   });
 
-  // POST /api/v1/overtime/unlock-month  – Monat entsperren (Snapshot löschen, Einträge entsperren)
+  // POST /api/v1/overtime/unlock-month  – Monat entsperren (Snapshot als superseded markieren, Einträge entsperren)
+  // COMP-V1814-04: ADMIN-only; supersedes snapshot (not hard-delete); mandatory reason required.
   app.post("/unlock-month", {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
-    preHandler: requireRole("ADMIN", "MANAGER"),
+    preHandler: requireRole("ADMIN"),
     handler: async (req, reply) => {
-      const { employeeId, year, month } = unlockMonthSchema.parse(req.body);
+      const { employeeId, year, month, reason } = unlockMonthSchema.parse(req.body);
 
       // Tenant isolation: verify the employee belongs to the caller's tenant
       const employee = await app.prisma.employee.findUnique({
@@ -1268,9 +1270,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Monat ist nicht abgeschlossen" });
       }
 
-      // D-02/D-03: Atomic transaction — hard-delete snapshot + unlock all non-deleted entries
+      // D-02/D-03: Atomic transaction — supersede snapshot + unlock all non-deleted entries
+      // COMP-V1814-04: never hard-delete; mark superseded=true with reason (Revisionssicherheit)
       await app.prisma.$transaction(async (tx) => {
-        await tx.saldoSnapshot.delete({ where: { id: snap.id } });
+        await tx.saldoSnapshot.update({
+          where: { id: snap.id },
+          data: { superseded: true, supersededReason: reason },
+        });
         await tx.timeEntry.updateMany({
           where: {
             employeeId,
@@ -1281,16 +1287,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
         });
       });
 
-      // Recalculate live overtime balance now that the snapshot is gone
+      // Recalculate live overtime balance now that the month is reopened
       await updateOvertimeAccount(app, employeeId);
 
-      // D-02: Audit log — entity SaldoSnapshot, action UNLOCK, oldValue = snapshot data
+      // D-02: Audit log — entity SaldoSnapshot, action UNLOCK; oldValue = snapshot; newValue includes reason
       await app.audit({
         userId: req.user.sub,
         action: "UNLOCK",
         entity: "SaldoSnapshot",
         entityId: snap.id,
         oldValue: snap,
+        newValue: { superseded: true, reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 

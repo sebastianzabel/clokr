@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi, beforeEach } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
@@ -214,6 +214,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: data.employee.id,
             year: 2024,
             month: 7,
+            reason: "Testfreigabe",
           },
         });
 
@@ -221,8 +222,10 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         const body = JSON.parse(res.body);
         expect(body.message).toBe("Monat entsperrt");
       } finally {
-        // Clean up — endpoint may have deleted snapshot already
-        await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
+        // Clean up — snapshot is superseded (not deleted) by endpoint; delete all rows
+        await app.prisma.saldoSnapshot.deleteMany({
+          where: { employeeId: data.employee.id, periodStart: monthStart },
+        });
       }
     });
   });
@@ -240,6 +243,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           employeeId: data.employee.id,
           year: 2024,
           month: 9,
+          reason: "Testfreigabe",
         },
       });
 
@@ -248,7 +252,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
       expect(body.error).toBe("Monat ist nicht abgeschlossen");
     });
 
-    it("D-02: deletes snapshot from DB after unlock", async () => {
+    it("D-02: marks snapshot superseded=true after unlock (Revisionssicherheit — not hard-deleted)", async () => {
       // October 2024 — UTC+2 (CEST), Oct 1 00:00 Berlin = Sep 30 22:00 UTC
       const monthStart = new Date("2024-09-30T22:00:00Z");
       const monthEnd = new Date("2024-10-31T22:59:59Z");
@@ -275,16 +279,22 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           employeeId: data.employee.id,
           year: 2024,
           month: 10,
+          reason: "Korrekturbuchung Oktober",
         },
       });
 
       expect(res.statusCode).toBe(200);
 
-      // Verify snapshot was hard-deleted from DB
-      const deletedSnap = await app.prisma.saldoSnapshot.findUnique({
+      // COMP-V1814-04: snapshot must NOT be hard-deleted — it must be marked superseded
+      const updatedSnap = await app.prisma.saldoSnapshot.findUnique({
         where: { id: snapshot.id },
       });
-      expect(deletedSnap).toBeNull();
+      expect(updatedSnap).not.toBeNull();
+      expect(updatedSnap?.superseded).toBe(true);
+      expect(updatedSnap?.supersededReason).toBe("Korrekturbuchung Oktober");
+
+      // Cleanup
+      await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
     });
 
     it("D-02: sets isLocked=false on all non-deleted time entries in that month", async () => {
@@ -329,6 +339,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: data.employee.id,
             year: 2024,
             month: 11,
+            reason: "Testfreigabe",
           },
         });
 
@@ -341,7 +352,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         expect(updatedEntry?.isLocked).toBe(false);
         expect(updatedEntry?.lockedAt).toBeNull();
       } finally {
-        // Clean up — snapshot already deleted by endpoint
+        // Clean up — snapshot is superseded (not deleted) by endpoint
         await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
         await app.prisma.timeEntry.deleteMany({ where: { id: lockedEntry.id } });
       }
@@ -390,6 +401,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: data.employee.id,
             year: 2024,
             month: 12,
+            reason: "Testfreigabe Dezember",
           },
         });
 
@@ -427,6 +439,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
           employeeId: fakeEmployeeId,
           year: 2024,
           month: 1,
+          reason: "Testfreigabe",
         },
       });
 
@@ -479,6 +492,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: otherEmp.id, // employee from tenant 2
             year: 2024,
             month: 1,
+            reason: "Testfreigabe",
           },
         });
 
@@ -492,6 +506,137 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
         await app.prisma.user.delete({ where: { id: otherUser.id } });
         await app.prisma.tenantConfig.deleteMany({ where: { tenantId: otherTenant.id } });
         await app.prisma.tenant.delete({ where: { id: otherTenant.id } });
+      }
+    });
+  });
+
+  // ── COMP-V1814-04: supersede semantics ──────────────────────────────────────
+
+  describe("supersede — unlock-month (COMP-V1814-04)", () => {
+    // Unique month bucket for this describe block (March 2025) to avoid conflicts.
+    const YEAR = 2025;
+    const MONTH = 3; // March 2025
+    // Europe/Berlin UTC+1 in March: Mar 1 00:00 Berlin = Feb 28 23:00 UTC
+    const MONTH_START = new Date("2025-02-28T23:00:00Z");
+    const MONTH_END = new Date("2025-03-31T21:59:59Z");
+
+    let snapshotId: string;
+
+    beforeEach(async () => {
+      // Create a fresh snapshot for each test in this group
+      const snap = await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: MONTH_START,
+          periodEnd: MONTH_END,
+          workedMinutes: 9600,
+          expectedMinutes: 9600,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+          closedBy: data.adminEmployee.id,
+        },
+      });
+      snapshotId = snap.id;
+    });
+
+    afterEach(async () => {
+      // Clean up all snapshots for this employee (active and superseded)
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: { employeeId: data.employee.id },
+      });
+    });
+
+    it("supersede — unlock marks superseded=true and preserves snapshot row", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/unlock-month",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          year: YEAR,
+          month: MONTH,
+          reason: "Korrektur durch Administrator",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.message).toBe("Monat entsperrt");
+
+      // The snapshot must still exist (not hard-deleted)
+      const snap = await app.prisma.saldoSnapshot.findUnique({ where: { id: snapshotId } });
+      expect(snap).not.toBeNull();
+      expect(snap?.superseded).toBe(true);
+      expect(snap?.supersededReason).toBe("Korrektur durch Administrator");
+    });
+
+    it("supersede — unlock requires a reason (400 when reason is missing)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/unlock-month",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          year: YEAR,
+          month: MONTH,
+          // reason intentionally omitted
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("supersede — unlock ADMIN only (MANAGER gets 403)", async () => {
+      // Create a MANAGER user for this test
+      const s = `mgr-le-${Date.now()}`;
+      const hash = await bcrypt.hash("test1234", 10);
+      const mgrUser = await app.prisma.user.create({
+        data: {
+          email: `${s}@test.de`,
+          passwordHash: hash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      const mgrEmp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: mgrUser.id,
+          employeeNumber: s,
+          firstName: "Mgr",
+          lastName: "Test",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({ data: { employeeId: mgrEmp.id, balanceHours: 0 } });
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `${s}@test.de`, password: "test1234" },
+      });
+      const { accessToken: mgrToken } = JSON.parse(loginRes.body);
+
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/overtime/unlock-month",
+          headers: { authorization: `Bearer ${mgrToken}` },
+          payload: {
+            employeeId: data.employee.id,
+            year: YEAR,
+            month: MONTH,
+            reason: "Versuch als Manager",
+          },
+        });
+
+        expect(res.statusCode).toBe(403);
+      } finally {
+        await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: mgrEmp.id } });
+        await app.prisma.employee.delete({ where: { id: mgrEmp.id } });
+        await app.prisma.user.delete({ where: { id: mgrUser.id } });
       }
     });
   });
