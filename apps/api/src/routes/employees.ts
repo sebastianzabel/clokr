@@ -998,29 +998,34 @@ export async function employeeRoutes(app: FastifyInstance) {
         }
       }
 
-      // Audit log BEFORE deletion (entity will be gone after).
-      // Include forceDelete flag and retentionExpiresAt so auditors can identify overrides.
-      await app.audit({
-        userId: req.user.sub,
-        action: "HARD_DELETE",
-        entity: "Employee",
-        entityId: id,
-        oldValue: {
-          employeeNumber: employee.employeeNumber,
-          userEmail: employee.user.email,
-          retentionStart: retentionStart.toISOString(),
-        },
-        newValue: {
-          forceDelete: forceDelete === true,
-          retentionExpiresAt: retentionExpires.toISOString(),
-        },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
-
       const userId = employee.userId;
 
+      // WR-01: audit is written as the FIRST step INSIDE the $transaction so that
+      // a failed deletion rolls back both the audit row and the deletes atomically.
+      // A phantom HARD_DELETE audit entry on a failed deletion is not acceptable in
+      // an immutable audit trail (Revisionssicherheit).
+      // AuditLog.userId uses onDelete:SetNull → the row survives the User deletion.
       // Hard delete in correct order — Restrict-protected relations first
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        // Audit first — entity still queryable; tx rollback removes phantom audit row
+        // Include forceDelete flag and retentionExpiresAt so auditors can identify overrides.
+        await app.audit({
+          userId: req.user.sub,
+          action: "HARD_DELETE",
+          entity: "Employee",
+          entityId: id,
+          oldValue: {
+            employeeNumber: employee.employeeNumber,
+            userEmail: employee.user.email,
+            retentionStart: retentionStart.toISOString(),
+          },
+          newValue: {
+            forceDelete: forceDelete === true,
+            retentionExpiresAt: retentionExpires.toISOString(),
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
         // Break records (nested under TimeEntry) — delete first
         await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
         // Restrict-protected models
