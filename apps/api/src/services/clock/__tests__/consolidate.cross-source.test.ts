@@ -57,8 +57,15 @@ describe("services/clock/consolidate — cross-source same-day consolidation", (
   });
 
   function buildEvent(opts: { source: string; intent: ClockIntent; hoursAgo: number }): ClockEvent {
-    const now = new Date();
-    const timestamp = new Date(now.getTime() - opts.hoursAgo * 3600 * 1000);
+    // Anchor to NOON UTC today so every hoursAgo offset (all <= 12h in this suite) lands on the
+    // SAME UTC day — otherwise a run in the early-morning CEST hours (when `now - 9h` crosses UTC
+    // midnight) would spread the events across two dateStr day-keys and the resolver would
+    // correctly create two per-day entries, breaking the "exactly 1 active entry per day"
+    // assumption. Production derives dateStr in the tenant timezone; the test just needs a stable
+    // same-day anchor. (Was: `new Date()` → time-of-day-fragile.)
+    const base = new Date();
+    base.setUTCHours(12, 0, 0, 0);
+    const timestamp = new Date(base.getTime() - opts.hoursAgo * 3600 * 1000);
     const dateStr = timestamp.toISOString().slice(0, 10);
     return {
       employeeId: data.employee.id,
