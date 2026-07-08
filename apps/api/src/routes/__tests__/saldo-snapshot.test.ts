@@ -45,6 +45,7 @@ describe("POST /overtime/unlock-month", () => {
         employeeId: data.employee.id,
         year: 2024,
         month: 5, // May 2024 — no snapshot exists
+        reason: "Testfreigabe",
       },
     });
 
@@ -95,6 +96,7 @@ describe("POST /overtime/unlock-month", () => {
           employeeId: otherEmp.id, // cross-tenant employee
           year: 2024,
           month: 1,
+          reason: "Testfreigabe",
         },
       });
 
@@ -110,7 +112,7 @@ describe("POST /overtime/unlock-month", () => {
     }
   });
 
-  it("deletes snapshot, unlocks entries, returns 200 on valid admin unlock", async () => {
+  it("supersedes snapshot (not hard-delete), unlocks entries, returns 200 on valid admin unlock", async () => {
     // Europe/Berlin UTC+1 in January 2024: Jan 1 00:00 Berlin = Dec 31 23:00 UTC
     const monthStart = new Date("2023-12-31T23:00:00Z");
     const monthEnd = new Date("2024-01-31T22:59:59Z");
@@ -153,6 +155,7 @@ describe("POST /overtime/unlock-month", () => {
           employeeId: data.employee.id,
           year: 2024,
           month: 1,
+          reason: "Korrektur Januar",
         },
       });
 
@@ -160,11 +163,13 @@ describe("POST /overtime/unlock-month", () => {
       const body = JSON.parse(res.body);
       expect(body.message).toBe("Monat entsperrt");
 
-      // Verify snapshot was deleted
-      const deletedSnap = await app.prisma.saldoSnapshot.findUnique({
+      // COMP-V1814-04: snapshot must NOT be hard-deleted — marked superseded (Revisionssicherheit)
+      const updatedSnap = await app.prisma.saldoSnapshot.findUnique({
         where: { id: snapshot.id },
       });
-      expect(deletedSnap).toBeNull();
+      expect(updatedSnap).not.toBeNull();
+      expect(updatedSnap?.superseded).toBe(true);
+      expect(updatedSnap?.supersededReason).toBe("Korrektur Januar");
 
       // Verify time entry was unlocked
       const updatedEntry = await app.prisma.timeEntry.findUnique({

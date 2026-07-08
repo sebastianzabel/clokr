@@ -176,8 +176,9 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
         },
       });
       await recalculateSnapshots(app, asEmpId, RECALC_FROM);
+      // COMP-V1814-04: recalc supersedes old row and creates new active one; filter superseded:false
       const snapFull = await app.prisma.saldoSnapshot.findFirst({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         orderBy: { periodStart: "desc" },
       });
       expect(snapFull).not.toBeNull();
@@ -185,8 +186,9 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
 
       // ── Second recalc with HALF-day version ─────────────────────────────
       await app.prisma.leaveRequest.deleteMany({ where: { employeeId: asEmpId } });
+      // Reset only the active (superseded=false) snapshot so recalc has a fresh row to work on
       await app.prisma.saldoSnapshot.updateMany({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         data: { expectedMinutes: 99999, balanceMinutes: -99999, carryOver: -99999 },
       });
       await app.prisma.leaveRequest.create({
@@ -202,7 +204,7 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
       });
       await recalculateSnapshots(app, asEmpId, RECALC_FROM);
       const snapHalf = await app.prisma.saldoSnapshot.findFirst({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         orderBy: { periodStart: "desc" },
       });
       expect(snapHalf).not.toBeNull();
@@ -220,20 +222,22 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
     it("recalculateSnapshots — no leave produces a baseline; adding full-day Fri leave reduces expected by exactly 570 (Ø-Methode for A.S. Fri)", async () => {
       // Baseline — no leave at all.
       await app.prisma.leaveRequest.deleteMany({ where: { employeeId: asEmpId } });
+      // Reset only active (superseded:false) so recalc has a fresh row to overwrite
       await app.prisma.saldoSnapshot.updateMany({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         data: { expectedMinutes: 99999, balanceMinutes: -99999, carryOver: -99999 },
       });
       await recalculateSnapshots(app, asEmpId, RECALC_FROM);
+      // COMP-V1814-04: filter superseded:false to get the new active row
       const snapNoLeave = await app.prisma.saldoSnapshot.findFirst({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         orderBy: { periodStart: "desc" },
       });
       const expectedNoLeave = snapNoLeave!.expectedMinutes;
 
       // Add full-day Fri leave.
       await app.prisma.saldoSnapshot.updateMany({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         data: { expectedMinutes: 99999, balanceMinutes: -99999, carryOver: -99999 },
       });
       await app.prisma.leaveRequest.create({
@@ -249,7 +253,7 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
       });
       await recalculateSnapshots(app, asEmpId, RECALC_FROM);
       const snapWithLeave = await app.prisma.saldoSnapshot.findFirst({
-        where: { employeeId: asEmpId, periodType: "MONTHLY" },
+        where: { employeeId: asEmpId, periodType: "MONTHLY", superseded: false },
         orderBy: { periodStart: "desc" },
       });
       const expectedWithLeave = snapWithLeave!.expectedMinutes;

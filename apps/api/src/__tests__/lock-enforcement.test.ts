@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi, beforeEach } 
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 
 /**
  * Integration tests for Phase 12 lock enforcement behaviors:
@@ -586,6 +587,30 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
       });
 
       expect(res.statusCode).toBe(400);
+    });
+
+    it("supersede — recalculate supersedes old snapshot and creates new active row", async () => {
+      // The beforeEach already created a snapshot at MONTH_START/MONTH_END for data.employee.id.
+      // Call recalculateSnapshots directly — it should supersede the old row and create a fresh active one.
+      await recalculateSnapshots(app, data.employee.id, MONTH_START);
+
+      // Old snapshot must be marked superseded (preserved for audit)
+      const oldSnap = await app.prisma.saldoSnapshot.findUnique({ where: { id: snapshotId } });
+      expect(oldSnap).not.toBeNull();
+      expect(oldSnap?.superseded).toBe(true);
+      expect(oldSnap?.supersededReason).toBe("retroactive recalculation");
+
+      // A new active (superseded=false) snapshot must exist for the same period
+      const newSnap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: MONTH_START,
+          superseded: false,
+        },
+      });
+      expect(newSnap).not.toBeNull();
+      expect(newSnap?.id).not.toBe(snapshotId); // must be a different row
     });
 
     it("supersede — unlock ADMIN only (MANAGER gets 403)", async () => {

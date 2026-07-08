@@ -279,21 +279,34 @@ export async function recalculateSnapshots(
     const isTrackOnly = schedule.overtimeMode === "TRACK_ONLY";
     const carryOver = isTrackOnly ? 0 : runningCarryOver + balanceMinutes;
 
-    // Update the snapshot
+    // COMP-V1814-04: supersede the old snapshot, then create a fresh active row.
+    // Never update in-place — closed history is immutable (Revisionssicherheit).
     await app.prisma.saldoSnapshot.update({
       where: { id: snapshot.id },
+      data: { superseded: true, supersededReason: "retroactive recalculation" },
+    });
+
+    await app.prisma.saldoSnapshot.create({
       data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: snapshot.periodStart,
+        periodEnd: snapshot.periodEnd,
         workedMinutes: Math.round(workedMinutes),
         expectedMinutes: Math.round(netExpected),
         balanceMinutes,
         carryOver,
+        closedAt: snapshot.closedAt,
+        closedBy: snapshot.closedBy,
+        note: snapshot.note,
+        // superseded defaults to false (new active row)
       },
     });
 
     // Audit log with old/new values
     await app.audit({
       userId: undefined, // system-initiated recalculation
-      action: "UPDATE",
+      action: "SUPERSEDE",
       entity: "SaldoSnapshot",
       entityId: snapshot.id,
       oldValue: oldValues,
@@ -302,6 +315,7 @@ export async function recalculateSnapshots(
         expectedMinutes: Math.round(netExpected),
         balanceMinutes,
         carryOver,
+        superseded: true,
         reason: "retroactive recalculation",
       },
     });
