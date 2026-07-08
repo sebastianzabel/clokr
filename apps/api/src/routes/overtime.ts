@@ -798,13 +798,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       for (let m = seqStartMonth; m < month; m++) {
         const { start: prevStart } = monthRangeUtc(year, m, tz);
-        const prevSnapshot = await app.prisma.saldoSnapshot.findUnique({
+        const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
           where: {
-            employeeId_periodType_periodStart: {
-              employeeId,
-              periodType: "MONTHLY",
-              periodStart: prevStart,
-            },
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: prevStart,
+            superseded: false,
           },
         });
         if (!prevSnapshot) {
@@ -815,13 +814,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
 
       // Check if snapshot already exists
-      const existing = await app.prisma.saldoSnapshot.findUnique({
+      const existing = await app.prisma.saldoSnapshot.findFirst({
         where: {
-          employeeId_periodType_periodStart: {
-            employeeId,
-            periodType: "MONTHLY",
-            periodStart: monthStart,
-          },
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          superseded: false,
         },
       });
       if (existing) {
@@ -1256,14 +1254,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
 
-      // Verify the month is actually closed
-      const snap = await app.prisma.saldoSnapshot.findUnique({
+      // Verify the month is actually closed — use findFirst with superseded:false
+      // (compound accessor removed when @@unique replaced by partial unique index, COMP-V1814-04)
+      const snap = await app.prisma.saldoSnapshot.findFirst({
         where: {
-          employeeId_periodType_periodStart: {
-            employeeId,
-            periodType: "MONTHLY",
-            periodStart: monthStart,
-          },
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          superseded: false,
         },
       });
       if (!snap) {

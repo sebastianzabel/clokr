@@ -227,15 +227,14 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         });
       }
 
-      // (5) locked-month gate
+      // (5) locked-month gate — findFirst with superseded:false (COMP-V1814-04)
       const monthStart = monthStartUtc(dateUtc);
-      const snapshot = await app.prisma.saldoSnapshot.findUnique({
+      const snapshot = await app.prisma.saldoSnapshot.findFirst({
         where: {
-          employeeId_periodType_periodStart: {
-            employeeId: employee.id,
-            periodType: "MONTHLY",
-            periodStart: monthStart,
-          },
+          employeeId: employee.id,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          superseded: false,
         },
         select: { id: true },
       });
@@ -363,15 +362,14 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       }
 
       // (6) locked-month gate — identical message + status to manual-insert's gate (5)
-      // for UI consistency.
+      // for UI consistency. findFirst with superseded:false (COMP-V1814-04)
       const monthStart = monthStartUtc(absence.startDate);
-      const snapshot = await app.prisma.saldoSnapshot.findUnique({
+      const snapshot = await app.prisma.saldoSnapshot.findFirst({
         where: {
-          employeeId_periodType_periodStart: {
-            employeeId: absence.employeeId,
-            periodType: "MONTHLY",
-            periodStart: monthStart,
-          },
+          employeeId: absence.employeeId,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          superseded: false,
         },
         select: { id: true },
       });

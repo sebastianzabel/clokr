@@ -47,16 +47,15 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
   });
 
   // Helper: did the per-employee snapshot lookup fire for THIS tenant's employees?
-  // saldoSnapshot.findUnique runs inside the tenant loop only AFTER the grace check
-  // passes, so its presence/absence is a reliable "was this tenant processed?" probe.
-  function findUniqueFiredForSeededTenant(
+  // saldoSnapshot.findFirst (COMP-V1814-04: replaced findUnique after @@unique → partial index)
+  // runs inside the tenant loop only AFTER the grace check passes, so its presence/absence is
+  // a reliable "was this tenant processed?" probe.
+  function findFirstFiredForSeededTenant(
     spy: ReturnType<typeof vi.spyOn>,
     employeeIds: string[],
   ): boolean {
     return spy.mock.calls.some((call: unknown[]) => {
-      const where = (
-        call[0] as { where?: { employeeId_periodType_periodStart?: { employeeId?: string } } }
-      )?.where?.employeeId_periodType_periodStart;
+      const where = (call[0] as { where?: { employeeId?: string } })?.where;
       return where?.employeeId != null && employeeIds.includes(where.employeeId);
     });
   }
@@ -66,17 +65,17 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     // 2024-02-05T06:00Z → Europe/Berlin local day 5 (< 15) → tenant skipped via continue.
     vi.setSystemTime(new Date("2024-02-05T06:00:00.000Z"));
 
-    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
     const snapshotCreateSpy = vi.spyOn(app.prisma.saldoSnapshot, "create");
     const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
       // Grace fired → this tenant's employees were never looked up or closed.
-      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(false);
+      expect(findFirstFiredForSeededTenant(findFirstSpy, seededIds)).toBe(false);
       expect(snapshotCreateSpy).not.toHaveBeenCalled();
     } finally {
-      findUniqueSpy.mockRestore();
+      findFirstSpy.mockRestore();
       snapshotCreateSpy.mockRestore();
       vi.useRealTimers();
     }
@@ -88,15 +87,15 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     // A UTC-based guard would wrongly SKIP; the per-tenant dateStrInTz guard PROCEEDS.
     vi.setSystemTime(new Date("2024-02-14T23:30:00.000Z"));
 
-    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
     const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
       // Local day 15 → the Berlin tenant IS processed (employees looked up).
-      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(true);
+      expect(findFirstFiredForSeededTenant(findFirstSpy, seededIds)).toBe(true);
     } finally {
-      findUniqueSpy.mockRestore();
+      findFirstSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -105,14 +104,14 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= 15
 
-    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
     const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
-      expect(findUniqueFiredForSeededTenant(findUniqueSpy, seededIds)).toBe(true);
+      expect(findFirstFiredForSeededTenant(findFirstSpy, seededIds)).toBe(true);
     } finally {
-      findUniqueSpy.mockRestore();
+      findFirstSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -169,14 +168,14 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= 15
 
-    const findUniqueSpy = vi.spyOn(app.prisma.saldoSnapshot, "findUnique");
+    const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
     try {
       await app.tryAutoCloseMonth();
       // Non-exempt seeded employee IS looked up; exempt employee is NOT.
-      expect(findUniqueFiredForSeededTenant(findUniqueSpy, [data.employee.id])).toBe(true);
-      expect(findUniqueFiredForSeededTenant(findUniqueSpy, [exempt.id])).toBe(false);
+      expect(findFirstFiredForSeededTenant(findFirstSpy, [data.employee.id])).toBe(true);
+      expect(findFirstFiredForSeededTenant(findFirstSpy, [exempt.id])).toBe(false);
     } finally {
-      findUniqueSpy.mockRestore();
+      findFirstSpy.mockRestore();
       vi.useRealTimers();
     }
   });
@@ -273,7 +272,7 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     /**
      * Seed MONTHLY SaldoSnapshots for the given employee for each month in `months`.
      * Uses monthRangeUtc with Europe/Berlin so periodStart matches exactly what
-     * tryAutoCloseMonth() expects for the findUnique(employeeId_periodType_periodStart) lookup.
+     * tryAutoCloseMonth() expects for the findFirst({ employeeId, periodType, periodStart, superseded:false }) lookup.
      */
     async function seedMonthlySnapshots(employeeId: string, year: number, months: number[]) {
       const tz = "Europe/Berlin";

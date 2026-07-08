@@ -429,7 +429,12 @@ model SaldoSnapshot {
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
-  @@unique([employeeId, periodType, periodStart])
+  // Uniqueness enforced by partial unique index in migration (COMP-V1814-04):
+  //   CREATE UNIQUE INDEX "SaldoSnapshot_active_unique"
+  //     ON "SaldoSnapshot" ("employeeId", "periodType", "periodStart")
+  //     WHERE "superseded" = false;
+  // Only one active (superseded=false) row per employee+periodType+periodStart is allowed.
+  // Superseded rows (superseded=true) are preserved for Revisionssicherheit.
   @@index([employeeId])
   @@index([employeeId, periodType])
 }

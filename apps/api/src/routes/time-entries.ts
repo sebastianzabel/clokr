@@ -246,14 +246,14 @@ export async function validateTimeEntryInvariants(
   }
 
   // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
+  // findFirst with superseded:false (compound accessor removed, COMP-V1814-04)
   const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
-  const lockedSnapshot = await app.prisma.saldoSnapshot.findUnique({
+  const lockedSnapshot = await app.prisma.saldoSnapshot.findFirst({
     where: {
-      employeeId_periodType_periodStart: {
-        employeeId,
-        periodType: "MONTHLY",
-        periodStart: lockedMonthStart,
-      },
+      employeeId,
+      periodType: "MONTHLY",
+      periodStart: lockedMonthStart,
+      superseded: false,
     },
     select: { id: true },
   });
