@@ -690,11 +690,15 @@ export async function leaveRoutes(app: FastifyInstance) {
           }
         } else {
           // Stornierung ablehnen → zurück auf APPROVED
+          // WR-02: do NOT overwrite reviewedBy here — it must keep pointing to the
+          // original leave approver so the 4-eyes check (line 608) still blocks that
+          // person from approving a subsequent cancellation request.  The rejection
+          // reviewer is captured in the AuditLog REJECT entry below.
           await app.prisma.leaveRequest.update({
             where: { id },
             data: {
               status: "APPROVED",
-              reviewedBy: req.user.sub,
+              // reviewedBy intentionally NOT updated — preserves original approver identity
               reviewedAt: new Date(),
               reviewNote: body.reviewNote,
             },
