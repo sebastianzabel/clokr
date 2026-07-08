@@ -1,17 +1,15 @@
 /**
- * Integration tests for Phase 59 (v1.6.5):
+ * Integration tests for Phase 59 (v1.6.5) and COMP-V1814-03 (Phase 76.21-04):
  *
- * Verifies that GET /reports/leave-overview self-heals divergent
+ * Phase 59: Verifies that GET /reports/leave-overview self-heals divergent
  * LeaveEntitlement.usedDays values from Σ approved LeaveRequest.days,
  * mirroring the long-standing heal in GET /entitlements/:employeeId.
  *
- * Reproduces the a-tenant tenant bug from 2026-05-27 where four employees
- * had stored usedDays diverging from actual approved-request sums and the
- * report displayed the stale wrong number while the leave page silently
- * corrected it.
+ * COMP-V1814-03: Carry-over expiry is gated on a documented EuGH Hinweis
+ * (CARRYOVER_WARNED AuditLog entry). Days do NOT expire unless a warning was
+ * recorded for that employee+entitlement. See docs/burlg-carryover.md.
  *
- * Test pattern mirrors apps/api/src/__tests__/monthly-hours-leave-skip.test.ts:
- * shared singleton Fastify app via getTestApp, per-suite tenant slug.
+ * Test pattern: shared singleton Fastify app via getTestApp, per-suite tenant slug.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
@@ -302,5 +300,235 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
     // Persisted on the canonical entitlement row.
     const db = await app.prisma.leaveEntitlement.findUnique({ where: { id: empC_EntId } });
     expect(Number(db!.usedDays)).toBe(5);
+  });
+});
+
+// ── COMP-V1814-03: EuGH C-684/16 carry-over expiry gate ─────────────────────
+// Carry-over days do NOT expire on the deadline unless a CARRYOVER_WARNED
+// AuditLog entry was recorded for that entitlement. Without a documented
+// warning the employer cannot forfeit the employee's entitlement.
+// See docs/burlg-carryover.md for the legal basis.
+describe("carryover expiry gate (COMP-V1814-03)", () => {
+  let app: FastifyInstance;
+  let gateAdminToken: string;
+  let gateTenantId: string;
+  let gateEmpId: string;
+  let gateLeaveTypeId: string;
+
+  // A deadline firmly in the past (previous calendar year)
+  const pastDeadline = new Date(new Date().getFullYear() - 1, 2, 31, 23, 59, 59); // 31 Mar last year
+  // A deadline firmly in the future
+  const futureDeadline = new Date(new Date().getFullYear() + 1, 2, 31, 23, 59, 59); // 31 Mar next year
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const s = "ceg-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `CEG Tenant ${s}`, slug: `ceg-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    gateTenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
+    });
+
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-ceg-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: adminUser.id,
+        employeeNumber: `ADM-CEG-${s}`,
+        firstName: "Admin",
+        lastName: "CEG",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-ceg-${s}@test.de`, password: "test1234" },
+    });
+    gateAdminToken = JSON.parse(loginRes.body).accessToken as string;
+
+    const lt = await prisma.leaveType.create({
+      data: {
+        tenantId: tenant.id,
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
+    });
+    gateLeaveTypeId = lt.id;
+
+    const empUser = await prisma.user.create({
+      data: {
+        email: `emp-ceg-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: empUser.id,
+        employeeNumber: `EMP-CEG-${s}`,
+        firstName: "TestEmp",
+        lastName: "CEG",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    gateEmpId = emp.id;
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, gateTenantId);
+    } catch (err) {
+      console.error("CEG test cleanup failed:", err);
+    }
+  });
+
+  it("carryover expiry gate — no warning preserves days", async () => {
+    // Past deadline + carriedOverDays=5, but NO CARRYOVER_WARNED audit entry.
+    // EuGH C-684/16: entitlement must be preserved.
+    const year = 2020; // fixed historic year avoids autoCarryOver interference
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: gateEmpId,
+        leaveTypeId: gateLeaveTypeId,
+        year,
+        totalDays: 20,
+        usedDays: 0,
+        carriedOverDays: 5,
+        carryOverDeadline: pastDeadline,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${gateEmpId}?year=${year}`,
+      headers: { authorization: `Bearer ${gateAdminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json() as Array<{ id: string; effectiveCarryOverDays: number }>;
+    const row = rows.find((r) => r.id === ent.id);
+    expect(row, "entitlement row must be present in response").toBeDefined();
+    // Without a documented warning, carry-over must NOT expire (EuGH C-684/16)
+    expect(row!.effectiveCarryOverDays).toBe(5);
+
+    await app.prisma.leaveEntitlement.delete({ where: { id: ent.id } });
+  });
+
+  it("carryover expiry gate — warning expires days", async () => {
+    // Past deadline + carriedOverDays=5 + CARRYOVER_WARNED audit entry present.
+    // Warning was issued → employer fulfilled Hinweispflicht → expiry is valid.
+    const year = 2019;
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: gateEmpId,
+        leaveTypeId: gateLeaveTypeId,
+        year,
+        totalDays: 20,
+        usedDays: 0,
+        carriedOverDays: 5,
+        carryOverDeadline: pastDeadline,
+      },
+    });
+
+    // Seed the CARRYOVER_WARNED audit row (proof of Hinweispflicht fulfillment)
+    await app.prisma.auditLog.create({
+      data: {
+        action: "CARRYOVER_WARNED",
+        entity: "LeaveEntitlement",
+        entityId: ent.id,
+        newValue: { thresholdDays: 30, year, carriedOverDays: 5 },
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${gateEmpId}?year=${year}`,
+      headers: { authorization: `Bearer ${gateAdminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json() as Array<{ id: string; effectiveCarryOverDays: number }>;
+    const row = rows.find((r) => r.id === ent.id);
+    expect(row, "entitlement row must be present in response").toBeDefined();
+    // Warning was issued → expiry is legally valid
+    expect(row!.effectiveCarryOverDays).toBe(0);
+
+    await app.prisma.auditLog.deleteMany({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+    });
+    await app.prisma.leaveEntitlement.delete({ where: { id: ent.id } });
+  });
+
+  it("carryover expiry gate — before deadline", async () => {
+    // Future deadline + carriedOverDays=5. Even with a warning, days must be preserved
+    // because the deadline has not yet passed.
+    const year = 2018;
+    const ent = await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: gateEmpId,
+        leaveTypeId: gateLeaveTypeId,
+        year,
+        totalDays: 20,
+        usedDays: 0,
+        carriedOverDays: 5,
+        carryOverDeadline: futureDeadline,
+      },
+    });
+
+    // A warning exists but the deadline is in the future — must still be preserved
+    await app.prisma.auditLog.create({
+      data: {
+        action: "CARRYOVER_WARNED",
+        entity: "LeaveEntitlement",
+        entityId: ent.id,
+        newValue: { thresholdDays: 30, year, carriedOverDays: 5 },
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${gateEmpId}?year=${year}`,
+      headers: { authorization: `Bearer ${gateAdminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json() as Array<{ id: string; effectiveCarryOverDays: number }>;
+    const row = rows.find((r) => r.id === ent.id);
+    expect(row, "entitlement row must be present in response").toBeDefined();
+    // Deadline not yet reached → always preserved regardless of warning
+    expect(row!.effectiveCarryOverDays).toBe(5);
+
+    await app.prisma.auditLog.deleteMany({
+      where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent.id },
+    });
+    await app.prisma.leaveEntitlement.delete({ where: { id: ent.id } });
   });
 });

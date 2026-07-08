@@ -276,7 +276,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year1 } },
         });
         if (ent1 && split.year1Days > 0) {
-          const co1 = getEffectiveCarryOver(ent1, start);
+          // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
+          const hinweis1 =
+            (await app.prisma.auditLog.count({
+              where: { action: "CARRYOVER_WARNED", entity: "LeaveEntitlement", entityId: ent1.id },
+            })) > 0;
+          const co1 = getEffectiveCarryOver(ent1, start, hinweis1);
           const avail1 = Number(ent1.totalDays) + co1 - Number(ent1.usedDays);
 
           // § 5 Abs. 2 BUrlG: H1 exits are capped at pro-rata entitlement.
@@ -316,7 +321,16 @@ export async function leaveRoutes(app: FastifyInstance) {
             where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year: year2 } },
           });
           if (ent2) {
-            const co2 = getEffectiveCarryOver(ent2, end);
+            // EuGH C-684/16: pre-fetch whether a warning was issued for this entitlement
+            const hinweis2 =
+              (await app.prisma.auditLog.count({
+                where: {
+                  action: "CARRYOVER_WARNED",
+                  entity: "LeaveEntitlement",
+                  entityId: ent2.id,
+                },
+              })) > 0;
+            const co2 = getEffectiveCarryOver(ent2, end, hinweis2);
             let avail2 = Number(ent2.totalDays) + co2 - Number(ent2.usedDays);
 
             // § 5 Abs. 2 BUrlG: apply H1 cap symmetrically to year 2 when employee exits in H1
@@ -1499,6 +1513,23 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Same logic the report endpoint now uses — see apps/api/src/utils/leave-self-heal.ts.
       await selfHealUsedDays(app.prisma, rows, vacMeta);
 
+      // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
+      // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
+      // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
+      const warnedEntitlementIds = new Set(
+        (
+          await app.prisma.auditLog.findMany({
+            where: {
+              action: "CARRYOVER_WARNED",
+              entity: "LeaveEntitlement",
+              entityId: { in: rows.map((r) => r.id) },
+            },
+            select: { entityId: true },
+            distinct: ["entityId"],
+          })
+        ).map((al) => al.entityId!),
+      );
+
       // typeCode + effektiven Resturlaub + anteiligen Urlaubsanspruch im Response markieren
       return rows.map((r) => {
         const isVacationRow = vacationNames.includes(r.leaveType.name);
@@ -1511,7 +1542,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
             ([, d]) => d.name === r.leaveType.name,
           )?.[0] ?? "VACATION") as TypeCode,
-          effectiveCarryOverDays: getEffectiveCarryOver(r, now),
+          effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
         };
@@ -1627,16 +1658,27 @@ async function recalculateCarryOver(
 }
 
 /**
- * Gibt den effektiven Resturlaub zurück — 0 wenn der Verfall bereits eingetreten ist.
+ * Gibt den effektiven Resturlaub zurück.
+ *
+ * EuGH C-684/16 (Hinweispflicht, docs/burlg-carryover.md): Resturlaub verfällt am
+ * Stichtag nur dann, wenn der Arbeitgeber den Arbeitnehmer zuvor ausdrücklich auf
+ * den bevorstehenden Verfall hingewiesen hat (CARRYOVER_WARNED AuditLog-Eintrag).
+ * Ohne dokumentierten Hinweis bleibt der Anspruch erhalten.
+ *
+ * @param hinweisIssued - true wenn ein CARRYOVER_WARNED-AuditLog für dieses
+ *   LeaveEntitlement existiert (vor dem Aufruf per count-Query zu ermitteln).
  */
 function getEffectiveCarryOver(
   entitlement: { carriedOverDays: Prisma.Decimal | number; carryOverDeadline: Date | null },
   referenceDate: Date,
+  hinweisIssued: boolean,
 ): number {
   const carryOver = Number(entitlement.carriedOverDays);
   if (carryOver <= 0) return 0;
   if (!entitlement.carryOverDeadline) return carryOver; // kein Verfall konfiguriert
-  return referenceDate <= entitlement.carryOverDeadline ? carryOver : 0;
+  if (referenceDate <= entitlement.carryOverDeadline) return carryOver; // Stichtag noch nicht erreicht
+  if (!hinweisIssued) return carryOver; // EuGH C-684/16: kein Verfall ohne dokumentierten Hinweis
+  return 0;
 }
 
 /**
