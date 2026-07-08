@@ -298,6 +298,53 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
       await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
     });
 
+    it("COMP-V1814-05 (F1): unlock writes an UNLOCK AuditLog atomically with the supersede (audit inside tx)", async () => {
+      // December 2024 — UTC+1 (CET), Dec 1 00:00 Berlin = Nov 30 23:00 UTC
+      const monthStart = new Date("2024-11-30T23:00:00Z");
+      const monthEnd = new Date("2024-12-31T22:59:59Z");
+
+      const snapshot = await app.prisma.saldoSnapshot.create({
+        data: {
+          employeeId: data.employee.id,
+          periodType: "MONTHLY",
+          periodStart: monthStart,
+          periodEnd: monthEnd,
+          workedMinutes: 1600,
+          expectedMinutes: 1600,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+        },
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/unlock-month",
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          employeeId: data.employee.id,
+          year: 2024,
+          month: 12,
+          reason: "Audit-Atomizität Dezember",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      // The audit row is written INSIDE the same $transaction as the supersede (COMP-V1814-05 F1),
+      // so a 200 response guarantees the UNLOCK audit row committed atomically with superseded=true.
+      const auditRows = await app.prisma.auditLog.findMany({
+        where: { entity: "SaldoSnapshot", entityId: snapshot.id, action: "UNLOCK" },
+      });
+      expect(auditRows.length).toBeGreaterThanOrEqual(1);
+
+      // Cleanup
+      await app.prisma.saldoSnapshot.deleteMany({ where: { id: snapshot.id } });
+      await app.prisma.auditLog.deleteMany({
+        where: { entity: "SaldoSnapshot", entityId: snapshot.id },
+      });
+    });
+
     it("D-02: sets isLocked=false on all non-deleted time entries in that month", async () => {
       // November 2024 — UTC+1 (CET), Nov 1 00:00 Berlin = Oct 31 23:00 UTC
       const monthStart = new Date("2024-10-31T23:00:00Z");

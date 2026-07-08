@@ -1199,16 +1199,19 @@ export async function overtimeRoutes(app: FastifyInstance) {
           update: { balanceHours: effectiveCarryOver / 60 },
         });
 
-        return snap;
-      });
+        // COMP-V1814-05 (audit F1): audit inside the same $transaction (pass tx) so a rollback
+        // cannot leave the snapshot committed without its CREATE audit row (or vice-versa).
+        await app.audit({
+          tx,
+          userId: req.user.sub,
+          action: "CREATE",
+          entity: "SaldoSnapshot",
+          entityId: snap.id,
+          newValue: snap,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
 
-      await app.audit({
-        userId: req.user.sub,
-        action: "CREATE",
-        entity: "SaldoSnapshot",
-        entityId: snapshot.id,
-        newValue: snapshot,
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        return snap;
       });
 
       // D-12: Informational hint if the request is made before the grace period ends.
@@ -1285,21 +1288,23 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
           data: { isLocked: false, lockedAt: null },
         });
+
+        // D-02 / COMP-V1814-05 (audit F1): audit UNLOCK inside the same $transaction (pass tx) so a
+        // rollback cannot leave the snapshot superseded without its UNLOCK audit row (or vice-versa).
+        await app.audit({
+          tx,
+          userId: req.user.sub,
+          action: "UNLOCK",
+          entity: "SaldoSnapshot",
+          entityId: snap.id,
+          oldValue: snap,
+          newValue: { superseded: true, reason },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
       });
 
-      // Recalculate live overtime balance now that the month is reopened
+      // Recalculate live overtime balance now that the month is reopened (post-commit; idempotent)
       await updateOvertimeAccount(app, employeeId);
-
-      // D-02: Audit log — entity SaldoSnapshot, action UNLOCK; oldValue = snapshot; newValue includes reason
-      await app.audit({
-        userId: req.user.sub,
-        action: "UNLOCK",
-        entity: "SaldoSnapshot",
-        entityId: snap.id,
-        oldValue: snap,
-        newValue: { superseded: true, reason },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
 
       return reply.code(200).send({ message: "Monat entsperrt" });
     },
