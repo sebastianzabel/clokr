@@ -1220,4 +1220,144 @@ describe("Leave / Absence API", () => {
       await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
     });
   });
+
+  // ── WR-02 regression: 4-eyes bypass across cancellation-reject→re-request ───
+  //
+  // Scenario: ManagerA approves leave → employee requests cancellation →
+  //   ManagerB REJECTS the cancellation → employee re-requests cancellation →
+  //   ManagerA must STILL get 403 (original-approver 4-eyes check).
+  //
+  // Before the fix, the rejection step overwrote reviewedBy with ManagerB's id,
+  // allowing ManagerA to slip through the 4-eyes guard on the re-request.
+  describe("COMPLIANCE WR-02 — original approver blocked after reject→re-request cycle", () => {
+    let leaveId: string;
+    let managerBToken: string;
+    let managerBUserId: string;
+    let managerBEmployeeId: string;
+
+    beforeAll(async () => {
+      // Spin up a second manager (ManagerB) to act as the cancellation-rejector
+      const s = "wr02-" + Date.now().toString(36);
+      const managerBPwHash = await bcrypt.hash("test1234", 10);
+      const managerBUser = await app.prisma.user.create({
+        data: {
+          email: `mgr-b-${s}@test.de`,
+          passwordHash: managerBPwHash,
+          role: "MANAGER",
+          isActive: true,
+        },
+      });
+      managerBUserId = managerBUser.id;
+      const managerBEmp = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: managerBUser.id,
+          employeeNumber: `MB-${s}`,
+          firstName: "Manager",
+          lastName: "B",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      managerBEmployeeId = managerBEmp.id;
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: managerBEmp.id, balanceHours: 0 },
+      });
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `mgr-b-${s}@test.de`, password: "test1234" },
+      });
+      managerBToken = JSON.parse(loginRes.body).accessToken;
+    });
+
+    afterAll(async () => {
+      if (leaveId) {
+        await app.prisma.leaveRequest.deleteMany({ where: { id: leaveId } });
+      }
+      if (managerBEmployeeId) {
+        await app.prisma.overtimeAccount.deleteMany({
+          where: { employeeId: managerBEmployeeId },
+        });
+        await app.prisma.employee.deleteMany({ where: { id: managerBEmployeeId } });
+      }
+      if (managerBUserId) {
+        await app.prisma.user.deleteMany({ where: { id: managerBUserId } });
+      }
+    });
+
+    it("ManagerA (original approver) is still blocked after ManagerB rejected the first cancellation", async () => {
+      // 1. Employee creates a SICK leave request (no entitlement constraint)
+      const createRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2029-03-03",
+          endDate: "2029-03-05",
+          note: "WR-02 regression test",
+        },
+      });
+      expect(createRes.statusCode).toBe(201);
+      leaveId = JSON.parse(createRes.body).id;
+
+      // 2. ManagerA (data.adminToken) approves the leave — reviewedBy = data.adminUser.id
+      const approveRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${leaveId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED", reviewNote: "OK" },
+      });
+      expect(approveRes.statusCode).toBe(200);
+      expect(JSON.parse(approveRes.body).status).toBe("APPROVED");
+
+      // Verify reviewedBy is set to ManagerA
+      const afterApproval = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
+      expect(afterApproval?.reviewedBy).toBe(data.adminUser.id);
+
+      // 3. Employee requests cancellation → CANCELLATION_REQUESTED
+      const cancelRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/leave/requests/${leaveId}`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(cancelRes.statusCode).toBe(200);
+      expect(JSON.parse(cancelRes.body).status).toBe("CANCELLATION_REQUESTED");
+
+      // 4. ManagerB rejects the cancellation → back to APPROVED
+      // Before WR-02 fix: reviewedBy would be overwritten to managerBUserId here.
+      // After fix: reviewedBy must still be data.adminUser.id.
+      const rejectRes = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${leaveId}/review`,
+        headers: { authorization: `Bearer ${managerBToken}` },
+        payload: { status: "REJECTED", reviewNote: "Stornierung abgelehnt" },
+      });
+      expect(rejectRes.statusCode).toBe(200);
+
+      // CRITICAL: reviewedBy must still be ManagerA (not ManagerB)
+      const afterRejection = await app.prisma.leaveRequest.findUnique({ where: { id: leaveId } });
+      expect(afterRejection?.status).toBe("APPROVED");
+      expect(afterRejection?.reviewedBy).toBe(data.adminUser.id);
+
+      // 5. Employee re-requests cancellation → CANCELLATION_REQUESTED again
+      const reCancel = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/leave/requests/${leaveId}`,
+        headers: { authorization: `Bearer ${data.empToken}` },
+      });
+      expect(reCancel.statusCode).toBe(200);
+      expect(JSON.parse(reCancel.body).status).toBe("CANCELLATION_REQUESTED");
+
+      // 6. ManagerA (original approver) tries to approve the re-requested cancellation.
+      // Must get 403 — the 4-eyes check must still block the original approver.
+      const bypassAttempt = await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${leaveId}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED", reviewNote: "sollte blockiert sein" },
+      });
+      expect(bypassAttempt.statusCode).toBe(403);
+    });
+  });
 });

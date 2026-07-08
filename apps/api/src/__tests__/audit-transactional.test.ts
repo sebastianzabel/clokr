@@ -109,4 +109,36 @@ describe("audit-transactional (COMP-V1814-05)", () => {
     });
     expect(count).toBe(0);
   });
+
+  it("WR-01: HARD_DELETE audit row inside a rolled-back deletion tx does NOT persist (no phantom audit on failed delete)", async () => {
+    // Simulates the fixed employees.ts hard-delete handler (WR-01):
+    // app.audit({action:"HARD_DELETE", tx}) is now called INSIDE the $transaction.
+    // If the deletion fails (e.g. a Restrict constraint fires), the audit row must
+    // roll back with the transaction — no phantom HARD_DELETE entry in the audit trail.
+    const entityId = `hard-delete-rollback-${runId}`;
+
+    await app.prisma
+      .$transaction(async (tx) => {
+        await app.audit({
+          userId: data.adminUser.id,
+          action: `TX_TEST_${runId}_HARD_DELETE`,
+          entity: "Employee",
+          entityId,
+          oldValue: { employeeNumber: "GELOESCHT-001", retentionStart: "2015-01-01" },
+          newValue: { forceDelete: false, retentionExpiresAt: "2025-01-01" },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          tx: tx as any,
+        });
+        // Simulate a deletion failure (e.g. constraint violation, DB error)
+        throw new Error("simulated hard-delete failure — WR-01 rollback test");
+      })
+      .catch(() => {
+        /* expected */
+      });
+
+    const count = await app.prisma.auditLog.count({
+      where: { action: `TX_TEST_${runId}_HARD_DELETE`, entityId },
+    });
+    expect(count).toBe(0);
+  });
 });
