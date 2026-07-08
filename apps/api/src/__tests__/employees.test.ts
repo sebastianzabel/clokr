@@ -780,5 +780,89 @@ describe("Employees API", () => {
       const body = JSON.parse(res.body);
       expect(body.error).toContain("§ 16 Abs. 2 ArbZG");
     });
+
+    it("retention — force-delete in window needs 4-eyes: forceDelete=true without prior authorization → 409", async () => {
+      // exitDate 3 years ago: past 2y floor (Dec 31, 2023+2=2025 < 2026) but inside 10y retention
+      const exitDate = new Date();
+      exitDate.setFullYear(exitDate.getFullYear() - 3);
+      const { emp, user } = await makeAnonymizedEmployee(exitDate);
+
+      const res = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: { authorization: `Bearer ${data.adminToken}`, "content-type": "application/json" },
+        payload: { forceDelete: true },
+      });
+
+      // Cleanup — employee still exists (no valid 4-eyes auth)
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.deleteMany({ where: { id: emp.id } });
+      await app.prisma.user.deleteMany({ where: { id: user.id } });
+
+      expect(res.statusCode).toBe(409);
+      const body = JSON.parse(res.body);
+      expect(body.error).toContain("4-Augen-Prinzip");
+    });
+
+    it("retention — self-authorize rejected: same admin who authorized cannot force-delete", async () => {
+      const exitDate = new Date();
+      exitDate.setFullYear(exitDate.getFullYear() - 3);
+      const { emp, user } = await makeAnonymizedEmployee(exitDate);
+
+      // Admin1 authorizes
+      const authRes = await app.inject({
+        method: "POST",
+        url: `/api/v1/employees/${emp.id}/hard-delete/authorize`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+
+      // Admin1 tries to force-delete using their own authorization → must be rejected
+      const delRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: { authorization: `Bearer ${data.adminToken}`, "content-type": "application/json" },
+        payload: { forceDelete: true },
+      });
+
+      // Cleanup — employee still exists (self-auth rejected)
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: emp.id } });
+      await app.prisma.employee.deleteMany({ where: { id: emp.id } });
+      await app.prisma.user.deleteMany({ where: { id: user.id } });
+
+      expect(authRes.statusCode).toBe(200);
+      expect(delRes.statusCode).toBe(409);
+      const body = JSON.parse(delRes.body);
+      expect(body.error).toContain("4-Augen-Prinzip");
+    });
+
+    it("retention — different admin authorization allows force-delete inside retention window", async () => {
+      const exitDate = new Date();
+      exitDate.setFullYear(exitDate.getFullYear() - 3);
+      const { emp } = await makeAnonymizedEmployee(exitDate);
+
+      // Admin2 (different admin) authorizes
+      const authRes = await app.inject({
+        method: "POST",
+        url: `/api/v1/employees/${emp.id}/hard-delete/authorize`,
+        headers: { authorization: `Bearer ${admin2Token}` },
+      });
+
+      // Admin1 force-deletes using Admin2's authorization → should succeed
+      const delRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${emp.id}/hard-delete`,
+        headers: { authorization: `Bearer ${data.adminToken}`, "content-type": "application/json" },
+        payload: { forceDelete: true },
+      });
+
+      expect(authRes.statusCode).toBe(200);
+      const authBody = JSON.parse(authRes.body);
+      expect(authBody.authorized).toBe(true);
+      expect(authBody.expiresAt).toBeDefined();
+
+      expect(delRes.statusCode).toBe(204);
+      const found = await app.prisma.employee.findUnique({ where: { id: emp.id } });
+      expect(found).toBeNull();
+    });
   });
 });
