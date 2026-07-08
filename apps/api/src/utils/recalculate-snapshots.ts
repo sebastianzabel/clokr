@@ -281,26 +281,30 @@ export async function recalculateSnapshots(
 
     // COMP-V1814-04: supersede the old snapshot, then create a fresh active row.
     // Never update in-place — closed history is immutable (Revisionssicherheit).
-    await app.prisma.saldoSnapshot.update({
-      where: { id: snapshot.id },
-      data: { superseded: true, supersededReason: "retroactive recalculation" },
-    });
+    // CR-01: wrap both operations in a single transaction so a crash between them
+    // cannot orphan the period (old superseded, new never created → carry-over gap).
+    await app.prisma.$transaction(async (tx) => {
+      await tx.saldoSnapshot.update({
+        where: { id: snapshot.id },
+        data: { superseded: true, supersededReason: "retroactive recalculation" },
+      });
 
-    await app.prisma.saldoSnapshot.create({
-      data: {
-        employeeId,
-        periodType: "MONTHLY",
-        periodStart: snapshot.periodStart,
-        periodEnd: snapshot.periodEnd,
-        workedMinutes: Math.round(workedMinutes),
-        expectedMinutes: Math.round(netExpected),
-        balanceMinutes,
-        carryOver,
-        closedAt: snapshot.closedAt,
-        closedBy: snapshot.closedBy,
-        note: snapshot.note,
-        // superseded defaults to false (new active row)
-      },
+      await tx.saldoSnapshot.create({
+        data: {
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: snapshot.periodStart,
+          periodEnd: snapshot.periodEnd,
+          workedMinutes: Math.round(workedMinutes),
+          expectedMinutes: Math.round(netExpected),
+          balanceMinutes,
+          carryOver,
+          closedAt: snapshot.closedAt,
+          closedBy: snapshot.closedBy,
+          note: snapshot.note,
+          // superseded defaults to false (new active row)
+        },
+      });
     });
 
     // Audit log with old/new values
