@@ -1,8 +1,21 @@
 # pnpm: Present as build tool in Docker image (corepack), not used at runtime.
-# Image uses pnpm@10.33.0 but Trivy detects the packageManager field declaring v9.
-# Runtime pnpm is v10.33.0 (installed via corepack prepare).
+# Image ships pnpm@10.34.5 (installed via corepack prepare in the Dockerfiles).
 CVE-2025-69262
 CVE-2025-69263
+
+# pnpm: Repository-controlled configDependencies can select a malicious native
+# install engine → arbitrary code execution (CVE-2026-55697 / GHSA-gj8w-mvpf-x27x).
+# Fixed only in the pnpm 11.x line (>=11.5.3); NO backport to the 10.x line, and
+# bumping the monorepo to pnpm 11 would disturb the pnpm@10-specific Prisma hoisting
+# in apps/api/Dockerfile (runtime stage). Not exploitable in our image: the exploit
+# requires `pnpm install` to process attacker-controlled configDependencies. The
+# production entrypoint never runs `pnpm install` — it uses the Prisma CLI + Node
+# directly, and the only pnpm invocation is `pnpm tsx` (a run command) against our
+# own baked, trusted workspace. Altering configDependencies would require write
+# access to the image filesystem (= full compromise already). The other 7 CVEs in
+# this pnpm cluster ARE fixed by the 10.33.0 → 10.34.5 bump. Revisit when a 10.x
+# backport lands or when the monorepo moves to pnpm 11.
+CVE-2026-55697
 
 # picomatch ReDoS in npm's bundled tinyglobby (/usr/local/lib/node_modules/npm/...).
 # Not exploitable: npm is a build/dev tool in the image, never exposed to user input at runtime.
