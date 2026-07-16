@@ -1,6 +1,6 @@
 # ── Stage 1: Install dependencies ───────────────────────────────────────────
 FROM node:24-alpine AS deps
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 WORKDIR /app
 
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
@@ -42,7 +42,7 @@ RUN apk update && apk upgrade --no-cache && apk add --no-cache su-exec
 RUN npm install -g npm@latest 2>/dev/null || true \
     && npm cache clean --force 2>/dev/null || true \
     && rm -rf /tmp/* /root/.npm/_cacache
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 WORKDIR /app
 
 # Copy full workspace from build (Prisma db push + seed need all deps at startup).
