@@ -18,7 +18,7 @@
  *   7. Retention-relevant row counts unchanged
  *      (TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount)
  */
-import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi, type MockInstance } from "vitest";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import type { FastifyInstance } from "fastify";
@@ -262,7 +262,7 @@ describe("anonymizeEmployeeData (helper)", () => {
     let piiAvatarPath: string;
     let piiDocPath: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let deleteSpy: ReturnType<typeof vi.spyOn<any, "delete">>;
+    let deleteSpy: MockInstance;
 
     beforeAll(async () => {
       const suffix = crypto.randomUUID().slice(0, 8);
