@@ -453,8 +453,16 @@
     }
   }
 
-  // ── Role gate ──────────────────────────────────────────────────────────────
+  // ── Role gate + initial load ───────────────────────────────────────────────
+  // WR-03 fix (Phase 76.23): merged the two separate onMount callbacks into one.
+  // The old pattern had a second onMount that set `mounted = true`, which caused
+  // the $effect below to fire immediately on mount (because `mounted` changed),
+  // resulting in two concurrent GET /shifts/week requests on every page load.
+  // Now: one onMount does the role check and triggers the initial load(); the
+  // $effect only re-fires on genuine week-navigation (cursorMonday changes).
+  let mounted = $state(false);
   onMount(() => {
+    mounted = true;
     const role = $authStore.user?.role;
     if (role !== "MANAGER" && role !== "ADMIN") {
       gated = true;
@@ -500,13 +508,20 @@
     }
   }
 
-  let mounted = $state(false);
-  onMount(() => {
-    mounted = true;
-  });
+  // WR-03 fix: $effect fires only on genuine week-navigation (cursorMonday
+  // value change), not on the initial mount. prevCursorMonday tracks the last
+  // loaded week; load() is called only when cursorMonday differs from it.
+  // This replaces the old boolean `mounted` guard which caused a double-load
+  // because setting mounted=true itself triggered the $effect.
+  let prevCursorMonday = $state<Date | null>(null);
   $effect(() => {
-    void cursorMonday;
-    if (mounted && !gated) void load();
+    // Declare reactive dependency on cursorMonday so Svelte tracks it.
+    const current = cursorMonday;
+    if (!mounted || gated) return;
+    if (prevCursorMonday && current.getTime() !== prevCursorMonday.getTime()) {
+      void load();
+    }
+    prevCursorMonday = new Date(current);
   });
 
   // ── Navigation ─────────────────────────────────────────────────────────────
