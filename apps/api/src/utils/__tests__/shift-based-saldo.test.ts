@@ -181,3 +181,103 @@ describe("calcShiftBasedSaldo — D-01 formula", () => {
     expect(result.expectedMinutes).toBe(9120);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D-09 roster-proration (Phase 76.22-04) — LIVE / open-month path only.
+//
+//   C_toDate = R_periodFull == 0 ? 0 : round(C × R_toDate ÷ R_periodFull)
+//   overtime = max(0, W − C_toDate),  undertime = max(0, R_toDate − W)
+//
+// When rosterProration is ABSENT the helper is byte-identical to the un-prorated formula
+// (proven by all tests above still passing unchanged). These tests cover the option.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("calcShiftBasedSaldo — D-09 roster-proration (open-month)", () => {
+  // Full-roster proration: R_toDate == R_periodFull → factor 1 → identical to no option.
+  // This is the month-end / complete-month case that keeps four-path parity green.
+  it("full roster (R_toDate == R_periodFull) → factor 1 → same as un-prorated", () => {
+    const params = {
+      contractSollMinutes: 9120, // C
+      rosterMinutes: 9900, // R (= R_toDate)
+      workedMinutes: 9900, // W
+    };
+    const withoutOption = calcShiftBasedSaldo(params);
+    const withFullRoster = calcShiftBasedSaldo({
+      ...params,
+      rosterProration: { rosterToDateMinutes: 9900, rosterPeriodMinutes: 9900 },
+    });
+    expect(withFullRoster.expectedMinutes).toBe(9120); // round(9120 × 9900/9900) = 9120
+    expect(withFullRoster.overtimeMinutes).toBe(780); // max(0, 9900 − 9120) = 780
+    expect(withFullRoster.undertimeMinutes).toBe(0);
+    expect(withFullRoster.balanceDelta).toBe(780);
+    // Byte-identical to the absent-option result.
+    expect(withFullRoster).toEqual(withoutOption);
+  });
+
+  // Half-progress proration: today is mid-month, half the month's roster is in the past.
+  // R_toDate = 4560, R_periodFull = 9120 → factor 0.5 → C_toDate = round(9120 × 0.5) = 4560.
+  // Employee has worked the first-half roster (W = 4560) → balance 0 (on-track, no phantom +).
+  it("half-progress (R_toDate/R_periodFull = 0.5) → C_toDate halved, worked matches → balance 0", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 9120, // C_periodFull
+      rosterMinutes: 4560, // R_toDate (undertime clause uses this)
+      workedMinutes: 4560, // W — worked the first-half roster
+      rosterProration: { rosterToDateMinutes: 4560, rosterPeriodMinutes: 9120 },
+    });
+    expect(result.expectedMinutes).toBe(4560); // round(9120 × 4560/9120) = 4560
+    expect(result.overtimeMinutes).toBe(0); // max(0, 4560 − 4560) = 0 (no phantom overtime)
+    expect(result.undertimeMinutes).toBe(0); // max(0, 4560 − 4560) = 0
+    expect(result.balanceDelta).toBe(0);
+  });
+
+  // Front-loaded roster: today mid-month, ALL of the month's shifts are in the first half
+  // (R_toDate == R_periodFull even though the calendar month is only half over).
+  // C_toDate = full C. Worked all rostered → over/undertime both 0 (contract not yet due? no:
+  // the whole roster is already delivered, so C_toDate = C and W = C_toDate handled by clause).
+  it("front-loaded roster (all shifts in first half) → C_toDate == C (roster fully accrued)", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 9120,
+      rosterMinutes: 9120, // R_toDate — whole roster already in the past half
+      workedMinutes: 9120, // W — worked all of it
+      rosterProration: { rosterToDateMinutes: 9120, rosterPeriodMinutes: 9120 },
+    });
+    expect(result.expectedMinutes).toBe(9120); // factor 1 — full roster already accrued
+    expect(result.overtimeMinutes).toBe(0);
+    expect(result.undertimeMinutes).toBe(0);
+    expect(result.balanceDelta).toBe(0);
+  });
+
+  // R_periodFull == 0 fallback: no roster planned for the open period → no daily Soll AND
+  // a zero open-month contribution. The Soll is *distributed* by the roster; with no roster
+  // nothing is due yet. Worked-without-a-roster must NOT read as phantom overtime (v1.8.15
+  // root bug) and an empty roster must NOT read as employee minus (§615) → balance 0.
+  it("R_periodFull == 0 fallback → expected 0, worked tracks to balance 0 (no phantom overtime)", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 9120,
+      rosterMinutes: 0, // R_toDate = 0 (no shifts)
+      workedMinutes: 2280, // employee tracked time but no roster exists
+      rosterProration: { rosterToDateMinutes: 0, rosterPeriodMinutes: 0 },
+    });
+    expect(result.expectedMinutes).toBe(0); // fallback: no daily Soll
+    expect(result.overtimeMinutes).toBe(0); // pure tracking — NOT max(0, 2280 − 0)
+    expect(result.undertimeMinutes).toBe(0);
+    expect(result.balanceDelta).toBe(0); // balance 0 — worked tracks, no phantom +
+  });
+
+  // §615 under-rostered open month: employer under-schedules; employee works all rostered.
+  // R_toDate = 3000, R_periodFull = 3000 (roster complete for the days that exist),
+  // C_periodFull = 9120 → C_toDate = round(9120 × 3000/3000) = 9120. But W = 3000 (all rostered).
+  // overtime = max(0, 3000 − 9120) = 0, undertime = max(0, 3000 − 3000) = 0 → balance 0 (§615).
+  it("§615 under-rostered: prorated C ≥ R_toDate, worked all rostered → balance 0 (no employee minus)", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 9120,
+      rosterMinutes: 3000, // R_toDate
+      workedMinutes: 3000, // W — worked every offered shift
+      rosterProration: { rosterToDateMinutes: 3000, rosterPeriodMinutes: 3000 },
+    });
+    // C_toDate = 9120 (factor 1: all planned shifts are in the past). Prorated C ≥ R_toDate.
+    expect(result.expectedMinutes).toBe(9120);
+    expect(result.overtimeMinutes).toBe(0); // max(0, 3000 − 9120) = 0
+    expect(result.undertimeMinutes).toBe(0); // max(0, 3000 − 3000) = 0
+    expect(result.balanceDelta).toBe(0); // §615: employer under-roster gap is NOT employee minus
+  });
+});
