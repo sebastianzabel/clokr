@@ -15,6 +15,7 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { getEffectiveBreakDuration } from "../utils/break-effective"; // v1.8.9 — SHIFT_BASED netto
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
+import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -534,9 +535,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // If a previous month is still open, this month is blocked
         if (previousOpen) {
           // PERF-V1814-01: count closed employees via pre-fetched snapshot Map (no DB call)
+          // isPeriodStartInMonth: @db.Date values come back as UTC midnight — a getTime()
+          // equality against the TZ-converted monthStart timestamp never matches.
           const closedCount = relevantEmployees.filter((e) =>
-            (snapshotsByEmp.get(e.id) ?? []).some(
-              (s) => s.periodStart.getTime() === monthStart.getTime(),
+            (snapshotsByEmp.get(e.id) ?? []).some((s) =>
+              isPeriodStartInMonth(s.periodStart, monthStart),
             ),
           ).length;
           months.push({
@@ -553,8 +556,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const closedIds = new Set(
           relevantEmployees
             .filter((e) =>
-              (snapshotsByEmp.get(e.id) ?? []).some(
-                (s) => s.periodStart.getTime() === monthStart.getTime(),
+              (snapshotsByEmp.get(e.id) ?? []).some((s) =>
+                isPeriodStartInMonth(s.periodStart, monthStart),
               ),
             )
             .map((e) => e.id),
@@ -798,11 +801,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       for (let m = seqStartMonth; m < month; m++) {
         const { start: prevStart } = monthRangeUtc(year, m, tz);
+        // Convention-robust window (see utils/snapshot-period.ts): matches both
+        // TZ-converted and legacy UTC-naive periodStart rows.
         const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
           where: {
             employeeId,
             periodType: "MONTHLY",
-            periodStart: prevStart,
+            periodStart: periodStartWindow(prevStart),
             superseded: false,
           },
         });
@@ -813,17 +818,43 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }
       }
 
-      // Check if snapshot already exists
+      // Check if snapshot already exists.
+      // Convention-robust window: a legacy UTC-naive snapshot (periodStart = the 1st)
+      // must also count as "closed" — an equality check on monthStart missed those
+      // rows and allowed duplicate active snapshots for the same month.
       const existing = await app.prisma.saldoSnapshot.findFirst({
         where: {
           employeeId,
           periodType: "MONTHLY",
-          periodStart: monthStart,
+          periodStart: periodStartWindow(monthStart),
           superseded: false,
         },
       });
       if (existing) {
         return reply.code(409).send({ error: "Monat ist bereits abgeschlossen" });
+      }
+
+      // Reject closing month N while a LATER month is already closed: the later
+      // snapshot's carryOver was computed WITHOUT this month's balance and would
+      // become stale (the saldo chain silently drops this month). The operator
+      // must unlock later months first, then close sequentially.
+      // NOTE gte (not gt): the NEXT month's TZ-converted periodStart is the LAST day
+      // of THIS month (e.g. July/Berlin summer → 2026-06-30), which equals monthEnd's
+      // date part. gt would miss exactly that row.
+      const laterSnapshot = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId,
+          periodType: "MONTHLY",
+          periodStart: { gte: monthEnd },
+          superseded: false,
+        },
+        orderBy: { periodStart: "asc" },
+      });
+      if (laterSnapshot) {
+        return reply.code(400).send({
+          error:
+            "Spätere Monate sind bereits abgeschlossen. Bitte zuerst die späteren Monate entsperren und dann sequentiell abschließen.",
+        });
       }
 
       // Don't allow closing future months

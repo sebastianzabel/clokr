@@ -16,6 +16,7 @@ import {
   getDayHoursFromSchedule,
 } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
+import { getEffectiveBreakDuration } from "./break-effective";
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -51,6 +52,8 @@ export async function recalculateSnapshots(
       tenantId: true,
       hireDate: true,
       isTimeTrackingExempt: true, // Phase 76.7 (D-06, SALDO-V19-04b)
+      breakOver6hOverride: true, // SHIFT_BASED netto (parity with overtime.ts close-month)
+      breakOver9hOverride: true,
       tenant: { select: { federalState: true } },
     },
   });
@@ -174,11 +177,30 @@ export async function recalculateSnapshots(
         const [h, m] = hm.split(":").map(Number);
         return (h ?? 0) * 60 + (m ?? 0);
       };
+      // SHIFT_BASED netto: subtract the configured break from each shift's brutto
+      // duration — parity with overtime.ts close-month (v1.8.9) and the live saldo
+      // path in time-entries.ts. Without this the recalc stored BRUTTO expected
+      // minutes, silently inflating the Soll by the break minutes per shift.
+      const recalcEmpBreakShape = {
+        breakOver6hOverride: employee.breakOver6hOverride ?? null,
+        breakOver9hOverride: employee.breakOver9hOverride ?? null,
+      };
+      const recalcTenantBreakShape = {
+        defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
+        defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
+      };
       let shiftMinutes = 0;
       for (const sh of shifts) {
         if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
-        const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-        if (dur > 0) shiftMinutes += dur;
+        let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+        if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
+        if (brutto <= 0) continue;
+        const breakMin = getEffectiveBreakDuration(
+          recalcEmpBreakShape,
+          recalcTenantBreakShape,
+          brutto,
+        );
+        shiftMinutes += Math.max(0, brutto - breakMin);
       }
       expectedMinutes = shiftMinutes;
       leaveMinutes = 0;

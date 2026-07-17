@@ -22,6 +22,7 @@ import { join } from "path";
 import { getTestApp, closeTestApp, cleanupTestData } from "../../__tests__/setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+import { monthRangeUtc } from "../../utils/timezone";
 
 describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsences invariant", () => {
   const PLUGIN_SOURCE_PATH = join(__dirname, "..", "auto-close-month.ts");
@@ -131,6 +132,24 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
         },
       });
       await prisma.overtimeAccount.create({ data: { employeeId: asEmp.id, balanceHours: 0 } });
+
+      // Sequential-close guard: April 2026 (hire month) must be closed before the
+      // cron may close May 2026. Seed a zero April snapshot.
+      const aprRange = monthRangeUtc(2026, 4, "Europe/Berlin");
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: asEmp.id,
+          periodType: "MONTHLY",
+          periodStart: aprRange.start,
+          periodEnd: aprRange.end,
+          workedMinutes: 0,
+          expectedMinutes: 0,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(),
+          closedBy: "test-system",
+        },
+      });
 
       // Seed time entries for every workday in May 2026 so completeness check
       // passes (skipping the day covered by leave).

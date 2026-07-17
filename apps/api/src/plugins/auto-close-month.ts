@@ -11,6 +11,8 @@ import {
 import { getEffectiveSchedule } from "../routes/time-entries";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+import { getEffectiveBreakDuration } from "../utils/break-effective";
+import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 
 declare module "fastify" {
@@ -110,11 +112,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           // Check if already closed — use findFirst with superseded:false.
           // The @@unique was replaced by a partial unique index (COMP-V1814-04); the compound
           // accessor no longer exists. superseded:false ensures only the active snapshot is checked.
+          // Convention-robust: periodStartWindow matches both the TZ-converted date
+          // (e.g. 2026-05-31 for June/Berlin) AND legacy UTC-naive rows (2026-06-01),
+          // so a manually/script-closed month is never re-closed by the cron.
           const existingSnapshot = await app.prisma.saldoSnapshot.findFirst({
             where: {
               employeeId: emp.id,
               periodType: "MONTHLY",
-              periodStart: monthStart,
+              periodStart: periodStartWindow(monthStart),
               superseded: false,
             },
           });
@@ -122,6 +127,45 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
           // Skip employees hired after this month
           if (emp.hireDate > monthEnd) continue;
+
+          // Sequential-close guard (parity with the manual close-month route, which
+          // rejects with "Bitte zuerst {Monat} abschließen"): NEVER close month N when
+          // month N-1 has no active snapshot — otherwise the prevSnapshot carry-over
+          // lookup silently skips over the open month and its entire balance is
+          // dropped from the saldo chain. Only exempt: employee was hired during or
+          // after the target month (no prior month exists for them).
+          {
+            let guardPrevYear = prevYear;
+            let guardPrevMonth = prevMonth - 1;
+            if (guardPrevMonth === 0) {
+              guardPrevMonth = 12;
+              guardPrevYear -= 1;
+            }
+            const { start: guardStart, end: guardEnd } = monthRangeUtc(
+              guardPrevYear,
+              guardPrevMonth,
+              tz,
+            );
+            const hireDateNormGuard = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
+            // Guard applies only if the employee was already employed in month N-1.
+            if (hireDateNormGuard <= guardEnd) {
+              const prevMonthSnapshot = await app.prisma.saldoSnapshot.findFirst({
+                where: {
+                  employeeId: emp.id,
+                  periodType: "MONTHLY",
+                  periodStart: periodStartWindow(guardStart),
+                  superseded: false,
+                },
+              });
+              if (!prevMonthSnapshot) {
+                app.log.warn(
+                  { employeeId: emp.id, month: prevMonth, year: prevYear },
+                  `Auto-Monatsabschluss: übersprungen — Vormonat ${guardPrevMonth}/${guardPrevYear} ist nicht abgeschlossen (sequentieller Abschluss erforderlich)`,
+                );
+                continue;
+              }
+            }
+          }
 
           const schedule = emp.workSchedules[0];
           if (!schedule) {
@@ -245,88 +289,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               );
             }, 0);
 
-            const expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
-
-            // Holiday minutes: merge computed Feiertage + manual DB entries, dedup by date string
-            const effectiveStartStr = dateStrInTz(effectiveStart, tz);
-            const monthEndStr = dateStrInTz(monthEnd, tz);
-            const acmComputedForSnap = getHolidays(prevYear, acmStateCode).filter(
-              (h) => h.date >= effectiveStartStr && h.date <= monthEndStr,
-            );
-            const computedSnapDateSet = new Set(acmComputedForSnap.map((h) => h.date));
-            const acmDbForSnap = await app.prisma.publicHoliday.findMany({
-              where: {
-                tenant: { employees: { some: { id: emp.id } } },
-                date: { gte: effectiveStart, lte: monthEnd },
-              },
-            });
-            // Build unified list of holiday dates as Date objects (no duplicates)
-            const allSnapHolidays: Date[] = [
-              ...acmComputedForSnap.map((h) => new Date(h.date + "T00:00:00Z")),
-              ...acmDbForSnap
-                .filter((h) => !computedSnapDateSet.has(dateStrInTz(h.date, tz)))
-                .map((h) => h.date),
-            ];
-            // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
-            const isMonthlyHoursDeduction =
-              String(schedule.type ?? "") === "MONTHLY_HOURS" &&
-              Number(schedule.monthlyHours ?? 0) > 0 &&
-              tenant.config?.monthlyHoursHolidayDeduction === true;
-
-            let workingDaysInRange = 0;
-            if (isMonthlyHoursDeduction) {
-              const wdCur = new Date(effectiveStart);
-              while (wdCur <= monthEnd) {
-                const wdDow = getDayOfWeekInTz(wdCur, tz);
-                if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
-                wdCur.setDate(wdCur.getDate() + 1);
-              }
-            }
-            const dailySollMin =
-              isMonthlyHoursDeduction && workingDaysInRange > 0
-                ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
-                : 0;
-
-            const holidayMinutes = allSnapHolidays.reduce((sum, hDate) => {
-              const dow = getDayOfWeekInTz(hDate, tz);
-              if (isMonthlyHoursDeduction) {
-                return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
-              }
-              return sum + getDayHoursFromSchedule(schedule, dow) * 60;
-            }, 0);
-
-            // D-06: exclude holidays inside leave/absence so a holiday-in-leave day is
-            // deducted once (holidayMinutes subtracts it separately — same source).
-            const snapHolidayStrs = new Set(allSnapHolidays.map((h) => dateStrInTz(h, tz)));
-
-            const approvedLeave = await app.prisma.leaveRequest.findMany({
-              where: {
-                employeeId: emp.id,
-                deletedAt: null, // required by soft-delete convention
-                status: "APPROVED",
-                startDate: { lte: monthEnd },
-                endDate: { gte: monthStart },
-              },
-            });
-            const isPureTracking =
-              String(schedule.type) === "MONTHLY_HOURS" &&
-              (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
-            let leaveMinutes = 0;
-            if (!isPureTracking) {
-              leaveMinutes = approvedLeave.reduce((sum, lr) => {
-                const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
-                const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-                if (leaveStart > leaveEnd) return sum;
-                // Phase 76.12 D-14 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
-                return (
-                  sum +
-                  calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
-                    halfDay: Boolean(lr.halfDay),
-                    excludeHolidays: snapHolidayStrs,
-                  })
-                );
-              }, 0);
-            }
+            const acmScheduleType = String(schedule.type ?? "");
 
             // Phase 63 — Berufsschule (BS) doubling for the auto-snapshot path.
             // Per D-01..D-04: VOCATIONAL_SCHOOL absences contribute the same minutes to
@@ -346,7 +309,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             });
             let bsWorkedMinutes = 0;
             let bsExpectedMinutes = 0;
-            const acmScheduleType = String(schedule.type ?? "");
             for (const ab of bsAbsences) {
               const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
               const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
@@ -366,33 +328,199 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               }
             }
 
-            // D-02: subtract general absences from expected (parity with manual overtime.ts close).
-            // Exclude VOCATIONAL_SCHOOL (balance-neutral via BS-doubling above) and PATTERN-source
-            // (auto-generated). Mirrors the leave day-sum (no holiday exclusion — auto-close is out
-            // of D-06 scope; keeps this path internally consistent).
-            const generalAbsences = await app.prisma.absence.findMany({
-              where: {
-                employeeId: emp.id,
-                deletedAt: null,
-                type: { not: "VOCATIONAL_SCHOOL" },
-                source: { not: "PATTERN" },
-                startDate: { lte: monthEnd },
-                endDate: { gte: effectiveStart },
-              },
-            });
+            // SHIFT_BASED: expectedMinutes = Σ actual shift netto durations for the month,
+            // skipping leave/absence-covered dates (parity with manual close-month in
+            // overtime.ts lines 884–986). Holiday, leave, and absence minutes are zeroed
+            // because they are already excluded from the shift sum via coveredDates.
+            let expectedMinutes: number;
+            let holidayMinutes = 0;
+            let leaveMinutes = 0;
             let absenceMinutes = 0;
-            if (!isPureTracking) {
-              absenceMinutes = generalAbsences.reduce((sum, ab) => {
-                const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
-                const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-                if (absStart > absEnd) return sum;
-                return (
-                  sum +
-                  calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
-                    excludeHolidays: snapHolidayStrs,
-                  })
-                );
+
+            if (acmScheduleType === "SHIFT_BASED") {
+              const shifts = await app.prisma.shift.findMany({
+                where: {
+                  employeeId: emp.id,
+                  date: { gte: effectiveStart, lte: monthEnd },
+                  deletedAt: null,
+                },
+                select: { date: true, startTime: true, endTime: true },
+              });
+              const approvedLeaveForShift = await app.prisma.leaveRequest.findMany({
+                where: {
+                  employeeId: emp.id,
+                  deletedAt: null,
+                  status: "APPROVED",
+                  startDate: { lte: monthEnd },
+                  endDate: { gte: effectiveStart },
+                },
+              });
+              const absencesForShift = await app.prisma.absence.findMany({
+                where: {
+                  employeeId: emp.id,
+                  deletedAt: null,
+                  startDate: { lte: monthEnd },
+                  endDate: { gte: effectiveStart },
+                },
+              });
+
+              // Build set of date strings covered by leave or absence (shifts on these days
+              // are excluded from the expected sum, matching overtime.ts SHIFT_BASED logic).
+              const coveredDates = new Set<string>();
+              const addCoveredRange = (s: Date, e: Date) => {
+                const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+                const end = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+                while (cur <= end) {
+                  coveredDates.add(dateStrInTz(cur, tz));
+                  cur.setUTCDate(cur.getUTCDate() + 1);
+                }
+              };
+              for (const lr of approvedLeaveForShift) {
+                const s = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+                const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+                if (s <= e) addCoveredRange(s, e);
+              }
+              for (const ab of absencesForShift) {
+                const s = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+                const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+                if (s <= e) addCoveredRange(s, e);
+              }
+
+              const hmToMin = (hm: string) => {
+                const [h, m] = hm.split(":").map(Number);
+                return (h ?? 0) * 60 + (m ?? 0);
+              };
+              const empBreakShape = {
+                breakOver6hOverride: emp.breakOver6hOverride ?? null,
+                breakOver9hOverride: emp.breakOver9hOverride ?? null,
+              };
+              const tenantBreakShape = {
+                defaultBreakOver6h: tenant.config?.defaultBreakOver6h ?? 30,
+                defaultBreakOver9h: tenant.config?.defaultBreakOver9h ?? 45,
+              };
+              let shiftMinutes = 0;
+              for (const sh of shifts) {
+                if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
+                let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+                if (brutto < 0) brutto += 24 * 60; // cross-midnight
+                if (brutto <= 0) continue;
+                const breakMin = getEffectiveBreakDuration(empBreakShape, tenantBreakShape, brutto);
+                shiftMinutes += Math.max(0, brutto - breakMin);
+              }
+              expectedMinutes = shiftMinutes;
+              // bsExpectedMinutes is added separately in totalExpected below, same as
+              // all other schedule types. holidayMinutes / leaveMinutes / absenceMinutes
+              // stay 0: covered days are already excluded from shiftMinutes via coveredDates.
+            } else {
+              expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+
+              // Holiday minutes: merge computed Feiertage + manual DB entries, dedup by date string
+              const effectiveStartStr = dateStrInTz(effectiveStart, tz);
+              const monthEndStr = dateStrInTz(monthEnd, tz);
+              const acmComputedForSnap = getHolidays(prevYear, acmStateCode).filter(
+                (h) => h.date >= effectiveStartStr && h.date <= monthEndStr,
+              );
+              const computedSnapDateSet = new Set(acmComputedForSnap.map((h) => h.date));
+              const acmDbForSnap = await app.prisma.publicHoliday.findMany({
+                where: {
+                  tenant: { employees: { some: { id: emp.id } } },
+                  date: { gte: effectiveStart, lte: monthEnd },
+                },
+              });
+              // Build unified list of holiday dates as Date objects (no duplicates)
+              const allSnapHolidays: Date[] = [
+                ...acmComputedForSnap.map((h) => new Date(h.date + "T00:00:00Z")),
+                ...acmDbForSnap
+                  .filter((h) => !computedSnapDateSet.has(dateStrInTz(h.date, tz)))
+                  .map((h) => h.date),
+              ];
+              // MONTHLY_HOURS Feiertagsabzug (Phase 15 — TENANT-01)
+              const isMonthlyHoursDeduction =
+                String(schedule.type ?? "") === "MONTHLY_HOURS" &&
+                Number(schedule.monthlyHours ?? 0) > 0 &&
+                tenant.config?.monthlyHoursHolidayDeduction === true;
+
+              let workingDaysInRange = 0;
+              if (isMonthlyHoursDeduction) {
+                const wdCur = new Date(effectiveStart);
+                while (wdCur <= monthEnd) {
+                  const wdDow = getDayOfWeekInTz(wdCur, tz);
+                  if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
+                  wdCur.setDate(wdCur.getDate() + 1);
+                }
+              }
+              const dailySollMin =
+                isMonthlyHoursDeduction && workingDaysInRange > 0
+                  ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
+                  : 0;
+
+              holidayMinutes = allSnapHolidays.reduce((sum, hDate) => {
+                const dow = getDayOfWeekInTz(hDate, tz);
+                if (isMonthlyHoursDeduction) {
+                  return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
+                }
+                return sum + getDayHoursFromSchedule(schedule, dow) * 60;
               }, 0);
+
+              // D-06: exclude holidays inside leave/absence so a holiday-in-leave day is
+              // deducted once (holidayMinutes subtracts it separately — same source).
+              const snapHolidayStrs = new Set(allSnapHolidays.map((h) => dateStrInTz(h, tz)));
+
+              const approvedLeave = await app.prisma.leaveRequest.findMany({
+                where: {
+                  employeeId: emp.id,
+                  deletedAt: null, // required by soft-delete convention
+                  status: "APPROVED",
+                  startDate: { lte: monthEnd },
+                  endDate: { gte: monthStart },
+                },
+              });
+              const isPureTracking =
+                String(schedule.type) === "MONTHLY_HOURS" &&
+                (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
+              if (!isPureTracking) {
+                leaveMinutes = approvedLeave.reduce((sum, lr) => {
+                  const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+                  const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+                  if (leaveStart > leaveEnd) return sum;
+                  // Phase 76.12 D-14 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
+                  return (
+                    sum +
+                    calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+                      halfDay: Boolean(lr.halfDay),
+                      excludeHolidays: snapHolidayStrs,
+                    })
+                  );
+                }, 0);
+              }
+
+              // D-02: subtract general absences from expected (parity with manual overtime.ts close).
+              // Exclude VOCATIONAL_SCHOOL (balance-neutral via BS-doubling above) and PATTERN-source
+              // (auto-generated). Mirrors the leave day-sum (no holiday exclusion — auto-close is out
+              // of D-06 scope; keeps this path internally consistent).
+              const generalAbsences = await app.prisma.absence.findMany({
+                where: {
+                  employeeId: emp.id,
+                  deletedAt: null,
+                  type: { not: "VOCATIONAL_SCHOOL" },
+                  source: { not: "PATTERN" },
+                  startDate: { lte: monthEnd },
+                  endDate: { gte: effectiveStart },
+                },
+              });
+              if (!isPureTracking) {
+                absenceMinutes = generalAbsences.reduce((sum, ab) => {
+                  const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+                  const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+                  if (absStart > absEnd) return sum;
+                  return (
+                    sum +
+                    calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+                      excludeHolidays: snapHolidayStrs,
+                    })
+                  );
+                }, 0);
+              }
             }
 
             const totalWorked = workedMinutes + bsWorkedMinutes;
