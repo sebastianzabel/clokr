@@ -1308,3 +1308,140 @@ describe("Fixture G — cancelled-shift guard: 3 soft-deleted, R=900, W=900, bal
     expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+// D-09 (Phase 76.22-04): LIVE open-month roster-proration.
+//
+// For the current OPEN month, the intra-period contract Soll is prorated by the ACTUAL
+// roster (R_toDate / R_periodFull), NOT the static workDays[] whitelist:
+//   C_toDate = R_periodFull == 0 ? 0 : round(C_periodFull × R_toDate / R_periodFull)
+//   overtime = max(0, W − C_toDate),  undertime = max(0, R_toDate − W)
+//
+// These tests exercise the LIVE path (updateOvertimeAccount) with February OPEN (now = Feb 16),
+// January closed. So the open range is a single calendar month (Feb) → proration applies.
+//
+// Config (same as the parity fixtures): weeklyHours=38, Mon–Fri, SHIFT_BASED, zero break
+// overrides. February 2026 has 20 Mon–Fri workdays. Full-month C = round(38×60×20/5) = 9120.
+// ════════════════════════════════════════════════════════════════════════════
+const MID_FEB_NOW = new Date("2026-02-16T10:00:00.000Z");
+const FEB_FIRST_HALF = FEB_MON_FRI.filter((d) => d <= "2026-02-16"); // Feb 2–6, 9–13, 16
+const FEB_SECOND_HALF = FEB_MON_FRI.filter((d) => d > "2026-02-16"); // Feb 17–27
+
+describe("D-09 live open-month roster-proration (Phase 76.22-04)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  }, 120_000);
+
+  afterAll(async () => {
+    vi.useRealTimers();
+  });
+
+  /** Close January so the open range at MID_FEB_NOW is Feb-only (single month). */
+  async function setupOpenFeb(slug: string): Promise<{ tenantId: string; empId: string }> {
+    const fixture = await createFixtureTenant(app, slug, new Date("2026-01-01T00:00:00Z"));
+    await closeJanManual(
+      app,
+      fixture.adminToken,
+      fixture.employee.id,
+      new Date("2026-01-01T00:00:00Z"),
+    );
+    return { tenantId: fixture.tenantId, empId: fixture.employee.id };
+  }
+
+  // Front-loaded roster: ALL shifts in the first half of February (Feb 2–13), employee works
+  // them all; today = Feb 16. R_toDate == R_periodFull (no future shifts) → factor 1 → C_toDate
+  // = full C for the elapsed days. Worked == roster == C_toDate → balance 0. Crucially the Soll
+  // follows the roster distribution, NOT the flat workDays whitelist (which would keep accruing
+  // Soll on Feb 16 with no shift and read a phantom minus).
+  it("front-loaded roster (all shifts first half), worked all → balance 0 (Soll follows roster)", async () => {
+    const { tenantId, empId } = await setupOpenFeb("d09-front");
+    try {
+      const shiftDays = FEB_FIRST_HALF.filter((d) => d < "2026-02-16"); // Feb 2–13 (8 days)
+      for (const d of shiftDays) {
+        await seedShift(app, empId, d, 456);
+        await seedEntry(app, empId, d, 456);
+      }
+      const live = await liveBalanceAt(app, empId, MID_FEB_NOW.toISOString());
+      // R_toDate = R_periodFull = 8×456 (no future shifts). Prorated C = round(C×1) = C_elapsed.
+      // W = 8×456 = R. Model B/§615: max(0, W−C) − max(0, R−W) = 0 (W == R, C ≥ R).
+      expect(live).toBeCloseTo(0, 1);
+    } finally {
+      await cleanupTestData(app, tenantId);
+    }
+  }, 120_000);
+
+  // Under-rostered open month: employer rosters only 3 shifts in the whole of February, employee
+  // works all 3; today = Feb 16 (all 3 shifts are in the past). §615: employee worked every
+  // offered shift (W == R) → NO employee minus.
+  it("under-rostered open month, worked all offered shifts → balance ≥ 0 (§615, no minus)", async () => {
+    const { tenantId, empId } = await setupOpenFeb("d09-under");
+    try {
+      const shiftDays = ["2026-02-03", "2026-02-05", "2026-02-10"]; // 3 shifts, all ≤ Feb 16
+      for (const d of shiftDays) {
+        await seedShift(app, empId, d, 450);
+        await seedEntry(app, empId, d, 450);
+      }
+      const live = await liveBalanceAt(app, empId, MID_FEB_NOW.toISOString());
+      // R_toDate = R_periodFull = 1350. C_toDate = round(C_elapsed × 1) = C_elapsed ≫ 1350.
+      // overtime = max(0, 1350 − C_elapsed) = 0; undertime = max(0, 1350 − 1350) = 0 → balance 0.
+      expect(live).toBeCloseTo(0, 1);
+      expect(live).toBeGreaterThanOrEqual(0); // never employee minus
+    } finally {
+      await cleanupTestData(app, tenantId);
+    }
+  }, 120_000);
+
+  // Roster spans the whole month (elapsed first-half worked + future second-half planned).
+  // R_toDate < R_periodFull → C_toDate prorated DOWN to the elapsed roster share → the not-yet-due
+  // second-half shifts do NOT create a premature minus, and worked-matches-elapsed reads balance 0.
+  it("roster spans whole month, worked elapsed half → C prorated down, balance 0 (no phantom minus)", async () => {
+    const { tenantId, empId } = await setupOpenFeb("d09-spread");
+    try {
+      const elapsed = FEB_FIRST_HALF.filter((d) => d < "2026-02-16"); // Feb 2–13 (8 days)
+      for (const d of elapsed) {
+        await seedShift(app, empId, d, 456);
+        await seedEntry(app, empId, d, 456);
+      }
+      for (const d of FEB_SECOND_HALF) {
+        await seedShift(app, empId, d, 456); // future-planned shift, not yet worked
+      }
+      const live = await liveBalanceAt(app, empId, MID_FEB_NOW.toISOString());
+      // R_toDate = 8×456 = 3648, R_periodFull = 13×456 = 5928. Factor 3648/5928.
+      // C_toDate = round(C_elapsed × factor) ≥ R_toDate. W = 3648 = R_toDate → balance 0.
+      expect(live).toBeCloseTo(0, 1);
+    } finally {
+      await cleanupTestData(app, tenantId);
+    }
+  }, 120_000);
+
+  // R_periodFull == 0 open month: no shifts at all, employee tracked time. Fallback → no daily
+  // Soll, zero open-month contribution → balance 0 (MONTHLY_HOURS-style pure tracking).
+  it("R_periodFull == 0 (no roster), worked → balance 0 (pure tracking, no phantom overtime)", async () => {
+    const { tenantId, empId } = await setupOpenFeb("d09-noroster");
+    try {
+      for (const d of FEB_FIRST_HALF.filter((d) => d < "2026-02-16")) {
+        await seedEntry(app, empId, d, 456);
+      }
+      const live = await liveBalanceAt(app, empId, MID_FEB_NOW.toISOString());
+      expect(live).toBeCloseTo(0, 1); // no phantom + despite worked minutes without a roster
+    } finally {
+      await cleanupTestData(app, tenantId);
+    }
+  }, 120_000);
+
+  // Phantom-overtime open-month fixture (the +36h prod case) still reads balance 0 while OPEN.
+  it("+phantom open-month fixture (0 shifts, worked) still reads balance 0 while open", async () => {
+    const { tenantId, empId } = await setupOpenFeb("d09-phantom");
+    try {
+      for (const d of FEB_FIRST_HALF.filter((d) => d < "2026-02-16")) {
+        await seedEntry(app, empId, d, 456);
+      }
+      const live = await liveBalanceAt(app, empId, MID_FEB_NOW.toISOString());
+      expect(live).toBeCloseTo(0, 1);
+    } finally {
+      await cleanupTestData(app, tenantId);
+    }
+  }, 120_000);
+});

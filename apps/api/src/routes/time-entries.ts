@@ -1792,56 +1792,180 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
       defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
     };
-    let shiftMinutes = 0; // R = Σ netto active shifts (deletedAt=null, coveredDates excluded)
-    for (const sh of shifts) {
-      if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
-      let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-      if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
-      if (brutto <= 0) continue;
-      const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
-      const netto = Math.max(0, brutto - breakMin);
-      shiftMinutes += netto;
-    }
+    // Netto reducer: Σ active shift netto (break-subtracted), covered days excluded.
+    // Shared by R_toDate (open range) and R_periodFull (whole open month) so both use
+    // byte-identical break/cross-midnight/covered-day rules (D-09 proration correctness).
+    const sumShiftNetto = (
+      list: { date: Date; startTime: string; endTime: string }[],
+      covered: Set<string>,
+    ): number => {
+      let total = 0;
+      for (const sh of list) {
+        if (covered.has(dateStrInTz(sh.date, tz))) continue;
+        let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+        if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
+        if (brutto <= 0) continue;
+        const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
+        total += Math.max(0, brutto - breakMin);
+      }
+      return total;
+    };
 
-    // Phase 76.22 — Model B + § 615: C_net = contract Ø-Methode Soll minus
-    // leave/absence credits (Ausfallprinzip). VOCATIONAL_SCHOOL + source=PATTERN
-    // absences excluded — handled via bsExpectedMinutes (D-06, Phase 63).
-    // Holiday credit included automatically by calcExpectedMinutesTz.
+    // ── Model B + § 615 (Phase 76.22) with D-09 roster-proration (Phase 76.22-04) ──
+    // C_net = contract Ø-Methode Soll minus leave/absence credits (Ausfallprinzip).
+    // VOCATIONAL_SCHOOL + source=PATTERN absences excluded (handled via bsExpectedMinutes,
+    // D-06, Phase 63). Holiday credit is included automatically by calcExpectedMinutesTz.
     //
     // D-03 note: avgWorkMinutesCore denominator uses {day}Hours>0 count, which equals
     // workDays[].length for all valid post-Phase-61 rows (CLAUDE.md invariant). No change
     // to the denominator source — FLEXTIME parity is preserved.
-    const liveContractSoll = calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
-    const liveLeaveCredit = approvedLeave.reduce((sum, lr) => {
-      const leaveStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
-      const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-      if (leaveStart > leaveEnd) return sum;
-      return (
-        sum +
-        calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
-          halfDay: Boolean(lr.halfDay),
-        })
-      );
-    }, 0);
-    const liveAbsenceCredit = absences.reduce((sum, ab) => {
-      // VOCATIONAL_SCHOOL + source=PATTERN excluded from credit loop (Phase 76.22 D-06).
-      if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
-      const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-      const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      if (absStart > absEnd) return sum;
-      return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
-    }, 0);
-    // C_net: contract Soll net of leave/absence credits. The live path has no bsExpectedMinutes
-    // in the SHIFT_BASED branch (existing gap — not introduced here). bsWorkedMinutes from the
-    // outer block is still added at the openPeriodBalance site as before.
-    const liveCNet = Math.max(0, liveContractSoll - liveLeaveCredit - liveAbsenceCredit);
-    const liveSbSaldo = calcShiftBasedSaldo({
-      contractSollMinutes: liveCNet,
-      rosterMinutes: shiftMinutes,
-      workedMinutes,
+    //
+    // D-09: the contract Soll is *distributed* across days by the actual Schichtplan, not by
+    // the static workDays[] whitelist (which cannot encode a floating roster). For the current
+    // OPEN partial month the intra-period Soll is prorated by roster progress:
+    //   C_toDate = R_periodFull == 0 ? 0 : round(C_currentMonth × R_toDate / R_periodFull)
+    // Prior COMPLETE months in the open range keep their full contract Soll (un-prorated), so
+    // the "close doesn't change the saldo" invariant holds: a closed month stores un-prorated C,
+    // and the un-prorated prior-months block reproduces exactly that. Only the still-open current
+    // month is roster-prorated. At month end R_toDate == R_periodFull → factor 1 → identical.
+    //
+    // Split the open range at the current-month boundary. The current month = the calendar month
+    // of effectiveEnd; everything before it is "prior complete months". Compute two blobs:
+    //   (1) prior-months blob [rangeStart .. dayBefore(currentMonthStart)] — un-prorated (matches
+    //       the pre-D-09 Model B behavior byte-for-byte, so close/cron/recalc parity is kept);
+    //   (2) current-month blob [currentMonthStart .. effectiveEnd] — roster-prorated (D-09).
+    // For the normal production case (all prior months snapshot-closed) the range is a single
+    // month → only blob (2) runs. Sum the two balanceDeltas + effective C's.
+    const currentMonthRange = monthRangeUtc(
+      effectiveEnd.getUTCFullYear(),
+      effectiveEnd.getUTCMonth() + 1,
+      tz,
+    );
+    const currentMonthStart =
+      currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
+
+    // Helper: net contract Soll (C_net) for a sub-range, using the same credit rules as before.
+    const cNetForRange = (segStart: Date, segEnd: Date): number => {
+      if (segStart > segEnd) return 0;
+      const contractSoll = calcExpectedMinutesTz(schedule, segStart, segEnd, tz);
+      const leaveCredit = approvedLeave.reduce((sum, lr) => {
+        const s = lr.startDate < segStart ? segStart : lr.startDate;
+        const e = lr.endDate > segEnd ? segEnd : lr.endDate;
+        if (s > e) return sum;
+        return (
+          sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz, { halfDay: Boolean(lr.halfDay) })
+        );
+      }, 0);
+      const absenceCredit = absences.reduce((sum, ab) => {
+        // VOCATIONAL_SCHOOL + source=PATTERN excluded from credit loop (Phase 76.22 D-06).
+        if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
+        const s = ab.startDate < segStart ? segStart : ab.startDate;
+        const e = ab.endDate > segEnd ? segEnd : ab.endDate;
+        if (s > e) return sum;
+        return sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz);
+      }, 0);
+      return Math.max(0, contractSoll - leaveCredit - absenceCredit);
+    };
+    // Helper: Σ netto active shifts and Σ worked netto (TimeEntry) for a sub-range.
+    const rosterForRange = (segStart: Date, segEnd: Date): number => {
+      if (segStart > segEnd) return 0;
+      const inSeg = shifts.filter((sh) => sh.date >= segStart && sh.date <= segEnd);
+      return sumShiftNetto(inSeg, coveredDates);
+    };
+    const workedForRange = (segStart: Date, segEnd: Date): number =>
+      entries.reduce((sum, e) => {
+        if (!e.endTime || e.date < segStart || e.date > segEnd) return sum;
+        return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+      }, 0);
+
+    let totalBalanceDelta = 0;
+    let totalExpected = 0;
+
+    // (1) Prior complete months — un-prorated Model B (byte-identical to pre-D-09).
+    if (rangeStart < currentMonthStart) {
+      const priorEnd = new Date(currentMonthStart.getTime() - 86400000);
+      const priorSaldo = calcShiftBasedSaldo({
+        contractSollMinutes: cNetForRange(rangeStart, priorEnd),
+        rosterMinutes: rosterForRange(rangeStart, priorEnd),
+        workedMinutes: workedForRange(rangeStart, priorEnd),
+      });
+      totalBalanceDelta += priorSaldo.balanceDelta;
+      totalExpected += priorSaldo.expectedMinutes;
+    }
+
+    // (2) Current open partial month — roster-prorated (D-09).
+    //   C_toDate = R_periodFull == 0 ? 0 : round(C_periodFull × R_toDate / R_periodFull)
+    // C_periodFull is the FULL-month contract Soll over [currentMonthStart .. monthEnd] — the
+    // whole remaining month from the open-range start (NOT just the elapsed days; the roster
+    // factor R_toDate/R_periodFull does the intra-period proration). R_periodFull spans the same
+    // window so the factor is a pure "roster progress" ratio.
+    //   R_toDate     = Σ active shift netto for shift-days ≤ effectiveEnd (this month).
+    //   R_periodFull = Σ active shift netto for the WHOLE current month window (incl. future
+    //                  shifts), same netto/break/covered rules as R_toDate.
+    // R_periodFull == 0 → helper fallback (no daily Soll, zero contribution): pure tracking,
+    // no phantom overtime, no §615 minus.
+    const curCNet = cNetForRange(currentMonthStart, currentMonthRange.end); // C_periodFull
+    const curRosterToDate = rosterForRange(currentMonthStart, effectiveEnd); // R_toDate
+    const curWorked = workedForRange(currentMonthStart, effectiveEnd);
+    const monthShifts = await app.prisma.shift.findMany({
+      where: {
+        employeeId,
+        date: { gte: currentMonthRange.start, lte: currentMonthRange.end },
+        deletedAt: null, // saldo math ignores soft-deleted (employer-cancelled) shifts
+      },
+      select: { date: true, startTime: true, endTime: true },
     });
-    expectedMinutes = liveSbSaldo.expectedMinutes; // = C_net (used for display + bsExpectedMinutes path)
-    shiftBalanceOverride = liveSbSaldo.balanceDelta; // D-01; bsWorkedMinutes added at openPeriodBalance site
+    // Full-month covered days (leave/absence) so covered future shift-days are excluded from
+    // R_periodFull consistently with R_toDate.
+    const monthLeave = await app.prisma.leaveRequest.findMany({
+      where: {
+        employeeId,
+        deletedAt: null,
+        status: "APPROVED",
+        startDate: { lte: currentMonthRange.end },
+        endDate: { gte: currentMonthRange.start },
+      },
+      select: { startDate: true, endDate: true },
+    });
+    const monthAbsences = await app.prisma.absence.findMany({
+      where: {
+        employeeId,
+        deletedAt: null,
+        startDate: { lte: currentMonthRange.end },
+        endDate: { gte: currentMonthRange.start },
+      },
+      select: { startDate: true, endDate: true },
+    });
+    const monthCovered = new Set<string>();
+    const addMonthRange = (s: Date, e: Date) => {
+      const start = s < currentMonthRange.start ? currentMonthRange.start : s;
+      const end = e > currentMonthRange.end ? currentMonthRange.end : e;
+      if (start > end) return;
+      const cur = new Date(dateStrInTz(start, tz) + "T00:00:00Z");
+      const last = new Date(dateStrInTz(end, tz) + "T00:00:00Z");
+      while (cur <= last) {
+        monthCovered.add(dateStrInTz(cur, tz));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    };
+    for (const lr of monthLeave) addMonthRange(lr.startDate, lr.endDate);
+    for (const ab of monthAbsences) addMonthRange(ab.startDate, ab.endDate);
+    const curRosterPeriodFull = sumShiftNetto(monthShifts, monthCovered); // R_periodFull
+    const curSaldo = calcShiftBasedSaldo({
+      contractSollMinutes: curCNet,
+      rosterMinutes: curRosterToDate, // R_toDate (undertime clause)
+      workedMinutes: curWorked,
+      // D-09: prorate the current open month's Soll by roster progress.
+      rosterProration: {
+        rosterToDateMinutes: curRosterToDate,
+        rosterPeriodMinutes: curRosterPeriodFull,
+      },
+    });
+    totalBalanceDelta += curSaldo.balanceDelta;
+    totalExpected += curSaldo.expectedMinutes;
+
+    expectedMinutes = totalExpected; // effective (prorated) C_net for the open range
+    shiftBalanceOverride = totalBalanceDelta; // D-01; bsWorkedMinutes added at openPeriodBalance site
 
     // Leave/absence already excluded above via C_net credits and coveredDates (R).
     // Manager-assigned shifts on Feiertagen count as worked. Zero out subtractions
