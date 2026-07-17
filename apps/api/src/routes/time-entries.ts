@@ -22,6 +22,7 @@ import { hasApprovedLeaveOnDate } from "../utils/leave-check";
 import { resolveClockEvent } from "../services/clock/resolver";
 import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
+import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -1715,9 +1716,18 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   let expectedMinutes = 0;
   let leaveMinutes = 0;
   let absenceMinutes = 0;
+  // Phase 76.22: non-null only in SHIFT_BASED branch; replaces the openPeriodBalance
+  // expression so the D-01 two-clause formula is used instead of the flat subtraction.
+  // shiftBalanceOverride = calcShiftBasedSaldo.balanceDelta (WITHOUT bsWorkedMinutes —
+  // that is added at the openPeriodBalance site so the live path's existing bs handling
+  // remains intact; the live path has no bsExpectedMinutes in the SHIFT_BASED branch
+  // today, which is an existing gap tracked separately).
+  let shiftBalanceOverride: number | null = null;
 
   if (scheduleType === "SHIFT_BASED") {
-    // ── SHIFT_BASED: expected = Σ Shift durations minus leave/absence-covered days ─
+    // ── SHIFT_BASED: Model B + § 615 (Phase 76.22) ──────────────────────────
+    // expectedMinutes = C_net (contract Ø-Methode − leave/absence credits).
+    // balanceDelta via calcShiftBasedSaldo (D-01: max(0,W−C) − max(0,R−W)).
     const shifts = await app.prisma.shift.findMany({
       where: {
         employeeId,
@@ -1782,6 +1792,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
       defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
     };
+    let shiftMinutes = 0; // R = Σ netto active shifts (deletedAt=null, coveredDates excluded)
     for (const sh of shifts) {
       if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
       let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
@@ -1789,11 +1800,52 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       if (brutto <= 0) continue;
       const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
       const netto = Math.max(0, brutto - breakMin);
-      expectedMinutes += netto;
+      shiftMinutes += netto;
     }
 
-    // Leave/absence already excluded above; manager-assigned shifts on Feiertagen
-    // count as worked. Zero out subtractions to avoid double-deduction.
+    // Phase 76.22 — Model B + § 615: C_net = contract Ø-Methode Soll minus
+    // leave/absence credits (Ausfallprinzip). VOCATIONAL_SCHOOL + source=PATTERN
+    // absences excluded — handled via bsExpectedMinutes (D-06, Phase 63).
+    // Holiday credit included automatically by calcExpectedMinutesTz.
+    //
+    // D-03 note: avgWorkMinutesCore denominator uses {day}Hours>0 count, which equals
+    // workDays[].length for all valid post-Phase-61 rows (CLAUDE.md invariant). No change
+    // to the denominator source — FLEXTIME parity is preserved.
+    const liveContractSoll = calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
+    const liveLeaveCredit = approvedLeave.reduce((sum, lr) => {
+      const leaveStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
+      const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
+      if (leaveStart > leaveEnd) return sum;
+      return (
+        sum +
+        calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+          halfDay: Boolean(lr.halfDay),
+        })
+      );
+    }, 0);
+    const liveAbsenceCredit = absences.reduce((sum, ab) => {
+      // VOCATIONAL_SCHOOL + source=PATTERN excluded from credit loop (Phase 76.22 D-06).
+      if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
+      const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
+      const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+      if (absStart > absEnd) return sum;
+      return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+    }, 0);
+    // C_net: contract Soll net of leave/absence credits. The live path has no bsExpectedMinutes
+    // in the SHIFT_BASED branch (existing gap — not introduced here). bsWorkedMinutes from the
+    // outer block is still added at the openPeriodBalance site as before.
+    const liveCNet = Math.max(0, liveContractSoll - liveLeaveCredit - liveAbsenceCredit);
+    const liveSbSaldo = calcShiftBasedSaldo({
+      contractSollMinutes: liveCNet,
+      rosterMinutes: shiftMinutes,
+      workedMinutes,
+    });
+    expectedMinutes = liveSbSaldo.expectedMinutes; // = C_net (used for display + bsExpectedMinutes path)
+    shiftBalanceOverride = liveSbSaldo.balanceDelta; // D-01; bsWorkedMinutes added at openPeriodBalance site
+
+    // Leave/absence already excluded above via C_net credits and coveredDates (R).
+    // Manager-assigned shifts on Feiertagen count as worked. Zero out subtractions
+    // to avoid double-deduction at the openPeriodBalance site.
     leaveMinutes = 0;
     absenceMinutes = 0;
     holidayMinutes = 0;
@@ -1962,13 +2014,19 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   }
 
   // Saldo = Snapshot-CarryOver + offener Zeitraum
+  // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride
+  // (calcShiftBasedSaldo.balanceDelta = max(0,W−C) − max(0,R−W)).
+  // bsWorkedMinutes is still added on the worked side (existing live-path bs handling).
+  // Non-SHIFT branches keep the flat worked − max(0, expected+bs−holidays−leave−absence).
   const openPeriodBalance =
-    workedMinutes +
-    bsWorkedMinutes -
-    Math.max(
-      0,
-      expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
-    );
+    shiftBalanceOverride !== null
+      ? shiftBalanceOverride + bsWorkedMinutes
+      : workedMinutes +
+        bsWorkedMinutes -
+        Math.max(
+          0,
+          expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
+        );
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
   // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)
