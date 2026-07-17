@@ -7,6 +7,7 @@ import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import {
   monthFirstRefinement,
   MONTH_FIRST_ERROR,
+  MODEL_SWITCH_SAME_MONTH_ERROR,
   snapToMonthFirstUtc,
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
@@ -431,6 +432,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       // Auf bestehende MA anwenden: Neue Schedule-Version für alle MA,
       // deren aktueller Schedule noch den alten Defaults entspricht
       let appliedCount = 0;
+      // Phase 76.24 (D-01) — tracks employees skipped due to same-month model-switch
+      // collision (existing row at validFrom has a different type than FIXED_SCHEDULE).
+      // Returned in the response so operators can handle them via the single-employee path.
+      let skippedModelSwitch = 0;
       if (applyToExisting) {
         const employees = await app.prisma.employee.findMany({
           where: { tenantId },
@@ -487,6 +492,22 @@ export async function settingsRoutes(app: FastifyInstance) {
             appliedCount++;
           } else if (current.type === "FIXED_SCHEDULE") {
             // Nur FIXED_SCHEDULE MA updaten (nicht Minijobber)
+
+            // Phase 76.24 (D-01 / T-76.24-03) — same-month type-change collision guard.
+            // Bulk apply always writes FIXED_SCHEDULE at `now` (month-1st). If a row
+            // already exists at that validFrom with a DIFFERENT type, skip this employee
+            // to prevent a silent overwrite of their AZ-model history. Surface skipped
+            // employees via `skippedModelSwitch` in the response body so the operator
+            // can handle them individually via PUT /settings/work/:employeeId.
+            const existingAtNow = await app.prisma.workSchedule.findFirst({
+              where: { employeeId: emp.id, validFrom: now },
+              select: { type: true },
+            });
+            if (existingAtNow && existingAtNow.type !== "FIXED_SCHEDULE") {
+              skippedModelSwitch++;
+              continue;
+            }
+
             // Phase 61 (v1.6.5) — same as above: derive workDays from the
             // per-day-hours that are actually being written for this employee.
             const updateHours: PerDayHours = {
@@ -570,7 +591,12 @@ export async function settingsRoutes(app: FastifyInstance) {
         });
       }
 
-      return { ...config, federalState: federalState ?? undefined, appliedCount };
+      return {
+        ...config,
+        federalState: federalState ?? undefined,
+        appliedCount,
+        skippedModelSwitch,
+      };
     },
   });
 
@@ -691,6 +717,15 @@ export async function settingsRoutes(app: FastifyInstance) {
               where: { employeeId, validFrom },
             });
 
+            // Phase 76.24 (D-01) — same-month type-change collision guard.
+            // A type change requires a CLEAN month boundary (no existing row at
+            // validFrom with a differing type). If a row exists with a different
+            // type, reject with MODEL_SWITCH_SAME_MONTH_ERROR. A pure hours-only
+            // edit (existing.type === body.type) keeps the update-in-place path.
+            if (existingForDate && existingForDate.type !== body.type) {
+              return reply.code(400).send({ error: MODEL_SWITCH_SAME_MONTH_ERROR });
+            }
+
             // $transaction returns the created/updated schedule via Promise.
             const schedule = await app.prisma.$transaction(async (tx) => {
               // 1. Delete all future shifts
@@ -779,6 +814,15 @@ export async function settingsRoutes(app: FastifyInstance) {
       const existing = await app.prisma.workSchedule.findFirst({
         where: { employeeId, validFrom },
       });
+
+      // Phase 76.24 (D-01) — same-month type-change collision guard.
+      // A type change requires a CLEAN month boundary (no existing row at
+      // validFrom with a differing type). If a row exists with a different
+      // type, reject with MODEL_SWITCH_SAME_MONTH_ERROR. A pure hours-only
+      // edit (existing.type === body.type) keeps the update-in-place path (D-01a).
+      if (existing && existing.type !== body.type) {
+        return reply.code(400).send({ error: MODEL_SWITCH_SAME_MONTH_ERROR });
+      }
 
       let schedule;
       const old = existing;
