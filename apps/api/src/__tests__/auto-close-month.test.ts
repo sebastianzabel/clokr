@@ -395,8 +395,15 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         where: { employeeId: empId, periodType: "MONTHLY", superseded: false },
       });
       expect(snapshot, "snapshot should have been created by auto-close").not.toBeNull();
-      // expectedMinutes must equal shift netto sum = 1425, not the Ø-Methode (~8360)
-      expect(snapshot!.expectedMinutes).toBe(1425);
+      // Phase 76.22 — Model B re-pin (SALDO-V1816-01): expectedMinutes is now C_net
+      // (contract Ø-Methode Soll), NOT Σ shift netto durations (Model A was 1425).
+      //
+      // Computation:
+      //   Schedule: weeklyHours=38, Tue+Thu+Fri (3 days/week).
+      //   January 2024 has 13 Tue+Thu+Fri workdays (5 Tue + 4 Thu + 4 Fri).
+      //   C = round(38 × 60 × 13 / 3) = round(9880) = 9880 min.
+      //   No leave/absence → C_net = 9880 (stored as expectedMinutes, not R=1425).
+      expect(snapshot!.expectedMinutes).toBe(9880); // Model B C_net (was 1425 in Model A)
 
       await cleanupTestData(app, tenant.id);
     });
@@ -471,8 +478,19 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         where: { employeeId: empId, periodType: "MONTHLY", superseded: false },
       });
       expect(snapshot, "snapshot should have been created").not.toBeNull();
-      // Only Jan 2 shift counts: 540 brutto - 30 break = 510 netto
-      expect(snapshot!.expectedMinutes).toBe(510);
+      // Phase 76.22 — Model B re-pin (SALDO-V1816-01): expectedMinutes is now C_net
+      // (contract Ø-Methode Soll net of leave credit), NOT Σ uncovered shift netto (Model A was 510).
+      //
+      // Computation:
+      //   Schedule override: weeklyHours=38, Tue+Thu only (2 days/week), fridayHours=0.
+      //   January 2024 has 9 Tue+Thu workdays (5 Tue + 4 Thu).
+      //   C = round(38 × 60 × 9 / 2) = round(10260) = 10260 min.
+      //   Leave credit (Jan 4, Thu, 1 day): calcLeaveAbsenceMinutesTz = round(38×60×1/2) = 1140 min.
+      //   C_net = 10260 − 1140 = 9120 min (stored as expectedMinutes, not R=510).
+      //   R (roster, Jan 2 shift only — Jan 4 in coveredDates): 510 min.
+      //   W (worked) = 0 (only time entries without meaningful endTime were seeded for readiness).
+      //   balance = max(0,0−9120) − max(0,510−0) = −510 min.
+      expect(snapshot!.expectedMinutes).toBe(9120); // Model B C_net (was 510 in Model A)
 
       await cleanupTestData(app, tenant.id);
     });
@@ -741,8 +759,12 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         where: { employeeId: empId, periodType: "MONTHLY", superseded: false },
       });
       expect(active).not.toBeNull();
-      // Before the fix the recalc stored BRUTTO (1515); netto is 1425.
-      expect(active!.expectedMinutes).toBe(1425);
+      // Phase 76.22 — Model B re-pin (SALDO-V1816-01): expectedMinutes is now C_net
+      // (contract Ø-Methode Soll), NOT Σ shift netto (Model A was 1425, before that BRUTTO 1515).
+      //
+      // Same fixture as the auto-close test above (Tue+Thu+Fri, Jan 2024, 13 workdays):
+      //   C = round(38 × 60 × 13 / 3) = 9880 min. No leave/absence → C_net = 9880.
+      expect(active!.expectedMinutes).toBe(9880); // Model B C_net (was 1425 in Model A)
 
       await cleanupTestData(app, tenant.id);
     });

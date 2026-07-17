@@ -814,12 +814,19 @@ describe("Overtime Saldo Calculation", () => {
       expect(res.statusCode).toBe(201);
       const snapshot = JSON.parse(res.body);
 
-      // Jan 8 shift: 480 min brutto − 30 min break (>6 h, no employee override) = 450 min netto.
-      // Jan 2 + Jan 3 shifts are in the leave's coveredDates → not summed into expectedMinutes.
-      // Jan 1 (New Year's) is also in coveredDates (part of the approved leave range) — the
-      // SHIFT_BASED path sets holidayMinutes=0, so there is NO double-deduction risk here.
-      // Value 450 is pinned: if this changes, the SHIFT_BASED coveredDates path was broken.
-      expect(snapshot.expectedMinutes).toBe(450);
+      // Phase 76.22 — Model B re-pin (SALDO-V1816-01): expectedMinutes is now C_net
+      // (contract Ø-Methode Soll, net of leave credits), NOT Σ shift durations (Model A).
+      //
+      // Computation for this fixture:
+      //   Schedule: weeklyHours=40, Mon-Fri (5 days/week). January 2024 has 23 Mon-Fri workdays.
+      //   C = round(40 × 60 × 23 / 5) = 11040 min
+      //   Leave credit (Jan 1-3, 3 Mon-Fri days): calcLeaveAbsenceMinutesTz = round(40×60×3/5) = 1440
+      //   C_net = 11040 − 1440 = 9600 min = 160h ← stored as expectedMinutes (not R=450).
+      //
+      // The Jan 8 shift (450 min netto) is still the only uncovered shift;
+      // R (roster) = 450 min; W (worked) = 0; balance = max(0,0−9600) − max(0,450−0) = −450 min.
+      // coveredDates logic is unchanged — Jan 2 + Jan 3 shifts still excluded from R.
+      expect(snapshot.expectedMinutes).toBe(9600); // Model B C_net (was 450 in Model A)
     });
   });
 });
