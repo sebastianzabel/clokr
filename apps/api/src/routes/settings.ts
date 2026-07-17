@@ -761,10 +761,10 @@ export async function settingsRoutes(app: FastifyInstance) {
 
             await app.audit({
               userId: req.user.sub,
-              action: "UPDATE",
+              action: existingForDate ? "UPDATE" : "CREATE",
               entity: "WorkSchedule",
               entityId: schedule.id,
-              oldValue: existingForDate,
+              oldValue: existingForDate ?? null,
               newValue: schedule,
               request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
@@ -839,11 +839,12 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: req.user.sub,
-        action: "UPDATE",
+        action: old ? "UPDATE" : "CREATE",
         entity: "WorkSchedule",
         entityId: schedule.id,
         oldValue: old,
         newValue: schedule,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       // Retroactive recalculation: if validFrom is in the past,
