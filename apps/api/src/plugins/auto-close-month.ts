@@ -15,6 +15,7 @@ import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-sa
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -347,14 +348,16 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               }
             }
 
-            // SHIFT_BASED: expectedMinutes = Σ actual shift netto durations for the month,
-            // skipping leave/absence-covered dates (parity with manual close-month in
-            // overtime.ts lines 884–986). Holiday, leave, and absence minutes are zeroed
-            // because they are already excluded from the shift sum via coveredDates.
+            // SHIFT_BASED: Model B + § 615 via calcShiftBasedSaldo (Phase 76.22).
+            //   expectedMinutes = C_net (contract Ø-Methode − leave/absence credits + bsExpectedMinutes).
+            //   balanceMinutes  = D-01 two-clause result via shiftBalanceOverride (not totalWorked−netExpected).
+            // All other types: existing calcExpectedMinutesTz + holiday/leave/absence path.
             let expectedMinutes: number;
             let holidayMinutes = 0;
             let leaveMinutes = 0;
             let absenceMinutes = 0;
+            // Phase 76.22: non-null only in SHIFT_BASED branch; replaces totalWorked−netExpected.
+            let shiftBalanceOverride: number | null = null;
 
             if (acmScheduleType === "SHIFT_BASED") {
               const shifts = await app.prisma.shift.findMany({
@@ -417,7 +420,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 defaultBreakOver6h: tenant.config?.defaultBreakOver6h ?? 30,
                 defaultBreakOver9h: tenant.config?.defaultBreakOver9h ?? 45,
               };
-              let shiftMinutes = 0;
+              let shiftMinutes = 0; // R = Σ netto active shifts (deletedAt=null, coveredDates excluded)
               for (const sh of shifts) {
                 if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
                 let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
@@ -426,10 +429,49 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 const breakMin = getEffectiveBreakDuration(empBreakShape, tenantBreakShape, brutto);
                 shiftMinutes += Math.max(0, brutto - breakMin);
               }
-              expectedMinutes = shiftMinutes;
-              // bsExpectedMinutes is added separately in totalExpected below, same as
-              // all other schedule types. holidayMinutes / leaveMinutes / absenceMinutes
-              // stay 0: covered days are already excluded from shiftMinutes via coveredDates.
+
+              // Phase 76.22 — Model B + § 615: C_net = contract Ø-Methode Soll minus
+              // leave/absence credits (Ausfallprinzip). VOCATIONAL_SCHOOL + source=PATTERN
+              // absences are excluded — handled via bsExpectedMinutes (D-06, Phase 63).
+              // Holiday credit is included automatically by calcExpectedMinutesTz.
+              //
+              // D-03 note: avgWorkMinutesCore denominator uses {day}Hours>0 count, which equals
+              // workDays[].length for all valid post-Phase-61 rows (CLAUDE.md invariant).
+              const acmContractSoll = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+              const acmLeaveCredit = approvedLeaveForShift.reduce((sum, lr) => {
+                const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+                const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+                if (leaveStart > leaveEnd) return sum;
+                return (
+                  sum +
+                  calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+                    halfDay: Boolean(lr.halfDay),
+                  })
+                );
+              }, 0);
+              const acmAbsenceCredit = absencesForShift.reduce((sum, ab) => {
+                // VOCATIONAL_SCHOOL + source=PATTERN excluded from credit loop (Phase 76.22 D-06).
+                if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
+                const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+                const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+                if (absStart > absEnd) return sum;
+                return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+              }, 0);
+              // C_net folds in bsExpectedMinutes (accumulated above for this employee/month).
+              const acmCNet =
+                Math.max(0, acmContractSoll - acmLeaveCredit - acmAbsenceCredit) +
+                bsExpectedMinutes;
+              const acmSbSaldo = calcShiftBasedSaldo({
+                contractSollMinutes: acmCNet,
+                rosterMinutes: shiftMinutes,
+                workedMinutes,
+              });
+              expectedMinutes = acmSbSaldo.expectedMinutes; // = C_net (stored in SaldoSnapshot)
+              // shiftBalanceOverride = D-01 balance + bsWorkedMinutes (worked-side BS credit).
+              // bsExpectedMinutes is already folded into C_net above — net BS effect is neutral.
+              shiftBalanceOverride = acmSbSaldo.balanceDelta + bsWorkedMinutes;
+              // leaveMinutes / absenceMinutes / holidayMinutes stay 0: credits folded into C_net.
+              // Prevents double-deduction at the netExpected site (bypassed via shiftBalanceOverride).
             } else {
               expectedMinutes = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
 
@@ -551,7 +593,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               0,
               totalExpected - holidayMinutes - leaveMinutes - absenceMinutes,
             );
-            const balanceMinutes = Math.round(totalWorked - netExpected);
+            // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride
+            // (calcShiftBasedSaldo.balanceDelta = max(0,W−C) − max(0,R−W)).
+            // Non-SHIFT branches keep the flat totalWorked − netExpected subtraction.
+            const balanceMinutes =
+              shiftBalanceOverride !== null
+                ? Math.round(shiftBalanceOverride)
+                : Math.round(totalWorked - netExpected);
 
             // Note: if months are not contiguous (gap in snapshots), carryOver from the most recent
             // prior snapshot is used. This is intentional — incomplete months before hire are not snapshotted.
@@ -571,6 +619,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
             const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
 
+            // Phase 76.22: SHIFT_BASED snapshot stores C_net (= expectedMinutes, already set
+            // to calcShiftBasedSaldo.expectedMinutes). Non-SHIFT stores netExpected as before.
+            const snapshotExpectedMinutes =
+              shiftBalanceOverride !== null ? Math.round(expectedMinutes) : Math.round(netExpected);
+
             await app.prisma.$transaction(async (tx) => {
               await tx.saldoSnapshot.create({
                 data: {
@@ -579,7 +632,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   periodStart: monthStart,
                   periodEnd: monthEnd,
                   workedMinutes: Math.round(totalWorked),
-                  expectedMinutes: Math.round(netExpected),
+                  expectedMinutes: snapshotExpectedMinutes,
                   balanceMinutes,
                   carryOver: effectiveCarryOver,
                   closedAt: new Date(),
@@ -621,7 +674,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 year: prevYear,
                 month: prevMonth,
                 workedMinutes: Math.round(totalWorked),
-                expectedMinutes: Math.round(netExpected),
+                expectedMinutes: snapshotExpectedMinutes,
                 balanceMinutes,
                 carryOver,
                 auto: true,
@@ -629,7 +682,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             });
 
             app.log.info(
-              `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${prevMonth}/${prevYear} abgeschlossen (${Math.round(totalWorked / 60)}h Ist, ${Math.round(netExpected / 60)}h Soll)`,
+              `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${prevMonth}/${prevYear} abgeschlossen (${Math.round(totalWorked / 60)}h Ist, ${Math.round(snapshotExpectedMinutes / 60)}h Soll)`,
             );
           } catch (err) {
             app.log.error(

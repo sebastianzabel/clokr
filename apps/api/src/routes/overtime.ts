@@ -17,6 +17,7 @@ import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-sa
 import { getEffectiveBreakDuration } from "../utils/break-effective"; // v1.8.9 — SHIFT_BASED netto
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
+import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -920,13 +921,17 @@ export async function overtimeRoutes(app: FastifyInstance) {
       let workedMinutesBs = 0;
 
       // ── Schedule-type-aware expected/holiday/leave/absence ─────────────────────
-      // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days;
-      // holiday/leave/absence subtractions stay at 0 (already excluded).
+      // SHIFT_BASED: Model B + § 615 via calcShiftBasedSaldo (Phase 76.22).
+      //   expectedMinutes = C_net (contract Ø-Methode − leave/absence credits + bsExpectedMinutes).
+      //   balanceMinutes = D-01 two-clause result (shiftBalanceOverride, not totalWorked−netExpected).
       // Otherwise: existing calcExpectedMinutesTz + holiday/leave/absence path.
       let expectedMinutes: number;
       let holidayMinutes: number;
       let leaveMinutes: number;
       let absenceMinutes: number;
+      // Phase 76.22: non-null only in the SHIFT_BASED branch; replaces totalWorked−netExpected
+      // so the D-01 formula (max(0,W−C) − max(0,R−W)) is used instead of the flat subtraction.
+      let shiftBalanceOverride: number | null = null;
 
       if (scheduleType === "SHIFT_BASED") {
         const shifts = await app.prisma.shift.findMany({
@@ -1017,7 +1022,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
           defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
         };
-        let shiftMinutes = 0;
+        let shiftMinutes = 0; // R = Σ netto active shifts (deletedAt=null, coveredDates excluded)
         for (const sh of shifts) {
           if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
           let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
@@ -1026,8 +1031,55 @@ export async function overtimeRoutes(app: FastifyInstance) {
           const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
           shiftMinutes += Math.max(0, brutto - breakMin);
         }
-        expectedMinutes = shiftMinutes + bsExpectedMinutes;
+
+        // Phase 76.22 — Model B + § 615: C_net = contract Ø-Methode Soll minus
+        // leave/absence credits (Ausfallprinzip). VOCATIONAL_SCHOOL + source=PATTERN
+        // absences are excluded from the credit loop — they are handled via bsExpectedMinutes
+        // (D-06, Phase 63). Holiday credit is included automatically by calcExpectedMinutesTz.
+        //
+        // D-03 note: avgWorkMinutesCore denominator uses {day}Hours>0 count, which equals
+        // workDays[].length for all valid post-Phase-61 rows (CLAUDE.md invariant). No change
+        // to the denominator source — equivalence is guaranteed and FLEXTIME parity is preserved.
+        const contractSoll = calcExpectedMinutesTz(schedule, effectiveStart, monthEnd, tz);
+        const sbLeaveCredit = approvedLeave.reduce((sum, lr) => {
+          const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
+          const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
+          if (leaveStart > leaveEnd) return sum;
+          return (
+            sum +
+            calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
+              halfDay: Boolean(lr.halfDay),
+            })
+          );
+        }, 0);
+        const sbAbsenceCredit = absences.reduce((sum, ab) => {
+          // VOCATIONAL_SCHOOL + source=PATTERN absences are handled via bsExpectedMinutes;
+          // exclude them from the credit loop to avoid double-counting (D-06, Phase 76.22).
+          if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
+          const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+          const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+          if (absStart > absEnd) return sum;
+          return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+        }, 0);
+        // C_net: contract Soll net of leave/absence credits + bsExpectedMinutes (BS day = Arbeitstag,
+        // BBiG §15 — VOCATIONAL_SCHOOL credit is folded in via bsExpectedMinutes, not the loop above).
+        const cNet =
+          Math.max(0, contractSoll - sbLeaveCredit - sbAbsenceCredit) + bsExpectedMinutes;
+        const sbSaldo = calcShiftBasedSaldo({
+          contractSollMinutes: cNet,
+          rosterMinutes: shiftMinutes,
+          workedMinutes,
+        });
+        expectedMinutes = sbSaldo.expectedMinutes; // = C_net (stored in SaldoSnapshot — not R)
+        // shiftBalanceOverride replaces totalWorked − netExpected for the SHIFT_BASED branch.
+        // D-01: balance = max(0,W−C) − max(0,R−W); this is NOT equal to W−C in general.
+        // bsWorkedMinutes is added here because it is additive on the worked side and C_net
+        // already folds bsExpectedMinutes — the net BS effect stays balance-neutral.
+        shiftBalanceOverride = sbSaldo.balanceDelta + bsWorkedMinutes;
         workedMinutesBs += bsWorkedMinutes;
+        // leaveMinutes / absenceMinutes / holidayMinutes stay 0: credits are already folded
+        // into C_net. Leaving them 0 prevents double-deduction at the netExpected site,
+        // which the SHIFT_BASED branch bypasses via shiftBalanceOverride.
         leaveMinutes = 0;
         absenceMinutes = 0;
         holidayMinutes = 0;
@@ -1190,7 +1242,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
       // (worked+=N, expected+=N — D-01) and "+ N to worked, 0 to expected" for
       // MONTHLY_HOURS (D-04 — already absence-skipped on expected side).
       const totalWorked = workedMinutes + workedMinutesBs;
-      const balanceMinutes = Math.round(totalWorked - netExpected);
+      // Phase 76.22: SHIFT_BASED uses the D-01 two-clause formula via shiftBalanceOverride
+      // (calcShiftBasedSaldo returns balanceDelta = max(0,W−C) − max(0,R−W)).
+      // Non-SHIFT branches keep the flat totalWorked − netExpected subtraction.
+      const balanceMinutes =
+        shiftBalanceOverride !== null
+          ? Math.round(shiftBalanceOverride)
+          : Math.round(totalWorked - netExpected);
 
       // Get previous month's carry-over
       const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
@@ -1210,6 +1268,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
       const effectiveCarryOver = isTrackOnly ? 0 : carryOver;
 
+      // Phase 76.22: SHIFT_BASED snapshot stores C_net (= expectedMinutes, already set to
+      // calcShiftBasedSaldo.expectedMinutes). Non-SHIFT stores netExpected as before.
+      const snapshotExpectedMinutes =
+        shiftBalanceOverride !== null ? Math.round(expectedMinutes) : Math.round(netExpected);
+
       // Create snapshot + lock entries
       const snapshot = await app.prisma.$transaction(async (tx) => {
         const snap = await tx.saldoSnapshot.create({
@@ -1219,7 +1282,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             periodStart: monthStart,
             periodEnd: monthEnd,
             workedMinutes: Math.round(totalWorked),
-            expectedMinutes: Math.round(netExpected),
+            expectedMinutes: snapshotExpectedMinutes,
             balanceMinutes,
             carryOver: effectiveCarryOver,
             closedAt: new Date(),
