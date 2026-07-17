@@ -205,7 +205,7 @@ async function isPeriodLocked(
     where: {
       employeeId,
       deletedAt: null,
-      date: { gte: periodStart, lte: periodEnd },
+      date: { gte: periodStart, lt: periodEnd }, // exclusive upper bound: corrective row ends before existingRow.validFrom
       isLocked: true,
     },
   });

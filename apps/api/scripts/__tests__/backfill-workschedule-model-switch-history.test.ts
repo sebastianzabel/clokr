@@ -388,6 +388,53 @@ describe("backfill-workschedule-model-switch-history (Phase 76.24 Plan 03)", () 
     }
   }, 60_000);
 
+  // ── Test 6b: Locked entry ON boundary date does NOT block corrective row ───
+  // The corrective period is half-open [proposedValidFrom, singleRow.validFrom).
+  // A locked TimeEntry dated exactly on singleRow.validFrom (2025-04-01, the switch
+  // month's 1st) is outside the corrective period and must NOT cause a false skip.
+  // WR-01 regression test: verifies isPeriodLocked uses lt (exclusive) not lte.
+  it("locked-safe: locked TimeEntry ON the boundary date (singleRow.validFrom) does NOT block the corrective row for the prior period", async () => {
+    await cleanup();
+
+    // Seed a locked TimeEntry exactly on the switch month's 1st (the exclusive upper
+    // bound of the corrective period). This entry belongs to the SHIFT_BASED month
+    // and must not influence the prior-period lock check.
+    const boundaryLockedEntry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: empId,
+        date: new Date("2025-04-01T00:00:00Z"), // == singleRow.validFrom — outside [start, end)
+        startTime: new Date("2025-04-01T08:00:00Z"),
+        endTime: new Date("2025-04-01T16:00:00Z"),
+        breakMinutes: 0,
+        type: "WORK",
+        isLocked: true,
+        lockedAt: new Date(),
+      },
+    });
+
+    try {
+      const summary: BackfillSummary = await main([`--tenant-id`, tenantId, `--apply`], app.prisma);
+
+      // The boundary locked entry must NOT trigger a skip — corrective row is written
+      expect(summary.written).toBeGreaterThanOrEqual(1);
+      expect(summary.skippedLocked.find((s) => s.employeeId === empId)).toBeUndefined();
+
+      // AuditLog row is created (write happened)
+      const auditRows = await app.prisma.auditLog.findMany({
+        where: { action: BACKFILL_ACTION },
+      });
+      expect(auditRows).toHaveLength(1);
+
+      // Corrective row was inserted (now 2 schedule rows for employee)
+      const scheduleCount = await app.prisma.workSchedule.count({
+        where: { employeeId: empId },
+      });
+      expect(scheduleCount).toBe(2);
+    } finally {
+      await app.prisma.timeEntry.delete({ where: { id: boundaryLockedEntry.id } });
+    }
+  }, 60_000);
+
   // ── Test 7: Idempotency — second --apply is a no-op ──────────────────────
   it("idempotent: second --apply after successful backfill writes zero new WorkSchedule rows and zero new AuditLog rows", async () => {
     await cleanup();
