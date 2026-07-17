@@ -33,6 +33,26 @@
 export const MONTH_FIRST_ERROR = "Vertragswechsel sind nur zum Monats-1. erlaubt.";
 
 /**
+ * Phase 76.24 (v1.8.16, GitHub #220 extension) — same-month AZ-model-switch collision.
+ *
+ * Background: `PUT /settings/work/:employeeId` had a history-loss gap: when a
+ * WorkSchedule row already existed at `validFrom` (same month-1st) and the submitted
+ * `type` differed, the prior model was silently overwritten in place. This makes it
+ * impossible for past-month closes to resolve the model that was actually in effect.
+ *
+ * This constant is the canonical German error message returned (HTTP 400) when
+ * a model-type change collides with an existing same-month-1st row. It is kept as a
+ * named constant so tests can assert against it without string duplication (D-01b),
+ * and so grep targets a single canonical phrase for audit trail compliance.
+ *
+ * Fire condition: WorkSchedule row exists for {employeeId, validFrom = month-1st}
+ * AND the submitted `type` differs from that row's type. A pure hours-only edit
+ * within the same type keeps the existing update-in-place path (D-01a — no rejection).
+ */
+export const MODEL_SWITCH_SAME_MONTH_ERROR =
+  "Für diesen Monat existiert bereits ein Arbeitszeitmodell — ein Modellwechsel ist nur zum 1. eines Monats ohne bestehendes Modell möglich.";
+
+/**
  * Returns true if `s` is the string "YYYY-MM-01" (month-1st), false otherwise.
  * Defensive against non-date strings — does NOT throw on garbage input.
  *
