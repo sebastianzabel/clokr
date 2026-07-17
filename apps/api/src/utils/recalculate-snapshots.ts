@@ -437,10 +437,19 @@ export async function recalculateSnapshots(
     }
 
     const totalWorked = workedMinutes + bsWorkedMinutes;
-    const netExpected = Math.max(
-      0,
-      expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
-    );
+    // NOTE: netExpected is ONLY valid for non-SHIFT branches. For SHIFT_BASED,
+    // expectedMinutes is already set to finalCNet (= recalcCNetBeforeBS + bsExpectedMinutes)
+    // in phase 2 above, so adding bsExpectedMinutes again would double-count it.
+    // The balanceMinutes and snapshotExpectedMinutes dispatch sites below both bypass
+    // netExpected when shiftBalanceOverride !== null — but the guard here makes it
+    // explicit and safe for any future consumer of netExpected.
+    const netExpected =
+      scheduleType !== "SHIFT_BASED"
+        ? Math.max(
+            0,
+            expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
+          )
+        : 0; // unused for SHIFT_BASED — dispatch is via shiftBalanceOverride
     // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride.
     // Non-SHIFT branches keep the flat totalWorked − netExpected subtraction.
     const balanceMinutes =
