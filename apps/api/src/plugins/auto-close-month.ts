@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import {
   monthRangeUtc,
+  monthDayBounds,
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   calcExpectedMinutesTz,
@@ -167,7 +168,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             }
           }
 
-          const schedule = emp.workSchedules[0];
+          // Schedule valid FOR the target month (not the newest row): after a contract
+          // change (validFrom = 1st of a later month) the readiness check must use the
+          // schedule that governed the month being closed.
+          const schedule = emp.workSchedules.find((ws) => ws.validFrom <= monthEnd);
           if (!schedule) {
             readyToClose.push(emp); // No schedule = no expected hours, can close
             continue;
@@ -261,21 +265,36 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           }
         }
 
+        // Tenant-local day bounds for @db.Date column filters (TimeEntry.date,
+        // Shift.date, PublicHoliday.date). monthStart/monthEnd timestamps cast to
+        // the PREVIOUS month's last day for UTC+ tenants — using them directly
+        // double-counts the boundary day (prod evidence: a May-31 entry counted
+        // in BOTH the May and the June snapshot).
+        const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+          monthStart,
+          monthEnd,
+          tz,
+        );
+
         // Auto-close employees that are ready
         for (const emp of readyToClose) {
           try {
-            const schedule = await getEffectiveSchedule(app, emp.id);
+            // Schedule valid for the MIDDLE of the target month — closing a past
+            // month after a contract change must use the historical schedule
+            // (parity with recalculate-snapshots.ts).
+            const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
+            const schedule = await getEffectiveSchedule(app, emp.id, midMonth);
             const hireDateNorm = emp.hireDate
               ? new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z")
               : null;
             const effectiveStart =
-              hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
+              hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
 
             const entries = await app.prisma.timeEntry.findMany({
               where: {
                 employeeId: emp.id,
                 deletedAt: null,
-                date: { gte: monthStart, lte: monthEnd },
+                date: { gte: effectiveStart, lte: monthLastDay },
                 endTime: { not: null },
                 type: "WORK",
                 isInvalid: false,
@@ -341,7 +360,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               const shifts = await app.prisma.shift.findMany({
                 where: {
                   employeeId: emp.id,
-                  date: { gte: effectiveStart, lte: monthEnd },
+                  date: { gte: effectiveStart, lte: monthLastDay },
                   deletedAt: null,
                 },
                 select: { date: true, startTime: true, endTime: true },
@@ -424,7 +443,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               const acmDbForSnap = await app.prisma.publicHoliday.findMany({
                 where: {
                   tenant: { employees: { some: { id: emp.id } } },
-                  date: { gte: effectiveStart, lte: monthEnd },
+                  date: { gte: effectiveStart, lte: monthLastDay },
                 },
               });
               // Build unified list of holiday dates as Date objects (no duplicates)
@@ -475,10 +494,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   endDate: { gte: monthStart },
                 },
               });
-              const isPureTracking =
-                String(schedule.type) === "MONTHLY_HOURS" &&
-                (!schedule.monthlyHours || Number(schedule.monthlyHours) === 0);
-              if (!isPureTracking) {
+              // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do
+              // NOT apply. Gate on the schedule type (parity with manual close, live path
+              // and recalculate-snapshots) — the previous isPureTracking gate only covered
+              // monthlyHours = 0 and wrongly subtracted leave/absence for budget Minijobs.
+              if (acmScheduleType !== "MONTHLY_HOURS") {
                 leaveMinutes = approvedLeave.reduce((sum, lr) => {
                   const leaveStart = lr.startDate < effectiveStart ? effectiveStart : lr.startDate;
                   const leaveEnd = lr.endDate > monthEnd ? monthEnd : lr.endDate;
@@ -494,21 +514,23 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 }, 0);
               }
 
-              // D-02: subtract general absences from expected (parity with manual overtime.ts close).
-              // Exclude VOCATIONAL_SCHOOL (balance-neutral via BS-doubling above) and PATTERN-source
-              // (auto-generated). Mirrors the leave day-sum (no holiday exclusion — auto-close is out
-              // of D-06 scope; keeps this path internally consistent).
+              // Subtract absences from expected — parity with manual overtime.ts close,
+              // which subtracts ALL absence types (INCLUDING VOCATIONAL_SCHOOL and
+              // PATTERN-source). Together with the BS-doubling above this is the only
+              // arithmetic that keeps a BS day balance-neutral (Phase 63 D-01): the
+              // day's Soll is removed via the absence subtraction and re-added as
+              // bsExpectedMinutes, while bsWorkedMinutes credits the same amount.
+              // (Excluding BS here — as this path previously did — left the day's Soll
+              // in expected and penalized the saldo by the daily target per BS day.)
               const generalAbsences = await app.prisma.absence.findMany({
                 where: {
                   employeeId: emp.id,
                   deletedAt: null,
-                  type: { not: "VOCATIONAL_SCHOOL" },
-                  source: { not: "PATTERN" },
                   startDate: { lte: monthEnd },
                   endDate: { gte: effectiveStart },
                 },
               });
-              if (!isPureTracking) {
+              if (acmScheduleType !== "MONTHLY_HOURS") {
                 absenceMinutes = generalAbsences.reduce((sum, ab) => {
                   const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
                   const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
@@ -570,7 +592,9 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 where: {
                   employeeId: emp.id,
                   deletedAt: null,
-                  date: { gte: monthStart, lte: monthEnd },
+                  // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
+                  // lower bound casts to the previous month's last day for UTC+ tenants.
+                  date: { gte: monthFirstDay, lte: monthLastDay },
                 },
                 data: { isLocked: true, lockedAt: new Date() },
               });

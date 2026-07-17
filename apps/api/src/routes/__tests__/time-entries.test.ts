@@ -209,7 +209,7 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
     }
   });
 
-  it("VOCATIONAL_SCHOOL + PATTERN Absence does NOT reduce Soll (BBiG §15)", async () => {
+  it("VOCATIONAL_SCHOOL (Berufsschule) day is balance-NEUTRAL (BBiG §15)", async () => {
     await app.prisma.leaveRequest.deleteMany({ where: { employeeId: asFlexId } });
     await app.prisma.absence.deleteMany({ where: { employeeId: asFlexId } });
     await app.prisma.overtimeAccount.update({
@@ -217,8 +217,11 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
       data: { balanceHours: 0 },
     });
 
-    // VOCATIONAL_SCHOOL+PATTERN must be FILTERED OUT at the Prisma where-clause
-    // so it never reaches the absenceMinutes.reduce.
+    // Phase 76.21 (debug D10): a Berufsschultag is subtracted from expected via the
+    // absence path AND re-added via BS-doubling (bsWorked/bsExpected) → net-zero, in
+    // lockstep with the legally-binding manual close (overtime.ts:1124-1155).
+    // BBiG §15 (Berufsschulzeit = Arbeitszeit) means the BS day must NEITHER add NOR
+    // subtract saldo — the Azubi is treated as if the day was fulfilled.
     await app.prisma.absence.create({
       data: {
         employeeId: asFlexId,
@@ -239,10 +242,14 @@ describe("Saldo Ø-Methode (Phase 76.12) — time-entries leave/absence subtract
       });
       const balanceMin = Math.round(Number(account?.balanceHours ?? 0) * 60);
 
-      // VOCATIONAL_SCHOOL+PATTERN filtered OUT → absenceMinutes = 0.
-      // expected = 9120 (16 workdays × 38h/4), worked = 0, leave = 0, absence = 0.
-      // balance = -9120 min.
-      expect(balanceMin).toBe(-9120);
+      // The base Ø-Methode counts the BS day (June 2, Tue) as a workday (+570).
+      // BS-doubling adds bsExpected(+bsMin) and bsWorked(+bsMin) which cancel, and
+      // the absence subtraction (−570) cancels the base count → the BS day nets 0.
+      // Remaining balance = the 15 non-BS workdays with no time entries × 570 =
+      // −8550 (NOT −9120: the old filter-out left the BS day double-counted in
+      // expected, wrongly penalising the Azubi one daily Soll per Berufsschultag).
+      // Proven in bs-day-saldo-parity.test.ts (live == closed, BS neutral).
+      expect(balanceMin).toBe(-8550);
     } finally {
       vi.useRealTimers();
     }

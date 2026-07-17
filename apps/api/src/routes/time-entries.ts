@@ -1584,17 +1584,21 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     rangeStart = new Date(lastSnapshot.periodEnd.getTime() + 86400000);
     snapshotCarryOver = lastSnapshot.carryOver;
   } else {
-    // Kein Snapshot: ab Monatsanfang oder Eintrittsdatum
+    // Kein Snapshot: ab Monatsanfang oder Eintrittsdatum.
+    // Normalize to the tenant-local FIRST DAY as UTC midnight — the raw monthRangeUtc
+    // timestamp casts to the previous month's last day on @db.Date filters for UTC+
+    // tenants (boundary-day double count).
     const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
-    const { start: monthStart } = monthRangeUtc(
+    const { start: monthStartTs } = monthRangeUtc(
       zonedNow.getUTCFullYear(),
       zonedNow.getUTCMonth() + 1,
       tz,
     );
+    const monthFirstDay = new Date(dateStrInTz(monthStartTs, tz) + "T00:00:00Z");
     const hireDateNorm = employee?.hireDate
       ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
       : null;
-    rangeStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
+    rangeStart = hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
   }
 
   // Determine cutoff: include today only if entries exist
@@ -1886,14 +1890,17 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     }, 0);
 
     // Approved/recorded absences (Krank, Sonderurlaub, etc.) — abziehen wie Urlaub.
-    // Phase 76.12 D-13 — filter VOCATIONAL_SCHOOL + PATTERN at Prisma layer
-    // (BBiG §15: BS-Tag = Arbeitstag, not abwesend; PATTERN-source is auto-gen).
+    // ALL absence types are subtracted (INCLUDING VOCATIONAL_SCHOOL and PATTERN-source)
+    // — parity with the manual close-month path in overtime.ts. Together with the
+    // BS-doubling below this is the only arithmetic that keeps a BS day balance-neutral
+    // (Phase 63 D-01): the day's Soll is removed via the absence subtraction and
+    // re-added as bsExpectedMinutes while bsWorkedMinutes credits the same amount.
+    // (The former Phase 76.12 D-13 exclusion left the day's Soll in expected and
+    // penalized FIXED/FLEXTIME Azubis by the daily target per BS day.)
     const absences = await app.prisma.absence.findMany({
       where: {
         employeeId,
         deletedAt: null, // required by soft-delete convention
-        type: { not: "VOCATIONAL_SCHOOL" },
-        source: { not: "PATTERN" },
         startDate: { lte: effectiveEnd },
         endDate: { gte: rangeStart },
       },

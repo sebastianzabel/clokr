@@ -10,6 +10,8 @@ import { getEffectiveSchedule } from "../routes/time-entries";
 import {
   getTenantTimezone,
   dateStrInTz,
+  monthRangeUtc,
+  monthDayBounds,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
@@ -17,6 +19,7 @@ import {
 } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
 import { getEffectiveBreakDuration } from "./break-effective";
+import { getVocationalSchoolMinutesForDate } from "./vocational-school-saldo";
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -86,19 +89,43 @@ export async function recalculateSnapshots(
       carryOver: snapshot.carryOver,
     };
 
-    const monthStart = snapshot.periodStart;
-    const monthEnd = snapshot.periodEnd;
+    // Derive the CANONICAL month range from the stored period instead of using
+    // periodStart/periodEnd directly:
+    //   - periodStart is convention-ambiguous (TZ-converted rows store the previous
+    //     month's last day, e.g. 2026-05-31 for June/Berlin; legacy UTC-naive rows
+    //     store the 1st). Iterating expected from the raw periodStart added ONE
+    //     EXTRA Soll day for TZ-converted rows.
+    //   - the mid-period instant is safely inside the month under BOTH conventions.
+    const midMonth = new Date((snapshot.periodStart.getTime() + snapshot.periodEnd.getTime()) / 2);
+    const { start: monthStart, end: monthEnd } = monthRangeUtc(
+      midMonth.getUTCFullYear(),
+      midMonth.getUTCMonth() + 1,
+      tz,
+    );
+    const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+      monthStart,
+      monthEnd,
+      tz,
+    );
 
     // Get the effective schedule for the middle of this month
-    const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
     const schedule = await getEffectiveSchedule(app, employeeId, midMonth);
+    const scheduleType = String(schedule.type ?? "");
 
-    // Calculate worked minutes for the month
+    // Effective start: hire date or first day of month, whichever is later
+    const hireDateNorm = employee.hireDate
+      ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
+      : null;
+    const effectiveStart =
+      hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
+
+    // Calculate worked minutes for the month (day bounds — see monthDayBounds:
+    // the raw periodStart included the previous month's boundary day for UTC+ tenants)
     const entries = await app.prisma.timeEntry.findMany({
       where: {
         employeeId,
         deletedAt: null,
-        date: { gte: monthStart, lte: monthEnd },
+        date: { gte: effectiveStart, lte: monthLastDay },
         endTime: { not: null },
         type: "WORK",
         isInvalid: false,
@@ -110,28 +137,22 @@ export async function recalculateSnapshots(
       return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
     }, 0);
 
-    // Calculate expected minutes
-    const hireDateNorm = employee.hireDate
-      ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
-      : null;
-    const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
-    const scheduleType = String(schedule.type ?? "");
-
-    // ── Schedule-type-aware expected/holiday/leave ─────────────────────────────
-    // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days; holiday
-    // and leave subtractions stay at 0 (already excluded by the shift filter).
-    // Note: absenceMinutes is intentionally NOT introduced here — scope of this
-    // change mirrors the SHIFT_BASED branch only. Adding absence subtraction to
-    // recalc is a separate ticket (out of scope to keep 260527-dsy scope clean).
+    // ── Schedule-type-aware expected/holiday/leave/absence ─────────────────────
+    // SHIFT_BASED: Σ Shift durations skipping leave/absence-covered days; holiday,
+    // leave and absence subtractions stay at 0 (already excluded by the shift filter).
+    // All other types: same subtraction chain as the manual close (overtime.ts) and
+    // auto-close paths — including absences and BS-doubling (parity invariant: a
+    // retroactive recalc of an unchanged month must reproduce the close's numbers).
     let expectedMinutes: number;
     let holidayMinutes: number;
     let leaveMinutes: number;
+    let absenceMinutes = 0;
 
     if (scheduleType === "SHIFT_BASED") {
       const shifts = await app.prisma.shift.findMany({
         where: {
           employeeId,
-          date: { gte: effectiveStart, lte: monthEnd },
+          date: { gte: effectiveStart, lte: monthLastDay },
           deletedAt: null, // Phase 67.2 — snapshot recalc ignores soft-deleted shifts
         },
         select: { date: true, startTime: true, endTime: true },
@@ -212,7 +233,10 @@ export async function recalculateSnapshots(
       const snapStateCode = employee.tenant
         ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
         : "NI";
-      const snapYear = monthStart.getUTCFullYear();
+      // Year from MID-month — monthStart.getUTCFullYear() is the PREVIOUS year for
+      // January in UTC+ timezones (2025-12-31T23:00Z), which silently skipped all
+      // January holidays (Neujahr) in the recalc.
+      const snapYear = midMonth.getUTCFullYear();
       const computedHolidays = getHolidays(snapYear, snapStateCode).filter(
         (h) => h.date >= dateStrInTz(effectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
       );
@@ -220,7 +244,7 @@ export async function recalculateSnapshots(
       const dbSnapHolidays = await app.prisma.publicHoliday.findMany({
         where: {
           tenant: { employees: { some: { id: employeeId } } },
-          date: { gte: effectiveStart, lte: monthEnd },
+          date: { gte: effectiveStart, lte: monthLastDay },
         },
       });
       const allHolidays: { date: Date }[] = [
@@ -286,19 +310,84 @@ export async function recalculateSnapshots(
         );
       }, 0);
 
+      // Subtract absences from expected — parity with the manual close (overtime.ts),
+      // which subtracts ALL absence types (INCLUDING VOCATIONAL_SCHOOL + PATTERN);
+      // together with the BS-doubling below this keeps BS days balance-neutral
+      // (Phase 63 D-01). The former "no absence subtraction in recalc" scope (#192)
+      // broke the invariant close == recalc: a retroactive recalc of an unchanged
+      // month with absences produced a different balance than its original close.
+      const recalcAbsences = await app.prisma.absence.findMany({
+        where: {
+          employeeId,
+          deletedAt: null, // required by soft-delete convention
+          startDate: { lte: monthEnd },
+          endDate: { gte: effectiveStart },
+        },
+      });
+      if (scheduleType !== "MONTHLY_HOURS") {
+        absenceMinutes = recalcAbsences.reduce((sum, ab) => {
+          const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+          const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+          if (absStart > absEnd) return sum;
+          return (
+            sum +
+            calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+              excludeHolidays: holidayDateStrSet,
+            })
+          );
+        }, 0);
+      }
+
       // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
-      // Note: this file does not currently subtract absences (v1.6.3 deliberately scoped
-      // absence-subtraction out of recalculateSnapshots). We preserve that decision —
-      // only leaveMinutes is gated here. (#192)
-      // Phase 76.12 D-15 — this scope is RESPECTED: leave-only refactor in this file.
       if (scheduleType === "MONTHLY_HOURS") {
         leaveMinutes = 0;
       }
     }
 
-    const netExpected = Math.max(0, expectedMinutes - holidayMinutes - leaveMinutes);
-    const balanceMinutes = Math.round(workedMinutes - netExpected);
-    const isTrackOnly = schedule.overtimeMode === "TRACK_ONLY";
+    // Phase 63 — Berufsschule (BS) doubling (parity with live, manual close and
+    // auto-close): VOCATIONAL_SCHOOL absences add the same minutes to BOTH
+    // workedMinutes AND expectedMinutes for Soll-bearing types (balance neutral);
+    // MONTHLY_HOURS adds to workedMinutes only (D-04). Previously MISSING here,
+    // so a recalc dropped the BS credit from the stored worked/expected values.
+    const bsAbsencesRecalc = await app.prisma.absence.findMany({
+      where: {
+        employeeId,
+        deletedAt: null, // CLAUDE.md soft-delete rule
+        type: "VOCATIONAL_SCHOOL",
+        startDate: { lte: monthEnd },
+        endDate: { gte: effectiveStart },
+      },
+    });
+    let bsWorkedMinutes = 0;
+    let bsExpectedMinutes = 0;
+    for (const ab of bsAbsencesRecalc) {
+      const start = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
+      const end = ab.endDate > monthEnd ? monthEnd : ab.endDate;
+      const cur = new Date(start);
+      while (cur <= end) {
+        const bsMin = await getVocationalSchoolMinutesForDate(
+          app.prisma,
+          employeeId,
+          cur,
+          tenantConfig,
+        );
+        bsWorkedMinutes += bsMin;
+        if (scheduleType !== "MONTHLY_HOURS") {
+          bsExpectedMinutes += bsMin;
+        }
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    }
+
+    const totalWorked = workedMinutes + bsWorkedMinutes;
+    const netExpected = Math.max(
+      0,
+      expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
+    );
+    const balanceMinutes = Math.round(totalWorked - netExpected);
+    // TRACK_ONLY zeroes the carry-over only for MONTHLY_HOURS (parity with the
+    // close paths, which gate on schedule type + overtimeMode).
+    const isTrackOnly = scheduleType === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
     const carryOver = isTrackOnly ? 0 : runningCarryOver + balanceMinutes;
 
     // COMP-V1814-04: supersede the old snapshot, then create a fresh active row.
@@ -317,7 +406,7 @@ export async function recalculateSnapshots(
           periodType: "MONTHLY",
           periodStart: snapshot.periodStart,
           periodEnd: snapshot.periodEnd,
-          workedMinutes: Math.round(workedMinutes),
+          workedMinutes: Math.round(totalWorked),
           expectedMinutes: Math.round(netExpected),
           balanceMinutes,
           carryOver,
@@ -337,7 +426,7 @@ export async function recalculateSnapshots(
       entityId: snapshot.id,
       oldValue: oldValues,
       newValue: {
-        workedMinutes: Math.round(workedMinutes),
+        workedMinutes: Math.round(totalWorked),
         expectedMinutes: Math.round(netExpected),
         balanceMinutes,
         carryOver,

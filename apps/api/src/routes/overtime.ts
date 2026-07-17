@@ -6,6 +6,7 @@ import {
   getTenantTimezone,
   dateStrInTz,
   monthRangeUtc,
+  monthDayBounds,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
@@ -865,15 +866,36 @@ export async function overtimeRoutes(app: FastifyInstance) {
           .send({ error: "Zukünftige Monate können nicht abgeschlossen werden" });
       }
 
-      const schedule = await getEffectiveSchedule(app, employeeId);
+      // Schedule valid for the MIDDLE of the target month — closing a past month
+      // after a contract change must use the historical schedule (parity with
+      // recalculate-snapshots.ts, which already selects by mid-month).
+      const closeMidMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
+      const schedule = await getEffectiveSchedule(app, employeeId, closeMidMonth);
       const scheduleType = String(schedule.type ?? "");
+
+      // Tenant-local day bounds for @db.Date column filters: the monthStart/monthEnd
+      // TIMESTAMPS cast to the previous month's last day for UTC+ tenants (June/Berlin
+      // monthStart = 2026-05-31T22:00Z → date '2026-05-31'), double-counting the
+      // boundary day in adjacent snapshots.
+      const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+        monthStart,
+        monthEnd,
+        tz,
+      );
+
+      // Effective start: hire date or first day of month, whichever is later
+      const hireDateNorm = employee.hireDate
+        ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
+        : null;
+      const effectiveStart =
+        hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
 
       // Calculate worked minutes for the month
       const entries = await app.prisma.timeEntry.findMany({
         where: {
           employeeId,
           deletedAt: null,
-          date: { gte: monthStart, lte: monthEnd },
+          date: { gte: effectiveStart, lte: monthLastDay },
           endTime: { not: null },
           type: "WORK",
           isInvalid: false,
@@ -884,12 +906,6 @@ export async function overtimeRoutes(app: FastifyInstance) {
         if (!e.endTime) return sum;
         return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
       }, 0);
-
-      // Effective start: hire date or month start, whichever is later
-      const hireDateNorm = employee.hireDate
-        ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
-        : null;
-      const effectiveStart = hireDateNorm && hireDateNorm > monthStart ? hireDateNorm : monthStart;
 
       const tenantConfig = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: employee.tenantId },
@@ -916,7 +932,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const shifts = await app.prisma.shift.findMany({
           where: {
             employeeId,
-            date: { gte: effectiveStart, lte: monthEnd },
+            date: { gte: effectiveStart, lte: monthLastDay },
             deletedAt: null, // Phase 67.2 — overtime saldo ignores soft-deleted shifts
           },
           select: { date: true, startTime: true, endTime: true },
@@ -1028,7 +1044,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
           where: {
             tenant: { employees: { some: { id: employeeId } } },
-            date: { gte: effectiveStart, lte: monthEnd },
+            date: { gte: effectiveStart, lte: monthLastDay },
           },
         });
         // Deduplicate by date string
@@ -1211,12 +1227,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
           },
         });
 
-        // Lock all time entries in this month
+        // Lock all time entries in this month (day bounds — the timestamp lower
+        // bound casts to the previous month's last day for UTC+ tenants)
         await tx.timeEntry.updateMany({
           where: {
             employeeId,
             deletedAt: null,
-            date: { gte: monthStart, lte: monthEnd },
+            date: { gte: monthFirstDay, lte: monthLastDay },
           },
           data: { isLocked: true, lockedAt: new Date() },
         });
@@ -1292,17 +1309,27 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // Verify the month is actually closed — use findFirst with superseded:false
       // (compound accessor removed when @@unique replaced by partial unique index, COMP-V1814-04)
+      // Convention-robust window: also matches legacy UTC-naive periodStart rows.
       const snap = await app.prisma.saldoSnapshot.findFirst({
         where: {
           employeeId,
           periodType: "MONTHLY",
-          periodStart: monthStart,
+          periodStart: periodStartWindow(monthStart),
           superseded: false,
         },
       });
       if (!snap) {
         return reply.code(404).send({ error: "Monat ist nicht abgeschlossen" });
       }
+
+      // Day bounds for the @db.Date entry filter — the monthStart timestamp casts to
+      // the PREVIOUS month's last day for UTC+ tenants and would unlock entries that
+      // belong to the still-closed previous month.
+      const { firstDay: unlockFirstDay, lastDay: unlockLastDay } = monthDayBounds(
+        monthStart,
+        monthEnd,
+        tz,
+      );
 
       // D-02/D-03: Atomic transaction — supersede snapshot + unlock all non-deleted entries
       // COMP-V1814-04: never hard-delete; mark superseded=true with reason (Revisionssicherheit)
@@ -1315,7 +1342,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           where: {
             employeeId,
             deletedAt: null,
-            date: { gte: monthStart, lte: monthEnd },
+            date: { gte: unlockFirstDay, lte: unlockLastDay },
           },
           data: { isLocked: false, lockedAt: null },
         });

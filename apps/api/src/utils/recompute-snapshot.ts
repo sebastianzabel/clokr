@@ -1,14 +1,21 @@
 /**
  * Phase 76.12 Plan 03 — Pure (read-only) recompute of SaldoSnapshot numbers.
  *
- * Mirrors the math from `recalculateSnapshots()` in this directory but
- * never writes. The ops script (apps/api/scripts/recalculate-snapshots-
- * after-soll-fix.ts) calls this to compute the post-Ø-Methode values and
- * compare them against the stored ones, so it can decide whether to write
- * + audit-log (D-20 idempotency / noop detection).
+ * ⚠️ STALE MIRROR — DO NOT USE FOR NEW WRITES WITHOUT RE-SYNCING. ⚠️
+ * This file was a one-time snapshot of the recalculateSnapshots() math for the
+ * Phase 76.12 Ø-Methode migration script. It has since DIVERGED from the live
+ * saldo paths (saldo-drops-after-month-close debug session):
+ *   - SHIFT_BASED expected uses shift BRUTTO (no getEffectiveBreakDuration)
+ *   - no absence subtraction, no Berufsschule (BS) doubling
+ *   - month range derived from raw periodStart/periodEnd (@db.Date boundary-day
+ *     bug: includes the previous month's last day for UTC+ tenants)
+ * Any script that uses this module to DECIDE writes would "correct" snapshots
+ * to WRONG values. Re-sync against recalculate-snapshots.ts before reuse.
  *
- * Keeping the recompute as a separate exported function avoids touching
- * `recalculateSnapshots()` itself (Plan 02 file) — additive-only change.
+ * Original purpose: mirrors the math from `recalculateSnapshots()` but never
+ * writes. The ops script (apps/api/scripts/recalculate-snapshots-after-soll-
+ * fix.ts) called this to compute post-Ø-Methode values and compare against
+ * stored ones (D-20 idempotency / noop detection).
  *
  * Takes a PrismaClient directly (not a FastifyInstance) so it can be
  * used from the script context where Fastify is not bootstrapped.

@@ -19,15 +19,18 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
   const SOURCE_PATH = join(__dirname, "..", "recalculate-snapshots.ts");
   const source = readFileSync(SOURCE_PATH, "utf-8");
 
-  // ── D-15: v1.6.3 absence-subtraction-scope decision PRESERVED ──
-  it("D-15: v1.6.3 absence-scope decision comment preserved (NO absence-subtraction added in leave-reduce)", () => {
-    expect(source).toContain("v1.6.3 deliberately scoped");
-    expect(source).toContain("absence-subtraction");
-    // Sanity: the file has exactly ONE absence.findMany — the SHIFT_BASED
-    // coveredDates path (NOT a Soll-subtraction). Phase 76.12 did NOT add a
-    // second one in the FIXED_SCHEDULE/FLEXTIME leave-reduce region.
+  // ── Phase 76.21 (debug D7): recalc subtracts absences + BS-doubling (supersedes v1.6.3) ──
+  it("Phase 76.21: recalc subtracts absences + BS-doubling for parity with the close", () => {
+    // v1.6.3 deliberately scoped absence-subtraction OUT of recalc. That created a
+    // recalc-vs-close drift: recalculating an unchanged closed month produced a
+    // different balance than the close (which DOES subtract absences). Debug D7
+    // reverses that so recalc reproduces the closed snapshot EXACTLY — proven by
+    // saldo-invariant-e2e.test.ts (step 6) and bs-day-saldo-parity.test.ts.
+    expect(source).toMatch(/parity with the manual close/);
+    // Three absence.findMany now: [1] SHIFT_BASED coveredDates, [2] the absence-
+    // subtraction (parity with close), [3] the VOCATIONAL_SCHOOL BS-doubling.
     const absenceFindManyCount = (source.match(/prisma\.absence\.findMany/g) ?? []).length;
-    expect(absenceFindManyCount).toBe(1);
+    expect(absenceFindManyCount).toBe(3);
   });
 
   // ── D-15: leave-reduce uses new helper + halfDay ──

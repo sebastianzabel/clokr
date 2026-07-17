@@ -63,6 +63,33 @@ export function getDayOfWeekInTz(utcDate: Date, tz: string): number {
 }
 
 /**
+ * Tenant-local first/last day of a month range as UTC-MIDNIGHT dates — the ONLY
+ * safe bounds for Prisma filters on @db.Date columns (TimeEntry.date, Shift.date,
+ * PublicHoliday.date).
+ *
+ * Why: monthRangeUtc timestamps cast to the WRONG date for non-UTC tenants.
+ * June 2026 in Europe/Berlin starts at 2026-05-31T22:00:00Z; Prisma casts that
+ * param to date '2026-05-31' → `date >= monthStart` INCLUDES the last day of
+ * MAY. Prod evidence: a May-31 time entry was counted in BOTH the May and the
+ * June snapshot (double-counted in the carry-over chain), while the live saldo
+ * path (rangeStart = periodEnd + 1 day) correctly starts at June 1 — breaking
+ * the live == closed invariant by the boundary-day minutes.
+ *
+ * dateStrInTz resolves the timestamp to the tenant-local calendar day, so
+ * firstDay/lastDay are the actual first/last day of the month in the tenant TZ.
+ */
+export function monthDayBounds(
+  monthStart: Date,
+  monthEnd: Date,
+  tz: string,
+): { firstDay: Date; lastDay: Date } {
+  return {
+    firstDay: new Date(dateStrInTz(monthStart, tz) + "T00:00:00Z"),
+    lastDay: new Date(dateStrInTz(monthEnd, tz) + "T00:00:00Z"),
+  };
+}
+
+/**
  * Compute the month start/end as UTC dates for a given year+month in the tenant timezone.
  *
  * @param year  - Calendar year (e.g. 2026)
