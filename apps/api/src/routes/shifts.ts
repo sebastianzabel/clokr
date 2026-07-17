@@ -1276,6 +1276,28 @@ export async function shiftRoutes(app: FastifyInstance) {
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }
 
+      // ── Phase 76.23 — Server-authoritative contract Soll per SHIFT_BASED employee ──
+      // Mirrors the 76.22 C_net caller-contract EXACTLY so the planner Soll and the
+      // saldo Soll agree for the same employee/period (D-02 — no drifting second Soll).
+      // Formula: max(0, calcExpectedMinutesTz − leaveMin − absenceMin) + vocSchoolMin
+      // This is the value the frontend MUST render as the Soll — it MUST NOT re-derive
+      // the Soll from sched.weeklyHours (D-02). This field is READ-ONLY; it is NEVER
+      // written to OvertimeAccount.balanceHours or SaldoSnapshot (D-04, § 615).
+      const contractSollMinutesByEmp: Record<string, number> = {};
+      for (const emp of employees) {
+        const sched = scheduleByEmp.get(emp.id);
+        if (!sched) continue;
+        if (String(sched.type ?? "") !== "SHIFT_BASED") continue;
+        const wh = Number(sched.weeklyHours ?? 0);
+        if (wh <= 0) continue;
+        const baseSoll = calcExpectedMinutesTz(sched, monday, sunday, tenantTz);
+        const leaveMin = leaveMinutesByEmp[emp.id] ?? 0;
+        const absenceMin = absenceMinutesByEmp[emp.id] ?? 0;
+        const vocSchoolMin = vocationalSchoolMinutesByEmp[emp.id] ?? 0;
+        contractSollMinutesByEmp[emp.id] =
+          Math.max(0, baseSoll - leaveMin - absenceMin) + vocSchoolMin;
+      }
+
       // v1.7.4 hotfix — per-(employee × day) SchoolHolidayPeriod info. Emitted
       // only for AZUBI employees: Schulferien are governed by BBiG §15 and are
       // only relevant for apprentices. Non-AZUBI employees (REGULAR, MINIJOB,
@@ -1317,6 +1339,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         // overlapping leave/absence exists for any employee.
         leaveMinutesByEmp,
         absenceMinutesByEmp,
+        // Phase 76.23 — server-authoritative contract Soll per SHIFT_BASED employee
+        // (minutes). Computed via calcExpectedMinutesTz (Ø-Methode) minus leave/absence
+        // credits (Ausfallprinzip) plus Berufsschule — the 76.22 C_net contract exactly.
+        // The frontend MUST render this value as the Soll (D-02 — no re-derivation from
+        // weeklyHours). Never written to OvertimeAccount (D-04, § 615 planning-only).
+        contractSollMinutesByEmp,
         schoolHoliday,
       };
     },
