@@ -6,6 +6,7 @@ import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-sa
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
+  weekRangeUtc,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
 } from "../utils/timezone";
@@ -719,6 +720,19 @@ export async function shiftRoutes(app: FastifyInstance) {
       // merge passes are skipped (Leave + Absence still apply).
       const availabilityOn = await isAvailabilityEnabled(app.prisma, tenantId);
 
+      // CR-01 fix (Phase 76.23): tenantTz must be resolved before computing the
+      // Soll boundary so we can use weekRangeUtc for calcExpectedMinutesTz.
+      // The raw `sunday` (setUTCHours 23:59:59.999 UTC) is kept for Prisma
+      // @db.Date filters — those compare against the UTC date component which is
+      // correct for the Sunday boundary. Only iterateDaysInTz (called inside
+      // calcExpectedMinutesTz) is sensitive to the UTC→local conversion edge: in
+      // CEST (UTC+2) a UTC-midnight-based Sunday end causes it to iterate 8 days
+      // instead of 7. weekRangeUtc.end = fromZonedTime(Sunday 23:59:59.999 local, tz)
+      // = e.g. 2026-08-02T21:59:59.999Z, which toZonedTime maps back to the
+      // correct local Sunday — making iterateDaysInTz count exactly 7 days.
+      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      const sundayForSoll = weekRangeUtc(refDate, tenantTz).end;
+
       const [
         shifts,
         employees,
@@ -1191,7 +1205,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       //
       // Map values are MINUTES (integers, matching `vocationalSchoolMinutesByEmp`
       // and `shiftBreakMinutesByEmp`). Client divides by 60 for hours.
-      const tenantTz = await getTenantTimezone(app.prisma, tenantId);
+      // tenantTz already resolved above (CR-01 fix).
 
       const leaveForSoll = await app.prisma.leaveRequest.findMany({
         where: {
@@ -1290,7 +1304,10 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (String(sched.type ?? "") !== "SHIFT_BASED") continue;
         const wh = Number(sched.weeklyHours ?? 0);
         if (wh <= 0) continue;
-        const baseSoll = calcExpectedMinutesTz(sched, monday, sunday, tenantTz);
+        // CR-01 fix: use sundayForSoll (timezone-correct local Sunday 23:59:59)
+        // instead of raw UTC sunday to prevent iterateDaysInTz from counting 8
+        // days in UTC+ timezones (Europe/Berlin CEST inflated 40h→48h).
+        const baseSoll = calcExpectedMinutesTz(sched, monday, sundayForSoll, tenantTz);
         const leaveMin = leaveMinutesByEmp[emp.id] ?? 0;
         const absenceMin = absenceMinutesByEmp[emp.id] ?? 0;
         const vocSchoolMin = vocationalSchoolMinutesByEmp[emp.id] ?? 0;

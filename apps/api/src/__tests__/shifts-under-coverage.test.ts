@@ -27,7 +27,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import bcrypt from "bcryptjs";
 import type { FastifyInstance } from "fastify";
-import { calcExpectedMinutesTz, calcLeaveAbsenceMinutesTz } from "../utils/timezone";
+import { calcExpectedMinutesTz, calcLeaveAbsenceMinutesTz, weekRangeUtc } from "../utils/timezone";
 
 const TZ = "Europe/Berlin";
 
@@ -49,11 +49,17 @@ function mondayDate(iso: string): Date {
   return d;
 }
 
+// IN-01 fix (Phase 76.23): sundayDate now mirrors the production fix — it uses
+// weekRangeUtc to produce the timezone-correct Sunday boundary, so the reference
+// calcExpectedMinutesTz call in Test A exercises the same code path as the
+// fixed GET /shifts/week handler and becomes a genuine anti-drift guard.
+// The old setUTCHours(23,59,59,999) produced a UTC-Sunday end that caused
+// iterateDaysInTz to count 8 days (not 7) in UTC+ timezones like Europe/Berlin
+// CEST, matching the server's bug and masking it. This helper now calls
+// weekRangeUtc with a noon-UTC anchor on the Monday so it always resolves the
+// correct ISO week regardless of DST transitions.
 function sundayDate(iso: string): Date {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + 6);
-  d.setUTCHours(23, 59, 59, 999);
-  return d;
+  return weekRangeUtc(new Date(iso + "T12:00:00Z"), TZ).end;
 }
 
 describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 planning-only)", () => {
@@ -244,12 +250,25 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const expectedBase = calcExpectedMinutesTz(schedule, monday, sunday, TZ);
     const expectedCNet = Math.max(0, expectedBase);
 
+    // IN-01 fix: pin the concrete expected value so this test is a genuine
+    // anti-drift AND anti-off-by-one guard, not just a both-sides-same-bug check.
+    // For a 40h Mon–Fri SHIFT_BASED schedule over exactly Mon–Sun (7 days),
+    // Ø-Methode: weeklyHours × workdaysInRange / workDaysPerWeek
+    //           = 40 × 60 × 5 / 5 = 2400 min (40h).
+    // If this assertion fails at 2880 (48h), the CR-01 bug has regressed —
+    // iterateDaysInTz is again counting 8 days (Mon–Mon) instead of 7 (Mon–Sun).
+    expect(expectedCNet).toBe(2400);
+
     const body = await getWeek();
     const serverSoll = body.contractSollMinutesByEmp?.[empId];
 
     expect(serverSoll).toBeDefined();
     // Exact equality — the server must use the same formula, not a rounding variant.
     expect(serverSoll).toBe(expectedCNet);
+    // Belt-and-suspenders: also assert the concrete value directly against the
+    // server response so a future refactor that changes the reference formula
+    // cannot silently mask the 40h→48h inflation.
+    expect(serverSoll).toBe(2400);
   });
 
   // ── Test B: AUSFALLPRINZIP (D-05) ────────────────────────────────────────
@@ -285,8 +304,11 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const expectedLeaveMin = calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, TZ);
     expect(sollWithoutLeave - sollWithLeave).toBe(expectedLeaveMin);
 
-    // Cleanup leave
-    await app.prisma.leaveRequest.delete({ where: { id: leave.id } });
+    // Cleanup leave — soft-delete to mirror production convention (CLAUDE.md).
+    await app.prisma.leaveRequest.update({
+      where: { id: leave.id },
+      data: { deletedAt: new Date() },
+    });
   });
 
   // ── Test C: UNDER-COVERAGE FIRES ─────────────────────────────────────────
@@ -375,9 +397,10 @@ describe("Phase 76.23 — contractSollMinutesByEmp in GET /shifts/week (§ 615 p
     const gapOver = contractSollOver - geplantMinOver;
     expect(gapOver).toBeLessThan(0);
 
-    // Cleanup
-    await app.prisma.shift.deleteMany({
+    // Cleanup — soft-delete to mirror production convention (CLAUDE.md, Phase 67.2).
+    await app.prisma.shift.updateMany({
       where: { id: { in: [shift.id, ...additionalShifts.map((s) => s.id)] } },
+      data: { deletedAt: new Date() },
     });
   });
 
