@@ -1,10 +1,17 @@
 /**
- * TZ-duplicate SaldoSnapshot cleanup — Phase 76.6.
+ * TZ-duplicate SaldoSnapshot cleanup — Phase 76.6 / hardened Phase 76.25.
  *
  * One-off data-hygiene function. Identifies (employeeId, periodType, calendar-month-of-periodStart)
  * groups containing 2+ rows whose periodStart values differ by exactly the tenant TZ offset,
  * picks the tenant-TZ-anchored row as canonical (the one matching monthRangeUtc(year, month, tz).start),
  * and marks the other(s) `superseded: true` with an AuditLog trail.
+ *
+ * Phase 76.25 hardening: before the anchor-based canonical selection, detects opening-balance /
+ * reset bridge rows via the shape heuristic (expectedMinutes==0 && workedMinutes==0 &&
+ * balanceMinutes==0 && carryOver!=0). When exactly one bridge is present in a group, the bridge
+ * is retained as canonical (preserving its opening carryOver) and the spurious auto-close rows are
+ * superseded. Ambiguous groups (>1 bridge candidate) are skipped with a warning. No-bridge groups
+ * keep the existing anchor-based selection byte-identical.
  *
  * NEVER hard-deletes rows (Revisionssicherheit per CLAUDE.md).
  *
@@ -38,6 +45,35 @@ function utcMonthStr(d: Date): string {
 
 export const SUPERSEDED_REASON = "TZ-duplicate cleanup — 2026-06-08 prod investigation";
 
+/**
+ * Returns true if this SaldoSnapshot is an opening-balance / reset bridge row.
+ *
+ * Heuristic: a bridge has all three work/expected/balance fields zero but a
+ * non-zero carryOver — it was set by a human operator as a carry-in value for a
+ * previously-untracked period and MUST NOT be superseded by the cleanup.
+ *
+ * No explicit bridge/reset/opening marker column exists on SaldoSnapshot (Phase 76.25 D-02).
+ * This shape heuristic is the authoritative signal, aligned with the same heuristic in
+ * apps/api/scripts/recalculate-snapshots-after-shift-soll-fix.ts (Phase 76.22 D-08).
+ *
+ * Limitation: a legitimate "no activity, zero carry" month satisfies carryOver==0
+ * and is correctly excluded. A bridge with non-zero activity cannot be detected by
+ * shape alone — an explicit schema column would be needed for that case (out of scope).
+ */
+function isBridgeSnapshot(snap: {
+  expectedMinutes: number;
+  workedMinutes: number;
+  balanceMinutes: number;
+  carryOver: number;
+}): boolean {
+  return (
+    snap.expectedMinutes === 0 &&
+    snap.workedMinutes === 0 &&
+    snap.balanceMinutes === 0 &&
+    snap.carryOver !== 0
+  );
+}
+
 export type CleanupOptions = {
   /** Required: AuditLog `userId` for every UPDATE row written. */
   actorId: string;
@@ -68,6 +104,12 @@ export type CleanupReport = {
   supersededRowCount: number;
   /** Total AuditLog rows that were (or would be) written. */
   auditLogRowCount: number;
+  /**
+   * Number of groups where a single bridge row was retained as canonical
+   * (Phase 76.25 hardening). Counts classification, not writes — populated
+   * in both dry-run and applied returns.
+   */
+  bridgePreservedGroups: number;
   applied: boolean;
 };
 
@@ -129,6 +171,7 @@ export async function cleanupTzDuplicateSnapshots(
 
   // 3. Identify duplicates + canonical row per group.
   const duplicateGroups: DuplicateGroup[] = [];
+  let bridgePreservedGroups = 0;
   for (const [key, rows] of groups) {
     if (rows.length < 2) continue;
     const [employeeId, periodType] = key.split("::");
@@ -141,6 +184,47 @@ export async function cleanupTzDuplicateSnapshots(
     const [yearStr, monthStr] = ym.split("-");
     const year = Number(yearStr);
     const month = Number(monthStr);
+
+    // ── Phase 76.25: Bridge-preferred canonical selection ─────────────────────
+    // Before the anchor-based find, detect opening-balance / reset bridge rows.
+    // A bridge: expectedMinutes==0 && workedMinutes==0 && balanceMinutes==0 && carryOver!=0.
+    // This shape is the authoritative signal (no explicit schema marker — D-02).
+    const bridges = rows.filter(isBridgeSnapshot);
+
+    if (bridges.length > 1) {
+      // D-03: Ambiguous — more than one bridge candidate. Refuse + flag.
+      // Mirror the existing no-anchor-match skip posture: warn + continue, supersede nothing.
+      log.warn(
+        `[saldo-snapshot-cleanup] Group ${key} has ${rows.length} rows and ${bridges.length} ` +
+          `bridge candidates — multiple bridge candidates, manual review required (nothing superseded).`,
+      );
+      continue;
+    }
+
+    if (bridges.length === 1) {
+      // D-01: Exactly one bridge. Retain the bridge as canonical; supersede all other rows.
+      // The bridge's carryOver (opening carry-in) is preserved — the spurious auto-close
+      // row(s) are superseded regardless of the TZ anchor.
+      const bridgeRow = bridges[0];
+      const superseded = rows.filter((r) => r.id !== bridgeRow.id);
+      duplicateGroups.push({
+        employeeId,
+        tenantId,
+        tenantTz: tz,
+        periodType: periodType as "MONTHLY" | "YEARLY",
+        year,
+        month,
+        canonicalRowId: bridgeRow.id,
+        canonicalPeriodStart: bridgeRow.periodStart,
+        supersededRowIds: superseded.map((r) => r.id),
+        supersededPeriodStarts: superseded.map((r) => r.periodStart),
+      });
+      bridgePreservedGroups++;
+      continue;
+    }
+
+    // D-04: Zero bridge rows — fall through to the existing anchor-based selection
+    // byte-identical. No behaviour change for non-bridge groups.
 
     // Canonical row = the one whose periodStart matches the UTC date you get
     // when monthRangeUtc(year, month, tz).start is stored as @db.Date (which
@@ -178,7 +262,7 @@ export async function cleanupTzDuplicateSnapshots(
   log.info(
     `[saldo-snapshot-cleanup] scanned=${snapshots.length} groups=${groups.size} ` +
       `duplicates=${duplicateGroups.length} rows_to_supersede=${supersededRowCount} ` +
-      `dry_run=${opts.dryRun}`,
+      `bridge_preserved=${bridgePreservedGroups} dry_run=${opts.dryRun}`,
   );
 
   if (opts.dryRun) {
@@ -188,6 +272,7 @@ export async function cleanupTzDuplicateSnapshots(
       duplicateGroups,
       supersededRowCount,
       auditLogRowCount: 0,
+      bridgePreservedGroups,
       applied: false,
     };
   }
@@ -267,6 +352,7 @@ export async function cleanupTzDuplicateSnapshots(
     duplicateGroups,
     supersededRowCount,
     auditLogRowCount,
+    bridgePreservedGroups,
     applied: true,
   };
 }

@@ -107,6 +107,7 @@ async function main() {
   console.log(`  Snapshots scanned:        ${report.scannedRowCount}`);
   console.log(`  Groups examined:          ${report.groupsExamined}`);
   console.log(`  Duplicate groups found:   ${report.duplicateGroups.length}`);
+  console.log(`  Bridge-preserved groups:  ${report.bridgePreservedGroups}`);
   console.log(`  Rows to supersede:        ${report.supersededRowCount}`);
   console.log(`  AuditLog rows written:    ${report.auditLogRowCount}`);
   console.log(`  Applied:                  ${report.applied}\n`);
