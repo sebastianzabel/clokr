@@ -91,6 +91,12 @@
     // and the Leave Cancellation Flow).
     leaveMinutesByEmp?: Record<string, number>;
     absenceMinutesByEmp?: Record<string, number>;
+    // Phase 76.23 — server-authoritative contract Soll per SHIFT_BASED employee
+    // (minutes). Computed server-side via calcExpectedMinutesTz (Ø-Methode)
+    // minus leave/absence credits (Ausfallprinzip) plus Berufsschule.
+    // The frontend MUST render this value as the Soll (D-02 — no re-derivation
+    // from weeklyHours). Never written to OvertimeAccount (D-04, § 615).
+    contractSollMinutesByEmp?: Record<string, number>;
     // v1.7.4 hotfix — SchoolHolidayPeriod cells for the visible week.
     schoolHoliday?: SchoolHolidayEntry[];
   }
@@ -600,11 +606,17 @@
     return n.toFixed(1).replace(/\.0$/, "");
   }
 
-  // Map<employeeId, { shiftH, bsH, assignedH, weeklyH, diff, klass }> for the
+  // Map<employeeId, { shiftH, bsH, assignedH, weeklyH, diff, klass, ... }> for the
   // visible week. `assignedH` = shiftH + bsH (Phase 63 D-01: BS counts as worked
   // toward the weekly target — server returns BS minutes via the
   // `vocationalSchoolMinutesByEmp` map so block-week cap stays in lockstep with
   // the saldo math).
+  //
+  // Phase 76.23 — `contractSollH` is now the SERVER-AUTHORITATIVE Soll, read from
+  // `week.contractSollMinutesByEmp` (Ø-Methode, Ausfallprinzip, Berufsschule folded
+  // in — the same C_net as the 76.22 saldo). The frontend MUST NOT re-derive the
+  // Soll from `weeklyHours` for the comparison (D-02 — no drifting second Soll).
+  // `weeklyH`, `leaveH`, `absenceH` are ONLY for the informational sub-label breakdown.
   const sollRowByEmp = $derived.by(() => {
     const out = new Map<
       string,
@@ -617,12 +629,21 @@
         // in the Soll label so managers see the reduction transparently.
         leaveH: number;
         absenceH: number;
-        // `effectiveWeeklyH = max(0, weeklyH - leaveH - absenceH)`. This is the
-        // value `diff` is calculated against — vacation weeks no longer show a
-        // phantom -40h Diff.
+        // `effectiveWeeklyH = max(0, weeklyH - leaveH - absenceH)`. Kept for the
+        // informational sub-label ONLY — the compared Soll is now contractSollH (D-02).
         effectiveWeeklyH: number;
+        // Phase 76.23 — server-authoritative contract Soll (hours). This is the
+        // value `diff` and the Unterdeckung warning are computed against (D-02).
+        contractSollH: number;
+        // geplantH = assignedH (alias for clarity in the warning computation).
+        geplantH: number;
         diff: number;
         klass: "ok" | "warn" | "bad";
+        // Phase 76.23 — Unterdeckung warning: true when geplant < contractSoll (D-01, D-03).
+        // Fires immediately with no tolerance band (D-03). Only set when contractSollH > 0.
+        underCoverage: boolean;
+        // Gap in hours (contractSollH - geplantH) when underCoverage, else 0.
+        gapH: number;
       }
     >();
     if (!week) return out;
@@ -638,6 +659,8 @@
     // CLAUDE.md "Leave Cancellation Flow") und Absence.deletedAt:null.
     const leaveMap = week.leaveMinutesByEmp ?? {};
     const absenceMap = week.absenceMinutesByEmp ?? {};
+    // Phase 76.23 — server-authoritative contract Soll map.
+    const sollMap = week.contractSollMinutesByEmp ?? {};
     for (const emp of week.employees) {
       const sched = emp.workSchedules?.[0];
       if (!sched || sched.type !== "SHIFT_BASED") continue;
@@ -651,8 +674,16 @@
       const assignedH = shiftH + bsH;
       const leaveH = (leaveMap[emp.id] ?? 0) / 60;
       const absenceH = (absenceMap[emp.id] ?? 0) / 60;
+      // Informational sub-label only — NOT the compared Soll (D-02).
       const effectiveWeeklyH = Math.max(0, wh - leaveH - absenceH);
-      const diff = assignedH - effectiveWeeklyH;
+      // Phase 76.23 — server-authoritative Soll from the endpoint (D-02).
+      const contractSollH = (sollMap[emp.id] ?? 0) / 60;
+      const geplantH = assignedH;
+      const diff = geplantH - contractSollH;
+      // Unterdeckung: fires as soon as geplant < Soll (D-03, no tolerance band).
+      // Guard: only fire when contractSollH > 0 (no server value = no Soll target).
+      const underCoverage = contractSollH > 0 && geplantH < contractSollH;
+      const gapH = underCoverage ? contractSollH - geplantH : 0;
       out.set(emp.id, {
         shiftH,
         bsH,
@@ -661,8 +692,12 @@
         leaveH,
         absenceH,
         effectiveWeeklyH,
+        contractSollH,
+        geplantH,
         diff,
         klass: diffClass(diff),
+        underCoverage,
+        gapH,
       });
     }
     return out;
@@ -1575,11 +1610,12 @@
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
+                class:sp-soll-cell--under-coverage={sr.underCoverage}
                 title="{u.firstName} {u.lastName}: Σ {formatHours(sr.assignedH)}h ({formatHours(
                   sr.shiftH,
                 )}h Schicht{sr.bsH > 0
                   ? ` + ${formatHours(sr.bsH)}h Berufsschule`
-                  : ''}), Soll {formatHours(sr.effectiveWeeklyH)}h{reductionH > 0
+                  : ''}), Soll {formatHours(sr.contractSollH)}h{reductionH > 0
                   ? ` (${formatHours(sr.weeklyH)}h − ${formatHours(
                       reductionH,
                     )}h Urlaub/Abwesenheit)`
@@ -1588,17 +1624,27 @@
                 <span class="sp-soll-num">Σ {formatHours(sr.assignedH)}h</span>
                 {#if reductionH > 0}
                   <span class="sp-soll-soll">
-                    / Soll {formatHours(sr.effectiveWeeklyH)}h
+                    / Soll {formatHours(sr.contractSollH)}h
                     <small class="sp-soll-reduction">
                       ({formatHours(sr.weeklyH)}h − {formatHours(reductionH)}h Urlaub/Abwesenheit)
                     </small>
                   </span>
                 {:else}
-                  <span class="sp-soll-soll">/ Soll {formatHours(sr.weeklyH)}h</span>
+                  <span class="sp-soll-soll">/ Soll {formatHours(sr.contractSollH)}h</span>
                 {/if}
                 <span class="sp-soll-diff">
                   {sr.diff >= 0 ? "+" : "−"}{formatHours(Math.abs(sr.diff))}h
                 </span>
+                {#if sr.underCoverage}
+                  <span
+                    class="sp-soll-under-coverage"
+                    aria-label="Unterdeckung: {u.firstName} {u.lastName}"
+                  >
+                    ↓ Unterdeckung: Soll {formatHours(sr.contractSollH)}h − geplant {formatHours(
+                      sr.geplantH,
+                    )}h = {formatHours(sr.gapH)}h unterplant
+                  </span>
+                {/if}
               </div>
             {/if}
           {/each}
@@ -2350,6 +2396,31 @@
   .sp-soll-cell--bad {
     background: color-mix(in srgb, var(--bad) 14%, transparent);
     color: var(--bad);
+  }
+  /* Phase 76.23 — Unterdeckung (per-employee under-coverage vs contract Soll).
+     Visually distinct from the per-day Coverage row (.sp-coverage-cell--under)
+     which signals demand-slot Unterbesetzung (D-06). Uses --warn accent with a
+     left border accent so the operator distinguishes "this employee is under-rostered
+     vs their contract" from "this time-slot has too few people". */
+  .sp-soll-cell--under-coverage {
+    border-left: 3px solid var(--warn);
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .sp-soll-under-coverage {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+    border-radius: var(--r-sm);
+    padding: 2px 8px;
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
   @media (max-width: 640px) {
     .sp-soll-label,
