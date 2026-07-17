@@ -256,10 +256,10 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
     auditSpy.mockRestore();
   }, 60_000);
 
-  // ── Test 4: --apply writes new Model-B values + one AuditLog row ──────────
-  it("--apply on stale Model-A SHIFT_BASED snapshot writes Model-B expected + exactly 1 AuditLog row", async () => {
+  // ── Test 4: --apply uses supersede-then-create (HI-01 Revisionssicherheit) ──
+  it("--apply supersedes old row and creates new Model-B row + exactly 1 AuditLog row", async () => {
     await resetAll();
-    await seedSnapshot({ periodStart: FEB_START, periodEnd: FEB_END });
+    const seeded = await seedSnapshot({ periodStart: FEB_START, periodEnd: FEB_END });
 
     const summary = await main([`--tenant-id`, tenantId, `--apply`], app.prisma);
 
@@ -271,15 +271,31 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
     expect(summary.recalculated).toBe(1);
     expect(summary.unchanged).toBe(0);
 
-    const snap = await app.prisma.saldoSnapshot.findFirst({
-      where: { employeeId: empId, periodStart: FEB_START },
+    // Old row must be preserved as superseded=true (Revisionssicherheit).
+    const oldRow = await app.prisma.saldoSnapshot.findUnique({ where: { id: seeded.id } });
+    expect(oldRow, "original row must still exist").not.toBeNull();
+    expect(oldRow!.superseded).toBe(true);
+    expect(oldRow!.supersededReason).toBe(RECALC_REASON);
+    // Old row retains original stale values (immutable history).
+    expect(oldRow!.expectedMinutes).toBe(STALE_EXPECTED);
+    expect(oldRow!.balanceMinutes).toBe(STALE_BALANCE);
+
+    // New active row must carry Model B values.
+    const newRow = await app.prisma.saldoSnapshot.findFirst({
+      where: { employeeId: empId, periodStart: FEB_START, superseded: false },
     });
-    // Model B: expectedMinutes = C_net (contract Soll), not sentinel 99999.
-    expect(snap!.expectedMinutes).not.toBe(STALE_EXPECTED);
+    expect(newRow, "new active row must exist").not.toBeNull();
+    expect(newRow!.id).not.toBe(seeded.id); // distinct row
     // February 2026 Berlin: 20 Mon–Fri workdays, C = round(38×60×20/5) = 9120.
     // Zero shifts, zero entries → balanceMinutes = max(0,0-9120) − max(0,0-0) = 0.
-    expect(snap!.expectedMinutes).toBe(9120);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(newRow!.expectedMinutes).toBe(9120);
+    expect(newRow!.balanceMinutes).toBe(0);
+
+    // Total snapshot count for this period: 2 (old superseded + new active).
+    const allRows = await app.prisma.saldoSnapshot.count({
+      where: { employeeId: empId, periodStart: FEB_START },
+    });
+    expect(allRows).toBe(2);
   }, 60_000);
 
   // ── Test 5: Locked month skipped (D-18) ───────────────────────────────────
@@ -378,23 +394,24 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
     expect(summary.recalculated).toBe(1); // only February
     expect(summary.unchanged).toBe(0); // bridge is not noop — it's preserved separately
 
-    // The bridge's carryOver MUST NOT be overwritten.
+    // The bridge's carryOver MUST NOT be overwritten (bridge row has no supersede candidate).
     const janSnap = await app.prisma.saldoSnapshot.findFirst({
-      where: { employeeId: empId, periodStart: JAN_START },
+      where: { employeeId: empId, periodStart: JAN_START, superseded: false },
     });
     expect(janSnap!.carryOver).toBe(BRIDGE_CARRY);
     expect(janSnap!.expectedMinutes).toBe(0); // unchanged
 
     // February's carryOver is chained from the bridge: BRIDGE_CARRY + feb_balance.
     // Feb: R=0, W=0, C=9120 → balance=0, so carryOver = BRIDGE_CARRY + 0 = BRIDGE_CARRY.
+    // Must query active row (superseded=false) — old row is superseded after --apply.
     const febSnap = await app.prisma.saldoSnapshot.findFirst({
-      where: { employeeId: empId, periodStart: FEB_START },
+      where: { employeeId: empId, periodStart: FEB_START, superseded: false },
     });
     expect(febSnap!.carryOver).toBe(BRIDGE_CARRY); // chained correctly
   }, 60_000);
 
   // ── Test 9: AuditLog row shape (D-19) ─────────────────────────────────────
-  it("D-19: AuditLog row has correct action, entity, entityId, oldValue, newValue with reason verbatim", async () => {
+  it("D-19: AuditLog row points to new row, oldValue preserves stale values + supersededRowId, reason verbatim", async () => {
     await resetAll();
     const seeded = await seedSnapshot({ periodStart: FEB_START, periodEnd: FEB_END });
 
@@ -406,15 +423,23 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
     expect(audit).not.toBeNull();
     expect(audit!.action).toBe(RECALC_ACTION);
     expect(audit!.entity).toBe("SaldoSnapshot");
-    expect(audit!.entityId).toBe(seeded.id);
+    // entityId must point to the NEW active row (not the superseded original).
+    expect(audit!.entityId).not.toBe(seeded.id);
+    const newRow = await app.prisma.saldoSnapshot.findFirst({
+      where: { employeeId: empId, periodStart: FEB_START, superseded: false },
+    });
+    expect(audit!.entityId).toBe(newRow!.id);
     expect(audit!.userId).toBeNull(); // system-initiated
 
     const oldVal = audit!.oldValue as Record<string, unknown>;
     const newVal = audit!.newValue as Record<string, unknown>;
     expect(oldVal).not.toBeNull();
     expect(newVal).not.toBeNull();
+    // oldValue must contain the original stale values for full audit traceability.
     expect(oldVal!.expectedMinutes).toBe(STALE_EXPECTED);
     expect(oldVal!.balanceMinutes).toBe(STALE_BALANCE);
+    // oldValue must reference the superseded row id so an auditor can find it.
+    expect(oldVal!.supersededRowId).toBe(seeded.id);
     expect(typeof newVal!.expectedMinutes).toBe("number");
     expect(typeof newVal!.balanceMinutes).toBe("number");
     expect(newVal!.reason).toBe(RECALC_REASON);
@@ -436,8 +461,10 @@ describe("recalculate-snapshots-after-shift-soll-fix (Phase 76.22 Plan 03)", () 
     // Only the 2026 snapshot should produce an audit row.
     expect(auditRows).toHaveLength(1);
 
+    // Dec-2025 snapshot must remain untouched (out of --year 2026 scope).
+    // Query with superseded: false — it was never superseded, so it stays as the sole active row.
     const dec2025Snap = await app.prisma.saldoSnapshot.findFirst({
-      where: { employeeId: empId, periodStart: DEC_2025_START },
+      where: { employeeId: empId, periodStart: DEC_2025_START, superseded: false },
     });
     expect(dec2025Snap!.expectedMinutes).toBe(STALE_EXPECTED); // untouched
 

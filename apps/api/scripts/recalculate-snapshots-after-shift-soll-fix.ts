@@ -41,8 +41,12 @@
  *     [--help]
  *
  * Without --apply: dry-run (prints proposed changes as JSON summary, zero writes).
- * With    --apply: opens one $transaction per recompute (SaldoSnapshot.update +
- *                  AuditLog.create) for atomicity.
+ * With    --apply: opens one $transaction per recompute (SaldoSnapshot.update to mark
+ *                  old row superseded + SaldoSnapshot.create for new corrected row +
+ *                  AuditLog.create) for atomicity. Follows the supersede-then-create
+ *                  pattern mandated by CLAUDE.md Revisionssicherheit immutability rules:
+ *                  the original Model-A row is preserved (superseded=true) and queryable
+ *                  by auditors; a new active row (superseded=false) carries the Model B values.
  */
 import { PrismaClient } from "@clokr/db";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -222,7 +226,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
   const args = parseArgs2(argv);
 
   if (args.help) {
-    console.log(USAGE);
+    console.info(USAGE);
     return {
       dryRun: true,
       tenantsScanned: 0,
@@ -340,7 +344,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             // activity. Preserve it without overwriting and use its carryOver
             // as the chain start for subsequent snapshots.
             if (isBridgeSnapshot(snap)) {
-              console.log(
+              console.info(
                 `[BRIDGE-SNAPSHOT] preserved — employeeId=${emp.id} ` +
                   `periodStart=${snap.periodStart.toISOString().slice(0, 10)} ` +
                   `carryOver=${snap.carryOver}`,
@@ -528,7 +532,14 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
                   tenantConfig as VocationalSchoolTenantConfig,
                 );
                 bsWorkedMinutes += bsMin;
-                bsExpectedMinutes += bsMin;
+                // Defensive gate: mirrors the three API paths (overtime.ts ~986,
+                // auto-close-month.ts ~344, recalculate-snapshots.ts ~418).
+                // The outer scope filter limits this script to SHIFT_BASED employees,
+                // so the condition is always true at runtime — but the explicit gate
+                // prevents a copy-paste trap if a future operator widens the scope.
+                if (String(schedule.type ?? "") !== "MONTHLY_HOURS") {
+                  bsExpectedMinutes += bsMin;
+                }
                 cur.setUTCDate(cur.getUTCDate() + 1);
               }
             }
@@ -567,13 +578,32 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
             // ── Locked-month guard (D-18 / Revisionssicherheit) ─────────
             const locked = await isSnapshotLocked(prisma, emp.id, snap.periodStart, snap.periodEnd);
             if (locked) {
+              const deltaBalance = newBalance - oldValues.balanceMinutes;
               summary.skippedLocked.push({
                 snapshotId: snap.id,
                 employeeId: emp.id,
                 tenantId: t.id,
                 periodStart: snap.periodStart,
-                deltaBalanceMinutes: newBalance - oldValues.balanceMinutes,
+                deltaBalanceMinutes: deltaBalance,
               });
+              // WR-02: Warn if a non-trivial Model-A/Model-B delta exists mid-chain.
+              // Downstream unlocked months will have their carry-over anchored to the
+              // stale (unrecomputed) Model-A carryOver, which may be incorrect.
+              // Operator action: manually close+reopen the locked month after deployment.
+              if (deltaBalance !== 0) {
+                // Find downstream unlocked months to name in the warning.
+                const downstreamCount = snapshots.filter(
+                  (s) => s.periodStart > snap.periodStart,
+                ).length;
+                console.warn(
+                  `[WARN] Locked snapshot in chain for employee ${emp.id} ` +
+                    `period=${snap.periodStart.toISOString().slice(0, 10)} ` +
+                    `deltaBalance=${deltaBalance}min. ` +
+                    `Downstream carry-over for ${downstreamCount} snapshot(s) will be anchored ` +
+                    `to the unrecomputed Model-A carryOver (${snap.carryOver}min). ` +
+                    `Manually close+reopen the locked month after deployment to resolve.`,
+                );
+              }
               // Chain from STORED value (we cannot update it).
               priorCarry = snap.carryOver;
               continue;
@@ -581,7 +611,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
 
             if (!args.apply) {
               // Dry-run: count proposed change but write nothing.
-              console.log(
+              console.info(
                 `[DRY-RUN] ${snap.periodStart.toISOString().slice(0, 10)} ` +
                   `employeeId=${emp.id} ` +
                   `expected=${oldValues.expectedMinutes}→${newExpected} ` +
@@ -593,15 +623,33 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
               continue;
             }
 
-            // ── --apply: atomic $transaction (SaldoSnapshot.update + AuditLog.create) ─
+            // ── --apply: supersede-then-create inside atomic $transaction ────────────
+            // Revisionssicherheit (CLAUDE.md): the original Model-A row is preserved
+            // as superseded=true (queryable by auditors). A new active row
+            // (superseded=false) carries the corrected Model B values.
+            // Both operations + AuditLog.create are wrapped in a single transaction
+            // so a crash cannot leave the period without an active row.
             await prisma.$transaction(async (tx) => {
+              // Mark old row immutable.
               await tx.saldoSnapshot.update({
                 where: { id: snap.id },
+                data: { superseded: true, supersededReason: RECALC_REASON },
+              });
+              // Insert corrected active row.
+              const newSnap = await tx.saldoSnapshot.create({
                 data: {
+                  employeeId: emp.id,
+                  periodType: "MONTHLY",
+                  periodStart: snap.periodStart,
+                  periodEnd: snap.periodEnd,
                   workedMinutes: newWorked,
                   expectedMinutes: newExpected,
                   balanceMinutes: newBalance,
                   carryOver: newCarry,
+                  closedAt: snap.closedAt,
+                  closedBy: snap.closedBy,
+                  note: snap.note,
+                  // superseded defaults to false (new active row)
                 },
               });
               await tx.auditLog.create({
@@ -609,8 +657,8 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
                   userId: null, // system-initiated (no human actor)
                   action: RECALC_ACTION,
                   entity: "SaldoSnapshot",
-                  entityId: snap.id,
-                  oldValue: oldValues,
+                  entityId: newSnap.id,
+                  oldValue: { ...oldValues, supersededRowId: snap.id },
                   newValue: {
                     workedMinutes: newWorked,
                     expectedMinutes: newExpected,
@@ -641,6 +689,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       } // end employee loop
     } // end tenant loop
 
+    // eslint-disable-next-line no-console -- intentional structured operator output
     console.log(JSON.stringify(summary, null, 2));
     return summary;
   } finally {
