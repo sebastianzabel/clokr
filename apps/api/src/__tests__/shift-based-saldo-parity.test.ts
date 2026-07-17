@@ -494,30 +494,35 @@ describe("Fixture A — phantom-overtime fix: 0 shifts, W=9120, balance=0 (SALDO
       vi.useRealTimers();
     }
 
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture A",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(9120);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(recalcSnap!.expectedMinutes).toBe(9120);
+    expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
 
@@ -612,30 +617,36 @@ describe("Fixture B — overtime: 20 shifts×495min, W=9900, balance=+780 (SALDO
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture B",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(9120);
-    expect(snap!.balanceMinutes).toBe(780);
+    expect(recalcSnap!.expectedMinutes).toBe(9120);
+    expect(recalcSnap!.balanceMinutes).toBe(780);
   }, 60_000);
 });
 
@@ -739,29 +750,35 @@ describe("Fixture C — rostered-not-worked: R=2250, W=1350, balance=−900 (SAL
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture C",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.balanceMinutes).toBe(-900);
+    expect(recalcSnap!.balanceMinutes).toBe(-900);
   }, 60_000);
 });
 
@@ -855,30 +872,36 @@ describe("Fixture D — §615: R=0, W=0, balance=0 NOT −9120 (SALDO-V1816-02, 
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture D",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(9120);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(recalcSnap!.expectedMinutes).toBe(9120);
+    expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
 
@@ -990,30 +1013,36 @@ describe("Fixture E — Ausfallprinzip: 5 leave days, C_net=6840, balance=0 (SAL
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture E",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(6840);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(recalcSnap!.expectedMinutes).toBe(6840);
+    expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
 
@@ -1108,30 +1137,36 @@ describe("Fixture F — partial-month: hireDate Feb 16, C=4560, balance=0 (SALDO
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture F",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(4560);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(recalcSnap!.expectedMinutes).toBe(4560);
+    expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
 
@@ -1241,29 +1276,35 @@ describe("Fixture G — cancelled-shift guard: 3 soft-deleted, R=900, W=900, bal
     } finally {
       vi.useRealTimers();
     }
+
+    // Capture close2 snapshot BEFORE recalc so V-03-B really tests close2 vs close1.
+    const close2Snap = await fetchFebSnapshot(app, empId);
+    expect(close2Snap, "Feb snapshot after second close").not.toBeNull();
+
     await recalculateSnapshots(app, empId, FEB_START);
-    const snap = await fetchFebSnapshot(app, empId);
-    expect(snap, "Feb snapshot after recalc").not.toBeNull();
+    // Capture recalcSnap AFTER recalc — distinct object from close2Snap.
+    const recalcSnap = await fetchFebSnapshot(app, empId);
+    expect(recalcSnap, "Feb snapshot after recalc").not.toBeNull();
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
 
     assertParitySnapshot(
       "Fixture G",
       close1Snap,
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: close2Snap!.workedMinutes,
+        expectedMinutes: close2Snap!.expectedMinutes,
+        balanceMinutes: close2Snap!.balanceMinutes,
+        carryOver: close2Snap!.carryOver,
       },
       {
-        workedMinutes: snap!.workedMinutes,
-        expectedMinutes: snap!.expectedMinutes,
-        balanceMinutes: snap!.balanceMinutes,
-        carryOver: snap!.carryOver,
+        workedMinutes: recalcSnap!.workedMinutes,
+        expectedMinutes: recalcSnap!.expectedMinutes,
+        balanceMinutes: recalcSnap!.balanceMinutes,
+        carryOver: recalcSnap!.carryOver,
       },
       live,
     );
-    expect(snap!.expectedMinutes).toBe(9120);
-    expect(snap!.balanceMinutes).toBe(0);
+    expect(recalcSnap!.expectedMinutes).toBe(9120);
+    expect(recalcSnap!.balanceMinutes).toBe(0);
   }, 60_000);
 });
