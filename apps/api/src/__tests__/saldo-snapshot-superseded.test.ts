@@ -278,6 +278,180 @@ describe("cleanupTzDuplicateSnapshots — Phase 76.25 bridge hardening", () => {
     expect(duplicateAfter?.superseded).toBe(true);
   });
 
+  it("retains bridge as canonical when bridge occupies the TZ-anchor slot (D-05 reverse)", async () => {
+    // Reverse of the v1.8.15 fixture: bridge IS at the TZ-anchored canonicalStart,
+    // the spurious non-bridge duplicate sits at UTC-midnight.
+    // Proves bridge detection runs before anchor selection — a future refactor that
+    // mistakenly re-introduces anchor-priority would be caught here.
+    const { start: canonicalStart, end: canonicalEnd } = monthRangeUtc(2026, 7, TZ);
+    const bridge = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: canonicalStart, // bridge IS at the TZ-anchor position
+        periodEnd: canonicalEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 540,
+        closedAt: new Date(),
+      },
+    });
+    const duplicate = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: new Date(`2026-07-01T00:00:00.000Z`), // UTC-midnight non-bridge
+        periodEnd: canonicalEnd,
+        workedMinutes: 9600,
+        expectedMinutes: 9600,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    const report = await cleanupTzDuplicateSnapshots(
+      app.prisma,
+      { actorId: actorUserId, dryRun: false },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(report.bridgePreservedGroups).toBe(1);
+    expect(report.duplicateGroups.length).toBe(1);
+    expect(report.duplicateGroups[0].canonicalRowId).toBe(bridge.id);
+
+    const bridgeAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: bridge.id } });
+    expect(bridgeAfter?.superseded).toBe(false);
+    expect(bridgeAfter?.carryOver).toBe(540);
+
+    const dupAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: duplicate.id } });
+    expect(dupAfter?.superseded).toBe(true);
+  });
+
+  it("detects bridge with negative carryOver (deficit carry-in) — IN-02", async () => {
+    // isBridgeSnapshot uses carryOver !== 0, which must fire for negative values too.
+    // A deficit carry-in (e.g. employee owed 5h at period start) must be preserved.
+    const { start: canonicalStart, end: canonicalEnd } = monthRangeUtc(2026, 8, TZ);
+    const bridgeStart = new Date(`2026-08-01T00:00:00.000Z`);
+    const bridge = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: bridgeStart,
+        periodEnd: canonicalEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: -300, // deficit carry-in — must still be detected as bridge
+        closedAt: new Date(),
+      },
+    });
+    const autoClose = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: canonicalStart,
+        periodEnd: canonicalEnd,
+        workedMinutes: 9600,
+        expectedMinutes: 9600,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    const report = await cleanupTzDuplicateSnapshots(
+      app.prisma,
+      { actorId: actorUserId, dryRun: false },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(report.bridgePreservedGroups).toBe(1);
+    expect(report.duplicateGroups[0].canonicalRowId).toBe(bridge.id);
+
+    const bridgeAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: bridge.id } });
+    expect(bridgeAfter?.superseded).toBe(false);
+    expect(bridgeAfter?.carryOver).toBe(-300);
+
+    const autoCloseAfter = await app.prisma.saldoSnapshot.findUnique({
+      where: { id: autoClose.id },
+    });
+    expect(autoCloseAfter?.superseded).toBe(true);
+  });
+
+  it("supersedes both non-bridge rows when group has 1 bridge + 2 non-bridge rows — IN-01", async () => {
+    // Verifies rows.filter(r => r.id !== bridgeRow.id) handles N > 1 non-bridge rows.
+    const { start: canonicalStart, end: canonicalEnd } = monthRangeUtc(2026, 9, TZ);
+    const bridgeStart = new Date(`2026-09-01T00:00:00.000Z`);
+    const bridge = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: bridgeStart,
+        periodEnd: canonicalEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 750,
+        closedAt: new Date(),
+      },
+    });
+    // First non-bridge duplicate (TZ-anchored periodStart)
+    const nonBridge1 = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: canonicalStart,
+        periodEnd: canonicalEnd,
+        workedMinutes: 9600,
+        expectedMinutes: 9600,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+    // Second non-bridge duplicate (different periodStart date, same periodEnd bucket).
+    // Must use a distinct DATE value — periodStart is @db.Date so the time component is
+    // truncated. 2026-09-02 is distinct from bridgeStart (2026-09-01) and canonicalStart
+    // (2026-08-31 as UTC date), yet still in the same Sept 2026 periodEnd bucket.
+    const nonBridge2 = await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        periodStart: new Date(`2026-09-02T00:00:00.000Z`),
+        periodEnd: canonicalEnd,
+        workedMinutes: 4800,
+        expectedMinutes: 9600,
+        balanceMinutes: -4800,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    const report = await cleanupTzDuplicateSnapshots(
+      app.prisma,
+      { actorId: actorUserId, dryRun: false },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(report.bridgePreservedGroups).toBe(1);
+    expect(report.duplicateGroups.length).toBe(1);
+    expect(report.duplicateGroups[0].canonicalRowId).toBe(bridge.id);
+    expect(report.duplicateGroups[0].supersededRowIds).toHaveLength(2);
+    expect(report.supersededRowCount).toBe(2);
+    expect(report.auditLogRowCount).toBe(2);
+
+    const bridgeAfter = await app.prisma.saldoSnapshot.findUnique({ where: { id: bridge.id } });
+    expect(bridgeAfter?.superseded).toBe(false);
+
+    const nb1After = await app.prisma.saldoSnapshot.findUnique({ where: { id: nonBridge1.id } });
+    expect(nb1After?.superseded).toBe(true);
+
+    const nb2After = await app.prisma.saldoSnapshot.findUnique({ where: { id: nonBridge2.id } });
+    expect(nb2After?.superseded).toBe(true);
+  });
+
   it("bridge preservation is idempotent — second run is a no-op", async () => {
     await seedBridgePlusAutoClose(2026, 6);
 
