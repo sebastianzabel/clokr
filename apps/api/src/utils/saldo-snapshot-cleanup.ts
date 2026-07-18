@@ -1,7 +1,7 @@
 /**
  * TZ-duplicate SaldoSnapshot cleanup — Phase 76.6 / hardened Phase 76.25.
  *
- * One-off data-hygiene function. Identifies (employeeId, periodType, calendar-month-of-periodStart)
+ * One-off data-hygiene function. Identifies (employeeId, periodType, calendar-month-of-periodEnd)
  * groups containing 2+ rows whose periodStart values differ by exactly the tenant TZ offset,
  * picks the tenant-TZ-anchored row as canonical (the one matching monthRangeUtc(year, month, tz).start),
  * and marks the other(s) `superseded: true` with an AuditLog trail.
@@ -121,12 +121,21 @@ export type CleanupLogger = {
 /**
  * Run the cleanup.
  *
- * Algorithm (D-04):
+ * Algorithm:
  *   1. Load all non-superseded SaldoSnapshot rows (optionally tenant-scoped).
- *   2. Group by (employeeId, periodType, calendar-month-of-periodStart in tenant TZ).
- *   3. For each group with 2+ rows: pick canonical = the row whose periodStart === monthRangeUtc(year, month, tz).start.
- *      If no row matches the canonical UTC value (unexpected — log a warning and SKIP the group; do NOT pick arbitrarily).
- *   4. Mark non-canonical rows superseded=true inside a $transaction. AuditLog row written BEFORE the UPDATE in the same tx.
+ *   2. Group by (employeeId, periodType, UTC-calendar-month-of-periodEnd).
+ *      periodEnd is used because the TZ bug only shifts periodStart by ~22h;
+ *      periodEnd stays in the correct UTC calendar month for positive-offset TZs.
+ *   3a. Phase 76.25 (D-01/D-03): For each group, scan for bridge rows
+ *       (expectedMinutes==0 && workedMinutes==0 && balanceMinutes==0 && carryOver!=0).
+ *       - Exactly one bridge → bridge is canonical; all other rows superseded (D-01).
+ *       - More than one bridge → skip group (warn, nothing superseded) (D-03).
+ *   3b. No bridge rows (D-04) → anchor-based selection: canonical = the row whose
+ *       periodStart matches monthRangeUtc(year, month, tz).start.
+ *       If no row matches the canonical UTC value (unexpected — log a warning and SKIP
+ *       the group; do NOT pick arbitrarily).
+ *   4. Mark non-canonical rows superseded=true inside a $transaction. AuditLog row
+ *      written BEFORE the UPDATE in the same tx.
  */
 export async function cleanupTzDuplicateSnapshots(
   prisma: PrismaClient,
