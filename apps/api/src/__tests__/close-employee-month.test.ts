@@ -321,10 +321,11 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
   let adminToken: string;
   let empId: string;
 
-  const JULY_WORKDAYS = monFriInRange("2026-07-01", "2026-07-31");
-  const { start: JULY_START, end: JULY_END } = monthRangeUtc(2026, 7, TZ);
-  // "now" frozen to Aug 2 for fake-timer context in manual close and live check
-  const LIVE_NOW = new Date("2026-08-02T10:00:00.000Z");
+  // Use June 2026 (already in the past as of 2026-07-18) so the future-month
+  // guard in close-month API does not trigger. hireDate = June 1 means the
+  // sequential guard loop runs from month 6 to 6 (exclusive) = 0 iterations.
+  const JUNE_WORKDAYS = monFriInRange("2026-06-01", "2026-06-30");
+  const { start: JUNE_START, end: JUNE_END } = monthRangeUtc(2026, 6, TZ);
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -389,7 +390,10 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
         employeeNumber: `EMP-${s}`,
         firstName: "Fixed",
         lastName: "PF",
-        hireDate: new Date("2026-01-01T00:00:00Z"),
+        // hireDate = June 1 so no prior months require closing (sequential guard loop
+        // runs from seqStartMonth=6 to month=6, exclusive → 0 iterations). June 2026 is
+        // already in the past (today = 2026-07-18) so the future-month guard also passes.
+        hireDate: new Date("2026-06-01T00:00:00Z"),
       },
     });
     await prisma.workSchedule.create({
@@ -404,14 +408,14 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
         fridayHours: 8,
         saturdayHours: 0,
         sundayHours: 0,
-        validFrom: new Date("2026-01-01T00:00:00Z"),
+        validFrom: new Date("2026-06-01T00:00:00Z"),
       },
     });
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
     empId = emp.id;
 
-    // Seed all July workdays
-    for (const d of JULY_WORKDAYS) {
+    // Seed all June workdays
+    for (const d of JUNE_WORKDAYS) {
       await seedEntry(app, empId, d);
     }
 
@@ -440,11 +444,11 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
     });
 
-    const { firstDay, lastDay } = monthDayBounds(JULY_START, JULY_END, TZ);
+    const { firstDay, lastDay } = monthDayBounds(JUNE_START, JUNE_END, TZ);
     const input: CloseMonthInput = {
       employeeId: empId,
-      monthStart: JULY_START,
-      monthEnd: JULY_END,
+      monthStart: JUNE_START,
+      monthEnd: JUNE_END,
       monthFirstDay: firstDay,
       monthLastDay: lastDay,
       tz: TZ,
@@ -465,30 +469,19 @@ describe("closeEmployeeMonth — case 2: FIXED four-path parity (CLOSE-05)", () 
 
     const coreResult = closeEmployeeMonth(input);
 
-    // Manual close via API (frozen time)
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(LIVE_NOW);
-    let manualRes;
-    try {
-      manualRes = await closeMonthApi(app, adminToken, empId, 2026, 7);
-    } finally {
-      vi.useRealTimers();
-    }
+    // Manual close via API — June 2026 is already in the past (today = 2026-07-18),
+    // so the future-month guard passes without any fake-timer manipulation.
+    // No fake timers → no JWT expiry risk.
+    const manualRes = await closeMonthApi(app, adminToken, empId, 2026, 6);
     expect(manualRes.statusCode, `manual close: ${manualRes.body}`).toBe(201);
-    const manualSnap = await fetchActiveSnapshot(app, empId, JULY_END);
+    const manualSnap = await fetchActiveSnapshot(app, empId, JUNE_END);
     expect(manualSnap, "manual snapshot must exist").not.toBeNull();
 
     // Retroactive recalc
-    await unlockMonthApi(app, adminToken, empId, 2026, 7);
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(LIVE_NOW);
-    try {
-      await closeMonthApi(app, adminToken, empId, 2026, 7);
-    } finally {
-      vi.useRealTimers();
-    }
-    await recalculateSnapshots(app, empId, JULY_START);
-    const recalcSnap = await fetchActiveSnapshot(app, empId, JULY_END);
+    await unlockMonthApi(app, adminToken, empId, 2026, 6);
+    await closeMonthApi(app, adminToken, empId, 2026, 6);
+    await recalculateSnapshots(app, empId, JUNE_START);
+    const recalcSnap = await fetchActiveSnapshot(app, empId, JUNE_END);
     expect(recalcSnap, "recalc snapshot must exist").not.toBeNull();
 
     assertFourPathParity(
@@ -684,8 +677,9 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
       hireDate: employee!.hireDate,
       exitDate: employee!.exitDate ?? null,
       isTimeTrackingExempt: false,
-      breakOver6hOverride: 0, // zero break override
-      breakOver9hOverride: 0,
+      // null = use tenant default 30 min break → shift 07:00–15:30 brutto 510 − 30 = 480 netto = R
+      breakOver6hOverride: null,
+      breakOver9hOverride: null,
       entries: entries as CloseMonthInput["entries"],
       shifts: shifts as CloseMonthInput["shifts"],
       approvedLeave: [],
@@ -696,7 +690,11 @@ describe("closeEmployeeMonth — case 3: SHIFT_BASED Model B + §615 (CLOSE-05)"
 
     const result = closeEmployeeMonth(input);
 
-    // C = round(38×60×20/5) = 9120. R = W = 10×480 = 4800. §615: balance = max(0,4800-9120) - max(0,4800-4800) = 0-0 = 0
+    // C = round(38×60×20/5) = 9120.
+    // Shifts 07:00–15:30 = 510 min brutto. breakOver6hOverride=null → tenant default 30 min break.
+    // Shift netto = 510 − 30 = 480 min. R = 10 × 480 = 4800.
+    // W = 10 × 480 = 4800 (entries 07:00–15:30, breakMinutes=30).
+    // §615: overtime = max(0,4800−9120) = 0; undertime = max(0,4800−4800) = 0; balance = 0.
     // (employee only rostered and worked 10 days — employer never rostered the other 10 = §615 Betriebsrisiko)
     expect(result.expectedMinutes).toBe(9120);
     expect(result.workedMinutes).toBe(10 * 480); // 10 days × 480 min
@@ -776,6 +774,8 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-doubling preserved (bsEx
         endDate: new Date("2026-02-02T23:59:59Z"),
         type: "VOCATIONAL_SCHOOL",
         source: "PATTERN",
+        days: 1,
+        createdBy: empId,
       },
     });
   }, 60_000);
