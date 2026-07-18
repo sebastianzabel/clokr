@@ -509,19 +509,29 @@
   }
 
   // WR-03 fix: $effect fires only on genuine week-navigation (cursorMonday
-  // value change), not on the initial mount. prevCursorMonday tracks the last
+  // value change), not on the initial mount. prevCursorMondayTime tracks the last
   // loaded week; load() is called only when cursorMonday differs from it.
   // This replaces the old boolean `mounted` guard which caused a double-load
   // because setting mounted=true itself triggered the $effect.
-  let prevCursorMonday = $state<Date | null>(null);
+  //
+  // v1.8.17 hotfix: `prevCursorMondayTime` is a PLAIN `let`, not `$state`, and holds
+  // a primitive timestamp (number), not a Date. The previous code stored a `Date` in
+  // `$state` and reassigned it inside this effect; because the effect also read that
+  // state and `new Date()` yields a fresh reference every run, Svelte's referential
+  // equality saw a change on every pass → the effect re-fired endlessly
+  // (effect_update_depth_exceeded, crashing the page). A non-reactive `let` is not
+  // tracked, so reading/writing it here cannot re-trigger the effect — the only
+  // reactive dependency is `cursorMonday` (plus mounted/gated), which is exactly the
+  // WR-03 intent: no double-load on mount, one load() per genuine week navigation.
+  let prevCursorMondayTime: number | null = null;
   $effect(() => {
     // Declare reactive dependency on cursorMonday so Svelte tracks it.
-    const current = cursorMonday;
+    const current = cursorMonday.getTime();
     if (!mounted || gated) return;
-    if (prevCursorMonday && current.getTime() !== prevCursorMonday.getTime()) {
+    if (prevCursorMondayTime !== null && current !== prevCursorMondayTime) {
       void load();
     }
-    prevCursorMonday = new Date(current);
+    prevCursorMondayTime = current;
   });
 
   // ── Navigation ─────────────────────────────────────────────────────────────
