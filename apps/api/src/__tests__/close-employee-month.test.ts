@@ -788,7 +788,7 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-doubling preserved (bsEx
     }
   });
 
-  it("case 4: BS day (VOCATIONAL_SCHOOL absence) contributes to both bsExpectedMinutes and bsWorkedMinutes — balance-neutral", async () => {
+  it("case 4: BS day (VOCATIONAL_SCHOOL absence) — reference value (byte-identical to overtime.ts post-hoc add)", async () => {
     const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
     const employee = await app.prisma.employee.findUnique({ where: { id: empId } });
     const absences = await app.prisma.absence.findMany({
@@ -821,10 +821,17 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-doubling preserved (bsEx
 
     const result = closeEmployeeMonth(input);
 
-    // BS day should NOT reduce balance — it contributes equally to both Soll and Ist sides.
-    // With 0 other entries, only BS-day contributes. The saldo for the BS-day itself is neutral.
-    // §615 applies for the non-BS days (no roster) → balance stays 0.
-    expect(result.balanceMinutes).toBe(0);
+    // Reference behavior (byte-identical to overtime.ts:1068–1078, auto-close-month.ts:464–472):
+    //   calcShiftBasedSaldo receives W=0 (entries only), R=0, C_net=contractSoll+480
+    //   → overtimeMinutes=0, undertimeMinutes=0, balanceDelta=0
+    //   shiftBalanceOverride = balanceDelta + bsWorkedMinutes = 0 + 480 = 480
+    //   totalWorked = workedMinutes + bsWorkedMinutes = 0 + 480 = 480
+    //
+    // NOTE: this produces balanceMinutes=480, which is NOT balance-neutral for a BS day.
+    // This appears to be a latent reference bug (tracked in 76.26-BS-DOUBLING-FOLLOWUP.md).
+    // The extraction phase must match the reference exactly; correctness fixes are out of scope.
+    expect(result.workedMinutes).toBe(480); // bsWorkedMinutes only
+    expect(result.balanceMinutes).toBe(480); // sbSaldo.balanceDelta(0) + bsWorkedMinutes(480)
   }, 30_000);
 });
 
@@ -1019,6 +1026,219 @@ describe("closeEmployeeMonth — case 7: cross-year carryOver chain (CLOSE-05)",
     expect(result.carryOverOut).toBe(600 + result.balanceMinutes); // 600 + (−480) = 120
     expect(result.carryOverOut).toBe(120);
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity pin
+// closeEmployeeMonth must produce byte-identical values to POST /overtime/close-month
+// for a SHIFT_BASED employee with a VOCATIONAL_SCHOOL absence.
+// Prevents silent drift of the BS post-hoc add (overtime.ts:1078 reference).
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity pin", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let adminToken: string;
+  let empId: string;
+
+  // Use March 2026 (past, no NI holidays Mon 2026-03-02 to Fri 2026-03-06).
+  // BS absence on 2026-03-03 (Tuesday). 5 shifts on 2026-03-02..2026-03-06.
+  // 4 entries on Mon/Wed/Thu/Fri (no entry on the BS Tuesday — Azubi is at school).
+  const { start: MAR_START, end: MAR_END } = monthRangeUtc(2026, 3, TZ);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = `shiftbs-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `ShiftBS ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: TZ },
+    });
+
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    const adminEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `ADM-${s}`,
+        firstName: "Admin",
+        lastName: "ShiftBS",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: adminEmp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: adminEmp.id, balanceHours: 0 } });
+
+    const empUser = await prisma.user.create({
+      data: {
+        email: `emp-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    // hireDate = March 1 so sequential close guard loop runs 0 iterations (no prior months).
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: empUser.id,
+        employeeNumber: `EMP-${s}`,
+        firstName: "Azubi",
+        lastName: "ShiftBS",
+        hireDate: new Date("2026-03-01T00:00:00Z"),
+        breakOver6hOverride: 0,
+        breakOver9hOverride: 0,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        mondayHours: 7.6,
+        tuesdayHours: 7.6,
+        wednesdayHours: 7.6,
+        thursdayHours: 7.6,
+        fridayHours: 7.6,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2026-03-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    empId = emp.id;
+
+    // 5 shifts: Mon 2026-03-02 to Fri 2026-03-06, 07:00–15:30 (brutto 510 min, no break override → 510 netto)
+    const FIRST_WEEK = ["2026-03-02", "2026-03-03", "2026-03-04", "2026-03-05", "2026-03-06"];
+    for (const d of FIRST_WEEK) {
+      await prisma.shift.create({
+        data: {
+          employeeId: empId,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: "07:00",
+          endTime: "15:30",
+          deletedAt: null,
+        },
+      });
+    }
+
+    // 4 entries: Mon, Wed, Thu, Fri — no entry on Tuesday 2026-03-03 (BS day)
+    for (const d of ["2026-03-02", "2026-03-04", "2026-03-05", "2026-03-06"]) {
+      await seedEntry(app, empId, d);
+    }
+
+    // VOCATIONAL_SCHOOL absence on Tuesday 2026-03-03
+    await prisma.absence.create({
+      data: {
+        employeeId: empId,
+        startDate: new Date("2026-03-03T00:00:00Z"),
+        endDate: new Date("2026-03-03T23:59:59Z"),
+        type: "VOCATIONAL_SCHOOL",
+        source: "PATTERN",
+        days: 1,
+        createdBy: empId,
+      },
+    });
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-${s}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(loginRes.body).accessToken;
+  }, 120_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("Case 9 cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("case 9: SHIFT_BASED + VOCATIONAL_SCHOOL closeEmployeeMonth == manual close (byte-identical parity pin)", async () => {
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
+    const employee = await app.prisma.employee.findUnique({ where: { id: empId } });
+    const entries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: empId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const shifts = await app.prisma.shift.findMany({
+      where: { employeeId: empId, deletedAt: null },
+      select: { date: true, startTime: true, endTime: true },
+    });
+    const absences = await app.prisma.absence.findMany({
+      where: { employeeId: empId, deletedAt: null },
+      select: { startDate: true, endDate: true, type: true, source: true },
+    });
+
+    const { firstDay, lastDay } = monthDayBounds(MAR_START, MAR_END, TZ);
+    const coreResult = closeEmployeeMonth({
+      employeeId: empId,
+      monthStart: MAR_START,
+      monthEnd: MAR_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: entries as CloseMonthInput["entries"],
+      shifts: shifts as CloseMonthInput["shifts"],
+      approvedLeave: [],
+      absences: absences as CloseMonthInput["absences"],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    });
+
+    // March 2026 is in the past (today = 2026-07-18) → no fake-timer needed.
+    const manualRes = await closeMonthApi(app, adminToken, empId, 2026, 3);
+    expect(manualRes.statusCode, `manual close: ${manualRes.body}`).toBe(201);
+    const manualSnap = await fetchActiveSnapshot(app, empId, MAR_END);
+    expect(manualSnap, "manual snapshot must exist").not.toBeNull();
+
+    // Byte-identical parity: closeEmployeeMonth == POST /overtime/close-month
+    expect(coreResult.workedMinutes, "case9 core.workedMinutes == manual").toBe(
+      manualSnap!.workedMinutes,
+    );
+    expect(coreResult.expectedMinutes, "case9 core.expectedMinutes == manual").toBe(
+      manualSnap!.expectedMinutes,
+    );
+    expect(coreResult.balanceMinutes, "case9 core.balanceMinutes == manual").toBe(
+      manualSnap!.balanceMinutes,
+    );
+  }, 120_000);
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
