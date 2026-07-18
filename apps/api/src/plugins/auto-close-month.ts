@@ -1,17 +1,12 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import {
-  monthRangeUtc,
-  monthDayBounds,
-  getDayOfWeekInTz,
-  getDayHoursFromSchedule,
-  dateStrInTz,
-} from "../utils/timezone";
+import { monthRangeUtc, monthDayBounds, dateStrInTz } from "../utils/timezone";
 import { getEffectiveSchedule } from "../routes/time-entries";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core
+import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -106,6 +101,14 @@ export const autoCloseMonthPlugin = fp(async (app) => {
         const missing: { employee: (typeof employees)[0]; missingDates: string[] }[] = [];
         const readyToClose: (typeof employees)[0][] = [];
 
+        // Tenant-local day bounds for @db.Date column filters (SNAP-05). Moved before
+        // the employee loop so the SHIFT_BASED readiness roster query can use these bounds.
+        const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+          monthStart,
+          monthEnd,
+          tz,
+        );
+
         for (const emp of employees) {
           // Check if already closed — use findFirst with superseded:false.
           // The @@unique was replaced by a partial unique index (COMP-V1814-04); the compound
@@ -174,14 +177,20 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             continue;
           }
 
-          // MONTHLY_HOURS employees work flexibly — no daily checks needed
-          if (String(schedule.type) === "MONTHLY_HOURS") {
+          // MONTHLY_HOURS and FLEXTIME employees work flexibly — no daily gap rule (D-01).
+          // Phase 76.26: FLEXTIME added alongside MONTHLY_HOURS (same as overtime.ts status handler).
+          const acmScheduleTypeSt = String(schedule.type);
+          if (acmScheduleTypeSt === "MONTHLY_HOURS" || acmScheduleTypeSt === "FLEXTIME") {
             readyToClose.push(emp);
             continue;
           }
 
+          // Phase 76.26 Task 2: replace inline getDayHoursFromSchedule enumeration with
+          // findMissingWorkdays (pitfall A4 fix — SHIFT_BASED now uses Shift.date roster,
+          // not {day}Hours). Shared coveredDates set with the saldo core (pitfall A1 fix).
+
           // Find workdays without time entries
-          const entries = await app.prisma.timeEntry.findMany({
+          const rdEntries = await app.prisma.timeEntry.findMany({
             where: {
               employeeId: emp.id,
               deletedAt: null,
@@ -191,10 +200,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
             },
             select: { date: true },
           });
-          const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
+          const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
 
           // Check approved leave and absences
-          const approvedLeave = await app.prisma.leaveRequest.findMany({
+          const rdApprovedLeave = await app.prisma.leaveRequest.findMany({
             where: {
               employeeId: emp.id,
               deletedAt: null,
@@ -202,58 +211,57 @@ export const autoCloseMonthPlugin = fp(async (app) => {
               startDate: { lte: monthEnd },
               endDate: { gte: monthStart },
             },
+            select: { startDate: true, endDate: true, halfDay: true },
           });
-          const absences = await app.prisma.absence.findMany({
+          const rdAbsences = await app.prisma.absence.findMany({
             where: {
               employeeId: emp.id,
               deletedAt: null,
               startDate: { lte: monthEnd },
               endDate: { gte: monthStart },
             },
+            select: { startDate: true, endDate: true },
           });
 
-          // Build set of leave/absence dates (TZ-aware)
-          const coveredDates = new Set<string>();
-          for (const lr of approvedLeave) {
-            const s = lr.startDate < monthStart ? monthStart : lr.startDate;
-            const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-            const cur = new Date(s);
-            while (cur <= e) {
-              coveredDates.add(dateStrInTz(cur, tz));
-              cur.setDate(cur.getDate() + 1);
-            }
-          }
-          for (const ab of absences) {
-            const s = ab.startDate < monthStart ? monthStart : ab.startDate;
-            const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-            const cur = new Date(s);
-            while (cur <= e) {
-              coveredDates.add(dateStrInTz(cur, tz));
-              cur.setDate(cur.getDate() + 1);
-            }
+          // For SHIFT_BASED: fetch rosterDates (Shift.date set) — pitfall A4 fix.
+          // Uses monthFirstDay/monthLastDay (@db.Date bounds, SNAP-05).
+          let rdRosterDates: Set<string> | undefined;
+          if (acmScheduleTypeSt === "SHIFT_BASED") {
+            const empShifts = await app.prisma.shift.findMany({
+              where: {
+                employeeId: emp.id,
+                date: { gte: monthFirstDay, lte: monthLastDay },
+                deletedAt: null,
+              },
+              select: { date: true },
+            });
+            rdRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
-          // Add holidays (computed Feiertage + manual DB entries) to coveredDates
-          for (const dateStr of acmHolidayDateStrings) {
-            coveredDates.add(dateStr);
-          }
+          // effectiveStart = max(hireDate, monthFirstDay) — TZ-normalised (CLOSE-04).
+          const rdHireDateNorm = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
+          const rdEffectiveStart = rdHireDateNorm > monthFirstDay ? rdHireDateNorm : monthFirstDay;
 
-          // Iterate workdays and find missing ones (TZ-aware date strings)
-          const missingDates: string[] = [];
-          const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
-          const cur = new Date(effectiveStart);
-          while (cur <= monthEnd) {
-            const dateStr = dateStrInTz(cur, tz);
-            const dow = getDayOfWeekInTz(cur, tz);
-            const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
+          const rdGapResult = findMissingWorkdays({
+            schedule: schedule as Record<string, unknown>,
+            effectiveStart: rdEffectiveStart,
+            effectiveEnd: monthLastDay,
+            tz,
+            entryDates: rdEntryDates,
+            approvedLeave: rdApprovedLeave.map((lr) => ({
+              startDate: lr.startDate,
+              endDate: lr.endDate,
+              halfDay: Boolean(lr.halfDay),
+            })),
+            absences: rdAbsences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+            holidayDateStrings: acmHolidayDateStrings,
+            rosterDates: rdRosterDates,
+          });
 
-            // Only check workdays (expected hours > 0)
-            if (expectedHours > 0 && !entryDates.has(dateStr) && !coveredDates.has(dateStr)) {
-              missingDates.push(dateStr);
-            }
-
-            cur.setDate(cur.getDate() + 1);
-          }
+          // Derive readiness from gaps — a month with any gap (full or partial) is NOT
+          // auto-closed. Do NOT make gaps auto-closeable here — CLOSE-01 (76.28) owns
+          // that gate relax.
+          const missingDates = rdGapResult.gaps.map((g) => g.date);
 
           if (missingDates.length > 0) {
             missing.push({ employee: emp, missingDates });
@@ -262,18 +270,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           }
         }
 
-        // Tenant-local day bounds for @db.Date column filters (TimeEntry.date,
-        // Shift.date, PublicHoliday.date). monthStart/monthEnd timestamps cast to
-        // the PREVIOUS month's last day for UTC+ tenants — using them directly
-        // double-counts the boundary day (prod evidence: a May-31 entry counted
-        // in BOTH the May and the June snapshot).
-        const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
-          monthStart,
-          monthEnd,
-          tz,
-        );
-
         // Auto-close employees that are ready
+        // (monthFirstDay/monthLastDay already computed above before the readiness loop)
         for (const emp of readyToClose) {
           try {
             // Schedule valid for the MIDDLE of the target month — closing a past
