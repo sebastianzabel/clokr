@@ -18,25 +18,31 @@ import bcrypt from "bcryptjs";
 describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtraction", () => {
   const SOURCE_PATH = join(__dirname, "..", "recalculate-snapshots.ts");
   const source = readFileSync(SOURCE_PATH, "utf-8");
+  // Phase 76.26: the per-month saldo math (absence subtraction, BS-doubling, leave
+  // reduction) was extracted from this file into the SHARED pure core
+  // close-employee-month.ts, which manual close, cron, and recalc all now call.
+  // These white-box structural tests therefore assert (a) recalc DELEGATES to the
+  // shared core, and (b) the moved logic lives in that core. The behavioural parity
+  // proof is unchanged: saldo-invariant-e2e.test.ts (step 6), bs-day-saldo-parity.test.ts,
+  // and recalculate-snapshots-atomic.test.ts all stay green.
+  const CLOSE_SOURCE_PATH = join(__dirname, "..", "close-employee-month.ts");
+  const closeSource = readFileSync(CLOSE_SOURCE_PATH, "utf-8");
 
-  // ── Phase 76.21 (debug D7): recalc subtracts absences + BS-doubling (supersedes v1.6.3) ──
-  it("Phase 76.21: recalc subtracts absences + BS-doubling for parity with the close", () => {
-    // v1.6.3 deliberately scoped absence-subtraction OUT of recalc. That created a
-    // recalc-vs-close drift: recalculating an unchanged closed month produced a
-    // different balance than the close (which DOES subtract absences). Debug D7
-    // reverses that so recalc reproduces the closed snapshot EXACTLY — proven by
-    // saldo-invariant-e2e.test.ts (step 6) and bs-day-saldo-parity.test.ts.
-    expect(source).toMatch(/parity with the manual close/);
-    // Three absence.findMany now: [1] SHIFT_BASED coveredDates, [2] the absence-
-    // subtraction (parity with close), [3] the VOCATIONAL_SCHOOL BS-doubling.
-    const absenceFindManyCount = (source.match(/prisma\.absence\.findMany/g) ?? []).length;
-    expect(absenceFindManyCount).toBe(3);
+  // ── Phase 76.21 (debug D7) → Phase 76.26: parity now guaranteed structurally via the shared core ──
+  it("Phase 76.26: recalc delegates to closeEmployeeMonth (shared core subtracts absences + BS-doubling for parity with the close)", () => {
+    // v1.6.3 scoped absence-subtraction OUT of recalc → recalc-vs-close drift. Debug D7
+    // (76.21) reversed that inline; Phase 76.26 extracted the whole computation into
+    // closeEmployeeMonth so recalc == manual == cron is STRUCTURAL (same function), not
+    // hand-maintained. Behaviour proven by saldo-invariant-e2e + bs-day-saldo-parity.
+    expect(source).toMatch(/closeEmployeeMonth\(/);
+    // The absence subtraction + BS-doubling now live in the shared core.
+    expect(closeSource).toMatch(/parity with the manual close|bsExpectedMinutes/);
   });
 
-  // ── D-15: leave-reduce uses new helper + halfDay ──
-  it("D-15: leave-reduce uses calcLeaveAbsenceMinutesTz with halfDay propagation", () => {
-    expect(source).toMatch(/calcLeaveAbsenceMinutesTz\(/);
-    expect(source).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
+  // ── D-15: leave-reduce uses calcLeaveAbsenceMinutesTz with halfDay (now in the shared core) ──
+  it("D-15: leave-reduce uses calcLeaveAbsenceMinutesTz with halfDay propagation (in close-employee-month.ts)", () => {
+    expect(closeSource).toMatch(/calcLeaveAbsenceMinutesTz\(/);
+    expect(closeSource).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
   });
 
   // ── Integration: existing snapshot is rewritten to Ø-Methode values ──
