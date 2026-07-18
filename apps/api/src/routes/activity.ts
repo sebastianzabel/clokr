@@ -77,7 +77,7 @@ export async function activityRoutes(app: FastifyInstance) {
             OR: [
               { user: { employee: { tenantId } } },
               { userId: null }, // SYSTEM cron actions + DSGVO-anonymized rows
-              { user: { employeeId: null } }, // SYSTEM-user actor without employee link
+              { user: { employee: { is: null } } }, // SYSTEM-user actor without employee link
             ],
           },
           orderBy: { createdAt: "desc" },
