@@ -2,14 +2,7 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getEffectiveSchedule, updateOvertimeAccount } from "./time-entries";
-import {
-  getTenantTimezone,
-  dateStrInTz,
-  monthRangeUtc,
-  monthDayBounds,
-  getDayOfWeekInTz,
-  getDayHoursFromSchedule,
-} from "../utils/timezone";
+import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
@@ -270,6 +263,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const tz = await getTenantTimezone(app.prisma, tenantId);
       const { start: monthStart, end: monthEnd } = monthRangeUtc(year, month, tz);
+      // SNAP-05: use monthDayBounds for correct @db.Date filtering (shift query + findMissingWorkdays)
+      const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+        monthStart,
+        monthEnd,
+        tz,
+      );
 
       // PERF-V1814-01: Get employees with tenant JOIN (folds tenant.findUnique, no extra query)
       const employees = await app.prisma.employee.findMany({
@@ -342,7 +341,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const schedule = emp.workSchedules[0];
 
         // No schedule or MONTHLY_HOURS → ready (no daily checks needed)
-        if (!schedule || String(schedule.type) === "MONTHLY_HOURS") {
+        // Phase 76.26: FLEXTIME is also gap-free (D-01 — no daily gap rule, like MONTHLY_HOURS).
+        const scheduleTypeSt = String(schedule.type);
+        if (!schedule || scheduleTypeSt === "MONTHLY_HOURS" || scheduleTypeSt === "FLEXTIME") {
           result.push({
             employeeId: emp.id,
             employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -357,51 +358,46 @@ export async function overtimeRoutes(app: FastifyInstance) {
         const entries = entriesByEmp.get(emp.id) ?? [];
         const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
-        // Check approved leave and absences
+        // Check approved leave and absences (full rows from bulk-fetch — halfDay + type + source included)
         const approvedLeave = leaveByEmp.get(emp.id) ?? [];
         const absences = absencesByEmp.get(emp.id) ?? [];
 
-        // Build set of leave/absence dates (TZ-aware)
-        const coveredDates = new Set<string>();
-        for (const lr of approvedLeave) {
-          const s = lr.startDate < monthStart ? monthStart : lr.startDate;
-          const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-          const cur = new Date(s);
-          while (cur <= e) {
-            coveredDates.add(dateStrInTz(cur, tz));
-            cur.setDate(cur.getDate() + 1);
-          }
-        }
-        for (const ab of absences) {
-          const s = ab.startDate < monthStart ? monthStart : ab.startDate;
-          const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-          const cur = new Date(s);
-          while (cur <= e) {
-            coveredDates.add(dateStrInTz(cur, tz));
-            cur.setDate(cur.getDate() + 1);
-          }
+        // Phase 76.26 Task 2: replace inline getDayHoursFromSchedule enumeration with findMissingWorkdays.
+        // For SHIFT_BASED: fetch rosterDates (Shift.date set) from DB — pitfall A4 fix.
+        // For FIXED types: rosterDates not needed (findMissingWorkdays uses getDayHoursFromSchedule internally).
+        let statusRosterDates: Set<string> | undefined;
+        if (scheduleTypeSt === "SHIFT_BASED") {
+          const empShifts = await app.prisma.shift.findMany({
+            where: {
+              employeeId: emp.id,
+              date: { gte: monthStart, lte: monthLastDay },
+              deletedAt: null,
+            },
+            select: { date: true },
+          });
+          statusRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
         }
 
-        // Add holidays (computed + manual) to coveredDates
-        for (const dateStr of holidayDateStrings) {
-          coveredDates.add(dateStr);
-        }
+        const effectiveStartSt = emp.hireDate > monthFirstDay ? emp.hireDate : monthFirstDay;
 
-        // Iterate workdays and find missing ones (TZ-aware date strings)
-        const missingDates: string[] = [];
-        const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
-        const cur = new Date(effectiveStart);
-        while (cur <= monthEnd) {
-          const dateStr = dateStrInTz(cur, tz);
-          const dow = getDayOfWeekInTz(cur, tz);
-          const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
+        const gapResultSt = findMissingWorkdays({
+          schedule: schedule as Record<string, unknown>,
+          effectiveStart: effectiveStartSt,
+          effectiveEnd: monthLastDay,
+          tz,
+          entryDates,
+          approvedLeave: approvedLeave.map((lr) => ({
+            startDate: lr.startDate,
+            endDate: lr.endDate,
+            halfDay: Boolean(lr.halfDay),
+          })),
+          absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+          holidayDateStrings,
+          rosterDates: statusRosterDates,
+        });
 
-          if (expectedHours > 0 && !entryDates.has(dateStr) && !coveredDates.has(dateStr)) {
-            missingDates.push(dateStr);
-          }
-
-          cur.setDate(cur.getDate() + 1);
-        }
+        // Build missingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
+        const missingDates = gapResultSt.gaps.map((g) => g.date);
 
         if (missingDates.length > 0) {
           result.push({
@@ -584,11 +580,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
         let anyMissing = false;
 
+        // Phase 76.26 Task 2: build holiday set for this month (merged computed + DB).
+        // Uses monthDayBounds for correct @db.Date filtering (SNAP-05).
+        const { firstDay: ysMonthFirstDay, lastDay: ysMonthLastDay } = monthDayBounds(
+          monthStart,
+          monthEnd,
+          tz,
+        );
+        const ysComputedHolidays = getHolidays(year, yearStatusStateCode);
+        const ysMonthHolidayDateStrings = new Set<string>([
+          ...ysComputedHolidays
+            .filter(
+              (h) =>
+                h.date >= dateStrInTz(ysMonthFirstDay, tz) &&
+                h.date <= dateStrInTz(ysMonthLastDay, tz),
+            )
+            .map((h) => h.date),
+          ...yearHolidays
+            .filter((h) => h.date >= monthStart && h.date <= monthEnd)
+            .map((h) => dateStrInTz(h.date, tz)),
+        ]);
+
         for (const emp of unclosedEmployees) {
           const schedule = emp.workSchedules[0];
 
           // No schedule or MONTHLY_HOURS → no missing dates
-          if (!schedule || String(schedule.type) === "MONTHLY_HOURS") {
+          // Phase 76.26: FLEXTIME is also gap-free (D-01 — no daily gap rule, like MONTHLY_HOURS).
+          const scheduleTypeYs = String(schedule?.type ?? "");
+          if (!schedule || scheduleTypeYs === "MONTHLY_HOURS" || scheduleTypeYs === "FLEXTIME") {
             continue;
           }
 
@@ -599,7 +618,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           );
           const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
 
-          // Check approved leave and absences
+          // Check approved leave and absences (full rows — halfDay + type + source included)
           const approvedLeave = (leaveByEmp.get(emp.id) ?? []).filter(
             (lr) => lr.startDate <= monthEnd && lr.endDate >= monthStart,
           );
@@ -607,55 +626,41 @@ export async function overtimeRoutes(app: FastifyInstance) {
             (ab) => ab.startDate <= monthEnd && ab.endDate >= monthStart,
           );
 
-          // Build set of leave/absence dates (TZ-aware)
-          const coveredDates = new Set<string>();
-          for (const lr of approvedLeave) {
-            const s = lr.startDate < monthStart ? monthStart : lr.startDate;
-            const e = lr.endDate > monthEnd ? monthEnd : lr.endDate;
-            const cur = new Date(s);
-            while (cur <= e) {
-              coveredDates.add(dateStrInTz(cur, tz));
-              cur.setDate(cur.getDate() + 1);
-            }
-          }
-          for (const ab of absences) {
-            const s = ab.startDate < monthStart ? monthStart : ab.startDate;
-            const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-            const cur = new Date(s);
-            while (cur <= e) {
-              coveredDates.add(dateStrInTz(cur, tz));
-              cur.setDate(cur.getDate() + 1);
-            }
+          // Phase 76.26 Task 2: replace inline getDayHoursFromSchedule enumeration with findMissingWorkdays.
+          // For SHIFT_BASED: fetch rosterDates (Shift.date set) from DB — pitfall A4 fix.
+          let ysRosterDates: Set<string> | undefined;
+          if (scheduleTypeYs === "SHIFT_BASED") {
+            const empShiftsYs = await app.prisma.shift.findMany({
+              where: {
+                employeeId: emp.id,
+                date: { gte: ysMonthFirstDay, lte: ysMonthLastDay },
+                deletedAt: null,
+              },
+              select: { date: true },
+            });
+            ysRosterDates = new Set(empShiftsYs.map((sh) => dateStrInTz(sh.date, tz)));
           }
 
-          // Check holidays: merge computed German Feiertage with pre-fetched DB holidays
-          const computedHolidaysYS = getHolidays(year, yearStatusStateCode);
-          for (const h of computedHolidaysYS) {
-            coveredDates.add(h.date);
-          }
-          // PERF-V1814-01: filter year-range holidays to this month in memory (no DB call)
-          const monthHolidays = yearHolidays.filter(
-            (h) => h.date >= monthStart && h.date <= monthEnd,
-          );
-          for (const h of monthHolidays) {
-            coveredDates.add(dateStrInTz(h.date, tz));
-          }
+          const ysEffectiveStart = emp.hireDate > ysMonthFirstDay ? emp.hireDate : ysMonthFirstDay;
 
-          // Iterate workdays and find missing ones (TZ-aware date strings)
-          const empMissingDates: string[] = [];
-          const effectiveStart = emp.hireDate > monthStart ? emp.hireDate : monthStart;
-          const cur = new Date(effectiveStart);
-          while (cur <= monthEnd) {
-            const dateStr = dateStrInTz(cur, tz);
-            const dow = getDayOfWeekInTz(cur, tz);
-            const expectedHours = getDayHoursFromSchedule(schedule as Record<string, unknown>, dow);
+          const ysGapResult = findMissingWorkdays({
+            schedule: schedule as Record<string, unknown>,
+            effectiveStart: ysEffectiveStart,
+            effectiveEnd: ysMonthLastDay,
+            tz,
+            entryDates,
+            approvedLeave: approvedLeave.map((lr) => ({
+              startDate: lr.startDate,
+              endDate: lr.endDate,
+              halfDay: Boolean(lr.halfDay),
+            })),
+            absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+            holidayDateStrings: ysMonthHolidayDateStrings,
+            rosterDates: ysRosterDates,
+          });
 
-            if (expectedHours > 0 && !entryDates.has(dateStr) && !coveredDates.has(dateStr)) {
-              empMissingDates.push(dateStr);
-            }
-
-            cur.setDate(cur.getDate() + 1);
-          }
+          // Build empMissingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
+          const empMissingDates = ysGapResult.gaps.map((g) => g.date);
 
           if (empMissingDates.length > 0) {
             anyMissing = true;
