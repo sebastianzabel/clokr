@@ -12,6 +12,7 @@ import {
   todayInTz,
   dateStrInTz,
   monthRangeUtc,
+  monthDayBounds,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
   getDayOfWeekInTz,
@@ -23,6 +24,7 @@ import { resolveClockEvent } from "../services/clock/resolver";
 import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
 import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
+import { closeEmployeeMonth } from "../utils/close-employee-month"; // SNAP-03 — Phase 76.27
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -1633,17 +1635,13 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
   }, 0);
 
-  // ── Schedule-type-aware expected/holiday/leave/absence computation ──────────
-  // - SHIFT_BASED: expected = Σ Shift durations (skipping leave/absence-covered days);
-  //   leave/absence/holiday subtractions stay at 0 (already excluded by skipping shifts).
-  // - MONTHLY_HOURS (monthlyHours > 0) spanning multiple calendar months: per-month
-  //   segmentation for expected/leave/absence so the proration denominator matches
-  //   each segment's month (avoids single-month-denominator distortion).
-  // - All other types (FIXED_WEEKLY, FLEXTIME, MONTHLY_HOURS single-month,
-  //   pure-tracking MONTHLY_HOURS with monthlyHours=0): unchanged single-call logic.
+  // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ─────
+  // ALL schedule models now use the unified per-month loop for COMPLETE open months,
+  // calling closeEmployeeMonth() once per month. The current partial month is computed
+  // inline (F-01 Option A — SHIFT_BASED: roster-prorated; non-SHIFT: flat calcExpectedMinutesTz).
   const scheduleType = String(schedule.type ?? "");
 
-  // Tenant config + state code are needed by both holiday + MONTHLY_HOURS branches
+  // Tenant config + state code are needed by both holiday + closeEmployeeMonth branches
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
     where: { tenantId: employee!.tenantId },
   });
@@ -1651,17 +1649,27 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     ? (STATE_MAP[employee.tenant.federalState] ?? "NI")
     : "NI";
 
-  // Hoisted holiday block — runs for default + MONTHLY_HOURS-multi-month branches.
-  // SHIFT_BASED resets holidayMinutes = 0 at the end of its branch (manager-assigned
-  // shifts on Feiertagen are intentional and count as worked).
+  // Hoisted holiday block — FULL-YEAR coverage (not filtered to [rangeStart, effectiveEnd]).
+  //
+  // SNAP-03 (76.27): closeEmployeeMonth() subtracts ALL holidays in the provided set from each
+  // month's expected (no internal month-range filtering). To maintain parity with the close paths
+  // (which use buildHolidaySet(year) = all year's holidays), the live path MUST pass the full
+  // annual holiday set to closeEmployeeMonth() for each complete open month AND for the current
+  // partial month close. Only covering holidays within [rangeStart, effectiveEnd] would cause the
+  // live path to subtract fewer holidays than the close path, breaking parity.
+  //
+  // We therefore build the holiday set for ALL calendar years spanned by the open range (typically
+  // just one year, but can span two). No date-range filtering — include all holidays for each year.
+  //
+  // DB manual holidays: still filter to [rangeStart, effectiveEnd] for the inline current-month
+  // branch (those are already included in the year-wide computed set for the close calls).
   const rangeYear = rangeStart.getUTCFullYear();
   const effectiveEndYear = effectiveEnd.getUTCFullYear();
   const computedHolidaysByDate = new Map<string, { date: Date }>();
   for (let yr = rangeYear; yr <= effectiveEndYear; yr++) {
     for (const h of getHolidays(yr, updateStateCode)) {
-      if (h.date >= dateStrInTz(rangeStart, tz) && h.date <= dateStrInTz(effectiveEnd, tz)) {
-        computedHolidaysByDate.set(h.date, { date: new Date(h.date + "T00:00:00Z") });
-      }
+      // Full year — NO date-range filter (SNAP-03: match close-path convention).
+      computedHolidaysByDate.set(h.date, { date: new Date(h.date + "T00:00:00Z") });
     }
   }
   const dbHolidays = await app.prisma.publicHoliday.findMany({
@@ -1678,112 +1686,237 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   }
   // D-06: holiday dates as tenant-TZ YYYY-MM-DD, passed to calcLeaveAbsenceMinutesTz so a
   // holiday inside approved leave/absence is NOT double-deducted (holidayMinutes already
-  // subtracts it separately).
+  // subtracts it separately). Full-year set used for all closeEmployeeMonth calls.
   const holidayDateStrSet = new Set(allHolidays.map((h) => dateStrInTz(h.date, tz)));
 
-  const isMonthlyHoursDeduction =
-    scheduleType === "MONTHLY_HOURS" &&
-    Number(schedule.monthlyHours ?? 0) > 0 &&
-    tenantConfig?.monthlyHoursHolidayDeduction === true;
+  // ── SNAP-03 (Phase 76.27): Per-month iteration via closeEmployeeMonth() ────────
+  //
+  // Build the list of COMPLETE open months: all calendar months entirely before the
+  // calendar month of effectiveEnd. The current (partial) month is handled inline below.
+  // Uses monthRangeUtc + monthDayBounds (SNAP-05 — never raw Date math).
+  //
+  // Algorithm: iterate month-by-month from rangeStart's month up to (but not including)
+  // the calendar month that contains effectiveEnd. Oldest-first.
 
-  let workingDaysInRange = 0;
-  if (isMonthlyHoursDeduction) {
-    const { start: wdMonthStart, end: wdMonthEnd } = monthRangeUtc(
-      rangeStart.getUTCFullYear(),
-      rangeStart.getUTCMonth() + 1,
-      tz,
-    );
-    const wdCur = new Date(wdMonthStart);
-    while (wdCur <= wdMonthEnd) {
-      const wdDow = getDayOfWeekInTz(wdCur, tz);
-      if (getDayHoursFromSchedule(schedule, wdDow) > 0) workingDaysInRange++;
-      wdCur.setDate(wdCur.getDate() + 1);
+  // Current month: the calendar month that contains effectiveEnd.
+  const currentMonthRange = monthRangeUtc(
+    effectiveEnd.getUTCFullYear(),
+    effectiveEnd.getUTCMonth() + 1,
+    tz,
+  );
+
+  // Build complete open months list (all months before the current month).
+  interface CompleteMonth {
+    monthStart: Date;
+    monthEnd: Date;
+    monthFirstDay: Date;
+    monthLastDay: Date;
+  }
+  const completeOpenMonths: CompleteMonth[] = [];
+  {
+    // Start from the calendar month containing rangeStart.
+    const rsStr = dateStrInTz(rangeStart, tz);
+    const [rsYear, rsMonth] = rsStr.split("-").map(Number);
+    let cy = rsYear!;
+    let cm = rsMonth!; // 1-based
+    for (let i = 0; i < 240; i++) {
+      const { start: mStart, end: mEnd } = monthRangeUtc(cy, cm, tz);
+      // Stop when this month IS the current month (contains effectiveEnd).
+      if (mStart >= currentMonthRange.start) break;
+      // Only include months that overlap with rangeStart (first segment may start mid-month).
+      if (mEnd >= rangeStart) {
+        const { firstDay: mFirstDay, lastDay: mLastDay } = monthDayBounds(mStart, mEnd, tz);
+        completeOpenMonths.push({
+          monthStart: mStart,
+          monthEnd: mEnd,
+          monthFirstDay: mFirstDay,
+          monthLastDay: mLastDay,
+        });
+      }
+      cm++;
+      if (cm > 12) {
+        cm = 1;
+        cy++;
+      }
     }
   }
-  const dailySollMin =
-    isMonthlyHoursDeduction && workingDaysInRange > 0
-      ? (Number(schedule.monthlyHours!) * 60) / workingDaysInRange
-      : 0;
 
-  let holidayMinutes = allHolidays.reduce((sum, h) => {
-    const dow = getDayOfWeekInTz(h.date, tz);
-    if (isMonthlyHoursDeduction) {
-      return getDayHoursFromSchedule(schedule, dow) > 0 ? sum + dailySollMin : sum;
-    }
-    return sum + getDayHoursFromSchedule(schedule, dow) * 60;
-  }, 0);
+  // ── Range-wide pre-fetch (ONE query per collection) ───────────────────────────
+  // Pre-fetch all data for [rangeStart, effectiveEnd] once. The per-month loop
+  // and current-month computation filter inline — no N×DB-round-trips (RESEARCH §2.4).
+  //
+  // Compute @db.Date bounds for the full range so entry/shift queries use the correct
+  // boundary type (SNAP-05). rangeStart and effectiveEnd are already @db.Date-compatible
+  // UTC midnight values from the snapshot.periodEnd+1 calculation above.
+  const rangeFirstDay = rangeStart; // Already a UTC-midnight @db.Date-compatible value
+  const rangeLastDay = effectiveEnd; // Already a UTC-midnight @db.Date-compatible value
+
+  const allShifts =
+    scheduleType === "SHIFT_BASED"
+      ? await app.prisma.shift.findMany({
+          where: {
+            employeeId,
+            date: { gte: rangeFirstDay, lte: rangeLastDay },
+            deletedAt: null,
+          },
+          select: { date: true, startTime: true, endTime: true },
+        })
+      : ([] as { date: Date; startTime: string; endTime: string }[]);
+
+  const allApprovedLeave = await app.prisma.leaveRequest.findMany({
+    where: {
+      employeeId,
+      deletedAt: null,
+      status: "APPROVED",
+      startDate: { lte: effectiveEnd },
+      endDate: { gte: rangeStart },
+    },
+  });
+
+  const allAbsences = await app.prisma.absence.findMany({
+    where: {
+      employeeId,
+      deletedAt: null,
+      startDate: { lte: effectiveEnd },
+      endDate: { gte: rangeStart },
+    },
+  });
+
+  // Build a full-range holidayDateStrings Set covering all years in [rangeStart, effectiveEnd].
+  // (Already computed above as holidayDateStrSet — reuse it directly for closeEmployeeMonth calls.)
+
+  // ── Complete open months loop: one closeEmployeeMonth() call per month ────────
+  // For each COMPLETE open month (all months before the current partial month),
+  // call closeEmployeeMonth() with the filtered data slice. Thread effectiveCarryOverOut
+  // as carryOverIn for the next month. Accumulate balanceMinutes into openPeriodBalance.
+  //
+  // SHIFT_BASED: each complete month is full/close-equivalent (no rosterProration).
+  // §615 applied per-month → eliminates the +64h lumping artifact (SNAP-03 fix).
+  // FIXED/FLEXTIME/MONTHLY_HOURS: also go through closeEmployeeMonth() for uniformity
+  // (RESEARCH §2.6 — all models benefit from per-month snapshot guarantee).
+
+  let accumulatedCarryOver = snapshotCarryOver;
+  let openPeriodBalance = 0;
+
+  for (const cm of completeOpenMonths) {
+    const { monthStart, monthEnd, monthFirstDay, monthLastDay } = cm;
+
+    // Filter each pre-fetched collection to this month's range.
+    // entries: @db.Date comparison (date >= monthFirstDay && date <= monthLastDay)
+    const monthEntries = entries.filter(
+      (e) => e.date >= monthFirstDay && e.date <= monthLastDay,
+    );
+    // shifts: same @db.Date filter
+    const monthShifts = allShifts.filter(
+      (s) => s.date >= monthFirstDay && s.date <= monthLastDay,
+    );
+    // leave/absences: range overlap (startDate <= monthEnd && endDate >= monthStart)
+    const monthLeave = allApprovedLeave.filter(
+      (lr) => lr.startDate <= monthEnd && lr.endDate >= monthStart,
+    );
+    const monthAbsences = allAbsences.filter(
+      (ab) => ab.startDate <= monthEnd && ab.endDate >= monthStart,
+    );
+
+    // SNAP-03 (76.27): pass the FULL-YEAR holiday set (no per-month filtering).
+    // closeEmployeeMonth() has no internal month-range filtering for holidays — it subtracts
+    // ALL holidays in the provided set from the month's expected. Passing the full set matches
+    // the close-path convention (buildHolidaySet(year) = all year's holidays, passed to each
+    // monthly close call). Filtering to the month would cause parity divergence.
+    const result = closeEmployeeMonth({
+      employeeId,
+      monthStart,
+      monthEnd,
+      monthFirstDay,
+      monthLastDay,
+      tz,
+      carryOverIn: accumulatedCarryOver,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: null, // live path — still employed
+      isTimeTrackingExempt: false, // already guarded above
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+      entries: monthEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: monthShifts,
+      approvedLeave: monthLeave.map((lr) => ({
+        startDate: lr.startDate,
+        endDate: lr.endDate,
+        halfDay: lr.halfDay,
+      })),
+      absences: monthAbsences.map((ab) => ({
+        startDate: ab.startDate,
+        endDate: ab.endDate,
+        type: ab.type,
+        source: ab.source,
+      })),
+      holidayDateStrings: holidayDateStrSet,
+      tenantConfig: tenantConfig
+        ? {
+            defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
+            defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
+            monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+            vocationalSchoolMinutesPerDay:
+              tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolBlockMinutesPerWeek:
+              tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+          }
+        : null,
+    });
+
+    // Thread carryOver for next month (§2.3 RESEARCH).
+    accumulatedCarryOver = result.effectiveCarryOverOut;
+    // Accumulate complete-month balance (already net — do NOT also add via leave/absence path).
+    openPeriodBalance += result.balanceMinutes;
+  }
+
+  // ── Current partial month: inline computation (F-01 Option A) ────────────────
+  //
+  // The calendar month containing effectiveEnd is the CURRENT PARTIAL month.
+  // For SHIFT_BASED: roster-prorated inline (D-09, existing proration logic preserved).
+  //   shiftBalanceOverride is set; bsWorkedMinutes added at openPeriodBalance site.
+  //   This preserves the existing live-path bsExpectedMinutes gap (RESEARCH §2.7 — do NOT fix).
+  // For non-SHIFT: flat calcExpectedMinutesTz over current-month open range only.
+  //   holdiayMinutes/leaveMinutes/absenceMinutes apply to current-month range only.
+  //
+  // currentMonthOpenStart: the later of rangeStart and the current month's UTC start.
+  // If rangeStart is already within the current month (no complete open months), the
+  // entire open range is the current partial month.
+
+  const currentMonthOpenStart =
+    currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
 
   let expectedMinutes = 0;
   let leaveMinutes = 0;
   let absenceMinutes = 0;
-  // Phase 76.22: non-null only in SHIFT_BASED branch; replaces the openPeriodBalance
-  // expression so the D-01 two-clause formula is used instead of the flat subtraction.
-  // shiftBalanceOverride = calcShiftBasedSaldo.balanceDelta (WITHOUT bsWorkedMinutes —
-  // that is added at the openPeriodBalance site so the live path's existing bs handling
-  // remains intact; the live path has no bsExpectedMinutes in the SHIFT_BASED branch
-  // today, which is an existing gap tracked separately).
+  let holidayMinutes = 0;
+  // Phase 76.22: non-null only in SHIFT_BASED branch for the current partial month.
   let shiftBalanceOverride: number | null = null;
 
+  // Current-month leave and absences (filtered from pre-fetched collections)
+  const curLeave = allApprovedLeave.filter(
+    (lr) => lr.startDate <= currentMonthRange.end && lr.endDate >= currentMonthRange.start,
+  );
+  const curAbsences = allAbsences.filter(
+    (ab) => ab.startDate <= currentMonthRange.end && ab.endDate >= currentMonthRange.start,
+  );
+
   if (scheduleType === "SHIFT_BASED") {
-    // ── SHIFT_BASED: Model B + § 615 (Phase 76.22) ──────────────────────────
-    // expectedMinutes = C_net (contract Ø-Methode − leave/absence credits).
-    // balanceDelta via calcShiftBasedSaldo (D-01: max(0,W−C) − max(0,R−W)).
-    const shifts = await app.prisma.shift.findMany({
-      where: {
-        employeeId,
-        date: { gte: rangeStart, lte: effectiveEnd },
-        deletedAt: null, // Phase 67.2 — saldo math ignores soft-deleted shifts
-      },
-      select: { date: true, startTime: true, endTime: true },
-    });
+    // ── SHIFT_BASED current partial month: roster-prorated (D-09, F-01 Option A) ──
+    //
+    // This block is the KEPT inline proration from the original code (RESEARCH §2.5).
+    // Complete prior months are handled by closeEmployeeMonth() above. Only the current
+    // partial month (containing effectiveEnd) is prorated here.
+    //
+    // coveredDates: union of approved leave and absences for the CURRENT month range.
+    // cNetForRange / rosterForRange / workedForRange helpers operate on current-month
+    // data only.
 
-    const approvedLeave = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        status: "APPROVED",
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
-    });
-    const absences = await app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
-    });
-
-    const coveredDates = new Set<string>();
-    const addRange = (s: Date, e: Date) => {
-      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
-      const end = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
-      while (cur <= end) {
-        coveredDates.add(dateStrInTz(cur, tz));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-    };
-    for (const lr of approvedLeave) {
-      const s = lr.startDate < rangeStart ? rangeStart : lr.startDate;
-      const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-      if (s <= e) addRange(s, e);
-    }
-    for (const ab of absences) {
-      const s = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-      const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      if (s <= e) addRange(s, e);
-    }
-
-    const hmToMin = (hm: string) => {
-      const [h, m] = hm.split(":").map(Number);
-      return (h ?? 0) * 60 + (m ?? 0);
-    };
-
-    // v1.8.9 — SHIFT_BASED netto: subtract configured break from brutto shift duration.
-    // Fixes brutto-vs-netto mismatch (workedMinutes already subtracts breakMinutes).
-    // Uses getEffectiveBreakDuration — single source of truth from Phase 64 (break-effective.ts).
-    // Cross-midnight fix: if brutto < 0, add 1440 (mirrors shifts.ts /range endpoint).
     const employeeBreakShape = {
       breakOver6hOverride: employee?.breakOver6hOverride ?? null,
       breakOver9hOverride: employee?.breakOver9hOverride ?? null,
@@ -1792,9 +1925,12 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
       defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
     };
-    // Netto reducer: Σ active shift netto (break-subtracted), covered days excluded.
-    // Shared by R_toDate (open range) and R_periodFull (whole open month) so both use
-    // byte-identical break/cross-midnight/covered-day rules (D-09 proration correctness).
+
+    const hmToMin = (hm: string) => {
+      const [h, m] = hm.split(":").map(Number);
+      return (h ?? 0) * 60 + (m ?? 0);
+    };
+
     const sumShiftNetto = (
       list: { date: Date; startTime: string; endTime: string }[],
       covered: Set<string>,
@@ -1803,7 +1939,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       for (const sh of list) {
         if (covered.has(dateStrInTz(sh.date, tz))) continue;
         let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-        if (brutto < 0) brutto += 24 * 60; // cross-midnight (e.g. 22:00–06:00)
+        if (brutto < 0) brutto += 24 * 60;
         if (brutto <= 0) continue;
         const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
         total += Math.max(0, brutto - breakMin);
@@ -1811,44 +1947,38 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       return total;
     };
 
-    // ── Model B + § 615 (Phase 76.22) with D-09 roster-proration (Phase 76.22-04) ──
-    // C_net = contract Ø-Methode Soll minus leave/absence credits (Ausfallprinzip).
-    // VOCATIONAL_SCHOOL + source=PATTERN absences excluded (handled via bsExpectedMinutes,
-    // D-06, Phase 63). Holiday credit is included automatically by calcExpectedMinutesTz.
-    //
-    // D-03 note: avgWorkMinutesCore denominator uses {day}Hours>0 count, which equals
-    // workDays[].length for all valid post-Phase-61 rows (CLAUDE.md invariant). No change
-    // to the denominator source — FLEXTIME parity is preserved.
-    //
-    // D-09: the contract Soll is *distributed* across days by the actual Schichtplan, not by
-    // the static workDays[] whitelist (which cannot encode a floating roster). For the current
-    // OPEN partial month the intra-period Soll is prorated by roster progress:
-    //   C_toDate = R_periodFull == 0 ? 0 : round(C_currentMonth × R_toDate / R_periodFull)
-    // Prior COMPLETE months in the open range keep their full contract Soll (un-prorated), so
-    // the "close doesn't change the saldo" invariant holds: a closed month stores un-prorated C,
-    // and the un-prorated prior-months block reproduces exactly that. Only the still-open current
-    // month is roster-prorated. At month end R_toDate == R_periodFull → factor 1 → identical.
-    //
-    // Split the open range at the current-month boundary. The current month = the calendar month
-    // of effectiveEnd; everything before it is "prior complete months". Compute two blobs:
-    //   (1) prior-months blob [rangeStart .. dayBefore(currentMonthStart)] — un-prorated (matches
-    //       the pre-D-09 Model B behavior byte-for-byte, so close/cron/recalc parity is kept);
-    //   (2) current-month blob [currentMonthStart .. effectiveEnd] — roster-prorated (D-09).
-    // For the normal production case (all prior months snapshot-closed) the range is a single
-    // month → only blob (2) runs. Sum the two balanceDeltas + effective C's.
-    const currentMonthRange = monthRangeUtc(
-      effectiveEnd.getUTCFullYear(),
-      effectiveEnd.getUTCMonth() + 1,
-      tz,
-    );
-    const currentMonthStart =
-      currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
+    // coveredDates for the current month open range [currentMonthOpenStart, effectiveEnd].
+    const coveredDates = new Set<string>();
+    for (const lr of curLeave) {
+      const s =
+        lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
+      const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
+      if (s > e) continue;
+      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+      while (cur <= last) {
+        coveredDates.add(dateStrInTz(cur, tz));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    }
+    for (const ab of curAbsences) {
+      const s =
+        ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+      const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+      if (s > e) continue;
+      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+      while (cur <= last) {
+        coveredDates.add(dateStrInTz(cur, tz));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    }
 
-    // Helper: net contract Soll (C_net) for a sub-range, using the same credit rules as before.
+    // C_net for the current month (full-month Soll, leave/absence credited).
     const cNetForRange = (segStart: Date, segEnd: Date): number => {
       if (segStart > segEnd) return 0;
       const contractSoll = calcExpectedMinutesTz(schedule, segStart, segEnd, tz);
-      const leaveCredit = approvedLeave.reduce((sum, lr) => {
+      const leaveCredit = curLeave.reduce((sum, lr) => {
         const s = lr.startDate < segStart ? segStart : lr.startDate;
         const e = lr.endDate > segEnd ? segEnd : lr.endDate;
         if (s > e) return sum;
@@ -1856,8 +1986,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
           sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz, { halfDay: Boolean(lr.halfDay) })
         );
       }, 0);
-      const absenceCredit = absences.reduce((sum, ab) => {
-        // VOCATIONAL_SCHOOL + source=PATTERN excluded from credit loop (Phase 76.22 D-06).
+      const absenceCredit = curAbsences.reduce((sum, ab) => {
         if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
         const s = ab.startDate < segStart ? segStart : ab.startDate;
         const e = ab.endDate > segEnd ? segEnd : ab.endDate;
@@ -1866,291 +1995,204 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       }, 0);
       return Math.max(0, contractSoll - leaveCredit - absenceCredit);
     };
-    // Helper: Σ netto active shifts and Σ worked netto (TimeEntry) for a sub-range.
-    const rosterForRange = (segStart: Date, segEnd: Date): number => {
-      if (segStart > segEnd) return 0;
-      const inSeg = shifts.filter((sh) => sh.date >= segStart && sh.date <= segEnd);
-      return sumShiftNetto(inSeg, coveredDates);
-    };
-    const workedForRange = (segStart: Date, segEnd: Date): number =>
-      entries.reduce((sum, e) => {
-        if (!e.endTime || e.date < segStart || e.date > segEnd) return sum;
-        return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
-      }, 0);
 
-    let totalBalanceDelta = 0;
-    let totalExpected = 0;
+    // Current month shifts from pre-fetched allShifts.
+    const curMonthFirstDay = monthDayBounds(currentMonthRange.start, currentMonthRange.end, tz).firstDay;
+    const curMonthLastDay = monthDayBounds(currentMonthRange.start, currentMonthRange.end, tz).lastDay;
+    const curMonthAllShifts = allShifts.filter(
+      (s) => s.date >= curMonthFirstDay && s.date <= curMonthLastDay,
+    );
+    // Shifts up to effectiveEnd (for R_toDate).
+    const curShiftsToDate = curMonthAllShifts.filter((s) => s.date <= effectiveEnd);
 
-    // (1) Prior complete months — un-prorated Model B (byte-identical to pre-D-09).
-    if (rangeStart < currentMonthStart) {
-      const priorEnd = new Date(currentMonthStart.getTime() - 86400000);
-      const priorSaldo = calcShiftBasedSaldo({
-        contractSollMinutes: cNetForRange(rangeStart, priorEnd),
-        rosterMinutes: rosterForRange(rangeStart, priorEnd),
-        workedMinutes: workedForRange(rangeStart, priorEnd),
-      });
-      totalBalanceDelta += priorSaldo.balanceDelta;
-      totalExpected += priorSaldo.expectedMinutes;
-    }
-
-    // (2) Current open partial month — roster-prorated (D-09).
-    //   C_toDate = R_periodFull == 0 ? 0 : round(C_periodFull × R_toDate / R_periodFull)
-    // C_periodFull is the FULL-month contract Soll over [currentMonthStart .. monthEnd] — the
-    // whole remaining month from the open-range start (NOT just the elapsed days; the roster
-    // factor R_toDate/R_periodFull does the intra-period proration). R_periodFull spans the same
-    // window so the factor is a pure "roster progress" ratio.
-    //   R_toDate     = Σ active shift netto for shift-days ≤ effectiveEnd (this month).
-    //   R_periodFull = Σ active shift netto for the WHOLE current month window (incl. future
-    //                  shifts), same netto/break/covered rules as R_toDate.
-    // R_periodFull == 0 → helper fallback (no daily Soll, zero contribution): pure tracking,
-    // no phantom overtime, no §615 minus.
-    const curCNet = cNetForRange(currentMonthStart, currentMonthRange.end); // C_periodFull
-    const curRosterToDate = rosterForRange(currentMonthStart, effectiveEnd); // R_toDate
-    const curWorked = workedForRange(currentMonthStart, effectiveEnd);
-    const monthShifts = await app.prisma.shift.findMany({
-      where: {
-        employeeId,
-        date: { gte: currentMonthRange.start, lte: currentMonthRange.end },
-        deletedAt: null, // saldo math ignores soft-deleted (employer-cancelled) shifts
-      },
-      select: { date: true, startTime: true, endTime: true },
-    });
-    // Full-month covered days (leave/absence) so covered future shift-days are excluded from
-    // R_periodFull consistently with R_toDate.
-    const monthLeave = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        status: "APPROVED",
-        startDate: { lte: currentMonthRange.end },
-        endDate: { gte: currentMonthRange.start },
-      },
-      select: { startDate: true, endDate: true },
-    });
-    const monthAbsences = await app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null,
-        startDate: { lte: currentMonthRange.end },
-        endDate: { gte: currentMonthRange.start },
-      },
-      select: { startDate: true, endDate: true },
-    });
+    // coveredDates for full month (for R_periodFull).
     const monthCovered = new Set<string>();
-    const addMonthRange = (s: Date, e: Date) => {
-      const start = s < currentMonthRange.start ? currentMonthRange.start : s;
-      const end = e > currentMonthRange.end ? currentMonthRange.end : e;
-      if (start > end) return;
-      const cur = new Date(dateStrInTz(start, tz) + "T00:00:00Z");
-      const last = new Date(dateStrInTz(end, tz) + "T00:00:00Z");
+    for (const lr of curLeave) {
+      const s =
+        lr.startDate < currentMonthRange.start ? currentMonthRange.start : lr.startDate;
+      const e = lr.endDate > currentMonthRange.end ? currentMonthRange.end : lr.endDate;
+      if (s > e) continue;
+      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
       while (cur <= last) {
         monthCovered.add(dateStrInTz(cur, tz));
         cur.setUTCDate(cur.getUTCDate() + 1);
       }
-    };
-    for (const lr of monthLeave) addMonthRange(lr.startDate, lr.endDate);
-    for (const ab of monthAbsences) addMonthRange(ab.startDate, ab.endDate);
-    const curRosterPeriodFull = sumShiftNetto(monthShifts, monthCovered); // R_periodFull
+    }
+    for (const ab of curAbsences) {
+      const s =
+        ab.startDate < currentMonthRange.start ? currentMonthRange.start : ab.startDate;
+      const e = ab.endDate > currentMonthRange.end ? currentMonthRange.end : ab.endDate;
+      if (s > e) continue;
+      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+      while (cur <= last) {
+        monthCovered.add(dateStrInTz(cur, tz));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+      }
+    }
+
+    const curCNet = cNetForRange(currentMonthOpenStart, currentMonthRange.end); // C_periodFull
+    const curRosterToDate = sumShiftNetto(curShiftsToDate, coveredDates); // R_toDate
+    const curRosterPeriodFull = sumShiftNetto(curMonthAllShifts, monthCovered); // R_periodFull
+    const curWorked = entries.reduce((sum, e) => {
+      if (!e.endTime || e.date < currentMonthOpenStart || e.date > effectiveEnd) return sum;
+      return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+    }, 0);
+
     const curSaldo = calcShiftBasedSaldo({
       contractSollMinutes: curCNet,
-      rosterMinutes: curRosterToDate, // R_toDate (undertime clause)
+      rosterMinutes: curRosterToDate,
       workedMinutes: curWorked,
-      // D-09: prorate the current open month's Soll by roster progress.
       rosterProration: {
         rosterToDateMinutes: curRosterToDate,
         rosterPeriodMinutes: curRosterPeriodFull,
       },
     });
-    totalBalanceDelta += curSaldo.balanceDelta;
-    totalExpected += curSaldo.expectedMinutes;
 
-    expectedMinutes = totalExpected; // effective (prorated) C_net for the open range
-    shiftBalanceOverride = totalBalanceDelta; // D-01; bsWorkedMinutes added at openPeriodBalance site
-
-    // Leave/absence already excluded above via C_net credits and coveredDates (R).
-    // Manager-assigned shifts on Feiertagen count as worked. Zero out subtractions
-    // to avoid double-deduction at the openPeriodBalance site.
+    expectedMinutes = curSaldo.expectedMinutes;
+    shiftBalanceOverride = curSaldo.balanceDelta; // bsWorkedMinutes added at openPeriodBalance site
     leaveMinutes = 0;
     absenceMinutes = 0;
     holidayMinutes = 0;
-  } else if (
-    scheduleType === "MONTHLY_HOURS" &&
-    Number(schedule.monthlyHours ?? 0) > 0 &&
-    effectiveEnd >= rangeStart &&
-    !sameCalendarMonth(rangeStart, effectiveEnd, tz)
-  ) {
-    // ── MONTHLY_HOURS spanning multiple calendar months: per-month proration ────
-    const segments = splitRangeByMonth(rangeStart, effectiveEnd, tz);
-    for (const seg of segments) {
-      expectedMinutes += calcExpectedMinutesTz(schedule, seg.start, seg.end, tz);
-    }
-
-    const approvedLeave = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        status: "APPROVED",
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
-    });
-    for (const lr of approvedLeave) {
-      const lrStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
-      const lrEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-      if (lrStart > lrEnd) continue;
-      for (const seg of splitRangeByMonth(lrStart, lrEnd, tz)) {
-        // Phase 76.12 — Ø-Methode (BAG 9 AZR 406/17). MONTHLY_HOURS branch will
-        // zero this out at the end (#192), but using the new helper keeps the
-        // intent consistent with the default branch and prevents drift if the
-        // zero-out is ever lifted (D-12 carry-forward).
-        leaveMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz, {
-          halfDay: Boolean(lr.halfDay),
-          excludeHolidays: holidayDateStrSet, // D-06 (no-op here — zeroed below — kept for parity)
-        });
-      }
-    }
-
-    const absences = await app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        type: { not: "VOCATIONAL_SCHOOL" }, // Phase 76.12 D-12: BBiG §15 — BS = Arbeitstag
-        source: { not: "PATTERN" }, // Phase 76.12 D-12: auto-generated, not approved
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
-    });
-    for (const ab of absences) {
-      const abStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-      const abEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      if (abStart > abEnd) continue;
-      for (const seg of splitRangeByMonth(abStart, abEnd, tz)) {
-        absenceMinutes += calcLeaveAbsenceMinutesTz(schedule, seg.start, seg.end, tz, {
-          excludeHolidays: holidayDateStrSet, // D-06 (no-op here — zeroed below — kept for parity)
-        });
-      }
-    }
-
-    // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
-    // We still compute the per-month-segmented values above for parity with the default
-    // branch shape, then zero leave + absence so the flat monthly budget stays the Soll. (#192)
-    leaveMinutes = 0;
-    absenceMinutes = 0;
   } else {
-    // ── Default: FIXED_WEEKLY / FLEXTIME / MONTHLY_HOURS single-month / pure-tracking ─
-    expectedMinutes =
-      effectiveEnd < rangeStart ? 0 : calcExpectedMinutesTz(schedule, rangeStart, effectiveEnd, tz);
+    // ── Non-SHIFT current partial month: closeEmployeeMonth() with full-month range ──
+    //
+    // SNAP-03 (76.27): For FIXED_SCHEDULE, FIXED_WEEKLY, FLEXTIME, MONTHLY_HOURS — the
+    // current partial month is ALSO computed via closeEmployeeMonth(), using the full
+    // month range (monthStart..monthEnd) and the partial entries up to effectiveEnd.
+    //
+    // This matches the parity-by-construction reference which calls closeEmployeeMonth()
+    // for BOTH June (complete) AND July (partial-entries, full-month range). The full-year
+    // holiday set (holidayDateStrSet) is passed unfiltered — closeEmployeeMonth() has no
+    // internal month-range filtering, matching the close-path convention.
+    //
+    // BS-doubling is handled internally by closeEmployeeMonth() for non-SHIFT types (the
+    // inline BS block below is retained only for SHIFT_BASED, per RESEARCH §2.7).
+    //
+    // entriesUpToEffectiveEnd: filter from the pre-fetched `entries` to current month,
+    // up to effectiveEnd (the pre-fetch already caps at effectiveEnd).
+    const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
+      currentMonthRange.start,
+      currentMonthRange.end,
+      tz,
+    );
 
-    // Genehmigte Abwesenheiten abziehen
-    const approvedLeave = await app.prisma.leaveRequest.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        status: "APPROVED",
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
+    const curMonthEntries = entries.filter(
+      (e) => e.date >= curMonthFirstDay && e.date <= curMonthLastDay,
+    );
+
+    // Current-month leave and absences (already filtered above for the SHIFT_BASED branch).
+    const curMonthResult = closeEmployeeMonth({
+      employeeId,
+      monthStart: currentMonthRange.start,
+      monthEnd: currentMonthRange.end,
+      monthFirstDay: curMonthFirstDay,
+      monthLastDay: curMonthLastDay,
+      tz,
+      carryOverIn: accumulatedCarryOver, // threaded from complete-months loop
+      schedule: schedule as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+      entries: curMonthEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: [], // non-SHIFT: no shifts
+      approvedLeave: curLeave.map((lr) => ({
+        startDate: lr.startDate,
+        endDate: lr.endDate,
+        halfDay: lr.halfDay,
+      })),
+      absences: curAbsences.map((ab) => ({
+        startDate: ab.startDate,
+        endDate: ab.endDate,
+        type: ab.type,
+        source: ab.source,
+      })),
+      holidayDateStrings: holidayDateStrSet, // full-year set (no month filtering)
+      tenantConfig: tenantConfig
+        ? {
+            defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
+            defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
+            monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+            vocationalSchoolMinutesPerDay:
+              tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolBlockMinutesPerWeek:
+              tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+          }
+        : null,
     });
-    leaveMinutes = approvedLeave.reduce((sum, lr) => {
-      const leaveStart = lr.startDate < rangeStart ? rangeStart : lr.startDate;
-      const leaveEnd = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-      if (leaveStart > leaveEnd) return sum;
-      // Phase 76.12 D-13 — Ø-Methode (BAG 9 AZR 406/17) honors lr.halfDay.
-      return (
-        sum +
-        calcLeaveAbsenceMinutesTz(schedule, leaveStart, leaveEnd, tz, {
-          halfDay: Boolean(lr.halfDay),
-          excludeHolidays: holidayDateStrSet, // D-06: holiday inside leave deducted once
-        })
-      );
-    }, 0);
 
-    // Approved/recorded absences (Krank, Sonderurlaub, etc.) — abziehen wie Urlaub.
-    // ALL absence types are subtracted (INCLUDING VOCATIONAL_SCHOOL and PATTERN-source)
-    // — parity with the manual close-month path in overtime.ts. Together with the
-    // BS-doubling below this is the only arithmetic that keeps a BS day balance-neutral
-    // (Phase 63 D-01): the day's Soll is removed via the absence subtraction and
-    // re-added as bsExpectedMinutes while bsWorkedMinutes credits the same amount.
-    // (The former Phase 76.12 D-13 exclusion left the day's Soll in expected and
-    // penalized FIXED/FLEXTIME Azubis by the daily target per BS day.)
-    const absences = await app.prisma.absence.findMany({
-      where: {
-        employeeId,
-        deletedAt: null, // required by soft-delete convention
-        startDate: { lte: effectiveEnd },
-        endDate: { gte: rangeStart },
-      },
-    });
-    absenceMinutes = absences.reduce((sum, ab) => {
-      const absStart = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-      const absEnd = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      if (absStart > absEnd) return sum;
-      return (
-        sum +
-        calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
-          excludeHolidays: holidayDateStrSet, // D-06: holiday inside absence deducted once
-        })
-      );
-    }, 0);
-
-    // CLAUDE.md "Schedule Types": MONTHLY_HOURS — holiday/absence deductions do NOT apply.
-    // This covers MONTHLY_HOURS single-month + pure-tracking (monthlyHours = 0). (#192)
-    if (scheduleType === "MONTHLY_HOURS") {
-      leaveMinutes = 0;
-      absenceMinutes = 0;
-    }
+    // Fold the non-SHIFT current-month result into openPeriodBalance.
+    // balanceMinutes already includes BS-doubling (handled inside closeEmployeeMonth).
+    openPeriodBalance += curMonthResult.balanceMinutes;
   }
 
-  // Phase 63 — Berufsschule (BS) doubling for the LIVE saldo path.
-  // Mirrors the doubling in overtime.ts (close-month) and auto-close-month.ts
-  // (snapshot). Per D-01..D-04: VOCATIONAL_SCHOOL absences add the same minutes to
-  // BOTH workedMinutes AND expectedMinutes (FIXED_SCHEDULE / SHIFT_BASED) or to
-  // workedMinutes only (MONTHLY_HOURS, D-04). Live and snapshot must agree
-  // (RESEARCH Pitfall #2 — live/snapshot drift).
-  const bsAbsencesUpdate = await app.prisma.absence.findMany({
-    where: {
-      employeeId,
-      deletedAt: null, // CLAUDE.md soft-delete rule
-      type: "VOCATIONAL_SCHOOL",
-      startDate: { lte: effectiveEnd },
-      endDate: { gte: rangeStart },
-    },
-  });
+  // Phase 63 — Berufsschule (BS) doubling for the CURRENT PARTIAL MONTH: SHIFT_BASED only.
+  // For non-SHIFT types: BS-doubling is handled inside closeEmployeeMonth() above.
+  // For SHIFT_BASED: the existing inline BS logic is preserved (RESEARCH §2.7 — live-path
+  // bsExpectedMinutes gap preserved, do NOT fix BS-doubling here; see 76.26-BS-DOUBLING-FOLLOWUP.md).
+  const bsAbsencesUpdate =
+    scheduleType === "SHIFT_BASED"
+      ? await app.prisma.absence.findMany({
+          where: {
+            employeeId,
+            deletedAt: null,
+            type: "VOCATIONAL_SCHOOL",
+            startDate: { lte: effectiveEnd },
+            endDate: { gte: currentMonthOpenStart },
+          },
+        })
+      : ([] as Awaited<ReturnType<typeof app.prisma.absence.findMany>>);
   let bsWorkedMinutes = 0;
   let bsExpectedMinutes = 0;
-  for (const ab of bsAbsencesUpdate) {
-    const start = ab.startDate < rangeStart ? rangeStart : ab.startDate;
-    const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-    const cur = new Date(start);
-    while (cur <= end) {
-      const bsMin = await getVocationalSchoolMinutesForDate(
-        app.prisma,
-        employeeId,
-        cur,
-        tenantConfig,
-      );
-      bsWorkedMinutes += bsMin;
-      if (scheduleType !== "MONTHLY_HOURS") {
-        bsExpectedMinutes += bsMin;
+  if (scheduleType === "SHIFT_BASED") {
+    for (const ab of bsAbsencesUpdate) {
+      const start =
+        ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+      const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+      const cur = new Date(start);
+      while (cur <= end) {
+        const bsMin = await getVocationalSchoolMinutesForDate(
+          app.prisma,
+          employeeId,
+          cur,
+          tenantConfig,
+        );
+        bsWorkedMinutes += bsMin;
+        // RESEARCH §2.7: SHIFT_BASED live path does NOT add bsExpectedMinutes (existing gap,
+        // preserved intentionally — see 76.26-BS-DOUBLING-FOLLOWUP.md).
+        cur.setUTCDate(cur.getUTCDate() + 1);
       }
-      cur.setUTCDate(cur.getUTCDate() + 1);
     }
   }
 
-  // Saldo = Snapshot-CarryOver + offener Zeitraum
-  // Phase 76.22: SHIFT_BASED uses D-01 two-clause formula via shiftBalanceOverride
-  // (calcShiftBasedSaldo.balanceDelta = max(0,W−C) − max(0,R−W)).
-  // bsWorkedMinutes is still added on the worked side (existing live-path bs handling).
-  // Non-SHIFT branches keep the flat worked − max(0, expected+bs−holidays−leave−absence).
-  const openPeriodBalance =
+  // ── Aggregate: complete-months (via loop above) + current partial month ─────
+  // SNAP-03 (Phase 76.27): openPeriodBalance holds the sum of ALL months:
+  //   - Complete open months: accumulated in the closeEmployeeMonth() loop above
+  //   - Non-SHIFT current month: added in the else-branch above (closeEmployeeMonth result)
+  //   - SHIFT_BASED current month: added here via shiftBalanceOverride + bsWorkedMinutes
+  //
+  // For SHIFT_BASED: shiftBalanceOverride = curSaldo.balanceDelta (D-01 two-clause formula
+  //   for the current partial month, roster-prorated). bsWorkedMinutes is for the SHIFT_BASED
+  //   current month only (existing live-path gap: bsExpectedMinutes skipped — RESEARCH §2.7).
+  // Non-SHIFT: balanceMinutes already added to openPeriodBalance in the else-branch above.
+  const currentMonthBalance =
     shiftBalanceOverride !== null
       ? shiftBalanceOverride + bsWorkedMinutes
-      : workedMinutes +
-        bsWorkedMinutes -
-        Math.max(
-          0,
-          expectedMinutes + bsExpectedMinutes - holidayMinutes - leaveMinutes - absenceMinutes,
-        );
+      : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
+
+  openPeriodBalance += currentMonthBalance;
+
+  // totalBalanceHours = (snapshotCarryOver from lastSnapshot) + openPeriodBalance
+  // (complete-months loop threads effectiveCarryOverOut, but the final balance displayed
+  // to the user is always relative to the snapshotCarryOver base — SNAP-01).
   const totalBalanceHours = (snapshotCarryOver + openPeriodBalance) / 60;
 
   // D-06: TRACK_ONLY mode — display balance as 0 (hours are tracked but not accumulated)
