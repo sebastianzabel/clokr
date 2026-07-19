@@ -1698,10 +1698,17 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   // Algorithm: iterate month-by-month from rangeStart's month up to (but not including)
   // the calendar month that contains effectiveEnd. Oldest-first.
 
-  // Current month: the calendar month that contains effectiveEnd.
+  // Current month: the calendar month that contains TODAY (not effectiveEnd).
+  //
+  // SNAP-03-A fix: when effectiveEnd is the last day of the previous calendar month
+  // (because today has no entries yet, so effectiveEnd = yesterday), using effectiveEnd's
+  // month would classify that complete month as the "current partial" month and skip it
+  // from the complete-months loop. Using todayDate ensures the month boundary is always
+  // the ACTUAL current calendar month, so all complete prior months (including yesterday's
+  // full month) are processed by closeEmployeeMonth().
   const currentMonthRange = monthRangeUtc(
-    effectiveEnd.getUTCFullYear(),
-    effectiveEnd.getUTCMonth() + 1,
+    todayDate.getUTCFullYear(),
+    todayDate.getUTCMonth() + 1,
     tz,
   );
 
@@ -1803,13 +1810,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
 
     // Filter each pre-fetched collection to this month's range.
     // entries: @db.Date comparison (date >= monthFirstDay && date <= monthLastDay)
-    const monthEntries = entries.filter(
-      (e) => e.date >= monthFirstDay && e.date <= monthLastDay,
-    );
+    const monthEntries = entries.filter((e) => e.date >= monthFirstDay && e.date <= monthLastDay);
     // shifts: same @db.Date filter
-    const monthShifts = allShifts.filter(
-      (s) => s.date >= monthFirstDay && s.date <= monthLastDay,
-    );
+    const monthShifts = allShifts.filter((s) => s.date >= monthFirstDay && s.date <= monthLastDay);
     // leave/absences: range overlap (startDate <= monthEnd && endDate >= monthStart)
     const monthLeave = allApprovedLeave.filter(
       (lr) => lr.startDate <= monthEnd && lr.endDate >= monthStart,
@@ -1861,8 +1864,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
             defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
             monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
-            vocationalSchoolMinutesPerDay:
-              tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:
               tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
           }
@@ -1950,8 +1952,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     // coveredDates for the current month open range [currentMonthOpenStart, effectiveEnd].
     const coveredDates = new Set<string>();
     for (const lr of curLeave) {
-      const s =
-        lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
+      const s = lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
       const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
       if (s > e) continue;
       const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
@@ -1962,8 +1963,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       }
     }
     for (const ab of curAbsences) {
-      const s =
-        ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+      const s = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
       const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       if (s > e) continue;
       const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
@@ -1997,8 +1997,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     };
 
     // Current month shifts from pre-fetched allShifts.
-    const curMonthFirstDay = monthDayBounds(currentMonthRange.start, currentMonthRange.end, tz).firstDay;
-    const curMonthLastDay = monthDayBounds(currentMonthRange.start, currentMonthRange.end, tz).lastDay;
+    const curMonthFirstDay = monthDayBounds(
+      currentMonthRange.start,
+      currentMonthRange.end,
+      tz,
+    ).firstDay;
+    const curMonthLastDay = monthDayBounds(
+      currentMonthRange.start,
+      currentMonthRange.end,
+      tz,
+    ).lastDay;
     const curMonthAllShifts = allShifts.filter(
       (s) => s.date >= curMonthFirstDay && s.date <= curMonthLastDay,
     );
@@ -2008,8 +2016,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     // coveredDates for full month (for R_periodFull).
     const monthCovered = new Set<string>();
     for (const lr of curLeave) {
-      const s =
-        lr.startDate < currentMonthRange.start ? currentMonthRange.start : lr.startDate;
+      const s = lr.startDate < currentMonthRange.start ? currentMonthRange.start : lr.startDate;
       const e = lr.endDate > currentMonthRange.end ? currentMonthRange.end : lr.endDate;
       if (s > e) continue;
       const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
@@ -2020,8 +2027,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       }
     }
     for (const ab of curAbsences) {
-      const s =
-        ab.startDate < currentMonthRange.start ? currentMonthRange.start : ab.startDate;
+      const s = ab.startDate < currentMonthRange.start ? currentMonthRange.start : ab.startDate;
       const e = ab.endDate > currentMonthRange.end ? currentMonthRange.end : ab.endDate;
       if (s > e) continue;
       const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
@@ -2055,23 +2061,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     leaveMinutes = 0;
     absenceMinutes = 0;
     holidayMinutes = 0;
-  } else {
-    // ── Non-SHIFT current partial month: closeEmployeeMonth() with full-month range ──
+  } else if (completeOpenMonths.length > 0) {
+    // ── Non-SHIFT current partial month (sub-case A): complete prior months exist ──
     //
-    // SNAP-03 (76.27): For FIXED_SCHEDULE, FIXED_WEEKLY, FLEXTIME, MONTHLY_HOURS — the
-    // current partial month is ALSO computed via closeEmployeeMonth(), using the full
-    // month range (monthStart..monthEnd) and the partial entries up to effectiveEnd.
+    // SNAP-03 (76.27): When there are complete prior open months, the current partial month
+    // is ALSO computed via closeEmployeeMonth(), using the full calendar-month range
+    // (monthStart..monthEnd) and entries up to effectiveEnd. This matches the
+    // parity-by-construction reference (SNAP-03-B2/B3) which calls closeEmployeeMonth()
+    // for BOTH complete AND partial months with the full-year holiday set.
     //
-    // This matches the parity-by-construction reference which calls closeEmployeeMonth()
-    // for BOTH June (complete) AND July (partial-entries, full-month range). The full-year
-    // holiday set (holidayDateStrSet) is passed unfiltered — closeEmployeeMonth() has no
-    // internal month-range filtering, matching the close-path convention.
-    //
-    // BS-doubling is handled internally by closeEmployeeMonth() for non-SHIFT types (the
-    // inline BS block below is retained only for SHIFT_BASED, per RESEARCH §2.7).
-    //
-    // entriesUpToEffectiveEnd: filter from the pre-fetched `entries` to current month,
-    // up to effectiveEnd (the pre-fetch already caps at effectiveEnd).
+    // BS-doubling is handled internally by closeEmployeeMonth() for non-SHIFT types.
     const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
       currentMonthRange.start,
       currentMonthRange.end,
@@ -2082,7 +2081,6 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       (e) => e.date >= curMonthFirstDay && e.date <= curMonthLastDay,
     );
 
-    // Current-month leave and absences (already filtered above for the SHIFT_BASED branch).
     const curMonthResult = closeEmployeeMonth({
       employeeId,
       monthStart: currentMonthRange.start,
@@ -2121,8 +2119,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
             defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
             monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
-            vocationalSchoolMinutesPerDay:
-              tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:
               tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
           }
@@ -2132,6 +2129,104 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     // Fold the non-SHIFT current-month result into openPeriodBalance.
     // balanceMinutes already includes BS-doubling (handled inside closeEmployeeMonth).
     openPeriodBalance += curMonthResult.balanceMinutes;
+  } else {
+    // ── Non-SHIFT current partial month (sub-case B): NO complete prior open months ──
+    //
+    // The ENTIRE open range [currentMonthOpenStart, effectiveEnd] falls within the current
+    // calendar month. Use flat partial-range calculation (calcExpectedMinutesTz over the
+    // actual open window) rather than closeEmployeeMonth(full calendar month).
+    //
+    // SNAP-01 fix: calling closeEmployeeMonth(full month) here would pass the full-year
+    // holiday set unfiltered — closeEmployeeMonth subtracts ALL holidays in the provided
+    // set from the full-month expected. For a partial open window (e.g. March 1–16),
+    // this inflates the expected by holidays outside the window (e.g. NI holidays in
+    // January, April, May, December), producing an erroneously large undertime deficit.
+    // Filtering holidays to [currentMonthOpenStart, effectiveEnd] and using the flat path
+    // avoids this cross-month bleed.
+    //
+    // Holiday filtering: only include holidays within [currentMonthOpenStart, effectiveEnd].
+    const openStartStr = dateStrInTz(currentMonthOpenStart, tz);
+    const openEndStr = dateStrInTz(effectiveEnd, tz);
+    const partialHolidayExclude = new Set(
+      [...holidayDateStrSet].filter((d) => d >= openStartStr && d <= openEndStr),
+    );
+
+    // Expected minutes for the partial open window.
+    const partialExpected =
+      effectiveEnd < currentMonthOpenStart
+        ? 0
+        : calcExpectedMinutesTz(
+            schedule as Record<string, unknown>,
+            currentMonthOpenStart,
+            effectiveEnd,
+            tz,
+          );
+
+    // Holiday deduction: only holidays inside the open window.
+    let partialHolidayMin = 0;
+    for (const hDateStr of holidayDateStrSet) {
+      if (hDateStr < openStartStr || hDateStr > openEndStr) continue;
+      const hDate = new Date(hDateStr + "T00:00:00Z");
+      const dow = getDayOfWeekInTz(hDate, tz);
+      partialHolidayMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+    }
+
+    // Leave deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
+    let partialLeaveMin = 0;
+    if (scheduleType !== "MONTHLY_HOURS") {
+      for (const lr of curLeave) {
+        const s = lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
+        const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
+        if (s > e) continue;
+        partialLeaveMin += calcLeaveAbsenceMinutesTz(
+          schedule as Record<string, unknown>,
+          s,
+          e,
+          tz,
+          { halfDay: Boolean(lr.halfDay), excludeHolidays: partialHolidayExclude },
+        );
+      }
+    }
+
+    // Absence deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
+    let partialAbsenceMin = 0;
+    if (scheduleType !== "MONTHLY_HOURS") {
+      for (const ab of curAbsences) {
+        if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") continue;
+        const s = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+        const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+        if (s > e) continue;
+        partialAbsenceMin += calcLeaveAbsenceMinutesTz(
+          schedule as Record<string, unknown>,
+          s,
+          e,
+          tz,
+          { excludeHolidays: partialHolidayExclude },
+        );
+      }
+    }
+
+    // Partial expected net of holidays/leave/absence.
+    const partialNetExpected = Math.max(
+      0,
+      partialExpected - partialHolidayMin - partialLeaveMin - partialAbsenceMin,
+    );
+
+    // Worked minutes for the partial open window (already in entries, capped at effectiveEnd).
+    const partialWorked = entries.reduce((sum, e) => {
+      if (!e.endTime || e.date < currentMonthOpenStart || e.date > effectiveEnd) return sum;
+      return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
+    }, 0);
+
+    openPeriodBalance += Math.round(partialWorked - partialNetExpected);
+
+    // Set the legacy variables so the openPeriodBalance formula at the aggregation site
+    // does not double-count (shiftBalanceOverride=null path uses workedMinutes - expected).
+    // We added directly to openPeriodBalance above, so zero out the legacy accumulators.
+    expectedMinutes = 0;
+    holidayMinutes = 0;
+    leaveMinutes = 0;
+    absenceMinutes = 0;
   }
 
   // Phase 63 — Berufsschule (BS) doubling for the CURRENT PARTIAL MONTH: SHIFT_BASED only.
@@ -2151,11 +2246,10 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         })
       : ([] as Awaited<ReturnType<typeof app.prisma.absence.findMany>>);
   let bsWorkedMinutes = 0;
-  let bsExpectedMinutes = 0;
+  const bsExpectedMinutes = 0;
   if (scheduleType === "SHIFT_BASED") {
     for (const ab of bsAbsencesUpdate) {
-      const start =
-        ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+      const start = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
       const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
       const cur = new Date(start);
       while (cur <= end) {
@@ -2184,9 +2278,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   //   current month only (existing live-path gap: bsExpectedMinutes skipped — RESEARCH §2.7).
   // Non-SHIFT: balanceMinutes already added to openPeriodBalance in the else-branch above.
   const currentMonthBalance =
-    shiftBalanceOverride !== null
-      ? shiftBalanceOverride + bsWorkedMinutes
-      : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
+    shiftBalanceOverride !== null ? shiftBalanceOverride + bsWorkedMinutes : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
 
   openPeriodBalance += currentMonthBalance;
 
