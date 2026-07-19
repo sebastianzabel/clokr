@@ -579,6 +579,13 @@ describe("SNAP-03-A — prod-repro: SHIFT_BASED Apr-snapshot + open May+June →
       Math.abs(liveMin - referencePerMonthSum),
       `prod-repro parity: |live(${liveMin}min) − reference(${referencePerMonthSum}min)| must be < 5 min after SNAP-03 (current lumped phantom ≈ +1120 min)`,
     ).toBeLessThan(5);
+
+    // Fixture sanity: the per-month reference MUST be neutral/negative (never a large positive).
+    // referencePerMonthSum ≈ −1120 min. If this fails, the fixture is wrong (not producing the bug).
+    expect(referencePerMonthSum).toBeLessThanOrEqual(0);
+    // After SNAP-03: live == reference ≈ −1120. Current code (lumped): live ≈ 0.
+    // The parity assertion above is the primary RED signal; this clarifies the direction.
+    expect(liveMin).not.toBeGreaterThan(referencePerMonthSum + 5); // live must not EXCEED reference by >5
   }, 120_000);
 });
 
