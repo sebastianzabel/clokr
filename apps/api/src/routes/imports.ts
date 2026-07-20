@@ -218,6 +218,10 @@ export async function importRoutes(app: FastifyInstance) {
 
           // Enforce the SAME invariants as POST /time-entries: month-lock (no writes
           // into a closed month), one-entry-per-day, and overlap. Per-row error on fail.
+          // isCorrectionByManager: true — CSV import is a manager bulk-correction / tenant
+          // onboarding of historical data and is exempt from the retro-window guard.
+          // Parallels the NFC exemption: both represent legitimate back-fill of authoritative
+          // data by an ADMIN, not a self-service edit by the employee. (RETRO-05)
           const invariantError = await validateTimeEntryInvariants(app, {
             employeeId,
             date: new Date(dateStr),
@@ -225,6 +229,8 @@ export async function importRoutes(app: FastifyInstance) {
             newStart: startTime,
             newEnd: endTime,
             tz,
+            tenantId: req.user.tenantId,
+            isCorrectionByManager: true,
           });
           if (invariantError) throw new Error(invariantError.error);
 

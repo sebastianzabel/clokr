@@ -25,6 +25,11 @@ import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
 import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // SNAP-03 — Phase 76.27
+import {
+  getRetroEntryWindowDays,
+  computeRetroLimitStr,
+  computeEntryAgeInDays,
+} from "../utils/retro-config"; // Phase 76.29 — RETRO-01 window guard
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -215,9 +220,16 @@ async function checkOverlap(
 // Shared time-entry invariants enforced by POST /time-entries, PUT /time-entries/:id
 // and the CSV import (POST /imports/time-entries). Extracting them here (D-01/D-03)
 // guarantees the three write paths cannot drift: one-entry-per-day, month-lock via
-// SaldoSnapshot, and overlap — all with self-exclusion for edits.
-// Returns { error } (German, byte-identical to the POST handler's messages) or null.
-// Callers map the "abgeschlossen" (month-lock) error to HTTP 403 and everything else to 409.
+// SaldoSnapshot, retro-window guard (RETRO-01), and overlap — all with self-exclusion for edits.
+// Returns { error, windowDays?, entryAgeInDays? } or null.
+// Callers map "abgeschlossen" (month-lock) and "RETRO_WINDOW_EXCEEDED" errors to HTTP 403
+// and everything else to 409.
+//
+// Exemptions from the retro-window guard (RETRO-01 / RETRO-05):
+//   - isCorrectionByManager=true  → manager editing a DIFFERENT employee's entry (inline correction)
+//   - grantId present             → caller pre-validated an approved RetroEntryRequest (Plan 03)
+//   - NFC/terminal punches        → naturally exempt (see nfc-punch route comment below)
+//   - CSV import                  → exempt via isCorrectionByManager:true (see imports.ts)
 export async function validateTimeEntryInvariants(
   app: FastifyInstance,
   params: {
@@ -227,10 +239,23 @@ export async function validateTimeEntryInvariants(
     newStart: Date;
     newEnd: Date | null;
     tz: string;
+    tenantId: string;
     excludeEntryId?: string;
+    isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
+    grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
   },
-): Promise<{ error: string } | null> {
-  const { employeeId, date, newStart, newEnd, tz, excludeEntryId } = params;
+): Promise<{ error: string; windowDays?: number; entryAgeInDays?: number } | null> {
+  const {
+    employeeId,
+    date,
+    newStart,
+    newEnd,
+    tz,
+    tenantId,
+    excludeEntryId,
+    isCorrectionByManager,
+    grantId,
+  } = params;
 
   // 1. one-per-day (mirror POST) — exclude self when editing
   const existingEntry = await app.prisma.timeEntry.findFirst({
@@ -250,6 +275,7 @@ export async function validateTimeEntryInvariants(
 
   // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
   // findFirst with superseded:false (compound accessor removed, COMP-V1814-04)
+  // RETRO-01 C2: lock-check runs FIRST — a locked month returns the lock message, never RETRO_WINDOW_EXCEEDED.
   const { start: lockedMonthStart } = monthRangeUtc(date.getFullYear(), date.getMonth() + 1, tz);
   const lockedSnapshot = await app.prisma.saldoSnapshot.findFirst({
     where: {
@@ -262,6 +288,20 @@ export async function validateTimeEntryInvariants(
   });
   if (lockedSnapshot) {
     return { error: "Monat ist abgeschlossen und kann nicht bearbeitet werden" };
+  }
+
+  // 2.5. Retro-window guard (RETRO-01) — AFTER month-lock (C2), BEFORE overlap.
+  // Fires when the entry date is older than the tenant's configured window AND neither
+  // an approved manager correction nor a pre-validated retro grant is present.
+  // Uses tenant-TZ date strings — never raw UTC arithmetic (C1 / DST-safety).
+  if (!isCorrectionByManager && !grantId) {
+    const windowDays = await getRetroEntryWindowDays(app.prisma, tenantId);
+    const todayStr = dateStrInTz(todayInTz(tz), tz);
+    const retroLimitStr = computeRetroLimitStr(tz, windowDays);
+    if (params.dateStr < retroLimitStr) {
+      const entryAgeInDays = computeEntryAgeInDays(todayStr, params.dateStr);
+      return { error: "RETRO_WINDOW_EXCEEDED", windowDays, entryAgeInDays };
+    }
   }
 
   // 3. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message
@@ -310,6 +350,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Build ClockEvent { intent: 'AUTO' (toggle), source: 'NFC', actor: TERMINAL }
+      //
+      // RETRO-05 NFC exemption: NFC/terminal punches always create a todayInTz entry via
+      // resolveClockEvent and bypass validateTimeEntryInvariants entirely — naturally exempt
+      // from the retro-window guard. The terminal cannot inject a historical date; date is
+      // always derived from the server clock (todayInTz(tz) below), not from request body.
       const now = new Date();
       const tz = await getTenantTimezone(app.prisma, employee.tenantId);
       const event: ClockEvent = {
@@ -948,9 +993,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Shared invariants (D-01/D-03): one-entry-per-day, month-lock via SaldoSnapshot,
-      // and overlap — extracted into validateTimeEntryInvariants so the CSV import and
-      // PUT enforce the identical guards. Month-lock → 403, everything else → 409
-      // (preserves the exact HTTP codes and German messages this handler used inline).
+      // retro-window guard (RETRO-01), and overlap — extracted into validateTimeEntryInvariants
+      // so the CSV import and PUT enforce the identical guards.
+      // Month-lock → 403, RETRO_WINDOW_EXCEEDED → 403 with numeric body, everything else → 409.
+      // isCorrectionByManager: manager creating an entry for a DIFFERENT employee is an inline
+      // correction and is exempt from the retro-window guard (same logic as PUT).
+      const postIsCorrectionByManager = isManager && employeeId !== user.employeeId;
       const invariantError = await validateTimeEntryInvariants(app, {
         employeeId,
         date: new Date(body.date),
@@ -958,8 +1006,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newStart,
         newEnd,
         tz,
+        tenantId: user.tenantId,
+        isCorrectionByManager: postIsCorrectionByManager,
       });
       if (invariantError) {
+        if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
+          return reply.code(403).send({
+            error: invariantError.error,
+            windowDays: invariantError.windowDays,
+            entryAgeInDays: invariantError.entryAgeInDays,
+          });
+        }
         const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
         return reply.code(code).send({ error: invariantError.error });
       }
@@ -1232,10 +1289,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // D-03(b): moving/editing an entry must enforce the SAME invariants POST enforces —
       // target-month snapshot-lock (so an open entry cannot be re-dated into a closed month),
-      // one-entry-per-day, and overlap — excluding this entry itself. Open-entry conflicts stay
-      // scoped to the edited entry's calendar day (v1.8.13).
+      // one-entry-per-day, retro-window guard (RETRO-01), and overlap — excluding this entry
+      // itself. Open-entry conflicts stay scoped to the edited entry's calendar day (v1.8.13).
+      //
+      // isCorrectionByManager: manager editing a DIFFERENT employee's entry is an inline
+      // correction (source=CORRECTION) and is exempt from the retro-window guard (RETRO-05 C6).
+      // Manager editing their OWN entry is NOT exempt (C6 parity — same 403 as employee).
+      // grantId: Plan 03 will pass a pre-validated RetroEntryRequest id here; Plan 02 just
+      // threads the seam so the grant skips the guard without consuming it (consumption = Plan 03).
       const overlapDate = body.date ? new Date(body.date) : existing.date;
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+      const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
       const invalid = await validateTimeEntryInvariants(app, {
         employeeId: existing.employeeId,
         date: overlapDate,
@@ -1243,9 +1307,18 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newStart: updatedStart,
         newEnd: updatedEnd,
         tz: overlapTz,
+        tenantId: existing.employee.tenantId,
         excludeEntryId: id,
+        isCorrectionByManager: putIsCorrectionByManager,
       });
       if (invalid) {
+        if (invalid.error === "RETRO_WINDOW_EXCEEDED") {
+          return reply.code(403).send({
+            error: invalid.error,
+            windowDays: invalid.windowDays,
+            entryAgeInDays: invalid.entryAgeInDays,
+          });
+        }
         const code = invalid.error.includes("abgeschlossen") ? 403 : 409;
         return reply.code(code).send({ error: invalid.error });
       }
@@ -1285,9 +1358,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
-      // Only set source to CORRECTION when a manager edits another employee's entry
-      const isCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
-      const patch: Record<string, unknown> = isCorrectionByManager ? { source: "CORRECTION" } : {};
+      // Only set source to CORRECTION when a manager edits another employee's entry.
+      // putIsCorrectionByManager is already computed above (before the invariant call) —
+      // reuse it here so the patch and the retro-window exemption stay in sync.
+      const patch: Record<string, unknown> = putIsCorrectionByManager
+        ? { source: "CORRECTION" }
+        : {};
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
@@ -1353,7 +1429,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       await app.audit({
         userId: user.sub,
-        action: isCorrectionByManager ? "MANAGER_CORRECTION" : "UPDATE",
+        action: putIsCorrectionByManager ? "MANAGER_CORRECTION" : "UPDATE",
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
@@ -1511,6 +1587,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply
           .code(403)
           .send({ error: "Eintrag ist gesperrt und kann nicht gelöscht werden" });
+      }
+
+      // Retro-window guard for DELETE (RETRO-01 / RETRO-05).
+      // Must run AFTER isLocked (lock wins — C2): a locked-month entry returns the lock message,
+      // never RETRO_WINDOW_EXCEEDED. DELETE does NOT call validateTimeEntryInvariants (no
+      // newStart/newEnd), so the guard is applied inline here.
+      // Exemption: MANAGER deleting a DIFFERENT employee's entry = inline correction (exempt).
+      // MANAGER deleting their OWN old entry is blocked (parity with employee self-service).
+      const deleteTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+      const deleteDateStr = dateStrInTz(existing.date, deleteTz);
+      const deleteIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
+      if (!deleteIsCorrectionByManager) {
+        const deleteWindowDays = await getRetroEntryWindowDays(
+          app.prisma,
+          existing.employee.tenantId,
+        );
+        const deleteRetroLimitStr = computeRetroLimitStr(deleteTz, deleteWindowDays);
+        if (deleteDateStr < deleteRetroLimitStr) {
+          const deleteTodayStr = dateStrInTz(todayInTz(deleteTz), deleteTz);
+          const deleteEntryAgeInDays = computeEntryAgeInDays(deleteTodayStr, deleteDateStr);
+          return reply.code(403).send({
+            error: "RETRO_WINDOW_EXCEEDED",
+            windowDays: deleteWindowDays,
+            entryAgeInDays: deleteEntryAgeInDays,
+          });
+        }
       }
 
       // Soft delete instead of hard delete
