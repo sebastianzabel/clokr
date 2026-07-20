@@ -261,8 +261,12 @@ export async function getVocationalSchoolMinutesForDate(
  * Returns the sorted (date ASC) distinct YYYY-MM-DD strings of VOCATIONAL_SCHOOL
  * Absence days in the SAME ISO week as `dateInWeek`, soft-delete-filtered. Used to
  * derive the 1-based ordinalInWeek for resolveBsTagSlot (PITFALLS CD-2).
+ *
+ * Exported so the §9 JArbSchG slot classification (jarbschg.ts, Phase 76.31-07)
+ * shares the SAME de-dupe-by-date-string + sort semantics — one source of truth
+ * for the ISO-week BS-date list.
  */
-async function sortedBsDatesInIsoWeek(
+export async function sortedBsDatesInIsoWeek(
   prisma: PrismaClient,
   employeeId: string,
   dateInWeek: Date,

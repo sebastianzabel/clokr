@@ -21,11 +21,15 @@
 //   - Information-disclosure: helper does NOT return birthDate to the caller
 //     (only `blocked`, `message`, `softWarn`). Verified in tests.
 
-import type { PrismaClient } from "@clokr/db";
+import type { PrismaClient, ScheduleType } from "@clokr/db";
 import {
   JARBSCHG_MAX_WORK_ON_BS_DAY_MIN,
   JARBSCHG_MINOR_AGE_THRESHOLD,
+  JARBSCHG_LONG_DAY_INSTRUCTION_MIN,
+  BS_DAILY_DEFAULT_MIN,
 } from "./vocational-school-constants.js";
+import { resolveBsTagSlot, buildSlotOverrideHierarchy } from "./bs-slot-resolver";
+import { sortedBsDatesInIsoWeek, computeDailySollMinutes } from "./vocational-school-saldo.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -44,6 +48,19 @@ export interface JArbSchGArgs {
   date: Date;
   plannedNetWorkMin: number;
 }
+
+/**
+ * Phase 76.31-07 — two-mode slot classification result for the §9 long-day check.
+ *
+ *   RESOLVER: the target `date` IS a BS-day whose ISO-week slot context resolves →
+ *             isLongDay drives the slot-aware §9 decision.
+ *   LEGACY:   no BS-Absence context on `date` → the caller applies the pre-76.31
+ *             flat 225-min threshold (preserves all existing seedBsAbsence tests).
+ *
+ * D-10: this is the Absence-based re-expression of v1.9's event-model-coupled
+ * classification. No event-model query — driven purely by BS `Absence` rows.
+ */
+type SlotClassification = { mode: "RESOLVER"; isLongDay: boolean } | { mode: "LEGACY" };
 
 // ── Verbatim D-11 message (German, JArbSchG-aligned vocabulary) ──────────────
 
@@ -165,4 +182,138 @@ export async function checkJArbSchG(
       message: SOFT_WARN_MESSAGE,
     },
   };
+}
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/**
+ * Phase 76.31-07 — Absence-based slot classification for the §9 long-day check.
+ *
+ * This is the 1.8.x re-expression of v1.9's event-model-coupled classification.
+ * It ports the CLASSIFICATION logic (slot → isLongDay) but drives it from BS `Absence`
+ * rows in the target date's ISO week — no event-model query, no event-model import (D-10).
+ *
+ * Returns:
+ *   - `{ mode: "LEGACY" }` when the target `date` is NOT itself a BS-day (no BS Absence
+ *     on that day). The caller then applies the pre-76.31 flat 225-min threshold. This
+ *     preserves ALL existing jarbschg tests that assert flat-225 behavior with a single
+ *     seedBsAbsence on the day but no full ISO-week slot context.
+ *   - `{ mode: "RESOLVER", isLongDay }` when `date` IS one of the ISO-week BS-days.
+ *     isLongDay per BBiG §15 Abs.2 / BVaDiG-2024:
+ *       FIRST_LONG_DAY / BLOCK_WEEK → always a long day (pauschal slots)
+ *       SECOND_LONG_DAY / SHORT_DAY → long ONLY when creditedMinutes > 225 (netto threshold)
+ *
+ * Note: the `date` IS always among the ISO-week BS dates when this helper is reached,
+ * because checkJArbSchG only calls it after confirming a BS Absence on `date`. The
+ * membership check below is a defensive belt-and-braces guard.
+ */
+async function classifyBsSlotFromAbsence(
+  prisma: PrismaClient,
+  employeeId: string,
+  date: Date,
+  tenantConfig?: {
+    bsSlotFirstLongDayMinutes: number | null;
+    bsSlotSecondLongDayMinutes: number | null;
+    bsSlotShortDayMinutes: number | null;
+    bsSlotBlockWeekMinutes: number | null;
+    vocationalSchoolMinutesPerDay: number | null;
+    vocationalSchoolBlockMinutesPerWeek: number | null;
+  } | null,
+): Promise<SlotClassification> {
+  // 1. Sorted distinct BS-Absence date strings in the target date's ISO week
+  //    (soft-delete-filtered — shared source of truth with the saldo path).
+  const bsDatesInWeek = await sortedBsDatesInIsoWeek(prisma, employeeId, date);
+
+  // 2. If `date` is not itself a BS-day → LEGACY (flat-225 path).
+  const targetDs = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+    .toISOString()
+    .slice(0, 10);
+  const idx = bsDatesInWeek.indexOf(targetDs);
+  if (idx < 0) return { mode: "LEGACY" };
+
+  // 3. Derive the ISO-week ordinal + block-week flag from the BS dates.
+  const ordinalInWeek = idx + 1; // 1-based
+  const isBlockWeek = bsDatesInWeek.length >= 5;
+
+  // 4. Load the employee bsSlot* overrides + the active BS Pattern + the active schedule
+  //    for the daily Soll. Explicit-null in every layer → delegate to the next layer down.
+  const dayStart = new Date(targetDs + "T00:00:00.000Z");
+  const [employeeSlots, patternSlots, schedule] = await Promise.all([
+    prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        bsSlotFirstLongDayMinutes: true,
+        bsSlotSecondLongDayMinutes: true,
+        bsSlotShortDayMinutes: true,
+        bsSlotBlockWeekMinutes: true,
+      },
+    }),
+    prisma.employeeVocationalSchoolPattern.findFirst({
+      where: {
+        employeeId,
+        isActive: true,
+        validFrom: { lte: dayStart },
+        OR: [{ validUntil: null }, { validUntil: { gte: dayStart } }],
+      },
+      orderBy: { validFrom: "desc" },
+      select: {
+        bsSlotFirstLongDayMinutes: true,
+        bsSlotSecondLongDayMinutes: true,
+        bsSlotShortDayMinutes: true,
+        bsSlotBlockWeekMinutes: true,
+      },
+    }),
+    prisma.workSchedule.findFirst({
+      where: { employeeId, validFrom: { lte: dayStart } },
+      orderBy: { validFrom: "desc" },
+      select: {
+        type: true,
+        weeklyHours: true,
+        mondayHours: true,
+        tuesdayHours: true,
+        wednesdayHours: true,
+        thursdayHours: true,
+        fridayHours: true,
+        saturdayHours: true,
+        sundayHours: true,
+      },
+    }),
+  ]);
+
+  // dailySollMinutes only matters for the FIRST_LONG_DAY amount, and FIRST_LONG_DAY is
+  // long regardless of amount. When no schedule is loaded → BS_DAILY_DEFAULT_MIN (480).
+  const dailySollMinutes = schedule ? computeDailySollMinutes(schedule) : BS_DAILY_DEFAULT_MIN;
+
+  const hierarchy = buildSlotOverrideHierarchy({
+    employee: employeeSlots ?? null,
+    pattern: patternSlots ?? null,
+    tenantConfig: {
+      bsSlotFirstLongDayMinutes: tenantConfig?.bsSlotFirstLongDayMinutes ?? null,
+      bsSlotSecondLongDayMinutes: tenantConfig?.bsSlotSecondLongDayMinutes ?? null,
+      bsSlotShortDayMinutes: tenantConfig?.bsSlotShortDayMinutes ?? null,
+      bsSlotBlockWeekMinutes: tenantConfig?.bsSlotBlockWeekMinutes ?? null,
+      vocationalSchoolMinutesPerDay: tenantConfig?.vocationalSchoolMinutesPerDay ?? null,
+      vocationalSchoolBlockMinutesPerWeek:
+        tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? null,
+    },
+    dailySollMinutes,
+  });
+
+  const scheduleType = (schedule?.type ?? "FIXED_SCHEDULE") as ScheduleType;
+  const res = resolveBsTagSlot(
+    date,
+    ordinalInWeek,
+    { bsDatesInWeek, isBlockWeek },
+    hierarchy,
+    scheduleType,
+  );
+
+  // Long-day classification (CD-4): pauschal slots always long; netto slots long only
+  // above the 225-min instruction-time threshold.
+  const isLongDay =
+    res.slotType === "FIRST_LONG_DAY" ||
+    res.slotType === "BLOCK_WEEK" ||
+    res.creditedMinutes > JARBSCHG_LONG_DAY_INSTRUCTION_MIN;
+
+  return { mode: "RESOLVER", isLongDay };
 }
