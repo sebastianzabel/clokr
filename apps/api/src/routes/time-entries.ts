@@ -2383,12 +2383,40 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
           );
 
     // Holiday deduction: only holidays inside the open window.
+    // MONTHLY_HOURS + real budget + tenant toggle ON → deduct dailySoll (parity with
+    // closeEmployeeMonth, close-employee-month.ts:476-504). Otherwise deduct the
+    // workday-marker hours. Pure-tracking (monthlyHours 0/null) is a no-op either way.
+    const isMonthlyHoursDeduction =
+      scheduleType === "MONTHLY_HOURS" &&
+      Number((schedule as Record<string, unknown>).monthlyHours ?? 0) > 0 &&
+      tenantConfig?.monthlyHoursHolidayDeduction === true;
+
+    let partialWorkingDays = 0;
+    if (isMonthlyHoursDeduction) {
+      const wdCur = new Date(currentMonthOpenStart.getTime());
+      while (wdCur <= effectiveEnd) {
+        const dow = getDayOfWeekInTz(wdCur, tz);
+        if (getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) > 0)
+          partialWorkingDays++;
+        wdCur.setTime(wdCur.getTime() + 24 * 60 * 60 * 1000);
+      }
+    }
+    const partialDailySollMin =
+      isMonthlyHoursDeduction && partialWorkingDays > 0
+        ? (Number((schedule as Record<string, unknown>).monthlyHours!) * 60) / partialWorkingDays
+        : 0;
+
     let partialHolidayMin = 0;
     for (const hDateStr of holidayDateStrSet) {
       if (hDateStr < openStartStr || hDateStr > openEndStr) continue;
       const hDate = new Date(hDateStr + "T00:00:00Z");
       const dow = getDayOfWeekInTz(hDate, tz);
-      partialHolidayMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      if (isMonthlyHoursDeduction) {
+        if (getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) > 0)
+          partialHolidayMin += partialDailySollMin;
+      } else {
+        partialHolidayMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      }
     }
 
     // Leave deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
