@@ -81,6 +81,7 @@ const updateEntrySchema = z.object({
   note: z.string().optional().nullable(),
   type: z.string().optional(),
   breaks: z.array(breakSlotSchema).optional(),
+  grantId: z.string().uuid().optional(), // Phase 76.29.1 Plan 02: pre-approved RetroEntryRequest id (PUT retro-correction)
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -1372,11 +1373,40 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // isCorrectionByManager: manager editing a DIFFERENT employee's entry is an inline
       // correction (source=CORRECTION) and is exempt from the retro-window guard (RETRO-05 C6).
       // Manager editing their OWN entry is NOT exempt (C6 parity — same 403 as employee).
-      // grantId: Plan 03 will pass a pre-validated RetroEntryRequest id here; Plan 02 just
-      // threads the seam so the grant skips the guard without consuming it (consumption = Plan 03).
+      // grantId (Phase 76.29.1 Plan 02): a pre-validated RetroEntryRequest id passed here skips
+      // the retro-window guard inside validateTimeEntryInvariants. Lock-first ordering is preserved:
+      // the month-lock check runs BEFORE the retro-window/grant skip inside validateTimeEntryInvariants,
+      // so an approved grant for a locked month still returns the lock 403 — the grant NEVER bypasses
+      // month-lock immutability. The grant is consumed atomically inside the update $transaction below.
       const overlapDate = body.date ? new Date(body.date) : existing.date;
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
+
+      // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
+      // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
+      // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
+      // caller, so a manager PUT-on-behalf cannot leak a grant from a different employee.
+      // Match is against overlapDate (the effective date being written, body.date ?? existing.date).
+      // On no match → 403 "Antrag bereits verwendet oder ungültig".
+      // Grant consumption is deferred to the $transaction below (atomic with the update).
+      let putResolvedGrantId: string | undefined;
+      if (body.grantId) {
+        const putGrant = await app.prisma.retroEntryRequest.findFirst({
+          where: {
+            id: body.grantId,
+            employeeId: existing.employeeId,
+            targetDate: overlapDate,
+            status: "APPROVED",
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!putGrant) {
+          return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        putResolvedGrantId = putGrant.id;
+      }
+
       const invalid = await validateTimeEntryInvariants(app, {
         employeeId: existing.employeeId,
         date: overlapDate,
@@ -1387,6 +1417,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         tenantId: existing.employee.tenantId,
         excludeEntryId: id,
         isCorrectionByManager: putIsCorrectionByManager,
+        grantId: putResolvedGrantId,
       });
       if (invalid) {
         if (invalid.error === "RETRO_WINDOW_EXCEEDED") {
@@ -1435,12 +1466,12 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Patch-Objekt explizit aufbauen um TS-Spread-Probleme zu vermeiden
-      // Only set source to CORRECTION when a manager edits another employee's entry.
+      // Only set source to CORRECTION when a manager edits another employee's entry, OR when a
+      // grant-backed edit is performed (putResolvedGrantId present — grant edits are always corrections).
       // putIsCorrectionByManager is already computed above (before the invariant call) —
       // reuse it here so the patch and the retro-window exemption stay in sync.
-      const patch: Record<string, unknown> = putIsCorrectionByManager
-        ? { source: "CORRECTION" }
-        : {};
+      const patch: Record<string, unknown> =
+        putIsCorrectionByManager || putResolvedGrantId ? { source: "CORRECTION" } : {};
       if (body.date) patch.date = new Date(body.date);
       if (body.startTime) patch.startTime = new Date(body.startTime);
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
@@ -1453,39 +1484,107 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         patch.invalidReason = null;
       }
 
-      // Handle break slots update
+      // Handle break slots update (non-grant path: runs before the update, as before)
+      // For the grant path, break-slots are handled inside the $transaction below.
+      let newBreakSlotsForTx: { timeEntryId: string; startTime: Date; endTime: Date }[] | undefined;
       if (body.breaks) {
         const newBreakSlots = body.breaks.map((b) => ({
           timeEntryId: id,
           startTime: new Date(b.startTime),
           endTime: new Date(b.endTime),
         }));
-        // Validate break slots before persisting
+        // Validate break slots before persisting (same for both paths)
         const breakError = validateBreakSlots(
           newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
           updatedStart,
           updatedEnd,
         );
         if (breakError) return reply.code(400).send({ error: breakError });
-        // Delete existing breaks and create new ones
-        await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
-        if (newBreakSlots.length > 0) {
-          await app.prisma.break.createMany({ data: newBreakSlots });
-        }
-        // Recalculate breakMinutes from the new break slots
+        // Recalculate breakMinutes from the new break slots (same for both paths)
         patch.breakMinutes = Math.round(
           calcBreakMinutes(
             newBreakSlots.map((b) => ({ startTime: b.startTime, endTime: b.endTime })),
           ),
         );
+        if (putResolvedGrantId) {
+          // Defer to the tx below so the whole correction is atomic
+          newBreakSlotsForTx = newBreakSlots;
+        } else {
+          // Non-grant path: delete existing breaks and create new ones outside tx (as before)
+          await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
+          if (newBreakSlots.length > 0) {
+            await app.prisma.break.createMany({ data: newBreakSlots });
+          }
+        }
       }
 
-      const updated = await app.prisma.timeEntry.update({
-        where: { id },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        data: patch as any,
-        include: { breaks: { orderBy: { startTime: "asc" } } },
-      });
+      // Phase 76.29.1 Plan 02 — race-safe single-use grant consumption on PUT.
+      // When a putResolvedGrantId is present, the TimeEntry update + grant flip + audit run
+      // inside one $transaction, mirroring the POST grant path (~:1095–1134).
+      // The conditional updateMany (WHERE status=APPROVED) ensures exactly one concurrent PUT
+      // wins — if count !== 1 the tx rolls back (GRANT_ALREADY_USED → 403).
+      // Break-slot mutations are also pulled into the tx so the entire correction is atomic.
+      // When no grant: keep the existing non-transactional update path byte-identical.
+      let updated: Awaited<ReturnType<typeof app.prisma.timeEntry.update>>;
+      try {
+        if (putResolvedGrantId) {
+          const grantIdForTx = putResolvedGrantId;
+          const effectiveDateStr = dateStrInTz(overlapDate, overlapTz);
+          const result = await app.prisma.$transaction(async (tx) => {
+            // Break-slot replacement inside the tx (atomic with the update)
+            if (newBreakSlotsForTx !== undefined) {
+              await tx.break.deleteMany({ where: { timeEntryId: id } });
+              if (newBreakSlotsForTx.length > 0) {
+                await tx.break.createMany({ data: newBreakSlotsForTx });
+              }
+            }
+
+            const txUpdated = await tx.timeEntry.update({
+              where: { id },
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              data: patch as any,
+              include: { breaks: { orderBy: { startTime: "asc" } } },
+            });
+
+            // Conditional flip: only succeeds if still APPROVED (single-use guard).
+            const consumed = await tx.retroEntryRequest.updateMany({
+              where: { id: grantIdForTx, status: "APPROVED" },
+              data: { status: "USED" },
+            });
+            if (consumed.count !== 1) {
+              throw new Error("GRANT_ALREADY_USED");
+            }
+
+            await app.audit({
+              userId: user.sub,
+              action: "RETRO_ENTRY_APPROVED_USED",
+              entity: "RetroEntryRequest",
+              entityId: grantIdForTx,
+              newValue: {
+                timeEntryId: id,
+                employeeId: existing.employeeId,
+                date: effectiveDateStr,
+              },
+              tx,
+            });
+
+            return txUpdated;
+          });
+          updated = result;
+        } else {
+          updated = await app.prisma.timeEntry.update({
+            where: { id },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            data: patch as any,
+            include: { breaks: { orderBy: { startTime: "asc" } } },
+          });
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+          return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        throw err;
+      }
 
       await updateOvertimeAccount(app, existing.employeeId);
 
