@@ -19,3 +19,8 @@ export const BS_DAILY_MIN_BOUND = 240; // 4h
 export const BS_DAILY_MAX_BOUND = 600; // 10h, ArbZG-compatible
 export const BS_BLOCK_WEEKLY_MIN_BOUND = 1200; // 20h
 export const BS_BLOCK_WEEKLY_MAX_BOUND = 3000; // 50h
+
+// Phase 76.31 — JArbSchG §9 slot-aware long-day threshold.
+// 225 = 5 UStd × 45 min. A SECOND_LONG_DAY / SHORT_DAY slot counts as a "long day"
+// (JArbSchG §9 hard-block relevant) only when its credited minutes exceed this.
+export const JARBSCHG_LONG_DAY_INSTRUCTION_MIN = 225;
