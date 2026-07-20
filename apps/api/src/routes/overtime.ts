@@ -723,6 +723,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
     employeeId: z.string().uuid(),
     year: z.number().int().min(2020).max(2099),
     month: z.number().int().min(1).max(12),
+    confirmGaps: z.boolean().optional(), // UX-01: manager acknowledgement gate (FORK-C)
   });
 
   // POST /api/v1/overtime/close-month  – Monat abschließen (Snapshot erzeugen)
@@ -730,7 +731,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
     schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req, reply) => {
-      const { employeeId, year, month } = closeMonthSchema.parse(req.body);
+      const body = closeMonthSchema.parse(req.body);
+      const { employeeId, year, month } = body;
 
       const employee = await app.prisma.employee.findUnique({
         where: { id: employeeId },
@@ -1045,7 +1047,19 @@ export async function overtimeRoutes(app: FastifyInstance) {
         carryOverOut,
         effectiveCarryOverOut,
         snapshotExpectedMinutes,
+        gaps,
       } = r;
+
+      // UX-01 / FORK-C: confirmGaps gate (unconditional — no ADMIN bypass)
+      // If gaps exist and caller has not acknowledged them, return 409 with gap metadata.
+      if (gaps.length > 0 && !body.confirmGaps) {
+        return reply.code(409).send({
+          error: `${gaps.length} Tag${gaps.length === 1 ? "" : "e"} ohne Eintrag ${gaps.length === 1 ? "wird" : "werden"} als 0h gewertet. Bitte mit confirmGaps=true bestätigen.`,
+          gapCount: gaps.length,
+          gapDates: gaps.map((g) => g.date),
+          requiresConfirmation: true,
+        });
+      }
 
       // Alias effectiveCarryOverOut → effectiveCarryOver for the $transaction below
       const effectiveCarryOver = effectiveCarryOverOut;
@@ -1065,6 +1079,10 @@ export async function overtimeRoutes(app: FastifyInstance) {
             carryOver: effectiveCarryOver,
             closedAt: new Date(),
             closedBy: req.user.sub,
+            note:
+              gaps.length > 0
+                ? `${gaps.length} Lücke(n) als 0h geschlossen: ${gaps.map((g) => g.date).join(", ")}`
+                : null,
           },
         });
 
