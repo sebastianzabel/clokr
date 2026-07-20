@@ -1100,3 +1100,196 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 76.28 Plan 00 Task 3: Cron gap-note RED scaffold
+//
+// When closeMonthWithGapsAllowed=true on the tenant config AND a FIXED_WEEKLY
+// employee has exactly 1 gap day in the target month, the cron close path MUST
+// write the gap count into the MONTHLY SaldoSnapshot.note.
+//
+// RED against current code: auto-close-month.ts:579 always writes the static
+// note "Automatischer Monatsabschluss" with no gap info. Plan 01 Task 2 turns
+// this GREEN by writing the gap count into the note.
+//
+// Implementation note: closeMonthWithGapsAllowed is read defensively off
+// tenant.config (cast to Record<string,unknown>) in auto-close-month.ts:371-373.
+// The column is NOT in the Prisma schema yet (lands in Phase 76.29 CFG-01), so
+// Prisma's tenant.findMany({ include: { config: true } }) would never return it.
+//
+// Strategy: spy on app.prisma.tenant.findMany so that for our isolated tenant, the
+// returned config object includes { closeMonthWithGapsAllowed: true }. This is
+// equivalent to the column existing in the schema — the type cast in auto-close-month.ts
+// reads it as Record<string,unknown> so injecting it via spy produces the same
+// code path as the real column will in Phase 76.29. The spy is scoped to this one
+// describe block's test only (restored in finally).
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
+  let app: Awaited<ReturnType<typeof getTestApp>>;
+  let tenantId: string;
+  let gapEmpId: string;
+
+  // January 2024: fixture month (23 Mon–Fri workdays). Fake time: Feb 16 → closes Jan.
+  // Gap day: 2024-01-09 (Tuesday of week 2)
+  const GAP_DAY = "2024-01-09";
+
+  // All Mon–Fri in January 2024
+  function janMonFri(): string[] {
+    const out: string[] = [];
+    const cur = new Date("2024-01-01T00:00:00Z");
+    const end = new Date("2024-01-31T00:00:00Z");
+    while (cur <= end) {
+      const dow = cur.getUTCDay();
+      if (dow >= 1 && dow <= 5) out.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return out;
+  }
+
+  async function seedEntryLocal(empId: string, dateStr: string) {
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: empId,
+        date: new Date(dateStr + "T00:00:00Z"),
+        startTime: new Date(dateStr + "T07:00:00Z"),
+        endTime: new Date(dateStr + "T15:30:00Z"),
+        breakMinutes: 30,
+        type: "WORK",
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = `gapnote-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    // Isolated tenant
+    const tenant = await prisma.tenant.create({
+      data: { name: `GapNote ${s}`, slug: `gapnote-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: {
+        tenantId,
+        defaultVacationDays: 30,
+        timezone: "Europe/Berlin",
+        defaultBreakOver6h: 30,
+        defaultBreakOver9h: 45,
+      },
+    });
+
+    // FIXED_WEEKLY employee, hireDate = Jan 1 2024
+    const empUser = await prisma.user.create({
+      data: {
+        email: `gapnote-emp-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: empUser.id,
+        employeeNumber: `GN-${s}`,
+        firstName: "Gap",
+        lastName: "Note",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+        isTimeTrackingExempt: false,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    gapEmpId = emp.id;
+
+    // Seed all January Mon–Fri EXCEPT the gap day
+    for (const d of janMonFri()) {
+      if (d !== GAP_DAY) await seedEntryLocal(emp.id, d);
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("cron gap-note cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("cron gap-note (RED): closeMonthWithGapsAllowed=true + 1 gap day → MONTHLY snapshot.note matches /1 Lücke/", async () => {
+    // Inject closeMonthWithGapsAllowed=true into our isolated tenant's config via spy.
+    // The column is not in the Prisma schema (76.29 CFG-01 adds it); reading it as
+    // Record<string,unknown> in auto-close-month.ts:372 returns the injected value.
+    // The spy wraps the real findMany result and augments only our test tenant's config.
+    const realFindMany = app.prisma.tenant.findMany.bind(app.prisma.tenant);
+    const findManySpy = vi
+      .spyOn(app.prisma.tenant, "findMany")
+      .mockImplementation(async (...args) => {
+        const tenants = await realFindMany(...(args as Parameters<typeof realFindMany>));
+        return tenants.map((t) => {
+          if (t.id !== tenantId) return t;
+          // Inject closeMonthWithGapsAllowed=true into this tenant's config
+          return {
+            ...t,
+            config: t.config ? { ...t.config, closeMonthWithGapsAllowed: true } : t.config,
+          };
+        });
+      });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
+
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      findManySpy.mockRestore();
+      vi.useRealTimers();
+    }
+
+    // Assert the MONTHLY snapshot was created for January 2024
+    const janRange = monthRangeUtc(2024, 1, "Europe/Berlin");
+    const snap = await app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId: gapEmpId,
+        periodType: "MONTHLY",
+        periodStart: {
+          gte: janRange.start,
+          lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+        },
+        superseded: false,
+      },
+    });
+
+    // If snap is null: F-02 break fired despite closeMonthWithGapsAllowed=true injection.
+    // Either assertion is RED and acceptable — the test documents the expected contract.
+    expect(
+      snap,
+      "cron gap-note (RED): MONTHLY snapshot must be created when closeMonthWithGapsAllowed=true",
+    ).not.toBeNull();
+
+    // RED: current code writes static "Automatischer Monatsabschluss" (no gap info).
+    // Plan 01 Task 2 turns this GREEN by appending the gap count to the note.
+    expect(
+      snap!.note,
+      `cron gap-note (RED): snapshot.note must match /1 Lücke/ but got: "${snap!.note}"`,
+    ).toEqual(expect.stringMatching(/1 Lücke/));
+  }, 60_000);
+});
