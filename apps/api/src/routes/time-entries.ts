@@ -25,6 +25,7 @@ import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
 import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // SNAP-03 — Phase 76.27
+import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
   getRetroEntryWindowDays,
   computeRetroLimitStr,
@@ -2110,6 +2111,13 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     const monthHolidaySet = new Set(
       [...holidayDateStrSet].filter((d) => d >= monthFirstDayStr && d <= monthLastDayStr),
     );
+    // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides for this
+    // month so the complete-month recompute honors per-MA / per-pattern slot amounts.
+    const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
+      app.prisma,
+      employeeId,
+      monthFirstDay,
+    );
     const result = closeEmployeeMonth({
       employeeId,
       monthStart,
@@ -2151,8 +2159,16 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
             vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:
               tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+            // Phase 76.31 (D-06) — TenantConfig slot layer.
+            bsSlotFirstLongDayMinutes: tenantConfig.bsSlotFirstLongDayMinutes ?? undefined,
+            bsSlotSecondLongDayMinutes: tenantConfig.bsSlotSecondLongDayMinutes ?? undefined,
+            bsSlotShortDayMinutes: tenantConfig.bsSlotShortDayMinutes ?? undefined,
+            bsSlotBlockWeekMinutes: tenantConfig.bsSlotBlockWeekMinutes ?? undefined,
           }
         : null,
+      // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+      employeeSlots,
+      patternSlots,
     });
 
     // Thread carryOver for next month (§2.3 RESEARCH).

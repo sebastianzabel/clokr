@@ -7,6 +7,7 @@ import { periodStartWindow } from "../utils/snapshot-period";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
+import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -539,6 +540,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   }),
                 ]);
 
+              // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides.
+              const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
+                app.prisma,
+                emp.id,
+                monthFirstDay,
+              );
+
               // ── Phase 76.26: call the shared pure saldo core ──────────────────
               const r = closeEmployeeMonth({
                 employeeId: emp.id,
@@ -587,8 +595,18 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                         tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
                       vocationalSchoolBlockMinutesPerWeek:
                         tenant.config.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+                      // Phase 76.31 (D-06) — TenantConfig slot layer.
+                      bsSlotFirstLongDayMinutes:
+                        tenant.config.bsSlotFirstLongDayMinutes ?? undefined,
+                      bsSlotSecondLongDayMinutes:
+                        tenant.config.bsSlotSecondLongDayMinutes ?? undefined,
+                      bsSlotShortDayMinutes: tenant.config.bsSlotShortDayMinutes ?? undefined,
+                      bsSlotBlockWeekMinutes: tenant.config.bsSlotBlockWeekMinutes ?? undefined,
                     }
                   : null,
+                // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+                employeeSlots,
+                patternSlots,
               });
 
               const {

@@ -4,6 +4,12 @@ import { FederalState } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { syncSchoolHolidaysForTenant } from "../plugins/school-holidays-sync";
 import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
+import {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../utils/vocational-school-constants";
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +60,38 @@ const patternItemSchema = z
     // Phase 67.2 — Pendler-Azubi-Support: BS-Bundesland ≠ Betrieb. NULL/omitted
     // falls back to Tenant.federalState in the generator.
     federalStateOverride: federalStateEnum.nullable().optional(),
+    // Phase 76.31 D-06 — per-pattern bsSlot* overrides (middle layer of the
+    // 4-layer slot hierarchy: Employee → Pattern → TenantConfig → daily-Soll).
+    // Nullable Int — explicit null clears the pattern override (delegate down).
+    // Daily bounds 240..600 (4h..10h); block-week bounds 1200..3000 (20h..50h).
+    bsSlotFirstLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotSecondLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotShortDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotBlockWeekMinutes: z
+      .number()
+      .int()
+      .min(BS_BLOCK_WEEKLY_MIN_BOUND)
+      .max(BS_BLOCK_WEEKLY_MAX_BOUND)
+      .nullable()
+      .optional(),
   })
   // At least one weekday OR at least one block week must be set.
   // Legacy `dayOfWeek` counts as "weekday set" since the PUT handler normalises it.
@@ -190,6 +228,12 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
               // Phase 67.2 — Persist Ferien-Steuerung + Pendler-Override.
               respectSchoolHolidays: p.respectSchoolHolidays ?? true,
               federalStateOverride: p.federalStateOverride ?? null,
+              // Phase 76.31 (D-06) — persist per-pattern bsSlot* overrides.
+              // undefined / omitted → null (delegate down the slot hierarchy).
+              bsSlotFirstLongDayMinutes: p.bsSlotFirstLongDayMinutes ?? null,
+              bsSlotSecondLongDayMinutes: p.bsSlotSecondLongDayMinutes ?? null,
+              bsSlotShortDayMinutes: p.bsSlotShortDayMinutes ?? null,
+              bsSlotBlockWeekMinutes: p.bsSlotBlockWeekMinutes ?? null,
             },
           });
           out.push(row);

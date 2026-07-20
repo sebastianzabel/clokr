@@ -19,6 +19,7 @@ import { getEffectiveSchedule } from "../routes/time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
+import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -213,6 +214,15 @@ export async function recalculateSnapshots(
     //
     // Phase 76.26-05 D-01: Phase-2 bsExpectedMinutes fold (old :404-437) is now
     // handled inside closeEmployeeMonth — REMOVED from the caller.
+    //
+    // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so the
+    // recompute honors per-MA / per-pattern slot amounts (null → fallback).
+    const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
+      app.prisma,
+      employeeId,
+      monthFirstDay,
+    );
+
     const r = closeEmployeeMonth({
       employeeId,
       monthStart,
@@ -260,8 +270,16 @@ export async function recalculateSnapshots(
             vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
             vocationalSchoolBlockMinutesPerWeek:
               tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+            // Phase 76.31 (D-06) — TenantConfig slot layer.
+            bsSlotFirstLongDayMinutes: tenantConfig.bsSlotFirstLongDayMinutes ?? undefined,
+            bsSlotSecondLongDayMinutes: tenantConfig.bsSlotSecondLongDayMinutes ?? undefined,
+            bsSlotShortDayMinutes: tenantConfig.bsSlotShortDayMinutes ?? undefined,
+            bsSlotBlockWeekMinutes: tenantConfig.bsSlotBlockWeekMinutes ?? undefined,
           }
         : null,
+      // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+      employeeSlots,
+      patternSlots,
     });
 
     const { workedMinutes, balanceMinutes, effectiveCarryOverOut, snapshotExpectedMinutes } = r;

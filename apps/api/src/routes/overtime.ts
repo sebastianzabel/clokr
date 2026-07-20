@@ -8,6 +8,7 @@ import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-0
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — gap detector
+import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -989,6 +990,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
       const carryOverIn = prevSnapshot?.carryOver ?? 0;
 
+      // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so
+      // the pure core resolves per-MA / per-pattern slot amounts (null → fallback).
+      const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
+        app.prisma,
+        employeeId,
+        monthFirstDay,
+      );
+
       // ── Phase 76.26: call the shared pure saldo core ──────────────────────────
       const r = closeEmployeeMonth({
         employeeId,
@@ -1036,8 +1045,16 @@ export async function overtimeRoutes(app: FastifyInstance) {
                 tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
               vocationalSchoolBlockMinutesPerWeek:
                 tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+              // Phase 76.31 (D-06) — TenantConfig slot layer.
+              bsSlotFirstLongDayMinutes: tenantConfig.bsSlotFirstLongDayMinutes ?? undefined,
+              bsSlotSecondLongDayMinutes: tenantConfig.bsSlotSecondLongDayMinutes ?? undefined,
+              bsSlotShortDayMinutes: tenantConfig.bsSlotShortDayMinutes ?? undefined,
+              bsSlotBlockWeekMinutes: tenantConfig.bsSlotBlockWeekMinutes ?? undefined,
             }
           : null,
+        // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+        employeeSlots,
+        patternSlots,
       });
 
       // Unpack result — these replace the old inline-computed locals

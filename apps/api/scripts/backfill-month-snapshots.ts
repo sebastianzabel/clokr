@@ -33,6 +33,7 @@ import { getEffectiveSchedule } from "../src/routes/time-entries";
 import { getHolidays, STATE_MAP } from "../src/utils/holidays";
 import { periodStartWindow } from "../src/utils/snapshot-period";
 import { closeEmployeeMonth } from "../src/utils/close-employee-month";
+import { loadBsSlotOverrides } from "../src/utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 
 // ── Exported pure helpers ────────────────────────────────────────────────────
 // These mirror the function-scoped helpers inside auto-close-month.ts but are
@@ -389,6 +390,13 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
               }),
             ]);
 
+            // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides.
+            const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
+              app.prisma,
+              emp.id,
+              monthFirstDay,
+            );
+
             // ── Call the shared pure saldo core (never re-implement saldo math) ─
             const r = closeEmployeeMonth({
               employeeId: emp.id,
@@ -437,8 +445,17 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                       tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
                     vocationalSchoolBlockMinutesPerWeek:
                       tenant.config.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+                    // Phase 76.31 (D-06) — TenantConfig slot layer.
+                    bsSlotFirstLongDayMinutes: tenant.config.bsSlotFirstLongDayMinutes ?? undefined,
+                    bsSlotSecondLongDayMinutes:
+                      tenant.config.bsSlotSecondLongDayMinutes ?? undefined,
+                    bsSlotShortDayMinutes: tenant.config.bsSlotShortDayMinutes ?? undefined,
+                    bsSlotBlockWeekMinutes: tenant.config.bsSlotBlockWeekMinutes ?? undefined,
                   }
                 : null,
+              // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+              employeeSlots,
+              patternSlots,
             });
 
             // Track the projected balance for this month
@@ -529,8 +546,18 @@ export async function main(app: FastifyInstance, opts: BackfillOptions): Promise
                         tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
                       vocationalSchoolBlockMinutesPerWeek:
                         tenant.config.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+                      // Phase 76.31 (D-06) — TenantConfig slot layer.
+                      bsSlotFirstLongDayMinutes:
+                        tenant.config.bsSlotFirstLongDayMinutes ?? undefined,
+                      bsSlotSecondLongDayMinutes:
+                        tenant.config.bsSlotSecondLongDayMinutes ?? undefined,
+                      bsSlotShortDayMinutes: tenant.config.bsSlotShortDayMinutes ?? undefined,
+                      bsSlotBlockWeekMinutes: tenant.config.bsSlotBlockWeekMinutes ?? undefined,
                     }
                   : null,
+                // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
+                employeeSlots,
+                patternSlots,
               });
 
               const closeCarryOver = rApply.carryOverOut;

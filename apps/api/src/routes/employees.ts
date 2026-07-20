@@ -15,9 +15,50 @@ import {
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
 } from "../utils/break-constants";
+import {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../utils/vocational-school-constants";
 
 // ── Retention constant ─────────────────────────────────────────────────────
 const DEFAULT_RETENTION_YEARS = 10;
+
+// Phase 76.31 D-06 — per-employee bsSlot* override Zod fields (highest layer of
+// the 4-layer slot hierarchy). Nullable Int — explicit null CLEARS the employee
+// override so resolution delegates down to Pattern → TenantConfig → daily-Soll.
+// Daily bounds 240..600 (4h..10h); block-week bounds 1200..3000 (20h..50h).
+const bsSlotEmployeeFields = {
+  bsSlotFirstLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND)
+    .max(BS_DAILY_MAX_BOUND)
+    .nullable()
+    .optional(),
+  bsSlotSecondLongDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND)
+    .max(BS_DAILY_MAX_BOUND)
+    .nullable()
+    .optional(),
+  bsSlotShortDayMinutes: z
+    .number()
+    .int()
+    .min(BS_DAILY_MIN_BOUND)
+    .max(BS_DAILY_MAX_BOUND)
+    .nullable()
+    .optional(),
+  bsSlotBlockWeekMinutes: z
+    .number()
+    .int()
+    .min(BS_BLOCK_WEEKLY_MIN_BOUND)
+    .max(BS_BLOCK_WEEKLY_MAX_BOUND)
+    .nullable()
+    .optional(),
+};
 
 /** SHA-256 hash for tokens stored in DB. */
 function hashToken(token: string): string {
@@ -96,6 +137,8 @@ const createEmployeeSchema = z.object({
     )
     .nullable()
     .optional(),
+  // Phase 76.31 D-06 — per-employee bsSlot* overrides (create).
+  ...bsSlotEmployeeFields,
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -147,6 +190,9 @@ const updateEmployeeSchema = z.object({
   // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
   // actual value change (see PATCH handler below).
   isTimeTrackingExempt: z.boolean().optional(),
+  // Phase 76.31 D-06 — per-employee bsSlot* overrides (update). undefined = no
+  // change; explicit null clears the override (delegate down a layer).
+  ...bsSlotEmployeeFields,
 });
 
 function deriveInvitationStatus(
@@ -312,6 +358,12 @@ export async function employeeRoutes(app: FastifyInstance) {
               // undefined / omitted → null (fall back to tenant default).
               breakOver6hOverride: body.breakOver6hOverride ?? null,
               breakOver9hOverride: body.breakOver9hOverride ?? null,
+              // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
+              // undefined / omitted → null (delegate down the slot hierarchy).
+              bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
+              bsSlotSecondLongDayMinutes: body.bsSlotSecondLongDayMinutes ?? null,
+              bsSlotShortDayMinutes: body.bsSlotShortDayMinutes ?? null,
+              bsSlotBlockWeekMinutes: body.bsSlotBlockWeekMinutes ?? null,
             },
           });
 
@@ -456,6 +508,20 @@ export async function employeeRoutes(app: FastifyInstance) {
       // below, modeled on the Phase 64 break-override pattern).
       if (body.isTimeTrackingExempt !== undefined) {
         updates.isTimeTrackingExempt = body.isTimeTrackingExempt;
+      }
+      // Phase 76.31 (D-06): per-employee bsSlot* overrides on update.
+      // undefined = no change, null = clear (delegate down a layer), number = set.
+      if (body.bsSlotFirstLongDayMinutes !== undefined) {
+        updates.bsSlotFirstLongDayMinutes = body.bsSlotFirstLongDayMinutes;
+      }
+      if (body.bsSlotSecondLongDayMinutes !== undefined) {
+        updates.bsSlotSecondLongDayMinutes = body.bsSlotSecondLongDayMinutes;
+      }
+      if (body.bsSlotShortDayMinutes !== undefined) {
+        updates.bsSlotShortDayMinutes = body.bsSlotShortDayMinutes;
+      }
+      if (body.bsSlotBlockWeekMinutes !== undefined) {
+        updates.bsSlotBlockWeekMinutes = body.bsSlotBlockWeekMinutes;
       }
 
       const updated = await app.prisma.employee.update({ where: { id }, data: updates });
