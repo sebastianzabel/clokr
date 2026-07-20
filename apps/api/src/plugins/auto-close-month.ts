@@ -557,6 +557,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 carryOverOut,
                 effectiveCarryOverOut,
                 snapshotExpectedMinutes,
+                gaps,
               } = r;
 
               // Alias for the $transaction and audit log below (mirrors P1 manual-close variable names)
@@ -576,7 +577,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     carryOver: effectiveCarryOver,
                     closedAt: new Date(),
                     closedBy: null, // SYSTEM
-                    note: "Automatischer Monatsabschluss",
+                    note:
+                      gaps.length > 0
+                        ? `Automatischer Monatsabschluss — ${gaps.length} Lücke(n) als 0h geschlossen: ${gaps.map((g) => g.date).join(", ")}`
+                        : "Automatischer Monatsabschluss",
                   },
                 });
 
