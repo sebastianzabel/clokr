@@ -291,7 +291,10 @@ async function closeMonth(
     method: "POST",
     url: "/api/v1/overtime/close-month",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { employeeId: empId, year, month },
+    // confirmGaps:true acknowledges gap months (e.g. Fixture C rostered-not-worked).
+    // Harmless on gap-free closes (A/B/D/E/F/G) and required for Fixture C after
+    // the Phase 76.28-01 unconditional 409 gate.
+    payload: { employeeId: empId, year, month, confirmGaps: true },
   });
 }
 
