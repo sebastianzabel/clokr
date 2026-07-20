@@ -2310,10 +2310,17 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     }
 
     // Absence deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
+    // VOCATIONAL_SCHOOL / PATTERN absences are included in partialAbsenceMin so the
+    // BS-day Soll is subtracted from the expected base, exactly matching the
+    // closeEmployeeMonth() non-SHIFT path (close-employee-month.ts:526-536). BBiG §15
+    // neutrality is then restored by bsExpectedMinutes (added back to expected) and
+    // bsWorkedMinutes (credited to worked) — see the BS-doubling block below.
     let partialAbsenceMin = 0;
     if (scheduleType !== "MONTHLY_HOURS") {
       for (const ab of curAbsences) {
-        if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") continue;
+        // All absence types (including VOCATIONAL_SCHOOL) are included here — matching
+        // closeEmployeeMonth() non-SHIFT path (close-employee-month.ts:526-536). BS-day
+        // neutrality is restored via bsExpectedMinutes + bsWorkedMinutes below (D-01).
         const s = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
         const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
         if (s > e) continue;
@@ -2327,19 +2334,60 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       }
     }
 
-    // Partial expected net of holidays/leave/absence.
+    // BBiG §15 Berufsschule (BS) doubling for the non-SHIFT current partial month.
+    //
+    // Mirrors closeEmployeeMonth() D-01 (close-employee-month.ts:341-356, 539-541, 556):
+    //   - partialAbsenceMin above includes the BS-day Soll via calcLeaveAbsenceMinutesTz
+    //     (the Ø-Methode daily figure), subtracting it from partialNetExpected.
+    //   - bsExpectedMinutes (+bsDaily) is added back to expected, compensating the subtraction
+    //     so the net expectation for the BS day equals (0 − bsDaily_soll + bsExpected) = (0).
+    //   - bsWorkedMinutes (+bsDaily) is added to worked, crediting the Azubi as if present.
+    //   - Net balance effect: +bsWorked − bsExpected_compensation = 0 vs a gap day, which
+    //     contributes (0 − daily_soll). Difference = daily_soll → BS day is neutral (BBiG §15).
+    //
+    // For SHIFT_BASED: the inline block below handles BS-doubling (RESEARCH §2.7 gap, preserved).
+    // For complete prior months: closeEmployeeMonth() handles it. This block is ONLY for the
+    // non-SHIFT current partial month path.
+    let partialBsWorkedMinutes = 0;
+    let partialBsExpectedMinutes = 0;
+    if (scheduleType !== "MONTHLY_HOURS" && scheduleType !== "SHIFT_BASED") {
+      for (const ab of curAbsences) {
+        if (ab.type !== "VOCATIONAL_SCHOOL") continue;
+        const start = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
+        const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
+        const cur = new Date(start);
+        while (cur <= end) {
+          const bsMin = await getVocationalSchoolMinutesForDate(
+            app.prisma,
+            employeeId,
+            cur,
+            tenantConfig,
+          );
+          partialBsWorkedMinutes += bsMin;
+          partialBsExpectedMinutes += bsMin; // D-01: add to both sides → balance neutral
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+      }
+    }
+
+    // Partial expected net of holidays/leave/absence + bsExpected (D-01 compensation).
     const partialNetExpected = Math.max(
       0,
-      partialExpected - partialHolidayMin - partialLeaveMin - partialAbsenceMin,
+      partialExpected +
+        partialBsExpectedMinutes -
+        partialHolidayMin -
+        partialLeaveMin -
+        partialAbsenceMin,
     );
 
     // Worked minutes for the partial open window (already in entries, capped at effectiveEnd).
+    // partialBsWorkedMinutes credits the Azubi for BS days (BBiG §15 — D-01 doubling).
     const partialWorked = entries.reduce((sum, e) => {
       if (!e.endTime || e.date < currentMonthOpenStart || e.date > effectiveEnd) return sum;
       return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
     }, 0);
 
-    openPeriodBalance += Math.round(partialWorked - partialNetExpected);
+    openPeriodBalance += Math.round(partialWorked + partialBsWorkedMinutes - partialNetExpected);
 
     // Set the legacy variables so the openPeriodBalance formula at the aggregation site
     // does not double-count (shiftBalanceOverride=null path uses workedMinutes - expected).
@@ -2351,7 +2399,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   }
 
   // Phase 63 — Berufsschule (BS) doubling for the CURRENT PARTIAL MONTH: SHIFT_BASED only.
-  // For non-SHIFT types: BS-doubling is handled inside closeEmployeeMonth() above.
+  // For non-SHIFT types / complete prior months: BS-doubling is handled inside
+  // closeEmployeeMonth() in the loop above. For non-SHIFT current partial month:
+  // BS-doubling is handled via partialBsWorkedMinutes in the else-branch above.
   // For SHIFT_BASED: the existing inline BS logic is preserved (RESEARCH §2.7 — live-path
   // bsExpectedMinutes gap preserved, do NOT fix BS-doubling here; see 76.26-BS-DOUBLING-FOLLOWUP.md).
   const bsAbsencesUpdate =
