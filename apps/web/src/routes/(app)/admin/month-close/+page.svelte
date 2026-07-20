@@ -73,6 +73,20 @@
   let confirmModalOpen = $state(false);
   let confirmMonth = $state<number | null>(null);
   let confirmEmployeeId = $state<string | null>(null);
+  let gapAcknowledged = $state(false);
+
+  // pendingGaps: gap dates for the employee(s) being confirmed.
+  // Derived from status-endpoint missingDates — never client-computed (A1 parity).
+  let pendingGaps = $derived.by<string[]>(() => {
+    if (confirmEmployeeId) {
+      const emp = detailEmployees.find((e) => e.employeeId === confirmEmployeeId);
+      return emp?.missingDates ?? [];
+    }
+    // Bulk close: union of all "missing" employees' dates
+    return detailEmployees
+      .filter((e) => e.status === "missing")
+      .flatMap((e) => e.missingDates ?? []);
+  });
 
   const years = $derived(
     Array.from({ length: currentYear - earliestYear + 1 }, (_, i) => currentYear - i),
@@ -174,6 +188,7 @@
     confirmModalOpen = false;
     confirmMonth = null;
     confirmEmployeeId = null;
+    gapAcknowledged = false; // synchronous reset — no $effect (avoids v1.8.17 loop trap)
   }
 
   async function onConfirmProceed() {
@@ -246,11 +261,14 @@
       const res = await api.get<MonthDetailResponse>(
         `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
       );
-      const readyEmployees = res.employees.filter((e) => e.status === "ready");
-      closingTotal = readyEmployees.length;
+      // FORK-A: include "missing" employees — single combined modal covers all
+      const closableEmployees = res.employees.filter(
+        (e) => e.status === "ready" || e.status === "missing",
+      );
+      closingTotal = closableEmployees.length;
 
-      if (readyEmployees.length === 0) {
-        error = "Keine Mitarbeiter bereit zum Abschluss";
+      if (closableEmployees.length === 0) {
+        error = "Keine Mitarbeiter zum Abschluss";
         closing = false;
         return;
       }
@@ -258,12 +276,13 @@
       let succeeded = 0;
       let failed = 0;
 
-      for (const emp of readyEmployees) {
+      for (const emp of closableEmployees) {
         try {
           await api.post("/overtime/close-month", {
             employeeId: emp.employeeId,
             year: selectedYear,
             month,
+            confirmGaps: (emp.missingDates?.length ?? 0) > 0,
           });
           succeeded++;
         } catch {
@@ -382,6 +401,7 @@
         employeeId,
         year: selectedYear,
         month,
+        confirmGaps: pendingGaps.length > 0,
       });
       const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
       success = `${monthName} ${selectedYear} für Mitarbeiter abgeschlossen`;
@@ -724,6 +744,33 @@
         </p>
       </div>
     </div>
+    {#if pendingGaps.length > 0}
+      <div class="callout warn gap-warning" role="alert" data-testid="month-close-gap-warning">
+        <div>
+          <b
+            >{pendingGaps.length} Tag{pendingGaps.length === 1 ? "" : "e"} ohne Eintrag {pendingGaps.length ===
+            1
+              ? "wird"
+              : "werden"} als 0h gewertet</b
+          >
+          <p>
+            Diese Tage zählen mit vollem Soll (kein Abzug). Der Saldo wird entsprechend negativ.
+          </p>
+          <ul class="gap-date-list">
+            {#each pendingGaps as d (d)}
+              <li>{formatMissingDates([d])}</li>
+            {/each}
+          </ul>
+        </div>
+      </div>
+      <label class="gap-ack-label">
+        <input type="checkbox" bind:checked={gapAcknowledged} data-testid="month-close-gap-ack" />
+        Ich habe die {pendingGaps.length} fehlende{pendingGaps.length === 1 ? "n" : ""} Tag{pendingGaps.length ===
+        1
+          ? ""
+          : "e"} zur Kenntnis genommen
+      </label>
+    {/if}
     <p class="modal-note">
       Bitte stelle sicher, dass alle Salden und fehlenden Einträge vor dem Sperren geprüft wurden.
     </p>
@@ -737,7 +784,7 @@
       <button
         class="btn btn-primary"
         onclick={onConfirmProceed}
-        disabled={closing}
+        disabled={closing || (pendingGaps.length > 0 && !gapAcknowledged)}
         data-testid="month-close-confirm"
       >
         {#if closing}<Spinner />{/if}
@@ -992,6 +1039,21 @@
   .btn-sm {
     padding: 0.25rem 0.625rem;
     font-size: 0.8rem;
+  }
+
+  /* ─── Gap warning (UX-01) ──────────────────────────────── */
+  .gap-date-list {
+    margin: var(--s-2) 0 0;
+    padding-left: var(--s-4);
+    font-size: 0.85rem;
+  }
+
+  .gap-ack-label {
+    display: flex;
+    gap: var(--s-2);
+    align-items: flex-start;
+    margin-top: var(--s-3);
+    font-size: 0.9rem;
   }
 
   /* ─── Modal body helper (Modal primitive owns backdrop/card/header/footer) ────── */
