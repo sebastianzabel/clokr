@@ -1262,19 +1262,23 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
     // Record<string,unknown> in auto-close-month.ts:372 returns the injected value.
     // The spy wraps the real findMany result and augments only our test tenant's config.
     const realFindMany = app.prisma.tenant.findMany.bind(app.prisma.tenant);
-    const findManySpy = vi
-      .spyOn(app.prisma.tenant, "findMany")
-      .mockImplementation(async (...args) => {
-        const tenants = await realFindMany(...(args as Parameters<typeof realFindMany>));
-        return tenants.map((t) => {
-          if (t.id !== tenantId) return t;
-          // Inject closeMonthWithGapsAllowed=true into this tenant's config
-          return {
-            ...t,
-            config: t.config ? { ...t.config, closeMonthWithGapsAllowed: true } : t.config,
-          };
-        });
+    const findManySpy = vi.spyOn(app.prisma.tenant, "findMany").mockImplementation((async (
+      ...args: Parameters<typeof realFindMany>
+    ) => {
+      const tenants = (await realFindMany(...args)) as Array<{
+        id: string;
+        config?: Record<string, unknown> | null;
+        [k: string]: unknown;
+      }>;
+      return tenants.map((t) => {
+        if (t.id !== tenantId) return t;
+        // Inject closeMonthWithGapsAllowed=true into this tenant's config
+        return {
+          ...t,
+          config: t.config ? { ...t.config, closeMonthWithGapsAllowed: true } : t.config,
+        };
       });
+    }) as unknown as typeof app.prisma.tenant.findMany);
 
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
