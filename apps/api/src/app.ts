@@ -53,6 +53,7 @@ import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
 import { adminSchoolHolidaysRoutes } from "./routes/admin/school-holidays";
 import { meRoutes } from "./routes/me";
 import { testBootstrapRoutes } from "./routes/test-bootstrap";
+import { retroEntryRequestRoutes } from "./routes/retro-entry-requests";
 import { requireAuth } from "./middleware/auth";
 
 // Phase 69 (DEVOPS-V8-02): bake version from package.json at module init.
@@ -264,6 +265,7 @@ export async function buildApp() {
   await app.register(employeeRoutes, { prefix: "/api/v1/employees" });
   await app.register(timeEntryRoutes, { prefix: "/api/v1/time-entries" });
   await app.register(leaveRoutes, { prefix: "/api/v1/leave" });
+  await app.register(retroEntryRequestRoutes, { prefix: "/api/v1/retro-entry-requests" });
   await app.register(overtimeRoutes, { prefix: "/api/v1/overtime" });
   await app.register(reportRoutes, { prefix: "/api/v1/reports" });
   await app.register(settingsRoutes, { prefix: "/api/v1/settings" });

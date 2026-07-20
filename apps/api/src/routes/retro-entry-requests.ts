@@ -1,0 +1,230 @@
+import { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { requireAuth, requireRole } from "../middleware/auth";
+import { getTenantTimezone, dateStrInTz, todayInTz } from "../utils/timezone";
+import { computeEntryAgeInDays } from "../utils/retro-config";
+
+// ── Zod schemas ───────────────────────────────────────────────────────────────
+
+const createRetroRequestSchema = z.object({
+  employeeId: z.string().uuid().optional(), // optional: falls back to req.user.employeeId
+  targetDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ungültiges Datum")
+    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+  reason: z.string().min(1, "Begründung ist erforderlich (revisionssicherheitspflichtig)."),
+});
+
+const reviewRetroRequestSchema = z.object({
+  status: z.enum(["APPROVED", "REJECTED"]),
+  reviewNote: z.string().min(1, "Bitte gib eine Begründung an (revisionssicherheitspflichtig)."),
+});
+
+const idParamSchema = z.object({ id: z.string().uuid() });
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+export async function retroEntryRequestRoutes(app: FastifyInstance) {
+  // ── POST /  — create a RetroEntryRequest ─────────────────────────────────
+  app.post("/", {
+    schema: { tags: ["Retro-Anfragen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const body = createRetroRequestSchema.parse(req.body);
+      const user = req.user;
+      const isManager = ["ADMIN", "MANAGER"].includes(user.role);
+
+      // Resolve target employee: managers may submit for themselves (own empId);
+      // employees always submit for themselves.
+      const employeeId =
+        body.employeeId && isManager ? body.employeeId : (user.employeeId ?? undefined);
+
+      if (!employeeId) {
+        return reply.code(400).send({ error: "Mitarbeiter nicht ermittelbar" });
+      }
+
+      // Verify employee belongs to this tenant
+      const targetEmployee = await app.prisma.employee.findFirst({
+        where: { id: employeeId, tenantId: user.tenantId },
+        select: { id: true, tenantId: true },
+      });
+      if (!targetEmployee) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const tz = await getTenantTimezone(app.prisma, user.tenantId);
+      const todayStr = dateStrInTz(todayInTz(tz), tz);
+      const ageInDays = computeEntryAgeInDays(todayStr, body.targetDate);
+
+      // Duplicate-grant guard: reject if PENDING or APPROVED grant already exists
+      // for the same (employeeId, targetDate).
+      const existing = await app.prisma.retroEntryRequest.findFirst({
+        where: {
+          employeeId,
+          targetDate: new Date(body.targetDate),
+          status: { in: ["PENDING", "APPROVED"] },
+          deletedAt: null,
+        },
+        select: { id: true, status: true },
+      });
+      if (existing) {
+        return reply
+          .code(409)
+          .send({ error: "Es existiert bereits ein offener Antrag für dieses Datum." });
+      }
+
+      const request = await app.prisma.retroEntryRequest.create({
+        data: {
+          employeeId,
+          targetDate: new Date(body.targetDate),
+          reason: body.reason,
+          status: "PENDING",
+        },
+      });
+
+      await app.audit({
+        userId: user.sub,
+        action: "RETRO_ENTRY_REQUESTED",
+        entity: "RetroEntryRequest",
+        entityId: request.id,
+        newValue: {
+          employeeId,
+          targetDate: body.targetDate,
+          ageInDays,
+          reason: body.reason,
+          requesterId: user.sub,
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(201).send({
+        ...request,
+        targetDate: request.targetDate.toISOString().split("T")[0],
+        requesterId: user.sub,
+      });
+    },
+  });
+
+  // ── GET /  — list (manager-scoped, tenant-isolated) ──────────────────────
+  app.get("/", {
+    schema: { tags: ["Retro-Anfragen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req) => {
+      const user = req.user;
+      const { status } = req.query as { status?: string };
+
+      const rows = await app.prisma.retroEntryRequest.findMany({
+        where: {
+          deletedAt: null,
+          employee: { tenantId: user.tenantId },
+          ...(status ? { status: status as "PENDING" | "APPROVED" | "REJECTED" | "USED" } : {}),
+        },
+        include: {
+          employee: { select: { firstName: true, lastName: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      return rows.map((r) => ({
+        ...r,
+        targetDate: r.targetDate.toISOString().split("T")[0],
+      }));
+    },
+  });
+
+  // ── PATCH /:id/review  — approve or reject ────────────────────────────────
+  // Uses requireAuth (not requireRole) so the self-approval block fires with the
+  // correct German error message even when an EMPLOYEE attempts to approve their
+  // own request — mirrors the pattern tested by retro-approval-flow.test.ts.
+  // Role check is enforced inside the handler after self-approval is evaluated.
+  app.patch("/:id/review", {
+    schema: { tags: ["Retro-Anfragen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const body = reviewRetroRequestSchema.parse(req.body);
+      const user = req.user;
+
+      const existing = await app.prisma.retroEntryRequest.findFirst({
+        where: { id, deletedAt: null },
+        include: { employee: { select: { tenantId: true, userId: true } } },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Tenant isolation
+      if (existing.employee.tenantId !== user.tenantId) {
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Only PENDING requests can be reviewed
+      if (existing.status !== "PENDING") {
+        return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
+      }
+
+      // ── 4-eyes: self-approval block — mirror leave.ts:591-612 verbatim ──────
+      // C3-a: block if the reviewer IS the requesting employee (by employeeId)
+      const reviewerEmployee = await app.prisma.employee.findFirst({
+        where: { userId: req.user.sub },
+        select: { id: true },
+      });
+      if (reviewerEmployee && existing.employeeId === reviewerEmployee.id) {
+        return reply
+          .code(403)
+          .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
+      }
+
+      // C3-b: block if the reviewer IS the target employee's user (second distinctness axis)
+      if (existing.employee.userId && req.user.sub === existing.employee.userId) {
+        return reply
+          .code(403)
+          .send({ error: "Eigene Anträge können nicht selbst genehmigt werden" });
+      }
+
+      // Role check: only ADMIN and MANAGER may approve/reject
+      if (!["ADMIN", "MANAGER"].includes(user.role)) {
+        return reply.code(403).send({ error: "Nur Manager oder Admins können Anträge genehmigen" });
+      }
+
+      const tz = await getTenantTimezone(app.prisma, user.tenantId);
+      const todayStr = dateStrInTz(todayInTz(tz), tz);
+      const targetDateStr = existing.targetDate.toISOString().split("T")[0];
+      const ageInDays = computeEntryAgeInDays(todayStr, targetDateStr);
+
+      const updated = await app.prisma.retroEntryRequest.update({
+        where: { id },
+        data: {
+          status: body.status,
+          reviewedBy: user.sub,
+          reviewedAt: new Date(),
+          reviewNote: body.reviewNote,
+        },
+      });
+
+      const action = body.status === "APPROVED" ? "RETRO_ENTRY_APPROVED" : "RETRO_ENTRY_REJECTED";
+
+      await app.audit({
+        userId: user.sub,
+        action,
+        entity: "RetroEntryRequest",
+        entityId: id,
+        newValue: {
+          requesterId: existing.employee.userId ?? existing.employeeId,
+          approverId: user.sub,
+          targetDate: targetDateStr,
+          ageInDays,
+          reason: existing.reason,
+          reviewNote: body.reviewNote,
+          status: body.status,
+        },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      return reply.code(200).send({
+        ...updated,
+        targetDate: updated.targetDate.toISOString().split("T")[0],
+      });
+    },
+  });
+}
