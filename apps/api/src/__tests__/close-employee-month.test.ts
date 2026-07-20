@@ -769,12 +769,16 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
     empId = emp.id;
 
-    // 1 VOCATIONAL_SCHOOL absence on Feb 2 (a Monday) = BS day
+    // 1 VOCATIONAL_SCHOOL absence on Feb 2 (a Monday) = BS day.
+    // startDate === endDate at UTC-midnight — mirrors how production creates BS absences
+    // (vocational-school.ts:255 endDate=dateUtc, generator.ts:426 endDate=date). A 23:59:59Z
+    // endDate would spill into the next Europe/Berlin calendar day (UTC+1) and double-count
+    // the BS day in the close accumulator.
     await prisma.absence.create({
       data: {
         employeeId: empId,
         startDate: new Date("2026-02-02T00:00:00Z"),
-        endDate: new Date("2026-02-02T23:59:59Z"),
+        endDate: new Date("2026-02-02T00:00:00Z"),
         type: "VOCATIONAL_SCHOOL",
         source: "PATTERN",
         days: 1,
@@ -889,13 +893,14 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     await prisma.overtimeAccount.create({ data: { employeeId: nEmp.id, balanceHours: 0 } });
 
     // THREE VOCATIONAL_SCHOOL absences on distinct dates (<5/week → daily 480 each).
-    // Feb 3 (Tue), Feb 10 (Tue), Feb 17 (Tue) 2026.
+    // Feb 3 (Tue), Feb 10 (Tue), Feb 17 (Tue) 2026. startDate === endDate at UTC-midnight,
+    // mirroring production BS-absence creation (see case-4 note above) so each BS day counts once.
     for (const day of ["2026-02-03", "2026-02-10", "2026-02-17"]) {
       await prisma.absence.create({
         data: {
           employeeId: nEmp.id,
           startDate: new Date(`${day}T00:00:00Z`),
-          endDate: new Date(`${day}T23:59:59Z`),
+          endDate: new Date(`${day}T00:00:00Z`),
           type: "VOCATIONAL_SCHOOL",
           source: "PATTERN",
           days: 1,
