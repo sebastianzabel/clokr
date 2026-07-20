@@ -113,6 +113,12 @@ model TenantConfig {
   // Phase 63 — Berufsschule Saldo/ArbZG (D-02): per-tenant configurable BS-day duration
   vocationalSchoolMinutesPerDay       Int     @default(480) // Net Anrechnung per single BS-day (default 8h = 480 min, BERSCH-03)
   vocationalSchoolBlockMinutesPerWeek Int     @default(2400) // Total Anrechnung per block-week (default 40h = 2400 min, BERSCH-04)
+  // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 tenant-level layer).
+  // NULL = fall through to vocationalSchoolMinutesPerDay / daily-Soll fallback.
+  bsSlotFirstLongDayMinutes           Int?
+  bsSlotSecondLongDayMinutes          Int?
+  bsSlotShortDayMinutes               Int?
+  bsSlotBlockWeekMinutes              Int?
   halfDayAllowed                      Boolean @default(true) // Halbe Tage erlaubt
   sickSelfReport                      Boolean @default(true) // MA dürfen Krankmeldung selbst eintragen
   sickNoteRequiredAfterDays           Int     @default(3) // AU-Pflicht nach X Krankheitstagen
@@ -191,9 +197,9 @@ model TenantConfig {
   //   OFF:                no store-hours check
   shiftStoreHoursMode            String   @default("DAY_ONLY")
   // Phase 76.29 CFG-01 — retro self-service window (days back from today an employee may submit a retro request)
-  retroEntryWindowDays      Int     @default(10)
+  retroEntryWindowDays           Int      @default(10)
   // Phase 76.29 CFG-01 — allows cron/manual month-close to proceed when open gaps exist (gap-warning only, not blocking)
-  closeMonthWithGapsAllowed Boolean @default(true)
+  closeMonthWithGapsAllowed      Boolean  @default(true)
   createdAt                      DateTime @default(now()) @db.Timestamptz
   updatedAt                      DateTime @updatedAt @db.Timestamptz
 
@@ -269,37 +275,43 @@ model Invitation {
 // ─────────────────────────────────────────────
 
 model Employee {
-  id                  String                 @id @default(uuid())
-  tenantId            String
-  userId              String                 @unique
-  employeeNumber      String
-  firstName           String
-  lastName            String
-  nfcCardId           String?                @unique // NFC Karten-ID
-  wifiMacs            String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
-  wifiPresenceEnabled Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
-  wifiOptInAt         DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
-  avatarPath          String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
+  id                         String                 @id @default(uuid())
+  tenantId                   String
+  userId                     String                 @unique
+  employeeNumber             String
+  firstName                  String
+  lastName                   String
+  nfcCardId                  String?                @unique // NFC Karten-ID
+  wifiMacs                   String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled        Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt                DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  avatarPath                 String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
-  classification      EmployeeClassification @default(VOLLZEIT)
-  coverageWeight      Decimal                @default(1.00) @db.Decimal(3, 2)
-  requiresSupervision Boolean                @default(false)
-  hireDate            DateTime               @db.Timestamptz
-  exitDate            DateTime?              @db.Timestamptz
+  classification             EmployeeClassification @default(VOLLZEIT)
+  coverageWeight             Decimal                @default(1.00) @db.Decimal(3, 2)
+  requiresSupervision        Boolean                @default(false)
+  hireDate                   DateTime               @db.Timestamptz
+  exitDate                   DateTime?              @db.Timestamptz
   // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
   // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
-  birthDate           DateTime?              @db.Date
+  birthDate                  DateTime?              @db.Date
   // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
-  breakOver6hOverride Int? // null = TenantConfig.defaultBreakOver6h verwenden
-  breakOver9hOverride Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  breakOver6hOverride        Int? // null = TenantConfig.defaultBreakOver6h verwenden
+  breakOver9hOverride        Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 per-employee override layer).
+  // NULL = delegate to EmployeeVocationalSchoolPattern.
+  bsSlotFirstLongDayMinutes  Int?
+  bsSlotSecondLongDayMinutes Int?
+  bsSlotShortDayMinutes      Int?
+  bsSlotBlockWeekMinutes     Int?
   // Phase 76.7 (D-01, EMP-V19-01) — § 18 ArbZG-Befreiung für Inhaber/Geschäftsführer/leitende
   // Angestellte. Wenn true: SKIP updateOvertimeAccount + checkArbZG + recalculateSnapshots
   // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
   // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
-  isTimeTrackingExempt Boolean                @default(false)
-  createdAt           DateTime               @default(now()) @db.Timestamptz
-  updatedAt           DateTime               @updatedAt @db.Timestamptz
+  isTimeTrackingExempt       Boolean                @default(false)
+  createdAt                  DateTime               @default(now()) @db.Timestamptz
+  updatedAt                  DateTime               @updatedAt @db.Timestamptz
 
   tenant                   Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user                     User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -414,22 +426,22 @@ model Break {
 // ─────────────────────────────────────────────
 
 model SaldoSnapshot {
-  id              String          @id @default(uuid())
-  employeeId      String
-  periodType      SaldoPeriodType
-  periodStart     DateTime        @db.Date
-  periodEnd       DateTime        @db.Date
-  workedMinutes   Int // Ist-Arbeitszeit im Zeitraum
-  expectedMinutes Int // Soll-Arbeitszeit im Zeitraum
-  balanceMinutes  Int // Differenz (worked - expected)
-  carryOver       Int // Kumulierter Übertrag bis periodEnd
-  closedAt        DateTime        @db.Timestamptz
-  closedBy        String? // userId wer abgeschlossen hat (null = SYSTEM)
-  note            String?
+  id               String          @id @default(uuid())
+  employeeId       String
+  periodType       SaldoPeriodType
+  periodStart      DateTime        @db.Date
+  periodEnd        DateTime        @db.Date
+  workedMinutes    Int // Ist-Arbeitszeit im Zeitraum
+  expectedMinutes  Int // Soll-Arbeitszeit im Zeitraum
+  balanceMinutes   Int // Differenz (worked - expected)
+  carryOver        Int // Kumulierter Übertrag bis periodEnd
+  closedAt         DateTime        @db.Timestamptz
+  closedBy         String? // userId wer abgeschlossen hat (null = SYSTEM)
+  note             String?
   // Phase 76.6 — TZ-duplicate cleanup. `superseded` rows are excluded from
   // production findFirst/findMany via `where: { superseded: false }`. Never
   // hard-deleted (Revisionssicherheit). See .planning/phases/76.6-*/76.6-NOTES.md.
-  superseded       Boolean @default(false)
+  superseded       Boolean         @default(false)
   supersededReason String?
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
@@ -560,27 +572,27 @@ model SpecialLeaveRule {
 }
 
 model LeaveRequest {
-  id                 String             @id @default(uuid())
-  employeeId         String
-  leaveTypeId        String
-  specialLeaveRuleId String? // For SPECIAL type: which rule applies
-  startDate          DateTime           @db.Date
-  endDate            DateTime           @db.Date
-  days               Decimal            @db.Decimal(5, 2)
-  halfDay            Boolean            @default(false)
-  status             LeaveRequestStatus @default(PENDING)
-  note               String?
-  reviewedBy         String?
-  reviewedAt         DateTime?          @db.Timestamptz
-  reviewNote         String?
-  cancellationRequestedBy String?        // userId who requested cancellation (for 4-eyes COMP-V1814-02)
+  id                      String             @id @default(uuid())
+  employeeId              String
+  leaveTypeId             String
+  specialLeaveRuleId      String? // For SPECIAL type: which rule applies
+  startDate               DateTime           @db.Date
+  endDate                 DateTime           @db.Date
+  days                    Decimal            @db.Decimal(5, 2)
+  halfDay                 Boolean            @default(false)
+  status                  LeaveRequestStatus @default(PENDING)
+  note                    String?
+  reviewedBy              String?
+  reviewedAt              DateTime?          @db.Timestamptz
+  reviewNote              String?
+  cancellationRequestedBy String? // userId who requested cancellation (for 4-eyes COMP-V1814-02)
   // Attest (nur für SICK / SICK_CHILD)
-  attestPresent      Boolean            @default(false)
-  attestValidFrom    DateTime?          @db.Date
-  attestValidTo      DateTime?          @db.Date
-  deletedAt          DateTime?          @db.Timestamptz // soft delete
-  createdAt          DateTime           @default(now()) @db.Timestamptz
-  updatedAt          DateTime           @updatedAt @db.Timestamptz
+  attestPresent           Boolean            @default(false)
+  attestValidFrom         DateTime?          @db.Date
+  attestValidTo           DateTime?          @db.Date
+  deletedAt               DateTime?          @db.Timestamptz // soft delete
+  createdAt               DateTime           @default(now()) @db.Timestamptz
+  updatedAt               DateTime           @updatedAt @db.Timestamptz
 
   employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   leaveType        LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
@@ -599,12 +611,12 @@ model LeaveRequest {
 model RetroEntryRequest {
   id         String           @id @default(uuid())
   employeeId String
-  targetDate DateTime         @db.Date        // the entry date the grant covers
-  reason     String                           // mandatory (Revisionssicherheit)
+  targetDate DateTime         @db.Date // the entry date the grant covers
+  reason     String // mandatory (Revisionssicherheit)
   status     RetroEntryStatus @default(PENDING)
-  reviewedBy String?                          // approver userId
+  reviewedBy String? // approver userId
   reviewedAt DateTime?        @db.Timestamptz
-  reviewNote String?                          // mandatory on approve/reject (enforced at route Zod, not DB)
+  reviewNote String? // mandatory on approve/reject (enforced at route Zod, not DB)
   deletedAt  DateTime?        @db.Timestamptz // soft-delete convention
   createdAt  DateTime         @default(now()) @db.Timestamptz
   updatedAt  DateTime         @updatedAt @db.Timestamptz
@@ -1066,24 +1078,30 @@ model EmployeeShiftPattern {
 // (drop scheduled for v1.7.5) so downgrade is possible. New code MUST read/write
 // `daysOfWeek`; the API normalises legacy inbound `dayOfWeek` into the array form.
 model EmployeeVocationalSchoolPattern {
-  id                    String        @id @default(uuid())
-  employeeId            String
-  employee              Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  dayOfWeek             Int? // DEPRECATED v1.7.4 — kept for one release of soak, drop in v1.7.5
-  daysOfWeek            Int[]         @default([]) // 0=Mo..6=So for recurring weekdays; empty array when only blockWeeks set
-  blockWeeks            Int[] // ISO week numbers for block-school weeks; empty array when only daysOfWeek set
-  blockYear             Int? // Year context for blockWeeks (for annual uniqueness); null when only daysOfWeek set
-  validFrom             DateTime      @db.Date
-  validUntil            DateTime?     @db.Date // null = open-ended
-  isActive              Boolean       @default(true)
+  id                         String        @id @default(uuid())
+  employeeId                 String
+  employee                   Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  dayOfWeek                  Int? // DEPRECATED v1.7.4 — kept for one release of soak, drop in v1.7.5
+  daysOfWeek                 Int[]         @default([]) // 0=Mo..6=So for recurring weekdays; empty array when only blockWeeks set
+  blockWeeks                 Int[] // ISO week numbers for block-school weeks; empty array when only daysOfWeek set
+  blockYear                  Int? // Year context for blockWeeks (for annual uniqueness); null when only daysOfWeek set
+  validFrom                  DateTime      @db.Date
+  validUntil                 DateTime?     @db.Date // null = open-ended
+  isActive                   Boolean       @default(true)
   // Phase 67.2 — Schulferien-Integration. Default TRUE für IHK-Berufe (KMK-Ferien).
   // Opt-OUT für Pflegeschulen / Berufsakademien die eigenem Schuljahresplan folgen.
-  respectSchoolHolidays Boolean       @default(true)
+  respectSchoolHolidays      Boolean       @default(true)
   // Phase 67.2 — Pendler-Azubi-Support: BS in anderem Bundesland als Betrieb.
   // NULL = verwende Tenant.federalState (Default).
-  federalStateOverride  FederalState?
-  createdAt             DateTime      @default(now()) @db.Timestamptz
-  updatedAt             DateTime      @updatedAt @db.Timestamptz
+  federalStateOverride       FederalState?
+  // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 per-pattern layer).
+  // NULL = delegate to TenantConfig.
+  bsSlotFirstLongDayMinutes  Int?
+  bsSlotSecondLongDayMinutes Int?
+  bsSlotShortDayMinutes      Int?
+  bsSlotBlockWeekMinutes     Int?
+  createdAt                  DateTime      @default(now()) @db.Timestamptz
+  updatedAt                  DateTime      @updatedAt @db.Timestamptz
 
   @@index([employeeId, isActive])
 }
