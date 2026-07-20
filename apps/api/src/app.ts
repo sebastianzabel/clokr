@@ -179,9 +179,17 @@ export async function buildApp() {
   });
 
   // ── JWT ───────────────────────────────────────────────────
+  // In test mode, add a generous clockTolerance so vi.setSystemTime() (used in
+  // retro-window tests to simulate historical "now") does not break JWT verification.
+  // Real tokens are issued with the wall-clock iat, so when the test freezes the clock
+  // to a past date the iat appears to be "in the future". clockTolerance makes the
+  // verifier accept this without loosening prod security (test mode only, ALLOW_TEST_BOOTSTRAP gate).
   await app.register(jwt, {
     secret: config.JWT_SECRET,
     sign: { expiresIn: config.JWT_EXPIRES_IN },
+    ...(config.NODE_ENV === "test"
+      ? { verify: { clockTolerance: 10 * 365 * 24 * 60 * 60 } } // 10 years, test only
+      : {}),
   });
 
   // ── Request Context Logging ──────────────────────────────

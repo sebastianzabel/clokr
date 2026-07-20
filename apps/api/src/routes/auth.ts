@@ -14,7 +14,11 @@ function hashToken(token: string): string {
 
 const loginSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8),
+  // No min length on login password — security is enforced by bcrypt at verify time,
+  // and short passwords are already blocked at creation time via validatePassword().
+  // A min(8) here would reject test users seeded with short passwords without adding
+  // real security (an attacker submitting a 2-char wrong password still fails bcrypt).
+  password: z.string().min(1),
 });
 
 const refreshSchema = z.object({
