@@ -1,6 +1,6 @@
 {
   "name": "clokr",
-  "version": "1.8.17",
+  "version": "1.8.18",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.5",
