@@ -7,7 +7,7 @@
  *   live (all open)  ==  cron-closed Jan–Jun + live July
  *   cron close       ==  manual close (same snapshot values)
  *   close            ==  retroactive recalc (unchanged data reproduces values)
- * Plus the guards: D2 (cron sequential guard), D3b (later-month-closed rejection).
+ * Plus the guards: D2 (cron backward backfill loop — Phase 76.27-03), D3b (later-month-closed rejection).
  *
  * Dataset details:
  *  - approved vacation Mar 9–13, SICK absence May 18–19 (all employees)
@@ -441,9 +441,19 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
     expect(after).toBeCloseTo(liveBefore[key], 2);
   }, 180_000);
 
-  // ── Step 5: cron sequential guard (D2 — the prod incident scenario) ───────
+  // ── Step 5: cron backward-backfill loop (D2 — the prod incident scenario) ──
+  //
+  // Phase 76.27-03: the old sequential guard (skip June while May open) has been
+  // REPLACED by a bounded backward backfill loop.  When cron targets June (the
+  // prev-month ceiling), it now closes ALL open months from firstOpenMonth up to
+  // and including June — oldest-first in a single cron run.
+  //
+  // New behavior: with May AND June both open, one cron run at July-16 closes
+  // both: May first (using Apr's snapshot as carryOver base), June second (using
+  // the freshly-created May snapshot as carryOver base).  June's final carryOver
+  // must equal the same value that was computed when we closed it sequentially.
 
-  it("step 5 — cron SKIPS closing June while May is open; closes after May is closed", async () => {
+  it("step 5 — cron backward loop closes BOTH May and June in one run when both are open", async () => {
     const key: EmpKey = "shift";
     const empId = empIds[key];
 
@@ -451,25 +461,15 @@ describe("saldo invariant E2E — all schedule types, Jan–Jul 2026", () => {
     expect((await unlockMonth(empId, 6)).statusCode).toBe(200);
     expect((await unlockMonth(empId, 5)).statusCode).toBe(200);
 
-    // Cron targets June (prev month of July 16) — must SKIP because May is open
-    await runCronAt("2026-07-16T06:00:00.000Z");
-    expect(
-      await activeJuneSnapshot(empId),
-      "June must NOT be closed while May is open (prod incident guard)",
-    ).toBeNull();
-
-    // Close May manually, cron may now close June
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(FINAL_NOW);
-    try {
-      expect((await closeMonth(empId, 5)).statusCode).toBe(201);
-    } finally {
-      vi.useRealTimers();
-    }
+    // Cron targets June (prev month of July 16).
+    // Backward loop: firstOpenMonth ≤ May < June → closes May then June in one run.
     await runCronAt("2026-07-16T06:00:00.000Z");
 
     const june = await activeJuneSnapshot(empId);
-    expect(june).not.toBeNull();
+    expect(
+      june,
+      "Backward loop must close June in the same cron run (both May+June were open)",
+    ).not.toBeNull();
     expect(june!.carryOver).toBe(cronJune[key].carryOver);
 
     const after = await liveAtFinalNow(empId);

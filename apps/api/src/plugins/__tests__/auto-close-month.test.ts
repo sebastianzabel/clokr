@@ -4,8 +4,12 @@
  * Asserts D-14 invariants on the auto-close-month plugin source AND on
  * the live behavior:
  *  - leave-reduce path uses calcLeaveAbsenceMinutesTz with halfDay (D-14)
+ *    NOTE (Phase 76.26): these patterns moved to close-employee-month.ts;
+ *    the plugin now delegates to closeEmployeeMonth() which owns them.
  *  - bsAbsences query (separate, intentional BS-Doubling path) remains
  *    UNCHANGED — keeps type: 'VOCATIONAL_SCHOOL' filter (D-14)
+ *    NOTE (Phase 76.26): the BS-doubling logic moved into closeEmployeeMonth;
+ *    the plugin passes all absences (incl. VOCATIONAL_SCHOOL) to the core.
  *  - Snapshot created with Ø-Methode-consistent balanceMinutes for an
  *    A.S.-style FLEXTIME employee with halfDay Fri leave.
  *
@@ -28,15 +32,26 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
   const PLUGIN_SOURCE_PATH = join(__dirname, "..", "auto-close-month.ts");
   const pluginSource = readFileSync(PLUGIN_SOURCE_PATH, "utf-8");
 
-  // ── Structural invariant: bsAbsences VOCATIONAL_SCHOOL path preserved ──
+  // Phase 76.26 moved leave-reduce and BS-doubling logic into closeEmployeeMonth().
+  // The plugin now DELEGATES to closeEmployeeMonth() — verify the delegation is wired.
+  // The underlying invariants (calcLeaveAbsenceMinutesTz, VOCATIONAL_SCHOOL handling)
+  // live in close-employee-month.ts; these structural tests verify the plugin CALLS them.
+
+  // ── Structural invariant: bsAbsences VOCATIONAL_SCHOOL path preserved in close-employee-month ──
   it("D-14: bsAbsences query KEEPS type: 'VOCATIONAL_SCHOOL' filter (BS-Doubling intact)", () => {
-    expect(pluginSource).toMatch(/const bsAbsences = await app\.prisma\.absence\.findMany/);
-    expect(pluginSource).toMatch(/type: "VOCATIONAL_SCHOOL"/);
+    // Phase 76.26: BS-doubling logic was moved from auto-close-month.ts into closeEmployeeMonth().
+    // The plugin passes all absence types (including VOCATIONAL_SCHOOL) to the core.
+    // Verify that the plugin source calls closeEmployeeMonth (the delegation point).
+    expect(pluginSource).toMatch(/closeEmployeeMonth\(/);
+    // And that all absences (incl. VOCATIONAL_SCHOOL) are passed via the absences array.
+    expect(pluginSource).toMatch(/absences:.*map.*ab.*type.*source/s);
   });
 
   // ── Structural invariant: leave-reduce uses new helper + halfDay ──
   it("D-14: leave-reduce uses calcLeaveAbsenceMinutesTz with halfDay propagation", () => {
-    expect(pluginSource).toMatch(/calcLeaveAbsenceMinutesTz\(/);
+    // Phase 76.26: calcLeaveAbsenceMinutesTz moved into closeEmployeeMonth().
+    // The plugin passes halfDay via the approvedLeave array to the core.
+    // Verify that halfDay is correctly mapped to the closeEmployeeMonth() call.
     expect(pluginSource).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
   });
 

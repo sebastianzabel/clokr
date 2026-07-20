@@ -588,10 +588,59 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       await cleanupTestData(app, tenant.id);
     });
 
-    it("sequential guard: cron does NOT close month N while month N-1 is open", async () => {
-      const { tenant, empId } = await createShiftScenario("seqguard");
+    it("backward loop: cron closes BOTH open months in one run when 2 months behind (replaces sequential guard)", async () => {
+      // Phase 76.27-03 SNAP-02: the single-month sequential guard is REPLACED by a
+      // bounded backward backfill loop (oldest→newest). An employee that is 2 months
+      // behind gets BOTH months closed in a single cron invocation.
+      //
+      // Fixture: SHIFT_BASED employee, hired 2024-01-01.
+      //   January 2024: shift + entries on all Tue/Thu/Fri marker days (complete).
+      //   February 2024: shift + entries on all Tue/Thu/Fri marker days (complete).
+      //   "Today" = March 16 2024 (cron targets February as prevMonth).
+      //   NO prior snapshot exists when the cron first runs.
+      //
+      // With the backward loop:
+      //   lastSnap = null → firstOpen = Jan 2024 (hireMonth).
+      //   Months to close = [Jan 2024, Feb 2024].
+      //   Jan: SHIFT_BASED, has entries + shifts, gap check passes → closes.
+      //   Feb: carryOverIn = Jan.effectiveCarryOverOut → closes.
+      //   Result: both Jan and Feb have active snapshots; Feb.carryOver chains off Jan.
+      const { tenant, empId } = await createShiftScenario("backfill2mo");
 
-      // February 2024 fully covered: one shift + entries on all Feb marker days.
+      // January 2024 shifts and entries on all Tue/Thu/Fri marker days
+      const janShiftDays = [
+        { date: "2024-01-02", startTime: "09:00", endTime: "18:00" }, // Tue
+        { date: "2024-01-04", startTime: "09:00", endTime: "15:00" }, // Thu
+        { date: "2024-01-05", startTime: "10:00", endTime: "20:00" }, // Fri
+      ];
+      for (const sh of janShiftDays) {
+        await app.prisma.shift.create({
+          data: {
+            employeeId: empId,
+            date: new Date(sh.date + "T00:00:00Z"),
+            startTime: sh.startTime,
+            endTime: sh.endTime,
+          },
+        });
+      }
+      // Remaining Jan Tue/Thu/Fri marker days also need entries for the gap check
+      const janRemainingWorkdays = [
+        "2024-01-09",
+        "2024-01-11",
+        "2024-01-12",
+        "2024-01-16",
+        "2024-01-18",
+        "2024-01-19",
+        "2024-01-23",
+        "2024-01-25",
+        "2024-01-26",
+        "2024-01-30",
+      ];
+      for (const d of [...janShiftDays.map((s) => s.date), ...janRemainingWorkdays]) {
+        await seedEntry(empId, d);
+      }
+
+      // February 2024 shift + entries on all Tue/Thu/Fri marker days
       await app.prisma.shift.create({
         data: {
           employeeId: empId,
@@ -602,16 +651,12 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       });
       const febWorkdays = [
         "2024-02-01",
-        "2024-02-02",
         "2024-02-06",
         "2024-02-08",
-        "2024-02-09",
         "2024-02-13",
         "2024-02-15",
-        "2024-02-16",
         "2024-02-20",
         "2024-02-22",
-        "2024-02-23",
         "2024-02-27",
         "2024-02-29",
       ];
@@ -620,40 +665,29 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       }
 
       vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(new Date("2024-03-16T06:00:00.000Z")); // targets February
+      vi.setSystemTime(new Date("2024-03-16T06:00:00.000Z")); // targets February (prevMonth)
       try {
-        // January 2024 has NO snapshot (employee hired Jan 1) → cron must SKIP February.
+        // No prior snapshot — backward loop starts from hireMonth (Jan 2024).
+        // Both January and February should be closed in one run.
         await app.tryAutoCloseMonth();
-        const febSnapshotEarly = await app.prisma.saldoSnapshot.findFirst({
+
+        const janRange = monthRangeUtc(2024, 1, "Europe/Berlin");
+        const janSnapshot = await app.prisma.saldoSnapshot.findFirst({
           where: {
             employeeId: empId,
             periodType: "MONTHLY",
-            periodEnd: { gte: new Date("2024-02-28T00:00:00Z") },
+            periodStart: {
+              gte: janRange.start,
+              lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+            },
             superseded: false,
           },
         });
-        // Without the guard the cron would close February and base carryOver on
-        // nothing (or a stale earlier month), silently dropping January's balance.
-        expect(febSnapshotEarly, "February must NOT be closed while January is open").toBeNull();
+        expect(
+          janSnapshot,
+          "January 2024 must be closed by the backward loop in one run",
+        ).not.toBeNull();
 
-        // Now close January (seed snapshot with a known carryOver) → cron may proceed.
-        const janRange = monthRangeUtc(2024, 1, "Europe/Berlin");
-        await app.prisma.saldoSnapshot.create({
-          data: {
-            employeeId: empId,
-            periodType: "MONTHLY",
-            periodStart: janRange.start,
-            periodEnd: janRange.end,
-            workedMinutes: 1000,
-            expectedMinutes: 0,
-            balanceMinutes: 1000,
-            carryOver: 1000,
-            closedAt: new Date(),
-            closedBy: "test-system",
-          },
-        });
-
-        await app.tryAutoCloseMonth();
         const febSnapshot = await app.prisma.saldoSnapshot.findFirst({
           where: {
             employeeId: empId,
@@ -662,9 +696,165 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
             superseded: false,
           },
         });
-        expect(febSnapshot, "February closes once January is closed").not.toBeNull();
-        // carryOver chains off January — January's balance is NOT dropped.
-        expect(febSnapshot!.carryOver).toBe(1000 + febSnapshot!.balanceMinutes);
+        expect(
+          febSnapshot,
+          "February 2024 must be closed in the same cron run (backward loop)",
+        ).not.toBeNull();
+
+        // carryOver chain: Feb.carryOver = Jan.effectiveCarryOverOut + Feb.balance
+        if (janSnapshot && febSnapshot) {
+          expect(febSnapshot.carryOver).toBe(janSnapshot.carryOver + febSnapshot.balanceMinutes);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+
+      await cleanupTestData(app, tenant.id);
+    });
+
+    it("gap-break (F-02): gap in month M stops the loop — months before M closed, months after M NOT closed", async () => {
+      // Phase 76.27-03 SNAP-02 F-02: when a month has gaps (missing entries) and
+      // closeMonthWithGapsAllowed is false (default), the backward loop BREAKS for that
+      // employee. Months before the gap-blocked month ARE closed; months after are NOT.
+      //
+      // Fixture: SHIFT_BASED employee, hired 2024-01-01.
+      //   January 2024: shift + complete entries on all Tue/Thu/Fri marker days.
+      //   February 2024: NO entries, has a shift → gap-blocked (missing entries).
+      //   March 2024: complete entries + shifts → would be closeable but loop breaks at Feb.
+      //   "Today" = April 16 2024 (cron targets March as prevMonth).
+      //
+      // Expected backward loop behavior:
+      //   Months = [Jan 2024, Feb 2024, Mar 2024].
+      //   Jan: complete → closes.
+      //   Feb: gaps → BREAK (F-02) → loop stops for this employee.
+      //   Mar: never reached (loop already broke at Feb).
+      //   Result: Jan has active snapshot; Feb and Mar do NOT.
+      const { tenant, empId } = await createShiftScenario("gapbreak");
+
+      // January 2024: complete entries on all Tue/Thu/Fri marker days + shifts
+      const janShifts = [
+        { date: "2024-01-02", startTime: "09:00", endTime: "18:00" },
+        { date: "2024-01-04", startTime: "09:00", endTime: "15:00" },
+        { date: "2024-01-05", startTime: "10:00", endTime: "20:00" },
+      ];
+      for (const sh of janShifts) {
+        await app.prisma.shift.create({
+          data: {
+            employeeId: empId,
+            date: new Date(sh.date + "T00:00:00Z"),
+            startTime: sh.startTime,
+            endTime: sh.endTime,
+          },
+        });
+      }
+      const janMarkerDays = [
+        "2024-01-02",
+        "2024-01-04",
+        "2024-01-05",
+        "2024-01-09",
+        "2024-01-11",
+        "2024-01-12",
+        "2024-01-16",
+        "2024-01-18",
+        "2024-01-19",
+        "2024-01-23",
+        "2024-01-25",
+        "2024-01-26",
+        "2024-01-30",
+      ];
+      for (const d of janMarkerDays) {
+        await seedEntry(empId, d);
+      }
+
+      // February 2024: shift exists but NO time entries (gap-blocked)
+      await app.prisma.shift.create({
+        data: {
+          employeeId: empId,
+          date: new Date("2024-02-06T00:00:00Z"),
+          startTime: "09:00",
+          endTime: "18:00",
+        },
+      });
+      // No entries for February → findMissingWorkdays will find gaps → F-02 break
+
+      // March 2024: complete entries on Tue/Thu/Fri marker days + shift
+      await app.prisma.shift.create({
+        data: {
+          employeeId: empId,
+          date: new Date("2024-03-05T00:00:00Z"),
+          startTime: "09:00",
+          endTime: "18:00",
+        },
+      });
+      const marMarkerDays = [
+        "2024-03-05",
+        "2024-03-07",
+        "2024-03-12",
+        "2024-03-14",
+        "2024-03-19",
+        "2024-03-21",
+        "2024-03-26",
+        "2024-03-28",
+      ];
+      for (const d of marMarkerDays) {
+        await seedEntry(empId, d);
+      }
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2024-04-16T06:00:00.000Z")); // targets March as prevMonth
+      try {
+        await app.tryAutoCloseMonth();
+
+        // January must be closed (it's before the gap-blocked February)
+        const janRange = monthRangeUtc(2024, 1, "Europe/Berlin");
+        const janSnapshot = await app.prisma.saldoSnapshot.findFirst({
+          where: {
+            employeeId: empId,
+            periodType: "MONTHLY",
+            periodStart: {
+              gte: janRange.start,
+              lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+            },
+            superseded: false,
+          },
+        });
+        expect(
+          janSnapshot,
+          "January (before gap) must be closed by the backward loop",
+        ).not.toBeNull();
+
+        // February must NOT be closed (gap-blocked → F-02 break)
+        const febRange = monthRangeUtc(2024, 2, "Europe/Berlin");
+        const febSnapshot = await app.prisma.saldoSnapshot.findFirst({
+          where: {
+            employeeId: empId,
+            periodType: "MONTHLY",
+            periodStart: {
+              gte: febRange.start,
+              lt: new Date(febRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+            },
+            superseded: false,
+          },
+        });
+        expect(febSnapshot, "February (gap-blocked, F-02) must NOT be closed").toBeNull();
+
+        // March must NOT be closed (loop broke at February)
+        const marRange = monthRangeUtc(2024, 3, "Europe/Berlin");
+        const marSnapshot = await app.prisma.saldoSnapshot.findFirst({
+          where: {
+            employeeId: empId,
+            periodType: "MONTHLY",
+            periodStart: {
+              gte: marRange.start,
+              lt: new Date(marRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+            },
+            superseded: false,
+          },
+        });
+        expect(
+          marSnapshot,
+          "March (after gap-blocked Feb, never reached) must NOT be closed",
+        ).toBeNull();
       } finally {
         vi.useRealTimers();
       }
