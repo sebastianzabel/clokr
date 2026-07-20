@@ -1587,8 +1587,12 @@ textarea.form-input {
 .cal-cell--partial {
   border-left: 3px solid var(--warn);
 }
+/* Expected-workday gap — advisory (valued 0h on close). Amber, distinct from red errors and leave-type backgrounds. */
 .cal-cell--missing {
-  border-left: 3px solid var(--bad);
+  border-left: 3px solid var(--warn);
+}
+.cal-cell.cal-cell--missing:not(.cal-today):not(.cal-selected) {
+  background: var(--warn-soft);
 }
 .cal-cell--today-ok {
   border-left: 3px solid var(--good);

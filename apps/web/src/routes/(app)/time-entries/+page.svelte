@@ -1744,7 +1744,7 @@
     border-left: 3px solid var(--warn);
   }
   .cal-cell--missing {
-    border-left: 3px solid var(--bad);
+    border-left: 3px solid var(--warn);
   }
   .cal-cell--today-ok {
     border-left: 3px solid var(--good);
