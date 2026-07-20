@@ -88,7 +88,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
   it("skips employees with zero carry-over", async () => {
     await setEntitlementCarryOver(30, 0);
 
-    const res = await runCarryoverWarningOnce(app);
+    const res = await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
 
     expect(res.warned).toBe(0);
     expect(res.scanned).toBe(0);
@@ -103,7 +103,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
     // 45 days out — not in default [60,30,14,7]
     await setEntitlementCarryOver(45);
 
-    const res = await runCarryoverWarningOnce(app);
+    const res = await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
 
     expect(res.warned).toBe(0);
     expect(res.scanned).toBe(1);
@@ -117,7 +117,7 @@ describe("Carryover-Warning — BUrlG § 7 Hinweispflicht", () => {
   it("issues a warning + audit log when a threshold matches", async () => {
     const entitlementId = await setEntitlementCarryOver(30);
 
-    const res = await runCarryoverWarningOnce(app);
+    const res = await runCarryoverWarningOnce(app, { onlyTenantId: data.tenant.id });
 
     expect(res.warned).toBe(1);
     expect(res.scanned).toBe(1);

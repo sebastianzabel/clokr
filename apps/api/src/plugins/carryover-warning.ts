@@ -48,10 +48,14 @@ function formatDeDate(d: Date): string {
  *
  * If `onlyEntitlementId` is given, only that single entitlement is processed
  * (used by the manual trigger). The dedup behaviour is the same.
+ *
+ * If `onlyTenantId` is given, only that tenant is scanned — used by tests for
+ * deterministic `scanned` counts. Production cron passes no filter and scans
+ * all tenants.
  */
 export async function runCarryoverWarningOnce(
   app: FastifyInstance,
-  opts: { onlyEntitlementId?: string } = {},
+  opts: { onlyEntitlementId?: string; onlyTenantId?: string } = {},
 ): Promise<CarryoverWarningRunResult> {
   const result: CarryoverWarningRunResult = {
     scanned: 0,
@@ -63,6 +67,7 @@ export async function runCarryoverWarningOnce(
   const now = new Date();
 
   const tenants = await app.prisma.tenant.findMany({
+    where: opts.onlyTenantId ? { id: opts.onlyTenantId } : undefined,
     select: { id: true },
   });
 
