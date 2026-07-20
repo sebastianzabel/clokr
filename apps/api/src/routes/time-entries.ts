@@ -1821,11 +1821,17 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       (ab) => ab.startDate <= monthEnd && ab.endDate >= monthStart,
     );
 
-    // SNAP-03 (76.27): pass the FULL-YEAR holiday set (no per-month filtering).
-    // closeEmployeeMonth() has no internal month-range filtering for holidays — it subtracts
-    // ALL holidays in the provided set from the month's expected. Passing the full set matches
-    // the close-path convention (buildHolidaySet(year) = all year's holidays, passed to each
-    // monthly close call). Filtering to the month would cause parity divergence.
+    // Filter holidays to this month's range only (matching the close-path convention in
+    // auto-close-month.ts which filters to [empEffectiveStart, monthEnd]).
+    // closeEmployeeMonth() has no internal month-range filtering — it subtracts ALL holidays
+    // in the provided set. Passing the full-year set causes every complete month to subtract
+    // ALL annual holidays, inflating expected by holidays from other months (saldo invariant
+    // regression). Filter to [monthFirstDay, monthLastDay] to match the actual month bounds.
+    const monthFirstDayStr = dateStrInTz(monthFirstDay, tz);
+    const monthLastDayStr = dateStrInTz(monthLastDay, tz);
+    const monthHolidaySet = new Set(
+      [...holidayDateStrSet].filter((d) => d >= monthFirstDayStr && d <= monthLastDayStr),
+    );
     const result = closeEmployeeMonth({
       employeeId,
       monthStart,
@@ -1858,7 +1864,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         type: ab.type,
         source: ab.source,
       })),
-      holidayDateStrings: holidayDateStrSet,
+      holidayDateStrings: monthHolidaySet,
       tenantConfig: tenantConfig
         ? {
             defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
@@ -2061,88 +2067,24 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     leaveMinutes = 0;
     absenceMinutes = 0;
     holidayMinutes = 0;
-  } else if (completeOpenMonths.length > 0) {
-    // ── Non-SHIFT current partial month (sub-case A): complete prior months exist ──
-    //
-    // SNAP-03 (76.27): When there are complete prior open months, the current partial month
-    // is ALSO computed via closeEmployeeMonth(), using the full calendar-month range
-    // (monthStart..monthEnd) and entries up to effectiveEnd. This matches the
-    // parity-by-construction reference (SNAP-03-B2/B3) which calls closeEmployeeMonth()
-    // for BOTH complete AND partial months with the full-year holiday set.
-    //
-    // BS-doubling is handled internally by closeEmployeeMonth() for non-SHIFT types.
-    const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
-      currentMonthRange.start,
-      currentMonthRange.end,
-      tz,
-    );
-
-    const curMonthEntries = entries.filter(
-      (e) => e.date >= curMonthFirstDay && e.date <= curMonthLastDay,
-    );
-
-    const curMonthResult = closeEmployeeMonth({
-      employeeId,
-      monthStart: currentMonthRange.start,
-      monthEnd: currentMonthRange.end,
-      monthFirstDay: curMonthFirstDay,
-      monthLastDay: curMonthLastDay,
-      tz,
-      carryOverIn: accumulatedCarryOver, // threaded from complete-months loop
-      schedule: schedule as Record<string, unknown>,
-      hireDate: employee!.hireDate,
-      exitDate: null,
-      isTimeTrackingExempt: false,
-      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
-      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
-      entries: curMonthEntries.map((e) => ({
-        date: e.date,
-        startTime: e.startTime,
-        endTime: e.endTime!,
-        breakMinutes: e.breakMinutes ?? 0,
-      })),
-      shifts: [], // non-SHIFT: no shifts
-      approvedLeave: curLeave.map((lr) => ({
-        startDate: lr.startDate,
-        endDate: lr.endDate,
-        halfDay: lr.halfDay,
-      })),
-      absences: curAbsences.map((ab) => ({
-        startDate: ab.startDate,
-        endDate: ab.endDate,
-        type: ab.type,
-        source: ab.source,
-      })),
-      holidayDateStrings: holidayDateStrSet, // full-year set (no month filtering)
-      tenantConfig: tenantConfig
-        ? {
-            defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
-            defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
-            monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
-            vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
-            vocationalSchoolBlockMinutesPerWeek:
-              tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
-          }
-        : null,
-    });
-
-    // Fold the non-SHIFT current-month result into openPeriodBalance.
-    // balanceMinutes already includes BS-doubling (handled inside closeEmployeeMonth).
-    openPeriodBalance += curMonthResult.balanceMinutes;
   } else {
-    // ── Non-SHIFT current partial month (sub-case B): NO complete prior open months ──
+    // ── Non-SHIFT current partial month: flat partial-range calculation ──────────
     //
-    // The ENTIRE open range [currentMonthOpenStart, effectiveEnd] falls within the current
-    // calendar month. Use flat partial-range calculation (calcExpectedMinutesTz over the
-    // actual open window) rather than closeEmployeeMonth(full calendar month).
+    // The current calendar month is always partially open (entries exist only up to
+    // effectiveEnd, not month-end). Use calcExpectedMinutesTz over the actual open
+    // window [currentMonthOpenStart, effectiveEnd] rather than closeEmployeeMonth(full month).
     //
-    // SNAP-01 fix: calling closeEmployeeMonth(full month) here would pass the full-year
-    // holiday set unfiltered — closeEmployeeMonth subtracts ALL holidays in the provided
-    // set from the full-month expected. For a partial open window (e.g. March 1–16),
-    // this inflates the expected by holidays outside the window (e.g. NI holidays in
-    // January, April, May, December), producing an erroneously large undertime deficit.
-    // Filtering holidays to [currentMonthOpenStart, effectiveEnd] and using the flat path
-    // avoids this cross-month bleed.
+    // This path handles ALL non-SHIFT cases, whether or not there are complete prior open
+    // months (sub-case A, which used closeEmployeeMonth for the partial month, has been
+    // removed because it violated the saldo invariant: closeEmployeeMonth(full month) computes
+    // expected over the entire calendar month, so when months are closed vs open the current-
+    // month contribution differs — sub-case A produces a larger expected deficit for partial
+    // months, breaking the invariant that live == cron-closed + live-current).
+    //
+    // SNAP-01 fix (preserved): calling closeEmployeeMonth(full month) here would subtract ALL
+    // holidays in the provided set from the full-month expected. For a partial open window,
+    // this inflates expected by holidays outside the window, producing an erroneously large
+    // undertime deficit. The flat calc with per-window holiday filtering avoids this.
     //
     // Holiday filtering: only include holidays within [currentMonthOpenStart, effectiveEnd].
     const openStartStr = dateStrInTz(currentMonthOpenStart, tz);
@@ -2268,15 +2210,15 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   }
 
   // ── Aggregate: complete-months (via loop above) + current partial month ─────
-  // SNAP-03 (Phase 76.27): openPeriodBalance holds the sum of ALL months:
+  // openPeriodBalance holds the sum of ALL months:
   //   - Complete open months: accumulated in the closeEmployeeMonth() loop above
-  //   - Non-SHIFT current month: added in the else-branch above (closeEmployeeMonth result)
+  //   - Non-SHIFT current month: flat partial-range balance added directly in the else-branch
   //   - SHIFT_BASED current month: added here via shiftBalanceOverride + bsWorkedMinutes
   //
   // For SHIFT_BASED: shiftBalanceOverride = curSaldo.balanceDelta (D-01 two-clause formula
   //   for the current partial month, roster-prorated). bsWorkedMinutes is for the SHIFT_BASED
   //   current month only (existing live-path gap: bsExpectedMinutes skipped — RESEARCH §2.7).
-  // Non-SHIFT: balanceMinutes already added to openPeriodBalance in the else-branch above.
+  // Non-SHIFT: partial balance already folded into openPeriodBalance in the else-branch above.
   const currentMonthBalance =
     shiftBalanceOverride !== null ? shiftBalanceOverride + bsWorkedMinutes : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
 
