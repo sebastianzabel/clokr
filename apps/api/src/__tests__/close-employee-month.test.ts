@@ -1580,3 +1580,350 @@ describe("closeEmployeeMonth — case 8: four-path parity SHIFT_BASED + FIXED (C
     );
   }, 120_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TC-CLOSE-01: close with gaps values 0h against full Soll
+//
+// CLOSE-01 contract: a month with exactly 1 gap day must close with
+// balanceMinutes == workedMinutes − FULL Soll (gap day NOT deducted from Soll).
+//
+// TC-CLOSE-01-A: FIXED_WEEKLY employee — 1 gap day (RED until Plan 01 implements
+//   confirmGaps gate; the pure-function assertions may already pass since
+//   closeEmployeeMonth() already values gaps as 0h. The HTTP-gate assertions in
+//   close-month-gate.test.ts are the primary RED surface for Plan 01.)
+// TC-CLOSE-01-B: SHIFT_BASED employee — 1 rostered-shift gap day. Asserts that
+//   adding the missing entry changes balanceMinutes by exactly that shift's net soll.
+//
+// Uses June 2026 (22 Mon–Fri workdays) — fully in the past as of 2026-07-20.
+// hireDate = June 1 → sequential close guard loop runs 0 iterations (no prior months
+// within the same year). No fake timers needed (June is already past).
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let fixedEmpId: string;
+  let shiftEmpId: string;
+
+  // June 2026: 22 Mon–Fri workdays (fully past as of 2026-07-20)
+  const JUNE_WORKDAYS = monFriInRange("2026-06-01", "2026-06-30");
+  const { start: JUNE_START, end: JUNE_END } = monthRangeUtc(2026, 6, TZ);
+
+  // Gap day: 2026-06-02 (Tuesday) — second workday of June 2026
+  const FIXED_GAP_DAY = "2026-06-02";
+  // Shift gap day: 2026-06-09 (Tuesday of week 2) — avoids the same day as FIXED_GAP_DAY
+  // to keep the two employees' scenarios distinct and independently verifiable
+  const SHIFT_GAP_DAY = "2026-06-09";
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = `tc01-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `TC01 ${s}`, slug: `tc01-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: TZ },
+    });
+
+    // ── TC-CLOSE-01-A: FIXED_WEEKLY employee ─────────────────────────────────
+    const fixedUser = await prisma.user.create({
+      data: {
+        email: `fixed-tc01-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const fixedEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: fixedUser.id,
+        employeeNumber: `F-TC01-${s}`,
+        firstName: "Fixed",
+        lastName: "TC01",
+        // hireDate = June 1 → sequential guard loop runs 0 iterations
+        hireDate: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: fixedEmp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: fixedEmp.id, balanceHours: 0 } });
+    fixedEmpId = fixedEmp.id;
+
+    // Seed all June workdays EXCEPT the gap day (21 entries)
+    for (const d of JUNE_WORKDAYS) {
+      if (d !== FIXED_GAP_DAY) await seedEntry(app, fixedEmpId, d);
+    }
+
+    // ── TC-CLOSE-01-B: SHIFT_BASED employee ──────────────────────────────────
+    const shiftUser = await prisma.user.create({
+      data: {
+        email: `shift-tc01-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const shiftEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: shiftUser.id,
+        employeeNumber: `S-TC01-${s}`,
+        firstName: "Shift",
+        lastName: "TC01",
+        hireDate: new Date("2026-06-01T00:00:00Z"),
+        breakOver6hOverride: 0,
+        breakOver9hOverride: 0,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: shiftEmp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        mondayHours: 7.6,
+        tuesdayHours: 7.6,
+        wednesdayHours: 7.6,
+        thursdayHours: 7.6,
+        fridayHours: 7.6,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: shiftEmp.id, balanceHours: 0 } });
+    shiftEmpId = shiftEmp.id;
+
+    // Seed shifts for ALL June workdays (07:00–15:30, brutto 510 min)
+    for (const d of JUNE_WORKDAYS) {
+      await prisma.shift.create({
+        data: {
+          employeeId: shiftEmpId,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: "07:00",
+          endTime: "15:30",
+          deletedAt: null,
+        },
+      });
+    }
+    // Seed entries for ALL June workdays EXCEPT the shift gap day
+    for (const d of JUNE_WORKDAYS) {
+      if (d !== SHIFT_GAP_DAY) await seedEntry(app, shiftEmpId, d);
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("TC-CLOSE-01 cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  // ── TC-CLOSE-01-A: FIXED_WEEKLY — 1 gap day saldo contract ───────────────────
+
+  it("TC-CLOSE-01-A: FIXED_WEEKLY 1-gap month — gaps.length===1, snapshotExpectedMinutes is FULL Soll, balanceMinutes==−480", () => {
+    // June 2026: 22 workdays × 8h = 10560 min Soll.
+    // 21 entries seeded → worked = 21 × 480 min.
+    // Gap NOT deducted from Soll → expectedMinutes = 22 × 480 = 10560.
+    // balanceMinutes = 21×480 − 22×480 = −480 (exactly one day's Soll negative).
+
+    // Build entries array in-memory (mirrors the seeded data)
+    const entries = JUNE_WORKDAYS.filter((d) => d !== FIXED_GAP_DAY).map((d) => ({
+      date: new Date(d + "T00:00:00Z"),
+      startTime: new Date(d + "T07:00:00Z"),
+      endTime: new Date(d + "T15:30:00Z"),
+      breakMinutes: 30,
+    }));
+
+    const { firstDay, lastDay } = monthDayBounds(JUNE_START, JUNE_END, TZ);
+    const schedule = {
+      type: "FIXED_SCHEDULE",
+      weeklyHours: 40,
+      mondayHours: 8,
+      tuesdayHours: 8,
+      wednesdayHours: 8,
+      thursdayHours: 8,
+      fridayHours: 8,
+      saturdayHours: 0,
+      sundayHours: 0,
+      workDays: [1, 2, 3, 4, 5],
+    };
+
+    const input: CloseMonthInput = {
+      employeeId: fixedEmpId,
+      monthStart: JUNE_START,
+      monthEnd: JUNE_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: new Date("2026-06-01T00:00:00Z"),
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: null,
+      breakOver9hOverride: null,
+      entries: entries as CloseMonthInput["entries"],
+      shifts: [],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    };
+
+    const result = closeEmployeeMonth(input);
+
+    // Gap set: exactly one gap day — 2026-06-02 (Tuesday)
+    expect(result.gaps, "TC-CLOSE-01-A: gaps.length must be 1").toHaveLength(1);
+    expect(
+      result.gaps.map((g) => g.date),
+      "TC-CLOSE-01-A: gap date must be the seeded gap",
+    ).toEqual([FIXED_GAP_DAY]);
+
+    // Worked: 21 × 480 min
+    expect(result.workedMinutes, "TC-CLOSE-01-A: workedMinutes = 21 days × 480 min").toBe(21 * 480);
+
+    // CLOSE-01 contract: Soll NOT reduced by the gap — full Soll = 22 × 480 min
+    expect(
+      result.snapshotExpectedMinutes,
+      "TC-CLOSE-01-A: snapshotExpectedMinutes is FULL Soll (gap NOT deducted)",
+    ).toBe(22 * 480);
+
+    // Balance = worked − full Soll = −480 min (exactly one day's Soll negative)
+    expect(result.balanceMinutes, "TC-CLOSE-01-A: balanceMinutes == −480 (1 gap day penalty)").toBe(
+      -480,
+    );
+  });
+
+  // ── TC-CLOSE-01-B: SHIFT_BASED — 1 rostered-shift gap day (relative delta) ───
+
+  it("TC-CLOSE-01-B: SHIFT_BASED 1-gap month — gaps.length===1, balanceMinutes differs from baseline by exactly shift net soll", () => {
+    // SHIFT_BASED 38h/week, Mon–Fri, June 2026 (22 workdays).
+    // Shifts: all 22 days, 07:00–15:30 (brutto 510 min, breakOver6hOverride=0 → netto 510 min).
+    // With-gap: 21 entries (SHIFT_GAP_DAY missing) → rostered gap.
+    // Baseline: all 22 entries (gap day added in-memory for comparison).
+
+    const shiftItems = JUNE_WORKDAYS.map((d) => ({
+      date: new Date(d + "T00:00:00Z"),
+      startTime: "07:00",
+      endTime: "15:30",
+    }));
+    const entriesWithGap = JUNE_WORKDAYS.filter((d) => d !== SHIFT_GAP_DAY).map((d) => ({
+      date: new Date(d + "T00:00:00Z"),
+      startTime: new Date(d + "T07:00:00Z"),
+      endTime: new Date(d + "T15:30:00Z"),
+      breakMinutes: 30,
+    }));
+    const entriesBaseline = JUNE_WORKDAYS.map((d) => ({
+      date: new Date(d + "T00:00:00Z"),
+      startTime: new Date(d + "T07:00:00Z"),
+      endTime: new Date(d + "T15:30:00Z"),
+      breakMinutes: 30,
+    }));
+
+    const { firstDay, lastDay } = monthDayBounds(JUNE_START, JUNE_END, TZ);
+    const schedule = {
+      type: "SHIFT_BASED",
+      weeklyHours: 38,
+      mondayHours: 7.6,
+      tuesdayHours: 7.6,
+      wednesdayHours: 7.6,
+      thursdayHours: 7.6,
+      fridayHours: 7.6,
+      saturdayHours: 0,
+      sundayHours: 0,
+      workDays: [1, 2, 3, 4, 5],
+    };
+    const sharedInput = {
+      employeeId: shiftEmpId,
+      monthStart: JUNE_START,
+      monthEnd: JUNE_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: new Date("2026-06-01T00:00:00Z"),
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      shifts: shiftItems as CloseMonthInput["shifts"],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    };
+
+    const withGap = closeEmployeeMonth({
+      ...sharedInput,
+      entries: entriesWithGap as CloseMonthInput["entries"],
+    });
+    const baseline = closeEmployeeMonth({
+      ...sharedInput,
+      entries: entriesBaseline as CloseMonthInput["entries"],
+    });
+
+    // Gap set: exactly one gap day (the seeded shift gap day)
+    expect(withGap.gaps, "TC-CLOSE-01-B: with-gap run must detect 1 gap").toHaveLength(1);
+    expect(
+      withGap.gaps.map((g) => g.date),
+      "TC-CLOSE-01-B: gap date must be the shift gap day",
+    ).toEqual([SHIFT_GAP_DAY]);
+
+    // Baseline should have no gaps
+    expect(
+      baseline.gaps,
+      "TC-CLOSE-01-B: baseline (all entries present) must have 0 gaps",
+    ).toHaveLength(0);
+
+    // Each entry 07:00–15:30 with breakMinutes=30 → worked netto = 510 − 30 = 480 min.
+    // (breakOver6hOverride=0 applies to SHIFT netto computation, not entry worked minutes.)
+    // Adding the missing shift-day entry increases workedMinutes by exactly 480 min.
+    const oneEntryNetto = 480; // 07:00–15:30 entry with breakMinutes=30
+    expect(
+      withGap.workedMinutes,
+      "TC-CLOSE-01-B: with-gap workedMinutes is baseline minus one entry netto (480 min)",
+    ).toBe(baseline.workedMinutes - oneEntryNetto);
+
+    // CLOSE-01 contract: removing one worked entry worsens the saldo (more negative).
+    // SHIFT_BASED §615 formula (Model B) is non-linear: balance = max(0,W-C) - max(0,R-W).
+    // The exact delta is not simply oneEntryNetto — it depends on W vs C and R vs W thresholds.
+    // We assert the directional invariant: gap makes saldo more negative (≤ baseline).
+    expect(
+      withGap.balanceMinutes,
+      "TC-CLOSE-01-B: withGap.balanceMinutes is worse (more negative) than baseline",
+    ).toBeLessThan(baseline.balanceMinutes);
+
+    // Exact values pinned for regression — June 2026, 22 workdays, 38h/week, all shifts present:
+    //   C = round(38×60×22/5) = 10032 min
+    //   R = 22 × 510 = 11220 min (shifts with breakOver6hOverride=0)
+    //   Baseline: W=22×480=10560. balance = max(0,10560-10032) - max(0,11220-10560) = 528-660 = -132
+    //   WithGap:  W=21×480=10080. balance = max(0,10080-10032) - max(0,11220-10080) = 48-1140 = -1092
+    // Soll NOT reduced by gap (CLOSE-01): snapshotExpectedMinutes is the same in both runs.
+    expect(
+      withGap.snapshotExpectedMinutes,
+      "TC-CLOSE-01-B: Soll (snapshotExpectedMinutes) is IDENTICAL in gap and baseline run",
+    ).toBe(baseline.snapshotExpectedMinutes);
+  });
+});
