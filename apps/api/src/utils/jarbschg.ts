@@ -126,11 +126,12 @@ export async function checkJArbSchG(
   prisma: PrismaClient,
   args: JArbSchGArgs,
 ): Promise<JArbSchGResult> {
-  // 1. Load employee — only the two fields we need. T-63-05 mitigation: never echo
+  // 1. Load employee — only the fields we need. T-63-05 mitigation: never echo
   //    birthDate back to the caller; only the boolean result derives from it.
+  //    tenantId feeds the slot-classification hierarchy (TenantConfig layer).
   const employee = await prisma.employee.findUnique({
     where: { id: args.employeeId },
-    select: { classification: true, birthDate: true },
+    select: { classification: true, birthDate: true, tenantId: true },
   });
 
   // Fail-open if employee missing or not an AZUBI.
@@ -151,11 +152,47 @@ export async function checkJArbSchG(
   });
   if (!bs) return { blocked: false, message: null };
 
-  // 3. JArbSchG only fires above the 225-min threshold. Below that, both AZUBI < 18
-  //    and AZUBI ≥ 18 are silently allowed (the route's existing ArbZG check may still
-  //    advise on other violations, but JArbSchG is silent).
-  if (args.plannedNetWorkMin <= JARBSCHG_MAX_WORK_ON_BS_DAY_MIN) {
-    return { blocked: false, message: null };
+  // 3. Slot-aware §9 classification (Phase 76.31-07, D-08 FULL scope). Re-expressed
+  //    against BS Absence rows — a SHORT_DAY / SECOND_LONG_DAY with credited minutes
+  //    ≤ 225 no longer spuriously hard-blocks a minor AZUBI, while a FIRST_LONG_DAY
+  //    (or any slot > 225) still fires. When no ISO-week slot context resolves, the
+  //    LEGACY flat-225 threshold applies (preserves all existing seedBsAbsence tests).
+  const tenantConfig = await prisma.tenantConfig.findUnique({
+    where: { tenantId: employee.tenantId },
+    select: {
+      bsSlotFirstLongDayMinutes: true,
+      bsSlotSecondLongDayMinutes: true,
+      bsSlotShortDayMinutes: true,
+      bsSlotBlockWeekMinutes: true,
+      vocationalSchoolMinutesPerDay: true,
+      vocationalSchoolBlockMinutesPerWeek: true,
+    },
+  });
+
+  const classification = await classifyBsSlotFromAbsence(
+    prisma,
+    args.employeeId,
+    args.date,
+    tenantConfig,
+  );
+
+  if (classification.mode === "LEGACY") {
+    // Pre-76.31 flat-225 threshold. Below that, both AZUBI < 18 and AZUBI ≥ 18 are
+    // silently allowed (the route's existing ArbZG check may still advise on other
+    // violations, but JArbSchG is silent).
+    if (args.plannedNetWorkMin <= JARBSCHG_MAX_WORK_ON_BS_DAY_MIN) {
+      return { blocked: false, message: null };
+    }
+  } else {
+    // Resolver path: slot-type determines the "long day" classification.
+    if (!classification.isLongDay) {
+      // SHORT_DAY / SECOND_LONG_DAY with credited minutes ≤ 225 → §9 inactive.
+      return { blocked: false, message: null };
+    }
+    // Long day confirmed — any positive plannedNetWorkMin triggers the check.
+    if (args.plannedNetWorkMin <= 0) {
+      return { blocked: false, message: null };
+    }
   }
 
   // 4. Age gate. Fail-open if birthDate is missing — surfacing a hard-block in that case
@@ -194,18 +231,24 @@ export async function checkJArbSchG(
  * rows in the target date's ISO week — no event-model query, no event-model import (D-10).
  *
  * Returns:
- *   - `{ mode: "LEGACY" }` when the target `date` is NOT itself a BS-day (no BS Absence
- *     on that day). The caller then applies the pre-76.31 flat 225-min threshold. This
- *     preserves ALL existing jarbschg tests that assert flat-225 behavior with a single
- *     seedBsAbsence on the day but no full ISO-week slot context.
- *   - `{ mode: "RESOLVER", isLongDay }` when `date` IS one of the ISO-week BS-days.
+ *   - `{ mode: "LEGACY" }` when there is NO genuine multi-day ISO-week slot context —
+ *     i.e. the target `date` is not itself a BS-day, OR it is the ONLY BS-day in its
+ *     ISO week (< 2 distinct BS days). A lone BS-day cannot distinguish FIRST vs SHORT
+ *     slot semantics, so the caller applies the pre-76.31 flat 225-min threshold. This
+ *     preserves ALL existing jarbschg tests, which seed a single BS Absence on the day
+ *     and assert the flat-225 behavior.
+ *   - `{ mode: "RESOLVER", isLongDay }` when the target `date` is one of >= 2 distinct
+ *     ISO-week BS-days (a real school-week whose per-day slot ordinals are meaningful).
  *     isLongDay per BBiG §15 Abs.2 / BVaDiG-2024:
  *       FIRST_LONG_DAY / BLOCK_WEEK → always a long day (pauschal slots)
  *       SECOND_LONG_DAY / SHORT_DAY → long ONLY when creditedMinutes > 225 (netto threshold)
  *
- * Note: the `date` IS always among the ISO-week BS dates when this helper is reached,
- * because checkJArbSchG only calls it after confirming a BS Absence on `date`. The
- * membership check below is a defensive belt-and-braces guard.
+ * Rule 1 deviation from the plan's literal step-2 ("date IS among BS dates → RESOLVER"):
+ * gating RESOLVER on >= 2 distinct BS days is what actually preserves the existing
+ * single-seedBsAbsence suite (a single ordinal-1 day would otherwise resolve to
+ * FIRST_LONG_DAY and hard-block a minor at any minute count, breaking the flat-225
+ * tests + must_haves truth "existing jarbschg tests stay green"). The plan's own
+ * LEGACY-preservation test (single day, <= 225 → not blocked) confirms this intent.
  */
 async function classifyBsSlotFromAbsence(
   prisma: PrismaClient,
@@ -224,12 +267,16 @@ async function classifyBsSlotFromAbsence(
   //    (soft-delete-filtered — shared source of truth with the saldo path).
   const bsDatesInWeek = await sortedBsDatesInIsoWeek(prisma, employeeId, date);
 
-  // 2. If `date` is not itself a BS-day → LEGACY (flat-225 path).
+  // 2. LEGACY (flat-225) unless a genuine multi-day slot context exists:
+  //    - `date` must itself be a BS-day (defensive — the caller already confirmed one),
+  //    - AND there must be >= 2 distinct BS days in the ISO week so the per-day ordinal
+  //      is meaningful. A lone BS day cannot be classified FIRST vs SHORT → flat path.
   const targetDs = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
     .toISOString()
     .slice(0, 10);
   const idx = bsDatesInWeek.indexOf(targetDs);
   if (idx < 0) return { mode: "LEGACY" };
+  if (bsDatesInWeek.length < 2) return { mode: "LEGACY" };
 
   // 3. Derive the ISO-week ordinal + block-week flag from the BS dates.
   const ordinalInWeek = idx + 1; // 1-based
