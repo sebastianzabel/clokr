@@ -699,6 +699,20 @@
                                               ? "..."
                                               : "Abschließen"}
                                           </button>
+                                        {:else if emp.status === "missing"}
+                                          <button
+                                            class="btn btn-primary btn-sm"
+                                            disabled={closingEmployee === emp.employeeId || closing}
+                                            onclick={() =>
+                                              openConfirmCloseEmployee(
+                                                emp.employeeId,
+                                                expandedMonth!,
+                                              )}
+                                          >
+                                            {closingEmployee === emp.employeeId
+                                              ? "..."
+                                              : "Abschließen"}
+                                          </button>
                                         {:else if emp.status === "closed"}
                                           <button
                                             class="btn btn-outline btn-sm"

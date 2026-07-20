@@ -939,7 +939,11 @@ describe("SNAP-03-B2 — parity-by-construction: FIXED_SCHEDULE live==Σcloses (
     });
     const julFirstDayStr = dateStrInTz(julFirstDay, TZ);
     const julPartialLastDayStr = dateStrInTz(julPartialLastDay, TZ);
-    const julHolidays = filterHolidaySet(buildHolidaySet(2026), julFirstDayStr, julPartialLastDayStr);
+    const julHolidays = filterHolidaySet(
+      buildHolidaySet(2026),
+      julFirstDayStr,
+      julPartialLastDayStr,
+    );
 
     const julResult = closeEmployeeMonth({
       employeeId: empId,
@@ -1063,7 +1067,11 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
     // closeEmployeeMonth core.
     const juneB3FirstDayStr = dateStrInTz(juneFirstDay, TZ);
     const juneB3LastDayStr = dateStrInTz(juneLastDay, TZ);
-    const juneB3Holidays = filterHolidaySet(buildHolidaySet(2026), juneB3FirstDayStr, juneB3LastDayStr);
+    const juneB3Holidays = filterHolidaySet(
+      buildHolidaySet(2026),
+      juneB3FirstDayStr,
+      juneB3LastDayStr,
+    );
 
     const juneResult = closeEmployeeMonth({
       employeeId: empId,
