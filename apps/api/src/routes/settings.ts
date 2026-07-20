@@ -17,6 +17,12 @@ import {
   BREAK_MAX_OVER_6H,
   BREAK_MAX_OVER_9H,
 } from "../utils/break-constants";
+import {
+  BS_DAILY_MIN_BOUND,
+  BS_DAILY_MAX_BOUND,
+  BS_BLOCK_WEEKLY_MIN_BOUND,
+  BS_BLOCK_WEEKLY_MAX_BOUND,
+} from "../utils/vocational-school-constants";
 
 const VALID_FEDERAL_STATES = Object.values(FederalState) as string[];
 
@@ -137,6 +143,39 @@ const tenantConfigSchema = z
       .int()
       .min(1200, "Berufsschul-Block pro Woche muss mindestens 1200 Min (20h) sein")
       .max(3000, "Berufsschul-Block pro Woche darf höchstens 3000 Min (50h) sein")
+      .optional(),
+    // Phase 76.31 D-06 — 4-layer bsSlot* override hierarchy (TenantConfig layer).
+    // Nullable: an explicit null CLEARS the tenant override so resolution delegates
+    // down to the daily-Soll fallback. Daily bounds 240..600 (4h..10h);
+    // block-week bounds 1200..3000 (20h..50h). Bounds constants mirror
+    // apps/api/src/utils/vocational-school-constants.ts (single source of truth).
+    bsSlotFirstLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotSecondLongDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotShortDayMinutes: z
+      .number()
+      .int()
+      .min(BS_DAILY_MIN_BOUND)
+      .max(BS_DAILY_MAX_BOUND)
+      .nullable()
+      .optional(),
+    bsSlotBlockWeekMinutes: z
+      .number()
+      .int()
+      .min(BS_BLOCK_WEEKLY_MIN_BOUND)
+      .max(BS_BLOCK_WEEKLY_MAX_BOUND)
+      .nullable()
       .optional(),
     // Phase 64 — Pausendauer (D-07, BREAK-04): per-tenant default auto-break duration.
     // Floor enforces ArbZG §4 Pflichtpause (30/45 Min); cap is a sane upper bound
