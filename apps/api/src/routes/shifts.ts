@@ -1149,11 +1149,14 @@ export async function shiftRoutes(app: FastifyInstance) {
           // round-trips on weeks without any BS data.
           const av = availabilityMap.get(keyOf(emp.id, iso))?.availability;
           if (av !== "vocational_school") continue;
+          const empSched = emp.workSchedules?.[0];
           const min = await getVocationalSchoolMinutesForDate(
             app.prisma,
             emp.id,
             new Date(iso + "T00:00:00Z"),
             tenantConfig,
+            // Phase 76.31 (B): slot-aware daily-Soll amount for the LONG BS day.
+            { schedule: empSched ?? null, scheduleType: empSched?.type ?? null },
           );
           total += min;
         }

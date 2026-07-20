@@ -44,7 +44,9 @@ import {
   getDayOfWeekInTz,
   dateStrInTz,
 } from "./timezone";
-import { BS_DAILY_DEFAULT_MIN, BS_BLOCK_WEEKLY_DEFAULT_MIN } from "./vocational-school-constants";
+import { buildSlotOverrideHierarchy, resolveBsTagSlot, type WeekContext } from "./bs-slot-resolver";
+import { computeDailySollMinutes } from "./vocational-school-saldo";
+import type { ScheduleType } from "@clokr/db";
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -100,8 +102,32 @@ export type CloseMonthInput = {
     monthlyHoursHolidayDeduction?: boolean;
     vocationalSchoolMinutesPerDay?: number | null;
     vocationalSchoolBlockMinutesPerWeek?: number | null;
+    // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 tenant layer).
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
+  } | null;
+
+  // Phase 76.31 — Employee/Pattern bsSlot* override rows (D-06 layers 1+2). Optional:
+  // callers thread them in (plan 06 caller wiring). When null → the fallback resolves
+  // to the individual daily Soll via the TenantConfig/legacy/daily-Soll layers.
+  employeeSlots?: {
+    bsSlotFirstLongDayMinutes: number | null;
+    bsSlotSecondLongDayMinutes: number | null;
+    bsSlotShortDayMinutes: number | null;
+    bsSlotBlockWeekMinutes: number | null;
+  } | null;
+  patternSlots?: {
+    bsSlotFirstLongDayMinutes: number | null;
+    bsSlotSecondLongDayMinutes: number | null;
+    bsSlotShortDayMinutes: number | null;
+    bsSlotBlockWeekMinutes: number | null;
   } | null;
 };
+
+// Re-export so amount-site callers/tests have a single import surface.
+export { computeDailySollMinutes };
 
 export type CloseMonthResult = {
   // SaldoSnapshot field values (caller writes to DB)
@@ -155,6 +181,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     absences,
     holidayDateStrings,
     tenantConfig,
+    employeeSlots,
+    patternSlots,
   } = input;
 
   const scheduleType = String(schedule.type ?? "");
@@ -280,8 +308,27 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // credit loop (they are handled by the doubling mechanism — matching all four paths;
   // see time-entries.ts:1861 / overtime.ts:1058).
 
-  const bsDaily = tenantConfig?.vocationalSchoolMinutesPerDay ?? BS_DAILY_DEFAULT_MIN;
-  const bsWeekly = tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? BS_BLOCK_WEEKLY_DEFAULT_MIN;
+  // Phase 76.31 (B): slot-aware BS amount. The FIRST_LONG_DAY credit is the individual
+  // daily Soll (round(weeklyHours*60/workDaysPerWeek), e.g. 38h/4-day → 570), NOT the flat
+  // 480 pauschal. Build the D-06 4-layer hierarchy once (Employee ?? Pattern ?? TenantConfig
+  // ?? legacy ?? daily-Soll); resolve each BS date via resolveBsTagSlot (block-week wins).
+  const bsDailySollMinutes = computeDailySollMinutes(
+    schedule as Parameters<typeof computeDailySollMinutes>[0],
+  );
+  const bsHierarchy = buildSlotOverrideHierarchy({
+    employee: employeeSlots ?? null,
+    pattern: patternSlots ?? null,
+    tenantConfig: {
+      bsSlotFirstLongDayMinutes: tenantConfig?.bsSlotFirstLongDayMinutes ?? null,
+      bsSlotSecondLongDayMinutes: tenantConfig?.bsSlotSecondLongDayMinutes ?? null,
+      bsSlotShortDayMinutes: tenantConfig?.bsSlotShortDayMinutes ?? null,
+      bsSlotBlockWeekMinutes: tenantConfig?.bsSlotBlockWeekMinutes ?? null,
+      vocationalSchoolMinutesPerDay: tenantConfig?.vocationalSchoolMinutesPerDay ?? null,
+      vocationalSchoolBlockMinutesPerWeek:
+        tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? null,
+    },
+    dailySollMinutes: bsDailySollMinutes,
+  });
 
   // Build set of distinct VOCATIONAL_SCHOOL dates within [effectiveStart, effectiveEnd]
   // from the provided absences array. Group by ISO week (Mon–Sun, UTC-based per
@@ -342,16 +389,25 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   let bsExpectedMinutes = 0;
   for (const ds of bsDatesInMonth) {
     const wk = isoWeekKey(ds);
-    const daysInWeek = bsDatesAllByWeek.get(wk)?.size ?? 1;
-    let bsMin: number;
-    if (daysInWeek >= 5) {
-      bsMin = Math.round(bsWeekly / daysInWeek);
-    } else {
-      bsMin = bsDaily;
-    }
-    bsWorkedMinutes += bsMin;
-    if (scheduleType !== "MONTHLY_HOURS") {
-      bsExpectedMinutes += bsMin;
+    const weekSet = bsDatesAllByWeek.get(wk) ?? new Set([ds]);
+    // Sorted distinct BS dates in this ISO week → 1-based ordinal for the slot resolver.
+    const bsDatesInWeek = Array.from(weekSet).sort();
+    const daysInWeek = bsDatesInWeek.length;
+    const ordinalInWeek = bsDatesInWeek.indexOf(ds) + 1; // 1-based
+    const weekContext: WeekContext = { bsDatesInWeek, isBlockWeek: daysInWeek >= 5 };
+
+    const res = resolveBsTagSlot(
+      new Date(ds + "T00:00:00Z"),
+      ordinalInWeek,
+      weekContext,
+      bsHierarchy,
+      scheduleType as ScheduleType,
+    );
+
+    bsWorkedMinutes += res.creditedMinutes;
+    // D-04: MONTHLY_HOURS credits worked only (contributesToExpected === false).
+    if (res.contributesToExpected) {
+      bsExpectedMinutes += res.creditedMinutes;
     }
   }
 

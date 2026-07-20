@@ -231,8 +231,12 @@ describe("getVocationalSchoolMinutesForDate + countBsDaysInIsoWeek (Phase 63 Pla
       expect(min).toBe(257);
     });
 
-    it("4 BS-days (< 5 threshold) in ISO week stays on daily path → 480", async () => {
-      // Mo-Th, only 4 days — cap doesn't kick in, daily default applies.
+    it("4 BS-days (< 5 threshold) in ISO week stays on daily path → 480 (FIRST_LONG_DAY)", async () => {
+      // Mo-Th, only 4 days — block-week cap does NOT kick in.
+      // Phase 76.31 (B): query MON (ordinal 1 = FIRST_LONG_DAY) to assert the daily path.
+      // With no schedule passed, the daily-Soll fallback = BS_DAILY_DEFAULT_MIN (480); the
+      // legacy per-day pauschal is preserved for the FIRST_LONG_DAY slot. (Block-week would
+      // credit 2400/4 = 600 ≠ 480, so 480 proves block mode did NOT engage.)
       await seedAbsence(app, data.employee.id, MON);
       await seedAbsence(app, data.employee.id, TUE);
       await seedAbsence(app, data.employee.id, WED);
@@ -240,14 +244,15 @@ describe("getVocationalSchoolMinutesForDate + countBsDaysInIsoWeek (Phase 63 Pla
       const min = await getVocationalSchoolMinutesForDate(
         app.prisma,
         data.employee.id,
-        WED,
+        MON,
         defaultConfig,
       );
       expect(min).toBe(480);
     });
 
     it("absence in different ISO week does NOT push current week into block mode", async () => {
-      // 4 absences in week N (single-day path) + 1 in week N+1 → query in week N → 480.
+      // 4 absences in week N (single-day path) + 1 in week N+1 → query FIRST_LONG_DAY of week N → 480.
+      // Phase 76.31 (B): query MON (ordinal 1 = FIRST_LONG_DAY). Block-week would give 2400/4 = 600.
       await seedAbsence(app, data.employee.id, MON);
       await seedAbsence(app, data.employee.id, TUE);
       await seedAbsence(app, data.employee.id, WED);
@@ -256,10 +261,10 @@ describe("getVocationalSchoolMinutesForDate + countBsDaysInIsoWeek (Phase 63 Pla
       const min = await getVocationalSchoolMinutesForDate(
         app.prisma,
         data.employee.id,
-        WED,
+        MON,
         defaultConfig,
       );
-      // Week N has 4 BS days → single-day path, not block path → daily default.
+      // Week N has 4 BS days → single-day path, not block path → FIRST_LONG_DAY default.
       expect(min).toBe(480);
     });
 

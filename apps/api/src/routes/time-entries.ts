@@ -2489,6 +2489,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
             employeeId,
             cur,
             tenantConfig,
+            { schedule, scheduleType }, // Phase 76.31 (B): slot-aware daily-Soll amount
           );
           partialBsWorkedMinutes += bsMin;
           partialBsExpectedMinutes += bsMin; // D-01: add to both sides → balance neutral
@@ -2557,6 +2558,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
           employeeId,
           cur,
           tenantConfig,
+          { schedule, scheduleType }, // Phase 76.31 (B): slot-aware daily-Soll amount
         );
         bsWorkedMinutes += bsMin;
         // Phase 76.31 (A): book the BS day equally on the expected side (SHIFT_BASED here is

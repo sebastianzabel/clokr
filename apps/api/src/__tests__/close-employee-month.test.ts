@@ -837,9 +837,14 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     //
     // NOTE: expectedMinutes = contract Ø-Methode Soll (C_net, nonzero for SHIFT_BASED) + bsExpected.
     // With roster R=0 and no entries W=0, undertime = max(0, R−W) = 0, so the balance is 0 with OR
-    // without the BS day — the BS day itself contributes exactly 0 (bsWorked 480 − bsExpected 480).
-    expect(result.workedMinutes).toBe(baseline.workedMinutes + 480); // +bsWorkedMinutes
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 480); // +bsExpectedMinutes (into C_net)
+    // without the BS day — the BS day itself contributes exactly 0 (bsWorked 456 − bsExpected 456).
+    //
+    // Phase 76.31 (B): the LONG BS day is now credited the individual daily Soll via the slot
+    // resolver (this fixture: 38h over a 5-day week, tenantConfig null → round(38*60/5) = 456),
+    // NOT the flat 480 pauschal. The neutrality invariant (balance 0) is unchanged.
+    const dailySoll456 = Math.round((38 * 60) / 5); // 456
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + dailySoll456); // +bsWorkedMinutes
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + dailySoll456); // +bsExpectedMinutes (into C_net)
     expect(result.balanceMinutes).toBe(0); // BS day nets to 0
     expect(result.balanceMinutes).toBe(baseline.balanceMinutes); // BS day changed the balance by 0
   }, 30_000);
@@ -1321,6 +1326,13 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       where: { employeeId: empId, deletedAt: null },
       select: { startDate: true, endDate: true, type: true, source: true },
     });
+    // Phase 76.31 (B): the slot resolver's FIRST_LONG_DAY fallback is the individual daily
+    // Soll (456 for 38h/5-day here) UNLESS the legacy tenantConfig.vocationalSchoolMinutesPerDay
+    // (schema @default 480) wins. The manual-close path (overtime.ts) threads the real
+    // tenantConfig, so this parity pin MUST pass the SAME tenantConfig to the core call —
+    // otherwise the two sides diverge (null → 456 vs config → 480). This is a genuine
+    // byte-identical parity assertion: identical inputs → identical outputs.
+    const closeTenantConfig = await app.prisma.tenantConfig.findFirst({ where: { tenantId } });
 
     const { firstDay, lastDay } = monthDayBounds(MAR_START, MAR_END, TZ);
     const coreResult = closeEmployeeMonth({
@@ -1342,7 +1354,22 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       approvedLeave: [],
       absences: absences as CloseMonthInput["absences"],
       holidayDateStrings: new Set<string>(),
-      tenantConfig: null,
+      tenantConfig: closeTenantConfig
+        ? {
+            defaultBreakOver6h: closeTenantConfig.defaultBreakOver6h,
+            defaultBreakOver9h: closeTenantConfig.defaultBreakOver9h,
+            monthlyHoursHolidayDeduction:
+              closeTenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+            vocationalSchoolMinutesPerDay:
+              closeTenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolBlockMinutesPerWeek:
+              closeTenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+            bsSlotFirstLongDayMinutes: closeTenantConfig.bsSlotFirstLongDayMinutes ?? undefined,
+            bsSlotSecondLongDayMinutes: closeTenantConfig.bsSlotSecondLongDayMinutes ?? undefined,
+            bsSlotShortDayMinutes: closeTenantConfig.bsSlotShortDayMinutes ?? undefined,
+            bsSlotBlockWeekMinutes: closeTenantConfig.bsSlotBlockWeekMinutes ?? undefined,
+          }
+        : null,
     });
 
     // March 2026 is in the past (today = 2026-07-18) → no fake-timer needed.
