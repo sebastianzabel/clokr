@@ -76,7 +76,10 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
     });
 
     it("pure tracking employee accumulates worked hours in overtime balance", async () => {
-      // Set schedule to pure tracking (monthlyHours = null)
+      // Set schedule to pure tracking (monthlyHours = null).
+      // validFrom must be a month-1st date that does NOT collide with an existing row of a
+      // different type (Phase 76.24 model-switch-same-month guard). The seed creates a
+      // FIXED_SCHEDULE row at 2024-01-01, so we use a distinct month-1st date here.
       const schedRes = await app.inject({
         method: "PUT",
         url: `/api/v1/settings/work/${data.employee.id}`,
@@ -94,7 +97,7 @@ describe("Minijob / MONTHLY_HOURS Schedule", () => {
           sundayHours: 0,
           overtimeThreshold: 60,
           allowOvertimePayout: false,
-          validFrom: "2024-01-01",
+          validFrom: "2025-01-01",
         },
       });
       expect(schedRes.statusCode).toBe(200);
