@@ -166,6 +166,20 @@ const tenantConfigSchema = z
         "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
       )
       .optional(),
+    // Phase 76.29 — CFG-01: Retro-entry window (RETRO-01).
+    // How many calendar days back an employee can create or edit time entries without
+    // an approved RetroEntryRequest. Default 10 days (see retro-config.ts).
+    // Bounds: min 1 (same-day only), max 90 (~3 months, ArbZG §16 audit window floor).
+    retroEntryWindowDays: z
+      .number()
+      .int()
+      .min(1, "Rückerfassungszeitraum muss mindestens 1 Tag betragen.")
+      .max(90, "Rückerfassungszeitraum darf höchstens 90 Tage betragen.")
+      .optional(),
+    // Phase 76.28 / 76.29 — CFG-01: Allow closing a month that has gap days
+    // (days with no time entry on scheduled workdays). When false, the
+    // Monatsabschluss is blocked until all gaps are resolved.
+    closeMonthWithGapsAllowed: z.boolean().optional(),
   })
   .superRefine((data, ctx) => {
     // Half-null guard: defaultCoreStart and defaultCoreEnd must be set together or both absent
