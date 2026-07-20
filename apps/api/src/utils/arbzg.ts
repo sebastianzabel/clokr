@@ -2,7 +2,7 @@ import { PrismaClient } from "@clokr/db";
 import { fromZonedTime } from "date-fns-tz";
 import { getTenantTimezone, dateStrInTz, getDayOfWeekInTz } from "./timezone";
 import { BS_DAILY_DEFAULT_MIN } from "./vocational-school-constants";
-import { countBsDaysInIsoWeek } from "./vocational-school-saldo";
+import { countBsDaysInIsoWeek, getVocationalSchoolMinutesForDate } from "./vocational-school-saldo";
 
 export interface ArbZGWarning {
   code:
@@ -46,7 +46,19 @@ export async function checkArbZG(
       workSchedules: {
         orderBy: { validFrom: "desc" },
         take: 1,
-        select: { type: true },
+        // Phase 76.31-05: full schedule needed so the slot resolver can compute
+        // the individual daily Soll (FIRST_LONG_DAY fallback → weeklyHours/workDays).
+        select: {
+          type: true,
+          weeklyHours: true,
+          mondayHours: true,
+          tuesdayHours: true,
+          wednesdayHours: true,
+          thursdayHours: true,
+          fridayHours: true,
+          saturdayHours: true,
+          sundayHours: true,
+        },
       },
     },
   });
@@ -56,15 +68,22 @@ export async function checkArbZG(
   if (employee.isTimeTrackingExempt) return warnings; // already []
 
   const tz = await getTenantTimezone(prisma, employee.tenantId);
-  const scheduleType = employee.workSchedules[0]?.type ?? "FIXED_SCHEDULE";
+  const schedule = employee.workSchedules[0] ?? null;
+  const scheduleType = schedule?.type ?? "FIXED_SCHEDULE";
 
   // Phase 63 — load tenant config for BS-minutes-per-day; fall back to default
   // so a missing TenantConfig row never throws (mirrors saldo helper semantics).
+  // Phase 76.31-05 — also read the bsSlot* override columns so the slot resolver
+  // walks the full D-06 4-layer hierarchy (Employee ?? Pattern ?? TenantConfig ?? legacy ?? daily-Soll).
   const tenantConfig = await prisma.tenantConfig.findUnique({
     where: { tenantId: employee.tenantId },
     select: {
       vocationalSchoolMinutesPerDay: true,
       vocationalSchoolBlockMinutesPerWeek: true,
+      bsSlotFirstLongDayMinutes: true,
+      bsSlotSecondLongDayMinutes: true,
+      bsSlotShortDayMinutes: true,
+      bsSlotBlockWeekMinutes: true,
     },
   });
   const bsDailyMin = tenantConfig?.vocationalSchoolMinutesPerDay ?? BS_DAILY_DEFAULT_MIN;
@@ -85,7 +104,16 @@ export async function checkArbZG(
     },
     select: { id: true, startDate: true },
   });
-  const bsMinutesToday = bsAbsenceToday ? bsDailyMin : 0;
+  // Phase 76.31-05 (D-08 FULL) — the §3 daily 10h check must count the REAL slot-
+  // resolved BS minutes, not a flat 480. A LONG day is 9.5h (570 min); counting it
+  // as 480 under-warns on the 10h cap (RESEARCH R5). The resolver returns 0 when no
+  // BS absence exists for the date, so the branch stays a no-op on non-BS days.
+  const bsMinutesToday = bsAbsenceToday
+    ? await getVocationalSchoolMinutesForDate(prisma, employeeId, changedDate, tenantConfig, {
+        schedule,
+        scheduleType,
+      })
+    : 0;
 
   // ── 1. Tagessicht: alle abgeschlossenen Slots des Tages ────────────────────
   const daySlots = await prisma.timeEntry.findMany({
