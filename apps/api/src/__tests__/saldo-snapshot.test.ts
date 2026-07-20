@@ -71,12 +71,13 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       await createEntry(data.employee.id, "2025-01-17", 7, 17, 60); // 9h
       // Total: 45h worked
 
-      // Close January 2025
+      // Close January 2025 — January has unworked days (gaps). Pass confirmGaps:true so
+      // the 76.28 gate (FORK-C) does not reject with 409. The gate itself is unchanged.
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: data.employee.id, year: 2025, month: 1 },
+        payload: { employeeId: data.employee.id, year: 2025, month: 1, confirmGaps: true },
       });
 
       expect(res.statusCode).toBe(201);
@@ -139,11 +140,12 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
       // Create February entries: 1 day, 10h (2h overtime)
       await createEntry(data.employee.id, "2025-02-03", 7, 17, 0); // 10h (Mon)
 
+      // February 2025 also has gap days — pass confirmGaps:true (76.28 gate intact).
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: data.employee.id, year: 2025, month: 2 },
+        payload: { employeeId: data.employee.id, year: 2025, month: 2, confirmGaps: true },
       });
       expect(res.statusCode).toBe(201);
       const febSnapshot = JSON.parse(res.body);
@@ -265,12 +267,12 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
         data: { deletedAt: new Date() },
       });
 
-      // Close March
+      // Close March — gap month (only 1 of 21 workdays has an entry). Pass confirmGaps:true.
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: data.employee.id, year: 2025, month: 3 },
+        payload: { employeeId: data.employee.id, year: 2025, month: 3, confirmGaps: true },
       });
       expect(res.statusCode).toBe(201);
       const snapshot = JSON.parse(res.body);

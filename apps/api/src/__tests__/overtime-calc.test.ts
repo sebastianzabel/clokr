@@ -263,16 +263,26 @@ describe("Overtime Saldo Calculation", () => {
         },
       });
 
-      // POST close-month for June 2024
+      // POST close-month for June 2024.
+      // 76.28 (FORK-C): months with gap days return 409 unless confirmGaps:true is sent.
+      // Pass confirmGaps:true on all close-month calls in this test so the gate does not
+      // block an otherwise valid close. The gate itself is NOT weakened — it remains active
+      // for callers that omit confirmGaps.
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: data.employee.id, year: testYear, month: testMonth },
+        payload: {
+          employeeId: data.employee.id,
+          year: testYear,
+          month: testMonth,
+          confirmGaps: true,
+        },
       });
 
-      // May need to close Jan-May 2024 first due to sequential validation
-      // If we get a 400 about needing to close previous months, close them first
+      // May need to close Jan-May 2024 first due to sequential validation.
+      // The error code for "close previous months first" is 400; for gap months it is 409.
+      // Both cases are handled below; all inner calls also pass confirmGaps:true.
       if (res.statusCode === 400) {
         const errBody = JSON.parse(res.body);
         if (errBody.error && errBody.error.includes("zuerst")) {
@@ -289,7 +299,13 @@ describe("Overtime Saldo Calculation", () => {
               method: "POST",
               url: "/api/v1/overtime/close-month",
               headers: { authorization: `Bearer ${data.adminToken}` },
-              payload: { employeeId: data.employee.id, year: testYear, month: m },
+              // confirmGaps:true — prior months are gap months (no entries seeded for them)
+              payload: {
+                employeeId: data.employee.id,
+                year: testYear,
+                month: m,
+                confirmGaps: true,
+              },
             });
           }
 
@@ -298,7 +314,12 @@ describe("Overtime Saldo Calculation", () => {
             method: "POST",
             url: "/api/v1/overtime/close-month",
             headers: { authorization: `Bearer ${data.adminToken}` },
-            payload: { employeeId: data.employee.id, year: testYear, month: testMonth },
+            payload: {
+              employeeId: data.employee.id,
+              year: testYear,
+              month: testMonth,
+              confirmGaps: true,
+            },
           });
           expect(retryRes.statusCode).toBe(201);
           const snapshot = JSON.parse(retryRes.body);
@@ -634,15 +655,23 @@ describe("Overtime Saldo Calculation", () => {
         },
       });
 
-      // Close August 2023
+      // Close August 2024 — August has gap days (only 1 entry seeded for Aug 2023, not 2024).
+      // 76.28 (FORK-C): pass confirmGaps:true so the gate does not reject with 409.
+      // If prior months are missing (400 "zuerst"), close them first, also with confirmGaps:true.
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: data.employee.id, year: trackOnlyYear, month: trackOnlyMonth },
+        payload: {
+          employeeId: data.employee.id,
+          year: trackOnlyYear,
+          month: trackOnlyMonth,
+          confirmGaps: true,
+        },
       });
 
-      // Handle sequential month validation (close prior months if needed)
+      // Handle sequential month validation (close prior months if needed).
+      // All inner calls pass confirmGaps:true — prior months are gap months (no entries seeded).
       if (res.statusCode === 400) {
         const errBody = JSON.parse(res.body);
         if (errBody.error && errBody.error.includes("zuerst")) {
@@ -658,7 +687,12 @@ describe("Overtime Saldo Calculation", () => {
               method: "POST",
               url: "/api/v1/overtime/close-month",
               headers: { authorization: `Bearer ${data.adminToken}` },
-              payload: { employeeId: data.employee.id, year: trackOnlyYear, month: m },
+              payload: {
+                employeeId: data.employee.id,
+                year: trackOnlyYear,
+                month: m,
+                confirmGaps: true,
+              },
             });
           }
           // Retry August
@@ -666,21 +700,26 @@ describe("Overtime Saldo Calculation", () => {
             method: "POST",
             url: "/api/v1/overtime/close-month",
             headers: { authorization: `Bearer ${data.adminToken}` },
-            payload: { employeeId: data.employee.id, year: trackOnlyYear, month: trackOnlyMonth },
+            payload: {
+              employeeId: data.employee.id,
+              year: trackOnlyYear,
+              month: trackOnlyMonth,
+              confirmGaps: true,
+            },
           });
           expect(retryRes.statusCode).toBe(201);
-          const snapshot = JSON.parse(retryRes.body);
+          const retrySnapshot = JSON.parse(retryRes.body);
           // TRACK_ONLY: carryOver must be 0
-          expect(snapshot.carryOver).toBe(0);
+          expect(retrySnapshot.carryOver).toBe(0);
           // balanceMinutes is stored informational (should be > 0 since 12h > 10h budget)
-          expect(typeof snapshot.balanceMinutes).toBe("number");
+          expect(typeof retrySnapshot.balanceMinutes).toBe("number");
 
           // OvertimeAccount must be 0
-          const account = await app.prisma.overtimeAccount.findUnique({
+          const retryAccount = await app.prisma.overtimeAccount.findUnique({
             where: { employeeId: data.employee.id },
           });
-          expect(account).not.toBeNull();
-          expect(Number(account!.balanceHours)).toBe(0);
+          expect(retryAccount).not.toBeNull();
+          expect(Number(retryAccount!.balanceHours)).toBe(0);
           return;
         }
       }
@@ -803,12 +842,14 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     it("SHIFT_BASED: leave covering a holiday excludes shifts via coveredDates; uncovered shift is netto 450 min (D-06 regression)", async () => {
-      // Close January 2024 — hireDate = Jan 1, so no prior month required
+      // Close January 2024 — hireDate = Jan 1, so no prior month required.
+      // January has 23 Mon-Fri workdays but only 3 shifts seeded → gap month.
+      // 76.28 (FORK-C): pass confirmGaps:true so the gate does not reject with 409.
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/overtime/close-month",
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { employeeId: shiftEmpId, year: 2024, month: 1 },
+        payload: { employeeId: shiftEmpId, year: 2024, month: 1, confirmGaps: true },
       });
 
       expect(res.statusCode).toBe(201);

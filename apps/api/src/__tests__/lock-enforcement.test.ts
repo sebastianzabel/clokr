@@ -725,6 +725,9 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
       let snapshotId: string | null = null;
 
       try {
+        // January 2024 has 23 workdays but no time entries seeded → gap month.
+        // 76.28 (FORK-C): pass confirmGaps:true so the gate does not reject with 409.
+        // The earlyClose intent (D-12 field contract) is unaffected by this flag.
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/overtime/close-month",
@@ -733,6 +736,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: data.employee.id,
             year: 2024,
             month: 1,
+            confirmGaps: true,
           },
         });
 
@@ -764,6 +768,9 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
       let snapshotId: string | null = null;
 
       try {
+        // January 2024 has 23 workdays but no time entries seeded → gap month.
+        // 76.28 (FORK-C): pass confirmGaps:true so the gate does not reject with 409.
+        // The earlyClose intent (D-12 earlyClose=true when now < Feb 15) is unaffected.
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/overtime/close-month",
@@ -772,6 +779,7 @@ describe("Phase 12 – Monatsabschluss Lock Enforcement", () => {
             employeeId: data.employee.id,
             year: 2024,
             month: 1,
+            confirmGaps: true,
           },
         });
 

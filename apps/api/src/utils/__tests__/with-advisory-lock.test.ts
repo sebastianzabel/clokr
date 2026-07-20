@@ -70,10 +70,12 @@ describe("withAdvisoryLock", () => {
     expect(opts.timeout).toBe(10 * 60 * 1000);
   });
 
-  it("registry exposes 13 distinct keys and tenantAdvisoryKey derives a bigint", () => {
+  // 76.28-03 added ATTENDANCE_GAP_EMPLOYEE (1014n) and ATTENDANCE_GAP_MANAGER (1015n),
+  // bringing the registry from 13 to 15 distinct keys.
+  it("registry exposes 15 distinct keys and tenantAdvisoryKey derives a bigint", () => {
     const values = Object.values(ADVISORY_LOCK_KEYS);
-    expect(values).toHaveLength(13);
-    expect(new Set(values).size).toBe(13);
+    expect(values).toHaveLength(15);
+    expect(new Set(values).size).toBe(15);
     const key = tenantAdvisoryKey("123e4567-e89b-12d3-a456-426614174000");
     expect(typeof key).toBe("bigint");
     // Deterministic + stable across calls.
