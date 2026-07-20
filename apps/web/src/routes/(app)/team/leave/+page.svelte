@@ -600,24 +600,23 @@
   <div class="emp-combobox" class:emp-combobox--open={empDropdownOpen}>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div class="emp-input-wrap" onclick={() => (empDropdownOpen = !empDropdownOpen)}>
-      {#if filterEmployeeId && !empDropdownOpen}
-        <span class="emp-selected-name">
-          {employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter"}
-        </span>
-      {:else}
-        <input
-          class="emp-search-input"
-          type="text"
-          placeholder={filterEmployeeId
-            ? (employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter")
-            : "Alle Mitarbeiter"}
-          bind:value={empSearch}
-          onfocus={() => (empDropdownOpen = true)}
-          oninput={() => (empDropdownOpen = true)}
-          aria-label="Mitarbeiter suchen"
-          autocomplete="off"
-        />
-      {/if}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <input
+        class="emp-search-input"
+        type="text"
+        placeholder={filterEmployeeId
+          ? (employeeOptions.find((e) => e.id === filterEmployeeId)?.name ?? "Alle Mitarbeiter")
+          : "Alle Mitarbeiter"}
+        bind:value={empSearch}
+        onclick={(e) => {
+          e.stopPropagation();
+          empDropdownOpen = true;
+        }}
+        onfocus={() => (empDropdownOpen = true)}
+        oninput={() => (empDropdownOpen = true)}
+        aria-label="Mitarbeiter suchen"
+        autocomplete="off"
+      />
       <svg
         class="emp-chevron"
         class:emp-chevron--up={empDropdownOpen}
@@ -1376,7 +1375,7 @@
   .employee-selector {
     margin-bottom: 1rem;
     position: relative;
-    z-index: 10;
+    z-index: 200; /* must beat sibling .cal-section.card-animate stacking context */
   }
 
   .emp-combobox {
@@ -1401,13 +1400,6 @@
   .emp-combobox--open .emp-input-wrap {
     border-color: var(--brand);
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 20%, transparent);
-  }
-
-  .emp-selected-name {
-    flex: 1;
-    font-size: 0.9375rem;
-    font-weight: 500;
-    color: var(--text);
   }
 
   .emp-search-input {

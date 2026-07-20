@@ -1329,7 +1329,7 @@
         <Card animate class="open-items" style="--card-idx: 6;">
           <CardHeader title="Offene Vorgänge" sub="Letzte Übersicht">
             {#snippet actions()}
-              <a href="/leave?view=approvals" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
+              <a href="/inbox" class="btn btn-ghost btn-sm">Alle anzeigen →</a>
             {/snippet}
           </CardHeader>
           <div class="open-items-list">

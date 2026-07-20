@@ -66,6 +66,43 @@
   // Unlocking state (tracks employeeId being unlocked)
   let unlocking = $state<string | null>(null);
 
+  // Unlock reason modal state
+  let unlockModalOpen = $state(false);
+  let unlockModalEmployeeId = $state<string | null>(null);
+  let unlockModalMonth = $state<number | null>(null);
+  let unlockReason = $state("");
+
+  let unlockModalTitle = $derived.by(() => {
+    if (unlockModalMonth == null) return "Monat entsperren";
+    const ms = monthStatuses.find((m) => m.month === unlockModalMonth);
+    const name = ms?.name ?? `Monat ${unlockModalMonth}`;
+    const emp = detailEmployees.find((e) => e.employeeId === unlockModalEmployeeId);
+    return `${name} ${selectedYear} – ${emp?.employeeName ?? "Mitarbeiter"} entsperren?`;
+  });
+
+  function openUnlockModal(employeeId: string, month: number) {
+    unlockModalEmployeeId = employeeId;
+    unlockModalMonth = month;
+    unlockReason = "";
+    unlockModalOpen = true;
+  }
+
+  function closeUnlockModal() {
+    unlockModalOpen = false;
+    unlockModalEmployeeId = null;
+    unlockModalMonth = null;
+    unlockReason = "";
+  }
+
+  async function onUnlockProceed() {
+    if (unlockModalEmployeeId == null || unlockModalMonth == null || !unlockReason.trim()) return;
+    const empId = unlockModalEmployeeId;
+    const month = unlockModalMonth;
+    const reason = unlockReason.trim();
+    closeUnlockModal();
+    await unlockEmployee(empId, month, reason);
+  }
+
   // Per-employee closing state
   let closingEmployee = $state<string | null>(null);
 
@@ -416,7 +453,7 @@
     }
   }
 
-  async function unlockEmployee(employeeId: string, month: number) {
+  async function unlockEmployee(employeeId: string, month: number, reason: string) {
     unlocking = employeeId;
     error = "";
     success = "";
@@ -425,6 +462,7 @@
         employeeId,
         year: selectedYear,
         month,
+        reason,
       });
       const monthName = monthStatuses.find((ms) => ms.month === month)?.name ?? `Monat ${month}`;
       success = `${monthName} ${selectedYear} für Mitarbeiter entsperrt`;
@@ -718,7 +756,7 @@
                                             class="btn btn-outline btn-sm"
                                             disabled={unlocking === emp.employeeId}
                                             onclick={() =>
-                                              unlockEmployee(emp.employeeId, expandedMonth!)}
+                                              openUnlockModal(emp.employeeId, expandedMonth!)}
                                           >
                                             {unlocking === emp.employeeId ? "..." : "Entsperren"}
                                           </button>
@@ -744,6 +782,45 @@
       {/if}
     {/snippet}
   </ToolPage>
+
+  <!-- ── Unlock reason modal (Revisionssicherheit: admin must enter why) ── -->
+  <Modal bind:open={unlockModalOpen} eyebrow="Monat entsperren" title={unlockModalTitle}>
+    <div class="callout warn" role="alert">
+      <div>
+        <b>Entsperrung erfordert einen Grund.</b>
+        <p>
+          Die Entsperrung hebt den Monatsabschluss auf und wird im Audit-Log festgehalten. Der Grund
+          wird dauerhaft gespeichert (Revisionssicherheit).
+        </p>
+      </div>
+    </div>
+    <div class="unlock-reason-field">
+      <label class="unlock-reason-label" for="unlock-reason-input">
+        Grund für die Entsperrung <span class="unlock-reason-required" aria-hidden="true">*</span>
+      </label>
+      <textarea
+        id="unlock-reason-input"
+        class="form-input unlock-reason-textarea"
+        bind:value={unlockReason}
+        placeholder="z. B. Fehlerhafte Buchung – Korrektur erforderlich"
+        rows="3"
+        maxlength="500"
+      ></textarea>
+    </div>
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeUnlockModal} disabled={unlocking != null}>
+        Abbrechen
+      </button>
+      <button
+        class="btn btn-primary"
+        onclick={onUnlockProceed}
+        disabled={unlocking != null || !unlockReason.trim()}
+      >
+        {#if unlocking != null}<Spinner />{/if}
+        Entsperren bestätigen
+      </button>
+    {/snippet}
+  </Modal>
 
   <!-- ── Confirm modal (v1.5 — uses Modal primitive) ─────── -->
   <Modal bind:open={confirmModalOpen} eyebrow="Endgültiger Monatsabschluss" title={confirmTitle}>
@@ -1077,6 +1154,33 @@
     font-size: 0.875rem;
     color: var(--text-muted);
     line-height: 1.5;
+  }
+
+  /* ─── Unlock reason modal ──────────────────────────────── */
+  .unlock-reason-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+    margin-top: var(--s-3);
+  }
+
+  .unlock-reason-label {
+    font-family: var(--font-sans);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .unlock-reason-required {
+    color: var(--bad, #e53e3e);
+    margin-left: 2px;
+  }
+
+  .unlock-reason-textarea {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   @media (max-width: 640px) {
