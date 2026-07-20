@@ -3,6 +3,7 @@
   import { page } from "$app/stores";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
@@ -162,6 +163,15 @@
   // the existing GET /employees/:id payload (Plan 02 exposed the field).
   let isExempt = $state(false);
   let teView = $state<"calendar" | "list">("calendar");
+
+  // ── Retro-window inline request state ─────────────────────────────────────
+  // Shown inside the modal when a 403 RETRO_WINDOW_EXCEEDED is returned.
+  let retroWindowExceeded = $state(false);
+  let retroWindowDays = $state(0);
+  let retroReason = $state("");
+  let retroReasonError = $state("");
+  let retroSubmitting = $state(false);
+  let retroSubmitError = $state("");
 
   // Modal
   let modalOpen = $state(false);
@@ -769,6 +779,11 @@
     modalOpen = false;
     editEntry = null;
     deleteConfirmId = "";
+    retroWindowExceeded = false;
+    retroWindowDays = 0;
+    retroReason = "";
+    retroReasonError = "";
+    retroSubmitError = "";
   }
 
   // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
@@ -778,6 +793,11 @@
     if (!modalOpen) {
       editEntry = null;
       deleteConfirmId = "";
+      retroWindowExceeded = false;
+      retroWindowDays = 0;
+      retroReason = "";
+      retroReasonError = "";
+      retroSubmitError = "";
     }
   });
 
@@ -816,8 +836,30 @@
       closeModal();
       await loadAll();
     } catch (e: unknown) {
-      if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
-        saveError = "Monat ist gesperrt";
+      const apiErr = e as {
+        status?: number;
+        data?: { error?: string; windowDays?: number; entryAgeInDays?: number };
+      };
+      if (apiErr?.status === 403 && apiErr?.data?.error === "RETRO_WINDOW_EXCEEDED") {
+        // Distinguish beyond-window 403 from month-locked 403.
+        // Show retro request form only for the entry owner (EMPLOYEE or MANAGER editing own entry).
+        const userRole = $authStore.user?.role;
+        const userEmpId = $authStore.user?.employeeId;
+        const entryEmpId = (editEntry as unknown as { employeeId?: string })?.employeeId ?? null;
+        const isOwnEntry = !entryEmpId || userEmpId === entryEmpId;
+        if (userRole === "EMPLOYEE" || (userRole === "MANAGER" && isOwnEntry)) {
+          retroWindowExceeded = true;
+          retroWindowDays = apiErr.data?.windowDays ?? 0;
+          retroReason = "";
+          retroReasonError = "";
+          retroSubmitError = "";
+        } else {
+          // Manager on-behalf: surface a neutral message, no retro form.
+          saveError = `Dieser Eintrag liegt außerhalb des Bearbeitungsfensters (${apiErr.data?.windowDays ?? "?"} Tage).`;
+        }
+      } else if (apiErr?.status === 403) {
+        saveError =
+          "Dieser Monat ist gesperrt. Bitte verwende 'Monat öffnen', um Korrekturen vorzunehmen.";
       } else {
         saveError = e instanceof Error ? e.message : "Fehler beim Speichern";
       }
@@ -832,11 +874,54 @@
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
-      if (e instanceof Error && "status" in e && (e as { status: number }).status === 403) {
-        error = "Monat ist gesperrt";
+      const apiErr = e as { status?: number; data?: { error?: string; windowDays?: number } };
+      if (apiErr?.status === 403 && apiErr?.data?.error === "RETRO_WINDOW_EXCEEDED") {
+        const userRole = $authStore.user?.role;
+        const userEmpId = $authStore.user?.employeeId;
+        // For delete we need to find the entry's employeeId from entries list
+        const matchEntry = entries.find((en) => en.id === id);
+        const entryEmpId = (matchEntry as unknown as { employeeId?: string })?.employeeId ?? null;
+        const isOwnEntry = !entryEmpId || userEmpId === entryEmpId;
+        if (userRole === "EMPLOYEE" || (userRole === "MANAGER" && isOwnEntry)) {
+          // Open the modal for that entry and show the retro form
+          if (matchEntry) openEdit(matchEntry);
+          retroWindowExceeded = true;
+          retroWindowDays = apiErr.data?.windowDays ?? 0;
+          retroReason = "";
+          retroReasonError = "";
+          retroSubmitError = "";
+        } else {
+          error = `Dieser Eintrag liegt außerhalb des Bearbeitungsfensters (${apiErr.data?.windowDays ?? "?"} Tage).`;
+        }
+      } else if (apiErr?.status === 403) {
+        error =
+          "Dieser Monat ist gesperrt. Bitte verwende 'Monat öffnen', um Korrekturen vorzunehmen.";
       } else {
         error = e instanceof Error ? e.message : "Fehler beim Löschen";
       }
+    }
+  }
+
+  // ── Submit retro entry request ─────────────────────────────────────────────
+  async function submitRetroRequest() {
+    if (!retroReason.trim()) {
+      retroReasonError = "Bitte gib eine Begründung an.";
+      return;
+    }
+    retroReasonError = "";
+    retroSubmitError = "";
+    retroSubmitting = true;
+    try {
+      await api.post("/retro-entry-requests", {
+        targetDate: formDate,
+        reason: retroReason,
+      });
+      closeModal();
+      toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
+    } catch (e: unknown) {
+      retroSubmitError = e instanceof Error ? e.message : "Fehler beim Einreichen des Antrags.";
+    } finally {
+      retroSubmitting = false;
     }
   }
 
@@ -1607,22 +1692,76 @@
           {/each}
         </div>
       {/if}
+
+      <!-- ── Beyond-window retro request form (Surface 2) ─────────────────── -->
+      <!-- Shown when save/delete returns 403 RETRO_WINDOW_EXCEEDED for own entries. -->
+      {#if retroWindowExceeded}
+        <div class="retro-request-section">
+          <div class="callout warning" role="alert">
+            <span class="ico" aria-hidden="true">⚠</span>
+            <p>
+              Dieser Eintrag liegt außerhalb des Bearbeitungsfensters ({retroWindowDays} Tage). Bitte
+              stelle einen Antrag auf rückwirkende Bearbeitung.
+            </p>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="retro-reason-field">Begründung (Pflichtfeld) *</label>
+            <textarea
+              id="retro-reason-field"
+              class="form-input"
+              rows="3"
+              bind:value={retroReason}
+              placeholder="Bitte beschreibe, warum der Eintrag nachträglich geändert werden muss."
+              disabled={retroSubmitting}
+            ></textarea>
+            {#if retroReasonError}
+              <p class="retro-field-error" role="alert">{retroReasonError}</p>
+            {/if}
+          </div>
+          {#if retroSubmitError}
+            <div class="callout error" role="alert">
+              <span class="ico">⚠</span>
+              <p>{retroSubmitError}</p>
+            </div>
+          {/if}
+          <div class="retro-actions">
+            <button
+              class="btn btn-ghost"
+              type="button"
+              onclick={closeModal}
+              disabled={retroSubmitting}
+            >
+              Abbrechen
+            </button>
+            <button
+              class="btn btn-primary"
+              type="button"
+              onclick={submitRetroRequest}
+              disabled={retroSubmitting}
+            >
+              {retroSubmitting ? "…" : "Antrag stellen"}
+            </button>
+          </div>
+        </div>
+      {/if}
     </div>
     {#snippet footer()}
-      <button
-        class="btn btn-ghost"
-        onclick={closeModal}
-        disabled={saving}
-        data-testid="time-entry-modal-cancel">Abbrechen</button
-      >
-      <button
-        class="btn btn-primary"
-        onclick={saveEntry}
-        disabled={saving}
-        data-testid="time-entry-modal-save"
-      >
-        {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
-      </button>
+      {#if !retroWindowExceeded}
+        <button
+          class="btn btn-ghost"
+          onclick={closeModal}
+          disabled={saving}
+          data-testid="time-entry-modal-cancel">Abbrechen</button
+        >
+        <button
+          class="btn btn-primary"
+          onclick={saveEntry}
+          disabled={saving}
+          data-testid="time-entry-modal-save"
+        >
+          {saving ? "Speichern…" : editEntry ? "Änderungen speichern" : "Eintrag hinzufügen"}
+        </button>
+      {/if}
     {/snippet}
   </Modal>
 </div>
@@ -1630,6 +1769,26 @@
 <!-- /data-testid="time-entries-page" -->
 
 <style>
+  /* ── Retro-window request section (Surface 2) ───────────────────────────── */
+  .retro-request-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .retro-field-error {
+    font-size: 12.5px;
+    color: var(--bad);
+    margin-top: 4px;
+  }
+  .retro-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
   /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
        same as .cal-monthbar — so header height matches /leave et al.) ──── */
   :global(.te-monthbar-card) {

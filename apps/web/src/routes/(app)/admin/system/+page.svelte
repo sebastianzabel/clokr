@@ -58,6 +58,9 @@
     // Plan 05 surfaces toggle here). Wenn true (Default): künftige Shifts auf neuen
     // BS-Tagen werden vom Generator weich-gelöscht; in der Vergangenheit nur markiert.
     vocationalSchoolAutoCleanupShifts?: boolean;
+    // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
+    closeMonthWithGapsAllowed?: boolean;
+    retroEntryWindowDays?: number;
   }
 
   interface StoreHourEntry {
@@ -201,6 +204,14 @@
   // Phase 67.2 (Plan 05) — Auto-Cleanup für Berufsschultag-Schichten Toggle
   let vocationalSchoolAutoCleanupShifts = $state(true);
   let vsAutoCleanupSaving = $state(false);
+
+  // Phase 76.29 — Monatsabschluss mit Lücken (toggle) + Rückwirkende Einträge (number)
+  let closeMonthWithGapsAllowed = $state(true);
+  let closeMonthWithGapsSaving = $state(false);
+  let retroEntryWindowDays = $state(10);
+  let retroWindowSaving = $state(false);
+  let retroWindowSaved = $state(false);
+  let retroWindowError = $state("");
 
   // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
   let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
@@ -405,6 +416,9 @@
 
       // Phase 67.2 (Plan 05) — load tenant-wide BS-Shift-Auto-Cleanup toggle
       vocationalSchoolAutoCleanupShifts = cfg.vocationalSchoolAutoCleanupShifts ?? true;
+      // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
+      closeMonthWithGapsAllowed = cfg.closeMonthWithGapsAllowed ?? true;
+      retroEntryWindowDays = cfg.retroEntryWindowDays ?? 10;
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
       defaultCoreStart = cfg.defaultCoreStart ?? "";
       defaultCoreEnd = cfg.defaultCoreEnd ?? "";
@@ -692,6 +706,55 @@
       // revert: state unchanged — toggle bounces back since we never wrote the new value
     } finally {
       vsAutoCleanupSaving = false;
+    }
+  }
+
+  // Phase 76.29 — Monatsabschluss mit Lücken toggle
+  async function saveCloseMonthWithGaps() {
+    if (!_gOtherFields) return;
+    closeMonthWithGapsSaving = true;
+    const newValue = !closeMonthWithGapsAllowed;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        closeMonthWithGapsAllowed: newValue,
+      });
+      closeMonthWithGapsAllowed = newValue;
+      toasts.success("Einstellung gespeichert.");
+    } catch {
+      // revert: state unchanged — toggle bounces back since we never wrote
+    } finally {
+      closeMonthWithGapsSaving = false;
+    }
+  }
+
+  // Phase 76.29 — Rückwirkende Einträge Selbstbearbeitungsfenster (onblur)
+  async function saveRetroEntryWindowDays() {
+    if (!_gOtherFields) return;
+    retroWindowError = "";
+    retroWindowSaved = false;
+    const val = Math.trunc(retroEntryWindowDays);
+    if (!Number.isFinite(val) || val < 1 || val > 90) {
+      retroWindowError = "Bitte gib einen Wert zwischen 1 und 90 Tagen ein.";
+      return;
+    }
+    retroWindowSaving = true;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        retroEntryWindowDays: val,
+      });
+      retroEntryWindowDays = val;
+      retroWindowSaved = true;
+      setTimeout(() => (retroWindowSaved = false), 2500);
+    } catch (e: unknown) {
+      retroWindowError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      retroWindowSaving = false;
     }
   }
 
@@ -1492,6 +1555,69 @@
               Leer lassen für keine Tenant-Defaults (Gleitzeit-MA starten ohne Kernzeit-Vorauswahl).
             </p>
           </div>
+        </Section>
+
+        <!-- ── Monatsabschluss mit Lücken (Phase 76.29 CFG-01) ───────────────── -->
+        <Section
+          title="Monatsabschluss mit Lücken"
+          sub="Erlaubt den Abschluss von Monaten mit fehlenden Zeiteinträgen"
+        >
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">Abschluss trotz fehlender Einträge erlauben</span>
+              <p class="form-hint text-muted">
+                Wenn aktiviert, können Monate auch dann abgeschlossen werden, wenn Arbeitstage ohne
+                Zeiterfassung vorliegen. Fehlende Tage werden als 0h gegen das volle Soll gewertet.
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="Monatsabschluss mit Lücken erlauben"
+                checked={closeMonthWithGapsAllowed}
+                onchange={saveCloseMonthWithGaps}
+                disabled={closeMonthWithGapsSaving}
+                data-testid="admin-system-arbeitszeit-closeMonthWithGapsAllowed"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+        </Section>
+
+        <!-- ── Rückwirkende Einträge — Selbstbearbeitungsfenster (Phase 76.29) ── -->
+        <Section
+          title="Rückwirkende Einträge"
+          sub="Frist für eigenständige Bearbeitung vergangener Zeiteinträge"
+        >
+          {#if retroWindowError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{retroWindowError}</span>
+            </div>
+          {/if}
+          <div class="form-group">
+            <label class="form-label" for="sys-retro-window">Selbstbearbeitungsfenster (Tage)</label
+            >
+            <input
+              id="sys-retro-window"
+              type="number"
+              min="1"
+              max="90"
+              step="1"
+              bind:value={retroEntryWindowDays}
+              onblur={saveRetroEntryWindowDays}
+              class="form-input modal-input-sm"
+              disabled={retroWindowSaving}
+              data-testid="admin-system-arbeitszeit-retroEntryWindowDays"
+            />
+            <p class="form-hint text-muted">
+              Mitarbeiter können Einträge bis zu N Tage rückwirkend selbst bearbeiten. Ältere
+              Einträge erfordern einen Antrag mit Genehmigung durch einen Manager. Gesetzlicher
+              Referenzwert (ArbZG-Referentenentwurf 2023): 7 Tage. Standard: 10 Tage.
+            </p>
+          </div>
+          {#if retroWindowSaved}
+            <span class="saved-hint">✓ Gespeichert</span>
+          {/if}
         </Section>
       {:else if currentTab === "sicherheit"}
         <!-- ── Sicherheit / 2FA ─────────────────────────────────────────────── -->
