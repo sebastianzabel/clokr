@@ -22,6 +22,8 @@ const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   MISSING_ENTRY: "emailOnMissingEntries",
   CLOCK_OUT_REMINDER: "emailOnClockOutReminder",
   MONTH_CLOSED: "emailOnMonthClose",
+  GAP_WARNING_EMPLOYEE: "emailOnMissingEntries",
+  GAP_WARNING_MANAGER: "emailOnMissingEntries",
 };
 
 declare module "fastify" {
