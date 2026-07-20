@@ -231,6 +231,16 @@ function buildHolidaySet(year: number): Set<string> {
   return new Set<string>(getHolidays(year, STATE_MAP["NIEDERSACHSEN"] ?? "NI").map((h) => h.date));
 }
 
+/**
+ * Filter a holiday set to only those dates within [fromStr, toStr] (inclusive, YYYY-MM-DD).
+ * The live path in updateOvertimeAccount filters per-month before passing to closeEmployeeMonth()
+ * (time-entries.ts lines 1830-1834). References must do the same — otherwise all annual
+ * holidays are subtracted from every month's expected, inflating the reference saldo.
+ */
+function filterHolidaySet(holidays: Set<string>, fromStr: string, toStr: string): Set<string> {
+  return new Set([...holidays].filter((d) => d >= fromStr && d <= toStr));
+}
+
 // All Mon–Fri dates in [fromStr, toStr] as "YYYY-MM-DD"
 function monFriDates(fromStr: string, toStr: string): string[] {
   const out: string[] = [];
@@ -874,6 +884,14 @@ describe("SNAP-03-B2 — parity-by-construction: FIXED_SCHEDULE live==Σcloses (
     const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
     const emp = await app.prisma.employee.findUnique({ where: { id: empId } });
 
+    // B2 fix: filter holidays to each month's range (matching the live path at
+    // time-entries.ts:1830-1834 which builds a per-month monthHolidaySet before
+    // calling closeEmployeeMonth). Passing the full-year set subtracts ALL annual
+    // holidays from every month's expected — a bleed that inflates the reference.
+    const juneFirstDayStr = dateStrInTz(juneFirstDay, TZ);
+    const juneLastDayStr = dateStrInTz(juneLastDay, TZ);
+    const juneHolidays = filterHolidaySet(buildHolidaySet(2026), juneFirstDayStr, juneLastDayStr);
+
     const juneResult = closeEmployeeMonth({
       employeeId: empId,
       monthStart: juneStart,
@@ -897,24 +915,38 @@ describe("SNAP-03-B2 — parity-by-construction: FIXED_SCHEDULE live==Σcloses (
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: buildHolidaySet(2026),
+      holidayDateStrings: juneHolidays,
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
-    // July partial reference
-    const { start: julStart, end: julEnd } = monthRangeUtc(2026, 7, TZ);
-    const { firstDay: julFirstDay, lastDay: julLastDay } = monthDayBounds(julStart, julEnd, TZ);
+    // July partial reference: match the live path's partial-window flat calc.
+    // The live path (time-entries.ts:2071+) computes the current partial month inline
+    // from currentMonthOpenStart to effectiveEnd — NOT a full-month closeEmployeeMonth.
+    // LIVE_NOW = 2026-07-19 with no Jul-19 entries → effectiveEnd = 2026-07-18.
+    // We replicate by calling closeEmployeeMonth with monthEnd/monthLastDay = Jul 18,
+    // which causes calcExpectedMinutesTz to cover only Jul 1–18 (14 Mon–Fri workdays).
+    const { start: julStart } = monthRangeUtc(2026, 7, TZ);
+    const { firstDay: julFirstDay } = monthDayBounds(julStart, julStart, TZ);
+    // effectiveEnd for the test fixture: LIVE_NOW=Jul-19, no Jul-19 entries → Jul-18.
+    const julPartialLastDay = new Date("2026-07-18T00:00:00Z");
     const julEntries = await app.prisma.timeEntry.findMany({
-      where: { employeeId: empId, deletedAt: null, date: { gte: julFirstDay, lte: julLastDay } },
+      where: {
+        employeeId: empId,
+        deletedAt: null,
+        date: { gte: julFirstDay, lte: julPartialLastDay },
+      },
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
     });
+    const julFirstDayStr = dateStrInTz(julFirstDay, TZ);
+    const julPartialLastDayStr = dateStrInTz(julPartialLastDay, TZ);
+    const julHolidays = filterHolidaySet(buildHolidaySet(2026), julFirstDayStr, julPartialLastDayStr);
 
     const julResult = closeEmployeeMonth({
       employeeId: empId,
       monthStart: julStart,
-      monthEnd: julEnd,
+      monthEnd: julPartialLastDay,
       monthFirstDay: julFirstDay,
-      monthLastDay: julLastDay,
+      monthLastDay: julPartialLastDay,
       tz: TZ,
       carryOverIn: juneResult.effectiveCarryOverOut,
       schedule: schedule as Record<string, unknown>,
@@ -932,7 +964,7 @@ describe("SNAP-03-B2 — parity-by-construction: FIXED_SCHEDULE live==Σcloses (
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: buildHolidaySet(2026),
+      holidayDateStrings: julHolidays,
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
@@ -982,8 +1014,12 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
     tenantId = fixture.tenantId;
     empId = fixture.empId;
 
-    // May 2026 snapshot: carryOver = 0
-    await seedMonthlySnapshot(app, empId, 2026, 5, 0, 6000, 7200, -1200);
+    // May 2026 snapshot: carryOver = -1200 (= carryOverIn(0) + balanceMinutes(-1200)).
+    // The production convention: snapshot.carryOver = carryOverIn + balanceMinutes.
+    // The live path reads snapshot.carryOver as snapshotCarryOver (time-entries.ts:1588).
+    // Seeding carryOver=0 with balanceMinutes=-1200 is self-inconsistent and causes the
+    // reference (which correctly uses -1200) to diverge from the live path (which reads 0).
+    await seedMonthlySnapshot(app, empId, 2026, 5, -1200, 6000, 7200, -1200);
 
     // June: 10 entries × 600 min = 6000 min (vs 120h budget = 7200 min → −1200)
     for (const d of JUNE_WORKDAYS.slice(0, 10)) {
@@ -1021,6 +1057,14 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
     const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
     const emp = await app.prisma.employee.findUnique({ where: { id: empId } });
 
+    // B3 fix (holiday bleed): filter holidays to June range only, matching the live path
+    // (time-entries.ts:1830-1834). MONTHLY_HOURS ignores holidays in its balance formula,
+    // but correctness requires the right set for the non-MONTHLY_HOURS path in the shared
+    // closeEmployeeMonth core.
+    const juneB3FirstDayStr = dateStrInTz(juneFirstDay, TZ);
+    const juneB3LastDayStr = dateStrInTz(juneLastDay, TZ);
+    const juneB3Holidays = filterHolidaySet(buildHolidaySet(2026), juneB3FirstDayStr, juneB3LastDayStr);
+
     const juneResult = closeEmployeeMonth({
       employeeId: empId,
       monthStart: juneStart,
@@ -1028,7 +1072,7 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
       monthFirstDay: juneFirstDay,
       monthLastDay: juneLastDay,
       tz: TZ,
-      carryOverIn: -1200, // May snapshot carryOver
+      carryOverIn: -1200, // May snapshot carryOver (corrected seed: carryOverIn(0) + balance(-1200))
       schedule: schedule as Record<string, unknown>,
       hireDate: emp!.hireDate,
       exitDate: null,
@@ -1044,23 +1088,42 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: buildHolidaySet(2026),
+      holidayDateStrings: juneB3Holidays,
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
-    const { start: julStart, end: julEnd } = monthRangeUtc(2026, 7, TZ);
-    const { firstDay: julFirstDay, lastDay: julLastDay } = monthDayBounds(julStart, julEnd, TZ);
+    // B3 fix (partial-month mismatch): July is the current partial month.
+    // The live path (time-entries.ts:2071+) computes July inline from currentMonthOpenStart
+    // to effectiveEnd = 2026-07-18 (LIVE_NOW=Jul-19, no Jul-19 entries).
+    // Using closeEmployeeMonth(full July) prorates over 31 days but entries only cover
+    // 8 days (Jul 1–8), producing a large negative balance that diverges from the live path.
+    // Fix: call closeEmployeeMonth with monthEnd/monthLastDay = Jul 18 (= effectiveEnd),
+    // matching the partial-window flat calc the live path uses.
+    const { start: julStart } = monthRangeUtc(2026, 7, TZ);
+    const { firstDay: julFirstDay } = monthDayBounds(julStart, julStart, TZ);
+    const julB3PartialLastDay = new Date("2026-07-18T00:00:00Z");
     const julEntries = await app.prisma.timeEntry.findMany({
-      where: { employeeId: empId, deletedAt: null, date: { gte: julFirstDay, lte: julLastDay } },
+      where: {
+        employeeId: empId,
+        deletedAt: null,
+        date: { gte: julFirstDay, lte: julB3PartialLastDay },
+      },
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
     });
+    const julB3FirstDayStr = dateStrInTz(julFirstDay, TZ);
+    const julB3PartialLastDayStr = dateStrInTz(julB3PartialLastDay, TZ);
+    const julB3Holidays = filterHolidaySet(
+      buildHolidaySet(2026),
+      julB3FirstDayStr,
+      julB3PartialLastDayStr,
+    );
 
     const julResult = closeEmployeeMonth({
       employeeId: empId,
       monthStart: julStart,
-      monthEnd: julEnd,
+      monthEnd: julB3PartialLastDay,
       monthFirstDay: julFirstDay,
-      monthLastDay: julLastDay,
+      monthLastDay: julB3PartialLastDay,
       tz: TZ,
       carryOverIn: juneResult.effectiveCarryOverOut,
       schedule: schedule as Record<string, unknown>,
@@ -1078,10 +1141,12 @@ describe("SNAP-03-B3 — parity-by-construction: MONTHLY_HOURS live==Σcloses (<
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: buildHolidaySet(2026),
+      holidayDateStrings: julB3Holidays,
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
+    // referenceTotal: May snapshot carryOver (-1200) + June balance + July partial balance.
+    // With corrected seed and partial July: expected ≈ -1200 + (-1200) + (4800 − ⌊7200×18/31⌋).
     const referenceTotal = -1200 + juneResult.balanceMinutes + julResult.balanceMinutes;
 
     // Post-SNAP-03 assertion: parity within <5 min.
