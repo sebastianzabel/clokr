@@ -64,6 +64,7 @@ const manualEntrySchema = z.object({
   note: z.string().optional().nullable(),
   source: z.nativeEnum(TimeEntrySource).default("MANUAL"),
   breaks: z.array(breakSlotSchema).optional(),
+  grantId: z.string().uuid().optional(), // Phase 76.29 Plan 03: pre-approved RetroEntryRequest id
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -992,12 +993,37 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
       }
 
+      // Phase 76.29 Plan 03 — RETRO grant lookup.
+      // If the caller supplies a grantId, verify there is an APPROVED RetroEntryRequest
+      // for this (employeeId, targetDate) before calling validateTimeEntryInvariants so
+      // the retro-window guard is skipped for a pre-approved grant.
+      // The grant is consumed atomically inside the $transaction below (Task 2).
+      let resolvedGrantId: string | undefined;
+      if (body.grantId) {
+        const grant = await app.prisma.retroEntryRequest.findFirst({
+          where: {
+            id: body.grantId,
+            employeeId,
+            targetDate: new Date(body.date),
+            status: "APPROVED",
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!grant) {
+          return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        resolvedGrantId = grant.id;
+      }
+
       // Shared invariants (D-01/D-03): one-entry-per-day, month-lock via SaldoSnapshot,
       // retro-window guard (RETRO-01), and overlap — extracted into validateTimeEntryInvariants
       // so the CSV import and PUT enforce the identical guards.
       // Month-lock → 403, RETRO_WINDOW_EXCEEDED → 403 with numeric body, everything else → 409.
       // isCorrectionByManager: manager creating an entry for a DIFFERENT employee is an inline
       // correction and is exempt from the retro-window guard (same logic as PUT).
+      // Lock-first ordering is preserved: validateTimeEntryInvariants checks the month-lock
+      // BEFORE the retro-window guard, so an approved grant for a locked month still fails.
       const postIsCorrectionByManager = isManager && employeeId !== user.employeeId;
       const invariantError = await validateTimeEntryInvariants(app, {
         employeeId,
@@ -1008,6 +1034,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         tz,
         tenantId: user.tenantId,
         isCorrectionByManager: postIsCorrectionByManager,
+        grantId: resolvedGrantId,
       });
       if (invariantError) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
@@ -1059,23 +1086,73 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgPost.message });
       }
 
+      // Phase 76.29 Plan 03 — race-safe single-use grant consumption.
+      // When a resolvedGrantId is present, the TimeEntry create and the grant flip
+      // run inside one $transaction. The conditional updateMany (WHERE status=APPROVED)
+      // ensures exactly one concurrent write wins — if count !== 1 the tx rolls back.
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
       try {
-        entry = await app.prisma.timeEntry.create({
-          data: {
-            employeeId,
-            date: new Date(body.date),
-            startTime: newStart,
-            endTime: newEnd,
-            breakMinutes: finalBreakMinutes,
-            note: body.note,
-            source: "MANUAL",
-            createdBy: user.sub,
-            isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
-            invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
-          },
-        });
+        if (resolvedGrantId) {
+          // Atomic: create entry + flip grant APPROVED → USED in one transaction.
+          const grantIdForTx = resolvedGrantId;
+          const result = await app.prisma.$transaction(async (tx) => {
+            const created = await tx.timeEntry.create({
+              data: {
+                employeeId,
+                date: new Date(body.date),
+                startTime: newStart,
+                endTime: newEnd,
+                breakMinutes: finalBreakMinutes,
+                note: body.note,
+                source: "CORRECTION", // grant-backed write is always a correction
+                createdBy: user.sub,
+                isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+                invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
+              },
+            });
+
+            // Conditional flip: only succeeds if still APPROVED (single-use guard).
+            const consumed = await tx.retroEntryRequest.updateMany({
+              where: { id: grantIdForTx, status: "APPROVED" },
+              data: { status: "USED" },
+            });
+            if (consumed.count !== 1) {
+              throw new Error("GRANT_ALREADY_USED");
+            }
+
+            await app.audit({
+              userId: user.sub,
+              action: "RETRO_ENTRY_APPROVED_USED",
+              entity: "RetroEntryRequest",
+              entityId: grantIdForTx,
+              newValue: { timeEntryId: created.id, employeeId, date: body.date },
+              tx,
+            });
+
+            return created;
+          });
+          entry = result;
+        } else {
+          entry = await app.prisma.timeEntry.create({
+            data: {
+              employeeId,
+              date: new Date(body.date),
+              startTime: newStart,
+              endTime: newEnd,
+              breakMinutes: finalBreakMinutes,
+              note: body.note,
+              source: "MANUAL",
+              createdBy: user.sub,
+              isInvalid: manualLeave?.status === "CANCELLATION_REQUESTED",
+              invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
+            },
+          });
+        }
       } catch (err: unknown) {
+        // Grant already consumed (concurrent race) → 403
+        if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
+          return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
         // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
         // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
         if (
