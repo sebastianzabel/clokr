@@ -190,6 +190,10 @@ model TenantConfig {
   //   STRICT:             shift time must be within [open, close]
   //   OFF:                no store-hours check
   shiftStoreHoursMode            String   @default("DAY_ONLY")
+  // Phase 76.29 CFG-01 — retro self-service window (days back from today an employee may submit a retro request)
+  retroEntryWindowDays      Int     @default(10)
+  // Phase 76.29 CFG-01 — allows cron/manual month-close to proceed when open gaps exist (gap-warning only, not blocking)
+  closeMonthWithGapsAllowed Boolean @default(true)
   createdAt                      DateTime @default(now()) @db.Timestamptz
   updatedAt                      DateTime @updatedAt @db.Timestamptz
 
@@ -314,6 +318,7 @@ model Employee {
   vocationalSchoolPatterns EmployeeVocationalSchoolPattern[]
   availabilities           EmployeeAvailability[]
   presenceDevices          PresenceDevice[]
+  retroEntryRequests       RetroEntryRequest[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -588,6 +593,30 @@ model LeaveRequest {
 }
 
 // ─────────────────────────────────────────────
+// RETRO-EINTRAG-ANFRAGEN (Phase 76.29)
+// ─────────────────────────────────────────────
+
+model RetroEntryRequest {
+  id         String           @id @default(uuid())
+  employeeId String
+  targetDate DateTime         @db.Date        // the entry date the grant covers
+  reason     String                           // mandatory (Revisionssicherheit)
+  status     RetroEntryStatus @default(PENDING)
+  reviewedBy String?                          // approver userId
+  reviewedAt DateTime?        @db.Timestamptz
+  reviewNote String?                          // mandatory on approve/reject (enforced at route Zod, not DB)
+  deletedAt  DateTime?        @db.Timestamptz // soft-delete convention
+  createdAt  DateTime         @default(now()) @db.Timestamptz
+  updatedAt  DateTime         @updatedAt @db.Timestamptz
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([employeeId])
+  @@index([employeeId, targetDate])
+  @@index([employeeId, status])
+}
+
+// ─────────────────────────────────────────────
 // ABWESENHEITEN
 // ─────────────────────────────────────────────
 
@@ -825,6 +854,14 @@ enum LeaveRequestStatus {
   REJECTED
   CANCELLED
   CANCELLATION_REQUESTED
+}
+
+// Phase 76.29 — retro self-service approval flow status
+enum RetroEntryStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  USED
 }
 
 enum AbsenceType {
