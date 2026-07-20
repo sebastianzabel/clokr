@@ -300,19 +300,35 @@ export async function checkArbZG(
     return sum + slotMin - Number(e.breakMinutes ?? 0);
   }, 0);
 
-  // Phase 63 D-05/D-08 — Add BS minutes for every VOCATIONAL_SCHOOL day in this
-  // ISO week. countBsDaysInIsoWeek already honors `deletedAt: null`. We multiply
-  // by the tenant's daily BS minutes; this MATCHES the daily contribution used
-  // in §3 mixed-day. For block-weeks the per-day value already represents the
-  // capped distribution from getVocationalSchoolMinutesForDate's semantics
-  // (weekly / N) — but here we use bsDailyMin × N which would OVER-count.
-  // Resolution: when the week is a block (N ≥ 5), use the weekly cap directly;
-  // otherwise use N × daily.
-  const bsDaysInWeek = await countBsDaysInIsoWeek(prisma, employeeId, changedDate);
-  const bsMinutesThisWeek =
-    bsDaysInWeek >= 5
-      ? (tenantConfig?.vocationalSchoolBlockMinutesPerWeek ?? bsDailyMin * bsDaysInWeek)
-      : bsDaysInWeek * bsDailyMin;
+  // Phase 76.31-05 (D-08 FULL) — sum the slot-resolved BS minutes for every
+  // VOCATIONAL_SCHOOL day in this ISO week, instead of a flat bsDailyMin × N (or
+  // the weekly-cap shortcut). getVocationalSchoolMinutesForDate returns the same
+  // per-date amount used by the §3 daily check AND the saldo math — so a LONG day
+  // counts 570 min (9.5h), a block week auto-caps via blockWeekMinutes/N, and the
+  // 48h weekly cap reflects the real credited load (RESEARCH R5). Soft-delete-aware.
+  const bsWeekRows = await prisma.absence.findMany({
+    where: {
+      employeeId,
+      deletedAt: null, // CLAUDE.md soft-delete rule
+      type: "VOCATIONAL_SCHOOL",
+      startDate: { gte: monday, lte: sunday },
+    },
+    select: { startDate: true },
+    orderBy: { startDate: "asc" },
+  });
+  const bsWeekDateStrs = Array.from(
+    new Set(bsWeekRows.map((r) => r.startDate.toISOString().slice(0, 10))),
+  );
+  let bsMinutesThisWeek = 0;
+  for (const ds of bsWeekDateStrs) {
+    bsMinutesThisWeek += await getVocationalSchoolMinutesForDate(
+      prisma,
+      employeeId,
+      new Date(`${ds}T00:00:00.000Z`),
+      tenantConfig,
+      { schedule, scheduleType },
+    );
+  }
   const weeklyTotalMin = weeklyNetMin + bsMinutesThisWeek;
 
   if (weeklyTotalMin > 48 * 60) {
