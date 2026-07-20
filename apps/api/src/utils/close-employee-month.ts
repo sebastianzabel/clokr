@@ -364,7 +364,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   //           + bsExpectedMinutes.
   //   No rosterProration (close = full month, not live open month).
   //   expectedMinutes = C_net (stored in SaldoSnapshot.expectedMinutes — not R, D-07).
-  //   shiftBalanceOverride = balanceDelta + bsWorkedMinutes.
+  //   shiftBalanceOverride = balanceDelta + (bsWorkedMinutes − bsExpectedMinutes)  (Phase 76.31 (A):
+  //     BS day net-neutral — worked==expected, contributes 0 outside the §615 floors).
   //
   // Non-SHIFT (FIXED/FLEXTIME/MONTHLY_HOURS):
   //   netExpected = calcExpectedMinutesTz − holidayMinutes − leaveMinutes − absenceMinutes.
@@ -441,11 +442,11 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     // BBiG §15 — VOCATIONAL_SCHOOL credit folded in via bsExpectedMinutes, not the loop above).
     const cNet = Math.max(0, contractSoll - sbLeaveCredit - sbAbsenceCredit) + bsExpectedMinutes;
 
-    // Byte-identical to overtime.ts:1068–1078 and auto-close-month.ts:464–472:
-    // Pass W = workedMinutes (entries only, WITHOUT bsWorkedMinutes) into calcShiftBasedSaldo,
-    // then add bsWorkedMinutes POST-HOC to balanceDelta.
-    // Any BS-doubling correctness change (e.g. balance-neutrality) is out of scope for this
-    // extraction (tracked separately in 76.26-BS-DOUBLING-FOLLOWUP.md).
+    // Pass W = workedMinutes (entries only, WITHOUT bsWorkedMinutes) into calcShiftBasedSaldo.
+    // bsExpectedMinutes is folded into C_net above (sets expectedMinutes = C_net so the stored
+    // snapshot worked/expected pair stays balanced); the net (bsWorked − bsExpected) BS-day
+    // contribution is applied to shiftBalanceOverride below, OUTSIDE the §615 max(0,…) floors,
+    // so a BS day nets to 0 for SHIFT_BASED (Phase 76.31 (A) neutrality).
     const sbSaldo = calcShiftBasedSaldo({
       contractSollMinutes: cNet,
       rosterMinutes: shiftMinutes,
@@ -454,10 +455,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     });
 
     expectedMinutes = sbSaldo.expectedMinutes; // = C_net (stored in SaldoSnapshot — not R, D-07)
-    // shiftBalanceOverride = D-01 two-clause balance + bsWorkedMinutes (worked-side BS credit).
-    // bsExpectedMinutes is already folded into C_net above — byte-identical to overtime.ts:1078
-    // and auto-close-month.ts:472.
-    shiftBalanceOverride = sbSaldo.balanceDelta + bsWorkedMinutes;
+    // Phase 76.31 (A): neutrality — contribute (bsWorked − bsExpected) OUTSIDE the max(0,…)
+    // §615 floors so a BS day nets to 0 for SHIFT_BASED (equal for non-MONTHLY_HOURS;
+    // = bsWorked for MONTHLY_HOURS where bsExpected is forced 0 per D-04).
+    shiftBalanceOverride = sbSaldo.balanceDelta + (bsWorkedMinutes - bsExpectedMinutes);
 
     // leaveMinutes / absenceMinutes / holidayMinutes stay 0:
     // Credits are folded into C_net. Leaving them 0 prevents double-deduction at

@@ -2529,8 +2529,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   // For non-SHIFT types / complete prior months: BS-doubling is handled inside
   // closeEmployeeMonth() in the loop above. For non-SHIFT current partial month:
   // BS-doubling is handled via partialBsWorkedMinutes in the else-branch above.
-  // For SHIFT_BASED: the existing inline BS logic is preserved (RESEARCH §2.7 — live-path
-  // bsExpectedMinutes gap preserved, do NOT fix BS-doubling here; see 76.26-BS-DOUBLING-FOLLOWUP.md).
+  // For SHIFT_BASED: Phase 76.31 (A) closes the former live-path gap — bsExpectedMinutes is now
+  // accumulated equally with bsWorkedMinutes (non-MONTHLY_HOURS Soll-bearing) so a BS day nets to 0
+  // (RESEARCH §2.7 gap now CLOSED; formerly tracked in 76.26-BS-DOUBLING-FOLLOWUP.md).
   const bsAbsencesUpdate =
     scheduleType === "SHIFT_BASED"
       ? await app.prisma.absence.findMany({
@@ -2544,7 +2545,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         })
       : ([] as Awaited<ReturnType<typeof app.prisma.absence.findMany>>);
   let bsWorkedMinutes = 0;
-  const bsExpectedMinutes = 0;
+  let bsExpectedMinutes = 0;
   if (scheduleType === "SHIFT_BASED") {
     for (const ab of bsAbsencesUpdate) {
       const start = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
@@ -2558,8 +2559,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
           tenantConfig,
         );
         bsWorkedMinutes += bsMin;
-        // RESEARCH §2.7: SHIFT_BASED live path does NOT add bsExpectedMinutes (existing gap,
-        // preserved intentionally — see 76.26-BS-DOUBLING-FOLLOWUP.md).
+        // Phase 76.31 (A): book the BS day equally on the expected side (SHIFT_BASED here is
+        // always non-MONTHLY_HOURS → Soll-bearing, so bsExpected == bsWorked). Nets to 0 below.
+        bsExpectedMinutes += bsMin;
         cur.setUTCDate(cur.getUTCDate() + 1);
       }
     }
@@ -2572,11 +2574,14 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   //   - SHIFT_BASED current month: added here via shiftBalanceOverride + bsWorkedMinutes
   //
   // For SHIFT_BASED: shiftBalanceOverride = curSaldo.balanceDelta (D-01 two-clause formula
-  //   for the current partial month, roster-prorated). bsWorkedMinutes is for the SHIFT_BASED
-  //   current month only (existing live-path gap: bsExpectedMinutes skipped — RESEARCH §2.7).
+  //   for the current partial month, roster-prorated). Phase 76.31 (A): the BS day is booked
+  //   equally on worked AND expected → net (bsWorkedMinutes − bsExpectedMinutes) = 0 for the
+  //   SHIFT_BASED current month (RESEARCH §2.7 gap now CLOSED).
   // Non-SHIFT: partial balance already folded into openPeriodBalance in the else-branch above.
   const currentMonthBalance =
-    shiftBalanceOverride !== null ? shiftBalanceOverride + bsWorkedMinutes : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
+    shiftBalanceOverride !== null
+      ? shiftBalanceOverride + (bsWorkedMinutes - bsExpectedMinutes)
+      : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
 
   openPeriodBalance += currentMonthBalance;
 

@@ -824,12 +824,20 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
 
     const result = closeEmployeeMonth(input);
 
+    // Baseline: SAME input WITHOUT the BS absence, to isolate the BS day's own contribution.
+    const baseline = closeEmployeeMonth({ ...input, absences: [] });
+
     // Phase 76.31 (A) — SHIFT_BASED Berufsschultag is NET-NEUTRAL: the BS minutes are
-    // booked equally on worked AND expected → balanceMinutes 0. (Was the latent +480
-    // phantom-overtime bug documented in 76.26-BS-DOUBLING-FOLLOWUP.md, now fixed.)
-    expect(result.workedMinutes).toBe(480); // bsWorkedMinutes
-    expect(result.expectedMinutes).toBe(480); // bsExpectedMinutes folded into C_net
-    expect(result.balanceMinutes).toBe(0); // (bsWorked 480) - (bsExpected 480) = 0
+    // booked EQUALLY on worked AND expected → the BS day adds 0 to the balance. (Was the
+    // latent +480 phantom-overtime bug documented in 76.26-BS-DOUBLING-FOLLOWUP.md, now fixed.)
+    //
+    // NOTE: expectedMinutes = contract Ø-Methode Soll (C_net, nonzero for SHIFT_BASED) + bsExpected.
+    // With roster R=0 and no entries W=0, undertime = max(0, R−W) = 0, so the balance is 0 with OR
+    // without the BS day — the BS day itself contributes exactly 0 (bsWorked 480 − bsExpected 480).
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + 480); // +bsWorkedMinutes
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 480); // +bsExpectedMinutes (into C_net)
+    expect(result.balanceMinutes).toBe(0); // BS day nets to 0
+    expect(result.balanceMinutes).toBe(baseline.balanceMinutes); // BS day changed the balance by 0
   }, 30_000);
 
   it("case 4b: SHIFT_BASED neutrality — N BS days, no work → balance 0, worked==expected", async () => {
@@ -928,8 +936,18 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
 
     const result = closeEmployeeMonth(input);
 
+    // Baseline WITHOUT the 3 BS absences isolates their combined contribution.
+    const baseline = closeEmployeeMonth({ ...input, absences: [] });
+
+    // 3 BS days × 480 = 1440 min booked equally on worked AND expected → net 0 to the balance.
     expect(result.balanceMinutes).toBe(0);
-    expect(result.workedMinutes).toBe(result.expectedMinutes); // 3*480 both sides
+    expect(result.balanceMinutes).toBe(baseline.balanceMinutes); // BS days changed the balance by 0
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + 1440); // +3×bsWorked
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 1440); // +3×bsExpected
+    // BS raised worked and expected by the SAME amount (true neutrality):
+    expect(result.workedMinutes - baseline.workedMinutes).toBe(
+      result.expectedMinutes - baseline.expectedMinutes,
+    );
 
     await cleanupTestData(app, tenant.id);
   }, 30_000);
