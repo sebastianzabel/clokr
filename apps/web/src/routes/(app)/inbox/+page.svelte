@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
+  import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
@@ -53,6 +54,24 @@
 
   type TabKey = "open" | "approved" | "rejected" | "all";
 
+  // ── RetroEntryRequest types ──────────────────────────────────────────────
+  type RetroStatus = "PENDING" | "APPROVED" | "REJECTED" | "USED";
+
+  interface RetroEntryRequest {
+    id: string;
+    employeeId: string;
+    employee: { firstName: string; lastName: string };
+    targetDate: string; // YYYY-MM-DD
+    reason: string;
+    status: RetroStatus;
+    reviewNote: string | null;
+    windowDays?: number;
+    entryAgeInDays?: number;
+    createdAt: string;
+  }
+
+  type RetroTabKey = "open" | "approved" | "rejected" | "all";
+
   const TYPE_LABELS: Record<TypeCode, string> = {
     VACATION: "Urlaub",
     OVERTIME_COMP: "Überstundenausgleich",
@@ -85,6 +104,18 @@
   let reviewSaving = $state(false);
   let reviewError = $state("");
 
+  // ── RetroEntryRequest state ──────────────────────────────────────────────
+  let retroRequests: RetroEntryRequest[] = $state([]);
+  let retroLoading = $state(true);
+  let retroTab: RetroTabKey = $state("open");
+
+  // Retro detail/review modal
+  let retroDetail: RetroEntryRequest | null = $state(null);
+  let retroDetailOpen = $state(false);
+  let retroReviewNote = $state("");
+  let retroReviewSaving = $state(false);
+  let retroReviewError = $state("");
+
   // ── Role gate ────────────────────────────────────────────────────────────
   onMount(() => {
     const role = $authStore.user?.role;
@@ -93,6 +124,7 @@
       return;
     }
     void loadRequests();
+    void loadRetroRequests();
   });
 
   // ── Data loading ─────────────────────────────────────────────────────────
@@ -108,6 +140,17 @@
       requests = [];
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadRetroRequests() {
+    retroLoading = true;
+    try {
+      retroRequests = await api.get<RetroEntryRequest[]>("/retro-entry-requests");
+    } catch {
+      retroRequests = [];
+    } finally {
+      retroLoading = false;
     }
   }
 
@@ -195,7 +238,67 @@
     return req.employeeId === $authStore.user?.employeeId;
   }
 
+  function isRetroSelfApproval(req: RetroEntryRequest): boolean {
+    return req.employeeId === $authStore.user?.employeeId;
+  }
+
   let approvedOverlap = $derived(detailOverlap.filter((o) => o.status === "APPROVED"));
+
+  // ── Retro derived: filtered lists + KPI ──────────────────────────────────
+  let retroOpenRequests = $derived(retroRequests.filter((r) => r.status === "PENDING"));
+  let retroApprovedRequests = $derived(
+    retroRequests.filter((r) => r.status === "APPROVED" || r.status === "USED"),
+  );
+  let retroRejectedRequests = $derived(retroRequests.filter((r) => r.status === "REJECTED"));
+
+  let retroVisible = $derived.by(() => {
+    if (retroTab === "open") return retroOpenRequests;
+    if (retroTab === "approved") return retroApprovedRequests;
+    if (retroTab === "rejected") return retroRejectedRequests;
+    return retroRequests;
+  });
+
+  let kpiRetroPending = $derived(retroOpenRequests.length);
+
+  // ── Retro detail modal ────────────────────────────────────────────────────
+  function openRetroDetail(req: RetroEntryRequest) {
+    retroDetail = req;
+    retroDetailOpen = true;
+    retroReviewNote = "";
+    retroReviewError = "";
+  }
+
+  function closeRetroDetail() {
+    if (retroReviewSaving) return;
+    retroDetailOpen = false;
+    retroDetail = null;
+    retroReviewError = "";
+  }
+
+  async function submitRetroReview(status: "APPROVED" | "REJECTED") {
+    if (!retroDetail) return;
+    if (!retroReviewNote.trim()) {
+      retroReviewError = "Bitte gib eine Begründung an (revisionssicherheitspflichtig).";
+      return;
+    }
+    retroReviewSaving = true;
+    retroReviewError = "";
+    try {
+      await api.patch(`/retro-entry-requests/${retroDetail.id}/review`, {
+        status,
+        reviewNote: retroReviewNote,
+      });
+      retroDetailOpen = false;
+      retroDetail = null;
+      toasts.success("Antrag wurde entschieden.");
+      await loadRetroRequests();
+    } catch (e: unknown) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      retroReviewError = apiErr?.data?.error ?? apiErr?.message ?? "Fehler";
+    } finally {
+      retroReviewSaving = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -211,7 +314,7 @@
   </div>
 {/if}
 
-<!-- ── KPI row (3 stats: pending / approved / rejected) ──────────────────── -->
+<!-- ── KPI row (4 stats: leave pending/approved/rejected + retro pending) ── -->
 <div class="kpi-row">
   <Card animate>
     <KPIStat
@@ -232,6 +335,13 @@
       label="Abgelehnt"
       value={String(kpiRejected)}
       unit={kpiRejected === 1 ? "Antrag" : "Anträge"}
+    />
+  </Card>
+  <Card animate>
+    <KPIStat
+      label="Retro-Anträge"
+      value={String(kpiRetroPending)}
+      unit={kpiRetroPending === 1 ? "offen" : "offen"}
     />
   </Card>
 </div>
@@ -384,6 +494,238 @@
 </Card>
 
 <!-- ── Detail modal ──────────────────────────────────────────────────────── -->
+<!-- ── Retro-Anträge view-tabs ─────────────────────────────────────────── -->
+<div class="view-tabs retro-tabs" role="tablist">
+  <button
+    type="button"
+    class="view-tab"
+    class:view-tab--active={retroTab === "open"}
+    role="tab"
+    aria-selected={retroTab === "open"}
+    onclick={() => (retroTab = "open")}
+  >
+    Offen
+    {#if retroOpenRequests.length > 0}
+      <span class="tab-badge">{retroOpenRequests.length}</span>
+    {/if}
+  </button>
+  <button
+    type="button"
+    class="view-tab"
+    class:view-tab--active={retroTab === "approved"}
+    role="tab"
+    aria-selected={retroTab === "approved"}
+    onclick={() => (retroTab = "approved")}
+  >
+    Genehmigt
+  </button>
+  <button
+    type="button"
+    class="view-tab"
+    class:view-tab--active={retroTab === "rejected"}
+    role="tab"
+    aria-selected={retroTab === "rejected"}
+    onclick={() => (retroTab = "rejected")}
+  >
+    Abgelehnt
+  </button>
+  <button
+    type="button"
+    class="view-tab"
+    class:view-tab--active={retroTab === "all"}
+    role="tab"
+    aria-selected={retroTab === "all"}
+    onclick={() => (retroTab = "all")}
+  >
+    Alle
+  </button>
+</div>
+
+<!-- ── Retro-Anträge list card ────────────────────────────────────────── -->
+<Card animate class="list-card retro-list-card" style="padding: 0;">
+  <div class="list-card-header">
+    <CardHeader
+      title="Nachträgliche Zeiterfassungs-Anträge"
+      sub="Anträge auf rückwirkende Einträge außerhalb des Selbstbearbeitungsfensters"
+    />
+  </div>
+
+  {#if retroLoading}
+    <div class="list-empty">Lädt…</div>
+  {:else if retroVisible.length === 0}
+    {#if retroTab === "open"}
+      <EmptyState
+        icon="inbox"
+        title="Keine Retro-Anträge"
+        description="Alle Anträge auf rückwirkende Einträge wurden bearbeitet."
+      />
+    {:else if retroTab === "approved"}
+      <EmptyState
+        icon="inbox"
+        title="Keine Retro-Anträge"
+        description="In diesem Zeitraum wurden keine Retro-Anträge genehmigt."
+      />
+    {:else if retroTab === "rejected"}
+      <EmptyState
+        icon="inbox"
+        title="Keine Retro-Anträge"
+        description="In diesem Zeitraum wurden keine Retro-Anträge abgelehnt."
+      />
+    {:else}
+      <EmptyState
+        icon="inbox"
+        title="Keine Retro-Anträge"
+        description="Keine Anträge auf rückwirkende Einträge vorhanden."
+      />
+    {/if}
+  {:else}
+    {#each retroVisible as req (req.id)}
+      <ApprovalRow
+        avatar={initials(req.employee.firstName, req.employee.lastName)}
+        name={`${req.employee.firstName} ${req.employee.lastName}`}
+        dates={`Eintrag vom ${fmtDate(req.targetDate)} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
+        onclick={() => openRetroDetail(req)}
+      >
+        {#snippet metaContent()}
+          <span class="chip chip-warn">Rückwirkend</span>
+          <span class="chip">{fmtDate(req.targetDate)}</span>
+          {#if req.status === "PENDING"}
+            <span class="badge badge-yellow">Ausstehend</span>
+          {:else if req.status === "APPROVED"}
+            <span class="badge badge-green">Genehmigt</span>
+          {:else if req.status === "REJECTED"}
+            <span class="badge badge-red">Abgelehnt</span>
+          {:else if req.status === "USED"}
+            <span class="badge badge-gray">Verwendet</span>
+          {/if}
+        {/snippet}
+        {#snippet actions()}
+          {#if req.status === "PENDING"}
+            <button
+              class="btn btn-primary btn-sm"
+              onclick={(e) => {
+                e.stopPropagation();
+                openRetroDetail(req);
+              }}
+            >
+              Prüfen
+            </button>
+          {:else}
+            <button
+              class="btn btn-ghost btn-sm"
+              onclick={(e) => {
+                e.stopPropagation();
+                openRetroDetail(req);
+              }}>Details</button
+            >
+          {/if}
+        {/snippet}
+      </ApprovalRow>
+    {/each}
+  {/if}
+</Card>
+
+<!-- ── Retro detail/review modal ──────────────────────────────────────── -->
+{#if retroDetail}
+  <Modal
+    bind:open={retroDetailOpen}
+    eyebrow="Retro-Antrag prüfen"
+    title={`${retroDetail.employee.firstName} ${retroDetail.employee.lastName}`}
+  >
+    <!-- Mini-stat grid: Mitarbeiter / Zieldatum / Alter -->
+    <div class="mini-stat-grid">
+      <div class="mini-stat">
+        <span class="label">Mitarbeiter</span>
+        <span class="value">{retroDetail.employee.firstName} {retroDetail.employee.lastName}</span>
+      </div>
+      <div class="mini-stat">
+        <span class="label">Zieldatum</span>
+        <span class="value">{fmtDate(retroDetail.targetDate)}</span>
+      </div>
+      <div class="mini-stat">
+        <span class="label">Alter (Tage)</span>
+        <span
+          class="value"
+          style="font-family: var(--font-mono); font-variant-numeric: tabular-nums;"
+        >
+          {retroDetail.entryAgeInDays ?? "?"}
+        </span>
+      </div>
+    </div>
+
+    <!-- Begründung Mitarbeiter -->
+    <div class="note-block">
+      <div class="note-label">Begründung Mitarbeiter</div>
+      <div class="note-text">„{retroDetail.reason}"</div>
+    </div>
+
+    <!-- Age warning callout (if age > window) -->
+    {#if retroDetail.entryAgeInDays != null && retroDetail.windowDays != null && retroDetail.entryAgeInDays > retroDetail.windowDays}
+      <div class="callout warning" role="alert">
+        <span class="ico" aria-hidden="true">⚠</span>
+        <p>
+          Eintrag vom {fmtDate(retroDetail.targetDate)} liegt {retroDetail.entryAgeInDays} Tage in der
+          Vergangenheit (Fenster: {retroDetail.windowDays} Tage).
+        </p>
+      </div>
+    {/if}
+
+    <!-- ArbZG legal callout (always shown) -->
+    <div class="callout" role="note">
+      <span class="ico" aria-hidden="true">⚖</span>
+      <p>Rückwirkende Korrekturen müssen revisionssicher begründet sein (ArbZG § 16 Abs. 2).</p>
+    </div>
+
+    <!-- Review note — MANDATORY for both approve and reject -->
+    <div class="review-note-field">
+      <label class="review-note-label" for="retro-review-note">Anmerkung (Pflichtfeld) *</label>
+      <input
+        id="retro-review-note"
+        type="text"
+        class="review-note-input"
+        bind:value={retroReviewNote}
+        placeholder="Begründung für Genehmigung oder Ablehnung"
+        disabled={retroReviewSaving}
+      />
+    </div>
+
+    {#if retroReviewError}
+      <div class="callout error" role="alert">
+        <span class="ico">⚠</span>
+        <p>{retroReviewError}</p>
+      </div>
+    {/if}
+
+    {#snippet footer()}
+      <button class="btn btn-ghost" onclick={closeRetroDetail} disabled={retroReviewSaving}>
+        Abbrechen
+      </button>
+      <span class="spacer"></span>
+      {#if retroDetail && isRetroSelfApproval(retroDetail)}
+        <span class="footer-note">Eigene Anträge können nicht selbst genehmigt werden.</span>
+      {:else if retroDetail?.status === "PENDING"}
+        <button
+          class="btn btn-danger"
+          onclick={() => submitRetroReview("REJECTED")}
+          disabled={retroReviewSaving || !retroReviewNote.trim()}
+        >
+          {retroReviewSaving ? "…" : "Ablehnen"}
+        </button>
+        <button
+          class="btn btn-primary"
+          onclick={() => submitRetroReview("APPROVED")}
+          disabled={retroReviewSaving || !retroReviewNote.trim()}
+        >
+          {retroReviewSaving ? "…" : "Genehmigen"}
+        </button>
+      {:else}
+        <span class="footer-note">Antrag bereits entschieden.</span>
+      {/if}
+    {/snippet}
+  </Modal>
+{/if}
+
+<!-- ── Leave detail modal ─────────────────────────────────────────────── -->
 {#if detailRequest}
   <Modal
     bind:open={detailOpen}
@@ -500,15 +842,26 @@
   /* ── KPI row ──────────────────────────────────────────────────────────── */
   .kpi-row {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 16px;
     margin-bottom: 16px;
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 900px) {
+    .kpi-row {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  }
+
+  @media (max-width: 560px) {
     .kpi-row {
       grid-template-columns: 1fr;
     }
+  }
+
+  /* ── Retro section spacing ────────────────────────────────────────────── */
+  .retro-tabs {
+    margin-top: 28px;
   }
 
   /* ── List card (overrides .card padding for full-bleed rows) ─────────── */
