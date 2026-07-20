@@ -1293,3 +1293,455 @@ describe("cron gap-note (closeMonthWithGapsAllowed)", () => {
     ).toEqual(expect.stringMatching(/1 Lücke/));
   }, 60_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 76.29 Plan 00 Task 3: Cron day-N window boundary — RED scaffold
+//
+// SUPERSEDES the day-15 grace period (DEFAULT_CLOSE_AFTER_DAY=15) from D-11.
+// The new model (Variante A — Tag-N-Fenster) defers gap-months during the
+// retro self-service window and only force-closes them on day N of M+1
+// (N = retroEntryWindowDays, default 10).
+//
+// Key invariants pinned here:
+//  1. In-window defer: day 1 of M+1, gap month, flag=true  → NO snapshot, notify.
+//  2. At-day-N force-close: day N of M+1, gap month, flag=true → snapshot created.
+//  3. Defer-forever: day N of M+1, gap month, flag=false → NO snapshot, notify only.
+//  4. Gap-free immediate close: gap-FREE prior month at day 1 of M+1 → closed.
+//  5. Old backfill month: gap month 3 months in the past, flag=true → force-close.
+//
+// References:
+//  - isMonthPastItsWindow() — Plan 04 adds this cron helper.
+//    Until Plan 04 lands, assertions about deferred vs force-closed behaviour are RED.
+//  - closeMonthWithGapsAllowed column — Plan 01 adds it to TenantConfig.
+//    Until Plan 01 lands, tests that write the column directly are RED.
+//  - These tests MUST NOT touch attendance-checker.test.ts (76.28-03 reminders).
+//  - All frozen "today" values use Europe/Berlin day-of-month (never UTC).
+//
+// RED note: tests 1-5 below will fail RED until Plans 01+04 implement the
+// day-N logic. Do NOT silence these failures — they are the guard-rail.
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)", () => {
+  let app: Awaited<ReturnType<typeof getTestApp>>;
+  let tenantId: string;
+  let gapEmpId: string; // employee with a gap month
+  let cleanEmpId: string; // employee with a gap-FREE month
+
+  // Fixture month: January 2025. M+1 = February 2025. N = 10 (default).
+  // in-window frozen time: 2025-02-01 Berlin (day 1 < N=10)
+  // at-N frozen time:      2025-02-10 Berlin (day 10 = N)
+
+  // February 2025-02-01T06:00Z = Berlin 2025-02-01 07:00 CET (day 1 in Berlin)
+  const IN_WINDOW_UTC = new Date("2025-02-01T06:00:00.000Z");
+  // 2025-02-10T06:00Z = Berlin 2025-02-10 07:00 CET (day 10 = N in Berlin)
+  const AT_N_UTC = new Date("2025-02-10T06:00:00.000Z");
+
+  // Old month: October 2024 (3 months before Jan 2025) — always past its window.
+  // "today" for old-backfill = 2025-02-10 (day N of Jan+1 = Feb).
+
+  async function seedEntry76_29(empId: string, dateStr: string) {
+    await app.prisma.timeEntry.create({
+      data: {
+        employeeId: empId,
+        date: new Date(dateStr + "T00:00:00Z"),
+        startTime: new Date(dateStr + "T07:00:00Z"),
+        endTime: new Date(dateStr + "T15:30:00Z"),
+        breakMinutes: 30,
+        type: "WORK",
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = `dayn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    // Isolated tenant with Berlin TZ
+    const tenant = await prisma.tenant.create({
+      data: { name: `DayN ${s}`, slug: `dayn-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+
+    // Write retroEntryWindowDays=10 + closeMonthWithGapsAllowed is set per-test via update.
+    // Plan 01 adds the column; until then this is a no-op (column absent in schema).
+    // The test uses the spy-injection pattern (same as the existing cron gap-note test above)
+    // as a fallback for the column-absent case.
+    await prisma.tenantConfig.create({
+      data: {
+        tenantId: tenant.id,
+        defaultVacationDays: 30,
+        timezone: "Europe/Berlin",
+      },
+    });
+
+    // Gap employee: hired 2024-10-01 (covers Oct 2024 + Jan 2025 fixture months)
+    const gapUser = await prisma.user.create({
+      data: {
+        email: `gapdayn-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const gapEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: gapUser.id,
+        employeeNumber: `GD-${s}`,
+        firstName: "Gap",
+        lastName: "DayN",
+        hireDate: new Date("2024-10-01T00:00:00Z"),
+        isTimeTrackingExempt: false,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: gapEmp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2024-10-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: gapEmp.id, balanceHours: 0 } });
+    gapEmpId = gapEmp.id;
+
+    // Clean employee (gap-FREE January 2025): seed all Mon-Fri of Jan 2025
+    const cleanUser = await prisma.user.create({
+      data: {
+        email: `cleandayn-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const cleanEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: cleanUser.id,
+        employeeNumber: `CD-${s}`,
+        firstName: "Clean",
+        lastName: "DayN",
+        hireDate: new Date("2025-01-01T00:00:00Z"),
+        isTimeTrackingExempt: false,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: cleanEmp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2025-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: cleanEmp.id, balanceHours: 0 } });
+    cleanEmpId = cleanEmp.id;
+
+    // Seed all Mon-Fri of January 2025 for cleanEmp (gap-free)
+    const jan2025MonFri: string[] = [];
+    const cur = new Date("2025-01-01T00:00:00Z");
+    const end = new Date("2025-01-31T00:00:00Z");
+    while (cur <= end) {
+      if (cur.getUTCDay() >= 1 && cur.getUTCDay() <= 5) {
+        jan2025MonFri.push(cur.toISOString().slice(0, 10));
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    for (const d of jan2025MonFri) {
+      await seedEntry76_29(cleanEmpId, d);
+    }
+
+    // Gap employee: seed Jan 2025 EXCEPT 2025-01-13 (gap day)
+    const GAP_DAY_JAN25 = "2025-01-13";
+    for (const d of jan2025MonFri) {
+      if (d !== GAP_DAY_JAN25) await seedEntry76_29(gapEmpId, d);
+    }
+
+    // Gap employee: seed October 2024 EXCEPT 2024-10-14 (gap day for old-backfill test)
+    const GAP_DAY_OCT24 = "2024-10-14";
+    const oct2024MonFri: string[] = [];
+    const octCur = new Date("2024-10-01T00:00:00Z");
+    const octEnd = new Date("2024-10-31T00:00:00Z");
+    while (octCur <= octEnd) {
+      if (octCur.getUTCDay() >= 1 && octCur.getUTCDay() <= 5) {
+        oct2024MonFri.push(octCur.toISOString().slice(0, 10));
+      }
+      octCur.setUTCDate(octCur.getUTCDate() + 1);
+    }
+    for (const d of oct2024MonFri) {
+      if (d !== GAP_DAY_OCT24) await seedEntry76_29(gapEmpId, d);
+    }
+
+    // Seed Nov + Dec 2024 for gapEmp to avoid opening gaps in the backfill chain
+    for (const [mo, moStart, moEnd] of [
+      ["nov", "2024-11-01", "2024-11-30"],
+      ["dec", "2024-12-01", "2024-12-31"],
+    ] as [string, string, string][]) {
+      const moCur = new Date(moStart + "T00:00:00Z");
+      const moEndDate = new Date(moEnd + "T00:00:00Z");
+      while (moCur <= moEndDate) {
+        if (moCur.getUTCDay() >= 1 && moCur.getUTCDay() <= 5) {
+          await seedEntry76_29(gapEmpId, moCur.toISOString().slice(0, 10));
+        }
+        moCur.setUTCDate(moCur.getUTCDate() + 1);
+      }
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("cron day-N cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  /**
+   * Inject closeMonthWithGapsAllowed into the isolated tenant's config via spy.
+   * Pattern mirrors the existing cron gap-note test above.
+   * Falls back to real DB column once Plan 01 lands (spy still works either way).
+   */
+  function withGapFlag<T>(flag: boolean, fn: () => Promise<T>): () => Promise<T> {
+    return async () => {
+      const realFindMany = app.prisma.tenant.findMany.bind(app.prisma.tenant);
+      const spy = vi
+        .spyOn(app.prisma.tenant, "findMany")
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore: mockImplementation returns Promise vs PrismaPromise — pre-existing pattern, same as cron gap-note test above
+        .mockImplementation(async (...args) => {
+          const tenants = await realFindMany(...(args as Parameters<typeof realFindMany>));
+          return tenants.map((t) => {
+            if (t.id !== tenantId) return t;
+            return {
+              ...t,
+              config: (t as Record<string, unknown>).config
+                ? {
+                    ...((t as Record<string, unknown>).config as object),
+                    closeMonthWithGapsAllowed: flag,
+                    retroEntryWindowDays: 10,
+                  }
+                : { closeMonthWithGapsAllowed: flag, retroEntryWindowDays: 10 },
+            };
+          });
+        });
+      try {
+        return await fn();
+      } finally {
+        spy.mockRestore();
+      }
+    };
+  }
+
+  it(
+    "day-N (1): IN-WINDOW defer — day 1 of M+1, gap month, flag=true → NO SaldoSnapshot created (DEFER+notify)",
+    withGapFlag(true, async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // day 1 of February 2025 in Berlin — within the N=10 window (day 1 < N=10)
+      vi.setSystemTime(IN_WINDOW_UTC);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // RED: Plan 04 isMonthPastItsWindow() returns false for day 1 → gap month DEFERRED.
+      // Until Plan 04 lands: current code either closes or skips via day-15 grace.
+      const { monthRangeUtc } = await import("../utils/timezone");
+      const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
+      const snap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+          superseded: false,
+        },
+      });
+      // In-window gap month must NOT be closed (deferred)
+      expect(
+        snap,
+        "day-N (1): gap month in-window (day 1 of M+1) must NOT have a snapshot — should be deferred",
+      ).toBeNull();
+    }),
+    90_000,
+  );
+
+  it(
+    "day-N (2): AT-DAY-N force-close — day N of M+1, gap month, flag=true → SaldoSnapshot created",
+    withGapFlag(true, async () => {
+      // Clean up any snapshot from previous test
+      const { monthRangeUtc } = await import("../utils/timezone");
+      const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+        },
+      });
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // day 10 of February 2025 in Berlin — exactly day N=10 (at/after window end)
+      vi.setSystemTime(AT_N_UTC);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // RED: Plan 04 isMonthPastItsWindow() returns true for day N → force-close despite gap.
+      const snap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+          superseded: false,
+        },
+      });
+      expect(
+        snap,
+        "day-N (2): gap month at day N of M+1, flag=true must be force-closed (snapshot created)",
+      ).not.toBeNull();
+    }),
+    90_000,
+  );
+
+  it(
+    "day-N (3): DEFER-FOREVER — day N of M+1, gap month, flag=false → NO snapshot (defer-forever)",
+    withGapFlag(false, async () => {
+      // Clean up any snapshot
+      const { monthRangeUtc } = await import("../utils/timezone");
+      const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+        },
+      });
+
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(AT_N_UTC);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // RED: when flag=false, even day N must NOT force-close — defer-forever.
+      const snap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+          superseded: false,
+        },
+      });
+      expect(
+        snap,
+        "day-N (3): flag=false at day N must NOT force-close (defer-forever) — no snapshot",
+      ).toBeNull();
+    }),
+    90_000,
+  );
+
+  it(
+    "day-N (4): GAP-FREE immediate close — gap-FREE prior month at day 1 of M+1 → closed immediately",
+    withGapFlag(true, async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // day 1 of February 2025 — within retro window — but cleanEmp has NO gaps in Jan 2025
+      vi.setSystemTime(IN_WINDOW_UTC);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // RED: gap-FREE month must close immediately regardless of the day-N window.
+      // (The window only defers gap months; complete months close right away.)
+      const { monthRangeUtc } = await import("../utils/timezone");
+      const janRange = monthRangeUtc(2025, 1, "Europe/Berlin");
+      const snap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: cleanEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: janRange.start,
+            lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+          superseded: false,
+        },
+      });
+      expect(
+        snap,
+        "day-N (4): gap-FREE month must be closed immediately at day 1 of M+1 (no day-N wait)",
+      ).not.toBeNull();
+    }),
+    90_000,
+  );
+
+  it(
+    "day-N (5): OLD BACKFILL MONTH — gap month 3 months in the past (Oct 2024) with flag=true → force-closed immediately",
+    withGapFlag(true, async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      // Today = 2025-02-10 (day N). October 2024 is 4 months in the past → always past its window.
+      vi.setSystemTime(AT_N_UTC);
+      try {
+        await app.tryAutoCloseMonth();
+      } finally {
+        vi.useRealTimers();
+      }
+
+      // RED: old backfill months (well past their window) must force-close immediately.
+      const { monthRangeUtc } = await import("../utils/timezone");
+      const octRange = monthRangeUtc(2024, 10, "Europe/Berlin");
+      const snap = await app.prisma.saldoSnapshot.findFirst({
+        where: {
+          employeeId: gapEmpId,
+          periodType: "MONTHLY",
+          periodStart: {
+            gte: octRange.start,
+            lt: new Date(octRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+          },
+          superseded: false,
+        },
+      });
+      expect(
+        snap,
+        "day-N (5): old backfill month (Oct 2024, past its window) with flag=true must be force-closed",
+      ).not.toBeNull();
+    }),
+    90_000,
+  );
+});
