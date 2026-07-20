@@ -68,7 +68,10 @@ async function closeMonthApi(
     method: "POST",
     url: "/api/v1/overtime/close-month",
     headers: { authorization: `Bearer ${adminToken}` },
-    payload: { employeeId: empId, year, month },
+    // confirmGaps:true acknowledges gap months (e.g. case 8a Jan close for FIXED employee
+    // with no January entries). Harmless on gap-free closes. Required after the Phase
+    // 76.28-01 unconditional 409 gate.
+    payload: { employeeId: empId, year, month, confirmGaps: true },
   });
 }
 
