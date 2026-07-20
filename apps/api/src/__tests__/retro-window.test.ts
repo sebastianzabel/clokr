@@ -76,7 +76,7 @@ async function seedRetroTenant(
   const adminUser = await prisma.user.create({
     data: {
       email: `admin-${s}@retro.test`,
-      passwordHash: await bcrypt.hash("pw", 4),
+      passwordHash: await bcrypt.hash("pwTest123", 4),
       role: "ADMIN",
       isActive: true,
     },
@@ -111,7 +111,7 @@ async function seedRetroTenant(
   const managerUser = await prisma.user.create({
     data: {
       email: `mgr-${s}@retro.test`,
-      passwordHash: await bcrypt.hash("pw", 4),
+      passwordHash: await bcrypt.hash("pwTest123", 4),
       role: "MANAGER",
       isActive: true,
     },
@@ -146,7 +146,7 @@ async function seedRetroTenant(
   const empUser = await prisma.user.create({
     data: {
       email: `emp-${s}@retro.test`,
-      passwordHash: await bcrypt.hash("pw", 4),
+      passwordHash: await bcrypt.hash("pwTest123", 4),
       role: "EMPLOYEE",
       isActive: true,
     },
@@ -181,17 +181,17 @@ async function seedRetroTenant(
   const adminLoginRes = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
-    payload: { email: `admin-${s}@retro.test`, password: "pw" },
+    payload: { email: `admin-${s}@retro.test`, password: "pwTest123" },
   });
   const mgrLoginRes = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
-    payload: { email: `mgr-${s}@retro.test`, password: "pw" },
+    payload: { email: `mgr-${s}@retro.test`, password: "pwTest123" },
   });
   const empLoginRes = await app.inject({
     method: "POST",
     url: "/api/v1/auth/login",
-    payload: { email: `emp-${s}@retro.test`, password: "pw" },
+    payload: { email: `emp-${s}@retro.test`, password: "pwTest123" },
   });
 
   return {

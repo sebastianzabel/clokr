@@ -53,7 +53,7 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
     const user = await prisma.user.create({
       data: {
         email: `${role.toLowerCase()}-${idx}-${s}@rappr.test`,
-        passwordHash: await bcrypt.hash("pw", 4),
+        passwordHash: await bcrypt.hash("pwTest123", 4),
         role,
         isActive: true,
       },
@@ -87,7 +87,7 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
     const loginRes = await app.inject({
       method: "POST",
       url: "/api/v1/auth/login",
-      payload: { email: `${role.toLowerCase()}-${idx}-${s}@rappr.test`, password: "pw" },
+      payload: { email: `${role.toLowerCase()}-${idx}-${s}@rappr.test`, password: "pwTest123" },
     });
     const { accessToken } = JSON.parse(loginRes.body);
     return { user, emp, token: accessToken };
