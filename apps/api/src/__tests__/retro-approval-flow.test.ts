@@ -546,6 +546,191 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
     });
   });
 
+  // ── RETRO-05 SC-2: PUT-with-approved-grant ────────────────────────────────────
+
+  describe("RETRO-05 SC-2: PUT-with-approved-grant (76.29.1)", () => {
+    it("SC-2 happy path: EMPLOYEE PUTs a >window existing entry with APPROVED grant → 200 source=CORRECTION, grant→USED; second PUT with USED grant → 403", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        // Use a date 20 days ago (well beyond the default 14-day retro window)
+        const targetDate = daysAgoInTz(new Date(), 20);
+
+        // Seed an existing TimeEntry directly via prisma (bypasses the route retro guard)
+        const existingEntry = await app.prisma.timeEntry.create({
+          data: {
+            employeeId,
+            date: new Date(targetDate),
+            startTime: new Date(`${targetDate}T07:00:00.000Z`),
+            endTime: new Date(`${targetDate}T15:00:00.000Z`),
+            breakMinutes: 30,
+            source: "MANUAL",
+            createdBy: employeeId,
+          },
+        });
+
+        // Create a RetroEntryRequest for that targetDate
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { employeeId, targetDate, reason: "SC-2 PUT test: entry needs correction" },
+        });
+        expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
+          201,
+        );
+        const grantId = JSON.parse(createRes.body).id;
+
+        // Approve the request via a DIFFERENT manager (manager2)
+        const approveRes = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${grantId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: "SC-2 approved for PUT test" },
+        });
+        expect(approveRes.statusCode, "manager approval must succeed").toBe(200);
+
+        // EMPLOYEE PUTs the existing entry with the approved grantId
+        const putRes = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${existingEntry.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            startTime: `${targetDate}T08:00:00.000Z`,
+            endTime: `${targetDate}T16:00:00.000Z`,
+            breakMinutes: 30,
+            grantId,
+          },
+        });
+        expect(putRes.statusCode, "grant-backed PUT must succeed with 200").toBe(200);
+        const putBody = JSON.parse(putRes.body);
+        expect(putBody.entry?.source, "entry updated via grant must have source=CORRECTION").toBe(
+          "CORRECTION",
+        );
+
+        // Verify grant is now USED
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const retroModel = (app.prisma as unknown as Record<string, any>)["retroEntryRequest"] as
+          | { findUnique: (opts: object) => Promise<{ status: string } | null> }
+          | undefined;
+        const grant = await retroModel?.findUnique({ where: { id: grantId } });
+        expect(grant?.status, "grant must be USED after PUT consumption").toBe("USED");
+
+        // Second PUT with the same (now USED) grantId → 403
+        const secondPutRes = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${existingEntry.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            startTime: `${targetDate}T09:00:00.000Z`,
+            endTime: `${targetDate}T17:00:00.000Z`,
+            breakMinutes: 30,
+            grantId, // same grant, now USED
+          },
+        });
+        expect(secondPutRes.statusCode, "second PUT with USED grant must be blocked (403)").toBe(
+          403,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("SC-2 lock-first: a valid APPROVED grant does NOT bypass a locked month on PUT → month-lock 403", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        // Lock February 2024 via a SaldoSnapshot (superseded:false)
+        const lockedDate = "2024-02-10";
+        const { monthRangeUtc } = await import("../utils/timezone");
+        const { start: lockedMonthStart } = monthRangeUtc(2024, 2, TZ);
+
+        await app.prisma.saldoSnapshot.create({
+          data: {
+            employeeId,
+            periodType: "MONTHLY",
+            periodStart: lockedMonthStart,
+            periodEnd: new Date("2024-02-29T22:59:59.000Z"),
+            workedMinutes: 0,
+            expectedMinutes: 0,
+            balanceMinutes: 0,
+            carryOver: 0,
+            closedAt: new Date(),
+            superseded: false,
+            note: "SC-2 lock-first test",
+          },
+        });
+
+        // Seed an existing entry in the locked month directly via prisma
+        const lockedEntry = await app.prisma.timeEntry.create({
+          data: {
+            employeeId,
+            date: new Date(lockedDate),
+            startTime: new Date(`${lockedDate}T07:00:00.000Z`),
+            endTime: new Date(`${lockedDate}T15:00:00.000Z`),
+            breakMinutes: 30,
+            source: "MANUAL",
+            createdBy: employeeId,
+          },
+        });
+
+        // Create + approve a grant for the locked date
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate: lockedDate,
+            reason: "SC-2 lock-first test: should never bypass lock",
+          },
+        });
+        expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
+          201,
+        );
+        const grantId = JSON.parse(createRes.body).id;
+
+        await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${grantId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: "Approved for lock-first test" },
+        });
+
+        // PUT with the valid grant into a locked month → must still return month-lock 403
+        const putRes = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${lockedEntry.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            startTime: `${lockedDate}T08:00:00.000Z`,
+            endTime: `${lockedDate}T16:00:00.000Z`,
+            breakMinutes: 30,
+            grantId,
+          },
+        });
+        expect(
+          putRes.statusCode,
+          "locked month must reject PUT even with valid approved grant (403)",
+        ).toBe(403);
+        const body = JSON.parse(putRes.body);
+        expect(
+          body.error,
+          "error must be the month-locked message, not success or RETRO_WINDOW_EXCEEDED",
+        ).toMatch(/abgeschlossen/i);
+        expect(body.error).not.toBe("RETRO_WINDOW_EXCEEDED");
+
+        // Cleanup
+        await app.prisma.timeEntry.delete({ where: { id: lockedEntry.id } });
+        await app.prisma.saldoSnapshot.deleteMany({
+          where: { employeeId, periodStart: lockedMonthStart, superseded: false },
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   // ── RETRO-04 lock-first ordering ──────────────────────────────────────────────
 
   describe("RETRO-04 lock-first: locked month → 403 month-locked even with APPROVED grant", () => {
