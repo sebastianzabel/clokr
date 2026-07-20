@@ -1,8 +1,14 @@
 /**
- * Integration tests for the auto-close-month plugin grace period guard (D-11).
+ * Integration tests for the auto-close-month plugin.
  *
- * D-11: tryAutoCloseMonth() exits early without touching the DB when
- *       dayOfMonth < DEFAULT_CLOSE_AFTER_DAY (15).
+ * Phase 76.29 Plan 04 (Variante A — Tag-N-Fenster):
+ *   The outer day-15 grace guard (DEFAULT_CLOSE_AFTER_DAY=15) has been removed.
+ *   Tenants are now always processed; the per-month day-N window (isMonthPastItsWindow)
+ *   governs whether gap-months are deferred or force-closed.
+ *
+ *   D-11 tests are updated to reflect this: day 5 of February now processes the
+ *   tenant (no outer guard). Gap months within the retro window are still deferred
+ *   (no snapshot), so most existing assertions remain valid with updated expectations.
  *
  * Phase 66 fix: the prior version mocked `node-cron` and captured callbacks by
  * cron expression. Both `autoCloseMonthPlugin` and `carryoverWarningPlugin`
@@ -62,31 +68,33 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     });
   }
 
-  it("D-11: grace check skips the tenant (no processing) when the tenant-local day < 15", async () => {
+  it("D-11 (updated 76.29-04): outer day-15 guard removed — tenant is always processed, even on day 5", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    // 2024-02-05T06:00Z → Europe/Berlin local day 5 (< 15) → tenant skipped via continue.
+    // 2024-02-05T06:00Z → Europe/Berlin local day 5.
+    // Previously skipped via DEFAULT_CLOSE_AFTER_DAY=15 continue. That guard is GONE.
+    // Tenant IS now processed; per-month isMonthPastItsWindow() defers gap months within
+    // the retro window (day 5 < N=10) so no snapshot is written for January 2024 (has gaps).
     vi.setSystemTime(new Date("2024-02-05T06:00:00.000Z"));
 
     const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
-    const snapshotCreateSpy = vi.spyOn(app.prisma.saldoSnapshot, "create");
     const seededIds = [data.adminEmployee.id, data.employee.id];
 
     try {
       await app.tryAutoCloseMonth();
-      // Grace fired → this tenant's employees were never looked up or closed.
-      expect(findFirstFiredForSeededTenant(findFirstSpy, seededIds)).toBe(false);
-      expect(snapshotCreateSpy).not.toHaveBeenCalled();
+      // No outer grace → employees ARE looked up (findFirst fires for seeded tenant).
+      expect(findFirstFiredForSeededTenant(findFirstSpy, seededIds)).toBe(true);
     } finally {
       findFirstSpy.mockRestore();
-      snapshotCreateSpy.mockRestore();
       vi.useRealTimers();
     }
   });
 
-  it("D-11: grace check is TENANT-TZ-aware — UTC day 14 but Berlin-local day 15 proceeds", async () => {
+  it("D-11 (still valid): isMonthPastItsWindow uses tenant-TZ — UTC day 14 / Berlin day 15 processes correctly", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    // 2024-02-14T23:30Z is UTC day 14 (< 15) but Europe/Berlin local day 15 (>= 15).
-    // A UTC-based guard would wrongly SKIP; the per-tenant dateStrInTz guard PROCEEDS.
+    // 2024-02-14T23:30Z is UTC day 14 but Europe/Berlin local day 15 (CET UTC+1).
+    // The per-month isMonthPastItsWindow() uses dateStrInTz (tenant TZ), not UTC.
+    // January 2024 window closes at day 10 of Feb → day 15 is past the window →
+    // gap-free months close; gap months force-close (flag=true default).
     vi.setSystemTime(new Date("2024-02-14T23:30:00.000Z"));
 
     const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
@@ -102,9 +110,9 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
     }
   });
 
-  it("D-11: proceeds to process the tenant when the tenant-local day >= 15", async () => {
+  it("D-11 (still valid): tenant is processed on day 16 — past the retro window, employees looked up", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= 15
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z")); // Berlin local day 16 >= N=10
 
     const findFirstSpy = vi.spyOn(app.prisma.saldoSnapshot, "findFirst");
     const seededIds = [data.adminEmployee.id, data.employee.id];
@@ -257,6 +265,9 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
         thursdayHours?: number;
         fridayHours?: number;
       },
+      tenantConfigOverrides?: {
+        closeMonthWithGapsAllowed?: boolean;
+      },
     ) {
       const s = `shift-${suffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
       const tenant = await app.prisma.tenant.create({
@@ -269,6 +280,9 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
           timezone: "Europe/Berlin",
           defaultBreakOver6h: 30,
           defaultBreakOver9h: 45,
+          ...(tenantConfigOverrides?.closeMonthWithGapsAllowed !== undefined && {
+            closeMonthWithGapsAllowed: tenantConfigOverrides.closeMonthWithGapsAllowed,
+          }),
         },
       });
       const user = await app.prisma.user.create({
@@ -714,8 +728,14 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
 
     it("gap-break (F-02): gap in month M stops the loop — months before M closed, months after M NOT closed", async () => {
       // Phase 76.27-03 SNAP-02 F-02: when a month has gaps (missing entries) and
-      // closeMonthWithGapsAllowed is false (default), the backward loop BREAKS for that
-      // employee. Months before the gap-blocked month ARE closed; months after are NOT.
+      // closeMonthWithGapsAllowed=false, the backward loop BREAKS for that employee.
+      // Months before the gap-blocked month ARE closed; months after are NOT.
+      //
+      // Phase 76.29-04: closeMonthWithGapsAllowed is now a real typed TenantConfig column
+      // with @default(true). This test explicitly sets it to false to preserve the flag=false
+      // defer-forever semantics. "Today" = April 16 2024, which is past the window for
+      // February (window end = day N=10 of March); with flag=false the defer-forever
+      // branch fires instead of force-closing.
       //
       // Fixture: SHIFT_BASED employee, hired 2024-01-01.
       //   January 2024: shift + complete entries on all Tue/Thu/Fri marker days.
@@ -723,13 +743,15 @@ describe("auto-close-month plugin — grace period guard (D-11)", () => {
       //   March 2024: complete entries + shifts → would be closeable but loop breaks at Feb.
       //   "Today" = April 16 2024 (cron targets March as prevMonth).
       //
-      // Expected backward loop behavior:
+      // Expected backward loop behavior (closeMonthWithGapsAllowed=false):
       //   Months = [Jan 2024, Feb 2024, Mar 2024].
       //   Jan: complete → closes.
-      //   Feb: gaps → BREAK (F-02) → loop stops for this employee.
+      //   Feb: gaps, past window, flag=false → BREAK (defer-forever) → loop stops.
       //   Mar: never reached (loop already broke at Feb).
       //   Result: Jan has active snapshot; Feb and Mar do NOT.
-      const { tenant, empId } = await createShiftScenario("gapbreak");
+      const { tenant, empId } = await createShiftScenario("gapbreak", undefined, {
+        closeMonthWithGapsAllowed: false,
+      });
 
       // January 2024: complete entries on all Tue/Thu/Fri marker days + shifts
       const janShifts = [

@@ -15,7 +15,7 @@ declare module "fastify" {
 }
 
 /**
- * Auto-Monatsabschluss: runs daily at 06:00 during the first 10 days of each month.
+ * Auto-Monatsabschluss: runs daily at 06:00.
  *
  * For each tenant, closes ALL unclosed prior months for each active employee via a
  * bounded backward backfill loop (SNAP-02 / Phase 76.27):
@@ -23,14 +23,23 @@ declare module "fastify" {
  *   2. Iterate oldest→newest [firstOpen .. prevMonth]:
  *      a. If month has an active (superseded=false) snapshot → skip + thread carryOver.
  *         This idempotency check also preserves bridge/zero opening snapshots (Pitfall B3).
- *      b. If month has gaps AND closeMonthWithGapsAllowed≠true → BREAK (F-02). Do NOT
- *         continue past a gap — closing later months on stale carryOver corrupts the chain.
- *      c. Otherwise → close via closeEmployeeMonth(), write snapshot + audit.
+ *      b. If month is gap-FREE → close immediately (no day-N wait).
+ *      c. If month has gaps:
+ *         - Within window (today < day N of M+1, N=retroEntryWindowDays) → DEFER (F-02 BREAK + notify).
+ *           Do NOT continue past a gap — closing later months on stale carryOver corrupts the chain.
+ *         - At/after day N AND closeMonthWithGapsAllowed=true → force-close (gaps=0h).
+ *         - At/after day N AND closeMonthWithGapsAllowed=false → DEFER forever (manual-only).
+ *      d. Otherwise → close via closeEmployeeMonth(), write snapshot + audit.
  *   3. Sends notifications about remaining gaps.
  *
  * Cross-year (Dec→Jan): handled via computePrevMonthInLoop (month=1 → month=12, year-1).
  * carryOver base: always the IMMEDIATELY preceding month's active snapshot (periodStartWindow
  * + superseded=false — never orderBy:desc which could pick a stale far-earlier row; Pitfall B2).
+ *
+ * Phase 76.29 Plan 04 (Variante A — Tag-N-Fenster):
+ *   Supersedes the hardcoded DEFAULT_CLOSE_AFTER_DAY=15 outer grace guard.
+ *   Gap-free months close whenever processed (no day-N wait).
+ *   Gap months defer while employees can self-service; force-close on/after day N of M+1.
  */
 export const autoCloseMonthPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
@@ -126,12 +135,37 @@ export const autoCloseMonthPlugin = fp(async (app) => {
     return { year: hireYear, month: hireMonth };
   }
 
-  async function tryAutoCloseMonth() {
-    // D-11: Grace period — auto-close only runs if we are past the configurable threshold.
-    // TenantConfig.closeAfterDay is not yet in the schema; hardcoded default is 15.
-    // (Future: add closeAfterDay: Int @default(15) to TenantConfig and read it per-tenant below)
-    const DEFAULT_CLOSE_AFTER_DAY = 15;
+  /**
+   * Returns true when today (in the given tenant timezone) is AT or AFTER day N of month M+1
+   * (the "window close" date for month M). Returns false while employees can still self-service.
+   *
+   * Decision matrix:
+   *   - today is still in month M or earlier → false (window not yet open)
+   *   - today is in month M+1 and todayDay < retroWindowDays → false (within window)
+   *   - today is in month M+1 and todayDay >= retroWindowDays → true (at/after day N)
+   *   - today is after month M+1 → true (long past window; old backfill)
+   *
+   * Handles Dec→Jan year rollover for M+1. Uses tenant-TZ dateStrInTz — never UTC math.
+   */
+  function isMonthPastItsWindow(
+    monthYear: number,
+    monthNum: number,
+    tz: string,
+    retroWindowDays: number,
+  ): boolean {
+    const todayStr = dateStrInTz(new Date(), tz); // YYYY-MM-DD in tenant TZ
+    const ty = parseInt(todayStr.slice(0, 4), 10);
+    const tm = parseInt(todayStr.slice(5, 7), 10);
+    const td = parseInt(todayStr.slice(8, 10), 10);
+    const wm = monthNum === 12 ? 1 : monthNum + 1; // window-close month (M+1)
+    const wy = monthNum === 12 ? monthYear + 1 : monthYear;
+    if (ty < wy) return false; // today is before M+1 → still within window
+    if (ty === wy && tm < wm) return false; // today is still in M or earlier → within window
+    if (ty === wy && tm === wm) return td >= retroWindowDays; // in M+1: check day N
+    return true; // today is after M+1 → long past window
+  }
 
+  async function tryAutoCloseMonth() {
     const now = new Date();
 
     app.log.info("Auto-Monatsabschluss: Prüfe Vormonat");
@@ -143,18 +177,6 @@ export const autoCloseMonthPlugin = fp(async (app) => {
     for (const tenant of tenants) {
       try {
         const tz = tenant.config?.timezone ?? "Europe/Berlin";
-
-        // D-11: Grace period — evaluated PER TENANT in the tenant's local timezone.
-        // A UTC day-of-month guard would close a tenant's month a day early/late on
-        // the boundary; `dateStrInTz` gives the tenant-local calendar day. `continue`
-        // skips only THIS tenant, not all subsequent tenants.
-        const dayOfMonthInTz = parseInt(dateStrInTz(now, tz).split("-")[2], 10);
-        if (dayOfMonthInTz < DEFAULT_CLOSE_AFTER_DAY) {
-          app.log.info(
-            `Auto-Monatsabschluss: Tenant ${tenant.name} — Warte bis Tag ${DEFAULT_CLOSE_AFTER_DAY} des Monats (aktuell: ${dayOfMonthInTz})`,
-          );
-          continue;
-        }
 
         // Calculate previous month (the CEILING of the backfill range — never close the current month)
         const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
@@ -362,30 +384,48 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   const missingDates = rdGapResult.gaps.map((g) => g.date);
 
                   if (missingDates.length > 0) {
-                    // F-02 = break: gap-blocked month stops the loop for this employee.
-                    // Do NOT continue past a gap — closing later months without this one
-                    // would corrupt the carryOver chain (wrong carryOverIn for M+1 and beyond).
-                    // After 76.28: if closeMonthWithGapsAllowed=true, this break is skipped.
-                    // Read TenantConfig.closeMonthWithGapsAllowed defensively (column not yet added;
-                    // defaults to false so current behavior = gap → break).
-                    const closeMonthWithGapsAllowed =
-                      (tenant.config as Record<string, unknown> | null)
-                        ?.closeMonthWithGapsAllowed === true;
+                    // Phase 76.29 Plan 04 — Variante A (Tag-N-Fenster):
+                    // Read real typed TenantConfig fields (column added by Plan 01).
+                    const retroWindowDays = tenant.config?.retroEntryWindowDays ?? 10;
+                    const closeAllowed = tenant.config?.closeMonthWithGapsAllowed ?? true;
+                    const pastWindow = isMonthPastItsWindow(
+                      monthKey.year,
+                      monthKey.month,
+                      tz,
+                      retroWindowDays,
+                    );
 
-                    if (!closeMonthWithGapsAllowed) {
+                    if (!pastWindow) {
+                      // Within the retro self-service window (today < day N of M+1).
+                      // Defer: BREAK + notify. Do NOT close later months on stale carryOver.
                       app.log.warn(
                         { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
-                        `Auto-Monatsabschluss: Backfill für MA pausiert — Lücken in ${monthKey.month}/${monthKey.year} (F-02 Break)`,
+                        `Auto-Monatsabschluss: Lücken in ${monthKey.month}/${monthKey.year} — innerhalb Selbstbearbeitungsfenster (Tag ${retroWindowDays}), verschoben`,
                       );
-                      // Track for notification
                       missing.push({
                         employee: emp,
                         missingDates,
                         month: monthKey.month,
                         year: monthKey.year,
                       });
-                      break; // F-02: stop this employee's backfill here
+                      break; // F-02: defer while in-window
                     }
+
+                    if (!closeAllowed) {
+                      // Past window but flag=false → defer forever (manual-only, never auto-finalize).
+                      app.log.warn(
+                        { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                        `Auto-Monatsabschluss: Lücken nach Fenster-Ende — closeMonthWithGapsAllowed=false, verschoben (manuell)`,
+                      );
+                      missing.push({
+                        employee: emp,
+                        missingDates,
+                        month: monthKey.month,
+                        year: monthKey.year,
+                      });
+                      break; // defer forever
+                    }
+                    // pastWindow && closeAllowed → fall through to force-close (gaps=0h)
                   }
                 }
               }
