@@ -17,15 +17,114 @@ declare module "fastify" {
 /**
  * Auto-Monatsabschluss: runs daily at 06:00 during the first 10 days of each month.
  *
- * For each tenant, checks if the previous month is already closed for all active employees.
- * If not:
- *   1. Check if all employees have time entries for all workdays
- *   2. If complete → auto-close the month (create SaldoSnapshot, lock entries)
- *   3. If incomplete → send notification to managers listing missing entries
- *   4. Retry next day
+ * For each tenant, closes ALL unclosed prior months for each active employee via a
+ * bounded backward backfill loop (SNAP-02 / Phase 76.27):
+ *   1. Find the employee's last active snapshot → compute first open month.
+ *   2. Iterate oldest→newest [firstOpen .. prevMonth]:
+ *      a. If month has an active (superseded=false) snapshot → skip + thread carryOver.
+ *         This idempotency check also preserves bridge/zero opening snapshots (Pitfall B3).
+ *      b. If month has gaps AND closeMonthWithGapsAllowed≠true → BREAK (F-02). Do NOT
+ *         continue past a gap — closing later months on stale carryOver corrupts the chain.
+ *      c. Otherwise → close via closeEmployeeMonth(), write snapshot + audit.
+ *   3. Sends notifications about remaining gaps.
+ *
+ * Cross-year (Dec→Jan): handled via computePrevMonthInLoop (month=1 → month=12, year-1).
+ * carryOver base: always the IMMEDIATELY preceding month's active snapshot (periodStartWindow
+ * + superseded=false — never orderBy:desc which could pick a stale far-earlier row; Pitfall B2).
  */
 export const autoCloseMonthPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
+
+  // ── Month-step helpers ────────────────────────────────────────────────────────
+
+  /**
+   * Compute the previous month (with year wrap: Jan → Dec of prior year).
+   * Used inside the backward loop to step between months.
+   */
+  function computePrevMonthInLoop(month: number, year: number): { month: number; year: number } {
+    if (month === 1) return { month: 12, year: year - 1 };
+    return { month: month - 1, year };
+  }
+
+  /**
+   * Build an ordered list of { year, month } keys from firstOpen to ceiling (both inclusive),
+   * oldest-first. Returns empty if firstOpen > ceiling.
+   *
+   * The loop iterates by stepping month+1 and wrapping Dec→Jan. This handles cross-year
+   * ranges without any special-casing at the call site.
+   */
+  function buildMonthRange(
+    firstOpen: { year: number; month: number },
+    ceiling: { year: number; month: number },
+  ): Array<{ year: number; month: number }> {
+    const result: Array<{ year: number; month: number }> = [];
+    let cur = { ...firstOpen };
+    // Safety: max 60 months to prevent runaway loops
+    let guard = 0;
+    while (guard++ < 60) {
+      // Stop if cur > ceiling
+      if (cur.year > ceiling.year || (cur.year === ceiling.year && cur.month > ceiling.month)) {
+        break;
+      }
+      result.push({ ...cur });
+      // Advance to next month
+      if (cur.month === 12) {
+        cur = { year: cur.year + 1, month: 1 };
+      } else {
+        cur = { year: cur.year, month: cur.month + 1 };
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Compute the first open month for an employee: max(hireMonth, lastSnapshotMonth+1).
+   * Returns null if the employee has no hire date (shouldn't happen in practice).
+   */
+  function computeFirstOpenMonth(
+    hireDate: Date,
+    lastSnap: { periodStart: Date } | null,
+    tz: string,
+  ): { year: number; month: number } | null {
+    // TZ-normalize hireDate to get the calendar month in tenant timezone
+    const hireDateStr = dateStrInTz(hireDate, tz);
+    const [hireYearStr, hireMonthStr] = hireDateStr.split("-");
+    const hireYear = parseInt(hireYearStr, 10);
+    const hireMonth = parseInt(hireMonthStr, 10); // 1-based
+
+    if (lastSnap === null) {
+      // No prior snapshot → start from hire month
+      return { year: hireYear, month: hireMonth };
+    }
+
+    // lastSnap.periodStart is a @db.Date — extract year and month from it.
+    // The periodStart may be TZ-converted (e.g. 2026-05-31 for June/Berlin) or
+    // UTC-naive (2026-06-01). Use the UTC date part and add 2 days then extract month
+    // to handle the TZ-shifted case — but more robustly, use the actual monthRangeUtc
+    // window convention (the periodStart's UTC date is ≤ the nominal month start).
+    // Since lastSnap is the newest active snapshot (found by orderBy:desc), its periodStart
+    // tells us which calendar month was last closed. The next open month = that month + 1.
+    const psDate = lastSnap.periodStart;
+    const psMidMonthDate = new Date(psDate.getTime() + 15 * 24 * 60 * 60 * 1000); // +15d → definitely in the correct month
+    const psMidMonthStr = dateStrInTz(psMidMonthDate, tz);
+    const [snapYearStr, snapMonthStr] = psMidMonthStr.split("-");
+    const snapYear = parseInt(snapYearStr, 10);
+    const snapMonth = parseInt(snapMonthStr, 10); // 1-based
+
+    // Next open month = snapMonth + 1 (with year wrap)
+    let nextYear = snapYear;
+    let nextMonth = snapMonth + 1;
+    if (nextMonth === 13) {
+      nextMonth = 1;
+      nextYear += 1;
+    }
+
+    // Return max(hireMonth, nextMonth) in chronological order
+    if (nextYear > hireYear || (nextYear === hireYear && nextMonth >= hireMonth)) {
+      return { year: nextYear, month: nextMonth };
+    }
+    return { year: hireYear, month: hireMonth };
+  }
 
   async function tryAutoCloseMonth() {
     // D-11: Grace period — auto-close only runs if we are past the configurable threshold.
@@ -57,7 +156,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           continue;
         }
 
-        // Calculate previous month
+        // Calculate previous month (the CEILING of the backfill range — never close the current month)
         const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
         let prevYear = zonedNow.getUTCFullYear();
         let prevMonth = zonedNow.getUTCMonth(); // 0-based, so this IS previous month (1-based)
@@ -66,19 +165,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           prevYear -= 1;
         }
 
-        const { start: monthStart, end: monthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
+        const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(prevYear, prevMonth, tz);
 
-        // Pre-compute holiday date strings for this month: computed Feiertage + manual DB entries
+        // Pre-compute holiday date strings for the current cron-target month
         const acmStateCode = STATE_MAP[tenant.federalState] ?? "NI";
-        const acmHolidayDateStrings = new Set<string>(
-          getHolidays(prevYear, acmStateCode).map((h) => h.date),
-        );
-        const acmDbHolidays = await app.prisma.publicHoliday.findMany({
-          where: { tenantId: tenant.id, date: { gte: monthStart, lte: monthEnd } },
-        });
-        for (const h of acmDbHolidays) {
-          acmHolidayDateStrings.add(dateStrInTz(h.date, tz));
-        }
 
         // Get all active employees
         const employees = await app.prisma.employee.findMany({
@@ -98,411 +188,445 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           (e) => e.user.role === "ADMIN" || e.user.role === "MANAGER",
         );
 
-        const missing: { employee: (typeof employees)[0]; missingDates: string[] }[] = [];
-        const readyToClose: (typeof employees)[0][] = [];
+        const missing: {
+          employee: (typeof employees)[0];
+          missingDates: string[];
+          month: number;
+          year: number;
+        }[] = [];
 
-        // Tenant-local day bounds for @db.Date column filters (SNAP-05). Moved before
-        // the employee loop so the SHIFT_BASED readiness roster query can use these bounds.
-        const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
-          monthStart,
-          monthEnd,
-          tz,
-        );
+        // ── SNAP-02 / Phase 76.27: Bounded backward backfill loop ─────────────────
+        // Replaces the single-month sequential guard (which was :138-170).
+        // For each employee, close ALL unclosed prior months oldest→newest.
+        // The loop bounds are: [max(hireMonth, lastSnapshot+1) .. prevMonth].
+        // carryOver base for each month = immediately-preceding month's active snapshot
+        // (periodStartWindow + superseded:false, NOT orderBy:desc — Pitfall B2).
+        // Bridge/zero opening snapshots are preserved: idempotency skip (Pitfall B3).
+        // Gap-blocked month → BREAK (F-02): never close later months on stale carryOver.
 
         for (const emp of employees) {
-          // Check if already closed — use findFirst with superseded:false.
-          // The @@unique was replaced by a partial unique index (COMP-V1814-04); the compound
-          // accessor no longer exists. superseded:false ensures only the active snapshot is checked.
-          // Convention-robust: periodStartWindow matches both the TZ-converted date
-          // (e.g. 2026-05-31 for June/Berlin) AND legacy UTC-naive rows (2026-06-01),
-          // so a manually/script-closed month is never re-closed by the cron.
-          const existingSnapshot = await app.prisma.saldoSnapshot.findFirst({
-            where: {
-              employeeId: emp.id,
-              periodType: "MONTHLY",
-              periodStart: periodStartWindow(monthStart),
-              superseded: false,
-            },
-          });
-          if (existingSnapshot) continue; // Already closed
-
-          // Skip employees hired after this month
-          if (emp.hireDate > monthEnd) continue;
-
-          // Sequential-close guard (parity with the manual close-month route, which
-          // rejects with "Bitte zuerst {Monat} abschließen"): NEVER close month N when
-          // month N-1 has no active snapshot — otherwise the prevSnapshot carry-over
-          // lookup silently skips over the open month and its entire balance is
-          // dropped from the saldo chain. Only exempt: employee was hired during or
-          // after the target month (no prior month exists for them).
-          {
-            let guardPrevYear = prevYear;
-            let guardPrevMonth = prevMonth - 1;
-            if (guardPrevMonth === 0) {
-              guardPrevMonth = 12;
-              guardPrevYear -= 1;
-            }
-            const { start: guardStart, end: guardEnd } = monthRangeUtc(
-              guardPrevYear,
-              guardPrevMonth,
-              tz,
-            );
-            const hireDateNormGuard = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
-            // Guard applies only if the employee was already employed in month N-1.
-            if (hireDateNormGuard <= guardEnd) {
-              const prevMonthSnapshot = await app.prisma.saldoSnapshot.findFirst({
-                where: {
-                  employeeId: emp.id,
-                  periodType: "MONTHLY",
-                  periodStart: periodStartWindow(guardStart),
-                  superseded: false,
-                },
-              });
-              if (!prevMonthSnapshot) {
-                app.log.warn(
-                  { employeeId: emp.id, month: prevMonth, year: prevYear },
-                  `Auto-Monatsabschluss: übersprungen — Vormonat ${guardPrevMonth}/${guardPrevYear} ist nicht abgeschlossen (sequentieller Abschluss erforderlich)`,
-                );
-                continue;
-              }
-            }
-          }
-
-          // Schedule valid FOR the target month (not the newest row): after a contract
-          // change (validFrom = 1st of a later month) the readiness check must use the
-          // schedule that governed the month being closed.
-          const schedule = emp.workSchedules.find((ws) => ws.validFrom <= monthEnd);
-          if (!schedule) {
-            readyToClose.push(emp); // No schedule = no expected hours, can close
-            continue;
-          }
-
-          // MONTHLY_HOURS and FLEXTIME employees work flexibly — no daily gap rule (D-01).
-          // Phase 76.26: FLEXTIME added alongside MONTHLY_HOURS (same as overtime.ts status handler).
-          const acmScheduleTypeSt = String(schedule.type);
-          if (acmScheduleTypeSt === "MONTHLY_HOURS" || acmScheduleTypeSt === "FLEXTIME") {
-            readyToClose.push(emp);
-            continue;
-          }
-
-          // Phase 76.26 Task 2: replace inline getDayHoursFromSchedule enumeration with
-          // findMissingWorkdays (pitfall A4 fix — SHIFT_BASED now uses Shift.date roster,
-          // not {day}Hours). Shared coveredDates set with the saldo core (pitfall A1 fix).
-
-          // Find workdays without time entries
-          const rdEntries = await app.prisma.timeEntry.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              date: { gte: monthStart, lte: monthEnd },
-              endTime: { not: null },
-              type: "WORK",
-            },
-            select: { date: true },
-          });
-          const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
-
-          // Check approved leave and absences
-          const rdApprovedLeave = await app.prisma.leaveRequest.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              status: "APPROVED",
-              startDate: { lte: monthEnd },
-              endDate: { gte: monthStart },
-            },
-            select: { startDate: true, endDate: true, halfDay: true },
-          });
-          const rdAbsences = await app.prisma.absence.findMany({
-            where: {
-              employeeId: emp.id,
-              deletedAt: null,
-              startDate: { lte: monthEnd },
-              endDate: { gte: monthStart },
-            },
-            select: { startDate: true, endDate: true },
-          });
-
-          // For SHIFT_BASED: fetch rosterDates (Shift.date set) — pitfall A4 fix.
-          // Uses monthFirstDay/monthLastDay (@db.Date bounds, SNAP-05).
-          let rdRosterDates: Set<string> | undefined;
-          if (acmScheduleTypeSt === "SHIFT_BASED") {
-            const empShifts = await app.prisma.shift.findMany({
-              where: {
-                employeeId: emp.id,
-                date: { gte: monthFirstDay, lte: monthLastDay },
-                deletedAt: null,
-              },
-              select: { date: true },
-            });
-            rdRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
-          }
-
-          // effectiveStart = max(hireDate, monthFirstDay) — TZ-normalised (CLOSE-04).
-          const rdHireDateNorm = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
-          const rdEffectiveStart = rdHireDateNorm > monthFirstDay ? rdHireDateNorm : monthFirstDay;
-
-          const rdGapResult = findMissingWorkdays({
-            schedule: schedule as Record<string, unknown>,
-            effectiveStart: rdEffectiveStart,
-            effectiveEnd: monthLastDay,
-            tz,
-            entryDates: rdEntryDates,
-            approvedLeave: rdApprovedLeave.map((lr) => ({
-              startDate: lr.startDate,
-              endDate: lr.endDate,
-              halfDay: Boolean(lr.halfDay),
-            })),
-            absences: rdAbsences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
-            holidayDateStrings: acmHolidayDateStrings,
-            rosterDates: rdRosterDates,
-          });
-
-          // Derive readiness from gaps — a month with any gap (full or partial) is NOT
-          // auto-closed. Do NOT make gaps auto-closeable here — CLOSE-01 (76.28) owns
-          // that gate relax.
-          const missingDates = rdGapResult.gaps.map((g) => g.date);
-
-          if (missingDates.length > 0) {
-            missing.push({ employee: emp, missingDates });
-          } else {
-            readyToClose.push(emp);
-          }
-        }
-
-        // Auto-close employees that are ready
-        // (monthFirstDay/monthLastDay already computed above before the readiness loop)
-        for (const emp of readyToClose) {
           try {
-            // Schedule valid for the MIDDLE of the target month — closing a past
-            // month after a contract change must use the historical schedule
-            // (parity with recalculate-snapshots.ts).
-            const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
-            const schedule = await getEffectiveSchedule(app, emp.id, midMonth);
-
-            // Phase 76.26 — P2 cron rewire: pre-fetch all data needed by closeEmployeeMonth.
-            // The inline saldo computation (~395 lines) is replaced by the shared pure core.
-            // $transaction + app.audit + SYSTEM user + isLocked guard stay here (caller owns
-            // DB atomicity). Byte-identical values to the previous inline path are guaranteed
-            // by the four-path parity test suite (shift-based-saldo-parity, saldo-invariant-e2e).
-
-            // Build holiday set for this employee: merge computed Feiertage + DB manual holidays.
-            // acmHolidayDateStrings (computed + DB) is already available for the whole tenant;
-            // the per-employee DB query below adds any employee-scoped overrides (same as before).
-            const empHireDateNorm = emp.hireDate
-              ? new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z")
-              : null;
-            const empEffectiveStart =
-              empHireDateNorm && empHireDateNorm > monthFirstDay ? empHireDateNorm : monthFirstDay;
-
-            const closeMonthComputedHolidays = getHolidays(prevYear, acmStateCode).filter(
-              (h) =>
-                h.date >= dateStrInTz(empEffectiveStart, tz) && h.date <= dateStrInTz(monthEnd, tz),
-            );
-            const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
-              where: {
-                tenant: { employees: { some: { id: emp.id } } },
-                date: { gte: empEffectiveStart, lte: monthLastDay },
-              },
-            });
-            const closeMonthHolidayDateSet = new Set<string>(
-              closeMonthComputedHolidays.map((h) => h.date),
-            );
-            const closeHolidayDateStrings = new Set<string>([
-              ...closeMonthComputedHolidays.map((h) => h.date),
-              ...closeMonthDbHolidays
-                .filter((h) => !closeMonthHolidayDateSet.has(dateStrInTz(h.date, tz)))
-                .map((h) => dateStrInTz(h.date, tz)),
-            ]);
-
-            // Pre-fetch all collections needed by closeEmployeeMonth.
-            const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] =
-              await Promise.all([
-                // WORK entries (effectiveStart..monthLastDay, soft-delete + isInvalid filter)
-                app.prisma.timeEntry.findMany({
-                  where: {
-                    employeeId: emp.id,
-                    deletedAt: null,
-                    date: { gte: empEffectiveStart, lte: monthLastDay },
-                    endTime: { not: null },
-                    type: "WORK",
-                    isInvalid: false,
-                  },
-                  select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-                }),
-                // Shifts (SHIFT_BASED only — also fetch for non-SHIFT; core ignores them)
-                app.prisma.shift.findMany({
-                  where: {
-                    employeeId: emp.id,
-                    date: { gte: empEffectiveStart, lte: monthLastDay },
-                    deletedAt: null,
-                  },
-                  select: { date: true, startTime: true, endTime: true },
-                }),
-                // Approved leave
-                app.prisma.leaveRequest.findMany({
-                  where: {
-                    employeeId: emp.id,
-                    deletedAt: null,
-                    status: "APPROVED",
-                    startDate: { lte: monthEnd },
-                    endDate: { gte: monthStart },
-                  },
-                  select: { startDate: true, endDate: true, halfDay: true },
-                }),
-                // All absences (including VOCATIONAL_SCHOOL — BS-doubling handled in core)
-                app.prisma.absence.findMany({
-                  where: {
-                    employeeId: emp.id,
-                    deletedAt: null,
-                    startDate: { lte: monthEnd },
-                    endDate: { gte: empEffectiveStart },
-                  },
-                  select: { startDate: true, endDate: true, type: true, source: true },
-                }),
-              ]);
-
-            // Previous snapshot carry-over (most recent prior month, or 0 for first month).
-            const prevSnapshot = await app.prisma.saldoSnapshot.findFirst({
+            // Find the newest active snapshot to determine where backfill starts.
+            // orderBy:desc IS correct here (finding the most recent closed month, not the carryOver base).
+            const lastSnap = await app.prisma.saldoSnapshot.findFirst({
               where: {
                 employeeId: emp.id,
                 periodType: "MONTHLY",
-                periodStart: { lt: monthStart },
-                superseded: false,
+                superseded: false, // Pitfall B5: always filter superseded=false
               },
               orderBy: { periodStart: "desc" },
             });
-            const carryOverIn = prevSnapshot?.carryOver ?? 0;
 
-            // ── Phase 76.26: call the shared pure saldo core ──────────────────────────
-            // BS-doubling (Phase 76.12 D-14): the old inline `const bsAbsences = await app.prisma.absence.findMany`
-            // with `type: "VOCATIONAL_SCHOOL"` filter is now handled inside closeEmployeeMonth (via the
-            // absences array passed below — all absence types including VOCATIONAL_SCHOOL are included).
-            // Leave-reduce (D-14): `calcLeaveAbsenceMinutesTz(` with `halfDay: Boolean(lr.halfDay)` is now
-            // inside closeEmployeeMonth; the `halfDay: Boolean(lr.halfDay)` mapping below preserves it.
-            const r = closeEmployeeMonth({
-              employeeId: emp.id,
-              monthStart,
-              monthEnd,
-              monthFirstDay,
-              monthLastDay,
-              tz,
-              carryOverIn,
-              schedule: schedule as Record<string, unknown>,
-              hireDate: emp.hireDate,
-              exitDate: emp.exitDate ?? null,
-              isTimeTrackingExempt: false, // already short-circuited above
-              breakOver6hOverride: emp.breakOver6hOverride ?? null,
-              breakOver9hOverride: emp.breakOver9hOverride ?? null,
-              entries: closeEntries.map((e) => ({
-                date: e.date,
-                startTime: e.startTime,
-                endTime: e.endTime!,
-                breakMinutes: e.breakMinutes,
-              })),
-              shifts: closeShifts.map((sh) => ({
-                date: sh.date,
-                startTime: sh.startTime,
-                endTime: sh.endTime,
-              })),
-              approvedLeave: closeApprovedLeave.map((lr) => ({
-                startDate: lr.startDate,
-                endDate: lr.endDate,
-                halfDay: Boolean(lr.halfDay),
-              })),
-              absences: closeAbsences.map((ab) => ({
-                startDate: ab.startDate,
-                endDate: ab.endDate,
-                type: ab.type,
-                source: ab.source,
-              })),
-              holidayDateStrings: closeHolidayDateStrings,
-              tenantConfig: tenant.config
-                ? {
-                    defaultBreakOver6h: tenant.config.defaultBreakOver6h,
-                    defaultBreakOver9h: tenant.config.defaultBreakOver9h,
-                    monthlyHoursHolidayDeduction:
-                      tenant.config.monthlyHoursHolidayDeduction ?? undefined,
-                    vocationalSchoolMinutesPerDay:
-                      tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
-                    vocationalSchoolBlockMinutesPerWeek:
-                      tenant.config.vocationalSchoolBlockMinutesPerWeek ?? undefined,
-                  }
-                : null,
-            });
+            // Skip employees hired after the ceiling month
+            if (emp.hireDate > prevMonthEnd) continue;
 
-            const {
-              workedMinutes: closeWorkedMinutes,
-              balanceMinutes,
-              carryOverOut,
-              effectiveCarryOverOut,
-              snapshotExpectedMinutes,
-            } = r;
+            // Compute the first open month = max(hireMonth, lastSnapshot+1)
+            const firstOpen = computeFirstOpenMonth(emp.hireDate, lastSnap, tz);
+            if (firstOpen === null) continue;
 
-            // Alias for the $transaction and audit log below (mirrors P1 manual-close variable names)
-            const effectiveCarryOver = effectiveCarryOverOut;
-            const carryOver = carryOverOut;
+            // Build the ordered range [firstOpen .. prevMonth]
+            const monthsToClose = buildMonthRange(firstOpen, { year: prevYear, month: prevMonth });
 
-            await app.prisma.$transaction(async (tx) => {
-              await tx.saldoSnapshot.create({
-                data: {
+            // Thread carryOver through the loop: seeded from the lastSnap before the loop starts.
+            // Will be updated as each month is closed or idempotency-skipped.
+            let carryOverIn = lastSnap?.carryOver ?? 0;
+
+            for (const monthKey of monthsToClose) {
+              const { start: monthStart, end: monthEnd } = monthRangeUtc(
+                monthKey.year,
+                monthKey.month,
+                tz,
+              );
+              const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+                monthStart,
+                monthEnd,
+                tz,
+              );
+
+              // ── Idempotency check ──────────────────────────────────────────────
+              // If this month already has an active (superseded=false) snapshot, skip it
+              // and thread its carryOver to the next month. This preserves bridge/zero
+              // opening balance snapshots (Pitfall B3) — they ARE active snapshots and
+              // this check naturally skips them without any balanceMinutes==0 heuristic.
+              // SNAP-04: bridge snapshots MUST NOT be superseded; the sole guard is this check.
+              const existingSnap = await app.prisma.saldoSnapshot.findFirst({
+                where: {
                   employeeId: emp.id,
                   periodType: "MONTHLY",
-                  periodStart: monthStart,
-                  periodEnd: monthEnd,
+                  periodStart: periodStartWindow(monthStart), // convention-robust (B5)
+                  superseded: false, // Pitfall B5: always filter superseded=false
+                },
+              });
+              if (existingSnap) {
+                // Skip — thread existing snapshot's carryOver as the next month's base.
+                carryOverIn = existingSnap.carryOver;
+                continue;
+              }
+
+              // Skip months that started after the employee's hire date check
+              if (emp.hireDate > monthEnd) continue;
+
+              // ── Per-month gap readiness check ──────────────────────────────────
+              // Re-uses the same findMissingWorkdays logic as before, scoped to THIS month.
+              // D-01: MONTHLY_HOURS and FLEXTIME have no daily gap rule.
+              const scheduleForMonth = emp.workSchedules.find((ws) => ws.validFrom <= monthEnd);
+
+              if (scheduleForMonth) {
+                const acmScheduleTypeSt = String(scheduleForMonth.type);
+                const isFlexible =
+                  acmScheduleTypeSt === "MONTHLY_HOURS" || acmScheduleTypeSt === "FLEXTIME";
+
+                if (!isFlexible) {
+                  // Fetch entries and leave/absences for this month
+                  const rdEntries = await app.prisma.timeEntry.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      date: { gte: monthStart, lte: monthEnd },
+                      endTime: { not: null },
+                      type: "WORK",
+                    },
+                    select: { date: true },
+                  });
+                  const rdEntryDates = new Set(rdEntries.map((e) => dateStrInTz(e.date, tz)));
+
+                  const rdApprovedLeave = await app.prisma.leaveRequest.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      status: "APPROVED",
+                      startDate: { lte: monthEnd },
+                      endDate: { gte: monthStart },
+                    },
+                    select: { startDate: true, endDate: true, halfDay: true },
+                  });
+                  const rdAbsences = await app.prisma.absence.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      startDate: { lte: monthEnd },
+                      endDate: { gte: monthStart },
+                    },
+                    select: { startDate: true, endDate: true },
+                  });
+
+                  // Pre-compute holiday date strings for this specific month
+                  const monthHolidayDateStrings = new Set<string>(
+                    getHolidays(monthKey.year, acmStateCode).map((h) => h.date),
+                  );
+                  const monthDbHolidays = await app.prisma.publicHoliday.findMany({
+                    where: { tenantId: tenant.id, date: { gte: monthStart, lte: monthEnd } },
+                  });
+                  for (const h of monthDbHolidays) {
+                    monthHolidayDateStrings.add(dateStrInTz(h.date, tz));
+                  }
+
+                  // For SHIFT_BASED: fetch rosterDates (Shift.date set) — pitfall A4 fix.
+                  let rdRosterDates: Set<string> | undefined;
+                  if (acmScheduleTypeSt === "SHIFT_BASED") {
+                    const empShifts = await app.prisma.shift.findMany({
+                      where: {
+                        employeeId: emp.id,
+                        date: { gte: monthFirstDay, lte: monthLastDay },
+                        deletedAt: null,
+                      },
+                      select: { date: true },
+                    });
+                    rdRosterDates = new Set(empShifts.map((sh) => dateStrInTz(sh.date, tz)));
+                  }
+
+                  // effectiveStart = max(hireDate, monthFirstDay) — TZ-normalised (CLOSE-04).
+                  const rdHireDateNorm = new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z");
+                  const rdEffectiveStart =
+                    rdHireDateNorm > monthFirstDay ? rdHireDateNorm : monthFirstDay;
+
+                  const rdGapResult = findMissingWorkdays({
+                    schedule: scheduleForMonth as Record<string, unknown>,
+                    effectiveStart: rdEffectiveStart,
+                    effectiveEnd: monthLastDay,
+                    tz,
+                    entryDates: rdEntryDates,
+                    approvedLeave: rdApprovedLeave.map((lr) => ({
+                      startDate: lr.startDate,
+                      endDate: lr.endDate,
+                      halfDay: Boolean(lr.halfDay),
+                    })),
+                    absences: rdAbsences.map((ab) => ({
+                      startDate: ab.startDate,
+                      endDate: ab.endDate,
+                    })),
+                    holidayDateStrings: monthHolidayDateStrings,
+                    rosterDates: rdRosterDates,
+                  });
+
+                  const missingDates = rdGapResult.gaps.map((g) => g.date);
+
+                  if (missingDates.length > 0) {
+                    // F-02 = break: gap-blocked month stops the loop for this employee.
+                    // Do NOT continue past a gap — closing later months without this one
+                    // would corrupt the carryOver chain (wrong carryOverIn for M+1 and beyond).
+                    // After 76.28: if closeMonthWithGapsAllowed=true, this break is skipped.
+                    // Read TenantConfig.closeMonthWithGapsAllowed defensively (column not yet added;
+                    // defaults to false so current behavior = gap → break).
+                    const closeMonthWithGapsAllowed =
+                      (tenant.config as Record<string, unknown> | null)
+                        ?.closeMonthWithGapsAllowed === true;
+
+                    if (!closeMonthWithGapsAllowed) {
+                      app.log.warn(
+                        { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                        `Auto-Monatsabschluss: Backfill für MA pausiert — Lücken in ${monthKey.month}/${monthKey.year} (F-02 Break)`,
+                      );
+                      // Track for notification
+                      missing.push({
+                        employee: emp,
+                        missingDates,
+                        month: monthKey.month,
+                        year: monthKey.year,
+                      });
+                      break; // F-02: stop this employee's backfill here
+                    }
+                  }
+                }
+              }
+
+              // ── Close this month ───────────────────────────────────────────────
+              // Pre-fetch the carryOver base from the IMMEDIATELY preceding month
+              // (Pitfall B2 — NOT orderBy:desc which could pick a far-earlier snapshot).
+              const prevMonthKeyInLoop = computePrevMonthInLoop(monthKey.month, monthKey.year);
+              const { start: prevMonthStartInLoop } = monthRangeUtc(
+                prevMonthKeyInLoop.year,
+                prevMonthKeyInLoop.month,
+                tz,
+              );
+              const prevSnapForCarryOver = await app.prisma.saldoSnapshot.findFirst({
+                where: {
+                  employeeId: emp.id,
+                  periodType: "MONTHLY",
+                  periodStart: periodStartWindow(prevMonthStartInLoop), // immediately-preceding month
+                  superseded: false, // Pitfall B5: always filter superseded=false
+                },
+                // NO orderBy here — periodStartWindow narrows to exactly one month
+              });
+              // Use the immediately-preceding snapshot's carryOver if available,
+              // otherwise fall back to the threaded carryOverIn (which may differ if
+              // the prev snapshot was just created in this same loop iteration).
+              // The threaded carryOverIn is equally correct since it was set to
+              // effectiveCarryOverOut of the previously closed month.
+              if (prevSnapForCarryOver) {
+                carryOverIn = prevSnapForCarryOver.carryOver;
+              }
+              // (else: carryOverIn remains the threaded value from the prior iteration)
+
+              // ── Schedule valid FOR this month (historical schedule awareness) ──
+              const midMonth = new Date((monthStart.getTime() + monthEnd.getTime()) / 2);
+              const schedule = await getEffectiveSchedule(app, emp.id, midMonth);
+
+              // Build holiday set for this month
+              const empHireDateNorm = emp.hireDate
+                ? new Date(dateStrInTz(emp.hireDate, tz) + "T00:00:00Z")
+                : null;
+              const empEffectiveStart =
+                empHireDateNorm && empHireDateNorm > monthFirstDay
+                  ? empHireDateNorm
+                  : monthFirstDay;
+
+              const closeMonthComputedHolidays = getHolidays(monthKey.year, acmStateCode).filter(
+                (h) =>
+                  h.date >= dateStrInTz(empEffectiveStart, tz) &&
+                  h.date <= dateStrInTz(monthEnd, tz),
+              );
+              const closeMonthDbHolidays = await app.prisma.publicHoliday.findMany({
+                where: {
+                  tenant: { employees: { some: { id: emp.id } } },
+                  date: { gte: empEffectiveStart, lte: monthLastDay },
+                },
+              });
+              const closeMonthHolidayDateSet = new Set<string>(
+                closeMonthComputedHolidays.map((h) => h.date),
+              );
+              const closeHolidayDateStrings = new Set<string>([
+                ...closeMonthComputedHolidays.map((h) => h.date),
+                ...closeMonthDbHolidays
+                  .filter((h) => !closeMonthHolidayDateSet.has(dateStrInTz(h.date, tz)))
+                  .map((h) => dateStrInTz(h.date, tz)),
+              ]);
+
+              // Pre-fetch all collections needed by closeEmployeeMonth
+              const [closeEntries, closeShifts, closeApprovedLeave, closeAbsences] =
+                await Promise.all([
+                  // WORK entries (effectiveStart..monthLastDay, soft-delete + isInvalid filter)
+                  app.prisma.timeEntry.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      date: { gte: empEffectiveStart, lte: monthLastDay },
+                      endTime: { not: null },
+                      type: "WORK",
+                      isInvalid: false,
+                    },
+                    select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+                  }),
+                  // Shifts (SHIFT_BASED only — also fetch for non-SHIFT; core ignores them)
+                  app.prisma.shift.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      date: { gte: empEffectiveStart, lte: monthLastDay },
+                      deletedAt: null,
+                    },
+                    select: { date: true, startTime: true, endTime: true },
+                  }),
+                  // Approved leave
+                  app.prisma.leaveRequest.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      status: "APPROVED",
+                      startDate: { lte: monthEnd },
+                      endDate: { gte: monthStart },
+                    },
+                    select: { startDate: true, endDate: true, halfDay: true },
+                  }),
+                  // All absences (including VOCATIONAL_SCHOOL — BS-doubling handled in core)
+                  app.prisma.absence.findMany({
+                    where: {
+                      employeeId: emp.id,
+                      deletedAt: null,
+                      startDate: { lte: monthEnd },
+                      endDate: { gte: empEffectiveStart },
+                    },
+                    select: { startDate: true, endDate: true, type: true, source: true },
+                  }),
+                ]);
+
+              // ── Phase 76.26: call the shared pure saldo core ──────────────────
+              const r = closeEmployeeMonth({
+                employeeId: emp.id,
+                monthStart,
+                monthEnd,
+                monthFirstDay,
+                monthLastDay,
+                tz,
+                carryOverIn,
+                schedule: schedule as Record<string, unknown>,
+                hireDate: emp.hireDate,
+                exitDate: emp.exitDate ?? null,
+                isTimeTrackingExempt: false, // already short-circuited above
+                breakOver6hOverride: emp.breakOver6hOverride ?? null,
+                breakOver9hOverride: emp.breakOver9hOverride ?? null,
+                entries: closeEntries.map((e) => ({
+                  date: e.date,
+                  startTime: e.startTime,
+                  endTime: e.endTime!,
+                  breakMinutes: e.breakMinutes,
+                })),
+                shifts: closeShifts.map((sh) => ({
+                  date: sh.date,
+                  startTime: sh.startTime,
+                  endTime: sh.endTime,
+                })),
+                approvedLeave: closeApprovedLeave.map((lr) => ({
+                  startDate: lr.startDate,
+                  endDate: lr.endDate,
+                  halfDay: Boolean(lr.halfDay),
+                })),
+                absences: closeAbsences.map((ab) => ({
+                  startDate: ab.startDate,
+                  endDate: ab.endDate,
+                  type: ab.type,
+                  source: ab.source,
+                })),
+                holidayDateStrings: closeHolidayDateStrings,
+                tenantConfig: tenant.config
+                  ? {
+                      defaultBreakOver6h: tenant.config.defaultBreakOver6h,
+                      defaultBreakOver9h: tenant.config.defaultBreakOver9h,
+                      monthlyHoursHolidayDeduction:
+                        tenant.config.monthlyHoursHolidayDeduction ?? undefined,
+                      vocationalSchoolMinutesPerDay:
+                        tenant.config.vocationalSchoolMinutesPerDay ?? undefined,
+                      vocationalSchoolBlockMinutesPerWeek:
+                        tenant.config.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+                    }
+                  : null,
+              });
+
+              const {
+                workedMinutes: closeWorkedMinutes,
+                balanceMinutes,
+                carryOverOut,
+                effectiveCarryOverOut,
+                snapshotExpectedMinutes,
+              } = r;
+
+              // Alias for the $transaction and audit log below (mirrors P1 manual-close variable names)
+              const effectiveCarryOver = effectiveCarryOverOut;
+              const carryOver = carryOverOut;
+
+              await app.prisma.$transaction(async (tx) => {
+                await tx.saldoSnapshot.create({
+                  data: {
+                    employeeId: emp.id,
+                    periodType: "MONTHLY",
+                    periodStart: monthStart,
+                    periodEnd: monthEnd,
+                    workedMinutes: closeWorkedMinutes,
+                    expectedMinutes: snapshotExpectedMinutes,
+                    balanceMinutes,
+                    carryOver: effectiveCarryOver,
+                    closedAt: new Date(),
+                    closedBy: null, // SYSTEM
+                    note: "Automatischer Monatsabschluss",
+                  },
+                });
+
+                await tx.timeEntry.updateMany({
+                  where: {
+                    employeeId: emp.id,
+                    deletedAt: null,
+                    // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
+                    // lower bound casts to the previous month's last day for UTC+ tenants.
+                    date: { gte: monthFirstDay, lte: monthLastDay },
+                  },
+                  data: { isLocked: true, lockedAt: new Date() },
+                });
+
+                // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
+                // A crash between snapshot commit and upsert can no longer leave a stale live balance.
+                // effectiveCarryOver=0 for TRACK_ONLY employees.
+                await tx.overtimeAccount.upsert({
+                  where: { employeeId: emp.id },
+                  create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
+                  update: { balanceHours: effectiveCarryOver / 60 },
+                });
+              });
+
+              await app.audit({
+                userId: undefined,
+                action: "CREATE",
+                entity: "SaldoSnapshot",
+                entityId: emp.id,
+                newValue: {
+                  origin: "SYSTEM",
+                  employeeId: emp.id,
+                  periodType: "MONTHLY",
+                  year: monthKey.year,
+                  month: monthKey.month,
                   workedMinutes: closeWorkedMinutes,
                   expectedMinutes: snapshotExpectedMinutes,
                   balanceMinutes,
-                  carryOver: effectiveCarryOver,
-                  closedAt: new Date(),
-                  closedBy: null, // SYSTEM
-                  note: "Automatischer Monatsabschluss",
+                  carryOver,
+                  auto: true,
                 },
               });
 
-              await tx.timeEntry.updateMany({
-                where: {
-                  employeeId: emp.id,
-                  deletedAt: null,
-                  // Day bounds (not the monthStart/monthEnd timestamps): the timestamp
-                  // lower bound casts to the previous month's last day for UTC+ tenants.
-                  date: { gte: monthFirstDay, lte: monthLastDay },
-                },
-                data: { isLocked: true, lockedAt: new Date() },
-              });
+              app.log.info(
+                `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${monthKey.month}/${monthKey.year} abgeschlossen (${Math.round(closeWorkedMinutes / 60)}h Ist, ${Math.round(snapshotExpectedMinutes / 60)}h Soll)`,
+              );
 
-              // PERF-V1814-02: overtimeAccount.upsert inside the same tx as snapshot + entry-lock.
-              // A crash between snapshot commit and upsert can no longer leave a stale live balance.
-              // effectiveCarryOver=0 for TRACK_ONLY employees.
-              await tx.overtimeAccount.upsert({
-                where: { employeeId: emp.id },
-                create: { employeeId: emp.id, balanceHours: effectiveCarryOver / 60 },
-                update: { balanceHours: effectiveCarryOver / 60 },
-              });
-            });
-
-            await app.audit({
-              userId: undefined,
-              action: "CREATE",
-              entity: "SaldoSnapshot",
-              entityId: emp.id,
-              newValue: {
-                origin: "SYSTEM",
-                employeeId: emp.id,
-                periodType: "MONTHLY",
-                year: prevYear,
-                month: prevMonth,
-                workedMinutes: closeWorkedMinutes,
-                expectedMinutes: snapshotExpectedMinutes,
-                balanceMinutes,
-                carryOver,
-                auto: true,
-              },
-            });
-
-            app.log.info(
-              `Auto-Monatsabschluss: ${emp.firstName} ${emp.lastName} — ${prevMonth}/${prevYear} abgeschlossen (${Math.round(closeWorkedMinutes / 60)}h Ist, ${Math.round(snapshotExpectedMinutes / 60)}h Soll)`,
-            );
+              // Thread the effectiveCarryOverOut to the next month in the loop
+              carryOverIn = effectiveCarryOverOut;
+            }
           } catch (err) {
             app.log.error(
               { err, employeeId: emp.id },
@@ -625,7 +749,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           }
         }
 
-        // Notify managers about missing entries
+        // Notify managers about missing entries (from gap-blocked months in the backfill loop)
         if (missing.length > 0) {
           const lines = missing.map((m) => {
             const name = `${m.employee.firstName} ${m.employee.lastName}`;
@@ -637,7 +761,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 }),
               )
               .join(", ");
-            return `${name}: ${dates}`;
+            return `${name} (${m.month}/${m.year}): ${dates}`;
           });
 
           const monthName = new Date(
@@ -655,11 +779,11 @@ export const autoCloseMonthPlugin = fp(async (app) => {
           }
 
           app.log.info(
-            `Auto-Monatsabschluss: Tenant ${tenant.name} — ${missing.length} MA mit fehlenden Einträgen, ${readyToClose.length} abgeschlossen`,
+            `Auto-Monatsabschluss: Tenant ${tenant.name} — ${missing.length} MA mit fehlenden Einträgen`,
           );
-        } else if (readyToClose.length > 0) {
+        } else {
           app.log.info(
-            `Auto-Monatsabschluss: Tenant ${tenant.name} — alle ${readyToClose.length} MA abgeschlossen`,
+            `Auto-Monatsabschluss: Tenant ${tenant.name} — Backfill-Durchlauf abgeschlossen`,
           );
         }
       } catch (err) {

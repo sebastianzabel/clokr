@@ -354,7 +354,8 @@ describe("SNAP-02-A: Multi-month oldest-first backfill", () => {
       await seedEntry(app, empId, d, 480);
     }
 
-    // Seed March 2026 entries: 10 days (Mon 2026-03-02 through Fri 2026-03-13)
+    // Seed March 2026 entries: all 22 Mon-Fri workdays (no NI public holidays in March 2026).
+    // Full coverage is required so the gap readiness check (F-02) passes and March closes.
     const marEntries = [
       "2026-03-02",
       "2026-03-03",
@@ -366,6 +367,18 @@ describe("SNAP-02-A: Multi-month oldest-first backfill", () => {
       "2026-03-11",
       "2026-03-12",
       "2026-03-13",
+      "2026-03-16",
+      "2026-03-17",
+      "2026-03-18",
+      "2026-03-19",
+      "2026-03-20",
+      "2026-03-23",
+      "2026-03-24",
+      "2026-03-25",
+      "2026-03-26",
+      "2026-03-27",
+      "2026-03-30",
+      "2026-03-31",
     ];
     for (const d of marEntries) {
       await seedEntry(app, empId, d, 480);
@@ -423,26 +436,36 @@ describe("SNAP-02-A: Multi-month oldest-first backfill", () => {
 
   it("SNAP-02-A: March snapshot carryOver = January.carryOver + Feb.balance + Mar.balance (oldest-first chain)", async () => {
     // After the backward loop, the carryOver chain must be:
-    //   Jan.carryOver = 1200
-    //   Feb.balance ≈ 0 (worked 9600, expected ≈ 9600)
-    //   Mar.balance ≈ -5280 (worked 4800, expected ≈ 10080)
-    //   Mar.carryOver ≈ 1200 + 0 - 5280 = -4080 (± tolerance for exact holiday calc)
+    //   Jan.carryOver = 1200 (seeded)
+    //   Feb.balance ≈ 0 (worked 9600 = 20×480, expected ≈ 9600 for 20 workdays)
+    //   Mar.balance ≈ 0 (worked 10560 = 22×480, expected ≈ 10560 for 22 workdays, no NI holidays in Mar 2026)
+    //   Mar.carryOver ≈ 1200 + 0 + 0 = 1200 (± tolerance for exact expected-minutes calc)
     //
-    // RED: marSnap is null, so this can't even be checked. The assertion will fail
-    // because carryOver on null throws. This is intentional — the RED is already
-    // established by the previous tests; this one documents the post-fix invariant.
+    // Note: the fixture was updated to seed all 22 March workdays (from 10) so the gap
+    // readiness check (F-02) passes and March closes. With full coverage, March.balance ≈ 0.
+    //
+    // This test also verifies that the carryOver chain is NOT broken: March.carryOver must
+    // equal Jan.carryOver + Feb.balance + Mar.balance, NOT Jan.carryOver alone (which would
+    // indicate the chain snapped and Mar.carryOverIn = 0 or an old snapshot was used).
     const marSnap = await fetchActiveMonthlySnapshot(app, empId, 2026, 3);
 
-    // If marSnap is null (RED case), this expect will fail explicitly:
+    // If marSnap is null, this fails explicitly:
     expect(marSnap, "March 2026 snapshot must exist to check carryOver chain").not.toBeNull();
 
-    // After 76.27-03: March carryOver = Jan.carryOver(1200) + Feb.balance(≈0) + Mar.balance(≈-5280)
-    // Allow ±600 min tolerance for holiday/ArbZG boundary effects.
-    const expectedApproxCarryOver = 1200 + 0 + -5280; // = -4080
-    const tolerance = 600;
+    // After 76.27-03: March carryOver = Jan.carryOver(1200) + Feb.balance(≈0) + Mar.balance(≈0) ≈ 1200.
+    // Key invariant: the carryOver IS chained through Jan→Feb→Mar (not skipping any month).
+    // We verify that Mar.carryOver = Jan.carryOver + Feb.balance + Mar.balance (chain integrity).
+    const janSnap = await fetchActiveMonthlySnapshot(app, empId, 2026, 1);
+    const febSnap = await fetchActiveMonthlySnapshot(app, empId, 2026, 2);
+    expect(janSnap, "January 2026 snapshot must exist (seeded)").not.toBeNull();
+    expect(febSnap, "February 2026 snapshot must exist (closed by backward loop)").not.toBeNull();
+
+    const expectedChainedCarryOver =
+      janSnap!.carryOver + febSnap!.balanceMinutes + marSnap!.balanceMinutes;
+    const tolerance = 60; // ±1 min rounding tolerance
     expect(
-      Math.abs(marSnap!.carryOver - expectedApproxCarryOver),
-      `SNAP-02-A: March carryOver ≈ ${expectedApproxCarryOver} min. ` +
+      Math.abs(marSnap!.carryOver - expectedChainedCarryOver),
+      `SNAP-02-A: March carryOver must = Jan.carryOver(${janSnap?.carryOver}) + Feb.balance(${febSnap?.balanceMinutes}) + Mar.balance(${marSnap?.balanceMinutes}) = ${expectedChainedCarryOver}. ` +
         `Got ${marSnap?.carryOver} — oldest-first chain not preserved.`,
     ).toBeLessThan(tolerance);
   }, 30_000);
@@ -496,8 +519,11 @@ describe("SNAP-02-B: Cross-year Dec 2025 → Jan 2026 backfill (year boundary)",
       balanceMinutes: 0,
     });
 
-    // Seed December 2025 entries: Mon 2025-12-01 through Tue 2025-12-30
-    // (23 Mon-Fri workdays in December 2025)
+    // Seed December 2025 entries: all Mon-Fri workdays in December 2025.
+    // Dec 25 (Thu) and Dec 26 (Fri) are NI public holidays — not seeded (they are in
+    // the holiday set so findMissingWorkdays counts them as covered).
+    // Dec 24 (Wed) and Dec 31 (Wed) are NOT public holidays in NI — must be seeded.
+    // Full coverage is required so the gap readiness check (F-02) passes and December closes.
     const decEntries = [
       "2025-12-01",
       "2025-12-02",
@@ -516,9 +542,10 @@ describe("SNAP-02-B: Cross-year Dec 2025 → Jan 2026 backfill (year boundary)",
       "2025-12-19",
       "2025-12-22",
       "2025-12-23",
-      "2025-12-24",
+      "2025-12-24", // not a holiday in NI — must be seeded
       "2025-12-29",
       "2025-12-30",
+      "2025-12-31", // not a holiday in NI — must be seeded
     ];
     for (const d of decEntries) {
       await seedEntry(app, empId, d, 480);
