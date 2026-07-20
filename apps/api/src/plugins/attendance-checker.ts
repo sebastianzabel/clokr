@@ -1,12 +1,22 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-lock";
+import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { fetchCloseMonthData } from "../utils/close-month-data";
+import { findMissingWorkdays } from "../utils/find-missing-workdays";
 
 declare module "fastify" {
   interface FastifyInstance {
     /** Phase 76.21-08 (COMP-V1814-08): exposed for integration tests — invokes the
      *  auto-invalidate scan synchronously without the cron/advisory-lock wrapper. */
     tryAutoInvalidate: () => Promise<void>;
+    /** Phase 76.28-03 (UX-03): exposed for integration tests — invokes the
+     *  end-of-month employee gap reminder scan (Feature 7) without cron/advisory-lock. */
+    tryEndOfMonthGapReminder: () => Promise<void>;
+    /** Phase 76.28-03 (UX-03): exposed for integration tests — invokes the
+     *  beginning-of-month manager gap reminder scan (Feature 8) without cron/advisory-lock. */
+    tryBeginningOfMonthGapReminder: () => Promise<void>;
   }
 }
 
@@ -547,10 +557,362 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     }
   }
 
+  /**
+   * Feature 7: End-of-month gap reminder (employee) — runs daily at 09:00.
+   * Active only during the last 3 days of the month (daysUntilMonthEnd <= 2).
+   * Notifies employees with open gaps in the current month via GAP_WARNING_EMPLOYEE.
+   * Excludes isTimeTrackingExempt + FLEXTIME/MONTHLY_HOURS employees (no daily gap).
+   * Deduplicates via 7-day window.
+   */
+  async function checkEndOfMonthGaps() {
+    app.log.info("Attendance-Checker: Prüfe Monatsend-Lückenerinnerungen (Feature 7)");
+    try {
+      const now = new Date();
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of tenants) {
+        try {
+          const tz = await getTenantTimezone(app.prisma, tenant.id);
+          const todayStr = dateStrInTz(now, tz);
+          const [todayYear, todayMonth] = todayStr.split("-").map(Number);
+
+          // Determine last day of current month in tenant TZ
+          const lastDayOfMonth = new Date(todayYear, todayMonth, 0).getDate();
+          const todayDayOfMonth = parseInt(todayStr.split("-")[2], 10);
+          const daysUntilMonthEnd = lastDayOfMonth - todayDayOfMonth;
+
+          // Only act in the last 3 days of the month (day >= lastDay - 2)
+          if (daysUntilMonthEnd > 2) continue;
+
+          const { start: monthStart, end: monthEnd } = monthRangeUtc(todayYear, todayMonth, tz);
+          const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+            monthStart,
+            monthEnd,
+            tz,
+          );
+
+          // Load active, non-exempt employees for this tenant
+          const employees = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              isTimeTrackingExempt: false,
+              user: { isActive: true },
+              exitDate: null,
+            },
+            include: {
+              user: { select: { id: true } },
+              workSchedules: { orderBy: { validFrom: "desc" } },
+              tenant: { select: { federalState: true } },
+            },
+          });
+
+          if (employees.length === 0) continue;
+
+          const stateCode =
+            STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
+          const holidayDateStrings = new Set<string>(
+            getHolidays(todayYear, stateCode).map((h) => h.date),
+          );
+          const employeeIds = employees.map((e) => e.id);
+          const {
+            entriesByEmp,
+            leaveByEmp,
+            absencesByEmp,
+            holidays: dbHolidays,
+          } = await fetchCloseMonthData(app.prisma, tenant.id, employeeIds, monthStart, monthEnd);
+          for (const h of dbHolidays) {
+            holidayDateStrings.add(dateStrInTz(h.date, tz));
+          }
+
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          const monthLabel = new Date(todayYear, todayMonth - 1, 1).toLocaleDateString("de-DE", {
+            month: "long",
+            year: "numeric",
+          });
+
+          for (const emp of employees) {
+            // Skip employees hired after this month
+            if (emp.hireDate > monthEnd) continue;
+
+            const schedule = emp.workSchedules[0];
+            if (!schedule) continue;
+
+            // FLEXTIME / MONTHLY_HOURS: no daily gap rule (D-01)
+            const scheduleType = String(schedule.type ?? "");
+            if (scheduleType === "MONTHLY_HOURS" || scheduleType === "FLEXTIME") continue;
+
+            // Build gap inputs (mirrors overtime.ts:356-397)
+            const entries = entriesByEmp.get(emp.id) ?? [];
+            const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
+            const approvedLeave = leaveByEmp.get(emp.id) ?? [];
+            const absences = absencesByEmp.get(emp.id) ?? [];
+
+            let rosterDates: Set<string> | undefined;
+            if (scheduleType === "SHIFT_BASED") {
+              const shifts = await app.prisma.shift.findMany({
+                where: {
+                  employeeId: emp.id,
+                  date: { gte: monthStart, lte: monthLastDay },
+                  deletedAt: null,
+                },
+                select: { date: true },
+              });
+              rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
+            }
+
+            const effectiveStart = emp.hireDate > monthFirstDay ? emp.hireDate : monthFirstDay;
+
+            const { gaps } = findMissingWorkdays({
+              schedule: schedule as Record<string, unknown>,
+              effectiveStart,
+              effectiveEnd: monthLastDay,
+              tz,
+              entryDates,
+              approvedLeave: approvedLeave.map((lr) => ({
+                startDate: lr.startDate,
+                endDate: lr.endDate,
+                halfDay: Boolean(lr.halfDay),
+              })),
+              absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+              holidayDateStrings,
+              rosterDates,
+            });
+
+            if (gaps.length === 0) continue;
+
+            // 7-day dedup: skip if already notified this window
+            const existing = await app.prisma.notification.findFirst({
+              where: {
+                userId: emp.user.id,
+                type: "GAP_WARNING_EMPLOYEE",
+                createdAt: { gte: sevenDaysAgo },
+              },
+            });
+            if (existing) continue;
+
+            const dayWord = gaps.length === 1 ? "Tag" : "Tage";
+            await app.notify({
+              userId: emp.user.id,
+              type: "GAP_WARNING_EMPLOYEE",
+              title: "Fehlende Zeiteinträge vor Monatsabschluss",
+              message: `Du hast ${gaps.length} ${dayWord} ohne Eintrag in ${monthLabel}. Trage diese nach, bevor der Monat abgeschlossen wird.`,
+              link: `/time-entries?month=${todayYear}-${String(todayMonth).padStart(2, "0")}&reminder=gap`,
+              tenantId: tenant.id,
+            });
+
+            app.log.info(
+              { userId: emp.user.id, employeeId: emp.id, gapCount: gaps.length },
+              "Monatsend-Lückenerinnerung gesendet (Feature 7)",
+            );
+          }
+        } catch (err) {
+          app.log.error(
+            { err, tenant: tenant.id },
+            "Monatsend-Lücken: Tenant fehlgeschlagen, fahre fort",
+          );
+          continue;
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei Monatsend-Lückenerinnerungen");
+    }
+  }
+
+  /**
+   * Feature 8: Beginning-of-month gap reminder (manager) — runs daily at 09:00.
+   * Active only during the first 3 days of the month (dayOfMonth <= 3).
+   * Notifies managers/admins about employees with gaps in the PREVIOUS month.
+   * Deduplicates via 7-day window.
+   */
+  async function checkBeginningOfMonthGaps() {
+    app.log.info("Attendance-Checker: Prüfe Monatsanfang-Lückenerinnerungen (Feature 8)");
+    try {
+      const now = new Date();
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of tenants) {
+        try {
+          const tz = await getTenantTimezone(app.prisma, tenant.id);
+          const todayStr = dateStrInTz(now, tz);
+          const todayDayOfMonth = parseInt(todayStr.split("-")[2], 10);
+
+          // Only act on days 1-3 of the month
+          if (todayDayOfMonth > 3) continue;
+
+          const [todayYear, todayMonth] = todayStr.split("-").map(Number);
+
+          // Compute previous month
+          const prevMonth = todayMonth === 1 ? 12 : todayMonth - 1;
+          const prevYear = todayMonth === 1 ? todayYear - 1 : todayYear;
+
+          const { start: prevMonthStart, end: prevMonthEnd } = monthRangeUtc(
+            prevYear,
+            prevMonth,
+            tz,
+          );
+          const { firstDay: prevMonthFirstDay, lastDay: prevMonthLastDay } = monthDayBounds(
+            prevMonthStart,
+            prevMonthEnd,
+            tz,
+          );
+
+          // Load active, non-exempt employees
+          const employees = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              isTimeTrackingExempt: false,
+              user: { isActive: true },
+            },
+            include: {
+              user: { select: { id: true } },
+              workSchedules: { orderBy: { validFrom: "desc" } },
+              tenant: { select: { federalState: true } },
+            },
+          });
+
+          if (employees.length === 0) continue;
+
+          const stateCode =
+            STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
+          const holidayDateStrings = new Set<string>(
+            getHolidays(prevYear, stateCode).map((h) => h.date),
+          );
+          const employeeIds = employees.map((e) => e.id);
+          const {
+            entriesByEmp,
+            leaveByEmp,
+            absencesByEmp,
+            holidays: dbHolidays,
+          } = await fetchCloseMonthData(
+            app.prisma,
+            tenant.id,
+            employeeIds,
+            prevMonthStart,
+            prevMonthEnd,
+          );
+          for (const h of dbHolidays) {
+            holidayDateStrings.add(dateStrInTz(h.date, tz));
+          }
+
+          // Find managers/admins for this tenant
+          const managers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            },
+            include: { user: { select: { id: true } } },
+          });
+
+          if (managers.length === 0) continue;
+
+          // Count employees with gaps in the previous month
+          let gapEmployeeCount = 0;
+
+          for (const emp of employees) {
+            // Skip hired after prev month ended
+            if (emp.hireDate > prevMonthEnd) continue;
+
+            const schedule = emp.workSchedules[0];
+            if (!schedule) continue;
+
+            const scheduleType = String(schedule.type ?? "");
+            if (scheduleType === "MONTHLY_HOURS" || scheduleType === "FLEXTIME") continue;
+
+            const entries = entriesByEmp.get(emp.id) ?? [];
+            const entryDates = new Set(entries.map((e) => dateStrInTz(e.date, tz)));
+            const approvedLeave = leaveByEmp.get(emp.id) ?? [];
+            const absences = absencesByEmp.get(emp.id) ?? [];
+
+            let rosterDates: Set<string> | undefined;
+            if (scheduleType === "SHIFT_BASED") {
+              const shifts = await app.prisma.shift.findMany({
+                where: {
+                  employeeId: emp.id,
+                  date: { gte: prevMonthStart, lte: prevMonthLastDay },
+                  deletedAt: null,
+                },
+                select: { date: true },
+              });
+              rosterDates = new Set(shifts.map((sh) => dateStrInTz(sh.date, tz)));
+            }
+
+            const effectiveStart =
+              emp.hireDate > prevMonthFirstDay ? emp.hireDate : prevMonthFirstDay;
+
+            const { gaps } = findMissingWorkdays({
+              schedule: schedule as Record<string, unknown>,
+              effectiveStart,
+              effectiveEnd: prevMonthLastDay,
+              tz,
+              entryDates,
+              approvedLeave: approvedLeave.map((lr) => ({
+                startDate: lr.startDate,
+                endDate: lr.endDate,
+                halfDay: Boolean(lr.halfDay),
+              })),
+              absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+              holidayDateStrings,
+              rosterDates,
+            });
+
+            if (gaps.length > 0) gapEmployeeCount++;
+          }
+
+          if (gapEmployeeCount === 0) continue;
+
+          const prevMonthLabel = new Date(prevYear, prevMonth - 1, 1).toLocaleDateString("de-DE", {
+            month: "long",
+          });
+          const mitarbeiterWord = gapEmployeeCount === 1 ? "Mitarbeiter hat" : "Mitarbeiter haben";
+          const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+          for (const mgr of managers) {
+            // 7-day dedup per manager
+            const existing = await app.prisma.notification.findFirst({
+              where: {
+                userId: mgr.user.id,
+                type: "GAP_WARNING_MANAGER",
+                createdAt: { gte: sevenDaysAgo },
+              },
+            });
+            if (existing) continue;
+
+            await app.notify({
+              userId: mgr.user.id,
+              type: "GAP_WARNING_MANAGER",
+              title: "Monatsabschluss mit Lücken",
+              message: `${gapEmployeeCount} ${mitarbeiterWord} im ${prevMonthLabel} ${prevYear} Lücken. Bitte Monatsabschluss prüfen.`,
+              link: `/admin/month-close?year=${prevYear}&month=${prevMonth}&reminder=gap`,
+              tenantId: tenant.id,
+            });
+
+            app.log.info(
+              { userId: mgr.user.id, gapEmployeeCount },
+              "Monatsanfang-Lückenerinnerung gesendet (Feature 8)",
+            );
+          }
+        } catch (err) {
+          app.log.error(
+            { err, tenant: tenant.id },
+            "Monatsanfang-Lücken: Tenant fehlgeschlagen, fahre fort",
+          );
+          continue;
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei Monatsanfang-Lückenerinnerungen");
+    }
+  }
+
   // Phase 76.21-08: expose autoInvalidateOpenEntries as a Fastify decorator so
   // integration tests can invoke the scan directly without cron/advisory-lock overhead.
   // Pattern mirrors tryAutoCloseMonth in auto-close-month.ts.
   app.decorate("tryAutoInvalidate", autoInvalidateOpenEntries);
+
+  // Phase 76.28-03 (UX-03): expose gap reminder functions as decorators for test invocability.
+  // Pattern mirrors tryAutoInvalidate above.
+  app.decorate("tryEndOfMonthGapReminder", checkEndOfMonthGaps);
+  app.decorate("tryBeginningOfMonthGapReminder", checkBeginningOfMonthGaps);
 
   app.addHook("onReady", async () => {
     try {
@@ -657,6 +1019,40 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(expiryTask);
       app.log.info("Reminder: Urlaubsverfall-Prüfung geplant (täglich 10:00)");
+
+      // Feature 7: End-of-month employee gap reminder — daily at 09:00, window-gated (last 3 days)
+      const endOfMonthGapTask = cron.schedule(
+        "0 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_GAP_EMPLOYEE,
+            () => checkEndOfMonthGaps(),
+            app.log,
+          ).catch((err) => app.log.error({ err }, "Reminder: Monatsend-Lücken Job fehlgeschlagen"));
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(endOfMonthGapTask);
+      app.log.info("Reminder: Monatsend-Lückenerinnerung geplant (täglich 09:00, letzte 3 Tage)");
+
+      // Feature 8: Beginning-of-month manager gap reminder — daily at 09:00, window-gated (first 3 days)
+      const beginningOfMonthGapTask = cron.schedule(
+        "0 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_GAP_MANAGER,
+            () => checkBeginningOfMonthGaps(),
+            app.log,
+          ).catch((err) =>
+            app.log.error({ err }, "Reminder: Monatsanfang-Lücken Job fehlgeschlagen"),
+          );
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(beginningOfMonthGapTask);
+      app.log.info("Reminder: Monatsanfang-Lückenerinnerung geplant (täglich 09:00, erste 3 Tage)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }
