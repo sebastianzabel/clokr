@@ -543,16 +543,15 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       type: true,
                       source: true,
                       halfDay: true,
+                      // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
+                      unterrichtsMinutes: true,
                     },
                   }),
                 ]);
 
               // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides.
-              const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
-                app.prisma,
-                emp.id,
-                monthFirstDay,
-              );
+              const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+                await loadBsSlotOverrides(app.prisma, emp.id, monthFirstDay);
 
               // ── Phase 76.26: call the shared pure saldo core ──────────────────
               const r = closeEmployeeMonth({
@@ -591,6 +590,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   type: ab.type,
                   source: ab.source,
                   halfDay: ab.halfDay,
+                  unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
                 })),
                 holidayDateStrings: closeHolidayDateStrings,
                 tenantConfig: tenant.config
@@ -615,6 +615,8 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
                 employeeSlots,
                 patternSlots,
+                // Phase 76.38 (D-11) — Pattern per-DOW Unterrichtszeit fallback.
+                patternUnterrichtsMinutenByDow,
               });
 
               const {

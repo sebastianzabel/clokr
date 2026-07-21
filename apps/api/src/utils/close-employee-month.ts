@@ -45,7 +45,10 @@ import {
   dateStrInTz,
 } from "./timezone";
 import { buildSlotOverrideHierarchy, resolveBsTagSlot, type WeekContext } from "./bs-slot-resolver";
-import { computeDailySollMinutes } from "./vocational-school-saldo";
+import {
+  computeDailySollMinutes,
+  normalizeUnterrichtsMinutenByDow,
+} from "./vocational-school-saldo";
 import type { ScheduleType } from "@clokr/db";
 
 // ── Public types ──────────────────────────────────────────────────────────────
@@ -93,6 +96,9 @@ export type CloseMonthInput = {
     type: string;
     source: string;
     halfDay?: boolean;
+    // Phase 76.38 (D-11): per-day Unterrichtszeit for duration-based BS slot
+    // classification. NULL/undefined → Pattern fallback (below) or ordinal fallback.
+    unterrichtsMinutes?: number | null;
   }>;
   holidayDateStrings: Set<string>; // YYYY-MM-DD in tenant TZ
 
@@ -125,6 +131,11 @@ export type CloseMonthInput = {
     bsSlotShortDayMinutes: number | null;
     bsSlotBlockWeekMinutes: number | null;
   } | null;
+
+  // Phase 76.38 (D-11): active BS pattern's per-DOW Unterrichtszeit map (raw JSON,
+  // {"1":300,"4":180}, DOW keys 0=Mo..6=So). Fallback for a BS date whose Absence has
+  // no unterrichtsMinutes. Absent/null → ordinal fallback (backward compat).
+  patternUnterrichtsMinutenByDow?: unknown;
 };
 
 // Re-export so amount-site callers/tests have a single import surface.
@@ -184,6 +195,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     tenantConfig,
     employeeSlots,
     patternSlots,
+    patternUnterrichtsMinutenByDow,
   } = input;
 
   const scheduleType = String(schedule.type ?? "");
@@ -372,6 +384,13 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // Count distinct BS dates per ISO week (using the full absences array, not just
   // bsDatesInMonth, to match the DB version which counts ALL BS days in the same
   // ISO week — including days outside the effective span that may be in the same week).
+  // Phase 76.38 (D-11): per-date Unterrichtszeit for duration-based BS slot
+  // classification. Absence.unterrichtsMinutes (per-day override) ?? Pattern
+  // unterrichtsMinutenByDow[dow] ?? null. Null entries → ordinal fallback (closed
+  // months unchanged, since their Absence rows carry NULL unterrichtsMinutes).
+  const patternDowMap = normalizeUnterrichtsMinutenByDow(patternUnterrichtsMinutenByDow);
+  const bsDurationByDate = new Map<string, number | null>();
+
   const bsDatesAllByWeek = new Map<string, Set<string>>();
   for (const ab of absences) {
     if (ab.type !== "VOCATIONAL_SCHOOL") continue;
@@ -383,6 +402,14 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       const wk = isoWeekKey(ds);
       if (!bsDatesAllByWeek.has(wk)) bsDatesAllByWeek.set(wk, new Set());
       bsDatesAllByWeek.get(wk)!.add(ds);
+      // Duration: per-day Absence override wins; else Pattern DOW fallback; else null.
+      // A multi-day VOCATIONAL_SCHOOL row shares one unterrichtsMinutes across its span.
+      if (ab.unterrichtsMinutes != null) {
+        bsDurationByDate.set(ds, ab.unterrichtsMinutes);
+      } else {
+        const dow = (new Date(ds + "T00:00:00Z").getUTCDay() + 6) % 7; // 0=Mo..6=So
+        bsDurationByDate.set(ds, patternDowMap[dow] ?? null);
+      }
       cur.setTime(cur.getTime() + 24 * 60 * 60 * 1000);
     }
   }
@@ -396,7 +423,16 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     const bsDatesInWeek = Array.from(weekSet).sort();
     const daysInWeek = bsDatesInWeek.length;
     const ordinalInWeek = bsDatesInWeek.indexOf(ds) + 1; // 1-based
-    const weekContext: WeekContext = { bsDatesInWeek, isBlockWeek: daysInWeek >= 5 };
+    // Phase 76.38 (D-11): per-date Unterrichtszeit map for this ISO week (null → ordinal).
+    const unterrichtsMinutesByDate: Record<string, number | null> = {};
+    for (const d of bsDatesInWeek) {
+      unterrichtsMinutesByDate[d] = bsDurationByDate.get(d) ?? null;
+    }
+    const weekContext: WeekContext = {
+      bsDatesInWeek,
+      isBlockWeek: daysInWeek >= 5,
+      unterrichtsMinutesByDate,
+    };
 
     const res = resolveBsTagSlot(
       new Date(ds + "T00:00:00Z"),

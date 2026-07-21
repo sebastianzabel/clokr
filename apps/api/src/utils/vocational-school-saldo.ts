@@ -246,10 +246,18 @@ export async function getVocationalSchoolMinutesForDate(
   const idx = bsDatesInWeek.indexOf(targetDs);
   const ordinalInWeek = idx >= 0 ? idx + 1 : 1; // 1-based; defensive fallback to 1
 
+  // Phase 76.38 (D-11): per-date Unterrichtszeit → duration-based classification.
+  // Null/absent entries fall back to the ordinal path (backward compat).
+  const unterrichtsMinutesByDate = await bsUnterrichtsMinutesByDateForIsoWeek(
+    prisma,
+    employeeId,
+    date,
+  );
+
   const res = resolveBsTagSlot(
     date,
     ordinalInWeek,
-    { bsDatesInWeek, isBlockWeek },
+    { bsDatesInWeek, isBlockWeek, unterrichtsMinutesByDate },
     hierarchy,
     (opts?.scheduleType ?? "FIXED_SCHEDULE") as ScheduleType,
   );
@@ -284,4 +292,80 @@ export async function sortedBsDatesInIsoWeek(
   });
   const uniq = new Set(rows.map((r) => r.startDate.toISOString().slice(0, 10)));
   return Array.from(uniq).sort();
+}
+
+/**
+ * Phase 76.38 (SALDO-05 / D-11) — build the per-date Unterrichtszeit map for the ISO
+ * week containing `dateInWeek`, for DURATION-based BS slot classification.
+ *
+ * Resolution per BS date (§15 Abs. 2 Nr. 2 BBiG):
+ *   1. Absence.unterrichtsMinutes (per-day override) — if non-null, use it.
+ *   2. else EmployeeVocationalSchoolPattern.unterrichtsMinutenByDow[dow] — dow = 0=Mo..6=So
+ *      (matching Pattern.daysOfWeek), from the active pattern covering that date.
+ *   3. else null → the resolver falls back to ordinal-based classification (backward compat).
+ *
+ * Values are wired into WeekContext.unterrichtsMinutesByDate. A day absent from the map
+ * (or mapped to null) reproduces the pre-76.38 ordinal behaviour byte-for-byte.
+ * Soft-delete-aware (deletedAt: null) per CLAUDE.md.
+ */
+export async function bsUnterrichtsMinutesByDateForIsoWeek(
+  prisma: PrismaClient,
+  employeeId: string,
+  dateInWeek: Date,
+): Promise<Record<string, number | null>> {
+  const { monday, nextMonday } = isoWeekBoundsUtc(dateInWeek);
+
+  const rows = await prisma.absence.findMany({
+    where: {
+      employeeId,
+      deletedAt: null, // CLAUDE.md soft-delete rule
+      type: "VOCATIONAL_SCHOOL",
+      startDate: { gte: monday, lt: nextMonday },
+    },
+    orderBy: { startDate: "asc" },
+    select: { startDate: true, unterrichtsMinutes: true },
+  });
+
+  // Active pattern covering the week's Monday → per-DOW Unterrichtszeit fallback.
+  const pattern = await prisma.employeeVocationalSchoolPattern.findFirst({
+    where: {
+      employeeId,
+      isActive: true,
+      validFrom: { lte: monday },
+      OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
+    },
+    orderBy: { validFrom: "desc" },
+    select: { unterrichtsMinutenByDow: true },
+  });
+  const dowMap = normalizeUnterrichtsMinutenByDow(pattern?.unterrichtsMinutenByDow);
+
+  const out: Record<string, number | null> = {};
+  for (const r of rows) {
+    const ds = r.startDate.toISOString().slice(0, 10);
+    if (r.unterrichtsMinutes != null) {
+      out[ds] = r.unterrichtsMinutes;
+      continue;
+    }
+    // Pattern fallback: dow 0=Mo..6=So (matches Pattern.daysOfWeek convention).
+    const dow = (r.startDate.getUTCDay() + 6) % 7; // 0=Sun..6=Sat → 0=Mo..6=So
+    out[ds] = dowMap[dow] ?? null;
+  }
+  return out;
+}
+
+/**
+ * Phase 76.38 — parse the Pattern.unterrichtsMinutenByDow JSON map ({"1":300,"4":180},
+ * DOW keys 0=Mo..6=So) into a numeric lookup. Non-numeric / out-of-range entries are
+ * dropped (fail-open to null → ordinal fallback). Pure; safe on unknown JSON shapes.
+ */
+export function normalizeUnterrichtsMinutenByDow(raw: unknown): Record<number, number | null> {
+  const out: Record<number, number | null> = {};
+  if (!raw || typeof raw !== "object") return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const dow = Number(k);
+    const min = typeof v === "number" ? v : Number(v);
+    if (!Number.isInteger(dow) || dow < 0 || dow > 6) continue;
+    out[dow] = Number.isFinite(min) ? min : null;
+  }
+  return out;
 }

@@ -38,7 +38,25 @@ export interface WeekContext {
    * heuristic; Phase 76.31 D-05 uses bsDatesInWeek.length >= 5 alone).
    */
   isBlockWeek: boolean;
+  /**
+   * Phase 76.38 (SALDO-05 / D-11) — per-date Unterrichtszeit map for DURATION-based
+   * slot classification (§15 Abs. 2 Nr. 2 BBiG). Key = YYYY-MM-DD (must be a member of
+   * bsDatesInWeek). Value = Unterrichtsminuten:
+   *   > 225  → Langtag (> 5 Unterrichtsstunden à 45 min)
+   *   ≤ 225  → Kurztag (SHORT_DAY, regardless of ISO-week ordinal)
+   *   null   → not captured for that date → ordinal fallback (backward compat)
+   * When the map is ABSENT, or the entry for the resolved date is null/undefined, the
+   * resolver uses the pre-76.38 ordinal-based classification byte-for-byte. Closed
+   * months (whose Absence rows carry NULL unterrichtsMinutes) are therefore unchanged.
+   */
+  unterrichtsMinutesByDate?: Record<string, number | null>;
 }
+
+/**
+ * §15 Abs. 2 Nr. 2 BBiG: > 5 Unterrichtsstunden à 45 min = > 225 min → Langtag.
+ * Strictly greater-than: exactly 225 min (= 5 UStd) is still a Kurztag.
+ */
+export const BS_LONG_DAY_UNTERRICHT_MIN = 225;
 
 /**
  * Pre-assembled 4-layer hierarchy. Use buildSlotOverrideHierarchy() to construct.
@@ -210,6 +228,43 @@ export function resolveBsTagSlot(
     return {
       slotType: "BLOCK_WEEK",
       creditedMinutes: perDay,
+      contributesToExpected,
+    };
+  }
+
+  // Phase 76.38 (SALDO-05 / D-11): DURATION-based classification when Unterrichtszeit
+  // is captured for THIS date. §15 Abs. 2 Nr. 2 BBiG: > 225 min = Langtag, else Kurztag —
+  // INDEPENDENT of the ISO-week ordinal. A null/absent entry falls through to the
+  // ordinal branch below (backward compat: closed months unchanged).
+  const dateStr = date.toISOString().slice(0, 10);
+  const durMin = weekContext.unterrichtsMinutesByDate?.[dateStr];
+  if (durMin != null) {
+    if (durMin <= BS_LONG_DAY_UNTERRICHT_MIN) {
+      // Kurztag — SHORT_DAY regardless of ordinal position.
+      return {
+        slotType: "SHORT_DAY",
+        creditedMinutes: hierarchy.nettoMinutes("SHORT_DAY"),
+        contributesToExpected,
+      };
+    }
+    // Langtag. FIRST vs SECOND among the week's LONG days, counted date ASC (≤ dateStr).
+    // A week member without duration data is treated as LONG for ordinal-among-longs
+    // counting (Assumption A3): unknown days keep the conservative ordinal position.
+    const longOrdinal = weekContext.bsDatesInWeek.filter((d) => {
+      if (d > dateStr) return false;
+      const dur = weekContext.unterrichtsMinutesByDate?.[d];
+      return dur == null || dur > BS_LONG_DAY_UNTERRICHT_MIN;
+    }).length; // 1-based position of THIS day among LONG days
+    if (longOrdinal <= 1) {
+      return {
+        slotType: "FIRST_LONG_DAY",
+        creditedMinutes: hierarchy.firstLongDayMinutes,
+        contributesToExpected,
+      };
+    }
+    return {
+      slotType: "SECOND_LONG_DAY",
+      creditedMinutes: hierarchy.nettoMinutes("SECOND_LONG_DAY"),
       contributesToExpected,
     };
   }

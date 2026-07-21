@@ -26,6 +26,10 @@ export type BsSlotOverride = {
 export type BsSlotOverrides = {
   employeeSlots: BsSlotOverride | null;
   patternSlots: BsSlotOverride | null;
+  // Phase 76.38 (D-11) — active pattern's per-DOW Unterrichtszeit map (raw JSON,
+  // {"1":300,"4":180}, DOW keys 0=Mo..6=So). Fallback for BS dates whose Absence
+  // carries no per-day unterrichtsMinutes. null when no active pattern covers the date.
+  patternUnterrichtsMinutenByDow: unknown;
 };
 
 /**
@@ -63,12 +67,19 @@ export async function loadBsSlotOverrides(
         bsSlotSecondLongDayMinutes: true,
         bsSlotShortDayMinutes: true,
         bsSlotBlockWeekMinutes: true,
+        // Phase 76.38 (D-11) — per-DOW Unterrichtszeit map for duration-based classification.
+        unterrichtsMinutenByDow: true,
       },
     }),
   ]);
 
+  const { unterrichtsMinutenByDow, ...patternSlotFields } = patternSlots ?? {
+    unterrichtsMinutenByDow: null,
+  };
+
   return {
     employeeSlots: employeeSlots ?? null,
-    patternSlots: patternSlots ?? null,
+    patternSlots: patternSlots ? (patternSlotFields as BsSlotOverride) : null,
+    patternUnterrichtsMinutenByDow: unterrichtsMinutenByDow ?? null,
   };
 }

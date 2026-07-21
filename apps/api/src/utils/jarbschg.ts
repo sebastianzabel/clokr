@@ -29,7 +29,11 @@ import {
   BS_DAILY_DEFAULT_MIN,
 } from "./vocational-school-constants.js";
 import { resolveBsTagSlot, buildSlotOverrideHierarchy } from "./bs-slot-resolver";
-import { sortedBsDatesInIsoWeek, computeDailySollMinutes } from "./vocational-school-saldo.js";
+import {
+  sortedBsDatesInIsoWeek,
+  computeDailySollMinutes,
+  bsUnterrichtsMinutesByDateForIsoWeek,
+} from "./vocational-school-saldo.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -347,20 +351,37 @@ async function classifyBsSlotFromAbsence(
   });
 
   const scheduleType = (schedule?.type ?? "FIXED_SCHEDULE") as ScheduleType;
+
+  // Phase 76.38 (D-11): per-date Unterrichtszeit → duration-based §9 classification.
+  // A genuine ordinal-1 Kurztag (≤ 225) resolves to SHORT_DAY (isLongDay false) →
+  // §9 no longer spuriously hard-blocks. Null/absent → ordinal fallback (unchanged).
+  const unterrichtsMinutesByDate = await bsUnterrichtsMinutesByDateForIsoWeek(
+    prisma,
+    employeeId,
+    date,
+  );
+
   const res = resolveBsTagSlot(
     date,
     ordinalInWeek,
-    { bsDatesInWeek, isBlockWeek },
+    { bsDatesInWeek, isBlockWeek, unterrichtsMinutesByDate },
     hierarchy,
     scheduleType,
   );
 
   // Long-day classification (CD-4): pauschal slots always long; netto slots long only
   // above the 225-min instruction-time threshold.
+  //
+  // Phase 76.38 (D-11): a SHORT_DAY is a Kurztag by definition (≤ 5 Unterrichtsstunden),
+  // so it is NEVER a §9 long day — regardless of its saldo credit. Under duration-based
+  // classification the SHORT credit defaults to the individual daily Soll (which may
+  // exceed 225 min), so the old `creditedMinutes > 225` proxy would misfire for a genuine
+  // Kurztag. Gate SHORT_DAY out explicitly. FIRST_LONG_DAY / BLOCK_WEEK stay always-long;
+  // SECOND_LONG_DAY keeps the >225 instruction-time proxy (a Langtag is long).
   const isLongDay =
     res.slotType === "FIRST_LONG_DAY" ||
     res.slotType === "BLOCK_WEEK" ||
-    res.creditedMinutes > JARBSCHG_LONG_DAY_INSTRUCTION_MIN;
+    (res.slotType !== "SHORT_DAY" && res.creditedMinutes > JARBSCHG_LONG_DAY_INSTRUCTION_MIN);
 
   return { mode: "RESOLVER", isLongDay };
 }

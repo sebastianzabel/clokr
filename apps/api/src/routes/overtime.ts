@@ -982,7 +982,15 @@ export async function overtimeRoutes(app: FastifyInstance) {
             startDate: { lte: monthEnd },
             endDate: { gte: effectiveStart },
           },
-          select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
+          select: {
+            startDate: true,
+            endDate: true,
+            type: true,
+            source: true,
+            halfDay: true,
+            // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
+            unterrichtsMinutes: true,
+          },
         }),
       ]);
 
@@ -1000,11 +1008,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so
       // the pure core resolves per-MA / per-pattern slot amounts (null → fallback).
-      const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
-        app.prisma,
-        employeeId,
-        monthFirstDay,
-      );
+      const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+        await loadBsSlotOverrides(app.prisma, employeeId, monthFirstDay);
 
       // ── Phase 76.26: call the shared pure saldo core ──────────────────────────
       const r = closeEmployeeMonth({
@@ -1043,6 +1048,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           type: ab.type,
           source: ab.source,
           halfDay: Boolean(ab.halfDay),
+          unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
         })),
         holidayDateStrings,
         tenantConfig: tenantConfig
@@ -1064,6 +1070,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
         employeeSlots,
         patternSlots,
+        // Phase 76.38 (D-11) — Pattern per-DOW Unterrichtszeit fallback.
+        patternUnterrichtsMinutenByDow,
       });
 
       // Unpack result — these replace the old inline-computed locals

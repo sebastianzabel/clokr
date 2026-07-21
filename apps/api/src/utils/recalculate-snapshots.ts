@@ -203,7 +203,15 @@ export async function recalculateSnapshots(
           startDate: { lte: monthEnd },
           endDate: { gte: effectiveStartForHolidayFilter },
         },
-        select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
+        select: {
+          startDate: true,
+          endDate: true,
+          type: true,
+          source: true,
+          halfDay: true,
+          // Phase 76.38 (D-11) — per-day Unterrichtszeit for duration-based BS slot.
+          unterrichtsMinutes: true,
+        },
       }),
     ]);
 
@@ -217,11 +225,8 @@ export async function recalculateSnapshots(
     //
     // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so the
     // recompute honors per-MA / per-pattern slot amounts (null → fallback).
-    const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
-      app.prisma,
-      employeeId,
-      monthFirstDay,
-    );
+    const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+      await loadBsSlotOverrides(app.prisma, employeeId, monthFirstDay);
 
     const r = closeEmployeeMonth({
       employeeId,
@@ -262,6 +267,7 @@ export async function recalculateSnapshots(
         type: ab.type,
         source: ab.source,
         halfDay: ab.halfDay,
+        unterrichtsMinutes: ab.unterrichtsMinutes ?? null,
       })),
       holidayDateStrings,
       tenantConfig: tenantConfig
@@ -282,6 +288,8 @@ export async function recalculateSnapshots(
       // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
       employeeSlots,
       patternSlots,
+      // Phase 76.38 (D-11) — Pattern per-DOW Unterrichtszeit fallback.
+      patternUnterrichtsMinutenByDow,
     });
 
     const { workedMinutes, balanceMinutes, effectiveCarryOverOut, snapshotExpectedMinutes } = r;
