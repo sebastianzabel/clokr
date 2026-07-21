@@ -123,11 +123,13 @@ export interface SlotLayerInputs {
  * BLOCK_WEEK precedence (unchanged from Phase 83): Employee > Pattern > TenantConfig >
  *   vocationalSchoolBlockMinutesPerWeek > BS_BLOCK_WEEKLY_DEFAULT_MIN (2400).
  *
- * SECOND_LONG_DAY and SHORT_DAY: explicit config wins, else 0. Per Phase 83,
- * the daily-Soll fallback for unconfigured second/short days is deliberately NOT
- * applied inside the resolver — it is handled at the CALLER level in Wave 3
- * (Claude's Discretion: never silently under-credit; surface as a config gap),
- * NOT here (no silent over-credit when instructionMinutes is unknown).
+ * SECOND_LONG_DAY and SHORT_DAY: explicit config wins, else the individual daily
+ * Soll (`inputs.dailySollMinutes`). Owner decision 2026-07-21 (Phase 76.34, D-02/D-09,
+ * Option A): per §15 Abs. 2 BBiG the 2nd BS-Langtag and the Kurztag are credited the
+ * "durchschnittliche tägliche Ausbildungszeit" (= individual daily Soll) by default.
+ * The prior `?? 0` under-credited these slots (rechtswidrig) and inverted the legal
+ * hierarchy vs. the FIRST_LONG_DAY = daily Soll credit. Explicit Employee/Pattern/
+ * TenantConfig `bsSlot*` overrides still win. This mirrors the FIRST_LONG_DAY chain.
  */
 export function buildSlotOverrideHierarchy(inputs: SlotLayerInputs): SlotOverrideHierarchy {
   const { employee, pattern, tenantConfig } = inputs;
@@ -154,7 +156,7 @@ export function buildSlotOverrideHierarchy(inputs: SlotLayerInputs): SlotOverrid
           employee?.bsSlotSecondLongDayMinutes ??
           pattern?.bsSlotSecondLongDayMinutes ??
           tenantConfig.bsSlotSecondLongDayMinutes ??
-          0
+          inputs.dailySollMinutes // §15 Abs. 2 BBiG: default = individual daily Soll (NOT 0)
         );
       }
       // SHORT_DAY
@@ -162,7 +164,7 @@ export function buildSlotOverrideHierarchy(inputs: SlotLayerInputs): SlotOverrid
         employee?.bsSlotShortDayMinutes ??
         pattern?.bsSlotShortDayMinutes ??
         tenantConfig.bsSlotShortDayMinutes ??
-        0
+        inputs.dailySollMinutes // §15 Abs. 2 BBiG: default = individual daily Soll (NOT 0)
       );
     },
   };
@@ -222,7 +224,8 @@ export function resolveBsTagSlot(
     };
   }
 
-  // SECOND_LONG_DAY (ordinal 2) or SHORT_DAY (ordinal 3+): netto from explicit config or 0.
+  // SECOND_LONG_DAY (ordinal 2) or SHORT_DAY (ordinal 3+): netto from explicit config,
+  // else the individual daily Soll (§15 Abs. 2 BBiG default — Phase 76.34).
   const slotType: "SECOND_LONG_DAY" | "SHORT_DAY" =
     clampedOrdinal === 2 ? "SECOND_LONG_DAY" : "SHORT_DAY";
 
