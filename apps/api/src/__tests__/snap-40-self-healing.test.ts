@@ -365,3 +365,301 @@ describe("SNAP-40 — self-healing parity: missing intermediate snapshot lands o
     ).toBeLessThan(5);
   }, 30_000);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Describe 2: bounded-window steady state — prior month closed → the open window is
+// the current partial month only; a pre-snapshot-month entry does NOT move the balance.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SNAP-40 — bounded-window steady state: prior month closed → open window = current partial month", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const LIVE_NOW = "2026-04-16T10:00:00.000Z";
+  const MARCH_CARRY_OVER = 1200;
+  const APRIL_PARTIAL_ENTRIES = monFriDates("2026-04-01", "2026-04-15");
+
+  // Reference = snapshotCarryOver + single current-partial close (bounded window = current month).
+  let reference = 0;
+  // Live balance recorded BEFORE the pre-snapshot-month probe entry.
+  let liveBefore = 0;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const fixture = await createTenant(app, "bounded", HIRE_DATE);
+    tenantId = fixture.tenantId;
+    empId = fixture.empId;
+
+    // March 2026 snapshot → the prior month is CLOSED (rangeStart = Apr 1, completeOpenMonths empty).
+    await seedMonthlySnapshot(app, empId, 2026, 3, MARCH_CARRY_OVER, 9600, 9600, 0);
+
+    // April 2026 partial entries (Apr 1–15).
+    for (const d of APRIL_PARTIAL_ENTRIES) {
+      await seedEntry(app, empId, d, 480);
+    }
+
+    // Reference: ONLY the current partial April close runs (prior month closed). monthEnd =
+    // effectiveEnd (non-SHIFT partial-window, time-entries.ts:2299) so expected covers Apr 1–15.
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
+    const emp = await app.prisma.employee.findUnique({ where: { id: empId } });
+    const { start: aprStart, end: aprEnd } = monthRangeUtc(2026, 4, TZ);
+    const { firstDay: aprFirstDay } = monthDayBounds(aprStart, aprEnd, TZ);
+    const aprFirstStr = dateStrInTz(aprFirstDay, TZ);
+    const effectiveEnd = new Date("2026-04-15T00:00:00Z");
+    const aprEntries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: empId, deletedAt: null, date: { gte: aprFirstDay, lte: effectiveEnd } },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const aprilResult = closeEmployeeMonth({
+      employeeId: empId,
+      monthStart: aprStart,
+      monthEnd: effectiveEnd,
+      monthFirstDay: aprFirstDay,
+      monthLastDay: effectiveEnd,
+      tz: TZ,
+      carryOverIn: MARCH_CARRY_OVER,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: emp!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: aprEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: [],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), aprFirstStr, "2026-04-15"),
+      tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
+    });
+    reference = MARCH_CARRY_OVER + aprilResult.balanceMinutes;
+
+    // Record the live balance before the pre-snapshot-month probe.
+    liveBefore = await liveMinutesAt(app, empId, LIVE_NOW);
+  }, 300_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("SNAP-40 bounded-window cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("live == snapshotCarryOver + single current-partial close (bounded window = current month only, <5 min)", async () => {
+    expect(
+      Math.abs(liveBefore - reference),
+      `bounded window: live=${liveBefore} ref=${reference}`,
+    ).toBeLessThan(5);
+  }, 30_000);
+
+  it("seeding a pre-snapshot-month entry (Feb, before March snapshot) does NOT move the live balance", async () => {
+    // Feb-14 2026 is a Saturday — not in any Mon–Fri seed set, so no one-entry-per-day conflict
+    // (CLAUDE.md). It falls BEFORE the March snapshot boundary → invisible to the live window.
+    await seedEntry(app, empId, "2026-02-14", 480);
+    const liveAfter = await liveMinutesAt(app, empId, LIVE_NOW);
+    expect(
+      Math.abs(liveAfter - liveBefore),
+      `pre-snapshot Feb entry must not move balance: before=${liveBefore} after=${liveAfter}`,
+    ).toBeLessThan(5);
+  }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Describe 3: read-idempotency — updateOvertimeAccount does NOT write a SaldoSnapshot
+// (D-03, audit-proof). The SaldoSnapshot row count is byte-unchanged after a recompute.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SNAP-40 — read-idempotency: updateOvertimeAccount does NOT write a SaldoSnapshot (D-03, audit-proof)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const APRIL_PARTIAL_ENTRIES = monFriDates("2026-04-01", "2026-04-15");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const fixture = await createTenant(app, "read-idem", HIRE_DATE);
+    tenantId = fixture.tenantId;
+    empId = fixture.empId;
+
+    // March snapshot (prior month closed) + April partial entries — a normal live-recompute setup.
+    await seedMonthlySnapshot(app, empId, 2026, 3, 1200, 9600, 9600, 0);
+    for (const d of APRIL_PARTIAL_ENTRIES) {
+      await seedEntry(app, empId, d, 480);
+    }
+  }, 300_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("SNAP-40 read-idempotency cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("SaldoSnapshot row count is unchanged after a live recompute — GET is side-effect-free", async () => {
+    const before = await app.prisma.saldoSnapshot.count({ where: { employeeId: empId } });
+    await liveMinutesAt(app, empId, "2026-04-16T10:00:00.000Z"); // drives updateOvertimeAccount
+    const after = await app.prisma.saldoSnapshot.count({ where: { employeeId: empId } });
+    expect(after).toBe(before);
+  }, 30_000);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Describe 4: reopen base resolution (76.33, SC#3) — superseded latest snapshot → the
+// base falls back to the previous non-superseded snapshot (NOT reopen→0, NOT the
+// superseded row). The SALDO-09 reopen→0 regression must stay fixed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("SNAP-40 — reopen base resolution (76.33, SC#3): superseded latest snapshot → base falls back to previous non-superseded", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const LIVE_NOW = "2026-04-16T10:00:00.000Z";
+  const FEB_CARRY_OVER = 2400;
+  const MARCH_CARRY_OVER = 3600;
+  const MARCH_ENTRIES = monFriDates("2026-03-01", "2026-03-31");
+  const APRIL_PARTIAL_ENTRIES = monFriDates("2026-04-01", "2026-04-15");
+
+  // Reference: base = Feb snapshot (latest non-superseded) → open range spans March + April-partial.
+  let reference = 0;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const fixture = await createTenant(app, "reopen-base", HIRE_DATE);
+    tenantId = fixture.tenantId;
+    empId = fixture.empId;
+
+    // Feb snapshot (superseded=false) — the correct base after March is reopened.
+    await seedMonthlySnapshot(app, empId, 2026, 2, FEB_CARRY_OVER, 9600, 9600, 0);
+    // March snapshot, then mark it superseded=true (simulating a 76.33 unlock/reopen of March).
+    await seedMonthlySnapshot(app, empId, 2026, 3, MARCH_CARRY_OVER, 9600, 9600, 0);
+    // SaldoSnapshot has NO Prisma composite unique key (Phase 76.21 replaced @@unique with a
+    // partial unique index via raw SQL) → use updateMany keyed on employeeId+periodStart.
+    const { start: marStartUtc } = monthRangeUtc(2026, 3, TZ);
+    await app.prisma.saldoSnapshot.updateMany({
+      where: { employeeId: empId, periodType: "MONTHLY", periodStart: marStartUtc },
+      data: { superseded: true, supersededReason: "test-reopen" },
+    });
+
+    // March entries (the reopened month) + April partial entries.
+    for (const d of MARCH_ENTRIES) {
+      await seedEntry(app, empId, d, 480);
+    }
+    for (const d of APRIL_PARTIAL_ENTRIES) {
+      await seedEntry(app, empId, d, 480);
+    }
+
+    // Reference: base = Feb carryOver → March (complete open) + April (partial) closes, threaded.
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
+    const emp = await app.prisma.employee.findUnique({ where: { id: empId } });
+
+    const { start: marStart, end: marEnd } = monthRangeUtc(2026, 3, TZ);
+    const { firstDay: marFirstDay, lastDay: marLastDay } = monthDayBounds(marStart, marEnd, TZ);
+    const marFirstStr = dateStrInTz(marFirstDay, TZ);
+    const marLastStr = dateStrInTz(marLastDay, TZ);
+    const marEntries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: empId, deletedAt: null, date: { gte: marFirstDay, lte: marLastDay } },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const marchResult = closeEmployeeMonth({
+      employeeId: empId,
+      monthStart: marStart,
+      monthEnd: marEnd,
+      monthFirstDay: marFirstDay,
+      monthLastDay: marLastDay,
+      tz: TZ,
+      carryOverIn: FEB_CARRY_OVER,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: emp!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: marEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: [],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), marFirstStr, marLastStr),
+      tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
+    });
+
+    const { start: aprStart, end: aprEnd } = monthRangeUtc(2026, 4, TZ);
+    const { firstDay: aprFirstDay } = monthDayBounds(aprStart, aprEnd, TZ);
+    const aprFirstStr = dateStrInTz(aprFirstDay, TZ);
+    const effectiveEnd = new Date("2026-04-15T00:00:00Z");
+    const aprEntries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: empId, deletedAt: null, date: { gte: aprFirstDay, lte: effectiveEnd } },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+    const aprilResult = closeEmployeeMonth({
+      employeeId: empId,
+      monthStart: aprStart,
+      monthEnd: effectiveEnd,
+      monthFirstDay: aprFirstDay,
+      monthLastDay: effectiveEnd,
+      tz: TZ,
+      carryOverIn: marchResult.effectiveCarryOverOut,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: emp!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: aprEntries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: [],
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), aprFirstStr, "2026-04-15"),
+      tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
+    });
+
+    reference = FEB_CARRY_OVER + marchResult.balanceMinutes + aprilResult.balanceMinutes;
+  }, 300_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("SNAP-40 reopen-base cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it("superseded latest snapshot → live base = previous non-superseded (March re-included), not reopen→0 (<5 min)", async () => {
+    const live = await liveMinutesAt(app, empId, LIVE_NOW);
+    expect(Math.abs(live - reference), `reopen base: live=${live} ref=${reference}`).toBeLessThan(
+      5,
+    );
+
+    // It must NOT anchor on the superseded March snapshot (which would give ~MARCH_CARRY_OVER +
+    // April-only, excluding the reopened March range). Guard against that regression.
+    const superSededMarchAnchor = MARCH_CARRY_OVER; // + April-only would be near this, not `reference`
+    expect(
+      Math.abs(live - superSededMarchAnchor),
+      `reopen must NOT anchor on superseded March snapshot: live=${live} supersededAnchor≈${superSededMarchAnchor}`,
+    ).toBeGreaterThan(5);
+  }, 30_000);
+});
