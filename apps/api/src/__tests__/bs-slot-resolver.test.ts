@@ -6,6 +6,12 @@
  * Asserts the Phase 76.31 D-02 DIVERGENCE from Phase 83: the FIRST_LONG_DAY
  * fallback resolves to the individual daily Soll (`dailySollMinutes`), NOT the
  * flat BS_DAILY_DEFAULT_MIN (480). A 38h/4-day Azubi → 570 min / 9.5h.
+ *
+ * Owner decision 2026-07-21 (BS-FIRST-LONG-DAY-DEFAULT-DECISION.md): the legacy
+ * NOT-NULL `vocationalSchoolMinutesPerDay` @default(480) was removed from the
+ * FIRST_LONG_DAY precedence chain so the individual daily Soll is the effective
+ * default per §15 Abs. 2 Nr. 2 BBiG. A flat pauschal is still possible via an
+ * explicit `bsSlotFirstLongDayMinutes` override.
  */
 import { describe, it, expect } from "vitest";
 import type { ScheduleType } from "@clokr/db";
@@ -77,12 +83,35 @@ describe("buildSlotOverrideHierarchy — FIRST_LONG_DAY daily-Soll fallback (D-0
     expect(h.firstLongDayMinutes).toBe(510);
   });
 
-  it("legacy vocationalSchoolMinutesPerDay wins over daily-Soll (backward-compat)", () => {
+  it("legacy vocationalSchoolMinutesPerDay does NOT drive FIRST_LONG_DAY → daily Soll wins (§15 Abs. 2 Nr. 2 BBiG)", () => {
+    // §15 Abs. 2 Nr. 2 BBiG (BVaDiG-2024): the FIRST BS-Langtag credits the
+    // "durchschnittliche tägliche Ausbildungszeit" = individual daily Soll, NOT a
+    // flat pauschal. The legacy NOT-NULL @default(480) column MUST NOT shadow the
+    // daily Soll (owner decision 2026-07-21, BS-FIRST-LONG-DAY-DEFAULT-DECISION.md).
+    // With bsSlot* null and a schedule whose daily Soll ≠ 480 (here 570), the
+    // resolver must fall through to the individual daily Soll — layer 4 dropped.
     const h = buildSlotOverrideHierarchy(
       makeInputs({
         tenantConfig: {
           ...NULL_SLOTS,
           vocationalSchoolMinutesPerDay: 480,
+          vocationalSchoolBlockMinutesPerWeek: null,
+        },
+        dailySollMinutes: 570,
+      }),
+    );
+    expect(h.firstLongDayMinutes).toBe(570);
+    expect(h.firstLongDayMinutes).not.toBe(480);
+  });
+
+  it("explicit bsSlotFirstLongDayMinutes override STILL wins over legacy + daily-Soll (layer 3 intact)", () => {
+    // A tenant that WANTS a flat pauschal must set it explicitly on the slot field.
+    const h = buildSlotOverrideHierarchy(
+      makeInputs({
+        tenantConfig: {
+          ...NULL_SLOTS,
+          bsSlotFirstLongDayMinutes: 480,
+          vocationalSchoolMinutesPerDay: 999,
           vocationalSchoolBlockMinutesPerWeek: null,
         },
         dailySollMinutes: 570,
