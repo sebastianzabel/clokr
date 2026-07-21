@@ -10,14 +10,16 @@
  * All expected values are SPEC-DERIVED from 76.32-GOLDEN-SPEC.md — NOT derived by
  * running the code. If the code disagrees, that is a real finding.
  *
- * Golden numbers (adjusted from 76.32-GOLDEN-SPEC.md §0 — bsCredit=480 per DB default):
- *   snapshot.workedMinutes    = 9792  (W=9312 + bsWorked=480)
- *   snapshot.expectedMinutes  = 9144  (C_net; Feiertag NOT deducted for SHIFT_BASED)
- *   snapshot.balanceMinutes   = +168  (two-clause overtime, BS net-neutral)
- *   snapshot.carryOver        = 168
- *   GET /overtime balanceHours = 2.8  (168 / 60)
- * Note: spec §0 assumed vocationalSchoolMinutesPerDay=null→dailySoll=456; the DB schema
- * has NOT NULL DEFAULT 480, so FIRST_LONG_DAY resolves to 480 instead of 456.
+ * Golden numbers (76.32-GOLDEN-SPEC.md §0 — §15-correct bsCredit = individual daily Soll 456):
+ *   snapshot.workedMinutes    = 9768  (W=9312 + bsWorked=456)
+ *   snapshot.expectedMinutes  = 9120  (C_net; Feiertag NOT deducted for SHIFT_BASED)
+ *   snapshot.balanceMinutes   = +192  (two-clause overtime, BS net-neutral)
+ *   snapshot.carryOver        = 192
+ *   GET /overtime balanceHours = 3.2  (192 / 60)
+ * §15 rationale (owner decision 2026-07-21, BS-FIRST-LONG-DAY-DEFAULT-DECISION.md):
+ * the FIRST BS-Langtag credits the individual daily Soll (round(38×60/5)=456), NOT the
+ * legacy flat 480. The NOT-NULL vocationalSchoolMinutesPerDay @default(480) was removed
+ * from the FIRST_LONG_DAY precedence chain, so this default is now reachable in prod.
  *
  * Test structure:
  *   step 1: cron auto-close Jan-2026 → golden snapshot values
@@ -60,25 +62,27 @@ const CRON_NOW = new Date("2026-02-16T06:00:00.000Z");
 // (Feb 1–16) has no Feb shifts/entries (R=0, W=0), so §615 → 0. Total = carryOver/60.
 const LIVE_NOW = new Date("2026-02-16T10:00:00.000Z");
 
-// ── Adjusted golden values (spec §0 with schema-actual bsCredit = 480) ───────
-// The spec assumed vocationalSchoolMinutesPerDay could be null → dailySoll=456.
-// The DB schema has NOT NULL DEFAULT 480, so FIRST_LONG_DAY resolves to 480.
-// Derivation (see 76.32-GOLDEN-SPEC.md §2, adjusted for bsCredit=480):
-//   bsWorkedMinutes   = 480 (FIRST_LONG_DAY = vocationalSchoolMinutesPerDay DB default)
-//   bsExpectedMinutes = 480
-//   workedMinutes     = W(9312) + bsWorked(480) = 9792
-//   C_net             = max(0, contractSoll(10032) − leaveCredit(1368) − 0) + bsExpected(480)
-//                     = 8664 + 480 = 9144
-//   balanceMinutes    = max(0, W(9312) − C_net(9144)) − max(0, R(9312) − W(9312)) + (480-480)
-//                     = max(0, 168) − 0 + 0 = 168
-//   carryOver         = 0 + 168 = 168
-//   balanceHours      = 168 / 60 = 2.8
-// These are SCHEMA-DERIVED values. If code disagrees, that is a real finding.
-const GOLDEN_WORKED_MINUTES = 9792; // W(9312) + bsWorked(480)
-const GOLDEN_EXPECTED_MINUTES = 9144; // C_net — Feiertag NOT deducted for SHIFT_BASED
-const GOLDEN_BALANCE_MINUTES = 168; // two-clause overtime; BS net-neutral
-const GOLDEN_CARRY_OVER = 168;
-const GOLDEN_BALANCE_HOURS = 2.8; // 168 / 60
+// ── Golden values (spec §0 — §15-correct bsCredit = individual daily Soll 456) ─
+// §15 Abs. 2 Nr. 2 BBiG: the FIRST BS-Langtag credits the individual daily Soll,
+// NOT the legacy flat 480. Owner decision 2026-07-21 removed the NOT-NULL
+// vocationalSchoolMinutesPerDay @default(480) from the FIRST_LONG_DAY precedence
+// chain, so the daily-Soll default is now reachable on a default-config tenant.
+// Derivation (see 76.32-GOLDEN-SPEC.md §2):
+//   bsWorkedMinutes   = 456 (FIRST_LONG_DAY = daily Soll round(38×60/5) = 456)
+//   bsExpectedMinutes = 456
+//   workedMinutes     = W(9312) + bsWorked(456) = 9768
+//   C_net             = max(0, contractSoll(10032) − leaveCredit(1368) − 0) + bsExpected(456)
+//                     = 8664 + 456 = 9120
+//   balanceMinutes    = max(0, W(9312) − C_net(9120)) − max(0, R(9312) − W(9312)) + (456-456)
+//                     = max(0, 192) − 0 + 0 = 192
+//   carryOver         = 0 + 192 = 192
+//   balanceHours      = 192 / 60 = 3.2
+// These are SPEC-DERIVED values. If code disagrees, that is a real finding.
+const GOLDEN_WORKED_MINUTES = 9768; // W(9312) + bsWorked(456)
+const GOLDEN_EXPECTED_MINUTES = 9120; // C_net — Feiertag NOT deducted for SHIFT_BASED
+const GOLDEN_BALANCE_MINUTES = 192; // two-clause overtime; BS net-neutral
+const GOLDEN_CARRY_OVER = 192;
+const GOLDEN_BALANCE_HOURS = 3.2; // 192 / 60
 
 // ── Rostered shifts (17 total, spec §1.3) ────────────────────────────────────
 // All shifts start at 08:00; end = 08:00 + brutto.
@@ -260,19 +264,18 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
       data: { name: `Golden Jan26 ${s}`, slug: s, federalState: "NIEDERSACHSEN" },
     });
     tenantId = tenant.id;
-    // vocationalSchoolMinutesPerDay = null → FIRST_LONG_DAY resolves to individual
-    // daily Soll = 456 (spec §1.2 parity-pin note). Explicit null ensures stability.
-    // vocationalSchoolMinutesPerDay is NOT NULL in the DB schema (default 480).
-    // The spec §1.2 parity-pin note assumed it could be null (it cannot).
-    // With the DB default of 480, FIRST_LONG_DAY resolves to 480 (not 456).
-    // Golden numbers are adjusted accordingly (see spec §0 note below).
+    // Default-config tenant: vocationalSchoolMinutesPerDay stays at its DB @default(480)
+    // and bsSlot* fields are null. Per owner decision 2026-07-21 the legacy field was
+    // removed from the FIRST_LONG_DAY precedence chain, so FIRST_LONG_DAY now resolves
+    // to the individual daily Soll = round(38×60/5) = 456 (§15 Abs. 2 Nr. 2 BBiG) —
+    // NOT the flat 480. This is the prod default path (no bsSlot* override needed).
     await prisma.tenantConfig.create({
       data: {
         tenantId,
         defaultVacationDays: 30,
         timezone: TZ,
-        // vocationalSchoolMinutesPerDay omitted → DB default 480 applies.
-        // bsSlot* fields left null → fall through to vocationalSchoolMinutesPerDay = 480.
+        // vocationalSchoolMinutesPerDay omitted → DB default 480 applies, but it no
+        // longer drives FIRST_LONG_DAY; bsSlot* null → daily Soll (456) is the default.
       },
     });
 
@@ -457,14 +460,14 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
     expect(snap, "Jan 2026 snapshot must exist after cron close").not.toBeNull();
 
     // Golden spec §3.1
-    expect(snap!.workedMinutes, "workedMinutes = W+bsWorked = 9312+480").toBe(
+    expect(snap!.workedMinutes, "workedMinutes = W+bsWorked = 9312+456").toBe(
       GOLDEN_WORKED_MINUTES,
     );
     expect(
       snap!.expectedMinutes,
       "expectedMinutes = C_net (Feiertag NOT deducted for SHIFT_BASED)",
     ).toBe(GOLDEN_EXPECTED_MINUTES);
-    expect(snap!.balanceMinutes, "balance = +168 (overtime clause, BS net-neutral)").toBe(
+    expect(snap!.balanceMinutes, "balance = +192 (overtime clause, BS net-neutral)").toBe(
       GOLDEN_BALANCE_MINUTES,
     );
     expect(snap!.carryOver, "carryOver = 0 + 192").toBe(GOLDEN_CARRY_OVER);
