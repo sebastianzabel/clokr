@@ -85,6 +85,24 @@ interface Cell {
   /** VOCATIONAL_SCHOOL absence days (source=PATTERN) */
   bsDays?: string[];
   /**
+   * Phase 76.38 — per-BS-day Unterrichtszeit (minutes) for duration-based slot
+   * classification (§15 Abs. 2 Nr. 2 BBiG). Key = YYYY-MM-DD, must be a member of
+   * bsDays. > 225 = Langtag, ≤ 225 = Kurztag. Absent day → NULL (ordinal fallback).
+   * Seeded onto Absence.unterrichtsMinutes.
+   */
+  bsDayDurations?: Record<string, number>;
+  /**
+   * Phase 76.38 — explicit TenantConfig bsSlot* minutes so the SHORT credit can be
+   * made observably distinct from the daily Soll (otherwise SHORT == dailySoll and the
+   * ordinal-vs-duration difference is numerically invisible).
+   */
+  bsSlotConfig?: {
+    bsSlotFirstLongDayMinutes?: number;
+    bsSlotSecondLongDayMinutes?: number;
+    bsSlotShortDayMinutes?: number;
+    bsSlotBlockWeekMinutes?: number;
+  };
+  /**
    * Half-day SICK absences (source=MANUAL, halfDay=true, days=0.5).
    * Each entry is ONE single-day SICK Absence.
    * Wave 2 (76.32.1-02): RED — current code ignores Absence.halfDay → over-credits by half a daily Soll.
@@ -1053,6 +1071,68 @@ const CELLS: Cell[] = [
     expectedRed: false,
   },
 
+  // ── Wave 2 RED anchors — Phase 76.38 (duration-based BS slot classification) ──
+  //
+  // Two BS days in ONE ISO week (Mon 2026-01-12 + Thu 2026-01-15), SB_38_5 → daily
+  // Soll 456. TenantConfig sets bsSlotShortDayMinutes ≠ 456 so the SHORT credit is
+  // observably distinct from the daily Soll. Per-day Unterrichtszeit drives the slot:
+  //   Mon Kurztag (≤ 225) → SHORT_DAY, Thu Langtag (> 225) → FIRST_LONG_DAY.
+  //
+  // BS crediting is net-neutral for SHIFT_BASED (worked==expected → balance 0); the
+  // ordinal-vs-duration difference surfaces in the worked/expected MAGNITUDE:
+  //   OLD ordinal code: Mon=FIRST_LONG(456) + Thu=SECOND_LONG(456) = 912 → 10944 (RED)
+  //   Duration-correct:  Mon=SHORT(cfg)      + Thu=FIRST_LONG(456)      → golden below
+  {
+    id: "az-38-5-bs_duration_short_first",
+    scheduleType: "SHIFT_BASED",
+    classification: "AZUBI",
+    situation: "Berufsschule — Mon Kurztag(180) + Thu Langtag(300); duration, not ordinal",
+    schedule: SB_38_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-12-01",
+    entries: buildAzMultiRoster(["2026-01-12", "2026-01-15"]).entries,
+    shifts: buildAzMultiRoster(["2026-01-12", "2026-01-15"]).shifts,
+    bsDays: ["2026-01-12", "2026-01-15"],
+    bsDayDurations: { "2026-01-12": 180, "2026-01-15": 300 },
+    bsSlotConfig: { bsSlotShortDayMinutes: 300 },
+    expected: {
+      // Mon SHORT=300, Thu FIRST_LONG=456 → bsCredit 756. R=10032 → 10788.
+      workedMinutes: 10788,
+      expectedMinutes: 10788,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    // RED under ordinal code (Mon→FIRST 456, Thu→SECOND 456 → 10944 ≠ 10788).
+    expectedRed: true,
+  },
+  {
+    id: "az-38-5-bs_duration_long_p2",
+    scheduleType: "SHIFT_BASED",
+    classification: "AZUBI",
+    situation: "Berufsschule — Langtag at ISO position 2 gets FIRST_LONG credit (duration)",
+    schedule: SB_38_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-12-01",
+    entries: buildAzMultiRoster(["2026-01-12", "2026-01-15"]).entries,
+    shifts: buildAzMultiRoster(["2026-01-12", "2026-01-15"]).shifts,
+    bsDays: ["2026-01-12", "2026-01-15"],
+    bsDayDurations: { "2026-01-12": 200, "2026-01-15": 400 },
+    bsSlotConfig: { bsSlotShortDayMinutes: 360 },
+    expected: {
+      // Mon SHORT=360, Thu FIRST_LONG=456 → bsCredit 816. R=10032 → 10848.
+      workedMinutes: 10848,
+      expectedMinutes: 10848,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    // RED under ordinal code (Mon→FIRST 456, Thu→SECOND 456 → 10944 ≠ 10848).
+    expectedRed: true,
+  },
+
   // ── Wave 2 RED anchor — Phase 76.32.1-02 (Part C Absence.halfDay) ──────────
   // fw-38-5-halfsick: FIXED_WEEKLY 38h/5-day, Feb 2026 (20 workdays, daily Soll=456 min).
   // Scenario: 2026-02-02 (Monday) has a half-day SICK Absence (halfDay=true, days=0.5)
@@ -1178,6 +1258,8 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
       ...(cell.monthlyHoursHolidayDeduction != null
         ? { monthlyHoursHolidayDeduction: cell.monthlyHoursHolidayDeduction }
         : {}),
+      // Phase 76.38 — explicit bsSlot* config so SHORT credit ≠ daily Soll (observable).
+      ...(cell.bsSlotConfig ?? {}),
     },
   });
 
@@ -1351,6 +1433,8 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
         endDate: new Date(d + "T00:00:00Z"),
         days: 1,
         createdBy: employeeId,
+        // Phase 76.38 — per-day Unterrichtszeit (null when not modeled → ordinal fallback).
+        unterrichtsMinutes: cell.bsDayDurations?.[d] ?? null,
       },
     });
   }
@@ -1511,7 +1595,15 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
     });
     const absences = await app.prisma.absence.findMany({
       where: { employeeId, deletedAt: null },
-      select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
+      select: {
+        startDate: true,
+        endDate: true,
+        type: true,
+        source: true,
+        halfDay: true,
+        // Phase 76.38 — per-day Unterrichtszeit for duration-based BS slot classification.
+        unterrichtsMinutes: true,
+      },
     });
     const approvedLeave = await app.prisma.leaveRequest.findMany({
       where: { employeeId, status: "APPROVED", deletedAt: null },

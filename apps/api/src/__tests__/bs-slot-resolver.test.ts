@@ -246,3 +246,94 @@ describe("resolveBsTagSlot — contributesToExpected (Phase 63 D-04)", () => {
     expect(fixed.contributesToExpected).toBe(true);
   });
 });
+
+// ── Phase 76.38 — duration-based classification (SALDO-05 / D-11) ─────────────
+//
+// A BS day with > 225 min Unterrichtszeit (> 5 Unterrichtsstunden à 45 min) is a
+// Langtag per §15 Abs. 2 Nr. 2 BBiG; otherwise a Kurztag (SHORT_DAY) — INDEPENDENT
+// of the ISO-week ordinal position. Among LONG days the FIRST vs SECOND crediting
+// distinction applies by date order. A NULL entry (or absent map) reproduces the
+// existing ordinal-based classification byte-for-byte (backward compat).
+//
+// Fixtures use a week of Mon (2026-07-20) + Thu (2026-07-23):
+//   Mon Kurztag (180 min ≤ 225) → SHORT_DAY regardless of being ordinal 1
+//   Thu Langtag (300 min > 225) → FIRST_LONG_DAY (first LONG day of the week)
+// Under the OLD ordinal code Mon (ordinal 1) would be FIRST_LONG_DAY and Thu
+// (ordinal 2) SECOND_LONG_DAY → these assertions are RED until Wave 3.
+describe("resolveBsTagSlot — duration-based classification (Phase 76.38, D-11)", () => {
+  // SHORT credit distinct from the daily Soll so the classification is observable.
+  const durHierarchy = buildSlotOverrideHierarchy(
+    makeInputs({
+      tenantConfig: {
+        ...NULL_SLOTS,
+        bsSlotShortDayMinutes: 240, // ≠ dailySoll (570) — makes SHORT observable
+        vocationalSchoolMinutesPerDay: null,
+        vocationalSchoolBlockMinutesPerWeek: null,
+      },
+      dailySollMinutes: 570,
+    }),
+  );
+
+  const MON = "2026-07-20";
+  const THU = "2026-07-23";
+  const durationWeek = (map: Record<string, number | null>): WeekContext => ({
+    bsDatesInWeek: [MON, THU],
+    isBlockWeek: false,
+    unterrichtsMinutesByDate: map,
+  });
+
+  it("Kurztag (180 ≤ 225) at ordinal 1 → SHORT_DAY, not FIRST_LONG_DAY", () => {
+    const week = durationWeek({ [MON]: 180, [THU]: 300 });
+    const r = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    expect(r.slotType).toBe("SHORT_DAY");
+    expect(r.creditedMinutes).toBe(240); // configured SHORT credit
+  });
+
+  it("Langtag (300 > 225) at ordinal 2 → FIRST_LONG_DAY (first LONG of the week)", () => {
+    const week = durationWeek({ [MON]: 180, [THU]: 300 });
+    const r = resolveBsTagSlot(new Date(THU + "T00:00:00Z"), 2, week, durHierarchy, SHIFT_BASED);
+    expect(r.slotType).toBe("FIRST_LONG_DAY");
+    expect(r.creditedMinutes).toBe(570); // firstLongDay = daily Soll
+  });
+
+  it("two Langtage → longOrdinal picks FIRST then SECOND in date order", () => {
+    const week = durationWeek({ [MON]: 300, [THU]: 300 });
+    const rMon = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    const rThu = resolveBsTagSlot(new Date(THU + "T00:00:00Z"), 2, week, durHierarchy, SHIFT_BASED);
+    expect(rMon.slotType).toBe("FIRST_LONG_DAY");
+    expect(rThu.slotType).toBe("SECOND_LONG_DAY");
+  });
+
+  it("exactly 225 min is a Kurztag (threshold is strictly > 225)", () => {
+    const week = durationWeek({ [MON]: 225, [THU]: 300 });
+    const r = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    expect(r.slotType).toBe("SHORT_DAY");
+  });
+
+  it("NULL entry for the current date → ordinal fallback (byte-identical to today)", () => {
+    // Mon has no duration data (null) → ordinal 1 → FIRST_LONG_DAY (old behaviour).
+    const week = durationWeek({ [MON]: null, [THU]: 300 });
+    const r = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    expect(r.slotType).toBe("FIRST_LONG_DAY");
+    expect(r.creditedMinutes).toBe(570);
+  });
+
+  it("absent map (undefined) → ordinal fallback for every day", () => {
+    const week: WeekContext = { bsDatesInWeek: [MON, THU], isBlockWeek: false };
+    const rMon = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    const rThu = resolveBsTagSlot(new Date(THU + "T00:00:00Z"), 2, week, durHierarchy, SHIFT_BASED);
+    expect(rMon.slotType).toBe("FIRST_LONG_DAY");
+    expect(rThu.slotType).toBe("SECOND_LONG_DAY");
+  });
+
+  it("block week wins over duration classification", () => {
+    // 5 BS days → isBlockWeek true; even a short Unterrichtszeit stays BLOCK_WEEK.
+    const week: WeekContext = {
+      bsDatesInWeek: [MON, "2026-07-21", "2026-07-22", THU, "2026-07-24"],
+      isBlockWeek: true,
+      unterrichtsMinutesByDate: { [MON]: 120 },
+    };
+    const r = resolveBsTagSlot(new Date(MON + "T00:00:00Z"), 1, week, durHierarchy, SHIFT_BASED);
+    expect(r.slotType).toBe("BLOCK_WEEK");
+  });
+});

@@ -23,7 +23,12 @@ function utcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
 
-async function seedBsAbsence(app: FastifyInstance, employeeId: string, date: Date) {
+async function seedBsAbsence(
+  app: FastifyInstance,
+  employeeId: string,
+  date: Date,
+  unterrichtsMinutes?: number,
+) {
   return app.prisma.absence.create({
     data: {
       employeeId,
@@ -34,6 +39,8 @@ async function seedBsAbsence(app: FastifyInstance, employeeId: string, date: Dat
       days: 1.0,
       createdBy: "jarbschg-slot-test",
       deletedAt: null,
+      // Phase 76.38 — per-day Unterrichtszeit for duration-based slot classification.
+      ...(unterrichtsMinutes != null ? { unterrichtsMinutes } : {}),
     },
   });
 }
@@ -185,6 +192,55 @@ describe("checkJArbSchG slot-aware §9 (Phase 76.31-07)", () => {
       employeeId: data.employee.id,
       date: WED,
       plannedNetWorkMin: 480,
+    });
+
+    expect(res.blocked).toBe(true);
+    expect(res.message).toBe(HARD_BLOCK_MESSAGE);
+  });
+
+  // ── Phase 76.38 — duration-based §9 classification (SALDO-05 / D-11) ─────────
+  //
+  // RED-first: a Monday that is ISO-week ordinal 1 but a genuine Kurztag (180 min
+  // Unterrichtszeit ≤ 225) must NOT hard-block a minor AZUBI. Under the OLD ordinal
+  // code Monday resolves to FIRST_LONG_DAY (ordinal 1) → isLongDay → hard-block. With
+  // duration-based classification Monday is SHORT_DAY (180 ≤ 225) → §9 inactive.
+  //
+  // Thursday carries a Langtag (300 min > 225) so there are >= 2 BS days in the week
+  // (RESOLVER mode, not LEGACY) — the ordinal-vs-duration divergence is exercised.
+  it("Phase 76.38: ordinal-1 Kurztag (180 min Unterrichtszeit) does NOT block a minor AZUBI", async () => {
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { birthDate: BIRTH_AGE_17 },
+    });
+    // Mon = ordinal 1 Kurztag (180 ≤ 225); Thu = Langtag (300) → >= 2-day RESOLVER week.
+    await seedBsAbsence(app, data.employee.id, MON, 180);
+    await seedBsAbsence(app, data.employee.id, TUE, 300);
+
+    const res = await checkJArbSchG(app.prisma, {
+      employeeId: data.employee.id,
+      date: MON,
+      plannedNetWorkMin: 480, // high, but a genuine Kurztag → §9 must stay inactive
+    });
+
+    // Duration-correct: Monday is a SHORT_DAY → not blocked. (RED under ordinal code,
+    // which classifies ordinal-1 Monday as FIRST_LONG_DAY and hard-blocks.)
+    expect(res.blocked).toBe(false);
+    expect(res.message).toBeNull();
+  });
+
+  it("Phase 76.38: ordinal-2 Langtag (300 min Unterrichtszeit) DOES block a minor AZUBI", async () => {
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { birthDate: BIRTH_AGE_17 },
+    });
+    // Mon = Kurztag(180); Tue = Langtag(300). Target Tue is a real Langtag → hard-block.
+    await seedBsAbsence(app, data.employee.id, MON, 180);
+    await seedBsAbsence(app, data.employee.id, TUE, 300);
+
+    const res = await checkJArbSchG(app.prisma, {
+      employeeId: data.employee.id,
+      date: TUE,
+      plannedNetWorkMin: 300,
     });
 
     expect(res.blocked).toBe(true);
