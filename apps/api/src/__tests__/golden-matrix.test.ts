@@ -20,10 +20,10 @@
  *   cron close == manual close == recalc == pure-core closeEmployeeMonth
  * mirroring golden-azubi-jan2026.test.ts, to keep runtime sane.
  *
- * RED-first anchors: `az-38-5-bs_second` and `az-38-5-bs_short` are documented
- * §15 (BBiG) SECOND_LONG/SHORT-credit defects targeted by Phase 76.34. They are
- * implemented as `it.fails(...)` so they DO NOT fail the suite while still proving
- * the spec-correct number set does not yet hold.
+ * Phase 76.34 (RESOLVED): `az-38-5-bs_second` and `az-38-5-bs_short` were the
+ * §15 (BBiG) SECOND_LONG/SHORT-credit RED-first anchors. The resolver now defaults
+ * the 2nd BS-Langtag + Kurztag to the individual daily Soll, so both cells run as
+ * regular GREEN golden cells (912 = 456+456 BS credit → worked=expected=10944).
  *
  * Model / references: golden-azubi-jan2026.test.ts (harness), shift-based-saldo-parity.test.ts,
  * close-employee-month.test.ts case 9 (pure-core pin), GOLDEN-MATRIX-SPEC.md.
@@ -96,8 +96,6 @@ interface Cell {
   monthlyHoursHolidayDeduction?: boolean;
   expected: Expected;
   expectedRed: boolean;
-  /** true → RED-first anchor implemented as it.fails (76.34) */
-  redAnchor?: boolean;
 }
 
 // Helper: build per-day netto entry/shift arrays from a date list.
@@ -1029,8 +1027,8 @@ const CELLS: Cell[] = [
       carryOver: 0,
       overtimeHours: 0,
     },
-    expectedRed: true,
-    redAnchor: true,
+    // Phase 76.34 flipped GREEN: SECOND_LONG_DAY now defaults to daily Soll (456) per §15.
+    expectedRed: false,
   },
   {
     id: "az-38-5-bs_short",
@@ -1051,8 +1049,8 @@ const CELLS: Cell[] = [
       carryOver: 0,
       overtimeHours: 0,
     },
-    expectedRed: true,
-    redAnchor: true,
+    // Phase 76.34 flipped GREEN: SHORT_DAY now defaults to daily Soll (456) per §15.
+    expectedRed: false,
   },
 
   // ── Wave 2 RED anchor — Phase 76.32.1-02 (Part C Absence.halfDay) ──────────
@@ -1493,82 +1491,6 @@ afterAll(async () => {
 describe.each(CELLS)("golden matrix — $id", (cell) => {
   const { start: MONTH_START, end: MONTH_END } = monthRangeUtc(cell.year, cell.month, TZ);
   const doParity = PARITY_IDS.has(cell.id);
-
-  // RED-first anchors: implement as it.fails so a spec-correct assertion that the
-  // current code does NOT satisfy is recorded without failing the suite.
-  if (cell.redAnchor) {
-    // RED-first anchor for Phase 76.34 — SECOND_LONG/SHORT credit = individual daily
-    // Soll (§15 BBiG), today's code gives 0 for the 2nd/short BS-Langtag.
-    it.fails(
-      `${cell.id}: §15 SECOND/SHORT BS credit (76.34 target) — expected RED today`,
-      async () => {
-        sharedApp = await getTestApp();
-        const app = sharedApp;
-        const { tenantId, employeeId } = await seedGoldenScenario(app, cell);
-        seededTenants.push(tenantId);
-
-        const { firstDay, lastDay } = monthDayBounds(MONTH_START, MONTH_END, TZ);
-        const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId } });
-        const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
-        const entries = await app.prisma.timeEntry.findMany({
-          where: { employeeId, deletedAt: null },
-          select: { date: true, startTime: true, endTime: true, breakMinutes: true },
-        });
-        const shifts = await app.prisma.shift.findMany({
-          where: { employeeId, deletedAt: null },
-          select: { date: true, startTime: true, endTime: true },
-        });
-        const absences = await app.prisma.absence.findMany({
-          where: { employeeId, deletedAt: null },
-          select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
-        });
-        const tc = await app.prisma.tenantConfig.findFirst({ where: { tenantId } });
-
-        const core = closeEmployeeMonth({
-          employeeId,
-          monthStart: MONTH_START,
-          monthEnd: MONTH_END,
-          monthFirstDay: firstDay,
-          monthLastDay: lastDay,
-          tz: TZ,
-          carryOverIn: 0,
-          schedule: schedule as unknown as Record<string, unknown>,
-          hireDate: employee!.hireDate,
-          exitDate: null,
-          isTimeTrackingExempt: false,
-          breakOver6hOverride: 0,
-          breakOver9hOverride: 0,
-          entries: entries as CloseMonthInput["entries"],
-          shifts: shifts as CloseMonthInput["shifts"],
-          approvedLeave: [],
-          absences: absences as CloseMonthInput["absences"],
-          holidayDateStrings: new Set<string>(),
-          tenantConfig: tc
-            ? {
-                defaultBreakOver6h: tc.defaultBreakOver6h,
-                defaultBreakOver9h: tc.defaultBreakOver9h,
-                monthlyHoursHolidayDeduction: tc.monthlyHoursHolidayDeduction ?? undefined,
-                vocationalSchoolMinutesPerDay: tc.vocationalSchoolMinutesPerDay ?? undefined,
-                vocationalSchoolBlockMinutesPerWeek:
-                  tc.vocationalSchoolBlockMinutesPerWeek ?? undefined,
-                bsSlotFirstLongDayMinutes: tc.bsSlotFirstLongDayMinutes ?? undefined,
-                bsSlotSecondLongDayMinutes: tc.bsSlotSecondLongDayMinutes ?? undefined,
-                bsSlotShortDayMinutes: tc.bsSlotShortDayMinutes ?? undefined,
-                bsSlotBlockWeekMinutes: tc.bsSlotBlockWeekMinutes ?? undefined,
-              }
-            : null,
-        });
-        // §15-CORRECT target: both BS-Langtage credit the individual daily Soll (456).
-        // TODAY the resolver credits the 2nd/short BS day 0 → worked/expected = 10488,
-        // not 10944 → this assertion FAILS (as marked). Phase 76.34 flips it green.
-        expect(core.workedMinutes).toBe(cell.expected.workedMinutes);
-        expect(core.expectedMinutes).toBe(cell.expected.expectedMinutes);
-        expect(core.balanceMinutes).toBe(cell.expected.balanceMinutes);
-      },
-      120_000,
-    );
-    return;
-  }
 
   it(`${cell.id}: close snapshot == spec (worked=${cell.expected.workedMinutes}, expected=${cell.expected.expectedMinutes}, balance=${cell.expected.balanceMinutes}, carryOver=${cell.expected.carryOver})`, async () => {
     sharedApp = await getTestApp();
