@@ -61,6 +61,11 @@
     // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
     closeMonthWithGapsAllowed?: boolean;
     retroEntryWindowDays?: number;
+    // Phase 76.31 D-06 / 76.35 — 4-layer bsSlot* override (TenantConfig layer)
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
   }
 
   interface StoreHourEntry {
@@ -212,6 +217,47 @@
   let retroWindowSaving = $state(false);
   let retroWindowSaved = $state(false);
   let retroWindowError = $state("");
+
+  // Phase 76.35 — Berufsschule Zeitgutschrift (bsSlot* TenantConfig overrides).
+  // Empty string = inherited (no explicit tenant override); numeric string = explicit value.
+  // Bounds mirror the server Zod schema (vocational-school-constants.ts):
+  //   daily slots [240..600 min], block week [1200..3000 min].
+  const BS_DAILY_MIN = 240;
+  const BS_DAILY_MAX = 600;
+  const BS_BLOCK_MIN = 1200;
+  const BS_BLOCK_MAX = 3000;
+
+  let bsSlotFirstLong = $state(""); // bsSlotFirstLongDayMinutes — "" = inherited
+  let bsSlotSecondLong = $state(""); // bsSlotSecondLongDayMinutes
+  let bsSlotShortDay = $state(""); // bsSlotShortDayMinutes
+  let bsSlotBlockWeek = $state(""); // bsSlotBlockWeekMinutes
+
+  let bsSlotSaving = $state(false);
+  let bsSlotSaved = $state(false);
+  let bsSlotError = $state("");
+  let bsSlotWarnings = $state<string[]>([]);
+
+  // Stunden-hints (derive from the raw input strings)
+  let bsSlotFirstLongHint = $derived(
+    bsSlotFirstLong !== "" && Number.isFinite(Number(bsSlotFirstLong))
+      ? `= ${(Number(bsSlotFirstLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let bsSlotSecondLongHint = $derived(
+    bsSlotSecondLong !== "" && Number.isFinite(Number(bsSlotSecondLong))
+      ? `= ${(Number(bsSlotSecondLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let bsSlotShortDayHint = $derived(
+    bsSlotShortDay !== "" && Number.isFinite(Number(bsSlotShortDay))
+      ? `= ${(Number(bsSlotShortDay) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let bsSlotBlockWeekHint = $derived(
+    bsSlotBlockWeek !== "" && Number.isFinite(Number(bsSlotBlockWeek))
+      ? `= ${(Number(bsSlotBlockWeek) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
 
   // Phase 49.5 — Standard-Arbeitstage (Mo-Fr default)
   let defaultWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
@@ -419,6 +465,14 @@
       // Phase 76.29 — Monatsabschluss mit Lücken + Rückwirkende Einträge
       closeMonthWithGapsAllowed = cfg.closeMonthWithGapsAllowed ?? true;
       retroEntryWindowDays = cfg.retroEntryWindowDays ?? 10;
+      // Phase 76.35 — bsSlot* tenant overrides: null/undefined = inherited (empty string)
+      bsSlotFirstLong =
+        cfg.bsSlotFirstLongDayMinutes != null ? String(cfg.bsSlotFirstLongDayMinutes) : "";
+      bsSlotSecondLong =
+        cfg.bsSlotSecondLongDayMinutes != null ? String(cfg.bsSlotSecondLongDayMinutes) : "";
+      bsSlotShortDay = cfg.bsSlotShortDayMinutes != null ? String(cfg.bsSlotShortDayMinutes) : "";
+      bsSlotBlockWeek =
+        cfg.bsSlotBlockWeekMinutes != null ? String(cfg.bsSlotBlockWeekMinutes) : "";
       // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
       defaultCoreStart = cfg.defaultCoreStart ?? "";
       defaultCoreEnd = cfg.defaultCoreEnd ?? "";
@@ -755,6 +809,76 @@
       retroWindowError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       retroWindowSaving = false;
+    }
+  }
+
+  // Phase 76.35 — Berufsschule Zeitgutschrift speichern.
+  // Client-side bounds mirror the server Zod schema (vocational-school-constants.ts).
+  // An empty string field sends explicit null → clears the tenant override so resolution
+  // delegates down to the per-employee daily-Soll fallback.
+  async function saveBsSlots() {
+    if (!_gOtherFields) return;
+    bsSlotError = "";
+    bsSlotSaved = false;
+    bsSlotWarnings = [];
+
+    // Client-side validation — only reject values that are outside bounds;
+    // empty string is valid (means "inherit / clear override").
+    const parseSlot = (
+      raw: string,
+      min: number,
+      max: number,
+      label: string,
+    ): number | null | "error" => {
+      if (raw === "") return null; // explicit null → clear override
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        bsSlotError = `${label}: Bitte eine ganze Zahl eingeben.`;
+        return "error";
+      }
+      if (n < min || n > max) {
+        bsSlotError = `${label}: Wert muss zwischen ${min} und ${max} Minuten liegen.`;
+        return "error";
+      }
+      return n;
+    };
+
+    const v1 = parseSlot(bsSlotFirstLong, BS_DAILY_MIN, BS_DAILY_MAX, "1. Langtag");
+    if (v1 === "error") return;
+    const v2 = parseSlot(bsSlotSecondLong, BS_DAILY_MIN, BS_DAILY_MAX, "2. Langtag");
+    if (v2 === "error") return;
+    const v3 = parseSlot(bsSlotShortDay, BS_DAILY_MIN, BS_DAILY_MAX, "Kurztag");
+    if (v3 === "error") return;
+    const v4 = parseSlot(bsSlotBlockWeek, BS_BLOCK_MIN, BS_BLOCK_MAX, "Blockunterricht-Woche");
+    if (v4 === "error") return;
+
+    bsSlotSaving = true;
+    try {
+      const res = await api.put<{
+        warnings?: string[];
+        bsSlotFirstLongDayMinutes?: number | null;
+        bsSlotSecondLongDayMinutes?: number | null;
+        bsSlotShortDayMinutes?: number | null;
+        bsSlotBlockWeekMinutes?: number | null;
+      }>("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        bsSlotFirstLongDayMinutes: v1,
+        bsSlotSecondLongDayMinutes: v2,
+        bsSlotShortDayMinutes: v3,
+        bsSlotBlockWeekMinutes: v4,
+      });
+      // Surface SC-3 over-crediting warnings (non-blocking)
+      if (res.warnings && res.warnings.length > 0) {
+        bsSlotWarnings = res.warnings;
+      }
+      bsSlotSaved = true;
+      setTimeout(() => (bsSlotSaved = false), 3000);
+    } catch (e: unknown) {
+      bsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      bsSlotSaving = false;
     }
   }
 
@@ -1618,6 +1742,198 @@
           {#if retroWindowSaved}
             <span class="saved-hint">✓ Gespeichert</span>
           {/if}
+        </Section>
+        <!-- ── Berufsschule — Zeitgutschrift (Phase 76.35) ─────────────────── -->
+        <Section
+          title="Berufsschule — Zeitgutschrift"
+          sub="Tenant-weite Zeitgutschrift-Slots für Berufsschultage (§ 15 Abs. 2 BBiG)"
+        >
+          {#snippet footer()}
+            <button
+              class="btn btn-primary"
+              onclick={saveBsSlots}
+              disabled={bsSlotSaving}
+              data-testid="admin-system-bsslot-save"
+            >
+              {#if bsSlotSaving}<Spinner />{/if}
+              Speichern
+            </button>
+            {#if bsSlotSaved}
+              <span class="saved-hint">✓ Gespeichert</span>
+            {/if}
+            <div class="alert alert-info bs-revision-alert" role="alert">
+              <span>ℹ</span><span>Änderungen wirken nur auf offene und künftige Monate.</span>
+            </div>
+          {/snippet}
+
+          <p class="form-hint text-muted" style="margin-bottom: 1.25rem;">
+            Überschreibt den systemweiten Fallback für alle Mitarbeitenden dieses Mandanten. Leer
+            lassen = Wert wird vom Tages-Soll des Mitarbeiters geerbt (kein expliziter
+            Tenant-Override). Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000
+            Min (20–50 h).
+          </p>
+
+          {#if bsSlotError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{bsSlotError}</span>
+            </div>
+          {/if}
+
+          {#if bsSlotWarnings.length > 0}
+            {#each bsSlotWarnings as w (w)}
+              <div class="alert alert-warning" role="alert" style="margin-bottom: 0.75rem;">
+                <span>⚠</span><span>{w}</span>
+              </div>
+            {/each}
+          {/if}
+
+          <!-- 1. Langtag -->
+          <div class="form-group bs-slot-group">
+            <label class="form-label" for="bs-slot-first-long">
+              1. Berufsschul-Langtag (Minuten)
+            </label>
+            <div class="bs-slot-input-row">
+              <input
+                id="bs-slot-first-long"
+                type="number"
+                min={BS_DAILY_MIN}
+                max={BS_DAILY_MAX}
+                step="1"
+                class="form-input modal-input-sm"
+                bind:value={bsSlotFirstLong}
+                placeholder="Erbt aus: Tages-Soll"
+                data-testid="admin-system-bsslot-firstLong"
+              />
+              {#if bsSlotFirstLongHint}
+                <span class="bs-slot-hint">{bsSlotFirstLongHint}</span>
+              {/if}
+              {#if bsSlotFirstLong !== ""}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm bs-clear-btn"
+                  onclick={() => (bsSlotFirstLong = "")}
+                  title="Auf Vorgabe zurücksetzen"
+                  aria-label="1. Langtag auf Vorgabe zurücksetzen"
+                >
+                  × Erben
+                </button>
+              {/if}
+            </div>
+            {#if bsSlotFirstLong === ""}
+              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+            {/if}
+          </div>
+
+          <!-- 2. Langtag -->
+          <div class="form-group bs-slot-group">
+            <label class="form-label" for="bs-slot-second-long">
+              2. Berufsschul-Langtag (Minuten)
+            </label>
+            <div class="bs-slot-input-row">
+              <input
+                id="bs-slot-second-long"
+                type="number"
+                min={BS_DAILY_MIN}
+                max={BS_DAILY_MAX}
+                step="1"
+                class="form-input modal-input-sm"
+                bind:value={bsSlotSecondLong}
+                placeholder="Erbt aus: Tages-Soll"
+                data-testid="admin-system-bsslot-secondLong"
+              />
+              {#if bsSlotSecondLongHint}
+                <span class="bs-slot-hint">{bsSlotSecondLongHint}</span>
+              {/if}
+              {#if bsSlotSecondLong !== ""}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm bs-clear-btn"
+                  onclick={() => (bsSlotSecondLong = "")}
+                  title="Auf Vorgabe zurücksetzen"
+                  aria-label="2. Langtag auf Vorgabe zurücksetzen"
+                >
+                  × Erben
+                </button>
+              {/if}
+            </div>
+            {#if bsSlotSecondLong === ""}
+              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+            {/if}
+          </div>
+
+          <!-- Kurztag -->
+          <div class="form-group bs-slot-group">
+            <label class="form-label" for="bs-slot-short-day">
+              Berufsschul-Kurztag (Minuten)
+            </label>
+            <div class="bs-slot-input-row">
+              <input
+                id="bs-slot-short-day"
+                type="number"
+                min={BS_DAILY_MIN}
+                max={BS_DAILY_MAX}
+                step="1"
+                class="form-input modal-input-sm"
+                bind:value={bsSlotShortDay}
+                placeholder="Erbt aus: Tages-Soll"
+                data-testid="admin-system-bsslot-shortDay"
+              />
+              {#if bsSlotShortDayHint}
+                <span class="bs-slot-hint">{bsSlotShortDayHint}</span>
+              {/if}
+              {#if bsSlotShortDay !== ""}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm bs-clear-btn"
+                  onclick={() => (bsSlotShortDay = "")}
+                  title="Auf Vorgabe zurücksetzen"
+                  aria-label="Kurztag auf Vorgabe zurücksetzen"
+                >
+                  × Erben
+                </button>
+              {/if}
+            </div>
+            {#if bsSlotShortDay === ""}
+              <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+            {/if}
+          </div>
+
+          <!-- Blockunterricht-Woche -->
+          <div class="form-group bs-slot-group">
+            <label class="form-label" for="bs-slot-block-week">
+              Blockunterricht-Woche (Minuten)
+            </label>
+            <div class="bs-slot-input-row">
+              <input
+                id="bs-slot-block-week"
+                type="number"
+                min={BS_BLOCK_MIN}
+                max={BS_BLOCK_MAX}
+                step="1"
+                class="form-input modal-input-sm"
+                bind:value={bsSlotBlockWeek}
+                placeholder="Erbt aus: Wochenstunden-Soll"
+                data-testid="admin-system-bsslot-blockWeek"
+              />
+              {#if bsSlotBlockWeekHint}
+                <span class="bs-slot-hint">{bsSlotBlockWeekHint}</span>
+              {/if}
+              {#if bsSlotBlockWeek !== ""}
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-sm bs-clear-btn"
+                  onclick={() => (bsSlotBlockWeek = "")}
+                  title="Auf Vorgabe zurücksetzen"
+                  aria-label="Blockunterricht-Woche auf Vorgabe zurücksetzen"
+                >
+                  × Erben
+                </button>
+              {/if}
+            </div>
+            {#if bsSlotBlockWeek === ""}
+              <p class="form-hint text-muted">Erbt aus: Wochenstunden-Soll des Mitarbeiters</p>
+            {/if}
+          </div>
         </Section>
       {:else if currentTab === "sicherheit"}
         <!-- ── Sicherheit / 2FA ─────────────────────────────────────────────── -->
@@ -3010,5 +3326,48 @@
     .inline-create {
       flex-direction: column;
     }
+  }
+
+  /* ── Berufsschule Zeitgutschrift (Phase 76.35) ──────────────────────────── */
+  .bs-slot-group {
+    margin-bottom: 1.25rem;
+  }
+
+  .bs-slot-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex-wrap: wrap;
+  }
+
+  .bs-slot-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .bs-clear-btn {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    padding: 0.25rem 0.625rem;
+    min-height: unset;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color 0.12s var(--ease),
+      border-color 0.12s var(--ease);
+  }
+
+  .bs-clear-btn:hover {
+    color: var(--bad);
+    border-color: var(--bad);
+  }
+
+  .bs-revision-alert {
+    margin-top: 0.75rem;
+    width: 100%;
   }
 </style>
