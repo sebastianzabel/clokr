@@ -147,7 +147,7 @@ describe("resolveBsTagSlot — slot classification + credited minutes", () => {
     expect(r.contributesToExpected).toBe(true);
   });
 
-  it("ordinal 2 → SECOND_LONG_DAY, credited = configured (300); null → 0", () => {
+  it("ordinal 2 → SECOND_LONG_DAY, credited = configured (300); unconfigured → daily Soll (§15, NOT 0)", () => {
     const week: WeekContext = {
       bsDatesInWeek: ["2026-07-20", "2026-07-21"],
       isBlockWeek: false,
@@ -159,13 +159,17 @@ describe("resolveBsTagSlot — slot classification + credited minutes", () => {
     expect(rConfigured.slotType).toBe("SECOND_LONG_DAY");
     expect(rConfigured.creditedMinutes).toBe(300);
 
-    const nullH = buildSlotOverrideHierarchy(makeInputs());
+    // Phase 76.34 (D-02/D-09, Option A): an UNCONFIGURED 2nd BS-Langtag defaults to
+    // the individual daily Soll per §15 Abs. 2 BBiG — NOT netto 0 (which was rechtswidrig
+    // and inverted the legal hierarchy vs. the FIRST_LONG_DAY = daily Soll credit).
+    const nullH = buildSlotOverrideHierarchy(makeInputs({ dailySollMinutes: 570 }));
     const rNull = resolveBsTagSlot(new Date("2026-07-21"), 2, week, nullH, SHIFT_BASED);
     expect(rNull.slotType).toBe("SECOND_LONG_DAY");
-    expect(rNull.creditedMinutes).toBe(0);
+    expect(rNull.creditedMinutes).toBe(570);
+    expect(rNull.creditedMinutes).not.toBe(0);
   });
 
-  it("ordinal 3 → SHORT_DAY, credited = configured (180); null → 0", () => {
+  it("ordinal 3 → SHORT_DAY, credited = configured (180); unconfigured → daily Soll (§15, NOT 0)", () => {
     const week: WeekContext = {
       bsDatesInWeek: ["2026-07-20", "2026-07-21", "2026-07-22"],
       isBlockWeek: false,
@@ -177,10 +181,13 @@ describe("resolveBsTagSlot — slot classification + credited minutes", () => {
     expect(rConfigured.slotType).toBe("SHORT_DAY");
     expect(rConfigured.creditedMinutes).toBe(180);
 
-    const nullH = buildSlotOverrideHierarchy(makeInputs());
+    // Phase 76.34 (D-02/D-09, Option A): an UNCONFIGURED Kurztag defaults to the
+    // individual daily Soll per §15 Abs. 2 BBiG — NOT netto 0.
+    const nullH = buildSlotOverrideHierarchy(makeInputs({ dailySollMinutes: 570 }));
     const rNull = resolveBsTagSlot(new Date("2026-07-22"), 3, week, nullH, SHIFT_BASED);
     expect(rNull.slotType).toBe("SHORT_DAY");
-    expect(rNull.creditedMinutes).toBe(0);
+    expect(rNull.creditedMinutes).toBe(570);
+    expect(rNull.creditedMinutes).not.toBe(0);
   });
 
   it("isBlockWeek true, 5 BS days, blockWeekMinutes=2400 → BLOCK_WEEK = 480 (2400/5), wins over ordinal", () => {
