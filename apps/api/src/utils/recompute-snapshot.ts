@@ -195,6 +195,9 @@ export async function recomputeSnapshotValues(
     });
 
     const coveredDates = new Set<string>();
+    // Phase 76.32.1 (Wave 4): half-day absence dates are only HALF covered — track
+    // separately so the shift is not fully excluded from R (only half the shift netto).
+    const halfCoveredDates = new Set<string>();
     const addRange = (s: Date, e: Date) => {
       const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
       const end = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
@@ -211,7 +214,19 @@ export async function recomputeSnapshotValues(
     for (const ab of absences) {
       const s = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
       const e = ab.endDate > monthEnd ? monthEnd : ab.endDate;
-      if (s <= e) addRange(s, e);
+      if (s > e) continue;
+      if (ab.halfDay) {
+        // Half-day absence: track in halfCoveredDates, NOT coveredDates.
+        // The shift on this date is only half-absent; it must not be fully excluded from R.
+        const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+        const end = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+        while (cur <= end) {
+          halfCoveredDates.add(dateStrInTz(cur, tz));
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+      } else {
+        addRange(s, e);
+      }
     }
     const hmToMin = (hm: string) => {
       const [h, m] = hm.split(":").map(Number);
@@ -219,9 +234,16 @@ export async function recomputeSnapshotValues(
     };
     let shiftMinutes = 0;
     for (const sh of shifts) {
-      if (coveredDates.has(dateStrInTz(sh.date, tz))) continue;
+      const dateStr = dateStrInTz(sh.date, tz);
+      if (coveredDates.has(dateStr)) continue; // full-day covered — exclude shift entirely
       const dur = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-      if (dur > 0) shiftMinutes += dur;
+      if (dur <= 0) continue;
+      if (halfCoveredDates.has(dateStr)) {
+        // Half-day absence: count only half the shift netto in R.
+        shiftMinutes += Math.round(dur / 2);
+      } else {
+        shiftMinutes += dur;
+      }
     }
     expectedMinutes = shiftMinutes;
     leaveMinutes = 0;

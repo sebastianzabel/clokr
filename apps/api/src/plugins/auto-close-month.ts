@@ -330,7 +330,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       startDate: { lte: monthEnd },
                       endDate: { gte: monthStart },
                     },
-                    select: { startDate: true, endDate: true },
+                    select: { startDate: true, endDate: true, halfDay: true },
                   });
 
                   // Pre-compute holiday date strings for this specific month
@@ -377,6 +377,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     absences: rdAbsences.map((ab) => ({
                       startDate: ab.startDate,
                       endDate: ab.endDate,
+                      halfDay: ab.halfDay,
                     })),
                     holidayDateStrings: monthHolidayDateStrings,
                     rosterDates: rdRosterDates,
@@ -536,7 +537,13 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                       startDate: { lte: monthEnd },
                       endDate: { gte: empEffectiveStart },
                     },
-                    select: { startDate: true, endDate: true, type: true, source: true },
+                    select: {
+                      startDate: true,
+                      endDate: true,
+                      type: true,
+                      source: true,
+                      halfDay: true,
+                    },
                   }),
                 ]);
 
@@ -583,6 +590,7 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                   endDate: ab.endDate,
                   type: ab.type,
                   source: ab.source,
+                  halfDay: ab.halfDay,
                 })),
                 holidayDateStrings: closeHolidayDateStrings,
                 tenantConfig: tenant.config

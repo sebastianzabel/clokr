@@ -203,7 +203,7 @@ export async function recalculateSnapshots(
           startDate: { lte: monthEnd },
           endDate: { gte: effectiveStartForHolidayFilter },
         },
-        select: { startDate: true, endDate: true, type: true, source: true },
+        select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
       }),
     ]);
 
@@ -255,11 +255,13 @@ export async function recalculateSnapshots(
       })),
       // Phase 76.12 D-14: halfDay: Boolean(lr.halfDay) and calcLeaveAbsenceMinutesTz
       // are now inside closeEmployeeMonth; the mapping above preserves the halfDay field.
+      // Phase 76.32.1 (Wave 4): halfDay: ab.halfDay threaded through absence mapper.
       absences: closeAbsences.map((ab) => ({
         startDate: ab.startDate,
         endDate: ab.endDate,
         type: ab.type,
         source: ab.source,
+        halfDay: ab.halfDay,
       })),
       holidayDateStrings,
       tenantConfig: tenantConfig

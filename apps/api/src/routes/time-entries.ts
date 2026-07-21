@@ -2149,6 +2149,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         endDate: ab.endDate,
         type: ab.type,
         source: ab.source,
+        halfDay: ab.halfDay,
       })),
       holidayDateStrings: monthHolidaySet,
       tenantConfig: tenantConfig
@@ -2291,7 +2292,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         const s = ab.startDate < segStart ? segStart : ab.startDate;
         const e = ab.endDate > segEnd ? segEnd : ab.endDate;
         if (s > e) return sum;
-        return sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz);
+        return (
+          sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz, { halfDay: Boolean(ab.halfDay) })
+        );
       }, 0);
       return Math.max(0, contractSoll - leaveCredit - absenceCredit);
     };
@@ -2472,7 +2475,7 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
           s,
           e,
           tz,
-          { excludeHolidays: partialHolidayExclude },
+          { halfDay: Boolean(ab.halfDay), excludeHolidays: partialHolidayExclude },
         );
       }
     }

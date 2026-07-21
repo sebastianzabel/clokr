@@ -355,7 +355,7 @@ type DatevEmployee = {
     endTime: Date | null;
     breakMinutes: number | bigint | null;
   }>;
-  absences: Array<{ startDate: Date; endDate: Date; type: string }>;
+  absences: Array<{ startDate: Date; endDate: Date; type: string; halfDay?: boolean | null }>;
   leaveRequests: Array<{ startDate: Date; endDate: Date; leaveType: { name: string } }>;
 };
 
@@ -427,12 +427,19 @@ function buildDatevLodas(params: {
     const workedHours = workedMinutes / 60;
 
     // Krankheit aus Absence-Modell
+    // Phase 76.32.1 (Wave 4): a.halfDay → count 0.5 instead of full workDaysInMonthRange.
     const sickDays = emp.absences
       .filter((a) => a.type === "SICK")
-      .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
+      .reduce(
+        (sum, a) => sum + (a.halfDay ? 0.5 : workDaysInMonthRange(a.startDate, a.endDate)),
+        0,
+      );
     const sickChildDays = emp.absences
       .filter((a) => a.type === "SICK_CHILD")
-      .reduce((sum, a) => sum + workDaysInMonthRange(a.startDate, a.endDate), 0);
+      .reduce(
+        (sum, a) => sum + (a.halfDay ? 0.5 : workDaysInMonthRange(a.startDate, a.endDate)),
+        0,
+      );
 
     // Abwesenheiten aus LeaveRequest (nur Arbeitstage)
     const vacationDays = daysForName(emp, "Urlaub");

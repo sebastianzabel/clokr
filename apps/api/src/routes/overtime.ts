@@ -392,7 +392,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
             endDate: lr.endDate,
             halfDay: Boolean(lr.halfDay),
           })),
-          absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+          absences: absences.map((ab) => ({
+            startDate: ab.startDate,
+            endDate: ab.endDate,
+            halfDay: ab.halfDay,
+          })),
           holidayDateStrings,
           rosterDates: statusRosterDates,
         });
@@ -655,7 +659,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
               endDate: lr.endDate,
               halfDay: Boolean(lr.halfDay),
             })),
-            absences: absences.map((ab) => ({ startDate: ab.startDate, endDate: ab.endDate })),
+            absences: absences.map((ab) => ({
+              startDate: ab.startDate,
+              endDate: ab.endDate,
+              halfDay: ab.halfDay,
+            })),
             holidayDateStrings: ysMonthHolidayDateStrings,
             rosterDates: ysRosterDates,
           });

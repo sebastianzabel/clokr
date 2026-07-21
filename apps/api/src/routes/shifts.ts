@@ -1248,6 +1248,7 @@ export async function shiftRoutes(app: FastifyInstance) {
           employeeId: true,
           startDate: true,
           endDate: true,
+          halfDay: true,
         },
       });
 
@@ -1343,9 +1344,10 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (!sched) continue;
         const clip = clipToWeek(ab.startDate, ab.endDate);
         if (!clip) continue;
-        // Phase 76.12 — Ø-Methode. Absence has no halfDay field (schema-confirmed).
+        // Phase 76.12 — Ø-Methode. Phase 76.32.1 (Wave 4): halfDay threaded through.
         // WR-02 fix: pass excludeHolidays for the same reason as the leave loop above.
         const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+          halfDay: Boolean(ab.halfDay),
           excludeHolidays: getEmpHolidaySet(ab.employeeId),
         });
         if (minutes <= 0) continue;
