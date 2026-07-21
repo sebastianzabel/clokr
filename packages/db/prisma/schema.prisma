@@ -640,6 +640,7 @@ model Absence {
   startDate    DateTime      @db.Date
   endDate      DateTime      @db.Date
   days         Decimal       @db.Decimal(5, 2)
+  halfDay      Boolean       @default(false)
   note         String?
   documentPath String? // Pfad zur AU-Bescheinigung (MinIO)
   deletedAt    DateTime?     @db.Timestamptz // soft delete
