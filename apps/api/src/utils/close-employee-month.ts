@@ -136,6 +136,18 @@ export type CloseMonthInput = {
   // {"1":300,"4":180}, DOW keys 0=Mo..6=So). Fallback for a BS date whose Absence has
   // no unterrichtsMinutes. Absent/null → ordinal fallback (backward compat).
   patternUnterrichtsMinutenByDow?: unknown;
+
+  // Phase 76.39 (D-07): roster proration for the LIVE current-partial-month path ONLY.
+  // Absent → full-month close behaviour (byte-identical parity with the P1/P2/P3/P5
+  // close/cron/recalc callers that never pass it). Present only when updateOvertimeAccount
+  // computes the open (not-yet-closed) partial month: the effective contract Soll used for
+  // the §615 overtime clause is scaled by roster progress (rosterToDate ÷ rosterPeriodFull).
+  // Read ONLY by the SHIFT_BASED branch — non-SHIFT never calls calcShiftBasedSaldo.
+  // At month end rosterToDateMinutes == rosterPeriodMinutes → factor 1 → identical to close.
+  rosterProration?: {
+    rosterToDateMinutes: number; // R_toDate    = Σ active shift netto for shift-days ≤ effectiveEnd
+    rosterPeriodMinutes: number; // R_periodFull = Σ active shift netto for the WHOLE open month
+  };
 };
 
 // Re-export so amount-site callers/tests have a single import surface.
@@ -548,7 +560,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       contractSollMinutes: cNet,
       rosterMinutes: shiftMinutes,
       workedMinutes: workedMinutes,
-      // NO rosterProration — close = full month, not live open month.
+      // Phase 76.39 (D-07): live current-partial-month path passes rosterProration to scale
+      // the effective Soll by roster progress. Absent (close/cron/recalc) → full-month
+      // behaviour, byte-identical to before. See CloseMonthInput.rosterProration doc.
+      rosterProration: input.rosterProration,
     });
 
     expectedMinutes = sbSaldo.expectedMinutes; // = C_net (stored in SaldoSnapshot — not R, D-07)

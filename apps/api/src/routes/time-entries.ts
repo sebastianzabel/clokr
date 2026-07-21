@@ -5,7 +5,6 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import { TimeEntrySource, Prisma } from "@clokr/db";
 import { checkArbZG } from "../utils/arbzg";
 import { checkJArbSchG } from "../utils/jarbschg";
-import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
@@ -14,16 +13,12 @@ import {
   monthRangeUtc,
   monthDayBounds,
   calcExpectedMinutesTz,
-  calcLeaveAbsenceMinutesTz,
-  getDayOfWeekInTz,
-  getDayHoursFromSchedule,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { hasApprovedLeaveOnDate } from "../utils/leave-check";
 import { resolveClockEvent } from "../services/clock/resolver";
 import { resolveActor } from "../services/clock/audit-actor";
 import type { ClockEvent } from "../services/clock/types";
-import { calcShiftBasedSaldo } from "../utils/shift-based-saldo"; // Phase 76.22 — Model B + § 615
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // SNAP-03 — Phase 76.27
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import {
@@ -2106,11 +2101,8 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     );
     // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides for this
     // month so the complete-month recompute honors per-MA / per-pattern slot amounts.
-    const { employeeSlots, patternSlots } = await loadBsSlotOverrides(
-      app.prisma,
-      employeeId,
-      monthFirstDay,
-    );
+    const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+      await loadBsSlotOverrides(app.prisma, employeeId, monthFirstDay);
     const result = closeEmployeeMonth({
       employeeId,
       monthStart,
@@ -2143,6 +2135,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
         type: ab.type,
         source: ab.source,
         halfDay: ab.halfDay,
+        // Phase 76.39 (D-11 cleanup): thread per-day Unterrichtszeit for duration-based
+        // BS slot classification (null → Pattern/ordinal fallback — no regression).
+        unterrichtsMinutes: ab.unterrichtsMinutes ?? undefined,
       })),
       holidayDateStrings: monthHolidaySet,
       tenantConfig: tenantConfig
@@ -2163,6 +2158,8 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
       // Phase 76.31 (D-06) — Employee/Pattern slot layers (null → fallback).
       employeeSlots,
       patternSlots,
+      // Phase 76.39 (D-11 cleanup) — active pattern's per-DOW Unterrichtszeit map.
+      patternUnterrichtsMinutenByDow,
     });
 
     // Thread carryOver for next month (§2.3 RESEARCH).
@@ -2187,13 +2184,6 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const currentMonthOpenStart =
     currentMonthRange.start < rangeStart ? rangeStart : currentMonthRange.start;
 
-  let expectedMinutes = 0;
-  let leaveMinutes = 0;
-  let absenceMinutes = 0;
-  let holidayMinutes = 0;
-  // Phase 76.22: non-null only in SHIFT_BASED branch for the current partial month.
-  let shiftBalanceOverride: number | null = null;
-
   // Current-month leave and absences (filtered from pre-fetched collections)
   const curLeave = allApprovedLeave.filter(
     (lr) => lr.startDate <= currentMonthRange.end && lr.endDate >= currentMonthRange.start,
@@ -2202,402 +2192,173 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     (ab) => ab.startDate <= currentMonthRange.end && ab.endDate >= currentMonthRange.start,
   );
 
-  if (scheduleType === "SHIFT_BASED") {
-    // ── SHIFT_BASED current partial month: roster-prorated (D-09, F-01 Option A) ──
-    //
-    // This block is the KEPT inline proration from the original code (RESEARCH §2.5).
-    // Complete prior months are handled by closeEmployeeMonth() above. Only the current
-    // partial month (containing effectiveEnd) is prorated here.
-    //
-    // coveredDates: union of approved leave and absences for the CURRENT month range.
-    // cNetForRange / rosterForRange / workedForRange helpers operate on current-month
-    // data only.
+  // ── Current partial month: ONE closeEmployeeMonth() call (Phase 76.39, D-07) ─
+  //
+  // Replaces the former ~400-line inline replica (SHIFT_BASED roster-proration +
+  // non-SHIFT flat calc + a redundant SHIFT_BASED BS-doubling DB loop). The shared
+  // core now computes the current partial month exactly like every close/cron/recalc
+  // path, with two partial-month adaptations threaded via input:
+  //   1. rosterProration (SHIFT_BASED only) — scales the effective Soll by roster
+  //      progress (R_toDate ÷ R_periodFull), preserving the §615 open-month semantics.
+  //   2. monthEnd/monthLastDay — for non-SHIFT, monthEnd = effectiveEnd so
+  //      calcExpectedMinutesTz covers ONLY the open window; for SHIFT_BASED, monthEnd =
+  //      currentMonthRange.end (full-month C_net) while monthLastDay = effectiveEnd
+  //      (partial window for shift/entry clamping). See RESEARCH §8.1.
+  //   3. holidayDateStrings = partialHolidayExclude — window-filtered so no out-of-window
+  //      holiday inflates the partial expected (SNAP-01 guard, RESEARCH §4).
+  //
+  // BS-doubling (SHIFT_BASED + non-SHIFT) is now handled purely inside the core from the
+  // pre-fetched absences (with unterrichtsMinutes) + employeeSlots/patternSlots — no more
+  // per-day getVocationalSchoolMinutesForDate DB calls.
 
-    const employeeBreakShape = {
-      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
-      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
-    };
-    const tenantConfigShape = {
-      defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
-      defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
-    };
-
-    const hmToMin = (hm: string) => {
-      const [h, m] = hm.split(":").map(Number);
-      return (h ?? 0) * 60 + (m ?? 0);
-    };
-
-    const sumShiftNetto = (
-      list: { date: Date; startTime: string; endTime: string }[],
-      covered: Set<string>,
-    ): number => {
-      let total = 0;
-      for (const sh of list) {
-        if (covered.has(dateStrInTz(sh.date, tz))) continue;
-        let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
-        if (brutto < 0) brutto += 24 * 60;
-        if (brutto <= 0) continue;
-        const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
-        total += Math.max(0, brutto - breakMin);
-      }
-      return total;
-    };
-
-    // coveredDates for the current month open range [currentMonthOpenStart, effectiveEnd].
-    const coveredDates = new Set<string>();
-    for (const lr of curLeave) {
-      const s = lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
-      const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-      if (s > e) continue;
-      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
-      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
-      while (cur <= last) {
-        coveredDates.add(dateStrInTz(cur, tz));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-    }
-    for (const ab of curAbsences) {
-      const s = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
-      const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      if (s > e) continue;
-      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
-      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
-      while (cur <= last) {
-        coveredDates.add(dateStrInTz(cur, tz));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-    }
-
-    // C_net for the current month (full-month Soll, leave/absence credited).
-    const cNetForRange = (segStart: Date, segEnd: Date): number => {
-      if (segStart > segEnd) return 0;
-      const contractSoll = calcExpectedMinutesTz(schedule, segStart, segEnd, tz);
-      const leaveCredit = curLeave.reduce((sum, lr) => {
-        const s = lr.startDate < segStart ? segStart : lr.startDate;
-        const e = lr.endDate > segEnd ? segEnd : lr.endDate;
-        if (s > e) return sum;
-        return (
-          sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz, { halfDay: Boolean(lr.halfDay) })
-        );
-      }, 0);
-      const absenceCredit = curAbsences.reduce((sum, ab) => {
-        if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
-        const s = ab.startDate < segStart ? segStart : ab.startDate;
-        const e = ab.endDate > segEnd ? segEnd : ab.endDate;
-        if (s > e) return sum;
-        return (
-          sum + calcLeaveAbsenceMinutesTz(schedule, s, e, tz, { halfDay: Boolean(ab.halfDay) })
-        );
-      }, 0);
-      return Math.max(0, contractSoll - leaveCredit - absenceCredit);
-    };
-
-    // Current month shifts from pre-fetched allShifts.
-    const curMonthFirstDay = monthDayBounds(
+  // effectiveEnd < currentMonthOpenStart → no open partial month (nothing to add).
+  if (effectiveEnd >= currentMonthOpenStart) {
+    const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
       currentMonthRange.start,
       currentMonthRange.end,
       tz,
-    ).firstDay;
-    const curMonthLastDay = monthDayBounds(
-      currentMonthRange.start,
-      currentMonthRange.end,
-      tz,
-    ).lastDay;
-    const curMonthAllShifts = allShifts.filter(
-      (s) => s.date >= curMonthFirstDay && s.date <= curMonthLastDay,
     );
-    // Shifts up to effectiveEnd (for R_toDate).
-    const curShiftsToDate = curMonthAllShifts.filter((s) => s.date <= effectiveEnd);
 
-    // coveredDates for full month (for R_periodFull).
-    const monthCovered = new Set<string>();
-    for (const lr of curLeave) {
-      const s = lr.startDate < currentMonthRange.start ? currentMonthRange.start : lr.startDate;
-      const e = lr.endDate > currentMonthRange.end ? currentMonthRange.end : lr.endDate;
-      if (s > e) continue;
-      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
-      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
-      while (cur <= last) {
-        monthCovered.add(dateStrInTz(cur, tz));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
+    // Load Employee + active-Pattern bsSlot* overrides + per-DOW Unterrichtszeit map for
+    // the current month (same convention as the complete-months loop above).
+    const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
+      await loadBsSlotOverrides(app.prisma, employeeId, curMonthFirstDay);
+
+    // Pre-compute rosterProration for SHIFT_BASED (partial month only). R_toDate uses shifts
+    // up to effectiveEnd (coveredDates for the open window); R_periodFull uses ALL current-
+    // month shifts (coveredDates for the full month). getEffectiveBreakDuration/netto match
+    // the core's shift-netto computation.
+    let rosterProration: { rosterToDateMinutes: number; rosterPeriodMinutes: number } | undefined;
+    if (scheduleType === "SHIFT_BASED") {
+      const employeeBreakShape = {
+        breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+        breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+      };
+      const tenantConfigShape = {
+        defaultBreakOver6h: tenantConfig?.defaultBreakOver6h ?? 30,
+        defaultBreakOver9h: tenantConfig?.defaultBreakOver9h ?? 45,
+      };
+      const hmToMin = (hm: string) => {
+        const [h, m] = hm.split(":").map(Number);
+        return (h ?? 0) * 60 + (m ?? 0);
+      };
+      const sumShiftNetto = (
+        list: { date: Date; startTime: string; endTime: string }[],
+        covered: Set<string>,
+      ): number => {
+        let total = 0;
+        for (const sh of list) {
+          if (covered.has(dateStrInTz(sh.date, tz))) continue;
+          let brutto = hmToMin(sh.endTime) - hmToMin(sh.startTime);
+          if (brutto < 0) brutto += 24 * 60;
+          if (brutto <= 0) continue;
+          const breakMin = getEffectiveBreakDuration(employeeBreakShape, tenantConfigShape, brutto);
+          total += Math.max(0, brutto - breakMin);
+        }
+        return total;
+      };
+      const buildCovered = (windowStart: Date, windowEnd: Date): Set<string> => {
+        const set = new Set<string>();
+        const add = (rangeStartD: Date, rangeEndD: Date) => {
+          const s = rangeStartD < windowStart ? windowStart : rangeStartD;
+          const e = rangeEndD > windowEnd ? windowEnd : rangeEndD;
+          if (s > e) return;
+          const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
+          const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
+          while (cur <= last) {
+            set.add(dateStrInTz(cur, tz));
+            cur.setUTCDate(cur.getUTCDate() + 1);
+          }
+        };
+        for (const lr of curLeave) add(lr.startDate, lr.endDate);
+        for (const ab of curAbsences) add(ab.startDate, ab.endDate);
+        return set;
+      };
+
+      const curMonthAllShifts = allShifts.filter(
+        (s) => s.date >= curMonthFirstDay && s.date <= curMonthLastDay,
+      );
+      const curShiftsToDate = curMonthAllShifts.filter((s) => s.date <= effectiveEnd);
+      const coveredToDate = buildCovered(currentMonthOpenStart, effectiveEnd);
+      const monthCovered = buildCovered(currentMonthRange.start, currentMonthRange.end);
+      rosterProration = {
+        rosterToDateMinutes: sumShiftNetto(curShiftsToDate, coveredToDate),
+        rosterPeriodMinutes: sumShiftNetto(curMonthAllShifts, monthCovered),
+      };
     }
-    for (const ab of curAbsences) {
-      const s = ab.startDate < currentMonthRange.start ? currentMonthRange.start : ab.startDate;
-      const e = ab.endDate > currentMonthRange.end ? currentMonthRange.end : ab.endDate;
-      if (s > e) continue;
-      const cur = new Date(dateStrInTz(s, tz) + "T00:00:00Z");
-      const last = new Date(dateStrInTz(e, tz) + "T00:00:00Z");
-      while (cur <= last) {
-        monthCovered.add(dateStrInTz(cur, tz));
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-    }
 
-    const curCNet = cNetForRange(currentMonthOpenStart, currentMonthRange.end); // C_periodFull
-    const curRosterToDate = sumShiftNetto(curShiftsToDate, coveredDates); // R_toDate
-    const curRosterPeriodFull = sumShiftNetto(curMonthAllShifts, monthCovered); // R_periodFull
-    const curWorked = entries.reduce((sum, e) => {
-      if (!e.endTime || e.date < currentMonthOpenStart || e.date > effectiveEnd) return sum;
-      return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
-    }, 0);
-
-    const curSaldo = calcShiftBasedSaldo({
-      contractSollMinutes: curCNet,
-      rosterMinutes: curRosterToDate,
-      workedMinutes: curWorked,
-      rosterProration: {
-        rosterToDateMinutes: curRosterToDate,
-        rosterPeriodMinutes: curRosterPeriodFull,
-      },
-    });
-
-    expectedMinutes = curSaldo.expectedMinutes;
-    shiftBalanceOverride = curSaldo.balanceDelta; // bsWorkedMinutes added at openPeriodBalance site
-    leaveMinutes = 0;
-    absenceMinutes = 0;
-    holidayMinutes = 0;
-  } else {
-    // ── Non-SHIFT current partial month: flat partial-range calculation ──────────
-    //
-    // The current calendar month is always partially open (entries exist only up to
-    // effectiveEnd, not month-end). Use calcExpectedMinutesTz over the actual open
-    // window [currentMonthOpenStart, effectiveEnd] rather than closeEmployeeMonth(full month).
-    //
-    // This path handles ALL non-SHIFT cases, whether or not there are complete prior open
-    // months (sub-case A, which used closeEmployeeMonth for the partial month, has been
-    // removed because it violated the saldo invariant: closeEmployeeMonth(full month) computes
-    // expected over the entire calendar month, so when months are closed vs open the current-
-    // month contribution differs — sub-case A produces a larger expected deficit for partial
-    // months, breaking the invariant that live == cron-closed + live-current).
-    //
-    // SNAP-01 fix (preserved): calling closeEmployeeMonth(full month) here would subtract ALL
-    // holidays in the provided set from the full-month expected. For a partial open window,
-    // this inflates expected by holidays outside the window, producing an erroneously large
-    // undertime deficit. The flat calc with per-window holiday filtering avoids this.
-    //
-    // Holiday filtering: only include holidays within [currentMonthOpenStart, effectiveEnd].
+    // Window-filtered holiday set (partial open window only — SNAP-01 guard).
     const openStartStr = dateStrInTz(currentMonthOpenStart, tz);
     const openEndStr = dateStrInTz(effectiveEnd, tz);
     const partialHolidayExclude = new Set(
       [...holidayDateStrSet].filter((d) => d >= openStartStr && d <= openEndStr),
     );
 
-    // Expected minutes for the partial open window.
-    const partialExpected =
-      effectiveEnd < currentMonthOpenStart
-        ? 0
-        : calcExpectedMinutesTz(
-            schedule as Record<string, unknown>,
-            currentMonthOpenStart,
-            effectiveEnd,
-            tz,
-          );
+    // monthEnd: SHIFT_BASED → full-month end (C_net Soll); non-SHIFT → effectiveEnd
+    // (partial-window expected). monthLastDay = effectiveEnd for shift/entry clamping.
+    const partialMonthEnd = scheduleType === "SHIFT_BASED" ? currentMonthRange.end : effectiveEnd;
 
-    // Holiday deduction: only holidays inside the open window.
-    // MONTHLY_HOURS + real budget + tenant toggle ON → deduct dailySoll (parity with
-    // closeEmployeeMonth, close-employee-month.ts:476-504). Otherwise deduct the
-    // workday-marker hours. Pure-tracking (monthlyHours 0/null) is a no-op either way.
-    const isMonthlyHoursDeduction =
-      scheduleType === "MONTHLY_HOURS" &&
-      Number((schedule as Record<string, unknown>).monthlyHours ?? 0) > 0 &&
-      tenantConfig?.monthlyHoursHolidayDeduction === true;
+    const partialResult = closeEmployeeMonth({
+      employeeId,
+      monthStart: currentMonthRange.start,
+      monthEnd: partialMonthEnd,
+      monthFirstDay: curMonthFirstDay,
+      monthLastDay: effectiveEnd, // partial window end
+      tz,
+      carryOverIn: accumulatedCarryOver,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: employee!.hireDate,
+      exitDate: null, // live path — still employed
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+      entries: entries
+        .filter((e) => e.date >= curMonthFirstDay && e.date <= effectiveEnd)
+        .map((e) => ({
+          date: e.date,
+          startTime: e.startTime,
+          endTime: e.endTime!,
+          breakMinutes: e.breakMinutes ?? 0,
+        })),
+      shifts: allShifts.filter((s) => s.date >= curMonthFirstDay && s.date <= effectiveEnd),
+      approvedLeave: curLeave.map((lr) => ({
+        startDate: lr.startDate,
+        endDate: lr.endDate,
+        halfDay: lr.halfDay,
+      })),
+      absences: curAbsences.map((ab) => ({
+        startDate: ab.startDate,
+        endDate: ab.endDate,
+        type: ab.type,
+        source: ab.source,
+        halfDay: ab.halfDay,
+        unterrichtsMinutes: ab.unterrichtsMinutes ?? undefined,
+      })),
+      holidayDateStrings: partialHolidayExclude,
+      tenantConfig: tenantConfig
+        ? {
+            defaultBreakOver6h: tenantConfig.defaultBreakOver6h,
+            defaultBreakOver9h: tenantConfig.defaultBreakOver9h,
+            monthlyHoursHolidayDeduction: tenantConfig.monthlyHoursHolidayDeduction ?? undefined,
+            vocationalSchoolMinutesPerDay: tenantConfig.vocationalSchoolMinutesPerDay ?? undefined,
+            vocationalSchoolBlockMinutesPerWeek:
+              tenantConfig.vocationalSchoolBlockMinutesPerWeek ?? undefined,
+            bsSlotFirstLongDayMinutes: tenantConfig.bsSlotFirstLongDayMinutes ?? undefined,
+            bsSlotSecondLongDayMinutes: tenantConfig.bsSlotSecondLongDayMinutes ?? undefined,
+            bsSlotShortDayMinutes: tenantConfig.bsSlotShortDayMinutes ?? undefined,
+            bsSlotBlockWeekMinutes: tenantConfig.bsSlotBlockWeekMinutes ?? undefined,
+          }
+        : null,
+      employeeSlots,
+      patternSlots,
+      patternUnterrichtsMinutenByDow,
+      rosterProration, // Phase 76.39 (D-07): SHIFT_BASED only; undefined for non-SHIFT
+    });
 
-    let partialWorkingDays = 0;
-    if (isMonthlyHoursDeduction) {
-      const wdCur = new Date(currentMonthOpenStart.getTime());
-      while (wdCur <= effectiveEnd) {
-        const dow = getDayOfWeekInTz(wdCur, tz);
-        if (getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) > 0)
-          partialWorkingDays++;
-        wdCur.setTime(wdCur.getTime() + 24 * 60 * 60 * 1000);
-      }
-    }
-    const partialDailySollMin =
-      isMonthlyHoursDeduction && partialWorkingDays > 0
-        ? (Number((schedule as Record<string, unknown>).monthlyHours!) * 60) / partialWorkingDays
-        : 0;
-
-    let partialHolidayMin = 0;
-    for (const hDateStr of holidayDateStrSet) {
-      if (hDateStr < openStartStr || hDateStr > openEndStr) continue;
-      const hDate = new Date(hDateStr + "T00:00:00Z");
-      const dow = getDayOfWeekInTz(hDate, tz);
-      if (isMonthlyHoursDeduction) {
-        if (getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) > 0)
-          partialHolidayMin += partialDailySollMin;
-      } else {
-        partialHolidayMin += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
-      }
-    }
-
-    // Leave deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
-    let partialLeaveMin = 0;
-    if (scheduleType !== "MONTHLY_HOURS") {
-      for (const lr of curLeave) {
-        const s = lr.startDate < currentMonthOpenStart ? currentMonthOpenStart : lr.startDate;
-        const e = lr.endDate > effectiveEnd ? effectiveEnd : lr.endDate;
-        if (s > e) continue;
-        partialLeaveMin += calcLeaveAbsenceMinutesTz(
-          schedule as Record<string, unknown>,
-          s,
-          e,
-          tz,
-          { halfDay: Boolean(lr.halfDay), excludeHolidays: partialHolidayExclude },
-        );
-      }
-    }
-
-    // Absence deduction for the partial window (MONTHLY_HOURS: skip per CLAUDE.md).
-    // VOCATIONAL_SCHOOL / PATTERN absences are included in partialAbsenceMin so the
-    // BS-day Soll is subtracted from the expected base, exactly matching the
-    // closeEmployeeMonth() non-SHIFT path (close-employee-month.ts:526-536). BBiG §15
-    // neutrality is then restored by bsExpectedMinutes (added back to expected) and
-    // bsWorkedMinutes (credited to worked) — see the BS-doubling block below.
-    let partialAbsenceMin = 0;
-    if (scheduleType !== "MONTHLY_HOURS") {
-      for (const ab of curAbsences) {
-        // All absence types (including VOCATIONAL_SCHOOL) are included here — matching
-        // closeEmployeeMonth() non-SHIFT path (close-employee-month.ts:526-536). BS-day
-        // neutrality is restored via bsExpectedMinutes + bsWorkedMinutes below (D-01).
-        const s = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
-        const e = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-        if (s > e) continue;
-        partialAbsenceMin += calcLeaveAbsenceMinutesTz(
-          schedule as Record<string, unknown>,
-          s,
-          e,
-          tz,
-          { halfDay: Boolean(ab.halfDay), excludeHolidays: partialHolidayExclude },
-        );
-      }
-    }
-
-    // BBiG §15 Berufsschule (BS) doubling for the non-SHIFT current partial month.
-    //
-    // Mirrors closeEmployeeMonth() D-01 (close-employee-month.ts:341-356, 539-541, 556):
-    //   - partialAbsenceMin above includes the BS-day Soll via calcLeaveAbsenceMinutesTz
-    //     (the Ø-Methode daily figure), subtracting it from partialNetExpected.
-    //   - bsExpectedMinutes (+bsDaily) is added back to expected, compensating the subtraction
-    //     so the net expectation for the BS day equals (0 − bsDaily_soll + bsExpected) = (0).
-    //   - bsWorkedMinutes (+bsDaily) is added to worked, crediting the Azubi as if present.
-    //   - Net balance effect: +bsWorked − bsExpected_compensation = 0 vs a gap day, which
-    //     contributes (0 − daily_soll). Difference = daily_soll → BS day is neutral (BBiG §15).
-    //
-    // For SHIFT_BASED: the inline block below handles BS-doubling (RESEARCH §2.7 gap, preserved).
-    // For complete prior months: closeEmployeeMonth() handles it. This block is ONLY for the
-    // non-SHIFT current partial month path.
-    let partialBsWorkedMinutes = 0;
-    let partialBsExpectedMinutes = 0;
-    if (scheduleType !== "MONTHLY_HOURS" && scheduleType !== "SHIFT_BASED") {
-      for (const ab of curAbsences) {
-        if (ab.type !== "VOCATIONAL_SCHOOL") continue;
-        const start = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
-        const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-        const cur = new Date(start);
-        while (cur <= end) {
-          const bsMin = await getVocationalSchoolMinutesForDate(
-            app.prisma,
-            employeeId,
-            cur,
-            tenantConfig,
-            { schedule, scheduleType }, // Phase 76.31 (B): slot-aware daily-Soll amount
-          );
-          partialBsWorkedMinutes += bsMin;
-          partialBsExpectedMinutes += bsMin; // D-01: add to both sides → balance neutral
-          cur.setUTCDate(cur.getUTCDate() + 1);
-        }
-      }
-    }
-
-    // Partial expected net of holidays/leave/absence + bsExpected (D-01 compensation).
-    const partialNetExpected = Math.max(
-      0,
-      partialExpected +
-        partialBsExpectedMinutes -
-        partialHolidayMin -
-        partialLeaveMin -
-        partialAbsenceMin,
-    );
-
-    // Worked minutes for the partial open window (already in entries, capped at effectiveEnd).
-    // partialBsWorkedMinutes credits the Azubi for BS days (BBiG §15 — D-01 doubling).
-    const partialWorked = entries.reduce((sum, e) => {
-      if (!e.endTime || e.date < currentMonthOpenStart || e.date > effectiveEnd) return sum;
-      return sum + (e.endTime.getTime() - e.startTime.getTime()) / 60000 - Number(e.breakMinutes);
-    }, 0);
-
-    openPeriodBalance += Math.round(partialWorked + partialBsWorkedMinutes - partialNetExpected);
-
-    // Set the legacy variables so the openPeriodBalance formula at the aggregation site
-    // does not double-count (shiftBalanceOverride=null path uses workedMinutes - expected).
-    // We added directly to openPeriodBalance above, so zero out the legacy accumulators.
-    expectedMinutes = 0;
-    holidayMinutes = 0;
-    leaveMinutes = 0;
-    absenceMinutes = 0;
+    // The partial-month balance is added to openPeriodBalance. carryOver threading stops
+    // here (the displayed saldo is snapshotCarryOver + openPeriodBalance — SNAP-01).
+    openPeriodBalance += partialResult.balanceMinutes;
   }
-
-  // Phase 63 — Berufsschule (BS) doubling for the CURRENT PARTIAL MONTH: SHIFT_BASED only.
-  // For non-SHIFT types / complete prior months: BS-doubling is handled inside
-  // closeEmployeeMonth() in the loop above. For non-SHIFT current partial month:
-  // BS-doubling is handled via partialBsWorkedMinutes in the else-branch above.
-  // For SHIFT_BASED: Phase 76.31 (A) closes the former live-path gap — bsExpectedMinutes is now
-  // accumulated equally with bsWorkedMinutes (non-MONTHLY_HOURS Soll-bearing) so a BS day nets to 0
-  // (RESEARCH §2.7 gap now CLOSED; formerly tracked in 76.26-BS-DOUBLING-FOLLOWUP.md).
-  const bsAbsencesUpdate =
-    scheduleType === "SHIFT_BASED"
-      ? await app.prisma.absence.findMany({
-          where: {
-            employeeId,
-            deletedAt: null,
-            type: "VOCATIONAL_SCHOOL",
-            startDate: { lte: effectiveEnd },
-            endDate: { gte: currentMonthOpenStart },
-          },
-        })
-      : ([] as Awaited<ReturnType<typeof app.prisma.absence.findMany>>);
-  let bsWorkedMinutes = 0;
-  let bsExpectedMinutes = 0;
-  if (scheduleType === "SHIFT_BASED") {
-    for (const ab of bsAbsencesUpdate) {
-      const start = ab.startDate < currentMonthOpenStart ? currentMonthOpenStart : ab.startDate;
-      const end = ab.endDate > effectiveEnd ? effectiveEnd : ab.endDate;
-      const cur = new Date(start);
-      while (cur <= end) {
-        const bsMin = await getVocationalSchoolMinutesForDate(
-          app.prisma,
-          employeeId,
-          cur,
-          tenantConfig,
-          { schedule, scheduleType }, // Phase 76.31 (B): slot-aware daily-Soll amount
-        );
-        bsWorkedMinutes += bsMin;
-        // Phase 76.31 (A): book the BS day equally on the expected side (SHIFT_BASED here is
-        // always non-MONTHLY_HOURS → Soll-bearing, so bsExpected == bsWorked). Nets to 0 below.
-        bsExpectedMinutes += bsMin;
-        cur.setUTCDate(cur.getUTCDate() + 1);
-      }
-    }
-  }
-
-  // ── Aggregate: complete-months (via loop above) + current partial month ─────
-  // openPeriodBalance holds the sum of ALL months:
-  //   - Complete open months: accumulated in the closeEmployeeMonth() loop above
-  //   - Non-SHIFT current month: flat partial-range balance added directly in the else-branch
-  //   - SHIFT_BASED current month: added here via shiftBalanceOverride + bsWorkedMinutes
-  //
-  // For SHIFT_BASED: shiftBalanceOverride = curSaldo.balanceDelta (D-01 two-clause formula
-  //   for the current partial month, roster-prorated). Phase 76.31 (A): the BS day is booked
-  //   equally on worked AND expected → net (bsWorkedMinutes − bsExpectedMinutes) = 0 for the
-  //   SHIFT_BASED current month (RESEARCH §2.7 gap now CLOSED).
-  // Non-SHIFT: partial balance already folded into openPeriodBalance in the else-branch above.
-  const currentMonthBalance =
-    shiftBalanceOverride !== null
-      ? shiftBalanceOverride + (bsWorkedMinutes - bsExpectedMinutes)
-      : 0; // non-SHIFT: already folded into openPeriodBalance in the else-branch above
-
-  openPeriodBalance += currentMonthBalance;
 
   // totalBalanceHours = (snapshotCarryOver from lastSnapshot) + openPeriodBalance
   // (complete-months loop threads effectiveCarryOverOut, but the final balance displayed
