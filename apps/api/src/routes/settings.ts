@@ -644,11 +644,37 @@ export async function settingsRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 76.34 (SC-3) — non-blocking over-crediting warning. §15 Abs. 2 BBiG:
+      // the FIRST BS-Langtag credits the full daily Soll; the 2nd Langtag and the
+      // Kurztag are "at most" that. A CONFIGURED bsSlotSecondLongDayMinutes /
+      // bsSlotShortDayMinutes that exceeds the CONFIGURED bsSlotFirstLongDayMinutes
+      // (the 1st-long-day / daily-Soll ceiling) over-credits the shorter slot. We do
+      // NOT block the save (over-crediting is never bußgeldbewehrt) — surface a German
+      // warning so the admin can confirm the intent.
+      const warnings: string[] = [];
+      const firstCeiling = config.bsSlotFirstLongDayMinutes;
+      if (firstCeiling != null) {
+        if (
+          config.bsSlotSecondLongDayMinutes != null &&
+          config.bsSlotSecondLongDayMinutes > firstCeiling
+        ) {
+          warnings.push(
+            `Der 2. Berufsschul-Langtag (${config.bsSlotSecondLongDayMinutes} Min) ist höher angesetzt als der 1. Berufsschul-Langtag (${firstCeiling} Min). Nach §15 Abs. 2 BBiG sollte der 2. Langtag höchstens dem individuellen Tages-Soll entsprechen. Bitte prüfen.`,
+          );
+        }
+        if (config.bsSlotShortDayMinutes != null && config.bsSlotShortDayMinutes > firstCeiling) {
+          warnings.push(
+            `Der Berufsschul-Kurztag (${config.bsSlotShortDayMinutes} Min) ist höher angesetzt als der 1. Berufsschul-Langtag (${firstCeiling} Min). Nach §15 Abs. 2 BBiG sollte der Kurztag höchstens dem individuellen Tages-Soll entsprechen. Bitte prüfen.`,
+          );
+        }
+      }
+
       return {
         ...config,
         federalState: federalState ?? undefined,
         appliedCount,
         skippedModelSwitch,
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
     },
   });

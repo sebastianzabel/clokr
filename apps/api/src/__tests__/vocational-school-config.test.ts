@@ -293,6 +293,52 @@ describe("Berufsschule bsSlot* override hierarchy (Phase 76.31 Plan 06)", () => 
     expect(cfg?.bsSlotFirstLongDayMinutes).toBeNull();
   });
 
+  // ── Phase 76.34 (SC-3): over-crediting warning (non-blocking) ──────────────
+
+  it("PUT /settings/work warns (non-blocking) when SECOND > FIRST long day (§15)", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: 480, bsSlotSecondLongDayMinutes: 540 },
+    });
+    // Non-blocking: the save STILL succeeds (200) and the value is persisted.
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warnings.some((w: string) => /2\. Berufsschul-Langtag/.test(w))).toBe(true);
+    const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId: data.tenant.id } });
+    expect(cfg?.bsSlotSecondLongDayMinutes).toBe(540);
+  });
+
+  it("PUT /settings/work warns when SHORT > FIRST long day (§15)", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { bsSlotFirstLongDayMinutes: 480, bsSlotShortDayMinutes: 570 },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.warnings.some((w: string) => /Kurztag/.test(w))).toBe(true);
+  });
+
+  it("PUT /settings/work does NOT warn when SECOND/SHORT <= FIRST long day", async () => {
+    const res = await app.inject({
+      method: "PUT",
+      url: "/api/v1/settings/work",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {
+        bsSlotFirstLongDayMinutes: 570,
+        bsSlotSecondLongDayMinutes: 456,
+        bsSlotShortDayMinutes: 300,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.warnings).toBeUndefined();
+  });
+
   // ── Layer 1: Employee (highest priority) ───────────────────────────────────
 
   it("PATCH /employees/:id persists bsSlotFirstLongDayMinutes=600 on the Employee", async () => {
