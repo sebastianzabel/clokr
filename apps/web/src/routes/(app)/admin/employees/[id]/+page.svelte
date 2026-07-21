@@ -67,6 +67,12 @@
     breakOver9hOverride?: number | null;
     // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption flag (ADMIN-only toggle).
     isTimeTrackingExempt?: boolean;
+    // Phase 76.36 — per-employee bsSlot* overrides (highest layer of 4-layer hierarchy).
+    // null = inherit from Pattern → TenantConfig → daily Soll.
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
     user?: {
       role: Role;
       email: string;
@@ -76,9 +82,14 @@
   }
 
   // Phase 65 — Tenant defaults consumed for placeholder display (D-08)
+  // Phase 76.36 — extended with bsSlot* tenant-layer values for inheritance display
   interface TenantBreakConfig {
     defaultBreakOver6h?: number;
     defaultBreakOver9h?: number;
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
   }
 
   // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
@@ -105,6 +116,12 @@
     // Phase 67.2 — Pendler-Azubi: BS-Schule in anderem Bundesland als Tenant.
     // null = use Tenant.federalState (default).
     federalStateOverride?: FederalState | null;
+    // Phase 76.37 — per-pattern bsSlot* overrides (middle layer Employee > Pattern > TenantConfig > daily-Soll).
+    // null = delegate down to TenantConfig / daily-Soll.
+    bsSlotFirstLongDayMinutes?: number | null;
+    bsSlotSecondLongDayMinutes?: number | null;
+    bsSlotShortDayMinutes?: number | null;
+    bsSlotBlockWeekMinutes?: number | null;
   }
 
   // Phase 67.2 (Plan 05) — Federal-state enum mirrored from packages/db/prisma/schema.prisma.
@@ -176,6 +193,12 @@
     //   the tenant's. null = inherit from Tenant.federalState. Default null.
     respectSchoolHolidays: boolean;
     federalStateOverride: FederalState | null;
+    // Phase 76.37 — per-pattern bsSlot* overrides. "" = null (inherit from TenantConfig / daily-Soll).
+    // String state matches the "leer = erben" UX: empty input → send null to API.
+    bsSlotFirstLong: string; // bsSlotFirstLongDayMinutes — "" = inherit
+    bsSlotSecondLong: string; // bsSlotSecondLongDayMinutes
+    bsSlotShortDay: string; // bsSlotShortDayMinutes
+    bsSlotBlockWeek: string; // bsSlotBlockWeekMinutes
   }
 
   // ── Loading state ──────────────────────────────────────────────────────────
@@ -256,6 +279,14 @@
             // never crashes on a pre-67.2 API response that lacks the columns.
             respectSchoolHolidays: p.respectSchoolHolidays ?? true,
             federalStateOverride: p.federalStateOverride ?? null,
+            // Phase 76.37 — hydrate bsSlot* overrides: null/undefined → "" (inherit).
+            bsSlotFirstLong:
+              p.bsSlotFirstLongDayMinutes != null ? String(p.bsSlotFirstLongDayMinutes) : "",
+            bsSlotSecondLong:
+              p.bsSlotSecondLongDayMinutes != null ? String(p.bsSlotSecondLongDayMinutes) : "",
+            bsSlotShortDay: p.bsSlotShortDayMinutes != null ? String(p.bsSlotShortDayMinutes) : "",
+            bsSlotBlockWeek:
+              p.bsSlotBlockWeekMinutes != null ? String(p.bsSlotBlockWeekMinutes) : "",
           };
         });
         bsPatternsLoadError = "";
@@ -319,6 +350,120 @@
   let pausendauerSaving = $state(false);
   let pausendauerError = $state("");
   let pausendauerSaved = $state(false);
+
+  // Phase 76.36 — per-employee bsSlot* overrides (BBIG-V19-03 employee layer).
+  // "" = inherit (field cleared → PATCH sends null → re-enables inheritance).
+  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts.
+  const EMP_BS_DAILY_MIN = 240;
+  const EMP_BS_DAILY_MAX = 600;
+  const EMP_BS_BLOCK_MIN = 1200;
+  const EMP_BS_BLOCK_MAX = 3000;
+
+  let empBsSlotFirstLong = $state<string>(""); // bsSlotFirstLongDayMinutes
+  let empBsSlotSecondLong = $state<string>(""); // bsSlotSecondLongDayMinutes
+  let empBsSlotShortDay = $state<string>(""); // bsSlotShortDayMinutes
+  let empBsSlotBlockWeek = $state<string>(""); // bsSlotBlockWeekMinutes
+
+  let empBsSlotSaving = $state(false);
+  let empBsSlotSaved = $state(false);
+  let empBsSlotError = $state("");
+
+  // Stunden-hints — only shown when a value is set (empty = inherited, no hint)
+  let empBsSlotFirstLongHint = $derived(
+    empBsSlotFirstLong !== "" && Number.isFinite(Number(empBsSlotFirstLong))
+      ? `= ${(Number(empBsSlotFirstLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let empBsSlotSecondLongHint = $derived(
+    empBsSlotSecondLong !== "" && Number.isFinite(Number(empBsSlotSecondLong))
+      ? `= ${(Number(empBsSlotSecondLong) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let empBsSlotShortDayHint = $derived(
+    empBsSlotShortDay !== "" && Number.isFinite(Number(empBsSlotShortDay))
+      ? `= ${(Number(empBsSlotShortDay) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+  let empBsSlotBlockWeekHint = $derived(
+    empBsSlotBlockWeek !== "" && Number.isFinite(Number(empBsSlotBlockWeek))
+      ? `= ${(Number(empBsSlotBlockWeek) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`
+      : "",
+  );
+
+  // Inheritance-source display: "Erbt aus: <layer> = <value>"
+  // Priority: Pattern > TenantConfig > Tages-Soll (daily Soll from schedule)
+  // The first active pattern's bsSlot* takes precedence; then tenant config.
+  // Daily Soll = round(weeklyHours * 60 / workDays). Shown when field is empty.
+  let empDailySollMin = $derived(
+    (() => {
+      // Only meaningful when schedule is loaded
+      if (!workSchedule) return null;
+      const wh = Number(workSchedule.weeklyHours ?? 0);
+      if (!Number.isFinite(wh) || wh <= 0) return null;
+      // Count work days from schedule (workDays array > per-day hours > default 5)
+      const sched = workSchedule as WorkSchedule & { workDays?: number[] };
+      const wdCount =
+        sched.workDays && sched.workDays.length > 0
+          ? sched.workDays.length
+          : [
+              sched.mondayHours,
+              sched.tuesdayHours,
+              sched.wednesdayHours,
+              sched.thursdayHours,
+              sched.fridayHours,
+              sched.saturdayHours,
+              sched.sundayHours,
+            ].filter((h) => Number(h) > 0).length || 5;
+      return Math.round((wh * 60) / wdCount);
+    })(),
+  );
+
+  // First active pattern's bsSlot* values (Pattern layer — 2nd precedence below Employee)
+  let firstPatternBsFirst = $derived(
+    bsPatterns.length > 0
+      ? ((bsPatterns[0] as BSPatternDraft & { bsSlotFirstLongDayMinutes?: number | null })
+          .bsSlotFirstLongDayMinutes ?? null)
+      : null,
+  );
+  let firstPatternBsSecond = $derived(
+    bsPatterns.length > 0
+      ? ((bsPatterns[0] as BSPatternDraft & { bsSlotSecondLongDayMinutes?: number | null })
+          .bsSlotSecondLongDayMinutes ?? null)
+      : null,
+  );
+  let firstPatternBsShort = $derived(
+    bsPatterns.length > 0
+      ? ((bsPatterns[0] as BSPatternDraft & { bsSlotShortDayMinutes?: number | null })
+          .bsSlotShortDayMinutes ?? null)
+      : null,
+  );
+  let firstPatternBsBlock = $derived(
+    bsPatterns.length > 0
+      ? ((bsPatterns[0] as BSPatternDraft & { bsSlotBlockWeekMinutes?: number | null })
+          .bsSlotBlockWeekMinutes ?? null)
+      : null,
+  );
+
+  // §3.2 over-credit warning: 2nd-Langtag credit > 1st-Langtag credit (Über-Kreditierungs-Schutz).
+  // Fires only when 2nd-long is explicitly set AND exceeds the effective 1st-long credit.
+  let empBsSlotOverCreditWarning = $derived(
+    (() => {
+      const v2 = empBsSlotSecondLong !== "" ? Number(empBsSlotSecondLong) : null;
+      if (v2 === null || !Number.isFinite(v2)) return "";
+      // Effective 1st-long: employee override → pattern → tenant → daily Soll
+      const effectiveFirst =
+        (empBsSlotFirstLong !== "" ? Number(empBsSlotFirstLong) : null) ??
+        firstPatternBsFirst ??
+        tenantBreakConfig?.bsSlotFirstLongDayMinutes ??
+        null ??
+        empDailySollMin;
+      if (effectiveFirst === null || !Number.isFinite(effectiveFirst)) return "";
+      if (v2 > effectiveFirst) {
+        return `§3.2-Warnung: 2. Langtag (${v2} Min = ${(v2 / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h) übersteigt den 1. Langtag (${effectiveFirst} Min = ${(effectiveFirst / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h). Über-Kreditierung des zweiten BS-Langtags prüfen.`;
+      }
+      return "";
+    })(),
+  );
 
   // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle (ADMIN-only).
   // `eIsTimeTrackingExempt` mirrors the checkbox UI state. `preChangeExempt`
@@ -399,6 +544,18 @@
     eIsTimeTrackingExempt = employee.isTimeTrackingExempt === true;
     preChangeExempt = eIsTimeTrackingExempt;
     intendedExempt = eIsTimeTrackingExempt;
+
+    // Phase 76.36 — hydrate per-employee bsSlot* overrides ("" = null, inherit from lower layer)
+    empBsSlotFirstLong =
+      employee.bsSlotFirstLongDayMinutes != null ? String(employee.bsSlotFirstLongDayMinutes) : "";
+    empBsSlotSecondLong =
+      employee.bsSlotSecondLongDayMinutes != null
+        ? String(employee.bsSlotSecondLongDayMinutes)
+        : "";
+    empBsSlotShortDay =
+      employee.bsSlotShortDayMinutes != null ? String(employee.bsSlotShortDayMinutes) : "";
+    empBsSlotBlockWeek =
+      employee.bsSlotBlockWeekMinutes != null ? String(employee.bsSlotBlockWeekMinutes) : "";
 
     const sched = workSchedule;
     eType = sched?.type ?? "FIXED_SCHEDULE";
@@ -551,6 +708,73 @@
     eBreakOver9hOverride = "60";
   }
 
+  // Phase 76.36 — Persist per-employee bsSlot* overrides (BBIG-V19-03).
+  // Partial PATCH: only send fields the admin explicitly touched.
+  // "" → null (clear override → re-enables inheritance for that field).
+  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts.
+  async function saveBsSlotEmp() {
+    if (!employee) return;
+    empBsSlotError = "";
+    empBsSlotSaved = false;
+
+    const parseSlot = (
+      raw: string,
+      min: number,
+      max: number,
+      label: string,
+    ): number | null | "error" => {
+      if (raw === "") return null; // explicit null → clear employee override
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !Number.isInteger(n)) {
+        empBsSlotError = `${label}: Bitte eine ganze Zahl eingeben.`;
+        return "error";
+      }
+      if (n < min || n > max) {
+        empBsSlotError = `${label}: Wert muss zwischen ${min} und ${max} Minuten liegen.`;
+        return "error";
+      }
+      return n;
+    };
+
+    const v1 = parseSlot(empBsSlotFirstLong, EMP_BS_DAILY_MIN, EMP_BS_DAILY_MAX, "1. Langtag");
+    if (v1 === "error") return;
+    const v2 = parseSlot(empBsSlotSecondLong, EMP_BS_DAILY_MIN, EMP_BS_DAILY_MAX, "2. Langtag");
+    if (v2 === "error") return;
+    const v3 = parseSlot(empBsSlotShortDay, EMP_BS_DAILY_MIN, EMP_BS_DAILY_MAX, "Kurztag");
+    if (v3 === "error") return;
+    const v4 = parseSlot(
+      empBsSlotBlockWeek,
+      EMP_BS_BLOCK_MIN,
+      EMP_BS_BLOCK_MAX,
+      "Blockunterricht-Woche",
+    );
+    if (v4 === "error") return;
+
+    empBsSlotSaving = true;
+    try {
+      await api.patch(`/employees/${employee.id}`, {
+        bsSlotFirstLongDayMinutes: v1,
+        bsSlotSecondLongDayMinutes: v2,
+        bsSlotShortDayMinutes: v3,
+        bsSlotBlockWeekMinutes: v4,
+      });
+      // Reflect persisted values back into the cached employee record
+      employee = {
+        ...employee,
+        bsSlotFirstLongDayMinutes: v1,
+        bsSlotSecondLongDayMinutes: v2,
+        bsSlotShortDayMinutes: v3,
+        bsSlotBlockWeekMinutes: v4,
+      };
+      empBsSlotSaved = true;
+      setTimeout(() => (empBsSlotSaved = false), 3000);
+    } catch (e: unknown) {
+      empBsSlotError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      empBsSlotSaving = false;
+    }
+  }
+
   // ── Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption toggle handlers ─────────
   // The toggle is bind:checked={eIsTimeTrackingExempt}. We intercept the change
   // via `onchange`, snapshot the requested value into `intendedExempt`, and open
@@ -619,6 +843,11 @@
         // (apps/api/src/routes/vocational-school-pattern.ts lines 52-55).
         respectSchoolHolidays: true,
         federalStateOverride: null,
+        // Phase 76.37 — bsSlot* default "" = inherit (no override set on new rows).
+        bsSlotFirstLong: "",
+        bsSlotSecondLong: "",
+        bsSlotShortDay: "",
+        bsSlotBlockWeek: "",
       },
     ];
   }
@@ -711,6 +940,39 @@
     );
   }
 
+  // Phase 76.37 — bsSlot* per-pattern override helpers.
+  // field: one of "bsSlotFirstLong" | "bsSlotSecondLong" | "bsSlotShortDay" | "bsSlotBlockWeek".
+  // value: raw string from the input — "" means clear (inherit from TenantConfig / daily-Soll).
+  function bsSetSlotField(
+    key: string,
+    field: "bsSlotFirstLong" | "bsSlotSecondLong" | "bsSlotShortDay" | "bsSlotBlockWeek",
+    value: string,
+  ) {
+    bsPatterns = bsPatterns.map((p) => (p._key === key ? { ...p, [field]: value } : p));
+  }
+
+  // Bounds mirror apps/api/src/utils/vocational-school-constants.ts
+  const BS_SLOT_DAILY_MIN = 240;
+  const BS_SLOT_DAILY_MAX = 600;
+  const BS_SLOT_BLOCK_MIN = 1200;
+  const BS_SLOT_BLOCK_MAX = 3000;
+
+  // Std-hint: minutes → hours string for display next to the input.
+  // Returns "" when value is empty or non-numeric (no hint needed).
+  function bsSlotHint(value: string): string {
+    if (value === "" || !Number.isFinite(Number(value))) return "";
+    return `= ${(Number(value) / 60).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h`;
+  }
+
+  // Parse a slot string field to an API-ready integer | null.
+  // "" → null (clear/inherit). Non-integer or out-of-bounds → null (soft-fallthrough).
+  function parseSlotField(value: string, min: number, max: number): number | null {
+    if (value === "") return null;
+    const n = Number.parseInt(value, 10);
+    if (!Number.isFinite(n) || n < min || n > max) return null;
+    return n;
+  }
+
   // Client-side validation mirroring apps/api/src/routes/vocational-school-pattern.ts
   // Returns an error string for the first invalid row, or "" if all rows pass.
   // Phase 67.1: refine on `daysOfWeek.length > 0` instead of single-value check.
@@ -770,6 +1032,28 @@
           // omitting them is safe; we still send them to keep the round-trip explicit.
           respectSchoolHolidays: p.respectSchoolHolidays,
           federalStateOverride: p.federalStateOverride,
+          // Phase 76.37 — persist per-pattern bsSlot* overrides.
+          // "" → null (clear/inherit from TenantConfig / daily-Soll).
+          bsSlotFirstLongDayMinutes: parseSlotField(
+            p.bsSlotFirstLong,
+            BS_SLOT_DAILY_MIN,
+            BS_SLOT_DAILY_MAX,
+          ),
+          bsSlotSecondLongDayMinutes: parseSlotField(
+            p.bsSlotSecondLong,
+            BS_SLOT_DAILY_MIN,
+            BS_SLOT_DAILY_MAX,
+          ),
+          bsSlotShortDayMinutes: parseSlotField(
+            p.bsSlotShortDay,
+            BS_SLOT_DAILY_MIN,
+            BS_SLOT_DAILY_MAX,
+          ),
+          bsSlotBlockWeekMinutes: parseSlotField(
+            p.bsSlotBlockWeek,
+            BS_SLOT_BLOCK_MIN,
+            BS_SLOT_BLOCK_MAX,
+          ),
         })),
       };
       const res = await api.put<{ patterns: VocationalSchoolPattern[] }>(
@@ -798,6 +1082,13 @@
           // Phase 67.2 (Plan 05) — round-trip Ferien fields from PUT response
           respectSchoolHolidays: p.respectSchoolHolidays ?? true,
           federalStateOverride: p.federalStateOverride ?? null,
+          // Phase 76.37 — round-trip bsSlot* overrides from PUT response
+          bsSlotFirstLong:
+            p.bsSlotFirstLongDayMinutes != null ? String(p.bsSlotFirstLongDayMinutes) : "",
+          bsSlotSecondLong:
+            p.bsSlotSecondLongDayMinutes != null ? String(p.bsSlotSecondLongDayMinutes) : "",
+          bsSlotShortDay: p.bsSlotShortDayMinutes != null ? String(p.bsSlotShortDayMinutes) : "",
+          bsSlotBlockWeek: p.bsSlotBlockWeekMinutes != null ? String(p.bsSlotBlockWeekMinutes) : "",
         };
       });
       bsNewKeyCounter = 0; // reset — all rows have server ids now
@@ -1887,6 +2178,207 @@
                         >Nur bei Pendler-Azubi: Schule in anderem Bundesland</small
                       >
                     </div>
+
+                    <!-- Phase 76.37 — per-pattern bsSlot* Zeitgutschrift overrides.
+                         Middle layer: Employee > Pattern (here) > TenantConfig > daily-Soll.
+                         "Leer = erben" pattern: empty input → null → delegate down the chain.
+                         Never pre-filled from lower layers so the admin sees exactly what's
+                         set at the pattern level, not an inherited value.
+                         Bounds: daily [240..600 min] (4-10 h), block-week [1200..3000 min] (20-50 h). -->
+                    <div class="bs-slot-section">
+                      <p class="bs-pattern-label bs-slot-section-title">
+                        Zeitgutschrift-Slots (optional)
+                      </p>
+                      <p class="bs-pattern-hint" style="margin-bottom: 0.75rem;">
+                        Leer = Wert wird aus Mandant-Konfiguration bzw. Tages-Soll geerbt.
+                        Tages-Slots: 240–600 Min (4–10 h). Blockunterricht-Woche: 1200–3000 Min
+                        (20–50 h).
+                      </p>
+
+                      <!-- 1. Berufsschul-Langtag -->
+                      <div class="form-group bs-slot-group">
+                        <label class="form-label" for="bs-p-slot-first-{p._key}">
+                          1. BS-Langtag (Minuten)
+                        </label>
+                        <div class="bs-slot-input-row">
+                          <input
+                            id="bs-p-slot-first-{p._key}"
+                            type="number"
+                            min={BS_SLOT_DAILY_MIN}
+                            max={BS_SLOT_DAILY_MAX}
+                            step="1"
+                            class="form-input modal-input-sm"
+                            value={p.bsSlotFirstLong}
+                            placeholder="Erbt aus: Tages-Soll"
+                            oninput={(e) =>
+                              bsSetSlotField(
+                                p._key,
+                                "bsSlotFirstLong",
+                                (e.currentTarget as HTMLInputElement).value,
+                              )}
+                            disabled={bsPatternsSaving}
+                          />
+                          {#if bsSlotHint(p.bsSlotFirstLong)}
+                            <span class="bs-slot-hint">{bsSlotHint(p.bsSlotFirstLong)}</span>
+                          {/if}
+                          {#if p.bsSlotFirstLong !== ""}
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm bs-clear-btn"
+                              onclick={() => bsSetSlotField(p._key, "bsSlotFirstLong", "")}
+                              disabled={bsPatternsSaving}
+                              title="Auf Vorgabe zurücksetzen"
+                              aria-label="1. Langtag auf Vorgabe zurücksetzen"
+                            >
+                              × Erben
+                            </button>
+                          {/if}
+                        </div>
+                        {#if p.bsSlotFirstLong === ""}
+                          <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+                        {/if}
+                      </div>
+
+                      <!-- 2. Berufsschul-Langtag -->
+                      <div class="form-group bs-slot-group">
+                        <label class="form-label" for="bs-p-slot-second-{p._key}">
+                          2. BS-Langtag (Minuten)
+                        </label>
+                        <div class="bs-slot-input-row">
+                          <input
+                            id="bs-p-slot-second-{p._key}"
+                            type="number"
+                            min={BS_SLOT_DAILY_MIN}
+                            max={BS_SLOT_DAILY_MAX}
+                            step="1"
+                            class="form-input modal-input-sm"
+                            value={p.bsSlotSecondLong}
+                            placeholder="Erbt aus: Tages-Soll"
+                            oninput={(e) =>
+                              bsSetSlotField(
+                                p._key,
+                                "bsSlotSecondLong",
+                                (e.currentTarget as HTMLInputElement).value,
+                              )}
+                            disabled={bsPatternsSaving}
+                          />
+                          {#if bsSlotHint(p.bsSlotSecondLong)}
+                            <span class="bs-slot-hint">{bsSlotHint(p.bsSlotSecondLong)}</span>
+                          {/if}
+                          {#if p.bsSlotSecondLong !== ""}
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm bs-clear-btn"
+                              onclick={() => bsSetSlotField(p._key, "bsSlotSecondLong", "")}
+                              disabled={bsPatternsSaving}
+                              title="Auf Vorgabe zurücksetzen"
+                              aria-label="2. Langtag auf Vorgabe zurücksetzen"
+                            >
+                              × Erben
+                            </button>
+                          {/if}
+                        </div>
+                        {#if p.bsSlotSecondLong === ""}
+                          <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+                        {/if}
+                      </div>
+
+                      <!-- Berufsschul-Kurztag -->
+                      <div class="form-group bs-slot-group">
+                        <label class="form-label" for="bs-p-slot-short-{p._key}">
+                          BS-Kurztag (Minuten)
+                        </label>
+                        <div class="bs-slot-input-row">
+                          <input
+                            id="bs-p-slot-short-{p._key}"
+                            type="number"
+                            min={BS_SLOT_DAILY_MIN}
+                            max={BS_SLOT_DAILY_MAX}
+                            step="1"
+                            class="form-input modal-input-sm"
+                            value={p.bsSlotShortDay}
+                            placeholder="Erbt aus: Tages-Soll"
+                            oninput={(e) =>
+                              bsSetSlotField(
+                                p._key,
+                                "bsSlotShortDay",
+                                (e.currentTarget as HTMLInputElement).value,
+                              )}
+                            disabled={bsPatternsSaving}
+                          />
+                          {#if bsSlotHint(p.bsSlotShortDay)}
+                            <span class="bs-slot-hint">{bsSlotHint(p.bsSlotShortDay)}</span>
+                          {/if}
+                          {#if p.bsSlotShortDay !== ""}
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm bs-clear-btn"
+                              onclick={() => bsSetSlotField(p._key, "bsSlotShortDay", "")}
+                              disabled={bsPatternsSaving}
+                              title="Auf Vorgabe zurücksetzen"
+                              aria-label="Kurztag auf Vorgabe zurücksetzen"
+                            >
+                              × Erben
+                            </button>
+                          {/if}
+                        </div>
+                        {#if p.bsSlotShortDay === ""}
+                          <p class="form-hint text-muted">Erbt aus: Tages-Soll des Mitarbeiters</p>
+                        {/if}
+                      </div>
+
+                      <!-- Blockunterricht-Woche -->
+                      <div class="form-group bs-slot-group">
+                        <label class="form-label" for="bs-p-slot-block-{p._key}">
+                          Blockunterricht-Woche (Minuten)
+                        </label>
+                        <div class="bs-slot-input-row">
+                          <input
+                            id="bs-p-slot-block-{p._key}"
+                            type="number"
+                            min={BS_SLOT_BLOCK_MIN}
+                            max={BS_SLOT_BLOCK_MAX}
+                            step="1"
+                            class="form-input modal-input-sm"
+                            value={p.bsSlotBlockWeek}
+                            placeholder="Erbt aus: Wochenstunden-Soll"
+                            oninput={(e) =>
+                              bsSetSlotField(
+                                p._key,
+                                "bsSlotBlockWeek",
+                                (e.currentTarget as HTMLInputElement).value,
+                              )}
+                            disabled={bsPatternsSaving}
+                          />
+                          {#if bsSlotHint(p.bsSlotBlockWeek)}
+                            <span class="bs-slot-hint">{bsSlotHint(p.bsSlotBlockWeek)}</span>
+                          {/if}
+                          {#if p.bsSlotBlockWeek !== ""}
+                            <button
+                              type="button"
+                              class="btn btn-ghost btn-sm bs-clear-btn"
+                              onclick={() => bsSetSlotField(p._key, "bsSlotBlockWeek", "")}
+                              disabled={bsPatternsSaving}
+                              title="Auf Vorgabe zurücksetzen"
+                              aria-label="Blockunterricht-Woche auf Vorgabe zurücksetzen"
+                            >
+                              × Erben
+                            </button>
+                          {/if}
+                        </div>
+                        {#if p.bsSlotBlockWeek === ""}
+                          <p class="form-hint text-muted">
+                            Erbt aus: Wochenstunden-Soll des Mitarbeiters
+                          </p>
+                        {/if}
+                      </div>
+
+                      <div class="alert alert-info bs-revision-alert" role="alert">
+                        <span>ℹ</span><span
+                          >Änderungen wirken nur auf offene und künftige Monate.</span
+                        >
+                      </div>
+                    </div>
                   </li>
                 {/each}
               </ul>
@@ -1901,6 +2393,254 @@
               >
                 + Berufsschultag hinzufügen
               </button>
+            </div>
+          </Section>
+
+          <!-- Phase 76.36 — Per-employee bsSlot* override panel (BBIG-V19-03).
+               Highest layer in Employee > Pattern > TenantConfig > daily-Soll hierarchy.
+               Empty field = inherit (never prefilled with inherited value).
+               Clearing a field sends null → re-enables inheritance for that slot. -->
+          <Section
+            title="Zeitgutschrift Berufsschule (Mitarbeiter-Override)"
+            sub="Überschreibt Pattern- und Mandanten-Vorgabe für diesen Azubi. Leer = von tieferer Schicht erben."
+          >
+            {#snippet footer()}
+              <button class="btn btn-primary" onclick={saveBsSlotEmp} disabled={empBsSlotSaving}>
+                {empBsSlotSaving ? "Speichern…" : "Speichern"}
+              </button>
+              {#if empBsSlotSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+            {/snippet}
+
+            <p class="form-hint text-muted" style="margin-bottom: 1.25rem;">
+              Mitarbeiter-Overrides haben höchste Priorität (Employee &gt; Pattern &gt; Mandant &gt;
+              Tages-Soll). Tages-Slots: {EMP_BS_DAILY_MIN}–{EMP_BS_DAILY_MAX} Min ({EMP_BS_DAILY_MIN /
+                60}–{EMP_BS_DAILY_MAX / 60} h). Blockunterricht-Woche:
+              {EMP_BS_BLOCK_MIN}–{EMP_BS_BLOCK_MAX} Min ({EMP_BS_BLOCK_MIN / 60}–{EMP_BS_BLOCK_MAX /
+                60} h).
+            </p>
+
+            {#if empBsSlotError}
+              <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+                <span>⚠</span><span>{empBsSlotError}</span>
+              </div>
+            {/if}
+
+            {#if empBsSlotOverCreditWarning}
+              <div class="alert alert-warning" role="alert" style="margin-bottom: 1rem;">
+                <span>⚠</span><span>{empBsSlotOverCreditWarning}</span>
+              </div>
+            {/if}
+
+            <!-- 1. Langtag -->
+            <div class="form-group bs-slot-group">
+              <label class="form-label" for="emp-bs-slot-first-long">
+                1. Berufsschul-Langtag (Minuten)
+              </label>
+              <div class="bs-slot-input-row">
+                <input
+                  id="emp-bs-slot-first-long"
+                  type="number"
+                  min={EMP_BS_DAILY_MIN}
+                  max={EMP_BS_DAILY_MAX}
+                  step="1"
+                  class="form-input modal-input-sm"
+                  bind:value={empBsSlotFirstLong}
+                  placeholder="Leer = erben"
+                  disabled={empBsSlotSaving}
+                />
+                {#if empBsSlotFirstLongHint}
+                  <span class="bs-slot-hint">{empBsSlotFirstLongHint}</span>
+                {/if}
+                {#if empBsSlotFirstLong !== ""}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm bs-clear-btn"
+                    onclick={() => (empBsSlotFirstLong = "")}
+                    title="Auf Vorgabe zurücksetzen (erben)"
+                    aria-label="1. Langtag auf Vorgabe zurücksetzen"
+                    disabled={empBsSlotSaving}
+                  >
+                    × Erben
+                  </button>
+                {/if}
+              </div>
+              {#if empBsSlotFirstLong === ""}
+                <p class="form-hint text-muted">
+                  {#if firstPatternBsFirst != null}
+                    Erbt aus: Pattern = {firstPatternBsFirst} Min ({(
+                      firstPatternBsFirst / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if tenantBreakConfig?.bsSlotFirstLongDayMinutes != null}
+                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotFirstLongDayMinutes} Min ({(
+                      tenantBreakConfig.bsSlotFirstLongDayMinutes / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if empDailySollMin != null}
+                    Erbt aus: Tages-Soll = {empDailySollMin} Min ({(
+                      empDailySollMin / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else}
+                    Erbt aus: Tages-Soll des Mitarbeiters
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            <!-- 2. Langtag -->
+            <div class="form-group bs-slot-group">
+              <label class="form-label" for="emp-bs-slot-second-long">
+                2. Berufsschul-Langtag (Minuten)
+              </label>
+              <div class="bs-slot-input-row">
+                <input
+                  id="emp-bs-slot-second-long"
+                  type="number"
+                  min={EMP_BS_DAILY_MIN}
+                  max={EMP_BS_DAILY_MAX}
+                  step="1"
+                  class="form-input modal-input-sm"
+                  bind:value={empBsSlotSecondLong}
+                  placeholder="Leer = erben"
+                  disabled={empBsSlotSaving}
+                />
+                {#if empBsSlotSecondLongHint}
+                  <span class="bs-slot-hint">{empBsSlotSecondLongHint}</span>
+                {/if}
+                {#if empBsSlotSecondLong !== ""}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm bs-clear-btn"
+                    onclick={() => (empBsSlotSecondLong = "")}
+                    title="Auf Vorgabe zurücksetzen (erben)"
+                    aria-label="2. Langtag auf Vorgabe zurücksetzen"
+                    disabled={empBsSlotSaving}
+                  >
+                    × Erben
+                  </button>
+                {/if}
+              </div>
+              {#if empBsSlotSecondLong === ""}
+                <p class="form-hint text-muted">
+                  {#if firstPatternBsSecond != null}
+                    Erbt aus: Pattern = {firstPatternBsSecond} Min ({(
+                      firstPatternBsSecond / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if tenantBreakConfig?.bsSlotSecondLongDayMinutes != null}
+                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotSecondLongDayMinutes} Min ({(
+                      tenantBreakConfig.bsSlotSecondLongDayMinutes / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if empDailySollMin != null}
+                    Erbt aus: Tages-Soll = {empDailySollMin} Min ({(
+                      empDailySollMin / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else}
+                    Erbt aus: Tages-Soll des Mitarbeiters
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            <!-- Kurztag -->
+            <div class="form-group bs-slot-group">
+              <label class="form-label" for="emp-bs-slot-short-day">
+                Berufsschul-Kurztag (Minuten)
+              </label>
+              <div class="bs-slot-input-row">
+                <input
+                  id="emp-bs-slot-short-day"
+                  type="number"
+                  min={EMP_BS_DAILY_MIN}
+                  max={EMP_BS_DAILY_MAX}
+                  step="1"
+                  class="form-input modal-input-sm"
+                  bind:value={empBsSlotShortDay}
+                  placeholder="Leer = erben"
+                  disabled={empBsSlotSaving}
+                />
+                {#if empBsSlotShortDayHint}
+                  <span class="bs-slot-hint">{empBsSlotShortDayHint}</span>
+                {/if}
+                {#if empBsSlotShortDay !== ""}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm bs-clear-btn"
+                    onclick={() => (empBsSlotShortDay = "")}
+                    title="Auf Vorgabe zurücksetzen (erben)"
+                    aria-label="Kurztag auf Vorgabe zurücksetzen"
+                    disabled={empBsSlotSaving}
+                  >
+                    × Erben
+                  </button>
+                {/if}
+              </div>
+              {#if empBsSlotShortDay === ""}
+                <p class="form-hint text-muted">
+                  {#if firstPatternBsShort != null}
+                    Erbt aus: Pattern = {firstPatternBsShort} Min ({(
+                      firstPatternBsShort / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if tenantBreakConfig?.bsSlotShortDayMinutes != null}
+                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotShortDayMinutes} Min ({(
+                      tenantBreakConfig.bsSlotShortDayMinutes / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if empDailySollMin != null}
+                    Erbt aus: Tages-Soll = {empDailySollMin} Min ({(
+                      empDailySollMin / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else}
+                    Erbt aus: Tages-Soll des Mitarbeiters
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            <!-- Blockunterricht-Woche -->
+            <div class="form-group bs-slot-group">
+              <label class="form-label" for="emp-bs-slot-block-week">
+                Blockunterricht-Woche (Minuten)
+              </label>
+              <div class="bs-slot-input-row">
+                <input
+                  id="emp-bs-slot-block-week"
+                  type="number"
+                  min={EMP_BS_BLOCK_MIN}
+                  max={EMP_BS_BLOCK_MAX}
+                  step="1"
+                  class="form-input modal-input-sm"
+                  bind:value={empBsSlotBlockWeek}
+                  placeholder="Leer = erben"
+                  disabled={empBsSlotSaving}
+                />
+                {#if empBsSlotBlockWeekHint}
+                  <span class="bs-slot-hint">{empBsSlotBlockWeekHint}</span>
+                {/if}
+                {#if empBsSlotBlockWeek !== ""}
+                  <button
+                    type="button"
+                    class="btn btn-ghost btn-sm bs-clear-btn"
+                    onclick={() => (empBsSlotBlockWeek = "")}
+                    title="Auf Vorgabe zurücksetzen (erben)"
+                    aria-label="Blockunterricht-Woche auf Vorgabe zurücksetzen"
+                    disabled={empBsSlotSaving}
+                  >
+                    × Erben
+                  </button>
+                {/if}
+              </div>
+              {#if empBsSlotBlockWeek === ""}
+                <p class="form-hint text-muted">
+                  {#if firstPatternBsBlock != null}
+                    Erbt aus: Pattern = {firstPatternBsBlock} Min ({(
+                      firstPatternBsBlock / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else if tenantBreakConfig?.bsSlotBlockWeekMinutes != null}
+                    Erbt aus: Mandant = {tenantBreakConfig.bsSlotBlockWeekMinutes} Min ({(
+                      tenantBreakConfig.bsSlotBlockWeekMinutes / 60
+                    ).toLocaleString("de-DE", { maximumFractionDigits: 2 })} h)
+                  {:else}
+                    Erbt aus: Wochenstunden-Soll des Mitarbeiters
+                  {/if}
+                </p>
+              {/if}
             </div>
           </Section>
         {/if}
@@ -2762,5 +3502,71 @@
     .bs-mode-help {
       margin-left: 0;
     }
+  }
+
+  /* ── Phase 76.36 — bsSlot* per-employee override panel (mirrors 76.35 system page) ── */
+  .modal-input-sm {
+    max-width: 180px;
+  }
+
+  .bs-slot-group {
+    margin-bottom: 1.25rem;
+  }
+
+  .bs-slot-input-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    flex-wrap: wrap;
+  }
+
+  .bs-slot-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .bs-clear-btn {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    padding: 0.25rem 0.625rem;
+    min-height: unset;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: transparent;
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      border-color 0.12s;
+  }
+
+  .bs-clear-btn:hover:not(:disabled) {
+    color: var(--bad);
+    border-color: var(--bad);
+  }
+
+  .bs-clear-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ── Phase 76.37 — per-pattern bsSlot* section inside pattern card ── */
+  .bs-slot-section {
+    border-top: 1px solid var(--border);
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+
+  .bs-slot-section-title {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+  }
+
+  .bs-revision-alert {
+    margin-top: 0.75rem;
+    font-size: 0.8125rem;
   }
 </style>
