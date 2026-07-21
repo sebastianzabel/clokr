@@ -304,11 +304,15 @@ describe("SNAP-40 — self-healing parity: missing intermediate snapshot lands o
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
-    // April (current partial month — cutoff = Apr-15, since Apr-16 has no entry per Pitfall 2)
+    // April (current partial month). Derive the cutoff the SAME way production does
+    // (time-entries.ts:1850-1886): today = dateStrInTz(LIVE_NOW, tz); LIVE_NOW's April day has no
+    // entry (Apr-16) → cutoff = yesterday. Deriving from LIVE_NOW (not hardcoding 2026-04-15) keeps
+    // the reference in lock-step with LIVE_NOW so a future LIVE_NOW change can't silently mis-reference.
     const { start: aprStart, end: aprEnd } = monthRangeUtc(2026, 4, TZ);
     const { firstDay: aprFirstDay } = monthDayBounds(aprStart, aprEnd, TZ);
     const aprFirstStr = dateStrInTz(aprFirstDay, TZ);
-    const effectiveEnd = new Date("2026-04-15T00:00:00Z");
+    const liveNowDay = new Date(dateStrInTz(new Date(LIVE_NOW), TZ) + "T00:00:00Z");
+    const effectiveEnd = new Date(liveNowDay.getTime() - 86_400_000); // yesterday (no today-entry)
     const aprEntries = await app.prisma.timeEntry.findMany({
       where: { employeeId: empId, deletedAt: null, date: { gte: aprFirstDay, lte: effectiveEnd } },
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
@@ -340,7 +344,11 @@ describe("SNAP-40 — self-healing parity: missing intermediate snapshot lands o
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), aprFirstStr, "2026-04-15"),
+      holidayDateStrings: filterHolidaySet(
+        buildHolidaySet(2026),
+        aprFirstStr,
+        dateStrInTz(effectiveEnd, TZ),
+      ),
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
@@ -407,7 +415,10 @@ describe("SNAP-40 — bounded-window steady state: prior month closed → open w
     const { start: aprStart, end: aprEnd } = monthRangeUtc(2026, 4, TZ);
     const { firstDay: aprFirstDay } = monthDayBounds(aprStart, aprEnd, TZ);
     const aprFirstStr = dateStrInTz(aprFirstDay, TZ);
-    const effectiveEnd = new Date("2026-04-15T00:00:00Z");
+    // Cutoff derived from LIVE_NOW (production time-entries.ts:1850-1886): LIVE_NOW's April day
+    // has no entry → cutoff = yesterday. Keeps the reference in lock-step with LIVE_NOW.
+    const liveNowDay = new Date(dateStrInTz(new Date(LIVE_NOW), TZ) + "T00:00:00Z");
+    const effectiveEnd = new Date(liveNowDay.getTime() - 86_400_000);
     const aprEntries = await app.prisma.timeEntry.findMany({
       where: { employeeId: empId, deletedAt: null, date: { gte: aprFirstDay, lte: effectiveEnd } },
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
@@ -435,7 +446,11 @@ describe("SNAP-40 — bounded-window steady state: prior month closed → open w
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), aprFirstStr, "2026-04-15"),
+      holidayDateStrings: filterHolidaySet(
+        buildHolidaySet(2026),
+        aprFirstStr,
+        dateStrInTz(effectiveEnd, TZ),
+      ),
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
     reference = MARCH_CARRY_OVER + aprilResult.balanceMinutes;
@@ -535,6 +550,9 @@ describe("SNAP-40 — reopen base resolution (76.33, SC#3): superseded latest sn
 
   // Reference: base = Feb snapshot (latest non-superseded) → open range spans March + April-partial.
   let reference = 0;
+  // April partial-month balance, hoisted so the superseded-anchor guard can derive the true
+  // regression value (superseded March carryOver + April-only) instead of hardcoding it.
+  let aprilBalance = 0;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -604,7 +622,10 @@ describe("SNAP-40 — reopen base resolution (76.33, SC#3): superseded latest sn
     const { start: aprStart, end: aprEnd } = monthRangeUtc(2026, 4, TZ);
     const { firstDay: aprFirstDay } = monthDayBounds(aprStart, aprEnd, TZ);
     const aprFirstStr = dateStrInTz(aprFirstDay, TZ);
-    const effectiveEnd = new Date("2026-04-15T00:00:00Z");
+    // Cutoff derived from LIVE_NOW (production time-entries.ts:1850-1886): LIVE_NOW's April day
+    // has no entry → cutoff = yesterday. Keeps the reference in lock-step with LIVE_NOW.
+    const liveNowDay = new Date(dateStrInTz(new Date(LIVE_NOW), TZ) + "T00:00:00Z");
+    const effectiveEnd = new Date(liveNowDay.getTime() - 86_400_000);
     const aprEntries = await app.prisma.timeEntry.findMany({
       where: { employeeId: empId, deletedAt: null, date: { gte: aprFirstDay, lte: effectiveEnd } },
       select: { date: true, startTime: true, endTime: true, breakMinutes: true },
@@ -632,11 +653,16 @@ describe("SNAP-40 — reopen base resolution (76.33, SC#3): superseded latest sn
       shifts: [],
       approvedLeave: [],
       absences: [],
-      holidayDateStrings: filterHolidaySet(buildHolidaySet(2026), aprFirstStr, "2026-04-15"),
+      holidayDateStrings: filterHolidaySet(
+        buildHolidaySet(2026),
+        aprFirstStr,
+        dateStrInTz(effectiveEnd, TZ),
+      ),
       tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
     });
 
-    reference = FEB_CARRY_OVER + marchResult.balanceMinutes + aprilResult.balanceMinutes;
+    aprilBalance = aprilResult.balanceMinutes;
+    reference = FEB_CARRY_OVER + marchResult.balanceMinutes + aprilBalance;
   }, 300_000);
 
   afterAll(async () => {
@@ -654,9 +680,11 @@ describe("SNAP-40 — reopen base resolution (76.33, SC#3): superseded latest sn
       5,
     );
 
-    // It must NOT anchor on the superseded March snapshot (which would give ~MARCH_CARRY_OVER +
-    // April-only, excluding the reopened March range). Guard against that regression.
-    const superSededMarchAnchor = MARCH_CARRY_OVER; // + April-only would be near this, not `reference`
+    // It must NOT anchor on the superseded March snapshot. That regression would exclude the
+    // reopened March range and start from March's carryOver, landing near
+    // (superseded March carryOver + April-only balance) — derived here, not hardcoded, so the
+    // guard tracks the true regression value.
+    const superSededMarchAnchor = MARCH_CARRY_OVER + aprilBalance;
     expect(
       Math.abs(live - superSededMarchAnchor),
       `reopen must NOT anchor on superseded March snapshot: live=${live} supersededAnchor≈${superSededMarchAnchor}`,
