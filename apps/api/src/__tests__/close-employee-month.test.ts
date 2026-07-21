@@ -2078,3 +2078,121 @@ describe("TC-CLOSE-01 — close with gaps values 0h against full Soll", () => {
     ).toBe(baseline.snapshotExpectedMinutes);
   });
 });
+
+// ── TC-HALFSICK-ABSENCE — Wave 2 RED: half-day SICK Absence saldo (76.32.1-02) ───────────
+//
+// Pure-core unit test (no DB). FIXED_WEEKLY 38h/5-day, Feb 2026 (20 workdays, dailySoll=456 min).
+// Scenario:
+//   • 2026-02-02 (Mon): a SICK Absence with halfDay=true, days=0.5 + a 228-min WORK entry (the other half).
+//   • Other 19 workdays: 456-min entries.
+//
+// SPEC-CORRECT (GREEN after Wave 3):
+//   workedMinutes   = 19×456 + 228 = 8892
+//   absenceMinutes  = 228  (half-day credit — absence excuses only 228 min, not 456)
+//   expectedMinutes = 20×456 = 9120; netExpected = max(0, 9120 − 228) = 8892
+//   balanceMinutes  = 8892 − 8892 = 0  (day is neutral: 228 worked + 228 excused)
+//
+// CURRENT CODE (RED until Wave 3):
+//   absenceMinutes  = 456  (full-day credit — halfDay ignored)
+//   netExpected     = max(0, 9120 − 456) = 8664
+//   balanceMinutes  = 8892 − 8664 = +228  (phantom overtime)
+//
+// This test encodes the CORRECT (GREEN) numbers. It FAILS on current code (RED)
+// because the absence credits 456 instead of 228 → balance is +228 instead of 0.
+// Wave 3 threads halfDay through closeEmployeeMonth → the test turns GREEN.
+
+describe("TC-HALFSICK-ABSENCE — half-day SICK Absence saldo correctness (76.32.1-02 RED)", () => {
+  // Feb 2026 Mon–Fri dates
+  const FEB_MO_FR: string[] = monFriInRange("2026-02-01", "2026-02-28");
+  const SICK_DAY = "2026-02-02"; // Monday — the half-day sick day
+  const DAILY_SOLL = 456; // 7.6h × 60 = 456 min
+  const HALF_SOLL = 228; // 456 / 2
+
+  const { start: FEB_START, end: FEB_END } = monthRangeUtc(2026, 2, TZ);
+
+  const schedule = {
+    type: "FIXED_SCHEDULE" as const,
+    weeklyHours: 38,
+    mondayHours: 7.6,
+    tuesdayHours: 7.6,
+    wednesdayHours: 7.6,
+    thursdayHours: 7.6,
+    fridayHours: 7.6,
+    saturdayHours: 0,
+    sundayHours: 0,
+    workDays: [1, 2, 3, 4, 5],
+  };
+
+  // Entries: sick day = 228 min (worked half); other 19 days = 456 min each.
+  const entries = FEB_MO_FR.map((d) => {
+    const netto = d === SICK_DAY ? HALF_SOLL : DAILY_SOLL;
+    return {
+      date: new Date(d + "T00:00:00Z"),
+      startTime: new Date(d + "T08:00:00Z"),
+      endTime: new Date(new Date(d + "T08:00:00Z").getTime() + netto * 60_000),
+      breakMinutes: 0,
+    };
+  });
+
+  // Half-day SICK Absence on SICK_DAY.
+  // halfDay?: boolean — the field threaded by Wave 3 (76.32.1-03).
+  // Currently CloseMonthInput.absences type lacks halfDay → we cast via unknown so
+  // the test compiles both before (missing field) and after (field present) Wave 3.
+  const absences = [
+    {
+      startDate: new Date(SICK_DAY + "T00:00:00Z"),
+      endDate: new Date(SICK_DAY + "T00:00:00Z"),
+      type: "SICK",
+      source: "MANUAL",
+      halfDay: true,
+    },
+  ] as unknown as CloseMonthInput["absences"];
+
+  it("TC-HALFSICK-ABSENCE: half-day SICK Absence → absence excuses 228 min, balanceMinutes = 0", () => {
+    // Feb 2026: 20 Mon–Fri workdays (no holidays). hireDate = 2026-02-01.
+    const { firstDay, lastDay } = monthDayBounds(FEB_START, FEB_END, TZ);
+
+    const input: CloseMonthInput = {
+      employeeId: "test-halfsick-absence",
+      monthStart: FEB_START,
+      monthEnd: FEB_END,
+      monthFirstDay: firstDay,
+      monthLastDay: lastDay,
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as unknown as Record<string, unknown>,
+      hireDate: new Date("2026-02-01T00:00:00Z"),
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: entries as CloseMonthInput["entries"],
+      shifts: [],
+      approvedLeave: [],
+      absences,
+      holidayDateStrings: new Set<string>(),
+      tenantConfig: null,
+    };
+
+    const result = closeEmployeeMonth(input);
+
+    // Worked: 19 full days × 456 + 1 half day × 228 = 8892 min
+    expect(result.workedMinutes, "TC-HALFSICK-ABSENCE: workedMinutes = 19×456 + 228 = 8892").toBe(
+      19 * DAILY_SOLL + HALF_SOLL,
+    );
+
+    // Expected (netExpected): 20×456 − 228 (half-day absence excuses 228 min only) = 8892
+    // RED on current code: absence credits 456 → netExpected = 8664.
+    expect(
+      result.snapshotExpectedMinutes,
+      "TC-HALFSICK-ABSENCE: netExpected = 20×456 − 228 = 8892 (half-day excuses 228 only)",
+    ).toBe(20 * DAILY_SOLL - HALF_SOLL);
+
+    // Balance = worked − netExpected = 8892 − 8892 = 0 (day is neutral).
+    // RED on current code: balance = 8892 − 8664 = +228 (phantom overtime).
+    expect(
+      result.balanceMinutes,
+      "TC-HALFSICK-ABSENCE: balanceMinutes = 0 (worked half + excused half = full day)",
+    ).toBe(0);
+  });
+});

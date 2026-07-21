@@ -84,6 +84,13 @@ interface Cell {
   leave?: Array<{ start: string; end: string }>;
   /** VOCATIONAL_SCHOOL absence days (source=PATTERN) */
   bsDays?: string[];
+  /**
+   * Half-day SICK absences (source=MANUAL, halfDay=true, days=0.5).
+   * Each entry is ONE single-day SICK Absence.
+   * Wave 2 (76.32.1-02): RED — current code ignores Absence.halfDay → over-credits by half a daily Soll.
+   * Wave 3 (76.32.1-03) threads halfDay through all valuation sites → turns GREEN.
+   */
+  halfAbsences?: Array<{ date: string }>;
   /** PublicHoliday rows to seed */
   holidays?: Array<{ date: string; name: string }>;
   monthlyHoursHolidayDeduction?: boolean;
@@ -157,6 +164,20 @@ const FW_30_MWF: ScheduleSpec = {
   saturdayHours: 0,
   sundayHours: 0,
   workDays: [1, 3, 5],
+};
+
+// fw-38-5-halfsick (Wave 2 RED anchor — 76.32.1-02)
+const FW_38_5: ScheduleSpec = {
+  type: "FIXED_SCHEDULE",
+  weeklyHours: 38,
+  mondayHours: 7.6,
+  tuesdayHours: 7.6,
+  wednesdayHours: 7.6,
+  thursdayHours: 7.6,
+  fridayHours: 7.6,
+  saturdayHours: 0,
+  sundayHours: 0,
+  workDays: [1, 2, 3, 4, 5],
 };
 
 // ── SHIFT_BASED schedule shells ──────────────────────────────────────────────
@@ -1033,6 +1054,52 @@ const CELLS: Cell[] = [
     expectedRed: true,
     redAnchor: true,
   },
+
+  // ── Wave 2 RED anchor — Phase 76.32.1-02 (Part C Absence.halfDay) ──────────
+  // fw-38-5-halfsick: FIXED_WEEKLY 38h/5-day, Feb 2026 (20 workdays, daily Soll=456 min).
+  // Scenario: 2026-02-02 (Monday) has a half-day SICK Absence (halfDay=true, days=0.5)
+  // AND a 228-min WORK entry (the worked half). All other 19 workdays: 456 min entry.
+  //
+  // Spec-correct (GREEN after Wave 3):
+  //   workedMinutes  = 19×456 + 228 = 8892
+  //   expectedMinutes = 20×456 − 228 = 8892  (half-day excuses 228 min only)
+  //   balanceMinutes = 0  (the day is neutral: 228 worked + 228 excused = 456 daily Soll)
+  //
+  // Current code (RED — absence.halfDay ignored, full day 456 deducted):
+  //   expectedMinutes = 20×456 − 456 = 8664  (over-deducts by 228)
+  //   balanceMinutes  = 8892 − 8664 = +228   (phantom overtime; inflated by 228 min)
+  //
+  // This cell is NOT a redAnchor (it.fails): it runs as a regular failing test so the
+  // RED output is visible in CI. Wave 3 (76.32.1-03) threads halfDay and turns it GREEN.
+  {
+    id: "fw-38-5-halfsick",
+    scheduleType: "FIXED_SCHEDULE",
+    classification: "REGULAR",
+    situation:
+      "half-day SICK Absence (halfDay=true) on 2026-02-02 + 228 min worked — balance must be neutral",
+    schedule: FW_38_5,
+    year: 2026,
+    month: 2,
+    hireDate: "2026-02-01",
+    // 19 full-day entries (456 min) + 1 half-day entry (228 min) on 2026-02-02
+    entries: [
+      { date: "2026-02-02", netto: 228 },
+      ...rows(
+        FEB_MO_FR.filter((d) => d !== "2026-02-02"),
+        456,
+      ),
+    ],
+    halfAbsences: [{ date: "2026-02-02" }],
+    expected: {
+      workedMinutes: 8892, // 19×456 + 228
+      expectedMinutes: 8892, // 20×456 − 228 (half-day excuses 228 min)
+      balanceMinutes: 0, // day neutral: 228 worked + 228 excused
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: true,
+    // NOT redAnchor — runs as a normal failing test (RED until Wave 3 fixes the code)
+  },
 ];
 
 // ── Roster builders for AZUBI cells ──────────────────────────────────────────
@@ -1290,6 +1357,22 @@ async function seedGoldenScenario(app: FastifyInstance, cell: Cell): Promise<See
     });
   }
 
+  // Half-day SICK absences (source=MANUAL, halfDay=true, days=0.5) — Wave 2 (76.32.1-02)
+  for (const ha of cell.halfAbsences ?? []) {
+    await prisma.absence.create({
+      data: {
+        employeeId,
+        type: "SICK",
+        source: "MANUAL",
+        startDate: new Date(ha.date + "T00:00:00Z"),
+        endDate: new Date(ha.date + "T00:00:00Z"),
+        days: 0.5,
+        halfDay: true,
+        createdBy: employeeId,
+      },
+    });
+  }
+
   // PublicHoliday rows
   for (const h of cell.holidays ?? []) {
     await prisma.publicHoliday.create({
@@ -1437,7 +1520,7 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
         });
         const absences = await app.prisma.absence.findMany({
           where: { employeeId, deletedAt: null },
-          select: { startDate: true, endDate: true, type: true, source: true },
+          select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
         });
         const tc = await app.prisma.tenantConfig.findFirst({ where: { tenantId } });
 
@@ -1506,7 +1589,7 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
     });
     const absences = await app.prisma.absence.findMany({
       where: { employeeId, deletedAt: null },
-      select: { startDate: true, endDate: true, type: true, source: true },
+      select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
     });
     const approvedLeave = await app.prisma.leaveRequest.findMany({
       where: { employeeId, status: "APPROVED", deletedAt: null },
