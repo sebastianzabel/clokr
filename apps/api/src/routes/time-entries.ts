@@ -1866,21 +1866,14 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     rangeStart = new Date(lastSnapshot.periodEnd.getTime() + 86400000);
     snapshotCarryOver = lastSnapshot.carryOver;
   } else {
-    // Kein Snapshot: ab Monatsanfang oder Eintrittsdatum.
-    // Normalize to the tenant-local FIRST DAY as UTC midnight — the raw monthRangeUtc
-    // timestamp casts to the previous month's last day on @db.Date filters for UTC+
-    // tenants (boundary-day double count).
-    const zonedNow = new Date(dateStrInTz(now, tz) + "T12:00:00Z");
-    const { start: monthStartTs } = monthRangeUtc(
-      zonedNow.getUTCFullYear(),
-      zonedNow.getUTCMonth() + 1,
-      tz,
-    );
-    const monthFirstDay = new Date(dateStrInTz(monthStartTs, tz) + "T00:00:00Z");
+    // No non-superseded snapshot: recompute from hireDate so that reopen of the
+    // only/earliest snapshot includes the full employment history (D-05 fix).
+    // Using currentMonthFirstDay as rangeStart would exclude all history before the
+    // current calendar month — the root cause of the reopen→0 saldo bug (SALDO-09).
     const hireDateNorm = employee?.hireDate
       ? new Date(dateStrInTz(employee.hireDate, tz) + "T00:00:00Z")
       : null;
-    rangeStart = hireDateNorm && hireDateNorm > monthFirstDay ? hireDateNorm : monthFirstDay;
+    rangeStart = hireDateNorm ?? new Date(0); // epoch fallback if hireDate is null
   }
 
   // Determine cutoff: include today only if entries exist
