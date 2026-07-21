@@ -50,6 +50,7 @@ type LeaveRequestWithType = {
   endDate: Date;
   status: string;
   deletedAt: Date | null;
+  halfDay: boolean;
   attestPresent: boolean;
   attestValidFrom: Date | null;
   attestValidTo: Date | null;
@@ -225,7 +226,7 @@ function computeEmployeeSummary(
   function daysForTypeName(typeName: string): number {
     return emp.leaveRequests
       .filter((lr) => lr.leaveType.name === typeName)
-      .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate), 0);
+      .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1), 0);
   }
 
   // ── Worked hours ─────────────────────────────────────────────────────────
@@ -242,7 +243,9 @@ function computeEmployeeSummary(
   const absenceMin = isMonthlyHours
     ? 0
     : emp.leaveRequests.reduce(
-        (sum, lr) => sum + calcAbsenceMinutes(emp.workSchedules, lr.startDate, lr.endDate),
+        (sum, lr) =>
+          sum +
+          calcAbsenceMinutes(emp.workSchedules, lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1),
         0,
       );
   const shouldMin = Math.max(0, rawShouldMin - absenceMin);
@@ -271,11 +274,12 @@ function computeEmployeeSummary(
   let sickDaysWithoutAttest = 0; // seeded from LeaveRequests only (not Absence) to avoid double-count
 
   for (const lr of sickLeaveRequests) {
-    const totalDays = daysInRange(lr.startDate, lr.endDate);
+    const factor = lr.halfDay ? 0.5 : 1;
+    const totalDays = daysInRange(lr.startDate, lr.endDate) * factor;
     if (lr.attestPresent && lr.attestValidFrom && lr.attestValidTo) {
       const attestFrom = lr.attestValidFrom > lr.startDate ? lr.attestValidFrom : lr.startDate;
       const attestTo = lr.attestValidTo < lr.endDate ? lr.attestValidTo : lr.endDate;
-      const attestDays = daysInRange(attestFrom, attestTo);
+      const attestDays = daysInRange(attestFrom, attestTo) * factor;
       sickDaysWithAttest += attestDays;
       sickDaysWithoutAttest += Math.max(0, totalDays - attestDays);
     } else if (lr.attestPresent) {
@@ -289,7 +293,7 @@ function computeEmployeeSummary(
   const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
   const nonSickLeave = emp.leaveRequests.filter((lr) => !SICK_NAMES.includes(lr.leaveType.name));
   const totalAbsenceDays = nonSickLeave.reduce(
-    (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate),
+    (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1),
     0,
   );
   const vacationDays = daysForTypeName("Urlaub");

@@ -924,6 +924,196 @@ describe("Reports API", () => {
     });
   });
 
+  // ── halfDay weighting in monthly report (76.32.1-partA) ─────────────────
+  describe("GET /api/v1/reports/monthly — halfDay weighting", () => {
+    let hdData: Awaited<ReturnType<typeof seedTestData>>;
+    let sickLeaveTypeId: string;
+    let vacationTypeIdHd: string;
+
+    // Fixed test month: April 2026 (Mon–Fri workdays, no German public holiday issues)
+    // Mon 2026-04-06, Wed 2026-04-08, Fri 2026-04-10 are normal workdays.
+    const YEAR = 2026;
+    const MONTH = 4;
+
+    beforeAll(async () => {
+      hdData = await seedTestData(app, "hd");
+      const prisma = app.prisma;
+
+      // Create Krankmeldung leave type
+      const sickType = await prisma.leaveType.create({
+        data: {
+          tenantId: hdData.tenant.id,
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF0000",
+        },
+      });
+      sickLeaveTypeId = sickType.id;
+      vacationTypeIdHd = hdData.vacationType.id;
+
+      // Seed 3 half-day sick leave requests on Mon/Wed/Fri of the same week
+      // halfDay=true, days=0.5, startDate==endDate (single day)
+      const halfDayDates = [
+        new Date("2026-04-06"), // Monday
+        new Date("2026-04-08"), // Wednesday
+        new Date("2026-04-10"), // Friday
+      ];
+      for (const d of halfDayDates) {
+        await prisma.leaveRequest.create({
+          data: {
+            employeeId: hdData.employee.id,
+            leaveTypeId: sickLeaveTypeId,
+            startDate: d,
+            endDate: d,
+            days: 0.5,
+            halfDay: true,
+            status: "APPROVED",
+          },
+        });
+      }
+
+      // Seed 1 full-day sick leave request (regression guard: must count as 1)
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: hdData.employee.id,
+          leaveTypeId: sickLeaveTypeId,
+          startDate: new Date("2026-04-13"), // Monday next week
+          endDate: new Date("2026-04-13"),
+          days: 1,
+          halfDay: false,
+          status: "APPROVED",
+        },
+      });
+
+      // Seed 1 half-day vacation (Urlaub) to verify daysForTypeName also applies factor
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: hdData.employee.id,
+          leaveTypeId: vacationTypeIdHd,
+          startDate: new Date("2026-04-14"), // Tuesday
+          endDate: new Date("2026-04-14"),
+          days: 0.5,
+          halfDay: true,
+          status: "APPROVED",
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await cleanupTestData(app, hdData.tenant.id);
+    });
+
+    it("HD-01: 3 half-day sick leave requests → sickDays === 1.5 (not 3)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // With the bug: sickDays === 3 (each halfDay counted as 1)
+      // After fix:   sickDays === 1.5 (each halfDay counted as 0.5)
+      // The full-day sick on 2026-04-13 is also in April, so total = 1.5 + 1 = 2.5
+      expect(row.sickDays).toBe(2.5);
+      expect(row.sickDaysWithoutAttest).toBe(2.5);
+      expect(row.sickDaysWithAttest).toBe(0);
+    });
+
+    it("HD-02: shouldHours is reduced by half a daily Soll for each halfDay sick (not a full day)", async () => {
+      // Employee schedule: 8h/day Mon-Fri.
+      // April 2026 Mon-Fri workdays (excluding 2026-04-06 Mon, 2026-04-08 Wed, 2026-04-10 Fri,
+      // 2026-04-13 Mon, 2026-04-14 Tue as leave days):
+      // April has workdays: 1,2,3(Thu/Fri skipped — wait, Apr1=Wed, let's compute):
+      // 2026-04-01 Wed, 02 Thu, 03 Fri, (6 Mon, 7 Tue, 8 Wed, 9 Thu, 10 Fri),
+      // (13 Mon, 14 Tue, 15 Wed, 16 Thu, 17 Fri), (20 Mon..24 Fri), (27 Mon..30 Thu)
+      // Total workdays in April 2026: 22 days → raw Soll = 22 * 8h = 176h
+      // Absence deduction:
+      //   3 half-day sick: 3 * 4h = 12h (correct) vs 3 * 8h = 24h (bug)
+      //   1 full-day sick: 1 * 8h = 8h
+      //   1 half-day vacation: 1 * 4h = 4h (correct) vs 1 * 8h = 8h (bug)
+      // Total correct deduction: 12 + 8 + 4 = 24h → shouldHours = 176 - 24 = 152h
+      // Bug deduction: 24 + 8 + 8 = 40h → shouldHours = 176 - 40 = 136h
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // After fix: shouldHours === 152
+      // With bug:  shouldHours === 136
+      expect(row.shouldHours).toBe(152);
+    });
+
+    it("HD-03: regression guard — full-day sick still counts as 1 in sickDays total", async () => {
+      // We verify the full-day sick (2026-04-13) is unaffected.
+      // We only look at it by seeding a fresh tenant with just the full-day sick entry.
+      const fdData = await seedTestData(app, "hd-fd");
+      const prisma = app.prisma;
+      const fdSickType = await prisma.leaveType.create({
+        data: {
+          tenantId: fdData.tenant.id,
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#FF0000",
+        },
+      });
+      await prisma.leaveRequest.create({
+        data: {
+          employeeId: fdData.employee.id,
+          leaveTypeId: fdSickType.id,
+          startDate: new Date("2026-04-13"),
+          endDate: new Date("2026-04-13"),
+          days: 1,
+          halfDay: false,
+          status: "APPROVED",
+        },
+      });
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${fdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${fdData.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        const row = body.rows.find(
+          (r: { employeeId: string }) => r.employeeId === fdData.employee.id,
+        );
+        expect(row).toBeDefined();
+        expect(row.sickDays).toBe(1);
+      } finally {
+        await cleanupTestData(app, fdData.tenant.id);
+      }
+    });
+
+    it("HD-04: half-day vacation → vacationDays === 0.5 (not 1)", async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly?employeeId=${hdData.employee.id}&year=${YEAR}&month=${MONTH}`,
+        headers: { authorization: `Bearer ${hdData.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      const row = body.rows.find(
+        (r: { employeeId: string }) => r.employeeId === hdData.employee.id,
+      );
+      expect(row).toBeDefined();
+      // After fix: vacationDays === 0.5; with bug: 1
+      expect(row.vacationDays).toBe(0.5);
+    });
+  });
+
   // ── GET /api/v1/reports/leave-overview — pendingDays (RPT-02) ────────────
   describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
     let pendingData: Awaited<ReturnType<typeof seedTestData>>;
