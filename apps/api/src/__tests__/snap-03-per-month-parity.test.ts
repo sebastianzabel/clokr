@@ -599,6 +599,161 @@ describe("SNAP-03-A — prod-repro: SHIFT_BASED Apr-snapshot + open May+June →
   }, 120_000);
 });
 
+// ── Describe GT-09: SHIFT_BASED month-boundary byte-identical parity (76.39) ──
+//
+// D-07: the live current-partial-month path now calls closeEmployeeMonth() with a
+// rosterProration struct instead of the former ~400-line inline replica. These two
+// anchors pin the refactor:
+//   GT-09-a — at MONTH END (effectiveEnd = monthLastDay), rosterToDate == rosterPeriod
+//             → proration factor = 1 → byte-identical to closeEmployeeMonth(full month,
+//             no proration). Tolerance 0.
+//   GT-09-b — MID-MONTH (effectiveEnd < monthLastDay), the live balance == a single
+//             closeEmployeeMonth(monthLastDay=effectiveEnd, rosterProration={...}) call.
+//
+// Both were RED before the core gained the rosterProration passthrough + the caller
+// refactor (the inline replica and the core diverged); GREEN after 76.39.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("GT-09 — SHIFT_BASED month-boundary byte-identical parity (Phase 76.39, D-07)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  // No prior snapshot → recompute from hireDate. hireDate = Jul 1 so the ONLY open
+  // month is July → the partial-month closeEmployeeMonth call is the whole saldo.
+  const JULY_ALL_SHIFTS = monFriDates("2026-07-01", "2026-07-31");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const fixture = await createIsolatedTenant(
+      app,
+      "gt09-shift-boundary",
+      {
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        mondayHours: 7.6,
+        tuesdayHours: 7.6,
+        wednesdayHours: 7.6,
+        thursdayHours: 7.6,
+        fridayHours: 7.6,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+      },
+      new Date("2026-07-01T00:00:00Z"), // hireDate = Jul 1 → July is the only open month
+    );
+    tenantId = fixture.tenantId;
+    empId = fixture.empId;
+
+    // Full July roster + entries (balanced-ish; some over/undertime for signal).
+    for (const d of JULY_ALL_SHIFTS) {
+      await seedShift(app, empId, d, 456);
+    }
+    for (const d of JULY_ALL_SHIFTS) {
+      await seedEntry(app, empId, d, 456);
+    }
+  }, 300_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("GT-09 cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  // Shared helper: compute the SHIFT_BASED closeEmployeeMonth reference for a given
+  // partial window end, replicating exactly what the live path threads (monthEnd =
+  // full-month end for C_net, monthLastDay = effectiveEnd, rosterProration).
+  async function shiftCloseReference(
+    effectiveEndStr: string,
+    withProration: boolean,
+  ): Promise<number> {
+    const { start: julStart, end: julEnd } = monthRangeUtc(2026, 7, TZ);
+    const { firstDay: julFirstDay, lastDay: julLastDay } = monthDayBounds(julStart, julEnd, TZ);
+    const effectiveEnd = new Date(effectiveEndStr + "T00:00:00Z");
+
+    const schedule = await app.prisma.workSchedule.findFirst({ where: { employeeId: empId } });
+    const emp = await app.prisma.employee.findUnique({ where: { id: empId } });
+
+    const allJulShifts = await app.prisma.shift.findMany({
+      where: { employeeId: empId, deletedAt: null, date: { gte: julFirstDay, lte: julLastDay } },
+      select: { date: true, startTime: true, endTime: true },
+    });
+    const toDateShifts = allJulShifts.filter((s) => s.date <= effectiveEnd);
+    const entries = await app.prisma.timeEntry.findMany({
+      where: { employeeId: empId, deletedAt: null, date: { gte: julFirstDay, lte: effectiveEnd } },
+      select: { date: true, startTime: true, endTime: true, breakMinutes: true },
+    });
+
+    // netto = 456 per shift (breakOverride=0, brutto=456<6h→no break) — R_toDate/R_period.
+    const netto = (list: typeof allJulShifts) => list.length * 456;
+
+    const holidays = filterHolidaySet(
+      buildHolidaySet(2026),
+      dateStrInTz(julFirstDay, TZ),
+      dateStrInTz(effectiveEnd, TZ),
+    );
+
+    const result = closeEmployeeMonth({
+      employeeId: empId,
+      monthStart: julStart,
+      monthEnd: julEnd, // full-month end (SHIFT_BASED C_net Soll)
+      monthFirstDay: julFirstDay,
+      monthLastDay: effectiveEnd, // partial window
+      tz: TZ,
+      carryOverIn: 0,
+      schedule: schedule as Record<string, unknown>,
+      hireDate: emp!.hireDate,
+      exitDate: null,
+      isTimeTrackingExempt: false,
+      breakOver6hOverride: 0,
+      breakOver9hOverride: 0,
+      entries: entries.map((e) => ({
+        date: e.date,
+        startTime: e.startTime,
+        endTime: e.endTime!,
+        breakMinutes: e.breakMinutes ?? 0,
+      })),
+      shifts: allJulShifts.filter((s) => s.date <= effectiveEnd),
+      approvedLeave: [],
+      absences: [],
+      holidayDateStrings: holidays,
+      tenantConfig: { defaultBreakOver6h: 0, defaultBreakOver9h: 0 },
+      rosterProration: withProration
+        ? { rosterToDateMinutes: netto(toDateShifts), rosterPeriodMinutes: netto(allJulShifts) }
+        : undefined,
+    });
+    return result.balanceMinutes;
+  }
+
+  it("GT-09-a: SHIFT_BASED at month end — live == closeEmployeeMonth(full month, no proration), byte-identical", async () => {
+    // effectiveEnd = Jul 31 (LIVE_NOW Jul 31 with entries → today included).
+    const liveMin = await liveBalanceMinutesAt(app, empId, "2026-07-31T20:00:00.000Z");
+    // At month end rosterToDate == rosterPeriod → proration factor 1 → identical to no-proration.
+    const refNoProration = await shiftCloseReference("2026-07-31", false);
+    const refWithProration = await shiftCloseReference("2026-07-31", true);
+    // Both references must agree (factor 1) AND live must be byte-identical to them.
+    expect(refWithProration).toBe(refNoProration);
+    expect(
+      Math.abs(liveMin - refNoProration),
+      `GT-09-a byte-identical: live(${liveMin}) vs close(${refNoProration})`,
+    ).toBe(0);
+  }, 120_000);
+
+  it("GT-09-b: SHIFT_BASED mid-month — live == closeEmployeeMonth(monthLastDay=effectiveEnd, rosterProration)", async () => {
+    // LIVE_NOW = Jul 16 (no Jul-16 entries? there ARE entries every workday) → today included
+    // if Jul-16 is a workday with an entry. Jul-16 2026 is a Thursday → has entry → effectiveEnd = Jul 16.
+    const liveMin = await liveBalanceMinutesAt(app, empId, "2026-07-16T20:00:00.000Z");
+    const ref = await shiftCloseReference("2026-07-16", true);
+    expect(
+      Math.abs(liveMin - ref),
+      `GT-09-b mid-month proration: live(${liveMin}) vs close(${ref})`,
+    ).toBeLessThan(5);
+  }, 120_000);
+});
+
 // ── Describe B.1: parity-by-construction (SHIFT_BASED) ───────────────────────
 
 describe("SNAP-03-B1 — parity-by-construction: SHIFT_BASED live==Σcloses (<5min tolerance)", () => {
