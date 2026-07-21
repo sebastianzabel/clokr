@@ -1781,3 +1781,191 @@ describe.each(CELLS)("golden matrix — $id", (cell) => {
     }
   }, 120_000);
 });
+
+// ── GT-08: reopen of earliest snapshot → live saldo == cumulative, not 0 ─────
+//
+// RED-first anchor (Phase 76.33 — SALDO-09 D-05/D-10).
+// Bug: after unlock-month marks the only snapshot as superseded, updateOvertimeAccount
+// enters the `else` branch and resolves rangeStart = currentMonthFirstDay instead of
+// hireDate, excluding all employment history before the current month → balanceHours
+// drifts away from the correct cumulative value.
+//
+// Fix: `else` branch resolves rangeStart = hireDateNorm ?? epoch (see time-entries.ts).
+// The test seeds exactly ONE closed snapshot (January), no prior snapshots. After unlock,
+// lastSnapshot === null, triggering the bug. The correct live balance at 2026-02-16 is:
+//   Jan open (closed month treated as open range): +480 min (+8h, 22 entries incl holiday day)
+//   Feb 1–15 partial (10 workdays, 0 entries): −4800 min (−80h)
+//   Total: −4320 min = −72h  ← the non-buggy value
+// The buggy code (rangeStart = 2026-02-01) produces Feb-only: −4800 min = −80h.
+// The assertion toBeCloseTo(−72, 1) is RED against buggy code (−80 ≠ −72) and GREEN after fix.
+describe("GT-08 — reopen earliest snapshot: live saldo == cumulative, not Feb-only", () => {
+  let gt08App: FastifyInstance;
+  let gt08Tenant: string;
+
+  afterAll(async () => {
+    if (!gt08App || !gt08Tenant) return;
+    try {
+      await cleanupTestData(gt08App, gt08Tenant);
+    } catch (err) {
+      console.error("GT-08 cleanup:", err);
+    }
+    vi.useRealTimers();
+  });
+
+  it.fails(
+    "GT-08: after unlock of only snapshot, balanceHours == cumulative (not Feb-only partial)",
+    async () => {
+      gt08App = await getTestApp();
+      const app = gt08App;
+      const prisma = app.prisma;
+      const s = `gm-gt08-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+
+      // ── Seed ────────────────────────────────────────────────────────────────
+      const tenant = await prisma.tenant.create({
+        data: { name: "GM GT-08", slug: s, federalState: "NIEDERSACHSEN" },
+      });
+      gt08Tenant = tenant.id;
+      await prisma.tenantConfig.create({
+        data: { tenantId: gt08Tenant, defaultVacationDays: 30, timezone: TZ },
+      });
+
+      // Admin user + employee (required for HTTP close/unlock endpoints)
+      const adminUser = await prisma.user.create({
+        data: {
+          email: `admin-${s}@test.invalid`,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "ADMIN",
+          isActive: true,
+        },
+      });
+      const adminEmp = await prisma.employee.create({
+        data: {
+          tenantId: gt08Tenant,
+          userId: adminUser.id,
+          employeeNumber: `ADM-${s}`,
+          firstName: "Admin",
+          lastName: "GT08",
+          hireDate: new Date("2024-01-01T00:00:00Z"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: adminEmp.id,
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01T00:00:00Z"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: adminEmp.id, balanceHours: 0 } });
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: `admin-${s}@test.invalid`, password: "test1234" },
+      });
+      const adminToken = JSON.parse(loginRes.body).accessToken;
+
+      // Employee: hireDate = 2026-01-01 — NO prior snapshot (precondition for the bug).
+      const empUser = await prisma.user.create({
+        data: {
+          email: `emp-${s}@test.invalid`,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId: gt08Tenant,
+          userId: empUser.id,
+          employeeNumber: `T-${s}`,
+          firstName: "Test",
+          lastName: "GT08",
+          hireDate: new Date("2026-01-01T00:00:00Z"),
+          breakOver6hOverride: 0,
+          breakOver9hOverride: 0,
+        },
+      });
+      const employeeId = emp.id;
+
+      await prisma.workSchedule.create({
+        data: {
+          employeeId,
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          workDays: [1, 2, 3, 4, 5],
+          overtimeMode: "CARRY_FORWARD",
+          validFrom: new Date("2026-01-01T00:00:00Z"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId, balanceHours: 0 } });
+
+      // 22 Mo-Fr entries in Jan 2026 (including Jan 01 / Neujahr), all at 480 net min.
+      // Neujahr is a NI holiday — close-month will subtract it from expected (10080 expected).
+      // Worked = 22 × 480 = 10560. Balance = 10560 − 10080 = +480 min = +8h.
+      for (const d of JAN_MO_FR) {
+        await prisma.timeEntry.create({
+          data: {
+            employeeId,
+            date: new Date(d + "T00:00:00Z"),
+            startTime: new Date(d + "T08:00:00Z"),
+            endTime: new Date(d + "T16:00:00Z"),
+            breakMinutes: 0,
+            type: "WORK",
+          },
+        });
+      }
+
+      // ── Close January ────────────────────────────────────────────────────────
+      // Creates the ONLY SaldoSnapshot (superseded: false).
+      const closeRes = await closeMonth(app, adminToken, employeeId, 2026, 1, liveNowIso(2026, 1));
+      expect(closeRes.statusCode, `close-month: ${closeRes.body}`).toBe(201);
+
+      // Exactly one non-superseded snapshot must exist.
+      const snapCount = await prisma.saldoSnapshot.count({
+        where: { employeeId, periodType: "MONTHLY", superseded: false },
+      });
+      expect(snapCount, "exactly one snapshot before unlock").toBe(1);
+
+      // ── Unlock January ───────────────────────────────────────────────────────
+      // Marks the snapshot superseded: true. updateOvertimeAccount runs post-commit.
+      const unlockRes = await unlockMonth(app, adminToken, employeeId, 2026, 1);
+      expect(unlockRes.statusCode, `unlock-month: ${unlockRes.body}`).toBe(200);
+
+      // After unlock: lastSnapshot === null (no non-superseded snapshots remain).
+      const remainingNonSuperseded = await prisma.saldoSnapshot.count({
+        where: { employeeId, periodType: "MONTHLY", superseded: false },
+      });
+      expect(remainingNonSuperseded, "no non-superseded snapshots after unlock").toBe(0);
+
+      // ── Assert: live balance at 2026-02-16 must equal cumulative, not Feb-only ──
+      // Correct cumulative at 2026-02-16:
+      //   Jan complete month: +480 min (+8h, 22 worked − 21 expected due to Neujahr holiday)
+      //   Feb 1–15 partial (10 Mo-Fr workdays, 0 entries): −4800 min (−80h gap)
+      //   Total: −4320 min = −72h
+      //
+      // Bug (rangeStart = 2026-02-01): Feb-only = −4800 min = −80h ≠ −72h → RED.
+      // Fix (rangeStart = 2026-01-01): cumulative = −4320 min = −72h → GREEN.
+      const balance = await liveBalanceAt(app, employeeId, liveNowIso(2026, 1));
+      // Expected: −72h (−4320 min / 60). Tolerance 1 decimal = ±0.05h.
+      expect(
+        balance,
+        "GT-08: live balance must be −72h (cumulative from hireDate), not −80h (Feb-only)",
+      ).toBeCloseTo(-72, 1);
+    },
+    120_000,
+  );
+});
