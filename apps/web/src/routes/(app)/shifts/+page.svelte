@@ -1631,7 +1631,12 @@
                 class="sp-soll-label"
                 aria-label="Soll-Korrelation für {u.firstName} {u.lastName}"
               >
-                <div class="sp-soll-sublabel">↳ Soll-Korrelation</div>
+                <div
+                  class="sp-soll-sublabel"
+                  title="Soll = Ø-Methode − Urlaub/Abwesenheit/Feiertag + Berufsschule (Berufsschule zählt als erfüllte Arbeitszeit)"
+                >
+                  ↳ Soll-Korrelation
+                </div>
               </div>
               <div
                 class="sp-soll-cell sp-soll-cell--{sr.klass}"
