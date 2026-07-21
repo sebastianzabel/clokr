@@ -80,6 +80,12 @@ export interface SlotLayerInputs {
     bsSlotSecondLongDayMinutes: number | null;
     bsSlotShortDayMinutes: number | null;
     bsSlotBlockWeekMinutes: number | null;
+    /**
+     * Legacy Phase 63 pauschal. As of owner decision 2026-07-21 this is NO LONGER
+     * consumed by the FIRST_LONG_DAY chain (it shadowed the §15 daily Soll). Kept in
+     * the interface for call-site compatibility; only a value passed via
+     * bsSlotFirstLongDayMinutes (layer 3) can now drive a flat FIRST credit.
+     */
     vocationalSchoolMinutesPerDay: number | null;
     vocationalSchoolBlockMinutesPerWeek: number | null;
   };
@@ -95,18 +101,24 @@ export interface SlotLayerInputs {
 // ── Hierarchy builder ─────────────────────────────────────────────────────────
 
 /**
- * Walks the Employee > Pattern > TenantConfig > legacy field > daily-Soll chain to
- * produce a resolved hierarchy. Pure function (no Prisma).
+ * Walks the Employee > Pattern > TenantConfig > daily-Soll chain to produce a
+ * resolved hierarchy. Pure function (no Prisma).
  *
  * FIRST_LONG_DAY precedence (highest to lowest):
  *   1. Employee.bsSlotFirstLongDayMinutes  (per-MA override — BBIG-V19-03)
  *   2. Pattern.bsSlotFirstLongDayMinutes   (per-pattern override — BBIG-V19-02)
  *   3. TenantConfig.bsSlotFirstLongDayMinutes  (tenant-level config — BBIG-V19-01)
- *   4. TenantConfig.vocationalSchoolMinutesPerDay
- *      (legacy tenant default — backward-compat with Phase 63 pauschal)
- *   5. inputs.dailySollMinutes  ← Phase 76.31 D-02 DIVERGENCE: individual daily Soll,
- *      NOT the flat BS_DAILY_DEFAULT_MIN (480). The LONG day credits the individual's
- *      daily contractual Soll so a 38h/4-day Azubi gets 570 min, not 480.
+ *   4. inputs.dailySollMinutes  ← DEFAULT: the individual daily Soll per §15 Abs. 2
+ *      Nr. 2 BBiG ("durchschnittliche tägliche Ausbildungszeit"), NOT the flat
+ *      BS_DAILY_DEFAULT_MIN (480). A 38h/4-day Azubi gets 570 min, a 38h/5-day Azubi
+ *      456 min. Only the 40h/5-day case coincidentally equals 480.
+ *
+ * Owner decision 2026-07-21 (BS-FIRST-LONG-DAY-DEFAULT-DECISION.md): the legacy
+ * NOT-NULL `vocationalSchoolMinutesPerDay` @default(480) was REMOVED from this chain.
+ * As a NOT-NULL column it always shadowed the daily Soll, silently re-flattening the
+ * §15-mandated individual credit to the pre-2020 pauschal (abolished by BVaDiG). A
+ * tenant that genuinely wants a flat pauschal must set it explicitly via
+ * `bsSlotFirstLongDayMinutes` (layer 3) — surfaced in the Config-UI (Phases 76.35-37).
  *
  * BLOCK_WEEK precedence (unchanged from Phase 83): Employee > Pattern > TenantConfig >
  *   vocationalSchoolBlockMinutesPerWeek > BS_BLOCK_WEEKLY_DEFAULT_MIN (2400).
@@ -124,8 +136,7 @@ export function buildSlotOverrideHierarchy(inputs: SlotLayerInputs): SlotOverrid
     employee?.bsSlotFirstLongDayMinutes ??
     pattern?.bsSlotFirstLongDayMinutes ??
     tenantConfig.bsSlotFirstLongDayMinutes ??
-    tenantConfig.vocationalSchoolMinutesPerDay ??
-    inputs.dailySollMinutes; // Phase 76.31 D-02 divergence: daily Soll, NOT BS_DAILY_DEFAULT_MIN
+    inputs.dailySollMinutes; // §15 Abs. 2 Nr. 2 BBiG: individual daily Soll is the default (NOT flat 480)
 
   const blockWeekMinutes =
     employee?.bsSlotBlockWeekMinutes ??
@@ -201,8 +212,8 @@ export function resolveBsTagSlot(
     };
   }
 
-  // FIRST_LONG_DAY: pauschal credit from firstLongDayMinutes (hierarchy layer 1-5,
-  // final fallback = individual daily Soll per Phase 76.31 D-02).
+  // FIRST_LONG_DAY: credit from firstLongDayMinutes (hierarchy layers 1-4,
+  // default = individual daily Soll per §15 Abs. 2 Nr. 2 BBiG).
   if (clampedOrdinal === 1) {
     return {
       slotType: "FIRST_LONG_DAY",
