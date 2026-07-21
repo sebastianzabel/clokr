@@ -1251,9 +1251,6 @@ export async function shiftRoutes(app: FastifyInstance) {
         },
       });
 
-      const leaveMinutesByEmp: Record<string, number> = {};
-      const absenceMinutesByEmp: Record<string, number> = {};
-
       // Per-employee schedule index for O(1) lookup.
       const scheduleByEmp = new Map<string, Record<string, unknown>>();
       for (const emp of employees) {
@@ -1271,14 +1268,71 @@ export async function shiftRoutes(app: FastifyInstance) {
         return { start, end };
       }
 
+      // ── Phase 76.32 (D-08) — gesetzliche Feiertage per federal state for the visible week ──
+      // NOTE: this is DISTINCT from SchoolHolidayPeriod/resolveHoliday (BS-Ferien = Schulferien).
+      // We merge computed holidays (getHolidays — Gauss algorithm, all 16 Bundesländer) with
+      // tenant-specific DB overrides (PublicHoliday). Pattern mirrors overtime.ts:908-931.
+      // Cross-year guard: when the visible week spans a year boundary (e.g. Mon 2026-12-28 →
+      // Sun 2027-01-03), we must query getHolidays for BOTH years so Neujahr is not missed.
+      //
+      // MUST be built before the leave/absence loops so that empHolidaySet is available
+      // for the calcLeaveAbsenceMinutesTz calls (WR-02 fix).
+      const weekYearStart = monday.getUTCFullYear();
+      const weekYearEnd = new Date(weekDays[6] + "T00:00:00Z").getUTCFullYear();
+      const neededFsValues = new Set([defaultFederalState, ...empFederalState.values()]);
+      const dbWeekHolidays = await app.prisma.publicHoliday.findMany({
+        where: { tenantId, date: { gte: monday, lte: sunday } },
+      });
+      // WR-01 fix: memo keyed by fs (FederalState enum), NOT sc (state code string).
+      // DB PublicHoliday rows are filtered to the bucket's own federalState so a
+      // BAYERN-only holiday does NOT leak into a NIEDERSACHSEN employee's holiday set.
+      const holidaySetByFs = new Map<typeof defaultFederalState, Set<string>>();
+      const weekHolidaysByState = new Map<typeof defaultFederalState, Set<string>>();
+      for (const fs of neededFsValues) {
+        if (!holidaySetByFs.has(fs)) {
+          const sc = STATE_MAP[fs] ?? "NI";
+          const computedStart = getHolidays(weekYearStart, sc)
+            .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
+            .map((h) => h.date);
+          // Include next year's holidays when the week spans a year boundary.
+          const computedEnd =
+            weekYearEnd !== weekYearStart
+              ? getHolidays(weekYearEnd, sc)
+                  .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
+                  .map((h) => h.date)
+              : [];
+          // WR-01: filter DB overrides to this bucket's federalState only.
+          const db = dbWeekHolidays
+            .filter((h) => h.federalState === fs)
+            .map((h) => dateStrInTz(h.date, tenantTz));
+          holidaySetByFs.set(fs, new Set([...computedStart, ...computedEnd, ...db]));
+        }
+        weekHolidaysByState.set(fs, holidaySetByFs.get(fs)!);
+      }
+
+      // Helper: per-employee holiday set (federal-state-aware) — used in leave/absence
+      // credit loops (WR-02) and contractSollMinutesByEmp loop below.
+      function getEmpHolidaySet(employeeId: string): Set<string> {
+        const fs = empFederalState.get(employeeId) ?? defaultFederalState;
+        return weekHolidaysByState.get(fs) ?? new Set<string>();
+      }
+
+      const leaveMinutesByEmp: Record<string, number> = {};
+      const absenceMinutesByEmp: Record<string, number> = {};
+
       for (const lr of leaveForSoll) {
         const sched = scheduleByEmp.get(lr.employeeId);
         if (!sched) continue;
         const clip = clipToWeek(lr.startDate, lr.endDate);
         if (!clip) continue;
         // Phase 76.12 — Ø-Methode (BAG 9 AZR 406/17). Honors lr.halfDay per D-11.
+        // WR-02 fix: pass excludeHolidays so the leave credit is consistent with
+        // baseSoll (which already excludes holidays via empHolidaySet). Without this,
+        // a leave spanning a Feiertag would count the holiday day as a work-day to
+        // subtract, causing max(0, baseSoll − credit) to over-subtract by one day.
         const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
           halfDay: Boolean(lr.halfDay),
+          excludeHolidays: getEmpHolidaySet(lr.employeeId),
         });
         if (minutes <= 0) continue;
         leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
@@ -1290,42 +1344,12 @@ export async function shiftRoutes(app: FastifyInstance) {
         const clip = clipToWeek(ab.startDate, ab.endDate);
         if (!clip) continue;
         // Phase 76.12 — Ø-Methode. Absence has no halfDay field (schema-confirmed).
-        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz);
+        // WR-02 fix: pass excludeHolidays for the same reason as the leave loop above.
+        const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
+          excludeHolidays: getEmpHolidaySet(ab.employeeId),
+        });
         if (minutes <= 0) continue;
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
-      }
-
-      // ── Phase 76.32 (D-08) — gesetzliche Feiertage per federal state for the visible week ──
-      // NOTE: this is DISTINCT from SchoolHolidayPeriod/resolveHoliday (BS-Ferien = Schulferien).
-      // We merge computed holidays (getHolidays — Gauss algorithm, all 16 Bundesländer) with
-      // tenant-specific DB overrides (PublicHoliday). Pattern mirrors overtime.ts:908-931.
-      // Cross-year guard: when the visible week spans a year boundary (e.g. Mon 2026-12-28 →
-      // Sun 2027-01-03), we must query getHolidays for BOTH years so Neujahr is not missed.
-      const weekYearStart = monday.getUTCFullYear();
-      const weekYearEnd = new Date(weekDays[6] + "T00:00:00Z").getUTCFullYear();
-      const neededFsValues = new Set([defaultFederalState, ...empFederalState.values()]);
-      const dbWeekHolidays = await app.prisma.publicHoliday.findMany({
-        where: { tenantId, date: { gte: monday, lte: sunday } },
-      });
-      const holidaySetByStateCode = new Map<string, Set<string>>();
-      const weekHolidaysByState = new Map<typeof defaultFederalState, Set<string>>();
-      for (const fs of neededFsValues) {
-        const sc = STATE_MAP[fs] ?? "NI";
-        if (!holidaySetByStateCode.has(sc)) {
-          const computedStart = getHolidays(weekYearStart, sc)
-            .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
-            .map((h) => h.date);
-          // Include next year's holidays when the week spans a year boundary.
-          const computedEnd =
-            weekYearEnd !== weekYearStart
-              ? getHolidays(weekYearEnd, sc)
-                  .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
-                  .map((h) => h.date)
-              : [];
-          const db = dbWeekHolidays.map((h) => dateStrInTz(h.date, tenantTz));
-          holidaySetByStateCode.set(sc, new Set([...computedStart, ...computedEnd, ...db]));
-        }
-        weekHolidaysByState.set(fs, holidaySetByStateCode.get(sc)!);
       }
 
       // ── Phase 76.23 — Server-authoritative contract Soll per SHIFT_BASED employee ──
@@ -1346,9 +1370,8 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (String(sched.type ?? "") !== "SHIFT_BASED") continue;
         const wh = Number(sched.weeklyHours ?? 0);
         if (wh <= 0) continue;
-        // D-08: per-employee public-holiday set (federal-state-aware)
-        const fs = empFederalState.get(emp.id) ?? defaultFederalState;
-        const empHolidaySet = weekHolidaysByState.get(fs) ?? new Set<string>();
+        // D-08: per-employee public-holiday set (federal-state-aware) via shared helper.
+        const empHolidaySet = getEmpHolidaySet(emp.id);
         // CR-01 fix: use sundayForSoll (timezone-correct local Sunday 23:59:59)
         // instead of raw UTC sunday to prevent iterateDaysInTz from counting 8
         // days in UTC+ timezones (Europe/Berlin CEST inflated 40h→48h).
