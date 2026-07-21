@@ -259,13 +259,17 @@ export function calcExpectedMinutesTz(
   from: Date,
   to: Date,
   tz: string,
+  excludeHolidays?: Set<string>,
 ): number {
   // SHIFT_BASED: Schichtplan ist führend. Soll = Ø-Methode (BAG 9 AZR 406/17):
   // weeklyHours × workdaysInRange ÷ workDaysPerWeek. For Leave/Absence
   // subtraction, callers MUST use `calcLeaveAbsenceMinutesTz` (same math
   // plus halfDay support). This branch is the full-range Soll-Berechner.
+  // Phase 76.32 (D-08): optional excludeHolidays set — when provided, days
+  // whose "YYYY-MM-DD" is in the set are not counted in workdaysInRange so
+  // gesetzliche Feiertage are deducted from the Planungs-Soll.
   if (String(schedule.type ?? "") === "SHIFT_BASED") {
-    return avgWorkMinutesCore(schedule, from, to, tz);
+    return avgWorkMinutesCore(schedule, from, to, tz, excludeHolidays);
   }
 
   // FLEXTIME: Gleitzeit — Wochenstundensoll, freie Tagesverteilung. Identical
@@ -273,8 +277,9 @@ export function calcExpectedMinutesTz(
   // and do NOT affect the saldo calculation (per Phase 49.1 CONTEXT.md locked
   // decision). Routed through `avgWorkMinutesCore` so SHIFT_BASED + FLEXTIME
   // cannot drift apart (single source of truth).
+  // Phase 76.32 (D-08): excludeHolidays threaded through for consistency.
   if (String(schedule.type ?? "") === "FLEXTIME") {
-    return avgWorkMinutesCore(schedule, from, to, tz);
+    return avgWorkMinutesCore(schedule, from, to, tz, excludeHolidays);
   }
 
   // Minijobber / flexible monthly hours: prorate monthly budget by working-day fraction
