@@ -9,7 +9,9 @@ import {
   weekRangeUtc,
   calcExpectedMinutesTz,
   calcLeaveAbsenceMinutesTz,
+  dateStrInTz,
 } from "../utils/timezone";
+import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { updateOvertimeAccount } from "./time-entries";
 // ARBZG_MARKER_47_4_01
 
@@ -1293,10 +1295,47 @@ export async function shiftRoutes(app: FastifyInstance) {
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }
 
+      // ── Phase 76.32 (D-08) — gesetzliche Feiertage per federal state for the visible week ──
+      // NOTE: this is DISTINCT from SchoolHolidayPeriod/resolveHoliday (BS-Ferien = Schulferien).
+      // We merge computed holidays (getHolidays — Gauss algorithm, all 16 Bundesländer) with
+      // tenant-specific DB overrides (PublicHoliday). Pattern mirrors overtime.ts:908-931.
+      // Cross-year guard: when the visible week spans a year boundary (e.g. Mon 2026-12-28 →
+      // Sun 2027-01-03), we must query getHolidays for BOTH years so Neujahr is not missed.
+      const weekYearStart = monday.getUTCFullYear();
+      const weekYearEnd = new Date(weekDays[6] + "T00:00:00Z").getUTCFullYear();
+      const neededFsValues = new Set([defaultFederalState, ...empFederalState.values()]);
+      const dbWeekHolidays = await app.prisma.publicHoliday.findMany({
+        where: { tenantId, date: { gte: monday, lte: sunday } },
+      });
+      const holidaySetByStateCode = new Map<string, Set<string>>();
+      const weekHolidaysByState = new Map<typeof defaultFederalState, Set<string>>();
+      for (const fs of neededFsValues) {
+        const sc = STATE_MAP[fs] ?? "NI";
+        if (!holidaySetByStateCode.has(sc)) {
+          const computedStart = getHolidays(weekYearStart, sc)
+            .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
+            .map((h) => h.date);
+          // Include next year's holidays when the week spans a year boundary.
+          const computedEnd =
+            weekYearEnd !== weekYearStart
+              ? getHolidays(weekYearEnd, sc)
+                  .filter((h) => h.date >= weekDays[0] && h.date <= weekDays[6])
+                  .map((h) => h.date)
+              : [];
+          const db = dbWeekHolidays.map((h) => dateStrInTz(h.date, tenantTz));
+          holidaySetByStateCode.set(sc, new Set([...computedStart, ...computedEnd, ...db]));
+        }
+        weekHolidaysByState.set(fs, holidaySetByStateCode.get(sc)!);
+      }
+
       // ── Phase 76.23 — Server-authoritative contract Soll per SHIFT_BASED employee ──
       // Mirrors the 76.22 C_net caller-contract EXACTLY so the planner Soll and the
       // saldo Soll agree for the same employee/period (D-02 — no drifting second Soll).
-      // Formula: max(0, calcExpectedMinutesTz − leaveMin − absenceMin) + vocSchoolMin
+      // Formula (Phase 76.32): max(0, calcExpectedMinutesTz(excludeHolidays) − leaveMin − absenceMin)
+      // D-01 (Phase 76.32): vocSchoolMin is NOT added here — BS is already on the Ist/assignedH
+      // side (bsH in +page.svelte). Adding it here caused BS to count twice (Soll inflation).
+      // D-08 (Phase 76.32): empHolidaySet excludes gesetzliche Feiertage from workdaysInRange
+      // so the displayed Planungs-Soll is reduced on holiday weeks.
       // This is the value the frontend MUST render as the Soll — it MUST NOT re-derive
       // the Soll from sched.weeklyHours (D-02). This field is READ-ONLY; it is NEVER
       // written to OvertimeAccount.balanceHours or SaldoSnapshot (D-04, § 615).
@@ -1307,15 +1346,24 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (String(sched.type ?? "") !== "SHIFT_BASED") continue;
         const wh = Number(sched.weeklyHours ?? 0);
         if (wh <= 0) continue;
+        // D-08: per-employee public-holiday set (federal-state-aware)
+        const fs = empFederalState.get(emp.id) ?? defaultFederalState;
+        const empHolidaySet = weekHolidaysByState.get(fs) ?? new Set<string>();
         // CR-01 fix: use sundayForSoll (timezone-correct local Sunday 23:59:59)
         // instead of raw UTC sunday to prevent iterateDaysInTz from counting 8
         // days in UTC+ timezones (Europe/Berlin CEST inflated 40h→48h).
-        const baseSoll = calcExpectedMinutesTz(sched, monday, sundayForSoll, tenantTz);
+        // D-08: pass empHolidaySet so Feiertage are excluded from workdaysInRange.
+        const baseSoll = calcExpectedMinutesTz(
+          sched,
+          monday,
+          sundayForSoll,
+          tenantTz,
+          empHolidaySet,
+        );
         const leaveMin = leaveMinutesByEmp[emp.id] ?? 0;
         const absenceMin = absenceMinutesByEmp[emp.id] ?? 0;
-        const vocSchoolMin = vocationalSchoolMinutesByEmp[emp.id] ?? 0;
-        contractSollMinutesByEmp[emp.id] =
-          Math.max(0, baseSoll - leaveMin - absenceMin) + vocSchoolMin;
+        // D-01: vocSchoolMin removed — bsH is already on assignedH (Ist) side in the frontend.
+        contractSollMinutesByEmp[emp.id] = Math.max(0, baseSoll - leaveMin - absenceMin);
       }
 
       // v1.7.4 hotfix — per-(employee × day) SchoolHolidayPeriod info. Emitted
