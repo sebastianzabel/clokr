@@ -1326,12 +1326,13 @@ describe("closeEmployeeMonth — case 9: SHIFT_BASED + VOCATIONAL_SCHOOL parity 
       where: { employeeId: empId, deletedAt: null },
       select: { startDate: true, endDate: true, type: true, source: true },
     });
-    // Phase 76.31 (B): the slot resolver's FIRST_LONG_DAY fallback is the individual daily
-    // Soll (456 for 38h/5-day here) UNLESS the legacy tenantConfig.vocationalSchoolMinutesPerDay
-    // (schema @default 480) wins. The manual-close path (overtime.ts) threads the real
-    // tenantConfig, so this parity pin MUST pass the SAME tenantConfig to the core call —
-    // otherwise the two sides diverge (null → 456 vs config → 480). This is a genuine
-    // byte-identical parity assertion: identical inputs → identical outputs.
+    // Phase 76.31 (B) + owner decision 2026-07-21: the slot resolver's FIRST_LONG_DAY
+    // default is the individual daily Soll (456 for 38h/5-day here). The legacy
+    // tenantConfig.vocationalSchoolMinutesPerDay was REMOVED from the FIRST chain, so it no
+    // longer forces 480. Both the core and the manual-close path (overtime.ts) thread the
+    // SAME tenantConfig, so this parity pin passes the same config to the core call — the
+    // two sides agree regardless of the field's value. This is a genuine byte-identical
+    // parity assertion: identical inputs → identical outputs.
     const closeTenantConfig = await app.prisma.tenantConfig.findFirst({ where: { tenantId } });
 
     const { firstDay, lastDay } = monthDayBounds(MAR_START, MAR_END, TZ);

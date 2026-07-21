@@ -238,7 +238,12 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     expect(result.balanceMinutes).toBe(0);
   });
 
-  it("legacy tenantConfig.vocationalSchoolMinutesPerDay=480, no bsSlot* → 480 (legacy honored)", () => {
+  it("legacy tenantConfig.vocationalSchoolMinutesPerDay=480 does NOT drive FIRST → daily Soll 570 (§15)", () => {
+    // §15 Abs. 2 Nr. 2 BBiG / owner decision 2026-07-21: the legacy NOT-NULL
+    // vocationalSchoolMinutesPerDay was removed from the FIRST_LONG_DAY chain because
+    // it silently shadowed the individual daily Soll. With bsSlot* null, the 38h/4-day
+    // schedule (daily Soll = round(38*60/4) = 570) is credited — NOT the legacy 480.
+    // A tenant that wants a flat pauschal must set bsSlotFirstLongDayMinutes explicitly.
     const input = baseInput({
       absences: oneBsDay,
       tenantConfig: {
@@ -251,8 +256,8 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
-    expect(result.workedMinutes).toBe(baseline.workedMinutes + 480);
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 480);
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + 570);
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 570);
     expect(result.balanceMinutes).toBe(0);
   });
 

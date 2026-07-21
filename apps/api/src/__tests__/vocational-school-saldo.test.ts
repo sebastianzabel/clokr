@@ -170,10 +170,25 @@ describe("getVocationalSchoolMinutesForDate + countBsDaysInIsoWeek (Phase 63 Pla
       expect(min).toBe(480);
     });
 
-    it("BERSCH-03 — single BS-day with tenantConfig daily=360 returns 360", async () => {
+    it("BERSCH-03 — legacy tenantConfig daily=360 no longer drives FIRST_LONG_DAY → coded default 480 (§15)", async () => {
+      // §15 Abs. 2 Nr. 2 BBiG / owner decision 2026-07-21: the legacy
+      // vocationalSchoolMinutesPerDay was removed from the FIRST_LONG_DAY precedence
+      // chain. With no schedule passed, dailySollMinutes falls to BS_DAILY_DEFAULT_MIN
+      // (480). The legacy 360 pauschal is IGNORED for the FIRST slot.
       await seedAbsence(app, data.employee.id, WED);
       const min = await getVocationalSchoolMinutesForDate(app.prisma, data.employee.id, WED, {
         vocationalSchoolMinutesPerDay: 360,
+        vocationalSchoolBlockMinutesPerWeek: 1800,
+      });
+      expect(min).toBe(480);
+    });
+
+    it("BERSCH-03 — explicit bsSlotFirstLongDayMinutes=360 DOES drive FIRST_LONG_DAY → 360 (override path)", async () => {
+      // A tenant that genuinely wants a flat pauschal sets it on the slot field.
+      await seedAbsence(app, data.employee.id, WED);
+      const min = await getVocationalSchoolMinutesForDate(app.prisma, data.employee.id, WED, {
+        bsSlotFirstLongDayMinutes: 360,
+        vocationalSchoolMinutesPerDay: 480,
         vocationalSchoolBlockMinutesPerWeek: 1800,
       });
       expect(min).toBe(360);
@@ -234,9 +249,9 @@ describe("getVocationalSchoolMinutesForDate + countBsDaysInIsoWeek (Phase 63 Pla
     it("4 BS-days (< 5 threshold) in ISO week stays on daily path → 480 (FIRST_LONG_DAY)", async () => {
       // Mo-Th, only 4 days — block-week cap does NOT kick in.
       // Phase 76.31 (B): query MON (ordinal 1 = FIRST_LONG_DAY) to assert the daily path.
-      // With no schedule passed, the daily-Soll fallback = BS_DAILY_DEFAULT_MIN (480); the
-      // legacy per-day pauschal is preserved for the FIRST_LONG_DAY slot. (Block-week would
-      // credit 2400/4 = 600 ≠ 480, so 480 proves block mode did NOT engage.)
+      // With no schedule passed, the daily-Soll fallback = BS_DAILY_DEFAULT_MIN (480)
+      // (owner decision 2026-07-21: the legacy per-day field no longer drives FIRST).
+      // (Block-week would credit 2400/4 = 600 ≠ 480, so 480 proves block mode did NOT engage.)
       await seedAbsence(app, data.employee.id, MON);
       await seedAbsence(app, data.employee.id, TUE);
       await seedAbsence(app, data.employee.id, WED);
