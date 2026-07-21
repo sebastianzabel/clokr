@@ -642,10 +642,15 @@ model Absence {
   days         Decimal       @db.Decimal(5, 2)
   halfDay      Boolean       @default(false)
   note         String?
-  documentPath String? // Pfad zur AU-Bescheinigung (MinIO)
-  deletedAt    DateTime?     @db.Timestamptz // soft delete
-  createdAt    DateTime      @default(now()) @db.Timestamptz
-  createdBy    String
+  documentPath        String?   // Pfad zur AU-Bescheinigung (MinIO)
+  deletedAt           DateTime? @db.Timestamptz // soft delete
+  createdAt           DateTime  @default(now()) @db.Timestamptz
+  createdBy           String
+  // Phase 76.38 — Per-day Unterrichtszeit override for duration-based BS slot classification.
+  // NULL = use pattern value (EmployeeVocationalSchoolPattern.unterrichtsMinutenByDow) or ordinal fallback.
+  // Set by admin when a specific BS day deviates from the Jahrgang Stundenplan.
+  // Only relevant for Absence.type = VOCATIONAL_SCHOOL; ignored for all other types.
+  unterrichtsMinutes  Int?
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
 
@@ -1101,6 +1106,12 @@ model EmployeeVocationalSchoolPattern {
   bsSlotSecondLongDayMinutes Int?
   bsSlotShortDayMinutes      Int?
   bsSlotBlockWeekMinutes     Int?
+  // Phase 76.38 — Duration-based BS slot classification (§15 Abs. 2 Nr. 2 BBiG).
+  // JSON map from DOW int (0=Mo..6=So) to Unterrichtsminuten Int.
+  // e.g. {"1": 300, "4": 180} = Tuesday 300 min, Friday 180 min.
+  // Empty object {} = not captured → ordinal fallback (backward compat).
+  // Individual entry >225 min = Langtag; ≤225 min = Kurztag.
+  unterrichtsMinutenByDow    Json          @default("{}")
   createdAt                  DateTime      @default(now()) @db.Timestamptz
   updatedAt                  DateTime      @updatedAt @db.Timestamptz
 
