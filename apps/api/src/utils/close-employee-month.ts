@@ -92,6 +92,7 @@ export type CloseMonthInput = {
     endDate: Date;
     type: string;
     source: string;
+    halfDay?: boolean;
   }>;
   holidayDateStrings: Set<string>; // YYYY-MM-DD in tenant TZ
 
@@ -270,6 +271,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
     absences: absences.map((ab) => ({
       startDate: ab.startDate,
       endDate: ab.endDate,
+      halfDay: ab.halfDay,
     })),
     holidayDateStrings,
     rosterDates,
@@ -491,7 +493,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
       const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
       if (absStart > absEnd) return sum;
-      return sum + calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz);
+      return (
+        sum +
+        calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, { halfDay: Boolean(ab.halfDay) })
+      );
     }, 0);
 
     // C_net: contract Soll net of leave/absence credits + bsExpectedMinutes (BS day = Arbeitstag,
@@ -587,6 +592,7 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
         return (
           sum +
           calcLeaveAbsenceMinutesTz(schedule, absStart, absEnd, tz, {
+            halfDay: Boolean(ab.halfDay),
             excludeHolidays: holidayExcludeSet, // D-06
           })
         );

@@ -974,7 +974,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             startDate: { lte: monthEnd },
             endDate: { gte: effectiveStart },
           },
-          select: { startDate: true, endDate: true, type: true, source: true },
+          select: { startDate: true, endDate: true, type: true, source: true, halfDay: true },
         }),
       ]);
 
@@ -1034,6 +1034,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
           endDate: ab.endDate,
           type: ab.type,
           source: ab.source,
+          halfDay: Boolean(ab.halfDay),
         })),
         holidayDateStrings,
         tenantConfig: tenantConfig

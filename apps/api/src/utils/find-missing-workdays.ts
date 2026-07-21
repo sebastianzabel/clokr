@@ -54,7 +54,7 @@ export type MissingWorkdaysInput = {
     endDate: Date;
     halfDay: boolean;
   }>;
-  absences: Array<{ startDate: Date; endDate: Date }>;
+  absences: Array<{ startDate: Date; endDate: Date; halfDay?: boolean }>;
   holidayDateStrings: Set<string>; // YYYY-MM-DD in tenant TZ
   rosterDates?: Set<string>; // SHIFT_BASED only: Shift.date strings
 };
@@ -107,6 +107,9 @@ export function findMissingWorkdays(input: MissingWorkdaysInput): MissingWorkday
     iterateDateRange(ab.startDate, ab.endDate, tz, (ds) => {
       if (ds >= spanStart && ds <= spanEnd) {
         coveredDates.add(ds);
+        if (ab.halfDay) {
+          halfDayDates.add(ds);
+        }
       }
     });
   }
