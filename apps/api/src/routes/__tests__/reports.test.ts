@@ -2,7 +2,18 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { computeOvertimeBalanceHours } from "../time-entries";
 import type { FastifyInstance } from "fastify";
+
+// Mirror of the module-private classifyOvertimeBalance thresholds in dashboard.ts (NORMAL |x|<=20,
+// ELEVATED |x|<=40, CRITICAL >40) — used to assert status is internally consistent with the LIVE
+// balanceHours the overtime-overview endpoint now returns (v1.8.24 live-through-yesterday change).
+function expectedOvertimeBand(balanceHours: number): "NORMAL" | "ELEVATED" | "CRITICAL" {
+  const abs = Math.abs(balanceHours);
+  if (abs <= 20) return "NORMAL";
+  if (abs <= 40) return "ELEVATED";
+  return "CRITICAL";
+}
 
 describe("Reports API", () => {
   let app: FastifyInstance;
@@ -490,6 +501,80 @@ describe("Reports API", () => {
       expect(res.statusCode).toBe(403);
       const body = JSON.parse(res.body);
       expect(body.error).toBe("Kein Zugriff");
+    });
+
+    // v1.8.24 — SHIFT_BASED monthly PDF must generate through the §615 overtime path
+    // (resolveReportOvertimeHours → computeMonthSaldo) without throwing. Regression guard for the
+    // reports.ts §615 fix (the legal Stundennachweis must use §615, not naive Ist−Soll).
+    it("generates a SHIFT_BASED employee's monthly PDF via the §615 overtime path", async () => {
+      const prisma = app.prisma;
+      const bcryptMod = await import("bcryptjs");
+      const pwHash = await bcryptMod.default.hash("test1234", 10);
+      const suffix = "sbpdf-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const u = await prisma.user.create({
+        data: {
+          email: `${suffix}@test.de`,
+          passwordHash: pwHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const e = await prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: u.id,
+          employeeNumber: `SBPDF-${suffix}`,
+          firstName: "ShiftPdf",
+          lastName: "Employee",
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: e.id,
+          type: "SHIFT_BASED",
+          weeklyHours: 40,
+          mondayHours: 0,
+          tuesdayHours: 0,
+          wednesdayHours: 0,
+          thursdayHours: 0,
+          fridayHours: 0,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2024-01-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: e.id, balanceHours: 0 } });
+      // One shift + a completed entry in Jan 2025 so the §615 core has data to work with.
+      await prisma.shift.create({
+        data: {
+          employeeId: e.id,
+          date: new Date("2025-01-06T00:00:00Z"),
+          startTime: "08:00",
+          endTime: "16:30",
+        },
+      });
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: e.id,
+          date: new Date("2025-01-06T00:00:00Z"),
+          startTime: new Date("2025-01-06T08:00:00.000Z"),
+          endTime: new Date("2025-01-06T16:30:00.000Z"),
+          breakMinutes: 30,
+          type: "WORK",
+          source: "MANUAL",
+          isInvalid: false,
+        },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/reports/monthly/pdf?employeeId=${e.id}&year=2025&month=1`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["content-type"]).toContain("application/pdf");
+      expect(res.rawPayload.slice(0, 4).toString("ascii")).toBe("%PDF");
     });
   });
 
@@ -1512,7 +1597,11 @@ describe("Reports API", () => {
       }
     });
 
-    it("Case 3: balanceHours matches stored OvertimeAccount (no recomputation)", async () => {
+    it("Case 3: balanceHours is the LIVE recomputed saldo (v1.8.24), not the stale stored value", async () => {
+      // v1.8.24: overtime-overview now returns a LIVE lifetime saldo through windowEnd (today only
+      // if today has completed entries, else yesterday) via computeOvertimeBalanceHours — the SAME
+      // source of truth as the dashboard KPI + calendar header. It NO LONGER echoes the stored
+      // OvertimeAccount.balanceHours. Assert each row equals a fresh live computation (rounded).
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/dashboard/overtime-overview",
@@ -1520,15 +1609,28 @@ describe("Reports API", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
+
       const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
       expect(normalEmp).toBeDefined();
-      expect(normalEmp.balanceHours).toBe(5);
+      const liveNormal = await computeOvertimeBalanceHours(app, empNormalId);
+      expect(liveNormal).not.toBeNull();
+      expect(normalEmp.balanceHours).toBe(Math.round(liveNormal as number));
+
       const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
       expect(elevatedEmp).toBeDefined();
-      expect(elevatedEmp.balanceHours).toBe(25);
+      const liveElevated = await computeOvertimeBalanceHours(app, empElevatedId);
+      expect(liveElevated).not.toBeNull();
+      expect(elevatedEmp.balanceHours).toBe(Math.round(liveElevated as number));
+
+      // Prove it is NOT merely echoing the deliberately-stale stored seed (5 / 25). These employees
+      // have no time entries since hireDate 2024-01-01, so the live saldo diverges from the seed.
+      expect(normalEmp.balanceHours).not.toBe(5);
+      expect(elevatedEmp.balanceHours).not.toBe(25);
     });
 
-    it("Case 4: status is NORMAL for |balance| <= 20, ELEVATED for (20,40], CRITICAL for > 40", async () => {
+    it("Case 4: status is internally consistent with the LIVE balanceHours (NORMAL/ELEVATED/CRITICAL bands)", async () => {
+      // The real invariant: every row's status = classifyOvertimeBalance(balanceHours). Since the
+      // number is now live, we assert the band matches the returned number rather than a seeded value.
       const res = await app.inject({
         method: "GET",
         url: "/api/v1/dashboard/overtime-overview",
@@ -1536,14 +1638,10 @@ describe("Reports API", () => {
       });
       expect(res.statusCode).toBe(200);
       const body = JSON.parse(res.body);
-      const normalEmp = body.employees.find((e: { id: string }) => e.id === empNormalId);
-      expect(normalEmp.status).toBe("NORMAL");
-      const elevatedEmp = body.employees.find((e: { id: string }) => e.id === empElevatedId);
-      expect(elevatedEmp.status).toBe("ELEVATED");
-      // Critical emp should have CRITICAL status (-50h)
-      const critEmp = body.employees.find((e: { balanceHours: number }) => e.balanceHours === -50);
-      expect(critEmp).toBeDefined();
-      expect(critEmp.status).toBe("CRITICAL");
+      expect(body.employees.length).toBeGreaterThan(0);
+      for (const emp of body.employees) {
+        expect(emp.status).toBe(expectedOvertimeBand(emp.balanceHours));
+      }
     });
 
     it("Case 5: employee with 3 MONTHLY snapshots in last 6 months returns snapshots.length === 3", async () => {

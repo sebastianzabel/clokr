@@ -1811,7 +1811,20 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 // ── Hilfsfunktion: Überstundensaldo berechnen (snapshot-basiert, TZ-aware) ────
 // Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum
 // seit dem Snapshot neu. Ohne Snapshot: Fallback auf den aktuellen Monat.
-export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
+//
+// PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo in hours through the
+// windowEnd cutoff (today only if today has completed entries, else yesterday — the same
+// hasTodayEntries convention the §615 calendar header/cells use). Handles all schedule types:
+//   - MONTHLY_HOURS TRACK_ONLY → 0 (tracked, not accumulated).
+//   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
+// Lifetime-correct: the balance = last-snapshot carryOver (or full history from hireDate when no
+// snapshot) + Σ balances of ALL open months (complete + current partial) up to windowEnd. This is
+// the SAME value updateOvertimeAccount persists — it is the single source of truth; the writer
+// wraps this and upserts. Returns null for §18-exempt employees (caller: skip / no value).
+export async function computeOvertimeBalanceHours(
+  app: FastifyInstance,
+  employeeId: string,
+): Promise<number | null> {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
@@ -1833,9 +1846,9 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   if (employee?.isTimeTrackingExempt) {
     app.log.info(
       { employeeId, exempt: true },
-      "updateOvertimeAccount skipped (isTimeTrackingExempt)",
+      "computeOvertimeBalanceHours skipped (isTimeTrackingExempt)",
     );
-    return;
+    return null;
   }
 
   const tz = await getTenantTimezone(app.prisma, employee?.tenantId ?? "");
@@ -2025,12 +2038,24 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
   const rangeFirstDay = rangeStart; // Already a UTC-midnight @db.Date-compatible value
   const rangeLastDay = effectiveEnd; // Already a UTC-midnight @db.Date-compatible value
 
+  // SHIFT_BASED roster fetch upper bound: include the WHOLE current calendar month, not just
+  // rangeLastDay (= effectiveEnd = yesterday when today has no entries). The partial-month §615
+  // block needs rosterPeriodMinutes = the FULL current-month roster (incl. future-planned shifts)
+  // to prorate the contract Soll (R_toDate ÷ R_periodFull). Truncating at effectiveEnd made
+  // R_periodFull == R_toDate → factor 1 → NO proration → the open partial month collapsed to ~0,
+  // dropping the current month from the running total (Bug 5). Only the roster DENOMINATOR needs
+  // future days; entries/leave/absences below keep the effectiveEnd bound, and the shift LIST fed
+  // to closeEmployeeMonth is still clamped to effectiveEnd (only curMonthAllShifts widens).
+  // currentMonthRange (computed above) is the calendar month containing today.
+  const shiftRangeLastDay =
+    currentMonthRange.end > rangeLastDay ? currentMonthRange.end : rangeLastDay;
+
   const allShifts =
     scheduleType === "SHIFT_BASED"
       ? await app.prisma.shift.findMany({
           where: {
             employeeId,
-            date: { gte: rangeFirstDay, lte: rangeLastDay },
+            date: { gte: rangeFirstDay, lte: shiftRangeLastDay },
             deletedAt: null,
           },
           select: { date: true, startTime: true, endTime: true },
@@ -2370,12 +2395,25 @@ export async function updateOvertimeAccount(app: FastifyInstance, employeeId: st
     String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
   const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
 
+  return effectiveBalanceHours;
+}
+
+// ── Überstundensaldo berechnen UND persistieren (event-driven writer) ─────────
+// Thin wrapper around computeOvertimeBalanceHours (single source of truth): recomputes the live
+// lifetime saldo through windowEnd and upserts OvertimeAccount.balanceHours. Called on every
+// time-entry mutation + month close/unlock. Exempt employees (compute → null) are skipped without
+// resetting the stored value (preserve audit trail).
+export async function updateOvertimeAccount(app: FastifyInstance, employeeId: string) {
+  const effectiveBalanceHours = await computeOvertimeBalanceHours(app, employeeId);
+  if (effectiveBalanceHours === null) return; // §18-exempt — do not touch stored balance
+
   const account = await app.prisma.overtimeAccount.upsert({
     where: { employeeId },
     create: { employeeId, balanceHours: effectiveBalanceHours },
     update: { balanceHours: effectiveBalanceHours },
   });
 
+  const schedule = await getEffectiveSchedule(app, employeeId);
   const threshold = Number(schedule.overtimeThreshold);
   if (Number(account.balanceHours) >= threshold) {
     app.log.warn(

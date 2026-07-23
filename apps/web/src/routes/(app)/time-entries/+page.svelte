@@ -176,6 +176,14 @@
       ? new Map(monthSaldo.days.map((d) => [d.date, d.cumulativeSaldoMinutes]))
       : new Map(),
   );
+  // §615 SHIFT_BASED Gesamt-Saldo (live): last day's cumulative in the §615 series = running total
+  // as of the last included day (same source the cells use → header can never diverge). null for
+  // non-SHIFT → falls back to the (event-driven, possibly stale) OvertimeAccount value.
+  let monthSaldoTotalMin: number | null = $derived(
+    monthSaldo && monthSaldo.days.length > 0
+      ? monthSaldo.days[monthSaldo.days.length - 1].cumulativeSaldoMinutes
+      : null,
+  );
 
   // Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt: hide the
   // "+ Neuer Eintrag" CTA + the per-day calendar-cell add handler.
@@ -321,8 +329,15 @@
       // SHIFT_BASED removed from monthly-path shortcut: the workaround (monthly=true
       // with zero monthlyHours) produced expectedMin=0 anyway, and now conflicts with
       // the shiftMinByDate injection path.
-      // §615 Monatssaldo für SHIFT_BASED: vom §615-Core-Endpoint laden.
-      if (schedule?.type === "SHIFT_BASED" && activeEmpId) {
+      // Monatssaldo vom §615-Core-Endpoint laden.
+      //   - SHIFT_BASED: header SOLL(BISHER)/IST/MONAT-SALDO + day cells come from monthSaldo.
+      //   - FIXED_SCHEDULE/FIXED_WEEKLY/FLEXTIME + MONTHLY_HOURS(target>0): fetched ONLY to derive a
+      //     LIVE Gesamt-Saldo (last cumulative), replacing the stale OvertimeAccount.balanceHours.
+      //     Their SOLL/IST/MONAT-SALDO tiles + day cells keep the existing per-type derivations.
+      //   - MONTHLY_HOURS(null/0) = pure tracking: no Soll, Gesamt-Saldo stays 0/N/A → skip fetch.
+      const isMonthlyHoursNoTarget =
+        schedule?.type === "MONTHLY_HOURS" && !(Number(schedule?.monthlyHours ?? 0) > 0);
+      if (schedule && !isMonthlyHoursNoTarget && activeEmpId) {
         monthSaldo = await api
           .get<MonthSaldo>(
             `/overtime/month-saldo/${activeEmpId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
@@ -1114,13 +1129,17 @@
     const stats: MonthBarStat[] = [];
 
     if (isShiftBased && monthSaldo) {
-      // §615 header: Soll (bisher) = expectedMinutes from core; Monat-Saldo = balanceMinutes from core
+      // §615 header — ALL three tiles from the SAME computeMonthSaldo to-date result so they always
+      // reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells:
+      //   Soll (bisher) = expectedMinutes (roster-prorated to-date C_net, NOT full-month roster)
+      //   Ist           = workedMinutes   (to-date worked, same cutoff as the cells)
+      //   Monat-Saldo   = balanceMinutes  (§615 to-date balance)
       stats.push({
         label: "Soll (bisher)",
         value: fmtMin(monthSaldo.expectedMinutes),
         unit: "h",
       });
-      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
+      stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
       stats.push({
         label: "Monat-Saldo",
         value: fmtBalance(monthSaldo.balanceMinutes),
@@ -1158,7 +1177,20 @@
       }
     }
 
-    if (overtimeTotalHours !== null) {
+    // Gesamt-Saldo: prefer the LIVE running total (last cumulative in the monthSaldo per-day series)
+    // for ALL Soll-bearing types (SHIFT_BASED, FIXED_*, FLEXTIME, MONTHLY_HOURS target>0). Same
+    // computeMonthSaldo model updateOvertimeAccount stores, computed live → never stale between
+    // time-entry mutations (Bug 2); matches the last visible §615 cell for SHIFT_BASED.
+    // monthSaldoTotalMin is null for MONTHLY_HOURS(null/0) (fetch skipped) → falls back to
+    // overtimeTotalHours (0 for TRACK_ONLY) → Gesamt-Saldo unchanged there by design.
+    if (monthSaldoTotalMin !== null) {
+      stats.push({
+        label: "Gesamt-Saldo",
+        value: fmtBalance(monthSaldoTotalMin),
+        unit: "h",
+        tone: balTone(monthSaldoTotalMin),
+      });
+    } else if (overtimeTotalHours !== null) {
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
         label: "Gesamt-Saldo",
@@ -1392,11 +1424,17 @@
                   </span>
                 {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-                {#if isShiftBased && monthSaldoDayMap.has(day.dateStr)}
-                  {@const cum = monthSaldoDayMap.get(day.dateStr)!}
-                  <span class="day-bal {balClass(cum)}"
-                    >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
-                  >
+                {#if isShiftBased}
+                  <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
+                       a cumulative for this day (past days up to windowEnd). For today-not-yet-worked
+                       and future days (no monthSaldoDayMap entry) show ONLY the hours — never fall back
+                       to the per-day delta, which would look like a spurious "today penalty". -->
+                  {#if monthSaldoDayMap.has(day.dateStr)}
+                    {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                    <span class="day-bal {balClass(cum)}"
+                      >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                    >
+                  {/if}
                 {:else if day.expectedMin > 0 && !isNoDailyTarget}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"

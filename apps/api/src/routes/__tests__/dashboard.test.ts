@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import { computeOvertimeBalanceHours } from "../time-entries";
 import type { FastifyInstance } from "fastify";
 
 /**
@@ -232,5 +233,162 @@ describe("GET /api/v1/dashboard - scheduleType field (Phase 49.1-03)", () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.scheduleType).toBe("SHIFT_BASED");
+  });
+});
+
+/**
+ * v1.8.24 — GET /api/v1/dashboard overtime KPI is a LIVE lifetime saldo (through windowEnd),
+ * NOT the stale event-driven OvertimeAccount.balanceHours. Single source of truth =
+ * computeOvertimeBalanceHours (same value updateOvertimeAccount persists + calendar header uses).
+ */
+describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  let tokenFixed: string;
+  let empFixedId: string;
+  let tokenTrackOnly: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "dashboard-live-ot");
+    const prisma = app.prisma;
+    const tenantId = data.tenant.id;
+    const suffix = "dlot-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const passwordHash = await bcrypt.hash("test1234", 10);
+
+    // ── FIXED_SCHEDULE employee with a STALE seeded OvertimeAccount.balanceHours ──
+    const userFixed = await prisma.user.create({
+      data: {
+        email: `livefixed-${suffix}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const empFixed = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: userFixed.id,
+        employeeNumber: `LFX-${suffix}`,
+        firstName: "LiveFixed",
+        lastName: "Schedule",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    empFixedId = empFixed.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: empFixed.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    // Deliberately STALE stored value — the KPI must NOT echo this; it recomputes live.
+    await prisma.overtimeAccount.create({
+      data: { employeeId: empFixed.id, balanceHours: 999 },
+    });
+
+    // ── MONTHLY_HOURS TRACK_ONLY employee (KPI must stay 0 even with a stale non-zero seed) ──
+    const userTrack = await prisma.user.create({
+      data: {
+        email: `livetrack-${suffix}@test.de`,
+        passwordHash,
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const empTrack = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: userTrack.id,
+        employeeNumber: `LTO-${suffix}`,
+        firstName: "LiveTrack",
+        lastName: "Only",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: empTrack.id,
+        type: "MONTHLY_HOURS",
+        monthlyHours: 80,
+        overtimeMode: "TRACK_ONLY",
+        weeklyHours: null,
+        mondayHours: 0,
+        tuesdayHours: 0,
+        wednesdayHours: 0,
+        thursdayHours: 0,
+        fridayHours: 0,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await prisma.overtimeAccount.create({
+      data: { employeeId: empTrack.id, balanceHours: 42 },
+    });
+
+    const loginFixed = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `livefixed-${suffix}@test.de`, password: "test1234" },
+    });
+    tokenFixed = JSON.parse(loginFixed.body).accessToken;
+
+    const loginTrack = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `livetrack-${suffix}@test.de`, password: "test1234" },
+    });
+    tokenTrackOnly = JSON.parse(loginTrack.body).accessToken;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("KPI ignores the stale stored balanceHours and returns the LIVE computed saldo", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard",
+      headers: { authorization: `Bearer ${tokenFixed}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+
+    // The stored value is a deliberately-wrong 999; the live KPI must not echo it.
+    expect(body.overtime.balanceHours).not.toBe(999);
+
+    // And it must equal a fresh live computation (single source of truth), rounded to whole hours
+    // like the endpoint does (round()).
+    const live = await computeOvertimeBalanceHours(app, empFixedId);
+    expect(live).not.toBeNull();
+    expect(body.overtime.balanceHours).toBe(Math.round(live as number));
+  });
+
+  it("MONTHLY_HOURS TRACK_ONLY KPI stays 0 despite a stale non-zero stored value", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard",
+      headers: { authorization: `Bearer ${tokenTrackOnly}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    // TRACK_ONLY: hours are tracked but never accumulated into a saldo → always 0.
+    expect(body.overtime.balanceHours).toBe(0);
   });
 });

@@ -19,6 +19,7 @@ import {
   streamVacationOverviewPdf,
 } from "../utils/pdf";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
+import { computeMonthSaldo } from "../utils/month-saldo";
 
 // ── Month name lookup ─────────────────────────────────────────────────────────
 const MONTH_NAMES = [
@@ -340,6 +341,69 @@ function computeEmployeeSummary(
     totalAbsenceDays,
     entries,
   };
+}
+
+// ── resolveReportOvertimeHours ────────────────────────────────────────────────
+// §615-consistent Überstunden figure for the monthly Stundennachweis PDF (the legal
+// Arbeitszeitnachweis). computeEmployeeSummary computes overtime NAIVELY as worked − target, which is
+// wrong for SHIFT_BASED (no §615, roster Soll lives in the Shift table). This resolver picks the
+// correct source WITHOUT changing the response shape — only the overtime NUMBER's derivation:
+//   - CLOSED month (non-superseded MONTHLY SaldoSnapshot for the exact period) → snapshot.balanceMinutes
+//     for ALL schedule types (immutable — Revisionssicherheit; never recompute a closed month).
+//   - OPEN month + SHIFT_BASED → computeMonthSaldo(...).balanceMinutes (§615 two-clause; same source of
+//     truth as the live calendar header / dashboard / overtime-overview).
+//   - OPEN month + non-SHIFT (FIXED_*/FLEXTIME/MONTHLY_HOURS target>0) → keep the naive worked − target
+//     (unchanged: preserves the working absence-deduction + whole-month Stundennachweis model).
+//   - MONTHLY_HOURS(null/0) / no schedule → 0 (pure tracking, no saldo target).
+// Fail-safe: on any error, fall back to the provided naive value so the PDF never fails to generate.
+async function resolveReportOvertimeHours(
+  app: FastifyInstance,
+  emp: EmployeeWithIncludes,
+  year: number,
+  month: number,
+  monthStart: Date,
+  naiveOvertimeHours: number,
+): Promise<number> {
+  try {
+    // Effective schedule for the reported month (latest validFrom ≤ month end already resolved by
+    // the caller's include ordering; use the last row as the effective one).
+    const latest =
+      emp.workSchedules.length > 0 ? emp.workSchedules[emp.workSchedules.length - 1] : null;
+    const scheduleType = String(latest?.type ?? "");
+
+    // MONTHLY_HOURS pure-tracking (null/0 budget) → no saldo target.
+    if (scheduleType === "MONTHLY_HOURS" && !(Number(latest?.monthlyHours ?? 0) > 0)) {
+      return 0;
+    }
+
+    // CLOSED month → immutable snapshot balance (all types).
+    const snapshot = await app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        periodStart: monthStart,
+        superseded: false,
+      },
+      select: { balanceMinutes: true },
+    });
+    if (snapshot) {
+      return Math.round((snapshot.balanceMinutes / 60) * 100) / 100;
+    }
+
+    // OPEN month + SHIFT_BASED → §615 core (computeMonthSaldo). Non-SHIFT keeps the naive value.
+    if (scheduleType === "SHIFT_BASED") {
+      const ms = await computeMonthSaldo(app, emp.id, year, month);
+      return Math.round((ms.balanceMinutes / 60) * 100) / 100;
+    }
+
+    return naiveOvertimeHours;
+  } catch (err) {
+    app.log.warn(
+      { err, employeeId: emp.id, year, month },
+      "resolveReportOvertimeHours failed, using naive worked−target",
+    );
+    return naiveOvertimeHours;
+  }
 }
 
 // ── buildDatevLodas ───────────────────────────────────────────────────────────
@@ -1032,6 +1096,16 @@ export async function reportRoutes(app: FastifyInstance) {
       }
 
       const summary = computeEmployeeSummary(emp, start, end, tz, pdfHolidayDeductionOpts);
+      // §615-correct Überstunden for the legal Stundennachweis (SHIFT_BASED / closed-month snapshot);
+      // non-SHIFT open months keep summary.overtimeHours. Shape unchanged — only the number's source.
+      const reportOvertimeHours = await resolveReportOvertimeHours(
+        app,
+        emp,
+        y,
+        m,
+        start,
+        summary.overtimeHours,
+      );
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -1040,7 +1114,7 @@ export async function reportRoutes(app: FastifyInstance) {
         month: `${MONTH_NAMES[m - 1]} ${y}`,
         workedHours: summary.workedHours,
         targetHours: summary.targetHours,
-        overtimeHours: summary.overtimeHours,
+        overtimeHours: reportOvertimeHours,
         sickDays: summary.sickDays,
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,
@@ -1118,15 +1192,28 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Keine Mitarbeiter gefunden" };
       }
 
-      const rows = employees.map((emp) => {
-        const summary = computeEmployeeSummary(emp, start, end, tz, allPdfHolidayDeductionOpts);
-        return {
-          employeeName: `${emp.firstName} ${emp.lastName}`,
-          employeeNumber: emp.employeeNumber,
-          role: emp.user.role,
-          ...summary,
-        };
-      });
+      const rows = await Promise.all(
+        employees.map(async (emp) => {
+          const summary = computeEmployeeSummary(emp, start, end, tz, allPdfHolidayDeductionOpts);
+          // §615-correct Überstunden (SHIFT_BASED / closed-month snapshot); non-SHIFT open months
+          // keep summary.overtimeHours. Override AFTER the spread so the shape stays identical.
+          const overtimeHours = await resolveReportOvertimeHours(
+            app,
+            emp,
+            y,
+            m,
+            start,
+            summary.overtimeHours,
+          );
+          return {
+            employeeName: `${emp.firstName} ${emp.lastName}`,
+            employeeNumber: emp.employeeNumber,
+            role: emp.user.role,
+            ...summary,
+            overtimeHours,
+          };
+        }),
+      );
 
       const doc = new PDFDocument({ size: "A4", margin: 50 });
       reply.header("Content-Type", "application/pdf");

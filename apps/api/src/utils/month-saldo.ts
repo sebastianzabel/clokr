@@ -222,8 +222,11 @@ export async function computeMonthSaldo(
   const carryOverIn = prevSnapshot?.carryOver ?? 0;
 
   // BS slot overrides for this month
-  const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } =
-    await loadBsSlotOverrides(app.prisma, employeeId, monthFirstDay);
+  const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } = await loadBsSlotOverrides(
+    app.prisma,
+    employeeId,
+    monthFirstDay,
+  );
 
   // Shared tenantConfig shape for closeEmployeeMonth
   const tenantCfg = tenantConfig
@@ -286,21 +289,29 @@ export async function computeMonthSaldo(
     patternUnterrichtsMinutenByDow,
   };
 
-  // ── Full-month call → header numbers ────────────────────────────────────
-  const monthResult = closeEmployeeMonth({
-    ...sharedInput,
-    monthLastDay,
-    // SHIFT_BASED: full-month → no rosterProration needed (same as close path)
-  });
-
   // ── Per-day cumulative series ─────────────────────────────────────────────
   // For SHIFT_BASED we need rosterProration per day.  Pre-compute the helper
   // functions here (same as time-entries.ts updateOvertimeAccount partial-month block).
+  //
+  // Header numbers (workedMinutes / expectedMinutes / balanceMinutes) are derived from the
+  // LAST included day's partial (to-date) result — NOT a separate full-month call. This makes
+  // the header the SAME §615 to-date state the cells display (single source of truth: header
+  // ↔ cells can never diverge). For the open month the last-day result is roster-prorated
+  // (SHIFT_BASED) so the header shows the "bisher" (to-date) Soll/Saldo, not the inflated
+  // full-month roster charged as undertime (Bug 3).
   const days: MonthSaldoDay[] = [];
 
-  // Iterate only days from effectiveStart to today-or-monthLastDay
+  // Iterate only days from effectiveStart to today-or-monthLastDay.
+  // Bug 1 fix: only include TODAY when the employee has completed entries for today —
+  // mirroring updateOvertimeAccount's hasTodayEntries cutoff (time-entries.ts). Otherwise
+  // a SHIFT_BASED employee with a shift today but no entry yet would have today's full shift
+  // charged as §615 undertime, showing a spurious "future penalty" on today's cell.
   const todayStr = dateStrInTz(new Date(), tz);
-  const windowEnd = todayStr < dateStrInTz(monthLastDay, tz) ? todayStr : dateStrInTz(monthLastDay, tz);
+  const yesterdayStr = dateStrInTz(new Date(Date.now() - 86400000), tz);
+  const hasTodayEntries = closeEntries.some((e) => dateStrInTz(e.date, tz) === todayStr);
+  const cutoffStr = hasTodayEntries ? todayStr : yesterdayStr;
+  const windowEnd =
+    cutoffStr < dateStrInTz(monthLastDay, tz) ? cutoffStr : dateStrInTz(monthLastDay, tz);
 
   // Pre-compute SHIFT_BASED netto helpers (reused per day)
   const employeeBreakShape = {
@@ -333,13 +344,15 @@ export async function computeMonthSaldo(
     }
   }
 
+  // Track the LAST included day's partial result — this is the to-date §615 state the header
+  // displays (single source of truth with the cells).
+  let lastDayResult: ReturnType<typeof closeEmployeeMonth> | null = null;
+
   for (const dayStr of dayStrings) {
     const dayEnd = new Date(dayStr + "T00:00:00Z");
 
     // For SHIFT_BASED: compute rosterProration up to this day
-    let rosterProration:
-      | { rosterToDateMinutes: number; rosterPeriodMinutes: number }
-      | undefined;
+    let rosterProration: { rosterToDateMinutes: number; rosterPeriodMinutes: number } | undefined;
     if (scheduleType === "SHIFT_BASED") {
       // coveredDates: leave + absence days that are not shift-days (same logic as time-entries.ts)
       const buildCovered = (fromD: Date, toD: Date): Set<string> => {
@@ -421,12 +434,17 @@ export async function computeMonthSaldo(
       date: dayStr,
       cumulativeSaldoMinutes: carryOverIn + dayResult.balanceMinutes,
     });
+
+    lastDayResult = dayResult;
   }
 
+  // Header numbers = last included day's to-date §615 state (single source of truth with cells).
+  // If no days were included (e.g. employee hired after windowEnd, or an all-future window),
+  // fall back to a zeroed to-date state — the terminal cumulative is just carryOverIn.
   return {
-    workedMinutes: monthResult.workedMinutes,
-    expectedMinutes: monthResult.expectedMinutes,
-    balanceMinutes: monthResult.balanceMinutes,
+    workedMinutes: lastDayResult?.workedMinutes ?? 0,
+    expectedMinutes: lastDayResult?.expectedMinutes ?? 0,
+    balanceMinutes: lastDayResult?.balanceMinutes ?? 0,
     closed: false,
     days,
   };

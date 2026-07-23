@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule } from "./time-entries";
+import { getEffectiveSchedule, computeOvertimeBalanceHours } from "./time-entries";
 import {
   getTenantTimezone,
   todayInTz,
@@ -199,10 +199,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
       }
 
       // ── Überstunden ───────────────────────────────────────────────────
-      const overtimeAccount = await app.prisma.overtimeAccount.findUnique({
-        where: { employeeId },
-      });
-      const overtimeBalance = Number(overtimeAccount?.balanceHours ?? 0);
+      // LIVE lifetime saldo through windowEnd (today only if today has completed entries, else
+      // yesterday), from the SAME source of truth updateOvertimeAccount persists — so the KPI
+      // reflects "as of yesterday" while the current day is incomplete, instead of the stale
+      // event-driven OvertimeAccount.balanceHours. computeOvertimeBalanceHours returns null for
+      // §18-exempt employees → display 0 (matches the prior `?? 0` fallback). Fail-safe: on any
+      // error, fall back to the stored value so the dashboard never 500s on the saldo tile.
+      let overtimeBalance: number;
+      try {
+        const live = await computeOvertimeBalanceHours(app, employeeId);
+        if (live !== null) {
+          overtimeBalance = live;
+        } else {
+          const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+          overtimeBalance = Number(acct?.balanceHours ?? 0);
+        }
+      } catch (err) {
+        app.log.warn({ err, employeeId }, "dashboard: live overtime saldo failed, using stored");
+        const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+        overtimeBalance = Number(acct?.balanceHours ?? 0);
+      }
 
       // ── Resturlaub ────────────────────────────────────────────────────
       const yearNow = parseInt(dateStrInTz(now, tz).slice(0, 4));
@@ -702,9 +718,27 @@ export async function dashboardRoutes(app: FastifyInstance) {
         snapshotsByEmp.set(snap.employeeId, list);
       }
 
-      return {
-        employees: accounts.map((a) => {
-          const balanceHours = Number(a.balanceHours);
+      // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
+      // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
+      // (computeOvertimeBalanceHours), replacing the stale event-driven OvertimeAccount.balanceHours.
+      // One compute per employee per request (no redundant recompute). computeOvertimeBalanceHours
+      // returns null for §18-exempt → fall back to the stored value. TRACK_ONLY → 0 (handled inside).
+      // Closed months are read from snapshots (not recomputed) inside the shared helper.
+      // Fail-safe: any per-employee error falls back to the stored value so one employee never
+      // 500s the whole team overview.
+      const employees = await Promise.all(
+        accounts.map(async (a) => {
+          let balanceHours: number;
+          try {
+            const live = await computeOvertimeBalanceHours(app, a.employeeId);
+            balanceHours = live !== null ? Math.round(live) : Number(a.balanceHours);
+          } catch (err) {
+            app.log.warn(
+              { err, employeeId: a.employeeId },
+              "overtime-overview: live saldo failed, using stored",
+            );
+            balanceHours = Number(a.balanceHours);
+          }
           return {
             id: a.employeeId,
             name: `${a.employee.firstName} ${a.employee.lastName}`,
@@ -718,7 +752,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
             })),
           };
         }),
-      };
+      );
+
+      return { employees };
     },
   });
 

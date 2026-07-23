@@ -56,8 +56,13 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
     const year = now.getFullYear();
     const month = now.getMonth() + 1; // current month (open by definition)
 
-    // Create one time entry this month: e.g. day 2 if workday, 9h worked (480+60=540 gross, 0 break)
-    const testDate = ymd(year, month, 2);
+    // Create one time entry, 9h worked (480+60=540 gross, 0 break). The header now reflects the
+    // TO-DATE (bisher) §615 state (windowEnd = today, or yesterday when no today-entries), so the
+    // entry MUST fall within [monthStart, today] to be counted. Use min(day 2, today's day-of-month):
+    // when today is the 1st/2nd, place it on today (the hasTodayEntries guard then includes today);
+    // otherwise day 2 (a past day, always inside the to-date window).
+    const testDay = Math.min(2, now.getDate());
+    const testDate = ymd(year, month, testDay);
     // Clean up any pre-existing entry for that date
     await app.prisma.timeEntry.deleteMany({
       where: { employeeId: data.employee.id, date: new Date(testDate + "T00:00:00Z") },
@@ -110,9 +115,10 @@ describe("month-saldo endpoint + computeMonthSaldo", () => {
     for (let i = 1; i < body.days.length; i++) {
       expect(body.days[i]!.date >= body.days[i - 1]!.date).toBe(true);
     }
-    // cumulative on the last day = carryOverIn + full-month balance.
+    // cumulative on the last day = carryOverIn + to-date (bisher) balance.
+    // Header balanceMinutes is now derived from the SAME last-included-day result the cells use
+    // (single source of truth), so the terminal cumulative must equal carryOverIn + body.balanceMinutes.
     // The seeded employee may have a prior snapshot so carryOverIn could be non-zero.
-    // Verify the invariant: lastDay.cumulativeSaldoMinutes = carryOverIn + body.balanceMinutes.
     const lastDay = body.days[body.days.length - 1]!;
     const carryOverIn = lastDay.cumulativeSaldoMinutes - body.balanceMinutes;
     expect(lastDay.cumulativeSaldoMinutes).toBe(carryOverIn + body.balanceMinutes);
