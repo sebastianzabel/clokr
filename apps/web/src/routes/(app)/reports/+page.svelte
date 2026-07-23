@@ -1546,14 +1546,16 @@
   /* ── Team overview section ───────────────────────────────────────────────── */
 
   .team-overview-section {
-    margin-top: 2rem;
+    margin-top: var(--s-8);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-6);
   }
 
   .team-overview-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 1rem;
     flex-wrap: wrap;
     gap: 0.75rem;
   }
@@ -1585,12 +1587,6 @@
   .period-select:focus {
     outline: 2px solid var(--brand);
     outline-offset: 1px;
-  }
-
-  /* ── Manager widget cards ─────────────────────────────────────────────────── */
-
-  .widget-card {
-    margin-top: 1rem;
   }
 
   .section-date {
