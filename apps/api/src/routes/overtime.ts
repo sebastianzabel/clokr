@@ -1,7 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule, updateOvertimeAccount } from "./time-entries";
+import {
+  getEffectiveSchedule,
+  updateOvertimeAccount,
+  computeOvertimeBalanceHours,
+} from "./time-entries";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
@@ -74,7 +78,22 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
 
       const threshold = Number(schedule?.overtimeThreshold ?? 60);
-      const balance = Number(account.balanceHours);
+
+      // v1.8.24 — return the LIVE lifetime overtime balance (through windowEnd: today only if today
+      // has completed entries, else yesterday) instead of the stale event-driven
+      // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceHours, the same
+      // value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This makes
+      // the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the viewed
+      // booking month) and correct. TRACK_ONLY → 0 (handled inside). Fail-safe: null (§18-exempt) or
+      // any error → stored value, so this read never 500s.
+      let balance: number;
+      try {
+        const live = await computeOvertimeBalanceHours(app, employeeId);
+        balance = live !== null ? live : Number(account.balanceHours);
+      } catch (err) {
+        app.log.warn({ err, employeeId }, "GET /overtime: live saldo failed, using stored");
+        balance = Number(account.balanceHours);
+      }
       const balanceMinutes = Math.round(balance * 60);
 
       // Max negative hours: per-employee override > tenant default > null (unlimited)
@@ -85,6 +104,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       return {
         ...account,
+        // Override the stored balanceHours with the live lifetime value (2-decimal so minutes survive).
+        balanceHours: Math.round(balance * 100) / 100,
         status:
           balance >= threshold ? "CRITICAL" : balance >= threshold * 0.67 ? "ELEVATED" : "NORMAL",
         threshold,

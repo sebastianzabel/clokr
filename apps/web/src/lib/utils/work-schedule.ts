@@ -147,3 +147,48 @@ export function countWorkingDaysInMonth(
   }
   return count;
 }
+
+/**
+ * Item C (v1.8.24) — MONTHLY_HOURS header SOLL = the FLAT full-month budget, drift-free.
+ *
+ * The header must show the flat monthly budget (e.g. 15:00 for a 15h Minijobber), NOT the
+ * per-working-day distribution sum round(budget/workingDays) × workingDays, which drifts (e.g.
+ * round(900/23)×23 = 897 = 14:57). Semantics (owner-decided):
+ *   - Tenant holiday-deduction flag OFF (default) → exactly monthlyBudgetMinutes (no drift).
+ *   - Flag ON → subtract holiday days that fall on configured workdays, at the FLAT daily rate
+ *     round(budget/totalWorkdays) (matches the backend isMonthlyHoursDeduction path), computed
+ *     from the budget (not by summing rounded per-day values), so a no-holiday month stays exact.
+ *
+ * @param schedule            the MONTHLY_HOURS work schedule (workDays / *Hours drive workday detection)
+ * @param monthStart          any Date within the target calendar month (local time)
+ * @param monthlyBudgetMinutes monthlyHours × 60 (caller resolves; 0 → returns 0)
+ * @param holidayDeduction    the tenant monthlyHoursHolidayDeduction flag
+ * @param holidayDateStrings  yyyy-MM-dd keys of public holidays (any range; filtered to this month)
+ */
+export function monthlyBudgetSollMinutes(
+  schedule: WorkScheduleLike | null | undefined,
+  monthStart: Date,
+  monthlyBudgetMinutes: number,
+  holidayDeduction: boolean,
+  holidayDateStrings: Iterable<string>,
+): number {
+  if (!schedule || monthlyBudgetMinutes <= 0) return 0;
+  if (!holidayDeduction) return monthlyBudgetMinutes; // flat budget — no working-day drift
+
+  const totalWorkdays = countWorkingDaysInMonth(schedule, monthStart);
+  if (totalWorkdays <= 0) return monthlyBudgetMinutes;
+  const dailyRate = Math.round(monthlyBudgetMinutes / totalWorkdays);
+
+  let holidayWorkdays = 0;
+  for (const dateStr of holidayDateStrings) {
+    const d = new Date(dateStr + "T12:00:00");
+    if (
+      d.getFullYear() === monthStart.getFullYear() &&
+      d.getMonth() === monthStart.getMonth() &&
+      isWorkDay(schedule, d)
+    ) {
+      holidayWorkdays++;
+    }
+  }
+  return Math.max(0, monthlyBudgetMinutes - holidayWorkdays * dailyRate);
+}

@@ -14,6 +14,7 @@
     isWorkDay,
     getDayExpectedHours,
     countWorkingDaysInMonth,
+    monthlyBudgetSollMinutes,
   } from "$lib/utils/work-schedule";
 
   interface Break {
@@ -168,20 +169,11 @@
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
-  // Map from YYYY-MM-DD → cumulativeSaldoMinutes for O(1) cell lookup
+  // Map from YYYY-MM-DD → cumulativeSaldoMinutes for O(1) cell lookup (per-month day cells).
   let monthSaldoDayMap: Map<string, number> = $derived(
     monthSaldo
       ? new Map(monthSaldo.days.map((d) => [d.date, d.cumulativeSaldoMinutes]))
       : new Map(),
-  );
-  // §615 SHIFT_BASED Gesamt-Saldo (live): the LAST day's cumulative in the §615 series is the
-  // running total as of the last included day (today, or yesterday when no today-entries). This
-  // is the SAME source the day cells use, so the header Gesamt-Saldo can never diverge from the
-  // last visible cell. Falls back to null (→ stale OvertimeAccount value) for non-SHIFT.
-  let monthSaldoTotalMin: number | null = $derived(
-    monthSaldo && monthSaldo.days.length > 0
-      ? monthSaldo.days[monthSaldo.days.length - 1].cumulativeSaldoMinutes
-      : null,
   );
 
   // Modal
@@ -319,16 +311,11 @@
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // Other schedule types compute expectedMin via getDayExpectedHours (D-03 returns 0
       // for SHIFT_BASED — this page-level wiring fills the gap).
-      // Monatssaldo vom §615-Core-Endpoint laden.
-      //   - SHIFT_BASED: header SOLL(BISHER)/IST/MONAT-SALDO + day cells come from monthSaldo.
-      //   - FIXED_SCHEDULE/FIXED_WEEKLY/FLEXTIME + MONTHLY_HOURS(target>0): monthSaldo is fetched
-      //     ONLY to derive a LIVE Gesamt-Saldo (last cumulative), replacing the stale
-      //     OvertimeAccount.balanceHours. Their SOLL/IST/MONAT-SALDO tiles + day cells keep the
-      //     existing per-type client derivations (unchanged).
-      //   - MONTHLY_HOURS(null/0) = pure tracking: no Soll, Gesamt-Saldo stays 0/N/A → skip fetch.
-      const isMonthlyHoursNoTarget =
-        schedule?.type === "MONTHLY_HOURS" && !(Number(schedule?.monthlyHours ?? 0) > 0);
-      if (schedule && !isMonthlyHoursNoTarget) {
+      // §615 Monatssaldo vom §615-Core-Endpoint laden — SHIFT_BASED only. It feeds the per-month
+      // header SOLL(BISHER)/IST/MONAT-SALDO tiles + the per-day cumulative cells. GESAMT-SALDO is NO
+      // LONGER sourced from here (it must be month-INDEPENDENT — see the Gesamt-Saldo tile, bound to
+      // the live lifetime GET /overtime/:id), so non-SHIFT types no longer need this fetch.
+      if (schedule?.type === "SHIFT_BASED") {
         monthSaldo = await api
           .get<MonthSaldo>(
             `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
@@ -970,18 +957,25 @@
     isMonthlyHours && schedule?.monthlyHours ? Number(schedule.monthlyHours) * 60 : 0,
   );
   let hasMonthlyTarget = $derived(isMonthlyHours && monthlyTarget > 0);
-  // Full-month expected: sum of all current-month days' expectedMin (incl. future).
-  // For MONTHLY_HOURS this reflects the holiday-deducted Soll when the toggle is ON,
-  // because buildCalendarDays computes dailySollMin after excluding qualifying holidays.
-  let totalMonthExpected = $derived(
-    calendarDays.filter((d) => d.isCurrentMonth).reduce((s, d) => s + d.expectedMin, 0),
+  // MONTHLY_HOURS header SOLL = the FLAT full-month budget (owner decision, Item C), drift-free.
+  // Shared helper (also unit-tested): flag OFF → exactly monthlyTarget; flag ON → holiday-deducted.
+  let monthlyBudgetSoll = $derived(
+    hasMonthlyTarget
+      ? monthlyBudgetSollMinutes(
+          schedule ?? undefined,
+          calMonth,
+          monthlyTarget,
+          monthlyHoursHolidayDeduction,
+          holidays.keys(),
+        )
+      : 0,
   );
   let mBalance = $derived(
-    // For MONTHLY_HOURS with a monthly target: compare worked against the full month budget
-    // (totalMonthExpected), not the partial daily accrual (totalExpected). Using totalExpected
-    // would only count workdays up to today × dailySollMin (e.g. 8 × 45min = 6h instead of 15h).
+    // For MONTHLY_HOURS with a monthly target: compare worked against the FLAT full-month budget
+    // (monthlyBudgetSoll), not the partial daily accrual (totalExpected) and not the drifted
+    // per-day distribution (totalMonthExpected). "Budget remaining" semantic, full-month.
     // For FIXED_SCHEDULE / FLEXTIME and no-target MONTHLY_HOURS: keep the up-to-today accrual.
-    hasMonthlyTarget ? totalWorked - totalMonthExpected : totalWorked - totalExpected,
+    hasMonthlyTarget ? totalWorked - monthlyBudgetSoll : totalWorked - totalExpected,
   );
   // Check if there are entries for today
   let hasTodayEntries = $derived(
@@ -1045,8 +1039,10 @@
     } else {
       if (!isMonthlyHours || hasMonthlyTarget) {
         stats.push({
+          // MONTHLY_HOURS(target) → flat full-month budget "Soll" (Item C, no working-day drift).
+          // FIXED_*/FLEXTIME → to-date "Soll (bisher)".
           label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-          value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+          value: fmtMin(hasMonthlyTarget ? monthlyBudgetSoll : totalExpected),
           unit: "h",
         });
       }
@@ -1063,20 +1059,12 @@
       }
     }
 
-    // Gesamt-Saldo: prefer the LIVE running total (last cumulative in the monthSaldo per-day series)
-    // for ALL Soll-bearing types (SHIFT_BASED, FIXED_*, FLEXTIME, MONTHLY_HOURS target>0). This is
-    // the same computeMonthSaldo model updateOvertimeAccount stores, but computed live — so it never
-    // goes stale between time-entry mutations (Bug 2). It also matches the last visible §615 cell for
-    // SHIFT_BASED. monthSaldoTotalMin is null for MONTHLY_HOURS(null/0) (we skip the fetch) →
-    // falls back to overtimeTotalHours (0 for TRACK_ONLY) → Gesamt-Saldo unchanged there by design.
-    if (monthSaldoTotalMin !== null) {
-      stats.push({
-        label: "Gesamt-Saldo",
-        value: fmtBalance(monthSaldoTotalMin),
-        unit: "h",
-        tone: balTone(monthSaldoTotalMin),
-      });
-    } else if (overtimeTotalHours !== null) {
+    // Gesamt-Saldo: the LIVE lifetime overtime balance (through windowEnd = yesterday when today is
+    // incomplete), sourced from GET /overtime/:id (now recomputed live via computeOvertimeBalanceHours).
+    // MONTH-INDEPENDENT by design — it is NOT bound to the viewed booking month, so navigating months
+    // does not change it. For the CURRENT month it still equals the last visible §615 cell (both derive
+    // from the same lifetime computation). For MONTHLY_HOURS(null/0) TRACK_ONLY the endpoint returns 0.
+    if (overtimeTotalHours !== null) {
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
         label: "Gesamt-Saldo",

@@ -40,6 +40,7 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
   let app: FastifyInstance;
   let tenantId: string;
   let employeeId: string;
+  let adminToken: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -53,6 +54,22 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
     tenantId = tenant.id;
 
     const passwordHash = await bcrypt.hash("test1234", 10);
+
+    // Admin (same tenant) for HTTP-level GET /overtime/:id + /overtime/month-saldo assertions.
+    const adminUser = await prisma.user.create({
+      data: { email: `b5admin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `B5A-${suffix}`,
+        firstName: "Bug5",
+        lastName: "Admin",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+
     const user = await prisma.user.create({
       data: { email: `b5-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
     });
@@ -173,6 +190,13 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
     }
 
     await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    const adminLogin = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `b5admin-${suffix}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(adminLogin.body).accessToken;
   });
 
   afterAll(async () => {
@@ -206,6 +230,47 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
 
       // windowEnd sanity: the day series must end at 2026-07-22 (today 07-23 excluded, no entry).
       expect(ms.days[ms.days.length - 1]!.date).toBe("2026-07-22");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("GET /overtime/:id (live lifetime GESAMT-SALDO) is MONTH-INDEPENDENT and == currentMonth lastCumulative", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+    try {
+      // The header GESAMT-SALDO is bound to GET /overtime/:id.balanceHours. That value must be the
+      // live lifetime saldo through windowEnd — the SAME regardless of which booking month the user
+      // is viewing (July, June, or August). The frontend also fetches month-saldo per viewed month
+      // (MONAT-SALDO / cells), but GESAMT-SALDO must NOT change with it.
+      const readGesamt = async (): Promise<number> => {
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/overtime/${employeeId}`,
+          headers: { authorization: `Bearer ${adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        return (JSON.parse(res.body) as { balanceHours: number }).balanceHours;
+      };
+
+      // Read GESAMT-SALDO three times, each "alongside" fetching a different month's §615 saldo
+      // (simulating the user navigating months). The GESAMT value must be identical every time.
+      const gJulyView = await readGesamt();
+      await computeMonthSaldo(app, employeeId, 2026, 6); // June view
+      const gJuneView = await readGesamt();
+      await computeMonthSaldo(app, employeeId, 2026, 8); // August view
+      const gAugView = await readGesamt();
+
+      expect(gJuneView).toBe(gJulyView);
+      expect(gAugView).toBe(gJulyView);
+
+      // And it equals the CURRENT month's last cumulative (both live-lifetime through windowEnd).
+      const ms = await computeMonthSaldo(app, employeeId, CUR_YEAR, CUR_MONTH);
+      const lastCumHours = ms.days[ms.days.length - 1]!.cumulativeSaldoMinutes / 60;
+      expect(gJulyView).toBeCloseTo(lastCumHours, 2);
+
+      // Includes the current partial month (not just the +3:14 June carry).
+      expect(Math.abs(gJulyView - 194 / 60)).toBeGreaterThan(0.01);
     } finally {
       vi.useRealTimers();
     }

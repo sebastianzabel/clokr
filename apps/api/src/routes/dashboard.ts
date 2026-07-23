@@ -731,7 +731,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           let balanceHours: number;
           try {
             const live = await computeOvertimeBalanceHours(app, a.employeeId);
-            balanceHours = live !== null ? Math.round(live) : Number(a.balanceHours);
+            balanceHours = live !== null ? round(live) : Number(a.balanceHours);
           } catch (err) {
             app.log.warn(
               { err, employeeId: a.employeeId },

@@ -16,6 +16,7 @@ import {
   isWorkDay,
   getDayExpectedHours,
   countWorkingDaysInMonth,
+  monthlyBudgetSollMinutes,
   type WorkScheduleLike,
 } from "../work-schedule";
 
@@ -143,5 +144,68 @@ describe("work-schedule helper (Phase 76.3 SALDO-V19-01)", () => {
     expect(countWorkingDaysInMonth(sched, monthStart)).toBe(22);
     // June 4 2026 is a Thursday
     expect(countWorkingDaysInMonth(sched, monthStart, ["2026-06-04"])).toBe(21);
+  });
+});
+
+// Item C (v1.8.24) — MONTHLY_HOURS header SOLL = flat full-month budget (no working-day drift).
+describe("monthlyBudgetSollMinutes — MONTHLY_HOURS flat budget (Item C)", () => {
+  // Nils: 15h/month Minijobber, Mon–Fri workdays (via *Hours drift or workDays).
+  const nils = (): WorkScheduleLike => ({
+    type: "MONTHLY_HOURS",
+    workDays: [1, 2, 3, 4, 5],
+    monthlyHours: 15,
+    sundayHours: 0,
+    mondayHours: 3,
+    tuesdayHours: 3,
+    wednesdayHours: 3,
+    thursdayHours: 3,
+    fridayHours: 3,
+    saturdayHours: 0,
+  });
+  const BUDGET = 900; // 15h × 60 = 900 min
+
+  it("flag OFF (default): SOLL == flat monthlyHours (900 = 15:00), NOT the drifted 897 = 14:57", () => {
+    // July 2026 has 23 Mon–Fri workdays → round(900/23)×23 = 39×23 = 897 (the drifted value).
+    const july = new Date(2026, 6, 1);
+    expect(countWorkingDaysInMonth(nils(), july)).toBe(23);
+    // Flat budget must be exactly 900 (no drift), regardless of working-day count.
+    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, false, [])).toBe(900);
+  });
+
+  it("flag OFF: SOLL is month-count-invariant — same 900 in a 22-workday and a 23-workday month", () => {
+    const june = new Date(2026, 5, 1); // 22 workdays
+    const july = new Date(2026, 6, 1); // 23 workdays
+    expect(countWorkingDaysInMonth(nils(), june)).toBe(22);
+    expect(countWorkingDaysInMonth(nils(), july)).toBe(23);
+    expect(monthlyBudgetSollMinutes(nils(), june, BUDGET, false, [])).toBe(900);
+    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, false, [])).toBe(900);
+  });
+
+  it("MONAT-SALDO semantic: worked − flat budget (Nils July, IST 6:30) = 390 − 900 = −510 (−8:30)", () => {
+    const july = new Date(2026, 6, 1);
+    const soll = monthlyBudgetSollMinutes(nils(), july, BUDGET, false, []);
+    const worked = 390; // 6:30h
+    expect(worked - soll).toBe(-510); // −8:30
+  });
+
+  it("flag ON: subtracts holiday workdays at the flat daily rate round(budget/totalWorkdays)", () => {
+    // Oct 2026: 3 Oct (Tag der Deutschen Einheit) is a Saturday 2026 → not a workday. Use a holiday
+    // that lands on a workday: 2026-07-01 (Wed) as a synthetic holiday in July (23 workdays).
+    const july = new Date(2026, 6, 1);
+    const dailyRate = Math.round(BUDGET / 23); // 39
+    // One holiday on a workday → budget − 39.
+    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, ["2026-07-01"])).toBe(
+      900 - dailyRate,
+    );
+    // A holiday on a weekend (2026-07-04 Sat) is NOT a workday → no deduction.
+    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, ["2026-07-04"])).toBe(900);
+    // No holidays with flag ON → still exactly the flat budget (no drift).
+    expect(monthlyBudgetSollMinutes(nils(), july, BUDGET, true, [])).toBe(900);
+  });
+
+  it("zero / null budget → 0; null schedule → 0", () => {
+    const july = new Date(2026, 6, 1);
+    expect(monthlyBudgetSollMinutes(nils(), july, 0, false, [])).toBe(0);
+    expect(monthlyBudgetSollMinutes(null, july, BUDGET, false, [])).toBe(0);
   });
 });
