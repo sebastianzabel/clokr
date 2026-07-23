@@ -2062,12 +2062,22 @@ export async function computeOvertimeBalanceHours(
         })
       : ([] as { date: Date; startTime: string; endTime: string }[]);
 
+  // Upper bound = shiftRangeLastDay (= full current calendar month, NOT effectiveEnd).
+  // The SHIFT_BASED partial-month C_net credit (closeEmployeeMonth uses monthEnd =
+  // currentMonthRange.end) must see approved leave/absences that START LATER in the current
+  // month than effectiveEnd (= yesterday when today has no entries). Truncating at effectiveEnd
+  // dropped a future-in-month approved vacation → its Soll-credit was never subtracted from
+  // C_net → the prorated effective Soll was inflated above W → the whole open-month §615
+  // contribution collapsed to 0, diverging from the per-day cells (computeMonthSaldo, which
+  // fetches the FULL month). This mirrors the shiftRangeLastDay widening above (Bug 5); the
+  // leave/absence fetch was left at effectiveEnd — that asymmetry is the divergence root cause.
+  // Non-SHIFT partial (monthEnd = effectiveEnd) ignores the extra rows (out of window) → no-op.
   const allApprovedLeave = await app.prisma.leaveRequest.findMany({
     where: {
       employeeId,
       deletedAt: null,
       status: "APPROVED",
-      startDate: { lte: effectiveEnd },
+      startDate: { lte: shiftRangeLastDay },
       endDate: { gte: rangeStart },
     },
   });
@@ -2076,7 +2086,7 @@ export async function computeOvertimeBalanceHours(
     where: {
       employeeId,
       deletedAt: null,
-      startDate: { lte: effectiveEnd },
+      startDate: { lte: shiftRangeLastDay },
       endDate: { gte: rangeStart },
     },
   });
