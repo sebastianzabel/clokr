@@ -83,6 +83,40 @@ describe("Leave / Absence API", () => {
       expect(Number(body.days)).toBe(0.5);
     });
 
+    it("rejects a half-day SICK request (teilweise AU gibt es nicht)", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "SICK",
+          startDate: "2026-08-12",
+          endDate: "2026-08-12",
+          halfDay: true,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toContain("Halbe Kranktage");
+    });
+
+    it("rejects a half-day SICK_CHILD request", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload: {
+          type: "SICK_CHILD",
+          startDate: "2026-08-13",
+          endDate: "2026-08-13",
+          halfDay: true,
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.body).error).toContain("Halbe Kranktage");
+    });
+
     it("rejects request with startDate after endDate", async () => {
       const res = await app.inject({
         method: "POST",

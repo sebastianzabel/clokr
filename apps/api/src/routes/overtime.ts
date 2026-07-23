@@ -1155,6 +1155,14 @@ export async function overtimeRoutes(app: FastifyInstance) {
         return snap;
       });
 
+      // v1.8.24: refresh OvertimeAccount to the true RUNNING total (incl. the current
+      // open month), mirroring the unlock-month path. Without this, closing a month
+      // freezes balanceHours at the closed-month-end carryOver, so the displayed
+      // GESAMT-SALDO would differ (lower) between a closed and a re-opened month even
+      // though the §615 per-month balances are identical. Keeps GESAMT-SALDO consistent
+      // regardless of a month's open/closed state.
+      await updateOvertimeAccount(app, employeeId);
+
       // D-12: Informational hint if the request is made before the grace period ends.
       // gracePeriodEnds = the 15th of the month FOLLOWING the target month.
       // Note: Date.UTC(year, month, 15) — month here is 1-based, so passing it directly
