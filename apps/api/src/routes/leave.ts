@@ -189,6 +189,16 @@ export async function leaveRoutes(app: FastifyInstance) {
       const leaveTypeId = await ensureLeaveType(app.prisma, tenantId, body.type);
       const leaveType = await app.prisma.leaveType.findUnique({ where: { id: leaveTypeId } });
 
+      // ── Half-day sick rejection ──
+      // Legal: teilweise Arbeitsunfähigkeit gibt es nicht; Krankheit wird immer
+      // ganztägig gutgeschrieben (EFZG §3/§4). Half-day only applies to vacation.
+      if (body.halfDay && ["SICK", "SICK_CHILD"].includes(body.type)) {
+        return reply.code(400).send({
+          error:
+            "Halbe Kranktage sind nicht zulässig — Krankheit wird immer ganztägig gutgeschrieben.",
+        });
+      }
+
       // ── Half-day check ──
       if (body.halfDay) {
         const globalHalfDay = tenantConfig?.halfDayAllowed ?? true;
@@ -1055,6 +1065,17 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Forbidden" });
       if (existing.status !== "PENDING")
         return reply.code(409).send({ error: "Nur ausstehende Anträge können bearbeitet werden" });
+
+      // ── Half-day sick rejection (legal: teilweise AU gibt es nicht) ──
+      const existingTypeCode = TYPE_CODES.find(
+        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
+      );
+      if (body.halfDay && (existingTypeCode === "SICK" || existingTypeCode === "SICK_CHILD")) {
+        return reply.code(400).send({
+          error:
+            "Halbe Kranktage sind nicht zulässig — Krankheit wird immer ganztägig gutgeschrieben.",
+        });
+      }
 
       const start = new Date(body.startDate);
       const end = new Date(body.endDate);

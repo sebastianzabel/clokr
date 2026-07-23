@@ -677,6 +677,7 @@
     const labels: Record<string, string> = {
       VACATION: "Urlaub",
       SICK: "Krank",
+      SICK_CHILD: "Kinderkrank",
       SPECIAL: "Sonderurlaub",
       OVERTIME_COMP: "Freizeitausgl.",
     };
