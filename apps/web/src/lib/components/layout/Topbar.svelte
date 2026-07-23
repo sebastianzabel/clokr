@@ -403,7 +403,9 @@
     gap: 18px;
     position: sticky;
     top: 0;
-    z-index: 20;
+    /* 1000 beats card-animate transform stacking contexts (those sit at default z-index
+       within the page flow; 1000 ensures both bell and avatar popovers paint above them) */
+    z-index: 1000;
     height: 60px;
     min-height: 60px;
   }

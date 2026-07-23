@@ -480,9 +480,56 @@
       : pendingRequests,
   );
 
+  // ── Lane assignment: stable gantt-style rows across calendar days ────────
+  // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
+  // occupies the same vertical row in every day cell it spans.
+  interface LaneResult {
+    laneById: Map<string, number>;
+    totalLanes: number;
+  }
+
+  function buildLaneMap(entries: CalEntry[]): LaneResult {
+    // Only the absences that will actually be rendered (mirrors the per-cell filter)
+    const visible = entries.filter((e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"));
+
+    // Deterministic sort: startDate → lastName → firstName → id
+    const sorted = [...visible].sort((a, b) => {
+      if (a.startDate !== b.startDate) return a.startDate < b.startDate ? -1 : 1;
+      const aName = `${a.lastName ?? ""}\0${a.firstName ?? ""}`;
+      const bName = `${b.lastName ?? ""}\0${b.firstName ?? ""}`;
+      if (aName !== bName) return aName < bName ? -1 : 1;
+      return a.id < b.id ? -1 : 1;
+    });
+
+    // laneEnd[L] = the endDate of the last absence placed in lane L
+    const laneEnd: string[] = [];
+    const laneById = new Map<string, number>();
+
+    for (const e of sorted) {
+      let placed = false;
+      for (let l = 0; l < laneEnd.length; l++) {
+        // Absence fits in lane l when the lane's last endDate is strictly before this startDate
+        if (laneEnd[l] < e.startDate) {
+          laneById.set(e.id, l);
+          laneEnd[l] = e.endDate;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        const l = laneEnd.length;
+        laneById.set(e.id, l);
+        laneEnd.push(e.endDate);
+      }
+    }
+
+    return { laneById, totalLanes: laneEnd.length };
+  }
+
   // Abgeleiteter Kalender (uses filteredCalEntries)
   let calMap = $derived(buildCalMap(filteredCalEntries));
   let calDays = $derived(buildCalDays(calYear, calMonth));
+  let calLanes = $derived(buildLaneMap(filteredCalEntries));
 
   // ── Anträge-Filter + Pagination ───────────────────────────────────────────
   let filterLeaveStatus = $state<Status | "">("");
@@ -805,8 +852,11 @@
         {#each calDays as day (day.dateStr)}
           {@const entries = calMap.get(day.dateStr) ?? []}
           {@const holidays = entries.filter((e) => e.isHoliday)}
-          {@const absences = entries.filter((e) => !e.isHoliday)}
+          {@const dayAbsences = entries.filter(
+            (e) => !e.isHoliday && (e.isOwn || e.status === "APPROVED"),
+          )}
           {@const isHoliday = holidays.length > 0}
+          {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
           <div
             class="cal-cell"
             class:cal-current={day.isCurrentMonth}
@@ -822,33 +872,37 @@
               </div>
             {/if}
             <div class="cal-chips">
-              {#each absences.filter((e) => e.isOwn || e.status === "APPROVED") as e (e.id)}
-                {@const _dow = new Date(day.dateStr + "T00:00:00").getDay()}
-                {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
-                {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
-                {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
-                <div
-                  class="cal-chip"
-                  class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
-                  class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
-                  class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
-                  class:cal-chip--pending={e.status === "PENDING" ||
-                    e.status === "CANCELLATION_REQUESTED"}
-                  class:cal-chip--own={e.isOwn}
-                  style:background={typeColor(e.typeCode, e.status, e.isOwn)}
-                  title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
-                    ? ' · ' + e.typeName
-                    : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
-                >
-                  {#if _showLabel}
-                    <span class="cal-chip-name">{e.firstName}</span>
-                    {#if e.isOwn && e.typeName}
-                      <span class="cal-chip-type">{e.typeName}</span>
-                    {:else}
-                      <span class="cal-chip-type">abwesend</span>
+              {#each Array(calLanes.totalLanes) as _, laneIdx (laneIdx)}
+                {@const e = dayAbsences.find((a) => calLanes.laneById.get(a.id) === laneIdx)}
+                {#if e}
+                  {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
+                  {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
+                  {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                  <div
+                    class="cal-chip"
+                    class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
+                    class:cal-chip--bar-end={!_isBarStart && _isBarEnd}
+                    class:cal-chip--bar-middle={!_isBarStart && !_isBarEnd}
+                    class:cal-chip--pending={e.status === "PENDING" ||
+                      e.status === "CANCELLATION_REQUESTED"}
+                    class:cal-chip--own={e.isOwn}
+                    style:background={typeColor(e.typeCode, e.status, e.isOwn)}
+                    title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
+                      ? ' · ' + e.typeName
+                      : ''}{e.status === 'PENDING' ? ' (ausstehend)' : ''}"
+                  >
+                    {#if _showLabel}
+                      <span class="cal-chip-name">{e.firstName}</span>
+                      {#if e.isOwn && e.typeName}
+                        <span class="cal-chip-type">{e.typeName}</span>
+                      {:else}
+                        <span class="cal-chip-type">abwesend</span>
+                      {/if}
                     {/if}
-                  {/if}
-                </div>
+                  </div>
+                {:else}
+                  <div class="cal-chip-placeholder"></div>
+                {/if}
               {/each}
             </div>
           </div>
@@ -1793,12 +1847,18 @@
   .cal-chips {
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 2px;
     flex: 1;
     min-height: 0;
     overflow: visible;
     margin: 0 -0.4rem;
+  }
+  /* Empty lane placeholder — reserves the row height so occupied lanes above/below
+     keep their stable vertical position across adjacent day cells. */
+  .cal-chip-placeholder {
+    height: 22px;
+    flex-shrink: 0;
   }
   .cal-chip {
     display: flex;
