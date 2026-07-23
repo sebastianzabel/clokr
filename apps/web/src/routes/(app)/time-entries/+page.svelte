@@ -157,6 +157,26 @@
   let overtimeTotalHours: number | null = $state(null);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
+
+  // §615 Meine Zeiteinträge display: month-saldo from the shared §615 core (SHIFT_BASED only).
+  interface MonthSaldoDay {
+    date: string;
+    cumulativeSaldoMinutes: number;
+  }
+  interface MonthSaldo {
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    closed: boolean;
+    days: MonthSaldoDay[];
+  }
+  let monthSaldo: MonthSaldo | null = $state(null);
+  let monthSaldoDayMap: Map<string, number> = $derived(
+    monthSaldo
+      ? new Map(monthSaldo.days.map((d) => [d.date, d.cumulativeSaldoMinutes]))
+      : new Map(),
+  );
+
   // Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt: hide the
   // "+ Neuer Eintrag" CTA + the per-day calendar-cell add handler.
   // Existing entries (if any) continue to display normally. Read from
@@ -301,6 +321,17 @@
       // SHIFT_BASED removed from monthly-path shortcut: the workaround (monthly=true
       // with zero monthlyHours) produced expectedMin=0 anyway, and now conflicts with
       // the shiftMinByDate injection path.
+      // §615 Monatssaldo für SHIFT_BASED: vom §615-Core-Endpoint laden.
+      if (schedule?.type === "SHIFT_BASED" && activeEmpId) {
+        monthSaldo = await api
+          .get<MonthSaldo>(
+            `/overtime/month-saldo/${activeEmpId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
+          )
+          .catch(() => null);
+      } else {
+        monthSaldo = null;
+      }
+
       if (schedule?.type === "SHIFT_BASED") {
         const rawShifts = await api
           .get<
@@ -1075,38 +1106,58 @@
       .filter((d) => d.dateStr >= weekStart && d.dateStr <= weekEnd && !d.isFuture)
       .reduce((s, d) => s + d.expectedMin, 0);
   });
+  // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
+  let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
   // Stat tiles for the MonthBar primitive — empty until a schedule loads.
   let monthBarStats: MonthBarStat[] = $derived.by(() => {
     if (!schedule) return [];
     const stats: MonthBarStat[] = [];
-    if (!isMonthlyHours || hasMonthlyTarget) {
+
+    if (isShiftBased && monthSaldo) {
+      // §615 header: Soll (bisher) = expectedMinutes from core; Monat-Saldo = balanceMinutes from core
       stats.push({
-        label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-        value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+        label: "Soll (bisher)",
+        value: fmtMin(monthSaldo.expectedMinutes),
         unit: "h",
       });
-    }
-    stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
-    // Phase 49.1 — FLEXTIME: show this week's worked vs expected diff in the bar
-    if (schedule.type === "FLEXTIME" && weekExpectedMin > 0) {
-      const weekDiff = weekWorkedMin - weekExpectedMin;
-      stats.push({
-        label: "Woche Saldo",
-        value: fmtBalance(weekDiff),
-        unit: "h",
-        tone: balTone(weekDiff),
-      });
-    }
-    if (isMonthlyHours && !hasMonthlyTarget) {
-      stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
-    } else {
+      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
       stats.push({
         label: "Monat-Saldo",
-        value: fmtBalance(mBalance),
+        value: fmtBalance(monthSaldo.balanceMinutes),
         unit: "h",
-        tone: balTone(mBalance),
+        tone: balTone(monthSaldo.balanceMinutes),
       });
+    } else {
+      if (!isMonthlyHours || hasMonthlyTarget) {
+        stats.push({
+          label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
+          value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+          unit: "h",
+        });
+      }
+      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
+      // Phase 49.1 — FLEXTIME: show this week's worked vs expected diff in the bar
+      if (schedule.type === "FLEXTIME" && weekExpectedMin > 0) {
+        const weekDiff = weekWorkedMin - weekExpectedMin;
+        stats.push({
+          label: "Woche Saldo",
+          value: fmtBalance(weekDiff),
+          unit: "h",
+          tone: balTone(weekDiff),
+        });
+      }
+      if (isMonthlyHours && !hasMonthlyTarget) {
+        stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
+      } else {
+        stats.push({
+          label: "Monat-Saldo",
+          value: fmtBalance(mBalance),
+          unit: "h",
+          tone: balTone(mBalance),
+        });
+      }
     }
+
     if (overtimeTotalHours !== null) {
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
@@ -1341,7 +1392,12 @@
                   </span>
                 {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-                {#if day.expectedMin > 0 && !isNoDailyTarget}
+                {#if isShiftBased && monthSaldoDayMap.has(day.dateStr)}
+                  {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                  <span class="day-bal {balClass(cum)}"
+                    >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                  >
+                {:else if day.expectedMin > 0 && !isNoDailyTarget}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"
                     >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
@@ -1382,6 +1438,9 @@
               <th>Bis</th>
               <th>Pause</th>
               <th>Netto</th>
+              {#if isShiftBased && monthSaldo}
+                <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
+              {/if}
               <th>Quelle</th>
               <th>Notiz</th>
               <th></th>
@@ -1415,6 +1474,12 @@
                   </td>
                   <td>{fmtBreaks(slot)}</td>
                   <td class="font-mono font-medium">{slotNet(slot)}</td>
+                  {#if isShiftBased && monthSaldo}
+                    {@const cum = monthSaldoDayMap.get(slotDate)}
+                    <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    </td>
+                  {/if}
                   <td
                     ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
                     ></td

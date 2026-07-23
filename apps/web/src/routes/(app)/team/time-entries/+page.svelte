@@ -154,6 +154,27 @@
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
 
+  // §615 Team-Zeiten display: month-saldo from the shared §615 core (SHIFT_BASED only).
+  // For non-SHIFT schedule types this stays null and existing derived values apply unchanged.
+  interface MonthSaldoDay {
+    date: string;
+    cumulativeSaldoMinutes: number;
+  }
+  interface MonthSaldo {
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    closed: boolean;
+    days: MonthSaldoDay[];
+  }
+  let monthSaldo: MonthSaldo | null = $state(null);
+  // Map from YYYY-MM-DD → cumulativeSaldoMinutes for O(1) cell lookup
+  let monthSaldoDayMap: Map<string, number> = $derived(
+    monthSaldo
+      ? new Map(monthSaldo.days.map((d) => [d.date, d.cumulativeSaldoMinutes]))
+      : new Map(),
+  );
+
   // Modal
   let modalOpen = $state(false);
   let editEntry: TimeEntry | null = $state(null);
@@ -234,6 +255,7 @@
       overtimeTotalHours = null;
       hireDate = null;
       shiftMinByDate = new Map();
+      monthSaldo = null;
       calendarDays = [];
       return;
     }
@@ -288,6 +310,18 @@
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // Other schedule types compute expectedMin via getDayExpectedHours (D-03 returns 0
       // for SHIFT_BASED — this page-level wiring fills the gap).
+      // §615 Monatssaldo für SHIFT_BASED: vom §615-Core-Endpoint laden.
+      // Non-SHIFT: unverändert (bestehende Ableitungen).
+      if (schedule?.type === "SHIFT_BASED") {
+        monthSaldo = await api
+          .get<MonthSaldo>(
+            `/overtime/month-saldo/${empId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
+          )
+          .catch(() => null);
+      } else {
+        monthSaldo = null;
+      }
+
       if (schedule?.type === "SHIFT_BASED") {
         const rawShifts = await api
           .get<
@@ -966,28 +1000,49 @@
       })
       .reduce((s, d) => s + d.expectedMin, 0),
   );
+  // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
+  // Non-SHIFT: fall through to the existing derived values (totalExpected, mBalance).
+  let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
   // Stat tiles for the MonthBar primitive — empty until an employee/schedule loads.
   let monthBarStats: MonthBarStat[] = $derived.by(() => {
     if (!selectedEmployee || !schedule) return [];
     const stats: MonthBarStat[] = [];
-    if (!isMonthlyHours || hasMonthlyTarget) {
+
+    if (isShiftBased && monthSaldo) {
+      // §615 header: Soll (bisher) = expectedMinutes from core; Monat-Saldo = balanceMinutes from core
       stats.push({
-        label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-        value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+        label: "Soll (bisher)",
+        value: fmtMin(monthSaldo.expectedMinutes),
         unit: "h",
       });
-    }
-    stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
-    if (isMonthlyHours && !hasMonthlyTarget) {
-      stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
-    } else {
+      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
       stats.push({
         label: "Monat-Saldo",
-        value: fmtBalance(mBalance),
+        value: fmtBalance(monthSaldo.balanceMinutes),
         unit: "h",
-        tone: balTone(mBalance),
+        tone: balTone(monthSaldo.balanceMinutes),
       });
+    } else {
+      if (!isMonthlyHours || hasMonthlyTarget) {
+        stats.push({
+          label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
+          value: fmtMin(hasMonthlyTarget ? totalMonthExpected : totalExpected),
+          unit: "h",
+        });
+      }
+      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
+      if (isMonthlyHours && !hasMonthlyTarget) {
+        stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
+      } else {
+        stats.push({
+          label: "Monat-Saldo",
+          value: fmtBalance(mBalance),
+          unit: "h",
+          tone: balTone(mBalance),
+        });
+      }
     }
+
     if (overtimeTotalHours !== null) {
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
@@ -1275,7 +1330,12 @@
                   </span>
                 {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
-                {#if day.expectedMin > 0 && !isMonthlyHours}
+                {#if isShiftBased && monthSaldoDayMap.has(day.dateStr)}
+                  {@const cum = monthSaldoDayMap.get(day.dateStr)!}
+                  <span class="day-bal {balClass(cum)}"
+                    >{cum >= 0 ? "+" : "−"}{fmtMin(Math.abs(cum))}</span
+                  >
+                {:else if day.expectedMin > 0 && !isMonthlyHours}
                   {@const b = day.workedMin - day.expectedMin}
                   <span class="day-bal {balClass(b)}"
                     >{b >= 0 ? "+" : "−"}{fmtMin(Math.abs(b))}</span
@@ -1316,6 +1376,9 @@
               <th>Bis</th>
               <th>Pause</th>
               <th>Netto</th>
+              {#if isShiftBased && monthSaldo}
+                <th title="Kumulierter Gesamtsaldo bis zu diesem Tag (§615)">Gesamtsaldo</th>
+              {/if}
               <th>Quelle</th>
               <th>Notiz</th>
               <th></th>
@@ -1349,6 +1412,12 @@
                   </td>
                   <td>{fmtBreaks(slot)}</td>
                   <td class="font-mono font-medium">{slotNet(slot)}</td>
+                  {#if isShiftBased && monthSaldo}
+                    {@const cum = monthSaldoDayMap.get(slotDate)}
+                    <td class="font-mono {cum != null ? balClass(cum) : ''}">
+                      {cum != null ? (cum >= 0 ? "+" : "−") + fmtMin(Math.abs(cum)) : "—"}
+                    </td>
+                  {/if}
                   <td
                     ><span class="badge {sourceBadge(slot.source)}">{sourceLabel(slot.source)}</span
                     ></td

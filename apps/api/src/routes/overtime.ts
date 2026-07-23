@@ -9,6 +9,7 @@ import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-perio
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — gap detector
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -1433,6 +1434,42 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
 
       return reply.code(201).send(snapshot);
+    },
+  });
+
+  // ── §615 Team-Zeiten monthly saldo display ──────────────────────────────────
+
+  // GET /api/v1/overtime/month-saldo/:employeeId?year=&month=
+  // Returns §615-consistent monthly saldo + per-day cumulative series.
+  // EMPLOYEE may only read their own; ADMIN/MANAGER may read any in their tenant.
+  app.get("/month-saldo/:employeeId", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { employeeId } = req.params as { employeeId: string };
+      const { year, month } = z
+        .object({
+          year: z.coerce.number().int().min(2020).max(2099),
+          month: z.coerce.number().int().min(1).max(12),
+        })
+        .parse(req.query);
+
+      // D-03: EMPLOYEE may only read their own saldo (mirrors GET /:employeeId above)
+      if (req.user.role === "EMPLOYEE" && req.user.employeeId !== employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Tenant isolation: employee must belong to the caller's tenant
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const result = await computeMonthSaldo(app, employeeId, year, month);
+      return result;
     },
   });
 }
