@@ -18,9 +18,9 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
-    "@tanstack/svelte-query": "^6.1.29",
+    "@tanstack/svelte-query": "^6.1.38",
     "chart.js": "^4.5.1",
-    "date-fns": "^4.2.0",
+    "date-fns": "^4.4.0",
     "svelte-dnd-action": "^0.9.69"
   },
   "devDependencies": {
@@ -28,16 +28,16 @@
     "@sveltejs/kit": "^2.60.1",
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@testing-library/jest-dom": "^6.6.3",
-    "@testing-library/svelte": "^5.2.7",
-    "@vitest/coverage-v8": "^4.1.6",
-    "autoprefixer": "^10.5.0",
+    "@testing-library/svelte": "^5.4.2",
+    "@vitest/coverage-v8": "^4.1.10",
+    "autoprefixer": "^10.5.4",
     "jsdom": "^25.0.1",
-    "postcss": "^8.5.14",
+    "postcss": "^8.5.22",
     "svelte": "^5.55.7",
     "svelte-check": "^4.4.8",
-    "tailwindcss": "^4.3.0",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.0.13",
+    "vite": "^8.1.5",
     "vitest": "^4.1.6"
   }
 }
