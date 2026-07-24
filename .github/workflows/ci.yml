@@ -489,7 +489,7 @@ jobs:
 
       - name: Upload playwright-report on failure
         if: failure() && steps.changes.outputs.visual == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression-report
           path: apps/e2e/playwright-report/
@@ -497,7 +497,7 @@ jobs:
 
       - name: Upload diff PNGs on failure
         if: failure() && steps.changes.outputs.visual == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: visual-regression-diffs
           path: apps/e2e/test-results/**/*.png
