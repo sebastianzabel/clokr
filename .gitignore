@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+.pnpm-store/
 
 # Environment
 .env
@@ -36,6 +37,7 @@ audit-*.png
 
 # Local design handoff package (external designer artifacts, kept local-only)
 docs/design/
+/design/
 
 # Claude Code / AI tooling (internal)
 .claude/
