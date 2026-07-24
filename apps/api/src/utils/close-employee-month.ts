@@ -8,13 +8,22 @@
  *   Caller owns $transaction + app.audit(). All inputs are pre-fetched by the
  *   caller. Purity contract matches calcShiftBasedSaldo (shift-based-saldo.ts).
  *
- * SHIFT_BASED bsExpectedMinutes note (live-path gap):
- *   This function includes bsExpectedMinutes for SHIFT_BASED, matching manual
- *   close (P1, overtime.ts:963–989), cron close (P2, auto-close-month.ts:314–348),
- *   and retroactive recalc (P3, recalculate-snapshots.ts:404–437).
- *   The live path (updateOvertimeAccount, time-entries.ts) still lacks bsExpectedMinutes
- *   in its SHIFT_BASED branch — that is an EXISTING gap carried forward to SNAP-03
- *   (phase 76.27); this core does NOT change updateOvertimeAccount.
+ * SHIFT_BASED bsExpectedMinutes note (single shared path):
+ *   This function includes bsExpectedMinutes for SHIFT_BASED. ALL saldo paths now route
+ *   through it: manual close (P1, overtime.ts), cron close (P2, auto-close-month.ts),
+ *   retroactive recalc (P3, recalculate-snapshots.ts), AND the live path
+ *   (computeOvertimeBalanceHours / updateOvertimeAccount, time-entries.ts) since the
+ *   Phase 76.39 consolidation. There is NO live-vs-closed bsExpectedMinutes divergence —
+ *   an earlier "live-path gap" note here was stale and has been removed (v1.8.27).
+ *
+ * SHIFT_BASED BS single-count (v1.8.27 fix):
+ *   A BS day is counted toward the contract Soll EXACTLY ONCE. contractSoll
+ *   (calcExpectedMinutesTz → avgWorkMinutesCore) has no BS awareness and counts a BS day
+ *   that lands on a normal workday as a contracted workday. The SHIFT_BASED sbAbsenceCredit
+ *   loop therefore subtracts that day's Ø-Method average credit (like every other absence
+ *   type) BEFORE bsExpectedMinutes re-adds the precise BBiG §15 slot credit. Before this
+ *   fix the loop skipped VOCATIONAL_SCHOOL/PATTERN, double-counting each BS day's Soll
+ *   (inflated Monats-Soll/Ist; prod-confirmed 247:00 on a 38h/week contract).
  *
  * exitDate convention (D-03):
  *   exitDate is INCLUSIVE — last working day, per vocational-school-generator.ts:320
@@ -330,9 +339,10 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // types (FIXED/FLEXTIME/SHIFT_BASED), keeping the balance neutral.
   // D-04: MONTHLY_HOURS adds to workedMinutes ONLY (no Soll target).
   //
-  // VOCATIONAL_SCHOOL / PATTERN absences are EXCLUDED from the leave/absence Soll-
-  // credit loop (they are handled by the doubling mechanism — matching all four paths;
-  // see time-entries.ts:1861 / overtime.ts:1058).
+  // v1.8.27: VOCATIONAL_SCHOOL / PATTERN absences are INCLUDED in the leave/absence Soll-
+  // credit loop (subtract-then-recredit — the day's Ø-Method average is removed from
+  // contractSoll, then the precise §15 slot credit is re-added via bsExpectedMinutes) so a
+  // BS day's Soll is counted exactly once. All four saldo paths share this single core.
 
   // Phase 76.31 (B): slot-aware BS amount. The FIRST_LONG_DAY credit is the individual
   // daily Soll (round(weeklyHours*60/workDaysPerWeek), e.g. 38h/4-day → 570), NOT the flat
@@ -466,8 +476,8 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
   // SHIFT_BASED: Model B + §615 via calcShiftBasedSaldo.
   //   R = Σ netto active shifts (deletedAt=null, coveredDates excluded) — reusing
   //       the SAME coveredDates from findMissingWorkdays (pitfall A1 fix).
-  //   C_net = calcExpectedMinutesTz − leave credits − absence credits (excl. BS/PATTERN)
-  //           + bsExpectedMinutes.
+  //   C_net = calcExpectedMinutesTz − leave credits − absence credits (incl. BS/PATTERN,
+  //           v1.8.27 subtract-then-recredit) + bsExpectedMinutes.
   //   No rosterProration (close = full month, not live open month).
   //   expectedMinutes = C_net (stored in SaldoSnapshot.expectedMinutes — not R, D-07).
   //   shiftBalanceOverride = balanceDelta + (bsWorkedMinutes − bsExpectedMinutes)  (Phase 76.31 (A):
@@ -536,8 +546,18 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       );
     }, 0);
     const sbAbsenceCredit = absences.reduce((sum, ab) => {
-      // VOCATIONAL_SCHOOL + source=PATTERN: handled via bsExpectedMinutes (D-06).
-      if (ab.type === "VOCATIONAL_SCHOOL" || ab.source === "PATTERN") return sum;
+      // v1.8.27 (BS double-count fix): ALL absence types are credited here — including
+      // VOCATIONAL_SCHOOL / source=PATTERN. contractSoll (avgWorkMinutesCore) has NO BS
+      // awareness: it counts every {day}Hours>0 calendar day as a contracted workday,
+      // so a BS day that lands on a normal workday IS already inside contractSoll once
+      // (at the Ø-Method daily average). We therefore subtract that same Ø-Method day
+      // credit here, then re-add the precise BBiG-§15 slot credit via bsExpectedMinutes
+      // below — so each BS day's Soll appears EXACTLY ONCE (subtract-then-recredit).
+      // This makes the SHIFT_BASED branch symmetric with the non-SHIFT branch's
+      // `absenceMinutes` reduce (lines ~639-655), which never excluded BS days and was
+      // therefore never affected by the double-count. Previously this loop skipped
+      // VOCATIONAL_SCHOOL/PATTERN, leaving the BS day in contractSoll AND adding
+      // bsExpectedMinutes on top → inflated Soll/Ist (prod: 247:00 on a 38h contract).
       const absStart = ab.startDate < effectiveStart ? effectiveStart : ab.startDate;
       const absEnd = ab.endDate > monthEnd ? monthEnd : ab.endDate;
       if (absStart > absEnd) return sum;
@@ -547,8 +567,13 @@ export function closeEmployeeMonth(input: CloseMonthInput): CloseMonthResult {
       );
     }, 0);
 
-    // C_net: contract Soll net of leave/absence credits + bsExpectedMinutes (BS day = Arbeitstag,
-    // BBiG §15 — VOCATIONAL_SCHOOL credit folded in via bsExpectedMinutes, not the loop above).
+    // C_net: contract Soll net of leave/absence credits (incl. the BS day's Ø-Method day
+    // credit, subtracted above) + bsExpectedMinutes (the precise BBiG §15 BS slot credit).
+    // BS day = Arbeitstag: its Soll now appears exactly ONCE — the Ø-Method average removed
+    // from contractSoll, the §15 slot credit added back. When the §15 slot credit equals the
+    // Ø-Method day average (the common no-slot-override case) the two cancel and cNet is
+    // unchanged by the BS day; when they differ (block-week / FIRST_LONG_DAY / duration slots)
+    // cNet correctly reflects the §15 credit instead of the flat average.
     const cNet = Math.max(0, contractSoll - sbLeaveCredit - sbAbsenceCredit) + bsExpectedMinutes;
 
     // Pass W = workedMinutes (entries only, WITHOUT bsWorkedMinutes) into calcShiftBasedSaldo.

@@ -831,20 +831,20 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     // Baseline: SAME input WITHOUT the BS absence, to isolate the BS day's own contribution.
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
-    // Phase 76.31 (A) — SHIFT_BASED Berufsschultag is NET-NEUTRAL: the BS minutes are
-    // booked EQUALLY on worked AND expected → the BS day adds 0 to the balance. (Was the
-    // latent +480 phantom-overtime bug documented in 76.26-BS-DOUBLING-FOLLOWUP.md, now fixed.)
+    // v1.8.27 SINGLE-COUNT — SHIFT_BASED Berufsschultag is counted toward Soll EXACTLY ONCE
+    // and remains balance-neutral. The BS day (Feb 2, a Monday) is already inside contractSoll
+    // (avgWorkMinutesCore counts every {day}Hours>0 calendar day). The SHIFT_BASED sbAbsenceCredit
+    // loop now subtracts that day's Ø-Method day credit (456) — like every other absence type —
+    // BEFORE bsExpectedMinutes re-adds the §15 FIRST_LONG_DAY slot credit (456). The two cancel:
+    //   - expectedMinutes (C_net) is UNCHANGED by adding the BS day (subtract 456, re-add 456).
+    //   - workedMinutes increases by the BS credit (456) — the BS day IS credited as worked.
+    //   - balanceMinutes stays 0 (R=0 no roster → §615 undertime 0; bsWorked 456 − bsExpected 456 = 0).
     //
-    // NOTE: expectedMinutes = contract Ø-Methode Soll (C_net, nonzero for SHIFT_BASED) + bsExpected.
-    // With roster R=0 and no entries W=0, undertime = max(0, R−W) = 0, so the balance is 0 with OR
-    // without the BS day — the BS day itself contributes exactly 0 (bsWorked 456 − bsExpected 456).
-    //
-    // Phase 76.31 (B): the LONG BS day is now credited the individual daily Soll via the slot
-    // resolver (this fixture: 38h over a 5-day week, tenantConfig null → round(38*60/5) = 456),
-    // NOT the flat 480 pauschal. The neutrality invariant (balance 0) is unchanged.
+    // OLD (buggy double-count) asserted expectedMinutes = baseline + 456 (the BS day's Soll was
+    // counted twice: once in contractSoll, once via bsExpected). Now it is counted once.
     const dailySoll456 = Math.round((38 * 60) / 5); // 456
-    expect(result.workedMinutes).toBe(baseline.workedMinutes + dailySoll456); // +bsWorkedMinutes
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + dailySoll456); // +bsExpectedMinutes (into C_net)
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + dailySoll456); // +bsWorkedMinutes (BS credited as worked)
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes); // UNCHANGED: BS day already in contractSoll, credit cancels (single-count)
     expect(result.balanceMinutes).toBe(0); // BS day nets to 0
     expect(result.balanceMinutes).toBe(baseline.balanceMinutes); // BS day changed the balance by 0
   }, 30_000);
@@ -949,15 +949,17 @@ describe("closeEmployeeMonth — case 4: SHIFT_BASED BS-day neutrality (worked==
     // Baseline WITHOUT the 3 BS absences isolates their combined contribution.
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
-    // 3 BS days × 480 = 1440 min booked equally on worked AND expected → net 0 to the balance.
+    // v1.8.27 SINGLE-COUNT: 3 BS days (Feb 3/10/17, all Tuesdays) × daily Soll 480 = 1440.
+    // Each BS day is counted toward Soll EXACTLY ONCE — its Ø-Method day credit (480) is
+    // subtracted from contractSoll (like every absence) and the §15 slot credit (480) is
+    // re-added, so expectedMinutes is UNCHANGED by adding the BS days. workedMinutes rises
+    // by the 1440 BS credit (the school days ARE credited as worked). Balance stays 0 via
+    // §615: R=0 (no shifts) → undertime 0, and Σ(bsWorked − bsExpected) = 0.
+    // OLD (buggy double-count) asserted expected = baseline + 1440 (BS Soll counted twice).
     expect(result.balanceMinutes).toBe(0);
     expect(result.balanceMinutes).toBe(baseline.balanceMinutes); // BS days changed the balance by 0
-    expect(result.workedMinutes).toBe(baseline.workedMinutes + 1440); // +3×bsWorked
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 1440); // +3×bsExpected
-    // BS raised worked and expected by the SAME amount (true neutrality):
-    expect(result.workedMinutes - baseline.workedMinutes).toBe(
-      result.expectedMinutes - baseline.expectedMinutes,
-    );
+    expect(result.workedMinutes).toBe(baseline.workedMinutes + 1440); // +3×bsWorked (credited as worked)
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes); // UNCHANGED: single-count (Ø-credit subtracted, §15 credit re-added → cancels)
 
     await cleanupTestData(app, tenant.id);
   }, 30_000);
