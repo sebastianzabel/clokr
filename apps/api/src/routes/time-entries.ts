@@ -2203,14 +2203,16 @@ export async function computeOvertimeBalanceHours(
     openPeriodBalance += result.balanceMinutes;
   }
 
-  // ── Current partial month: inline computation (F-01 Option A) ────────────────
+  // ── Current partial month: ONE closeEmployeeMonth() call (Phase 76.39, D-07) ─
   //
-  // The calendar month containing effectiveEnd is the CURRENT PARTIAL month.
-  // For SHIFT_BASED: roster-prorated inline (D-09, existing proration logic preserved).
-  //   shiftBalanceOverride is set; bsWorkedMinutes added at openPeriodBalance site.
-  //   This preserves the existing live-path bsExpectedMinutes gap (RESEARCH §2.7 — do NOT fix).
-  // For non-SHIFT: flat calcExpectedMinutesTz over current-month open range only.
-  //   holdiayMinutes/leaveMinutes/absenceMinutes apply to current-month range only.
+  // The calendar month containing effectiveEnd is the CURRENT PARTIAL month. It is
+  // computed by the SAME shared closeEmployeeMonth() core as every close/cron/recalc path
+  // (Phase 76.39 consolidation), so BS handling — including the v1.8.27 single-count fix —
+  // is identical live vs closed. An earlier note here claimed a "live-path bsExpectedMinutes
+  // gap ... do NOT fix"; that gap no longer exists (the live path was rewired through the
+  // shared core) and the stale note has been removed.
+  // For SHIFT_BASED: roster-prorated via rosterProration (D-07).
+  // For non-SHIFT: flat calcExpectedMinutesTz over the current-month open range only.
   //
   // currentMonthOpenStart: the later of rangeStart and the current month's UTC start.
   // If rangeStart is already within the current month (no complete open months), the

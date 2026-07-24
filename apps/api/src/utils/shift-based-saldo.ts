@@ -10,10 +10,13 @@
  *   C_net  = contractSollMinutes — contractual Soll net of leave/holiday/absence credits
  *            (Ausfallprinzip). Computed by the CALLER via:
  *              calcExpectedMinutesTz(schedule, effectiveStart, rangeEnd, tz)
- *              − calcLeaveAbsenceMinutesTz (approved leave, excl. VOCATIONAL_SCHOOL+PATTERN)
- *              − calcLeaveAbsenceMinutesTz (absences,      excl. VOCATIONAL_SCHOOL+PATTERN)
- *            then Math.max(0, ...). bsExpectedMinutes (VOCATIONAL_SCHOOL doubling per Phase 63)
- *            is also added by the caller before passing.
+ *              − calcLeaveAbsenceMinutesTz (approved leave)
+ *              − calcLeaveAbsenceMinutesTz (absences, INCL. VOCATIONAL_SCHOOL+PATTERN —
+ *                v1.8.27 subtract-then-recredit: the BS day's Ø-Method day credit is
+ *                subtracted here, then re-added as the precise §15 slot credit via
+ *                bsExpectedMinutes, so each BS day is counted exactly once)
+ *            then Math.max(0, ...). bsExpectedMinutes (VOCATIONAL_SCHOOL §15 slot credit)
+ *            is added by the caller before passing.
  *
  *   R      = rosterMinutes — Σ netto shift durations (deletedAt=null, coveredDates excluded).
  *            The caller MUST pre-exclude:

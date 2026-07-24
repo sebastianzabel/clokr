@@ -964,15 +964,18 @@ const CELLS: Cell[] = [
     year: 2026,
     month: 1,
     hireDate: "2025-12-01",
-    // BS day Jan14 (sole in its ISO week -> FIRST_LONG_DAY). Roster R = W = contract
-    // Soll 10032 across the 21 non-BS Mo-Fr workdays; the BS day 456 is credited via
-    // bsWorked/bsExpected -> worked/expected stored = 10488.
+    // v1.8.27 single-count: contractSoll=10032 (22 Mo-Fr × 456). BS day Jan14 counted ONCE
+    // (Ø-Method day credit 456 subtracted from contractSoll, §15 FIRST_LONG_DAY credit 456
+    // re-added → cancels). R=W=9576 (21 non-BS days), bsWorked=bsExpected=456.
+    //   expected = C_net = max(0,10032−0−456)+456 = 10032
+    //   worked   = W(9576)+bsWorked(456) = 10032 ; balance 0.
+    // OLD (buggy double-count) pinned 10488/10488 — the BS day's Soll was counted twice.
     entries: buildAzFirstRoster().entries,
     shifts: buildAzFirstRoster().shifts,
     bsDays: ["2026-01-14"],
     expected: {
-      workedMinutes: 10488,
-      expectedMinutes: 10488,
+      workedMinutes: 10032,
+      expectedMinutes: 10032,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
@@ -988,14 +991,16 @@ const CELLS: Cell[] = [
     year: 2026,
     month: 1,
     hireDate: "2025-12-01",
-    // 17 Mo-Do workdays; BS day Jan14 (Wed) excluded → 16 roster days. R=W=10200.
-    // 16 legal days summing 10200: computed by helper.
+    // v1.8.27 single-count: 40h/4-day, contractSoll=10200 (17 Mo-Do × 600). BS day Jan14
+    // counted ONCE (600 subtracted, §15 credit 600 re-added). R=W=9600 (16 non-BS days),
+    // bsWorked=bsExpected=600. expected=C_net=max(0,10200−600)+600=10200; worked=9600+600=10200.
+    // OLD (double-count) pinned 10800/10800.
     entries: buildAz404Roster().entries,
     shifts: buildAz404Roster().shifts,
     bsDays: ["2026-01-14"],
     expected: {
-      workedMinutes: 10800,
-      expectedMinutes: 10800,
+      workedMinutes: 10200,
+      expectedMinutes: 10200,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
@@ -1011,13 +1016,16 @@ const CELLS: Cell[] = [
     year: 2026,
     month: 1,
     hireDate: "2025-12-01",
-    // 12 Mo-Mi workdays; BS day Jan14 (Wed) excluded → 11 roster days. R=W=7200.
+    // v1.8.27 single-count: 30h/3-day, contractSoll=7200 (12 Mo-Mi × 600). BS day Jan14
+    // counted ONCE (600 subtracted, §15 credit 600 re-added). R=W=6600 (11 non-BS days),
+    // bsWorked=bsExpected=600. expected=C_net=max(0,7200−600)+600=7200; worked=6600+600=7200.
+    // OLD (double-count) pinned 7800/7800.
     entries: buildAz303Roster().entries,
     shifts: buildAz303Roster().shifts,
     bsDays: ["2026-01-14"],
     expected: {
-      workedMinutes: 7800,
-      expectedMinutes: 7800,
+      workedMinutes: 7200,
+      expectedMinutes: 7200,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
@@ -1034,18 +1042,22 @@ const CELLS: Cell[] = [
     year: 2026,
     month: 1,
     hireDate: "2025-12-01",
-    // 2 BS days in ONE ISO week (Tue Jan13 + Thu Jan15). R=W=10032 on remaining days.
+    // v1.8.27 single-count: 2 BS days ONE ISO week (Tue Jan13 + Thu Jan15). contractSoll=10032.
+    // Both counted ONCE: 2×456 Ø-credit subtracted, 2×456 §15 credit re-added (FIRST+SECOND_LONG
+    // both = daily Soll 456). R=W=9120 (20 non-BS days), bsWorked=bsExpected=912.
+    //   expected = C_net = max(0,10032−912)+912 = 10032 ; worked = 9120+912 = 10032 ; balance 0.
+    // OLD (double-count) pinned 10944/10944.
     entries: buildAzMultiRoster(["2026-01-13", "2026-01-15"]).entries,
     shifts: buildAzMultiRoster(["2026-01-13", "2026-01-15"]).shifts,
     bsDays: ["2026-01-13", "2026-01-15"],
     expected: {
-      workedMinutes: 10944,
-      expectedMinutes: 10944,
+      workedMinutes: 10032,
+      expectedMinutes: 10032,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
     },
-    // Phase 76.34 flipped GREEN: SECOND_LONG_DAY now defaults to daily Soll (456) per §15.
+    // Phase 76.34: SECOND_LONG_DAY defaults to daily Soll (456) per §15.
     expectedRed: false,
   },
   {
@@ -1061,13 +1073,17 @@ const CELLS: Cell[] = [
     shifts: buildAzMultiRoster(["2026-01-13", "2026-01-15"]).shifts,
     bsDays: ["2026-01-13", "2026-01-15"],
     expected: {
-      workedMinutes: 10944,
-      expectedMinutes: 10944,
+      // v1.8.27 single-count: same as bs_second (no bsSlotConfig/durations → both BS days
+      // default to daily Soll 456). 2×456 subtracted + 2×456 §15 re-added. R=W=9120.
+      //   expected = C_net = max(0,10032−912)+912 = 10032 ; worked = 9120+912 = 10032 ; balance 0.
+      // OLD (double-count) pinned 10944/10944.
+      workedMinutes: 10032,
+      expectedMinutes: 10032,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
     },
-    // Phase 76.34 flipped GREEN: SHORT_DAY now defaults to daily Soll (456) per §15.
+    // Phase 76.34: SHORT_DAY defaults to daily Soll (456) per §15.
     expectedRed: false,
   },
 
@@ -1097,15 +1113,21 @@ const CELLS: Cell[] = [
     bsDayDurations: { "2026-01-12": 180, "2026-01-15": 300 },
     bsSlotConfig: { bsSlotShortDayMinutes: 300 },
     expected: {
-      // Mon SHORT=300, Thu FIRST_LONG=456 → bsCredit 756. R=10032 → 10788.
-      workedMinutes: 10788,
-      expectedMinutes: 10788,
+      // Phase 76.38 slot classification UNCHANGED by v1.8.27: Mon SHORT=300, Thu FIRST_LONG=456
+      // → bsExpected=bsWorked=756. v1.8.27 single-count then subtracts the 2 BS days' Ø-Method
+      // day credit (2×456=912) from contractSoll before re-adding the 756 §15 slot credit:
+      //   R=W=9120 (buildAzMultiRoster: 10032−912). expected = C_net = max(0,10032−912)+756 = 9876
+      //   worked = 9120 + bsWorked(756) = 9876 ; balance 0.
+      // NOTE: this cell is affected by BOTH the 76.38 duration classification (sets bsCredit=756,
+      // unchanged here) AND the v1.8.27 double-count fix (removes the +912 inflation). OLD pinned
+      // 10788/10788 (double-count: contractSoll 10032 + bsExpected 756, roster inflated to 10032).
+      workedMinutes: 9876,
+      expectedMinutes: 9876,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
     },
-    // RED under ordinal code (Mon→FIRST 456, Thu→SECOND 456 → 10944 ≠ 10788).
-    expectedRed: true,
+    expectedRed: false,
   },
   {
     id: "az-38-5-bs_duration_long_p2",
@@ -1122,15 +1144,20 @@ const CELLS: Cell[] = [
     bsDayDurations: { "2026-01-12": 200, "2026-01-15": 400 },
     bsSlotConfig: { bsSlotShortDayMinutes: 360 },
     expected: {
-      // Mon SHORT=360, Thu FIRST_LONG=456 → bsCredit 816. R=10032 → 10848.
-      workedMinutes: 10848,
-      expectedMinutes: 10848,
+      // Phase 76.38 slot classification UNCHANGED by v1.8.27: Mon SHORT=360, Thu FIRST_LONG=456
+      // → bsExpected=bsWorked=816. v1.8.27 single-count subtracts 2×456=912 Ø-credit before
+      // re-adding the 816 §15 slot credit:
+      //   R=W=9120 (10032−912). expected = C_net = max(0,10032−912)+816 = 9936
+      //   worked = 9120 + 816 = 9936 ; balance 0.
+      // Affected by BOTH 76.38 (bsCredit=816, unchanged) AND v1.8.27 (removes +912 inflation).
+      // OLD pinned 10848/10848 (double-count).
+      workedMinutes: 9936,
+      expectedMinutes: 9936,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,
     },
-    // RED under ordinal code (Mon→FIRST 456, Thu→SECOND 456 → 10944 ≠ 10848).
-    expectedRed: true,
+    expectedRed: false,
   },
 
   // ── Wave 2 RED anchor — Phase 76.32.1-02 (Part C Absence.halfDay) ──────────
@@ -1197,29 +1224,36 @@ function distribute(dates: string[], total: number): Array<{ date: string; netto
   });
 }
 
+// v1.8.27 BS single-count fix: non-BS days now carry the contract Soll MINUS the BS
+// day's Ø-Method day credit (the BS day is credited separately via bsWorked/bsExpected).
+// This keeps W==R==(contractSoll − bsAvg) so total worked==expected==contractSoll and
+// balance 0 — WITHOUT the former over-inflation of the non-BS roster that artificially
+// cancelled the double-count. (Old code left the BS day inside contractSoll AND added
+// bsExpected on top, so the roster had to be inflated to contractSoll to net to 0.)
 function buildAzFirstRoster() {
-  // 38h/5-day, contract Soll R=10032. BS day Jan14 excluded -> 21 non-BS Mo-Fr days.
+  // 38h/5-day, contractSoll=10032, daily avg 456. 21 non-BS Mo-Fr days carry 10032−456=9576.
   const days = JAN_MO_FR.filter((d) => d !== "2026-01-14");
-  const r = distribute(days, 10032); // 21 days, ~478 min each
+  const r = distribute(days, 9576); // 21 days summing to 9576 (= contractSoll − 1×456)
   return { entries: r, shifts: r };
 }
 function buildAz404Roster() {
-  // 40h/4-day, R=10200. 17 Mo-Do days minus BS Jan14 -> 16 roster days.
-  // R/W totals are what drive the saldo; per-day distribution is irrelevant to balance.
+  // 40h/4-day, contractSoll=10200, daily avg 600. 16 non-BS Mo-Do days carry 10200−600=9600.
   const days = JAN_MO_DO.filter((d) => d !== "2026-01-14");
-  const r = distribute(days, 10200); // 16 days summing to 10200
+  const r = distribute(days, 9600); // 16 days summing to 9600 (= contractSoll − 1×600)
   return { entries: r, shifts: r };
 }
 function buildAz303Roster() {
-  // 30h/3-day, R=7200. 12 Mo-Mi days minus BS Jan14 -> 11 roster days.
+  // 30h/3-day, contractSoll=7200, daily avg 600. 11 non-BS Mo-Mi days carry 7200−600=6600.
   const days = JAN_MO_MI.filter((d) => d !== "2026-01-14");
-  const r = distribute(days, 7200); // 11 days summing to 7200
+  const r = distribute(days, 6600); // 11 days summing to 6600 (= contractSoll − 1×600)
   return { entries: r, shifts: r };
 }
 function buildAzMultiRoster(bs: string[]) {
-  // 38h/5-day, R=10032. Remove the BS days from the 22 Mo-Fr days.
+  // 38h/5-day, contractSoll=10032, daily avg 456. v1.8.27: non-BS days carry
+  // contractSoll − 456×N (the N BS days are credited separately via bsWorked/bsExpected),
+  // so W==R==(10032 − 456×N) and total worked==expected==contractSoll (balance 0).
   const days = JAN_MO_FR.filter((d) => !bs.includes(d));
-  const r = distribute(days, 10032);
+  const r = distribute(days, 10032 - 456 * bs.length);
   return { entries: r, shifts: r };
 }
 

@@ -207,20 +207,23 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     }
   });
 
-  it("LONG BS day, all bsSlot* null → 570 (daily Soll), NOT 480; worked==expected, balance 0", () => {
+  it("LONG BS day, all bsSlot* null → 570 (daily Soll), NOT 480; single-count, balance 0", () => {
     const input = baseInput({ absences: oneBsDay });
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
     // The BS day is credited the individual daily Soll (570), NOT the flat 480 pauschal.
+    // worked rises by the slot credit (570 = bsWorked). v1.8.27 single-count: expected is
+    // UNCHANGED — the BS day (Feb 2, Mon) is already in contractSoll at its Ø-Method day
+    // credit (570); that credit is now subtracted before the §15 slot credit (570) is
+    // re-added, and the two cancel (slot == dayAvg here). balance 0 via §615 (R=0) + bsWorked==bsExpected.
     expect(result.workedMinutes).toBe(baseline.workedMinutes + 570);
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 570);
-    // SHIFT_BASED net-neutral: worked and expected each rose by 570 → balance unchanged (0).
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes); // single-count: 570 subtracted, 570 re-added → cancels
     expect(result.balanceMinutes).toBe(0);
     expect(result.balanceMinutes).toBe(baseline.balanceMinutes);
   });
 
-  it("Employee.bsSlotFirstLongDayMinutes=600 → 600 both sides, balance 0", () => {
+  it("Employee.bsSlotFirstLongDayMinutes=600 → worked +600, expected +30 (slot−dayAvg), balance 0", () => {
     const input = baseInput({
       absences: oneBsDay,
       employeeSlots: {
@@ -233,8 +236,11 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
+    // worked rises by the slot credit (600 = bsWorked). v1.8.27 single-count: expected rises
+    // by (slot 600 − Ø-Method day credit 570) = +30. The BS day contributes exactly 600 to
+    // expected (its 570 in contractSoll is removed, the 600 §15 slot credit added). balance 0.
     expect(result.workedMinutes).toBe(baseline.workedMinutes + 600);
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 600);
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 30); // 600 slot − 570 Ø-day-credit
     expect(result.balanceMinutes).toBe(0);
   });
 
@@ -256,8 +262,10 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
+    // slot credit = 570 (daily Soll, legacy 480 does NOT drive FIRST). v1.8.27 single-count:
+    // worked +570; expected unchanged (570 subtracted, 570 re-added → cancels). balance 0.
     expect(result.workedMinutes).toBe(baseline.workedMinutes + 570);
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 570);
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes); // single-count: 570 == Ø-day-credit → cancels
     expect(result.balanceMinutes).toBe(0);
   });
 
@@ -281,9 +289,13 @@ describe("closeEmployeeMonth — slot-resolved BS amount (daily Soll for LONG da
     const result = closeEmployeeMonth(input);
     const baseline = closeEmployeeMonth({ ...input, absences: [] });
 
-    // 5 days × 480 = 2400 total, both sides, balance 0.
+    // Block week: 5 BS days × 480 = 2400 credited to worked (bsWorked). v1.8.27 single-count:
+    // the Ø-Method day credit is subtracted for the 4 SCHEDULED workdays Feb2–5 (Mo–Do, 4×570
+    // = 2280); Feb6 (Fri, fridayHours=0) was never in contractSoll → 0 subtracted. So expected
+    // rises by (bsExpected 2400 − Ø-credit 2280) = +120. worked rises by the full 2400. balance 0
+    // (R=0 → §615 no minus; bsWorked==bsExpected). OLD (double-count) asserted expected +2400.
     expect(result.workedMinutes).toBe(baseline.workedMinutes + 2400);
-    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 2400);
+    expect(result.expectedMinutes).toBe(baseline.expectedMinutes + 120); // 2400 block credit − 2280 Ø-day-credit (4 sched. workdays)
     expect(result.balanceMinutes).toBe(0);
   });
 
