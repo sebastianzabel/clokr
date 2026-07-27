@@ -67,7 +67,8 @@
       "find-my-way": ">=9.7.0",
       "@fastify/static": ">=10.1.1",
       "postcss": ">=8.5.18",
-      "prettier": "3.8.3"
+      "prettier": "3.8.3",
+      "@playwright/test": "1.60.0"
     }
   }
 }
