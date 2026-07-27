@@ -87,7 +87,14 @@ test.describe("Phase 75 — Visual baselines", () => {
     // Dashboard renders chart.js widgets; wait for the network to settle so
     // every KPI fetch is reflected in the screenshot.
     await page.waitForLoadState("networkidle");
-    await expect(page).toHaveScreenshot("01-dashboard.png", { fullPage: true });
+    // Mask the chart.js <canvas> elements: canvas rasterization is non-deterministic
+    // across runs/renders (observed as byte-differing screenshots between retries in
+    // the same CI run), which would flake the baseline. Masking excludes those regions
+    // from the comparison while still validating the surrounding layout.
+    await expect(page).toHaveScreenshot("01-dashboard.png", {
+      fullPage: true,
+      mask: [page.locator("canvas")],
+    });
   });
 
   test("02 — Zeiterfassung Kalender", async ({ page }) => {
@@ -171,6 +178,10 @@ test.describe("Phase 75 — Visual baselines", () => {
     await page.goto("/dashboard");
     await expect(page.getByTestId("dashboard-page")).toBeVisible();
     await page.waitForLoadState("networkidle");
-    await expect(page).toHaveScreenshot("10-mobile-dashboard.png", { fullPage: true });
+    // Mask chart.js <canvas> (non-deterministic rasterization) — see test 01.
+    await expect(page).toHaveScreenshot("10-mobile-dashboard.png", {
+      fullPage: true,
+      mask: [page.locator("canvas")],
+    });
   });
 });
