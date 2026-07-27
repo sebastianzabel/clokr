@@ -164,8 +164,14 @@ function validateBreakSlots(
 // tz (optional): tenant timezone used to format the conflict message. The server
 // container runs in UTC, so without it the message printed times in UTC with no
 // date — making a cross-month conflict impossible for the user to identify.
+// Prisma client shape shared by `app.prisma` (top-level) and the `tx` handle inside
+// `$transaction(async (tx) => ...)` — lets checkOverlap / checkEntryConflicts run
+// against either, which the grant-consumption race fix (retro-grant-race-403-vs-409)
+// relies on to re-run conflict checks INSIDE the tx after the single-use grant flip.
+type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
+
 async function checkOverlap(
-  app: FastifyInstance,
+  db: DbClient,
   employeeId: string,
   startTime: Date,
   endTime: Date | null,
@@ -182,7 +188,7 @@ async function checkOverlap(
     ? { endTime: null, date: entryDate }
     : { endTime: null };
 
-  const overlapping = await app.prisma.timeEntry.findFirst({
+  const overlapping = await db.timeEntry.findFirst({
     where: {
       employeeId,
       deletedAt: null,
@@ -215,6 +221,29 @@ async function checkOverlap(
   return `Überschneidung mit bestehendem Eintrag vom ${dateLabel} (${fmt(overlapping.startTime)} – ${fmt(overlapping.endTime)})`;
 }
 
+// One-per-day existence check (step 1 of validateTimeEntryInvariants), extracted so it
+// can be re-run against a `tx` handle from inside the grant-consumption $transaction
+// (retro-grant-race-403-vs-409 fix) — see param doc on deferConflictChecksToTx below.
+async function checkOneEntryPerDay(
+  db: DbClient,
+  employeeId: string,
+  date: Date,
+  excludeEntryId?: string,
+): Promise<string | null> {
+  const existingEntry = await db.timeEntry.findFirst({
+    where: {
+      employeeId,
+      deletedAt: null,
+      date,
+      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
+    },
+  });
+  if (existingEntry) {
+    return "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.";
+  }
+  return null;
+}
+
 // Shared time-entry invariants enforced by POST /time-entries, PUT /time-entries/:id
 // and the CSV import (POST /imports/time-entries). Extracting them here (D-01/D-03)
 // guarantees the three write paths cannot drift: one-entry-per-day, month-lock via
@@ -241,6 +270,20 @@ export async function validateTimeEntryInvariants(
     excludeEntryId?: string;
     isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
     grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
+    // Race fix (retro-grant-race-403-vs-409, 2026-07): the POST grant-consumption path
+    // passes true here. Both the one-per-day check (step 1) AND the overlap check
+    // (step 3) below are advisory pre-tx queries against the TimeEntry table — under
+    // concurrent same-grant writes, the loser can observe the winner's already-committed
+    // entry in EITHER check and get a generic 409 ("day already taken" / "overlaps with
+    // existing entry") instead of the single-use grant being the authoritative
+    // discriminator (403, "Antrag bereits verwendet"). When true, both checks are
+    // skipped here; the caller's own $transaction re-runs them (via checkOneEntryPerDay
+    // / checkOverlap against `tx`) AFTER the grant-flip succeeds, so only the winner
+    // ever reaches them, and the loser is rejected by the grant-flip itself before any
+    // conflict check runs. Never set for PUT: PUT updates an existing row by id
+    // (excludeEntryId), which does not race the same way and whose catch block does
+    // not re-run these checks.
+    deferConflictChecksToTx?: boolean;
   },
 ): Promise<{ error: string; windowDays?: number; entryAgeInDays?: number } | null> {
   const {
@@ -253,22 +296,17 @@ export async function validateTimeEntryInvariants(
     excludeEntryId,
     isCorrectionByManager,
     grantId,
+    deferConflictChecksToTx,
   } = params;
 
-  // 1. one-per-day (mirror POST) — exclude self when editing
-  const existingEntry = await app.prisma.timeEntry.findFirst({
-    where: {
-      employeeId,
-      deletedAt: null,
-      date,
-      ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}),
-    },
-  });
-  if (existingEntry) {
-    return {
-      error:
-        "Es existiert bereits ein Eintrag für diesen Tag. Bitte den bestehenden Eintrag bearbeiten.",
-    };
+  // 1. one-per-day (mirror POST) — exclude self when editing.
+  // Skipped when deferConflictChecksToTx is set (see param doc above) — the caller's own
+  // $transaction is the authoritative source of truth in that case.
+  if (!deferConflictChecksToTx) {
+    const oneDayError = await checkOneEntryPerDay(app.prisma, employeeId, date, excludeEntryId);
+    if (oneDayError) {
+      return { error: oneDayError };
+    }
   }
 
   // 2. month-lock via SaldoSnapshot (mirror POST) — authoritative even with no entries
@@ -302,10 +340,21 @@ export async function validateTimeEntryInvariants(
     }
   }
 
-  // 3. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message
-  const overlap = await checkOverlap(app, employeeId, newStart, newEnd, excludeEntryId, date, tz);
-  if (overlap) {
-    return { error: overlap };
+  // 3. overlap (mirror POST) — preserve v1.8.13 same-day open-entry scoping + tz message.
+  // Skipped when deferConflictChecksToTx is set — see param doc above.
+  if (!deferConflictChecksToTx) {
+    const overlap = await checkOverlap(
+      app.prisma,
+      employeeId,
+      newStart,
+      newEnd,
+      excludeEntryId,
+      date,
+      tz,
+    );
+    if (overlap) {
+      return { error: overlap };
+    }
   }
 
   return null;
@@ -1032,6 +1081,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         tenantId: user.tenantId,
         isCorrectionByManager: postIsCorrectionByManager,
         grantId: resolvedGrantId,
+        // Grant race fix: defer the one-per-day + overlap checks to the $transaction
+        // below so the single-use grant flip (checked first, before create) is the sole
+        // discriminator for concurrent same-grant writes — see param doc on
+        // validateTimeEntryInvariants. Re-run against `tx` after a successful flip.
+        deferConflictChecksToTx: !!resolvedGrantId,
       });
       if (invariantError) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
@@ -1084,15 +1138,56 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       }
 
       // Phase 76.29 Plan 03 — race-safe single-use grant consumption.
-      // When a resolvedGrantId is present, the TimeEntry create and the grant flip
-      // run inside one $transaction. The conditional updateMany (WHERE status=APPROVED)
-      // ensures exactly one concurrent write wins — if count !== 1 the tx rolls back.
+      // When a resolvedGrantId is present, the grant flip and the TimeEntry create
+      // run inside one $transaction, in that order (grant flip FIRST). The conditional
+      // updateMany (WHERE status=APPROVED) ensures exactly one concurrent write wins —
+      // if count !== 1 the tx rolls back before the create is ever attempted, so the
+      // loser is rejected with GRANT_ALREADY_USED (403) instead of racing into the
+      // (employeeId,date) unique index and getting a P2002 (409) (fixed 2026-07: see
+      // .planning/debug/resolved/retro-grant-race-403-vs-409.md).
       let entry: Awaited<ReturnType<typeof app.prisma.timeEntry.create>>;
       try {
         if (resolvedGrantId) {
           // Atomic: create entry + flip grant APPROVED → USED in one transaction.
           const grantIdForTx = resolvedGrantId;
           const result = await app.prisma.$transaction(async (tx) => {
+            // Conditional flip FIRST: only succeeds if still APPROVED (single-use guard).
+            // This must run before the TimeEntry create so the grant is the authoritative
+            // discriminator for concurrent same-day writes — otherwise the loser can fail
+            // on the (employeeId,date) unique index (P2002 -> 409) before the grant guard
+            // ever gets a chance to reject it with 403.
+            const consumed = await tx.retroEntryRequest.updateMany({
+              where: { id: grantIdForTx, status: "APPROVED" },
+              data: { status: "USED" },
+            });
+            if (consumed.count !== 1) {
+              throw new Error("GRANT_ALREADY_USED");
+            }
+
+            // Re-run the one-per-day + overlap conflict checks against `tx` now that
+            // this request has exclusively won the grant (deferConflictChecksToTx above
+            // skipped these pre-tx). Only the winner ever reaches this point, so these
+            // catch genuinely unrelated conflicts (e.g. a different, non-grant write to
+            // the same day) rather than the grant race itself — the (employeeId,date)
+            // partial unique index remains the final backstop for the one-per-day case.
+            const conflictDate = new Date(body.date);
+            const oneDayErrorTx = await checkOneEntryPerDay(tx, employeeId, conflictDate);
+            if (oneDayErrorTx) {
+              throw new Error(`ENTRY_CONFLICT:${oneDayErrorTx}`);
+            }
+            const overlapTx = await checkOverlap(
+              tx,
+              employeeId,
+              newStart,
+              newEnd,
+              undefined,
+              conflictDate,
+              tz,
+            );
+            if (overlapTx) {
+              throw new Error(`ENTRY_CONFLICT:${overlapTx}`);
+            }
+
             const created = await tx.timeEntry.create({
               data: {
                 employeeId,
@@ -1107,15 +1202,6 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                 invalidReason: manualLeave ? "Urlaubsstornierung ausstehend" : null,
               },
             });
-
-            // Conditional flip: only succeeds if still APPROVED (single-use guard).
-            const consumed = await tx.retroEntryRequest.updateMany({
-              where: { id: grantIdForTx, status: "APPROVED" },
-              data: { status: "USED" },
-            });
-            if (consumed.count !== 1) {
-              throw new Error("GRANT_ALREADY_USED");
-            }
 
             await app.audit({
               userId: user.sub,
@@ -1149,6 +1235,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Grant already consumed (concurrent race) → 403
         if (err instanceof Error && err.message === "GRANT_ALREADY_USED") {
           return reply.code(403).send({ error: "Antrag bereits verwendet oder ungültig" });
+        }
+        // Genuinely unrelated conflict (one-per-day/overlap), re-checked inside the tx
+        // after the grant flip succeeded (deferConflictChecksToTx) → 409.
+        if (err instanceof Error && err.message.startsWith("ENTRY_CONFLICT:")) {
+          return reply.code(409).send({ error: err.message.slice("ENTRY_CONFLICT:".length) });
         }
         // DATA-V1814-04: the partial-unique index catches a concurrent same-day create
         // that raced past the app-level one-per-day check → P2002 → 409 (not a 500).
@@ -1696,7 +1787,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // Overlap check — scope open-entry conflicts to this entry's day (v1.8.13).
         const revalidateTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
         const overlap = await checkOverlap(
-          app,
+          app.prisma,
           existing.employeeId,
           newStart,
           newEnd,
