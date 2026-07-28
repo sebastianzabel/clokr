@@ -83,6 +83,7 @@ export type RecalcSummary = {
   snapshotsScanned: number;
   recalculated: number;
   unchanged: number;
+  skippedZero: number;
   skippedLocked: Array<{
     snapshotId: string;
     employeeId: string;
@@ -196,6 +197,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       snapshotsScanned: 0,
       recalculated: 0,
       unchanged: 0,
+      skippedZero: 0,
       skippedLocked: [],
       errors: [],
     };
@@ -218,6 +220,7 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
       snapshotsScanned: 0,
       recalculated: 0,
       unchanged: 0,
+      skippedZero: 0,
       skippedLocked: [],
       errors: [],
     };
@@ -292,6 +295,17 @@ export async function main(argv: string[], injectedPrisma?: PrismaClient): Promi
                 `[BRIDGE-SNAPSHOT] preserved — employeeId=${emp.id} ` +
                   `periodStart=${snap.periodStart.toISOString().slice(0, 10)} carryOver=${snap.carryOver}`,
               );
+              runningCarryOver = snap.carryOver;
+              continue;
+            }
+
+            // v1.8.27 scope guard: the BS double-count only ever INFLATES expected (it adds the
+            // BS Soll on top without subtracting it first). A stored snapshot with
+            // expectedMinutes === 0 therefore CANNOT be BS-inflated — it is a pre-tracking /
+            // zero-activity / bridge-adjacent row. Skip it so this fix-recompute does NOT convert
+            // a legitimate zero snapshot into undertime (out of scope; see project_pretracking_saldo_pattern).
+            if (snap.expectedMinutes === 0) {
+              summary.skippedZero++;
               runningCarryOver = snap.carryOver;
               continue;
             }

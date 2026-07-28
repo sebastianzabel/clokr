@@ -1,10 +1,20 @@
 /**
  * Model B + § 615 saldo reconciliation helper for SHIFT_BASED schedules.
  *
- * Formula (D-01, Phase 76.22 CONTEXT.md):
- *   overtimeMinutes  = max(0, W − C_net)   — worked beyond the contractual Soll
- *   undertimeMinutes = max(0, R − W)        — employee-fault shortfall (no-show on offered shift)
+ * Formula (D-01, Phase 76.22 CONTEXT.md; BS pooling added v1.8.28):
+ *   overtimeMinutes  = max(0, (W + bsWorked) − C_net)  — total worked beyond the contractual Soll
+ *   undertimeMinutes = max(0, R − W)                    — employee-fault shortfall (no-show on offered shift)
  *   balanceDelta     = overtimeMinutes − undertimeMinutes
+ *
+ * Berufsschule (§15 BBiG) neutrality — v1.8.28 BS-overtime-swallow fix:
+ *   The caller folds each BS day's §15 credit into C_net (as bsExpectedMinutes). The SAME credit
+ *   (bsWorked) is therefore pooled into the OVERTIME numerator so a BS day is Soll-neutral
+ *   (bsWorked cancels bsExpected inside C_net) rather than raising the overtime threshold with no
+ *   offset. Before this fix W excluded bsWorked while C_net included bsExpected, so genuine
+ *   overtime on non-BS (salon) days never crossed the BS-inflated threshold and was swallowed
+ *   (e.g. a 38h/5-day Azubi with salon Ist > salon-Soll showed +0 instead of the real +overtime).
+ *   bsWorked is deliberately NOT added to the undertime clause: BS days are absences, never
+ *   rostered, so they must not offset a real salon no-show.
  *
  * Parameters:
  *   C_net  = contractSollMinutes — contractual Soll net of leave/holiday/absence credits
@@ -76,6 +86,14 @@ export function calcShiftBasedSaldo(params: {
   contractSollMinutes: number; // C_net — already holiday/leave/absence credited + bsExpectedMinutes folded in by caller
   rosterMinutes: number; // R — Σ netto active shifts (deletedAt=null, covered days excluded)
   workedMinutes: number; // W — TimeEntry netto (isInvalid=false, type=WORK, deletedAt=null)
+  // Berufsschule (§15 BBiG) credited minutes for BS days in range. Folded into C_net by the
+  // caller (as bsExpectedMinutes) → it must ALSO be pooled into the worked side of the OVERTIME
+  // clause so a BS day stays Soll-neutral (bsWorked in numerator cancels bsExpected inside C_net)
+  // while genuine overtime on non-BS days is credited instead of swallowed by the BS Soll.
+  // Deliberately NOT added to the UNDERTIME clause: BS days are absences, never rostered shifts,
+  // so they must not offset a real salon no-show (undertime stays max(0, R − W)). Default 0 →
+  // byte-identical to callers that never pass it. See §615 BS-overtime-swallow fix (v1.8.28).
+  bsWorkedMinutes?: number;
   // D-09 (live path only): prorate the contract Soll by roster progress for the open month.
   // Absent → effective Soll = contractSollMinutes (byte-identical to close/cron/recalc).
   rosterProration?: {
@@ -83,12 +101,18 @@ export function calcShiftBasedSaldo(params: {
     rosterPeriodMinutes: number; // R_periodFull — Σ active shift netto for the whole open month
   };
 }): {
-  overtimeMinutes: number; // max(0, W − C_eff)
+  overtimeMinutes: number; // max(0, (W + bsWorked) − C_eff)
   undertimeMinutes: number; // max(0, R − W)
   balanceDelta: number; // overtimeMinutes − undertimeMinutes  (replaces the per-path `totalWorked − netExpected`)
   expectedMinutes: number; // = effective contract Soll  (stored in SaldoSnapshot.expectedMinutes)
 } {
-  const { contractSollMinutes: C, rosterMinutes: R, workedMinutes: W, rosterProration } = params;
+  const {
+    contractSollMinutes: C,
+    rosterMinutes: R,
+    workedMinutes: W,
+    bsWorkedMinutes: BS = 0,
+    rosterProration,
+  } = params;
 
   // D-09 fallback: no roster planned for the open period (R_periodFull == 0) → no daily Soll.
   // The Soll is *distributed* by the roster; with no roster there is nothing due yet, so the
@@ -104,7 +128,7 @@ export function calcShiftBasedSaldo(params: {
     ? Math.round((C * rosterProration.rosterToDateMinutes) / rosterProration.rosterPeriodMinutes)
     : C;
 
-  const overtimeMinutes = Math.max(0, W - effectiveC);
+  const overtimeMinutes = Math.max(0, W + BS - effectiveC);
   const undertimeMinutes = Math.max(0, R - W);
   const balanceDelta = overtimeMinutes - undertimeMinutes;
   return { overtimeMinutes, undertimeMinutes, balanceDelta, expectedMinutes: effectiveC };

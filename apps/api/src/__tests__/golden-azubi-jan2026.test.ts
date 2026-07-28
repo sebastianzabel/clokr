@@ -10,12 +10,13 @@
  * All expected values are SPEC-DERIVED from 76.32-GOLDEN-SPEC.md — NOT derived by
  * running the code. If the code disagrees, that is a real finding.
  *
- * Golden numbers (v1.8.27 BS single-count fix — see derivation block below):
+ * Golden numbers (v1.8.28 BS-overtime-swallow fix — see derivation block below):
  *   snapshot.workedMinutes    = 9768  (W=9312 + bsWorked=456)
  *   snapshot.expectedMinutes  = 8664  (C_net; BS day counted ONCE, Feiertag NOT deducted for SHIFT_BASED)
- *   snapshot.balanceMinutes   = +648  (two-clause overtime; BS single-count RESTORES 456 suppressed overtime)
- *   snapshot.carryOver        = 648
- *   GET /overtime balanceHours = 10.8 (648 / 60)
+ *   snapshot.balanceMinutes   = +1104 (total worked 9768 − C_net 8664, zero undertime; BS pooled into
+ *                                      the overtime clause so the full salon overtime is credited)
+ *   snapshot.carryOver        = 1104
+ *   GET /overtime balanceHours = 18.4 (1104 / 60)
  * §15 rationale (owner decision 2026-07-21, BS-FIRST-LONG-DAY-DEFAULT-DECISION.md):
  * the FIRST BS-Langtag credits the individual daily Soll (round(38×60/5)=456), NOT the
  * legacy flat 480. The NOT-NULL vocationalSchoolMinutesPerDay @default(480) was removed
@@ -23,10 +24,10 @@
  *
  * Test structure:
  *   step 1: cron auto-close Jan-2026 → golden snapshot values
- *   step 2: live (post-close) balance == carryOver/60 == 10.8h
+ *   step 2: live (post-close) balance == carryOver/60 == 18.4h
  *   step 3: unlock + manual re-close → identical snapshot (V-03-B)
  *   step 4: unlock + recalc → identical; four-path parity holds (V-03-A/B/C)
- *   step 5: GET /overtime/:empId → balanceHours === 10.8 (HTTP-API path)
+ *   step 5: GET /overtime/:empId → balanceHours === 18.4 (HTTP-API path)
  *   step 6: pure-core closeEmployeeMonth == manual close (byte-identical parity pin)
  *
  * References: 76.32-GOLDEN-SPEC.md, shift-based-saldo-parity.test.ts (patterns),
@@ -76,19 +77,24 @@ const LIVE_NOW = new Date("2026-02-16T10:00:00.000Z");
 //   workedMinutes     = W(9312) + bsWorked(456) = 9768
 //   C_net             = max(0, contractSoll(10032) − leaveCredit(1368) − bsAbsenceCredit(456)) + bsExpected(456)
 //                     = max(0, 8208) + 456 = 8664
-//   balanceMinutes    = max(0, W(9312) − C_net(8664)) − max(0, R(9312) − W(9312)) + (456−456)
-//                     = max(0, 648) − 0 + 0 = 648
-//   carryOver         = 0 + 648 = 648
-//   balanceHours      = 648 / 60 = 10.8
-// This Azubi worked the full roster (R=9312) which exceeds the net contractual Soll after
-// Urlaub+BS reduction (C_net=8664) → 648 min legitimate overtime. The OLD double-count code
-// inflated C_net to 9120 (BS day counted twice), SUPPRESSING 456 min of that overtime
-// (reported +192 instead of +648) — the exact "inflated Soll suppresses Azubi overtime" symptom.
+//   balanceMinutes    = max(0, (W(9312) + bsWorked(456)) − C_net(8664)) − max(0, R(9312) − W(9312))
+//                     = max(0, 9768 − 8664) − 0 = 1104
+//   carryOver         = 0 + 1104 = 1104
+//   balanceHours      = 1104 / 60 = 18.4
+// This Azubi worked the full roster (R=9312) which exceeds the SALON net contractual Soll after
+// Urlaub+BS reduction (salon-net = C_net − bsExpected = 8664 − 456 = 8208) → 9312 − 8208 = 1104 min
+// legitimate salon overtime; the BS day is Soll-neutral. Two earlier bugs each hid part of this:
+//   - the OLD double-count inflated C_net to 9120 (BS counted twice), reporting +192;
+//   - v1.8.27 fixed the double-count but the SWALLOW remained: the overtime clause compared
+//     salon-only W(9312) against a C_net that still includes the BS Soll → +648 (456 still lost).
+//   - v1.8.28 (this fix) pools bsWorked into the overtime clause so BS cancels bsExpected inside
+//     C_net and the full salon overtime is credited → +1104. Ist(9768) − Soll(8664) with zero
+//     undertime = 1104, so the stored worked/expected/balance triple is now self-consistent.
 const GOLDEN_WORKED_MINUTES = 9768; // W(9312) + bsWorked(456)
 const GOLDEN_EXPECTED_MINUTES = 8664; // C_net — BS day counted ONCE; Feiertag NOT deducted for SHIFT_BASED
-const GOLDEN_BALANCE_MINUTES = 648; // two-clause overtime; BS single-count restores suppressed overtime
-const GOLDEN_CARRY_OVER = 648;
-const GOLDEN_BALANCE_HOURS = 10.8; // 648 / 60
+const GOLDEN_BALANCE_MINUTES = 1104; // total worked 9768 − C_net 8664, zero undertime (BS pooled → no swallow)
+const GOLDEN_CARRY_OVER = 1104;
+const GOLDEN_BALANCE_HOURS = 18.4; // 1104 / 60
 
 // ── Rostered shifts (17 total, spec §1.3) ────────────────────────────────────
 // All shifts start at 08:00; end = 08:00 + brutto.
@@ -459,7 +465,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
   });
 
   // ── step 1: cron auto-close → golden snapshot values ─────────────────────
-  it("step 1: cron closes Jan 2026 → golden snapshot (workedMinutes=9768, expectedMinutes=8664, balance=+648, carryOver=648)", async () => {
+  it("step 1: cron closes Jan 2026 → golden snapshot (workedMinutes=9768, expectedMinutes=8664, balance=+1104, carryOver=1104)", async () => {
     await runCronAt(app, CRON_NOW.toISOString());
 
     const snap = await fetchJanSnapshot(app, empId);
@@ -475,9 +481,9 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
     ).toBe(GOLDEN_EXPECTED_MINUTES);
     expect(
       snap!.balanceMinutes,
-      "balance = +648 (overtime clause; BS single-count restores 456 suppressed overtime)",
+      "balance = +1104 (overtime clause; BS pooled → full salon overtime credited, no swallow)",
     ).toBe(GOLDEN_BALANCE_MINUTES);
-    expect(snap!.carryOver, "carryOver = 0 + 648").toBe(GOLDEN_CARRY_OVER);
+    expect(snap!.carryOver, "carryOver = 0 + 1104").toBe(GOLDEN_CARRY_OVER);
 
     close1Snap = {
       workedMinutes: snap!.workedMinutes,
@@ -488,7 +494,7 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
   }, 120_000);
 
   // ── step 2: live (post-close) == carryOver/60 ────────────────────────────
-  it("step 2: live (post-close Feb 16) == carryOver/60 == 10.8h (V-03-A, §615 Feb open range = 0)", async () => {
+  it("step 2: live (post-close Feb 16) == carryOver/60 == 18.4h (V-03-A, §615 Feb open range = 0)", async () => {
     const live = await liveBalanceAt(app, empId, LIVE_NOW.toISOString());
     expect(live).toBeCloseTo(GOLDEN_BALANCE_HOURS, 1);
     expect(live).toBeCloseTo(close1Snap.carryOver / 60, 1);
@@ -564,8 +570,8 @@ describe("Phase 76.32 — GOLDEN Azubi Jan 2026: BS + Urlaub + Feiertag", () => 
     expect(recalcSnap!.carryOver).toBe(GOLDEN_CARRY_OVER);
   }, 60_000);
 
-  // ── step 5: GET /overtime/:empId → balanceHours === 10.8 (HTTP-API path) ───
-  it("step 5: GET /overtime/:empId → balanceHours === 10.8 (spec §3.2, HTTP-API path)", async () => {
+  // ── step 5: GET /overtime/:empId → balanceHours === 18.4 (HTTP-API path) ───
+  it("step 5: GET /overtime/:empId → balanceHours === 18.4 (spec §3.2, HTTP-API path)", async () => {
     const res = await app.inject({
       method: "GET",
       url: `/api/v1/overtime/${empId}`,

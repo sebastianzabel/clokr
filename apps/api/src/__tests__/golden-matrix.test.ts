@@ -983,6 +983,32 @@ const CELLS: Cell[] = [
     expectedRed: false,
   },
   {
+    id: "az-38-5-bs_first_overtime",
+    scheduleType: "SHIFT_BASED",
+    classification: "AZUBI",
+    situation: "Berufsschule + salon OVERTIME on non-BS days (v1.8.28 swallow fix)",
+    schedule: SB_38_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-12-01",
+    // The v1.8.28 regression shape (prod June repro): a BS day nets to 0, but the Azubi works
+    // OVERTIME on non-BS (salon) days that sits BELOW the BS-inflated C_net → pre-fix swallowed.
+    // contractSoll=10032, salon-net=9576, BS Jan14 bsWorked=bsExpected=456, C_net=10032.
+    // Salon Ist=9876 (roster R=9576, +300 overtime worked); total worked=9876+456=10332.
+    //   overtime = max(0, (9876+456) − 10032) = 300 ; balance +300 (was 0 before the fix).
+    entries: buildAzOvertimeRoster().entries,
+    shifts: buildAzOvertimeRoster().shifts,
+    bsDays: ["2026-01-14"],
+    expected: {
+      workedMinutes: 10332,
+      expectedMinutes: 10032,
+      balanceMinutes: 300,
+      carryOver: 300,
+      overtimeHours: 5,
+    },
+    expectedRed: false,
+  },
+  {
     id: "az-40-4-bs_first",
     scheduleType: "SHIFT_BASED",
     classification: "AZUBI",
@@ -1255,6 +1281,18 @@ function buildAzMultiRoster(bs: string[]) {
   const days = JAN_MO_FR.filter((d) => !bs.includes(d));
   const r = distribute(days, 10032 - 456 * bs.length);
   return { entries: r, shifts: r };
+}
+// v1.8.28 §615 BS-overtime-swallow fix: Azubi who works OVERTIME on non-BS (salon) days.
+// 38h/5-day, contractSoll=10032, daily avg 456, single BS day Jan14 (bsWorked=bsExpected=456).
+// salon-net Soll = 9576 (21 non-BS days). The salon Ist (9876) EXCEEDS salon-net by 300 (5h),
+// but is still BELOW the BS-inflated C_net (10032) — the exact shape that pre-fix swallowed to 0.
+// Roster R = 9576 (rostered the salon Soll; employee worked 300 more) ≤ W → no undertime.
+//   Post-fix: overtime = max(0, (9876+456) − 10032) = 300 ; worked = 9876+456 = 10332 ;
+//             expected = C_net = 10032 ; balance +300.
+//   Pre-fix (bug): overtime = max(0, 9876 − 10032) = 0 → balance 0 (salon overtime swallowed).
+function buildAzOvertimeRoster() {
+  const days = JAN_MO_FR.filter((d) => d !== "2026-01-14");
+  return { entries: distribute(days, 9876), shifts: distribute(days, 9576) };
 }
 
 // ── Representative subset for four-path parity (≥1 per scheduleType) ──────────

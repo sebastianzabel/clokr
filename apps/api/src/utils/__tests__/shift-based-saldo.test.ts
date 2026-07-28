@@ -183,6 +183,73 @@ describe("calcShiftBasedSaldo — D-01 formula", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Berufsschule (§15 BBiG) pooling — v1.8.28 BS-overtime-swallow fix.
+//
+// The caller folds each BS day's §15 credit into C_net (as bsExpectedMinutes). The SAME credit
+// (bsWorkedMinutes) is pooled into the OVERTIME numerator so a BS day is Soll-neutral while
+// genuine overtime on non-BS (salon) days is credited instead of swallowed by the BS-inflated
+// threshold. bsWorked is NOT added to the undertime clause (BS days are absences, never rostered).
+//
+// For SHIFT_BASED bsWorked === bsExpected always (both = resolveBsTagSlot.creditedMinutes,
+// contributesToExpected=true), so BS cancels exactly and only true salon over/undertime remains.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("calcShiftBasedSaldo — BS §15 pooling (v1.8.28 overtime-swallow fix)", () => {
+  // Prod repro case (SHIFT_BASED 38h/5-day Azubi, June 2026): the exact swallow case.
+  // salon-net contract = 5928; bsExpected = 4104 (folded into C_net) → C_net = 10032.
+  // salon worked W = 6525 (> 5928 → +597 salon overtime); bsWorked = 4104; roster R = 5895 (≤ W).
+  it("prod repro shape: salon overtime above BS-inflated C_net is credited, not swallowed (+597)", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 10032, // C_net = salon-net 5928 + bsExpected 4104
+      rosterMinutes: 5895, // R (salon shifts ≤ W → no undertime)
+      workedMinutes: 6525, // W (salon)
+      bsWorkedMinutes: 4104, // BS §15 credit (== bsExpected inside C_net)
+    });
+    expect(result.overtimeMinutes).toBe(597); // max(0, (6525+4104) − 10032) = 597
+    expect(result.undertimeMinutes).toBe(0); // max(0, 5895 − 6525) = 0
+    expect(result.balanceDelta).toBe(597); // was 0 before the fix (BS swallowed the salon +)
+    expect(result.expectedMinutes).toBe(10032); // stored C_net unchanged (BS still counts in Soll)
+  });
+
+  // Regression guard: WITHOUT bsWorked pooling (the old code path), the very same inputs swallow
+  // the salon overtime to 0. Passing bsWorkedMinutes: 0 reproduces the pre-fix behavior.
+  it("regression: bsWorked omitted (=0) reproduces the swallow → balance 0", () => {
+    const swallowed = calcShiftBasedSaldo({
+      contractSollMinutes: 10032,
+      rosterMinutes: 5895,
+      workedMinutes: 6525,
+      // bsWorkedMinutes omitted → 0 → max(0, 6525 − 10032) = 0 (the bug)
+    });
+    expect(swallowed.balanceDelta).toBe(0);
+  });
+
+  // BS-neutral: salon worked exactly the salon-net Soll, no salon overtime → BS cancels → 0.
+  it("BS-neutral: W == salon-net Soll, bsWorked == bsExpected → balance 0", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 10032, // C_net = 5928 salon-net + 4104 bsExpected
+      rosterMinutes: 5928,
+      workedMinutes: 5928, // exactly the salon Soll — no overtime
+      bsWorkedMinutes: 4104,
+    });
+    expect(result.overtimeMinutes).toBe(0); // max(0, (5928+4104) − 10032) = 0
+    expect(result.undertimeMinutes).toBe(0);
+    expect(result.balanceDelta).toBe(0);
+  });
+
+  // BS must NOT offset a real salon no-show: undertime clause ignores bsWorked.
+  it("salon no-show with BS days: bsWorked does NOT offset undertime", () => {
+    const result = calcShiftBasedSaldo({
+      contractSollMinutes: 10032,
+      rosterMinutes: 6525, // rostered salon shifts
+      workedMinutes: 5000, // no-showed 1525 min of salon roster
+      bsWorkedMinutes: 4104, // BS credit — must not cancel the salon no-show
+    });
+    expect(result.overtimeMinutes).toBe(0); // max(0, (5000+4104) − 10032) = 0
+    expect(result.undertimeMinutes).toBe(1525); // max(0, 6525 − 5000) = 1525 (BS-independent)
+    expect(result.balanceDelta).toBe(-1525);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // D-09 roster-proration (Phase 76.22-04) — LIVE / open-month path only.
 //
 //   C_toDate = R_periodFull == 0 ? 0 : round(C × R_toDate ÷ R_periodFull)
