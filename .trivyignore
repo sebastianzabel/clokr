@@ -35,3 +35,27 @@ CVE-2026-35039
 # issued exclusively by our API with a fixed algorithm (HS256/RS256 via JWT_SECRET).
 # No external JWTs or untrusted issuers are accepted. Revisit when fast-jwt releases a fix.
 CVE-2026-35042
+
+# node-tar: DoS via crafted gzip bomb / malformed tar archive (CVE-2026-59873 CRIT / -59874).
+# Present ONLY in build tooling bundles, never in the runtime app dependency tree:
+#   /usr/local/lib/node_modules/npm/node_modules/tar (npm's own bundled tar) and
+#   corepack's pnpm cache (…/corepack/v1/pnpm/*/dist/node_modules/tar).
+# npm@latest (11.12.x) still bundles the vulnerable tar 7.5.11 — no fix flows via `npm i -g
+# npm@latest` yet. Not exploitable: npm/pnpm run at build time against our own trusted,
+# baked workspace; the production entrypoint (node + prisma CLI + `pnpm tsx`) never extracts
+# untrusted archives. Revisit when npm/corepack bundle tar>=7.5.19.
+CVE-2026-59873
+CVE-2026-59874
+
+# sigstore: Unauthorized certificates accepted (CVE-2026-48815). Present ONLY in npm's bundle
+# (/usr/local/lib/node_modules/npm/node_modules/sigstore), used by `npm audit signatures` /
+# provenance verification at build/dev time — never in the runtime app tree or entrypoint.
+# npm@latest still bundles the affected sigstore. Revisit when npm bundles sigstore>=4.1.1.
+CVE-2026-48815
+
+# brace-expansion: ReDoS (CVE-2026-14257 / -13149). The vulnerable copies (2.1.2 / 5.0.4) live
+# ONLY in npm's bundle and corepack's pnpm cache (build tooling). Our app dependency tree
+# already resolves brace-expansion@5.0.8 (fixed, via the existing pnpm.overrides pin), so no
+# runtime code path is affected. Revisit when npm/corepack bundle brace-expansion>=5.0.8.
+CVE-2026-14257
+CVE-2026-13149

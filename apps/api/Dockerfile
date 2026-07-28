@@ -37,7 +37,11 @@ RUN cp -r /app/packages/db/generated /app/packages/db/dist/generated
 
 # ── Stage 3: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
-RUN apk update && apk upgrade --no-cache && apk add --no-cache su-exec
+# apk upgrade pulls the latest Alpine packages; the explicit min-version pins assert the
+# openssl/musl CVE fixes and bust any cached layer (CVE-2026-31789 CRIT heap overflow +
+# CVE-2026-28387/28388/28389/28390 + CVE-2026-45447 openssl; CVE-2026-40200 musl).
+RUN apk update && apk upgrade --no-cache \
+    && apk add --no-cache su-exec "libcrypto3>=3.5.7-r0" "libssl3>=3.5.7-r0" "musl>=1.2.6-r2"
 # Update npm to latest (fixes bundled tar/minimatch CVEs) and clean old cache
 RUN npm install -g npm@latest 2>/dev/null || true \
     && npm cache clean --force 2>/dev/null || true \
