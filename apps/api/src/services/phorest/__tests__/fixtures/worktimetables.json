@@ -1,0 +1,25 @@
+{
+  "__note": "ASSUMED Phorest /staffworktimetables shape — NOT recorded against live Phorest. Open Questions 1-3 (85-RESEARCH.md): stable per-entry id, endpoint path/params, and time/TZ format are unverified. Entries intentionally carry NO 'id' so phorestShiftKey() uses the deterministic composite key (staffId|date|startTime|endTime) — the composite path applies until the 85-05 owner-recording gate re-freezes this fixture. 'ph-staff-mapped' has 2 shifts (creates 2 origin=PHOREST shifts); 'ph-staff-unmapped' has 1 shift that must produce ZERO shifts (no mapping — SS-01).",
+  "_embedded": {
+    "staffWorkTimeTables": [
+      {
+        "staffId": "ph-staff-mapped",
+        "date": "2026-07-30",
+        "startTime": "2026-07-30T08:00:00.000Z",
+        "endTime": "2026-07-30T16:00:00.000Z"
+      },
+      {
+        "staffId": "ph-staff-mapped",
+        "date": "2026-07-31",
+        "startTime": "2026-07-31T09:00:00.000Z",
+        "endTime": "2026-07-31T17:00:00.000Z"
+      },
+      {
+        "staffId": "ph-staff-unmapped",
+        "date": "2026-07-30",
+        "startTime": "2026-07-30T10:00:00.000Z",
+        "endTime": "2026-07-30T18:00:00.000Z"
+      }
+    ]
+  }
+}

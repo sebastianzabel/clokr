@@ -1,0 +1,19 @@
+{
+  "__note": "ASSUMED Phorest /staff shape — NOT recorded against live Phorest. Open Questions 1-3 (85-RESEARCH.md): the exact wire shape, endpoint path/params, and time/TZ format are unverified. This fixture MUST be re-frozen by the 85-05 owner-recording gate before live sync is trusted. 'ph-staff-mapped' has an explicit PhorestStaffMapping in the seed; 'ph-staff-unmapped' intentionally has NONE despite name+email matching a seeded clokr employee (SS-01 negative-match).",
+  "_embedded": {
+    "staff": [
+      {
+        "staffId": "ph-staff-mapped",
+        "firstName": "Erika",
+        "lastName": "Musterfrau",
+        "email": "erika@salon.de"
+      },
+      {
+        "staffId": "ph-staff-unmapped",
+        "firstName": "Max",
+        "lastName": "Beispiel",
+        "email": "max.beispiel@salon.de"
+      }
+    ]
+  }
+}
