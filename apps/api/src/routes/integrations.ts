@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireRole } from "../middleware/auth";
 import { encrypt, decryptSafe } from "../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
-import { phorestFetch } from "../services/phorest/client";
+import { phorestFetch, PhorestApiError } from "../services/phorest/client";
 import { syncPhorestShifts } from "../services/phorest/sync-shifts";
 import type { PhorestStaffItem, SyncResult } from "../services/phorest/types";
 
@@ -123,7 +123,12 @@ export async function integrationRoutes(app: FastifyInstance) {
     },
   });
 
-  // POST /phorest/test — Verbindung testen
+  // POST /phorest/test — Verbindung testen (klassifiziert: SS-02, UI-SPEC Block B)
+  //
+  // Returns a structured result the UI renders directly:
+  //   { ok: true, staffCount, branchName? }
+  //   { ok: false, reason: "not-configured" | "auth-invalid" | "unreachable" | "error", message, status? }
+  // T-85-11: the raw upstream body / password is NEVER echoed — only classified German reason codes.
   app.post("/phorest/test", {
     schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN"),
@@ -133,7 +138,11 @@ export async function integrationRoutes(app: FastifyInstance) {
       });
       const phorestPwd = decryptSafe(cfg?.phorestPassword);
       if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !phorestPwd) {
-        return { success: false, error: "Phorest-Zugangsdaten nicht konfiguriert" };
+        return {
+          ok: false,
+          reason: "not-configured",
+          message: "Phorest-Zugangsdaten nicht konfiguriert.",
+        };
       }
 
       try {
@@ -144,12 +153,45 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestPwd,
           { size: "1", page: "0" },
         );
-        return {
-          success: true,
-          message: `Verbindung erfolgreich. ${staff.totalElements ?? "?"} Mitarbeiter gefunden.`,
-        };
+
+        const staffArr = staff._embedded?.staff ?? staff.staff ?? [];
+        const staffCount =
+          typeof staff.totalElements === "number" ? staff.totalElements : staffArr.length;
+        const branchName = typeof staff.branchName === "string" ? staff.branchName : undefined;
+
+        return { ok: true, staffCount, ...(branchName ? { branchName } : {}) };
       } catch (err: unknown) {
-        return { success: false, error: err instanceof Error ? err.message : "Unknown error" };
+        // Classify via the typed PhorestApiError.status (SS-02): auth vs unreachable.
+        if (err instanceof PhorestApiError) {
+          if (err.status === 401 || err.status === 403) {
+            return {
+              ok: false,
+              reason: "auth-invalid",
+              message:
+                "Verbindung fehlgeschlagen: Zugangsdaten ungültig. Prüfen Sie Benutzername und Passwort.",
+            };
+          }
+          if (err.status === "NETWORK" || err.status === "TIMEOUT") {
+            return {
+              ok: false,
+              reason: "unreachable",
+              message:
+                "Verbindung fehlgeschlagen: Phorest ist nicht erreichbar. Prüfen Sie Business-/Branch-ID und versuchen Sie es erneut.",
+            };
+          }
+          // Other non-ok HTTP status — surface the status code, never the raw body.
+          return {
+            ok: false,
+            reason: "error",
+            status: err.status,
+            message: `Verbindung fehlgeschlagen: Phorest-Fehler (Status ${err.status}).`,
+          };
+        }
+        return {
+          ok: false,
+          reason: "error",
+          message: "Verbindung fehlgeschlagen: Unbekannter Fehler.",
+        };
       }
     },
   });

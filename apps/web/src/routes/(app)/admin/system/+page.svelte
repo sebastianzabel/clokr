@@ -1148,11 +1148,19 @@
     phTesting = true;
     phTestResult = "";
     try {
-      const res = await api.post<{ success: boolean; message?: string; error?: string }>(
-        "/integrations/phorest/test",
-        {},
-      );
-      phTestResult = res.success ? `✓ ${res.message}` : `✕ ${res.error}`;
+      const res = await api.post<{
+        ok: boolean;
+        reason?: string;
+        message?: string;
+        staffCount?: number;
+        branchName?: string;
+      }>("/integrations/phorest/test", {});
+      if (res.ok) {
+        const branch = res.branchName ? `Branch „${res.branchName}", ` : "";
+        phTestResult = `✓ Verbindung erfolgreich — ${branch}${res.staffCount ?? "?"} Mitarbeiter gefunden.`;
+      } else {
+        phTestResult = `✕ ${res.message ?? "Verbindung fehlgeschlagen."}`;
+      }
     } catch (e: unknown) {
       phTestResult = `✕ ${e instanceof Error ? e.message : "Fehler"}`;
     } finally {
