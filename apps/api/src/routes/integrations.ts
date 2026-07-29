@@ -27,6 +27,20 @@ const syncSchema = z.object({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
 });
 
+const mappingCreateSchema = z.object({
+  phorestStaffId: z.string().min(1),
+  employeeId: z.string().min(1),
+});
+
+const mappingParamSchema = z.object({
+  phorestStaffId: z.string().min(1),
+});
+
+const syncRunsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+  page: z.coerce.number().int().min(0).optional().default(0),
+});
+
 const configSchema = z.object({
   phorestBusinessId: z.string().min(1),
   phorestBranchId: z.string().min(1),
@@ -181,9 +195,17 @@ export async function integrationRoutes(app: FastifyInstance) {
         include: { user: { select: { email: true } } },
       });
 
-      // Auto-Mapping über E-Mail
+      // Persistierte, explizite Zuordnungen laden (SS-01) — die einzige Quelle, der der Sync folgt.
+      const savedMappings = await app.prisma.phorestStaffMapping.findMany({
+        where: { tenantId: req.user.tenantId },
+      });
+      const savedByStaffId = new Map(savedMappings.map((m) => [m.phorestStaffId, m.employeeId]));
+
+      // RESEARCH Pattern 4: die alte implizite E-Mail/Name-Zuordnung ist hier NUR noch ein
+      // beratender Vorschlag (suggestedEmployeeId). Sie ist niemals maßgeblich für den Sync —
+      // dieser verwendet ausschließlich die persistierte PhorestStaffMapping.
       const mapped = phorestStaff.map((ps) => {
-        const match = clokrEmployees.find(
+        const suggestion = clokrEmployees.find(
           (ce) =>
             ce.user.email.toLowerCase() === ps.email?.toLowerCase() ||
             (ce.firstName.toLowerCase() === ps.firstName.toLowerCase() &&
@@ -191,15 +213,155 @@ export async function integrationRoutes(app: FastifyInstance) {
         );
         return {
           phorestStaffId: ps.staffId,
-          phorestName: `${ps.firstName} ${ps.lastName}`,
-          phorestEmail: ps.email,
-          clokrEmployeeId: match?.id ?? null,
-          clokrName: match ? `${match.firstName} ${match.lastName}` : null,
-          autoMatched: !!match,
+          name: `${ps.firstName} ${ps.lastName}`,
+          email: ps.email ?? null,
+          savedEmployeeId: savedByStaffId.get(ps.staffId) ?? null,
+          suggestedEmployeeId: suggestion?.id ?? null,
         };
       });
 
       return { staff: mapped };
+    },
+  });
+
+  // ── Phorest Staff Mapping CRUD (SS-01) ────────────────────────────────
+
+  // GET /phorest/mappings — persistierte Zuordnungen des Mandanten
+  app.get("/phorest/mappings", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req) => {
+      const mappings = await app.prisma.phorestStaffMapping.findMany({
+        where: { tenantId: req.user.tenantId },
+        include: { employee: { select: { firstName: true, lastName: true } } },
+        orderBy: { createdAt: "asc" },
+      });
+      return {
+        mappings: mappings.map((m) => ({
+          id: m.id,
+          phorestStaffId: m.phorestStaffId,
+          employeeId: m.employeeId,
+          employeeName: `${m.employee.firstName} ${m.employee.lastName}`,
+        })),
+      };
+    },
+  });
+
+  // POST /phorest/mappings — Zuordnung anlegen/aktualisieren (upsert)
+  app.post("/phorest/mappings", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const body = mappingCreateSchema.parse(req.body);
+
+      // T-85-09: der Mitarbeiter MUSS zum Mandanten des Aufrufers gehören (kein Cross-Tenant-Map).
+      const emp = await app.prisma.employee.findFirst({
+        where: { id: body.employeeId, tenantId: req.user.tenantId },
+        select: { id: true },
+      });
+      if (!emp) {
+        return reply
+          .code(400)
+          .send({ error: "Mitarbeiter nicht gefunden oder gehört nicht zu diesem Mandanten." });
+      }
+
+      const existing = await app.prisma.phorestStaffMapping.findUnique({
+        where: {
+          tenantId_phorestStaffId: {
+            tenantId: req.user.tenantId,
+            phorestStaffId: body.phorestStaffId,
+          },
+        },
+      });
+
+      const mapping = await app.prisma.phorestStaffMapping.upsert({
+        where: {
+          tenantId_phorestStaffId: {
+            tenantId: req.user.tenantId,
+            phorestStaffId: body.phorestStaffId,
+          },
+        },
+        create: {
+          tenantId: req.user.tenantId,
+          phorestStaffId: body.phorestStaffId,
+          employeeId: body.employeeId,
+        },
+        update: { employeeId: body.employeeId },
+      });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: existing ? "UPDATE" : "CREATE",
+        entity: "PhorestStaffMapping",
+        entityId: mapping.id,
+        oldValue: existing
+          ? { phorestStaffId: existing.phorestStaffId, employeeId: existing.employeeId }
+          : undefined,
+        newValue: { phorestStaffId: mapping.phorestStaffId, employeeId: mapping.employeeId },
+      });
+
+      return {
+        mapping: {
+          id: mapping.id,
+          phorestStaffId: mapping.phorestStaffId,
+          employeeId: mapping.employeeId,
+        },
+      };
+    },
+  });
+
+  // DELETE /phorest/mappings/:phorestStaffId — Zuordnung aufheben
+  app.delete("/phorest/mappings/:phorestStaffId", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const { phorestStaffId } = mappingParamSchema.parse(req.params);
+
+      const existing = await app.prisma.phorestStaffMapping.findUnique({
+        where: {
+          tenantId_phorestStaffId: { tenantId: req.user.tenantId, phorestStaffId },
+        },
+      });
+      if (!existing) {
+        return reply.code(404).send({ error: "Zuordnung nicht gefunden." });
+      }
+
+      await app.prisma.phorestStaffMapping.delete({ where: { id: existing.id } });
+
+      await app.audit({
+        userId: req.user.sub,
+        action: "DELETE",
+        entity: "PhorestStaffMapping",
+        entityId: existing.id,
+        oldValue: { phorestStaffId: existing.phorestStaffId, employeeId: existing.employeeId },
+      });
+
+      return { success: true };
+    },
+  });
+
+  // ── Phorest Sync-Run History (SS-05) ──────────────────────────────────
+
+  // GET /phorest/sync-runs — letzter Lauf + Verlauf (Observability)
+  app.get("/phorest/sync-runs", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req) => {
+      const { limit, page } = syncRunsQuerySchema.parse(req.query);
+      const where = { tenantId: req.user.tenantId };
+
+      const [latest, history, total] = await Promise.all([
+        app.prisma.phorestSyncRun.findFirst({ where, orderBy: { startedAt: "desc" } }),
+        app.prisma.phorestSyncRun.findMany({
+          where,
+          orderBy: { startedAt: "desc" },
+          take: limit,
+          skip: page * limit,
+        }),
+        app.prisma.phorestSyncRun.count({ where }),
+      ]);
+
+      return { latest, history, total, page, limit };
     },
   });
 
