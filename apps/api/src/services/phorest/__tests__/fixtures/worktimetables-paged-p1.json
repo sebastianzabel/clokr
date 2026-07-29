@@ -1,0 +1,14 @@
+{
+  "__note": "ASSUMED Phorest /staffworktimetables PAGE 1 (of 2). Carries ONLY the ph-staff-mapped 2026-07-30 entry (byte-identical to worktimetables.json) and a Spring-HATEOAS `page` envelope with totalPages=2/number=0 (has-more). The 2026-07-31 entry lives on page 2. Drives the pagination-exhaustion guardrail test: a page-1-only read would omit the 07-31 entry and falsely soft-cancel it — the sync MUST read both pages first, so cancelled===0. Entries carry NO 'id' → composite externalId.",
+  "_embedded": {
+    "staffWorkTimeTables": [
+      {
+        "staffId": "ph-staff-mapped",
+        "date": "2026-07-30",
+        "startTime": "2026-07-30T08:00:00.000Z",
+        "endTime": "2026-07-30T16:00:00.000Z"
+      }
+    ]
+  },
+  "page": { "size": 1, "totalElements": 2, "totalPages": 2, "number": 0 }
+}

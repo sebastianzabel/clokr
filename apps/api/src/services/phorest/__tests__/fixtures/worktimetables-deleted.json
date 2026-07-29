@@ -1,0 +1,19 @@
+{
+  "__note": "ASSUMED Phorest /staffworktimetables shape (see worktimetables.json) — the SAME window with the ph-staff-mapped 2026-07-31 entry REMOVED. Used by the delete-diff test: after a first sync against worktimetables.json (2 mapped shifts), re-syncing against this fixture drops the 07-31 entry from the fresh set, so its shift must be soft-cancelled (deletedReason PHOREST_REMOVED). The 07-30 mapped entry is byte-identical so its externalId matches and it is NOT cancelled. Entries carry NO 'id' → deterministic composite externalId until the 85-05 owner-recording gate.",
+  "_embedded": {
+    "staffWorkTimeTables": [
+      {
+        "staffId": "ph-staff-mapped",
+        "date": "2026-07-30",
+        "startTime": "2026-07-30T08:00:00.000Z",
+        "endTime": "2026-07-30T16:00:00.000Z"
+      },
+      {
+        "staffId": "ph-staff-unmapped",
+        "date": "2026-07-30",
+        "startTime": "2026-07-30T10:00:00.000Z",
+        "endTime": "2026-07-30T18:00:00.000Z"
+      }
+    ]
+  }
+}
