@@ -168,12 +168,17 @@ export async function syncPhorestShifts(
       freshExternalIds.add(externalId);
 
       // ── Adopt-on-match (SS-07 dedup) ─────────────────────────────
-      // Before creating, look for an ACTIVE shift already occupying this exact slot
-      // (employeeId + date + startTime + endTime) REGARDLESS of origin. A pre-existing
-      // label="Phorest" origin=MANUAL row (from the old untested sync, externalId null) would
-      // NOT be found by the externalId upsert and would be duplicated (SS-07 violation, Open
-      // Question 4). If such a conflicting occupant exists with a different/absent externalId,
-      // adopt it in place instead of inserting a second row.
+      // Before creating, look for a LEGACY Phorest-imported row already occupying this exact
+      // slot (employeeId + date + startTime + endTime). Such a row is left by the old untested
+      // sync (label="Phorest" origin=MANUAL, externalId null) and would NOT be found by the
+      // externalId upsert → it would be duplicated (SS-07 violation, Open Question 4). If found
+      // with a different/absent externalId, adopt it in place instead of inserting a second row.
+      //
+      // CRITICAL: the query is restricted to label="Phorest" so a GENUINE, hand-entered MANUAL
+      // shift that happens to share the same slot is NEVER reclassified to origin=PHOREST — that
+      // would make it eligible for auto soft-cancel, violating the locked invariant "MANUAL shifts
+      // are NEVER touched by the sync" (85-CONTEXT <decisions>). A same-slot genuine-MANUAL
+      // collision is left untouched here; parallel-shift collision handling is Phase 87.
       const occupant = await app.prisma.shift.findFirst({
         where: {
           employeeId,
@@ -181,6 +186,7 @@ export async function syncPhorestShifts(
           startTime: startH,
           endTime: endH,
           deletedAt: null,
+          label: "Phorest",
         },
       });
 

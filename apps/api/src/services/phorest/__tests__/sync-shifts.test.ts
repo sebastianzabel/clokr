@@ -368,4 +368,57 @@ describe("phorest sync-shifts", () => {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
   });
+
+  it("CR-01 adopt-safety: a genuine MANUAL shift (non-'Phorest' label) at the exact fixture slot is NEVER adopted or cancelled", async () => {
+    const seed = await seedPhorestTenant(app, "manualslot");
+    try {
+      // A genuinely hand-entered MANUAL shift occupying the EXACT slot of the 07-30 mapped
+      // fixture entry (08:00-16:00), but with a real label — NOT the legacy "Phorest" marker.
+      // The sync must not reclassify it to origin=PHOREST (which would make it eligible for
+      // auto soft-cancel), honouring the locked "MANUAL shifts are NEVER touched" invariant.
+      const manual = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "08:00",
+          endTime: "16:00",
+          origin: "MANUAL",
+          label: "Handeintrag",
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+
+      // The MANUAL shift is untouched: still origin=MANUAL, still active, externalId untouched.
+      const untouched = await app.prisma.shift.findUnique({ where: { id: manual.id } });
+      expect(untouched?.origin).toBe("MANUAL");
+      expect(untouched?.deletedAt).toBeNull();
+      expect(untouched?.externalId).toBeNull();
+
+      // The Phorest entry is created as a SEPARATE PHOREST row (collision handling = Phase 87),
+      // so the slot now holds two active rows: the untouched MANUAL one + the new PHOREST one.
+      const slot = await app.prisma.shift.findMany({
+        where: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "08:00",
+          endTime: "16:00",
+          deletedAt: null,
+        },
+      });
+      expect(slot.some((s) => s.origin === "MANUAL" && s.id === manual.id)).toBe(true);
+      expect(slot.some((s) => s.origin === "PHOREST" && s.externalId !== null)).toBe(true);
+
+      // A second sync must still never touch the MANUAL row (idempotent, no late adopt/cancel).
+      mockPhorest(wttFixture);
+      await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      const stillUntouched = await app.prisma.shift.findUnique({ where: { id: manual.id } });
+      expect(stillUntouched?.origin).toBe("MANUAL");
+      expect(stillUntouched?.deletedAt).toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
 });
