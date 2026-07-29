@@ -635,15 +635,8 @@
         phAutoSync = ph.phorestAutoSync ?? false;
         phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
         phSyncWindowDays = ph.phorestSyncWindowDays ?? 7;
-        // Set default sync range to current week
-        const now = new Date();
-        const dow = now.getDay();
-        const mon = new Date(now);
-        mon.setDate(mon.getDate() - (dow === 0 ? 6 : dow - 1));
-        const sun = new Date(mon);
-        sun.setDate(sun.getDate() + 6);
-        phSyncStart = mon.toISOString().split("T")[0];
-        phSyncEnd = sun.toISOString().split("T")[0];
+        // Von/Bis bleiben leer: das Zeitfenster (Tage) ist der Default für den
+        // manuellen Sync, eine explizite Range ist nur ein optionaler Override.
         // SS-01/SS-05: wenn konfiguriert, Mapping-Tabelle + Observability laden
         if (phConfigured) {
           void loadPhEmployees();
@@ -1354,6 +1347,17 @@
     phError = "";
     // Optimistisch: letzten Lauf auf „Läuft…" setzen, bis der Refresh kommt.
     if (phLatestRun) phLatestRun = { ...phLatestRun, status: "RUNNING" };
+    // Zeitfenster (Tage) ist der Default; eine explizite Von/Bis-Range ist ein
+    // optionaler Override. Ohne Range: heute … heute + phSyncWindowDays.
+    let startDate = phSyncStart;
+    let endDate = phSyncEnd;
+    if (!phSyncStart || !phSyncEnd) {
+      const today = new Date();
+      const end = new Date(today);
+      end.setDate(end.getDate() + phSyncWindowDays);
+      startDate = today.toISOString().split("T")[0];
+      endDate = end.toISOString().split("T")[0];
+    }
     try {
       const res = await api.post<{
         runId: string;
@@ -1364,8 +1368,8 @@
         unmapped: number;
         error?: string;
       }>("/integrations/phorest/sync-shifts", {
-        startDate: phSyncStart,
-        endDate: phSyncEnd,
+        startDate,
+        endDate,
       });
       if (res.status === "SUCCESS") {
         toasts.success(
@@ -3076,12 +3080,12 @@
                 <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
               </div>
             </div>
+            <p class="form-hint text-muted">
+              Optional. Ohne Angabe wird das Zeitfenster oben verwendet (heute bis heute +
+              {phSyncWindowDays} Tage).
+            </p>
             <div class="settings-actions">
-              <button
-                class="btn btn-primary"
-                onclick={syncPhorest}
-                disabled={phSyncing || !phSyncStart || !phSyncEnd}
-              >
+              <button class="btn btn-primary" onclick={syncPhorest} disabled={phSyncing}>
                 {phSyncing ? "Synchronisiere…" : "Jetzt synchronisieren"}
               </button>
             </div>
