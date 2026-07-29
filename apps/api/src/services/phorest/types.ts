@@ -32,7 +32,53 @@ export interface PhorestApiResponse {
   _embedded?: { staff?: PhorestStaffItem[]; staffWorkTimeTables?: PhorestWorkTimeItem[] };
   staff?: PhorestStaffItem[];
   staffWorkTimeTables?: PhorestWorkTimeItem[];
+  // Spring-HATEOAS pagination envelope (ASSUMED, Open Question 2). `page.number` is the
+  // zero-based current page, `page.totalPages` the count. `_links.next` is the fallback
+  // has-more indicator. Kept here so the 85-05 owner-recording gate can pin the exact keys.
+  page?: { size?: number; totalElements?: number; totalPages?: number; number?: number };
+  _links?: { next?: { href?: string } | null };
   [key: string]: unknown;
+}
+
+// ── Pagination (GATE 2 — exhaust all pages before diffing) ───────────
+//
+// The worktimetables endpoint is paginated. A page-1-only read must NEVER drive a
+// soft-cancel of a page-2 shift, so the sync loops until the page set is exhausted.
+// The exact paging keys are ASSUMED (Open Question 2) and centralised here so the
+// 85-05 gate pins them in one place.
+
+/** Worktimetable page size requested per page (Phorest `size` param). */
+export const PHOREST_PAGE_SIZE = 200;
+
+/** Extract the worktimetable entries from a (possibly paged) Phorest response. */
+export function extractWorkTimes(data: PhorestApiResponse): PhorestWorkTimeItem[] {
+  const entries =
+    data._embedded?.staffWorkTimeTables ??
+    data.staffWorkTimeTables ??
+    (Array.isArray(data) ? (data as PhorestWorkTimeItem[]) : []);
+  return Array.isArray(entries) ? entries : [];
+}
+
+/**
+ * True when another worktimetables page must be fetched. Prefers the explicit Spring
+ * `page` envelope (`number < totalPages - 1`); falls back to a `_links.next` HATEOAS
+ * link; final fallback treats a FULL page (entries === requested size) as "there may be
+ * more". A short/empty page with no envelope means the read is complete.
+ */
+export function phorestHasMorePages(
+  data: PhorestApiResponse,
+  currentPage: number,
+  pageEntryCount: number,
+  requestedSize: number,
+): boolean {
+  const p = data.page;
+  if (p && typeof p.totalPages === "number") {
+    const num = typeof p.number === "number" ? p.number : currentPage;
+    return num < p.totalPages - 1;
+  }
+  if (data._links?.next?.href) return true;
+  // No pagination envelope at all → single-page response unless the page came back full.
+  return pageEntryCount >= requestedSize;
 }
 
 // ── Shared sync contract (RESEARCH Pattern 1) ────────────────────────
@@ -45,10 +91,13 @@ export interface SyncOpts {
 
 export interface SyncResult {
   runId: string;
-  status: "SUCCESS" | "ERROR";
+  // SUSPECT (Plan 02, GATE 3): an HTTP-200 fetch whose in-window set is empty while the DB
+  // still holds active PHOREST shifts in that window — treated as a likely wrong-branchId /
+  // dropped-connection read, so ZERO shifts are cancelled and the run is flagged, not SUCCESS.
+  status: "SUCCESS" | "ERROR" | "SUSPECT";
   created: number;
   updated: number;
-  cancelled: number; // always 0 in Plan 01 — windowed soft-cancel is Plan 02
+  cancelled: number; // count of shifts soft-cancelled by windowed reconciliation (Plan 02)
   unmapped: number; // count of worktime entries whose staffId has no explicit mapping
   unmappedStaff: { phorestStaffId: string; name?: string }[]; // deduplicated, for the UI warning
   error?: string;
