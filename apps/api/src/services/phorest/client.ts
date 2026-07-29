@@ -66,8 +66,11 @@ export async function phorestFetch(
   }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new PhorestApiError(res.status, `Phorest API error ${res.status}: ${text.slice(0, 200)}`);
+    // Build the surfaced message from the STATUS only — never embed the raw upstream body.
+    // This message flows into PhorestSyncRun.error, the admin API response, and logs; echoing
+    // the body could leak upstream internals (mirror the scrubbing in POST /phorest/test, T-85-11).
+    await res.text().catch(() => ""); // drain the body, do not embed it
+    throw new PhorestApiError(res.status, `Phorest API error ${res.status}`);
   }
 
   return res.json() as Promise<PhorestApiResponse>;
