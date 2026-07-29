@@ -2,6 +2,10 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireRole } from "../middleware/auth";
 import { encrypt, decryptSafe } from "../utils/crypto";
+import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
+import { phorestFetch } from "../services/phorest/client";
+import { syncPhorestShifts } from "../services/phorest/sync-shifts";
+import type { PhorestStaffItem, SyncResult } from "../services/phorest/types";
 
 /**
  * Phorest API Integration
@@ -12,6 +16,10 @@ import { encrypt, decryptSafe } from "../utils/crypto";
  *   GET  /api/business/{bid}/branch/{brid}/appointment?appointmentDate=
  *
  * Auth: Basic Auth with "global/{email}" as username
+ *
+ * Phase 85: the Phorest HTTP client (phorestFetch) and the shift-sync body were promoted to
+ * services/phorest/. This file keeps the config/test/staff routes and the manual sync trigger,
+ * which now calls the shared syncPhorestShifts() under the per-tenant advisory lock (SS-07).
  */
 
 const syncSchema = z.object({
@@ -33,66 +41,6 @@ declare module "fastify" {
   interface FastifyInstance {
     refreshScheduler?: () => Promise<void>;
   }
-}
-
-interface PhorestStaff {
-  staffId: string;
-  firstName: string;
-  lastName: string;
-  email?: string;
-}
-
-interface PhorestWorkTimeEntry {
-  staffId: string;
-  date: string; // ISO date
-  startTime: string; // ISO datetime
-  endTime: string; // ISO datetime
-}
-
-interface PhorestApiResponse {
-  totalElements?: unknown;
-  _embedded?: { staff?: PhorestStaffRaw[]; staffWorkTimeTables?: PhorestWorkTimeEntry[] };
-  staff?: PhorestStaffRaw[];
-  staffWorkTimeTables?: PhorestWorkTimeEntry[];
-  [key: string]: unknown;
-}
-
-interface PhorestStaffRaw {
-  staffId: string;
-  firstName: string;
-  lastName: string;
-  email?: string;
-}
-
-async function phorestFetch(
-  baseUrl: string,
-  path: string,
-  username: string,
-  password: string,
-  query?: Record<string, string>,
-): Promise<PhorestApiResponse> {
-  const url = new URL(path, baseUrl);
-  if (query) {
-    for (const [k, v] of Object.entries(query)) {
-      url.searchParams.set(k, v);
-    }
-  }
-
-  const auth = Buffer.from(`global/${username}:${password}`).toString("base64");
-
-  const res = await fetch(url.toString(), {
-    headers: {
-      Authorization: `Basic ${auth}`,
-      Accept: "application/json",
-    },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Phorest API error ${res.status}: ${text.slice(0, 200)}`);
-  }
-
-  return res.json() as Promise<PhorestApiResponse>;
 }
 
 export async function integrationRoutes(app: FastifyInstance) {
@@ -216,7 +164,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         { size: "200", page: "0" },
       );
 
-      const phorestStaff: PhorestStaff[] = (
+      const phorestStaff: PhorestStaffItem[] = (
         phorestData._embedded?.staff ??
         phorestData.staff ??
         []
@@ -264,152 +212,30 @@ export async function integrationRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { startDate, endDate } = syncSchema.parse(req.body);
 
-      const cfg = await app.prisma.tenantConfig.findUnique({
-        where: { tenantId: req.user.tenantId },
-      });
-      const syncPwd = decryptSafe(cfg?.phorestPassword);
-      if (!cfg?.phorestBusinessId || !cfg?.phorestUsername || !syncPwd) {
-        return reply.code(400).send({ error: "Phorest nicht konfiguriert" });
-      }
-
-      const baseUrl = cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server";
-      const biz = cfg.phorestBusinessId;
-      const branch = cfg.phorestBranchId;
-
-      // 1. Staff-Mapping: Phorest staffId → Clokr employeeId
-      const phorestData = await phorestFetch(
-        baseUrl,
-        `/api/business/${biz}/branch/${branch}/staff`,
-        cfg.phorestUsername,
-        syncPwd,
-        { size: "200", page: "0" },
+      // SS-07: the manual trigger takes the SAME per-tenant advisory lock as the cron so a
+      // manual click can't race the scheduled sync. Both call the ONE shared service.
+      let result: SyncResult | undefined;
+      await withAdvisoryLock(
+        app.prisma,
+        tenantAdvisoryKey(req.user.tenantId),
+        async () => {
+          result = await syncPhorestShifts(app, req.user.tenantId, {
+            startDate,
+            endDate,
+            actorUserId: req.user.sub,
+          });
+        },
+        app.log,
       );
 
-      const phorestStaff: PhorestStaff[] = phorestData._embedded?.staff ?? phorestData.staff ?? [];
-
-      const clokrEmployees = await app.prisma.employee.findMany({
-        where: { tenantId: req.user.tenantId },
-        include: { user: { select: { email: true } } },
-      });
-
-      const staffMap = new Map<string, string>(); // phorestStaffId → clokrEmployeeId
-      for (const ps of phorestStaff) {
-        const match = clokrEmployees.find(
-          (ce) =>
-            ce.user.email.toLowerCase() === (ps.email ?? "").toLowerCase() ||
-            (ce.firstName.toLowerCase() === ps.firstName.toLowerCase() &&
-              ce.lastName.toLowerCase() === ps.lastName.toLowerCase()),
-        );
-        if (match) staffMap.set(ps.staffId, match.id);
+      if (!result) {
+        // Lock not acquired — another sync (cron or a concurrent manual click) is running.
+        return reply
+          .code(409)
+          .send({ error: "Ein Phorest-Sync läuft bereits. Bitte später erneut versuchen." });
       }
 
-      // 2. WorkTimeTables aus Phorest laden
-      let wttData;
-      try {
-        wttData = await phorestFetch(
-          baseUrl,
-          `/api/business/${biz}/branch/${branch}/staffworktimetables`,
-          cfg.phorestUsername,
-          syncPwd,
-          { start_date: startDate, end_date: endDate },
-        );
-      } catch (err: unknown) {
-        app.log.error({ err }, "Fehler beim Laden der Phorest WorkTimeTables");
-        return reply.code(502).send({
-          error: `Phorest WorkTimeTables nicht abrufbar: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
-      // Phorest gibt ein Array von Arbeitszeiteinträgen zurück
-      const entries =
-        wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
-      const workTimes: PhorestWorkTimeEntry[] = Array.isArray(entries) ? entries : [];
-
-      // 3. Schichten in Clokr erstellen
-      let created = 0;
-      let skipped = 0;
-      let unmapped = 0;
-      const errors: string[] = [];
-
-      for (const wt of workTimes) {
-        const employeeId = staffMap.get(wt.staffId);
-        if (!employeeId) {
-          unmapped++;
-          continue;
-        }
-
-        // Datum und Zeiten extrahieren
-        const date = wt.date ?? (wt.startTime ? wt.startTime.split("T")[0] : null);
-        if (!date) {
-          skipped++;
-          continue;
-        }
-
-        const startH = wt.startTime ? new Date(wt.startTime).toISOString().slice(11, 16) : null;
-        const endH = wt.endTime ? new Date(wt.endTime).toISOString().slice(11, 16) : null;
-        if (!startH || !endH) {
-          skipped++;
-          continue;
-        }
-
-        // Prüfen ob Schicht schon existiert (gleicher MA, Tag, Zeiten)
-        const existing = await app.prisma.shift.findFirst({
-          where: {
-            employeeId,
-            date: new Date(date),
-            startTime: startH,
-            endTime: endH,
-            deletedAt: null, // Phase 67.2 — integration import only checks active shifts
-          },
-        });
-        if (existing) {
-          skipped++;
-          continue;
-        }
-
-        try {
-          await app.prisma.shift.create({
-            data: {
-              employeeId,
-              date: new Date(date),
-              startTime: startH,
-              endTime: endH,
-              label: "Phorest",
-              createdBy: req.user.sub,
-            },
-          });
-          created++;
-        } catch (err: unknown) {
-          errors.push(
-            `${date} ${startH}-${endH}: ${err instanceof Error ? err.message.slice(0, 100) : String(err)}`,
-          );
-        }
-      }
-
-      await app.audit({
-        userId: req.user.sub,
-        action: "IMPORT",
-        entity: "Shift",
-        newValue: {
-          source: "Phorest",
-          startDate,
-          endDate,
-          created,
-          skipped,
-          unmapped,
-          errors: errors.length,
-        },
-      });
-
-      return {
-        total: workTimes.length,
-        created,
-        skipped,
-        unmapped,
-        errors: errors.length,
-        errorDetails: errors.slice(0, 10),
-        staffMapped: staffMap.size,
-        staffTotal: phorestStaff.length,
-      };
+      return result;
     },
   });
 }
