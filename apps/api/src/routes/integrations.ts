@@ -49,6 +49,8 @@ const configSchema = z.object({
   phorestBaseUrl: z.string().url().optional(),
   phorestAutoSync: z.boolean().optional(),
   phorestSyncCron: z.string().optional(),
+  // SS-05: configurable sync window (Zeitfenster) surfaced in the admin observability panel.
+  phorestSyncWindowDays: z.coerce.number().int().min(1).max(90).optional(),
 });
 
 declare module "fastify" {
@@ -74,6 +76,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestBaseUrl: true,
           phorestAutoSync: true,
           phorestSyncCron: true,
+          phorestSyncWindowDays: true,
           // Passwort nicht zurückgeben
         },
       });
@@ -100,6 +103,9 @@ export async function integrationRoutes(app: FastifyInstance) {
           ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
           ...(body.phorestAutoSync !== undefined ? { phorestAutoSync: body.phorestAutoSync } : {}),
           ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
+          ...(body.phorestSyncWindowDays !== undefined
+            ? { phorestSyncWindowDays: body.phorestSyncWindowDays }
+            : {}),
         },
       });
 
