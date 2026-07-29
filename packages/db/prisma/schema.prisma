@@ -33,6 +33,9 @@ model Tenant {
   presenceDevices      PresenceDevice[]
   // Phase 67.2 — Schulferien-Cache pro Tenant pro Bundesland
   schoolHolidayPeriods SchoolHolidayPeriod[]
+  // Phase 85 — Phorest staff mapping + sync run history
+  phorestStaffMappings PhorestStaffMapping[]
+  phorestSyncRuns      PhorestSyncRun[]
 }
 
 // ─────────────────────────────────────────────
@@ -91,6 +94,9 @@ model TenantConfig {
   phorestBaseUrl                      String? @default("https://api.phorest.com/third-party-api-server")
   phorestAutoSync                     Boolean @default(false)
   phorestSyncCron                     String  @default("0 3 * * *") // Default: täglich 03:00
+  // Phase 85 (SS-06): configurable sync window in days ahead of today. Default 7 matches the previously
+  // hard-coded 7-day window in scheduler.ts — migration-neutral for existing tenants.
+  phorestSyncWindowDays               Int     @default(7)
   // Compliance
   arbzgEnabled                        Boolean @default(true) // ArbZG-Verstöße anzeigen
   // Verfügbarkeits-System (Phase 47.3) — when false, EmployeeAvailability is ignored by the resolver,
@@ -331,6 +337,8 @@ model Employee {
   availabilities           EmployeeAvailability[]
   presenceDevices          PresenceDevice[]
   retroEntryRequests       RetroEntryRequest[]
+  // Phase 85 — explicit Phorest staff mapping (onDelete: Restrict — never cascade-delete history)
+  phorestStaffMappings     PhorestStaffMapping[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -901,6 +909,56 @@ enum AbsenceSource {
   MANUAL
 }
 
+// Phase 85 (SS-03): origin of a Shift row.
+// MANUAL  = human-created (Schichtplanung UI, pattern generator) — NEVER touched by the Phorest sync.
+// PHOREST = imported from Phorest via syncPhorestShifts(). Only PHOREST rows are upserted/soft-cancelled.
+// Mirrors the AbsenceSource / TimeEntrySource convention. @default(MANUAL) backfills existing rows at
+// ADD COLUMN time — no data migration.
+enum ShiftOrigin {
+  MANUAL
+  PHOREST
+}
+
+// Phase 85 (SS-01): explicit Phorest staffId → clokr employee mapping.
+// Replaces the fragile implicit name/email match in the sync path. Survives renames,
+// multi-tenant-safe (@@unique([tenantId, phorestStaffId])), auditable. The name/email
+// matcher is demoted to an advisory UI auto-suggest only (later plans).
+model PhorestStaffMapping {
+  id             String   @id @default(uuid())
+  tenantId       String
+  phorestStaffId String
+  employeeId     String
+  createdAt      DateTime @default(now()) @db.Timestamptz
+  updatedAt      DateTime @updatedAt @db.Timestamptz
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Audit-proof: never cascade-delete employee history (CLAUDE.md CASCADE=Restrict rule).
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, phorestStaffId])
+  @@index([tenantId])
+  @@index([employeeId])
+}
+
+// Phase 85 (SS-05): one row per sync invocation for observability/history.
+// status: "RUNNING" → "SUCCESS" | "ERROR". Latest run surfaced prominently in the admin UI.
+model PhorestSyncRun {
+  id         String    @id @default(uuid())
+  tenantId   String
+  startedAt  DateTime  @default(now()) @db.Timestamptz
+  finishedAt DateTime? @db.Timestamptz
+  status     String // "RUNNING" | "SUCCESS" | "ERROR"
+  created    Int       @default(0)
+  updated    Int       @default(0)
+  cancelled  Int       @default(0)
+  unmapped   Int       @default(0)
+  error      String?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, startedAt])
+}
+
 enum ScheduleType {
   FIXED_SCHEDULE // Fester Stundenplan (was FIXED_WEEKLY) — per-day Decimal hours configured
   FLEXTIME // Gleitzeit — Wochenstundensoll, freie Tagesverteilung; optional Kernarbeitszeit
@@ -1037,18 +1095,28 @@ model Shift {
   // Phase 43: marked TRUE by reverse-hook when a LeaveRequest is approved
   // that overlaps this shift's date. Audit-proof: shift is flagged, never silent-deleted.
   conflictsWithLeave Boolean        @default(false)
+  // Phase 85 (SS-03/SS-07): shift provenance + Phorest idempotency key.
+  // origin defaults to MANUAL so all existing rows backfill to MANUAL at ADD COLUMN time (no data migration).
+  // externalId is the stable Phorest key (phorestShiftKey); GLOBALLY unique — Phorest ids are opaque UUIDs,
+  // so cross-tenant collision is negligible. Tenant isolation for reconcile/write is enforced by the
+  // origin=PHOREST + employee.tenantId filter on every sync query, NOT by this column. MANUAL shifts leave it null.
+  origin             ShiftOrigin    @default(MANUAL)
+  externalId         String?        @unique
   createdAt          DateTime       @default(now()) @db.Timestamptz
   createdBy          String?
   // Phase 67.2 — Soft-Delete (additive only, audit-proof).
   // Set when an Auto-Cleanup-Hook removes a Shift on einem neu entstandenen Berufsschultag.
   // Vergangenheits-Shifts (date < today) werden NIE soft-deleted — nur conflictsWithLeave=true gesetzt.
   // Restore-Pfad via /shifts/conflicts UI mit explicit Manager-Aktion + AuditLog.
+  // Phase 85 (SS-04): also set on Phorest windowed soft-cancel with deletedReason = "PHOREST_REMOVED".
   deletedAt          DateTime?      @db.Timestamptz
-  deletedReason      String? // z.B. "AUTO_BS_DAY_CLEANUP", "MANUAL_RESTORE_REVERT"
+  deletedReason      String? // z.B. "AUTO_BS_DAY_CLEANUP", "MANUAL_RESTORE_REVERT", "PHOREST_REMOVED"
 
   @@index([employeeId, date])
   @@index([date])
   @@index([employeeId, date, deletedAt])
+  // Phase 85 — supports the windowed reconcile query (origin=PHOREST, date in window).
+  @@index([origin, date])
 }
 
 // Phase 43 — Recurring weekly shift assignments per employee.
