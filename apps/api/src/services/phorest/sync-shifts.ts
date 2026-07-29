@@ -130,11 +130,29 @@ export async function syncPhorestShifts(
       if (!phorestHasMorePages(wttData, page, pageEntries.length, PHOREST_PAGE_SIZE)) break;
       page++;
       if (page >= MAX_WTT_PAGES) {
-        app.log.warn(
+        // GATE 2 invariant: a truncated read must NEVER drive a soft-cancel. Hitting the cap
+        // means the fresh set is incomplete, so treat the read as untrustworthy — flag SUSPECT,
+        // cancel ZERO, and return before the reconcile pass (mirror the plausibility-floor exit).
+        app.log.error(
           { tenantId, runId: run.id, pages: page },
-          "Phorest worktimetables pagination hit MAX_WTT_PAGES cap",
+          "Phorest worktimetables pagination hit MAX_WTT_PAGES cap — aborting reconcile (truncated read)",
         );
-        break;
+        result.status = "SUSPECT";
+        await app.audit({
+          userId: opts.actorUserId,
+          action: "UPDATE",
+          entity: "PhorestSyncRun",
+          entityId: run.id,
+          newValue: {
+            status: "SUSPECT",
+            reason: "pagination cap hit — truncated worktimetables read",
+            pages: page,
+            window: { startDate, endDate },
+            cancelled: 0,
+          },
+        });
+        await finalizeRun(app, run.id, result);
+        return result;
       }
     }
 
