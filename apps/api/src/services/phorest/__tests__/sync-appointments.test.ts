@@ -7,8 +7,11 @@ import type { FastifyInstance } from "fastify";
 import { getTestApp } from "../../../__tests__/setup";
 import { todayInTz, dateStrInTz } from "../../../utils/timezone";
 import { syncPhorestAppointments } from "../sync-appointments";
-import { seedPhorestTenant, cleanupPhorestTenant } from "./helpers";
+import { seedPhorestTenant, cleanupPhorestTenant, UNMAPPED_STAFF_ID } from "./helpers";
 import appointmentsFixture from "./fixtures/appointments.json";
+import appointmentsCancelledFixture from "./fixtures/appointments-cancelled.json";
+import appointmentsPagedP1 from "./fixtures/appointments-paged-p1.json";
+import appointmentsPagedP2 from "./fixtures/appointments-paged-p2.json";
 
 const originalFetch = global.fetch;
 const TZ = "Europe/Berlin";
@@ -35,32 +38,72 @@ function targetDateStr(daysAhead: number): string {
   return dateStrInTz(day, TZ);
 }
 
+/** Shape of any of the appointment fixtures (PII-laden items + an optional page envelope). */
+type AppointmentFixture = {
+  _embedded: { appointments: { startTime: string; endTime: string }[] };
+  page?: unknown;
+};
+
 /**
- * Rewrite the PII-laden fixture's appointment dates onto `dateStr` (keeping the time-of-day and the
- * PII fields), so the drop test runs against a real in-window date regardless of the calendar day
- * the suite executes on.
+ * Rewrite a fixture's appointment dates onto `dateStr` (keeping the time-of-day + every PII field),
+ * so a test runs against a real in-window date regardless of the calendar day the suite executes on.
+ * All non-`_embedded` top-level keys (notably the `page` pagination envelope) are preserved.
  */
-function remapFixtureToDate(dateStr: string): unknown {
-  const items = appointmentsFixture._embedded.appointments.map((a) => ({
+function remapFixtureToDate(fixture: AppointmentFixture, dateStr: string): unknown {
+  const items = fixture._embedded.appointments.map((a) => ({
     ...a,
     startTime: dateStr + a.startTime.slice(10),
     endTime: dateStr + a.endTime.slice(10),
   }));
-  return { _embedded: { appointments: items } };
+  return { ...fixture, _embedded: { appointments: items } };
+}
+
+const EMPTY_PAGE = { _embedded: { appointments: [] } };
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 // Mock the appointment endpoint: return the (remapped, PII-laden) fixture ONLY for the target
 // appointmentDate; every other forward date in the window returns an empty appointment page.
-function mockPhorestAppointments(dateStr: string): void {
-  const body = remapFixtureToDate(dateStr);
+function mockPhorestAppointments(
+  dateStr: string,
+  fixture: AppointmentFixture = appointmentsFixture,
+): void {
+  const body = remapFixtureToDate(fixture, dateStr);
   global.fetch = vi.fn(async (url: string | URL) => {
-    const u = url.toString();
-    const requested = new URL(u).searchParams.get("appointmentDate");
-    const payload = requested === dateStr ? body : { _embedded: { appointments: [] } };
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    const requested = new URL(url.toString()).searchParams.get("appointmentDate");
+    return jsonResponse(requested === dateStr ? body : EMPTY_PAGE);
+  }) as unknown as typeof fetch;
+}
+
+// Every appointment fetch fails with a non-ok HTTP status → GATE-1 (fetch-ok) fail-closed.
+function mockPhorestAppointments503(): void {
+  global.fetch = vi.fn(async () =>
+    jsonResponse("upstream unavailable", 503),
+  ) as unknown as typeof fetch;
+}
+
+// Paginated: for the target date, dispatch on the `page` query param — page 0 → p1 (has-more),
+// page 1 → p2 (final). Every other date returns a single empty page.
+function mockPhorestAppointmentsPaged(dateStr: string): void {
+  const p1 = remapFixtureToDate(appointmentsPagedP1, dateStr);
+  const p2 = remapFixtureToDate(appointmentsPagedP2, dateStr);
+  global.fetch = vi.fn(async (url: string | URL) => {
+    const u = new URL(url.toString());
+    if (u.searchParams.get("appointmentDate") !== dateStr) return jsonResponse(EMPTY_PAGE);
+    return jsonResponse(u.searchParams.get("page") === "1" ? p2 : p1);
+  }) as unknown as typeof fetch;
+}
+
+// Return an inline (unmapped-staff) appointment body ONLY for the target date.
+function mockPhorestAppointmentsBody(dateStr: string, body: unknown): void {
+  global.fetch = vi.fn(async (url: string | URL) => {
+    const requested = new URL(url.toString()).searchParams.get("appointmentDate");
+    return jsonResponse(requested === dateStr ? body : EMPTY_PAGE);
   }) as unknown as typeof fetch;
 }
 
@@ -135,6 +178,177 @@ describe("phorest sync-appointments", () => {
       // Shift-owned status is NOT touched by the appointment sync.
       expect(reloaded?.status).toBe("SUCCESS");
       expect(reloaded?.appointmentError).toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("SA-02 hard-replace: a cancelled/moved slot is HARD-DELETED on re-sync (appointmentsRemoved counted)", async () => {
+    const seed = await seedPhorestTenant(app, "hardreplace");
+    try {
+      const dateStr = targetDateStr(3);
+
+      // First sync: the full two-slot window → two rows.
+      mockPhorestAppointments(dateStr, appointmentsFixture);
+      const first = await syncPhorestAppointments(app, seed.tenantId, {});
+      expect(first.status).toBe("SUCCESS");
+      expect(first.appointmentsStored).toBe(2);
+
+      // Re-sync against the same window MINUS the appt-mapped-2 slot → it must be gone (hard delete).
+      mockPhorestAppointments(dateStr, appointmentsCancelledFixture);
+      const second = await syncPhorestAppointments(app, seed.tenantId, {});
+      expect(second.status).toBe("SUCCESS");
+      expect(second.appointmentsStored).toBe(1);
+      expect(second.appointmentsRemoved).toBeGreaterThanOrEqual(1);
+
+      const rows = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+      });
+      expect(rows.length).toBe(1);
+      // The surviving slot is the 09:00 one; the cancelled 11:00 slot is GONE (hard delete, not soft).
+      expect(rows[0].startTime).toBe("09:00");
+      expect(rows.some((r) => r.startTime === "11:00")).toBe(false);
+      // externalId of the removed slot is truly gone (globally unique key freed, not soft-deleted).
+      const orphan = await app.prisma.phorestAppointment.findUnique({
+        where: { externalId: "appt-mapped-2" },
+      });
+      expect(orphan).toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("GATE-1 fail-closed: a 503 fetch → status ERROR, pre-existing rows byte-for-byte unchanged, appointmentError set", async () => {
+    const seed = await seedPhorestTenant(app, "failclosed");
+    try {
+      const dateStr = targetDateStr(4);
+      const run = await app.prisma.phorestSyncRun.create({
+        data: { tenantId: seed.tenantId, status: "SUCCESS" },
+      });
+
+      // Seed two rows via a successful sync so a false-wipe would have something to destroy.
+      mockPhorestAppointments(dateStr, appointmentsFixture);
+      const seededRes = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      expect(seededRes.appointmentsStored).toBe(2);
+
+      const before = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+        orderBy: { startTime: "asc" },
+      });
+      expect(before.length).toBe(2);
+
+      // Now every appointment fetch 503s → GATE-1: status ERROR, ZERO deletes/inserts.
+      mockPhorestAppointments503();
+      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      expect(res.status).toBe("ERROR");
+      expect(res.appointmentsRemoved).toBe(0);
+      expect(res.appointmentsStored).toBe(0);
+
+      // Pre-existing rows are byte-for-byte unchanged (same ids + createdAt — no delete+recreate).
+      const after = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+        orderBy: { startTime: "asc" },
+      });
+      expect(after.length).toBe(2);
+      expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+      expect(after.map((r) => r.createdAt.getTime())).toEqual(
+        before.map((r) => r.createdAt.getTime()),
+      );
+
+      // The error is recorded onto the shared run's appointmentError (shift-owned status untouched).
+      const reloaded = await app.prisma.phorestSyncRun.findUnique({ where: { id: run.id } });
+      expect(reloaded?.appointmentError).toBeTruthy();
+      expect(reloaded?.status).toBe("SUCCESS");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("SA-03 horizon-bound: an appointment beyond today+horizon is never fetched or stored", async () => {
+    const seed = await seedPhorestTenant(app, "horizon");
+    try {
+      // horizonDays=2 → the loop only requests today..today+2. Place the fixture on today+5 (OUT).
+      const outOfWindow = targetDateStr(5);
+      mockPhorestAppointments(outOfWindow, appointmentsFixture);
+
+      const res = await syncPhorestAppointments(app, seed.tenantId, { horizonDays: 2 });
+      expect(res.status).toBe("SUCCESS");
+      expect(res.appointmentsStored).toBe(0);
+
+      const rows = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+      });
+      expect(rows.length).toBe(0);
+
+      // The out-of-window date was NEVER requested (loop upper bound = today+horizon).
+      const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+      const requestedDates = fetchMock.mock.calls.map((c) =>
+        new URL(String(c[0])).searchParams.get("appointmentDate"),
+      );
+      expect(requestedDates).not.toContain(outOfWindow);
+      expect(requestedDates).toContain(targetDateStr(0));
+      expect(requestedDates).toContain(targetDateStr(2));
+      expect(requestedDates).not.toContain(targetDateStr(3));
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("SA-01 unmapped-skip: an UNMAPPED_STAFF_ID appointment is never stored", async () => {
+    const seed = await seedPhorestTenant(app, "unmapped");
+    try {
+      const dateStr = targetDateStr(2);
+      // A branch-wide appointment for a staff member with NO explicit mapping — must be skipped.
+      mockPhorestAppointmentsBody(dateStr, {
+        _embedded: {
+          appointments: [
+            {
+              appointmentId: "appt-unmapped-1",
+              staffId: UNMAPPED_STAFF_ID,
+              startTime: dateStr + "T09:00:00Z",
+              endTime: dateStr + "T10:00:00Z",
+              clientName: "Walk In",
+              serviceName: "Cut",
+              price: 20,
+            },
+          ],
+        },
+      });
+
+      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      expect(res.status).toBe("SUCCESS");
+      expect(res.appointmentsStored).toBe(0);
+
+      // Neither the unmapped employee nor anyone else in the tenant got a row.
+      const unmappedRows = await app.prisma.phorestAppointment.count({
+        where: { employeeId: seed.unmappedEmployeeId },
+      });
+      expect(unmappedRows).toBe(0);
+      const anyRows = await app.prisma.phorestAppointment.count({
+        where: { employee: { tenantId: seed.tenantId } },
+      });
+      expect(anyRows).toBe(0);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("GATE-2 pagination: a two-page date is fully read before the hard-replace → both pages' slots stored", async () => {
+    const seed = await seedPhorestTenant(app, "paged");
+    try {
+      const dateStr = targetDateStr(3);
+      mockPhorestAppointmentsPaged(dateStr);
+
+      const res = await syncPhorestAppointments(app, seed.tenantId, {});
+      expect(res.status).toBe("SUCCESS");
+      // Page 1 (09:00) + page 2 (14:00) → BOTH stored (page-2 slot not lost).
+      expect(res.appointmentsStored).toBe(2);
+
+      const rows = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+        orderBy: { startTime: "asc" },
+      });
+      expect(rows.map((r) => r.startTime)).toEqual(["09:00", "14:00"]);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }

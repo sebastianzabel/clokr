@@ -1,0 +1,18 @@
+{
+  "__note": "ASSUMED Phorest /appointment PAGE 2 (final, of 2) for the same date as appointments-paged-p1.json. Carries the ph-staff-mapped 14:00 slot with a `page` envelope totalPages=2/number=1 (no more pages). Paired with page 1 for the GATE-2 pagination-exhaustion test — once both pages are merged the fresh set contains BOTH slots, so both are hard-replaced into the cache. The date part of startTime/endTime is rewritten to an in-window date by the test.",
+  "_embedded": {
+    "appointments": [
+      {
+        "appointmentId": "appt-paged-2",
+        "staffId": "ph-staff-mapped",
+        "startTime": "2026-07-30T14:00:00Z",
+        "endTime": "2026-07-30T15:15:00Z",
+        "clientId": "cust-page-2",
+        "clientName": "Page Two Client",
+        "serviceName": "Color",
+        "price": 60
+      }
+    ]
+  },
+  "page": { "size": 1, "totalElements": 2, "totalPages": 2, "number": 1 }
+}
