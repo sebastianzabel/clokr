@@ -587,6 +587,21 @@
   let collisionConfirmOpen = $state(false);
   let collisionSummary = $state<CollisionSummary | null>(null);
 
+  // Snapshot of the create payload captured BEFORE the form Modal is closed on
+  // the collision path. Closing the Modal triggers the reset effect
+  // (`if (!showForm) resetFormFields()`) which would otherwise wipe
+  // formStart/formEnd/… before the confirm-path POST runs — so the confirm
+  // mutation reads this snapshot instead of the (now reset) live fields.
+  type PendingCreate = {
+    type: TypeCode;
+    startDate: string;
+    endDate: string;
+    halfDay: boolean;
+    note: string;
+    specialLeaveRuleId?: string;
+  };
+  let pendingCreate = $state<PendingCreate | null>(null);
+
   async function submitRequest() {
     // Edit path is unchanged — no collision pre-check on PATCH.
     if (editingRequest) {
@@ -601,7 +616,21 @@
     });
     if (summary && summary.total > 0) {
       // Booked appointments in range → require explicit confirm before POST.
+      // Snapshot the payload FIRST, then close the form Modal so exactly ONE
+      // scrim is live (mirrors the team/leave pendingApprove pattern), then
+      // open the collision dialog.
+      pendingCreate = {
+        type: formType,
+        startDate: formStart,
+        endDate: formEnd,
+        halfDay: formHalfDay,
+        note: formNote,
+        ...(formType === "SPECIAL" && formSpecialRuleId
+          ? { specialLeaveRuleId: formSpecialRuleId }
+          : {}),
+      };
       collisionSummary = summary;
+      showForm = false;
       collisionConfirmOpen = true;
       return;
     }
@@ -612,9 +641,23 @@
     await performLeaveMutation();
   }
 
+  // Confirm handler for the collision dialog (create path only). Throws on
+  // failure so the ConfirmDialog stays open (its documented contract), mirroring
+  // the team/leave confirmCreateWithCollisions pattern.
+  async function confirmCreateWithCollisions() {
+    const ok = await performLeaveMutation();
+    if (!ok) throw new Error("Antrag konnte nicht eingereicht werden");
+  }
+
+  // Cancel handler for the collision dialog — abort cleanly, no orphaned state.
+  function cancelCreateCollision() {
+    pendingCreate = null;
+    collisionSummary = null;
+  }
+
   // The actual create/edit mutation, shared by the direct path and the
-  // collision-confirm path.
-  async function performLeaveMutation() {
+  // collision-confirm path. Returns true on success, false on failure.
+  async function performLeaveMutation(): Promise<boolean> {
     formSaving = true;
     formError = "";
     try {
@@ -626,21 +669,41 @@
           note: formNote || null,
         });
       } else {
-        await api.post("/leave/requests", {
+        // Prefer the snapshot captured before the collision dialog closed the
+        // form (its reset effect wiped the live fields); fall back to the live
+        // form fields for the direct no-collision path.
+        const src: PendingCreate = pendingCreate ?? {
           type: formType,
           startDate: formStart,
           endDate: formEnd,
           halfDay: formHalfDay,
-          note: formNote || null,
+          note: formNote,
           ...(formType === "SPECIAL" && formSpecialRuleId
             ? { specialLeaveRuleId: formSpecialRuleId }
+            : {}),
+        };
+        await api.post("/leave/requests", {
+          type: src.type,
+          startDate: src.startDate,
+          endDate: src.endDate,
+          halfDay: src.halfDay,
+          note: src.note || null,
+          ...(src.type === "SPECIAL" && src.specialLeaveRuleId
+            ? { specialLeaveRuleId: src.specialLeaveRuleId }
             : {}),
         });
       }
       resetForm();
+      pendingCreate = null;
+      collisionSummary = null;
       await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+      return true;
     } catch (e: unknown) {
       formError = e instanceof Error ? e.message : "Fehler";
+      // On the collision-confirm path the form Modal is already closed, so the
+      // inline formError is not visible — surface it via a toast instead.
+      if (!showForm) toasts.error(formError);
+      return false;
     } finally {
       formSaving = false;
     }
@@ -1852,7 +1915,8 @@
       title="Kundentermine im Zeitraum gebucht"
       confirmLabel="Trotzdem fortfahren"
       cancelLabel="Abbrechen"
-      onConfirm={performLeaveMutation}
+      onConfirm={confirmCreateWithCollisions}
+      onCancel={cancelCreateCollision}
     >
       {#snippet body()}
         <CollisionWarnBody summary={collisionSummary} variant="range" />
