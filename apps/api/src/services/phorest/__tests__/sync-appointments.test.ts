@@ -7,7 +7,12 @@ import type { FastifyInstance } from "fastify";
 import { getTestApp } from "../../../__tests__/setup";
 import { todayInTz, dateStrInTz } from "../../../utils/timezone";
 import { syncPhorestAppointments } from "../sync-appointments";
-import { seedPhorestTenant, cleanupPhorestTenant, UNMAPPED_STAFF_ID } from "./helpers";
+import {
+  seedPhorestTenant,
+  cleanupPhorestTenant,
+  MAPPED_STAFF_ID,
+  UNMAPPED_STAFF_ID,
+} from "./helpers";
 import appointmentsFixture from "./fixtures/appointments.json";
 import appointmentsCancelledFixture from "./fixtures/appointments-cancelled.json";
 import appointmentsPagedP1 from "./fixtures/appointments-paged-p1.json";
@@ -328,6 +333,65 @@ describe("phorest sync-appointments", () => {
         where: { employee: { tenantId: seed.tenantId } },
       });
       expect(anyRows).toBe(0);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("WR-01 dedupe: two items sharing an externalId → ONE stored row, run stays SUCCESS (no ERROR)", async () => {
+    const seed = await seedPhorestTenant(app, "dupextid");
+    try {
+      const dateStr = targetDateStr(3);
+      const run = await app.prisma.phorestSyncRun.create({
+        data: { tenantId: seed.tenantId, status: "SUCCESS" },
+      });
+
+      // Two mapped-staff appointments that collapse to the SAME externalId: a genuinely
+      // double-booked identical window (same appointmentId here; the composite fallback key would
+      // collide too). An unfiltered createMany inside the $transaction would throw on the @unique
+      // externalId, roll back the deleteMany, and flip the run to ERROR — this must NOT happen.
+      mockPhorestAppointmentsBody(dateStr, {
+        _embedded: {
+          appointments: [
+            {
+              appointmentId: "appt-dup-1",
+              staffId: MAPPED_STAFF_ID,
+              startTime: dateStr + "T09:00:00Z",
+              endTime: dateStr + "T10:00:00Z",
+              clientName: "Jane Doe",
+              serviceName: "Haircut",
+              price: 42,
+            },
+            {
+              appointmentId: "appt-dup-1", // SAME externalId → must collapse to one stored row
+              staffId: MAPPED_STAFF_ID,
+              startTime: dateStr + "T09:00:00Z",
+              endTime: dateStr + "T10:00:00Z",
+              clientName: "John Smith",
+              serviceName: "Beard Trim",
+              price: 25,
+            },
+          ],
+        },
+      });
+
+      const res = await syncPhorestAppointments(app, seed.tenantId, { runId: run.id });
+      // The duplicate did NOT abort the hard-replace: run is SUCCESS, not ERROR.
+      expect(res.status).toBe("SUCCESS");
+      // appointmentsStored counts rows actually written (deduped), not the two fetched items.
+      expect(res.appointmentsStored).toBe(1);
+
+      const rows = await app.prisma.phorestAppointment.findMany({
+        where: { employeeId: seed.mappedEmployeeId },
+      });
+      expect(rows.length).toBe(1);
+      expect(rows[0].externalId).toBe("appt-dup-1");
+
+      // The shared run recorded the deduped count and NO appointmentError.
+      const reloaded = await app.prisma.phorestSyncRun.findUnique({ where: { id: run.id } });
+      expect(reloaded?.appointmentsStored).toBe(1);
+      expect(reloaded?.appointmentError).toBeNull();
+      expect(reloaded?.status).toBe("SUCCESS");
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }

@@ -176,9 +176,22 @@ export async function syncPhorestAppointments(
     windowEndDay.setUTCDate(windowEndDay.getUTCDate() + horizon);
     const windowEnd = new Date(dateStrInTz(windowEndDay, tz));
 
+    // De-duplicate `fresh` by the globally-unique externalId BEFORE the transaction (WR-01). Two
+    // fetched items can legitimately collide on externalId: a genuinely double-booked slot (same
+    // staff+window ⇒ same composite fallback key) or a page-boundary repeat of the same appointmentId.
+    // Since externalId is @unique, an unfiltered createMany would throw a unique-constraint violation
+    // that rolls back the WHOLE $transaction (incl. the deleteMany) → the run flips to ERROR and the
+    // window's cache is left stale, recurring every sync until the duplicate clears. Hard-replace
+    // makes externalId "a nice-to-have, not the reconcile key", so a collision must NOT abort the
+    // replace. Dedupe-then-insert (keep first occurrence) keeps appointmentsStored honest — it counts
+    // the rows actually written, not the raw fetched items (skipDuplicates alone would over-count).
+    const dedupedFresh = [...new Map(fresh.map((r) => [r.externalId, r])).values()];
+
     // Hard delete + insert as ONE $transaction (Pitfall 4: no crash-window where the cache is left
     // empty). TRANSIENT cache, NOT audit data → hard delete, run-level counters only, no per-row
     // audit, no soft-delete (Pitfall 7). Delete scoped to window + mapped employees + tenant.
+    // createMany also carries skipDuplicates as a belt-and-braces guard against any pre-existing
+    // out-of-window row that shares an externalId (the delete is window-scoped, dedupe is not).
     const [removed] = await app.prisma.$transaction([
       app.prisma.phorestAppointment.deleteMany({
         where: {
@@ -187,10 +200,10 @@ export async function syncPhorestAppointments(
           employeeId: { in: mappedEmployeeIds.length ? mappedEmployeeIds : ["__none__"] },
         },
       }),
-      app.prisma.phorestAppointment.createMany({ data: fresh }),
+      app.prisma.phorestAppointment.createMany({ data: dedupedFresh, skipDuplicates: true }),
     ]);
     result.appointmentsRemoved = removed.count;
-    result.appointmentsStored = fresh.length;
+    result.appointmentsStored = dedupedFresh.length;
 
     // SA-03: record appointment counters onto the SHARED shift run row (best-effort — a counter
     // write failure must not fail the sync). status stays shift-owned; we only set counters +
