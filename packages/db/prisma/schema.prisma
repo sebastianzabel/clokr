@@ -97,6 +97,9 @@ model TenantConfig {
   // Phase 85 (SS-06): configurable sync window in days ahead of today. Default 7 matches the previously
   // hard-coded 7-day window in scheduler.ts — migration-neutral for existing tenants.
   phorestSyncWindowDays               Int     @default(7)
+  // Phase 86 (SA-03): configurable forward window in days for the appointment cache (today .. today+horizon).
+  // Distinct from phorestSyncWindowDays (shifts) — appointments look further ahead (leave is requested months out).
+  phorestAppointmentHorizonDays       Int     @default(90)
   // Compliance
   arbzgEnabled                        Boolean @default(true) // ArbZG-Verstöße anzeigen
   // Verfügbarkeits-System (Phase 47.3) — when false, EmployeeAvailability is ignored by the resolver,
@@ -339,6 +342,8 @@ model Employee {
   retroEntryRequests       RetroEntryRequest[]
   // Phase 85 — explicit Phorest staff mapping (onDelete: Restrict — never cascade-delete history)
   phorestStaffMappings     PhorestStaffMapping[]
+  // Phase 86 — DSGVO-minimal appointment busy-window cache (onDelete: Restrict — never cascade-delete)
+  phorestAppointments      PhorestAppointment[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -953,10 +958,42 @@ model PhorestSyncRun {
   cancelled  Int       @default(0)
   unmapped   Int       @default(0)
   error      String?
+  // Phase 86 (SA-03): appointment counters land on the SAME run row as the shift sync.
+  // status/error above stay shift-owned; appointmentError records an appointment-fetch failure independently.
+  appointmentsStored  Int     @default(0)
+  appointmentsRemoved Int     @default(0)
+  appointmentError    String?
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, startedAt])
+}
+
+// Phase 86 (SA-01/SA-02) — DSGVO-minimal appointment busy-window cache.
+// Read-only mirror of Phorest customer appointments, reduced to a bare busy window per mapped
+// staff. This is a TRANSIENT external cache (not clokr audit data), so it is hard-replaced per
+// sync window — no soft-delete. Tenant-scoped via the employee relation (like Shift, no tenantId).
+//
+// CRITICAL (SA-02): this model has NO customer/service/price columns. The DSGVO minimization is
+// enforced structurally by the ABSENCE of those columns plus the closed mapAppointment() literal
+// in services/phorest/sync-appointments.ts — the raw Phorest payload is never spread into a row.
+model PhorestAppointment {
+  id         String   @id @default(uuid())
+  employeeId String
+  date       DateTime @db.Date // UTC midnight, tenant-local calendar day
+  startTime  String // "HH:mm" busy-window start
+  endTime    String // "HH:mm" busy-window end
+  // Non-load-bearing idempotency/debug key (phorestAppointmentKey). GLOBALLY unique like Shift.externalId.
+  // With hard-replace this is a nice-to-have, not the reconcile key.
+  externalId String?  @unique
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  // Audit-proof: never cascade-delete employee history (CLAUDE.md CASCADE=Restrict rule).
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  // Phase 87 overlap query: appointments of an employee within a date window.
+  @@index([employeeId, date])
+  @@index([date])
 }
 
 enum ScheduleType {
