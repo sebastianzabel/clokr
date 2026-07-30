@@ -2,6 +2,7 @@ import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
 import { syncPhorestShifts } from "../services/phorest/sync-shifts";
+import { syncPhorestAppointments } from "../services/phorest/sync-appointments";
 
 /**
  * Background scheduler for recurring tasks.
@@ -41,7 +42,10 @@ export const schedulerPlugin = fp(async (app) => {
             app.prisma,
             tenantAdvisoryKey(cfg.tenantId),
             async () => {
-              await syncPhorestShifts(app, cfg.tenantId);
+              // Phase 86 (SA-03): shifts + appointments sync under the SAME lock and record onto
+              // the SAME PhorestSyncRun row (runId hand-off). Cron actor = SYSTEM (no actorUserId).
+              const shiftRun = await syncPhorestShifts(app, cfg.tenantId);
+              await syncPhorestAppointments(app, cfg.tenantId, { runId: shiftRun.runId });
             },
             app.log,
           ).catch((err) => app.log.error({ err, tenantId: cfg.tenantId }, "Scheduler-Fehler"));

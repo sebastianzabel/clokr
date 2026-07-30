@@ -27,11 +27,32 @@ export interface PhorestWorkTimeItem {
   endTime?: string; // ISO datetime
 }
 
+// Phase 86 (SA-01/SA-02) — Phorest appointment wire shape, DSGVO-minimally modeled.
+//
+// CRITICAL: this interface deliberately models ONLY staffId + start/end + an optional stable id.
+// It does NOT model clientName / clientId / serviceName / price or any other appointment field —
+// so the closed mapAppointment() literal that consumes it CANNOT read PII by construction, and a
+// TypeScript reader of `a.clientName` would not compile. The DSGVO minimization is structural.
+// Wire shape is ASSUMED (inherits the 85-05 owner-recording gate) — see the header note above.
+export interface PhorestAppointmentItem {
+  // `appointmentId` is OPTIONAL: if the real Phorest response carries a stable per-appointment id
+  // it becomes the externalId; otherwise phorestAppointmentKey() falls back to a deterministic composite.
+  appointmentId?: string;
+  staffId: string;
+  startTime?: string; // ISO datetime
+  endTime?: string; // ISO datetime
+}
+
 export interface PhorestApiResponse {
   totalElements?: unknown;
-  _embedded?: { staff?: PhorestStaffItem[]; staffWorkTimeTables?: PhorestWorkTimeItem[] };
+  _embedded?: {
+    staff?: PhorestStaffItem[];
+    staffWorkTimeTables?: PhorestWorkTimeItem[];
+    appointments?: PhorestAppointmentItem[];
+  };
   staff?: PhorestStaffItem[];
   staffWorkTimeTables?: PhorestWorkTimeItem[];
+  appointments?: PhorestAppointmentItem[];
   // Spring-HATEOAS pagination envelope (ASSUMED, Open Question 2). `page.number` is the
   // zero-based current page, `page.totalPages` the count. `_links.next` is the fallback
   // has-more indicator. Kept here so the 85-05 owner-recording gate can pin the exact keys.
@@ -113,4 +134,40 @@ export function phorestShiftKey(wt: PhorestWorkTimeItem): string {
   if (wt.id) return wt.id;
   const date = wt.date ?? (wt.startTime ? wt.startTime.split("T")[0] : "");
   return `${wt.staffId}|${date}|${wt.startTime ?? ""}|${wt.endTime ?? ""}`;
+}
+
+// ── Appointment sync contract (Phase 86, SA-01/SA-02/SA-03) ──────────
+
+/** Extract the appointment entries from a (possibly paged) Phorest response. Mirrors extractWorkTimes. */
+export function extractAppointments(data: PhorestApiResponse): PhorestAppointmentItem[] {
+  const entries =
+    data._embedded?.appointments ??
+    data.appointments ??
+    (Array.isArray(data) ? (data as PhorestAppointmentItem[]) : []);
+  return Array.isArray(entries) ? entries : [];
+}
+
+/**
+ * Stable externalId for a Phorest appointment — a non-load-bearing idempotency/debug key (with
+ * hard-replace it is a nice-to-have, not the reconcile key). Uses the Phorest appointmentId when
+ * present, else a deterministic composite `${staffId}|${date}|${startTime}|${endTime}` (mirror
+ * phorestShiftKey). Reads ONLY staff + start/end — never any customer/service field.
+ */
+export function phorestAppointmentKey(a: PhorestAppointmentItem): string {
+  if (a.appointmentId) return a.appointmentId;
+  const date = a.startTime ? a.startTime.split("T")[0] : "";
+  return `${a.staffId}|${date}|${a.startTime ?? ""}|${a.endTime ?? ""}`;
+}
+
+export interface AppointmentSyncOpts {
+  actorUserId?: string; // req.user.sub (manual) | undefined (cron = SYSTEM)
+  runId?: string; // the shift run to record appointment counters onto (SA-03 shared run)
+  horizonDays?: number; // override the forward window; default = tenantConfig.phorestAppointmentHorizonDays
+}
+
+export interface AppointmentSyncResult {
+  status: "SUCCESS" | "ERROR";
+  appointmentsStored: number;
+  appointmentsRemoved: number;
+  error?: string;
 }

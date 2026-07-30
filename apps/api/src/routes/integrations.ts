@@ -5,6 +5,7 @@ import { encrypt, decryptSafe } from "../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
 import { phorestFetch, PhorestApiError } from "../services/phorest/client";
 import { syncPhorestShifts } from "../services/phorest/sync-shifts";
+import { syncPhorestAppointments } from "../services/phorest/sync-appointments";
 import type { PhorestStaffItem, SyncResult } from "../services/phorest/types";
 
 /**
@@ -432,6 +433,13 @@ export async function integrationRoutes(app: FastifyInstance) {
           result = await syncPhorestShifts(app, req.user.tenantId, {
             startDate,
             endDate,
+            actorUserId: req.user.sub,
+          });
+          // Phase 86 (SA-03): appointment sync runs inside the SAME lock, recording onto the SAME
+          // run row (result.runId). Appointment counters live on the run; the endpoint response
+          // stays the shift SyncResult (surfacing appointment counts here is out of scope).
+          await syncPhorestAppointments(app, req.user.tenantId, {
+            runId: result.runId,
             actorUserId: req.user.sub,
           });
         },

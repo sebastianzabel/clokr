@@ -114,6 +114,9 @@ export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: strin
   await prisma.auditLog.deleteMany({ where: { userId: { in: userIds } } });
   await prisma.phorestStaffMapping.deleteMany({ where: { tenantId } });
   await prisma.phorestSyncRun.deleteMany({ where: { tenantId } });
+  // Phase 86 — PhorestAppointment.employee is onDelete: Restrict, so it MUST be removed before the
+  // employees (mirror the PhorestStaffMapping ordering above).
+  await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
