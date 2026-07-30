@@ -400,8 +400,12 @@
 
   async function submitReview(status: "APPROVED" | "REJECTED") {
     if (!reviewModal) return;
-    if (status === "APPROVED") {
-      // Pre-check only the approve branch. Reject is never gated.
+    // Pre-check only a genuine leave APPROVAL. A CANCELLATION_REQUESTED review
+    // shares this "APPROVED" path, but approving a cancellation makes the
+    // employee present again — booked appointments are a reason TO cancel, not a
+    // risk of proceeding — so the collision warning would be semantically
+    // inverted and is skipped. Reject is never gated either.
+    if (status === "APPROVED" && reviewModal.status !== "CANCELLATION_REQUESTED") {
       const summary = await checkAppointmentCollisions({
         employeeId: reviewModal.employeeId,
         from: reviewModal.startDate,
