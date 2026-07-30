@@ -1,6 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { requireRole } from "../middleware/auth";
+import { requireRole, requireAuth } from "../middleware/auth";
 import { encrypt, decryptSafe } from "../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
 import { phorestFetch, PhorestApiError } from "../services/phorest/client";
@@ -53,6 +53,19 @@ const configSchema = z.object({
   // SS-05: configurable sync window (Zeitfenster) surfaced in the admin observability panel.
   phorestSyncWindowDays: z.coerce.number().int().min(1).max(90).optional(),
 });
+
+// Phase 87 (CO-01/CO-02/CO-03): read-only appointment-collision pre-check.
+// Two mutually-exclusive input shapes (GET query params arrive as STRINGS — validate, don't coerce dates):
+//   A) { employeeId, from, to } — a leave/sick/absence date window
+//   B) { shiftId }              — shift removal (resolves shift → employee + single day)
+const collisionQuerySchema = z.union([
+  z.object({
+    employeeId: z.string().uuid(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }),
+  z.object({ shiftId: z.string().uuid() }),
+]);
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -454,6 +467,87 @@ export async function integrationRoutes(app: FastifyInstance) {
       }
 
       return result;
+    },
+  });
+
+  // ── Phorest Appointment Collision Pre-Check (CO-01/CO-02/CO-03) ────────
+  //
+  // GET /phorest/appointment-collisions?employeeId=&from=&to=   (range shape)
+  //                                     ?shiftId=               (shift-removal shape)
+  //
+  // Read-only, DSGVO-minimized: returns ONLY { total, collisions:[{date,count}], deepLink }.
+  // The response is the DSGVO boundary — it NEVER carries customer/service/price PII (the model has
+  // no such columns; the groupBy selects only date + _count). Tenant scope is via employee.tenantId
+  // (PhorestAppointment has no tenantId column). Authorization is in-handler: a non-manager may
+  // pre-check ONLY their own employeeId; any {shiftId} or another employeeId requires ADMIN/MANAGER.
+  app.get("/phorest/appointment-collisions", {
+    schema: { tags: ["Integrationen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const q = collisionQuerySchema.parse(req.query);
+      const isManager = req.user.role === "ADMIN" || req.user.role === "MANAGER";
+
+      // Resolve the tenant-proven employeeId + inclusive [from,to] window for both input shapes.
+      let employeeId: string;
+      let from: Date;
+      let to: Date;
+
+      if ("shiftId" in q) {
+        // Shift removal is a manager/admin action (mirrors DELETE /shifts/:id = requireRole ADMIN,MANAGER).
+        if (!isManager) {
+          return reply.code(403).send({ error: "Keine Berechtigung" });
+        }
+        // Tenant gate: the shift MUST belong to an employee of the caller's tenant (else 404).
+        const shift = await app.prisma.shift.findFirst({
+          where: { id: q.shiftId, employee: { tenantId: req.user.tenantId }, deletedAt: null },
+          select: { employeeId: true, date: true },
+        });
+        if (!shift) {
+          return reply.code(404).send({ error: "Schicht nicht gefunden" });
+        }
+        employeeId = shift.employeeId;
+        from = shift.date;
+        to = shift.date; // single-day window
+      } else {
+        // A non-manager may only pre-check their OWN leave window.
+        if (q.employeeId !== req.user.employeeId && !isManager) {
+          return reply.code(403).send({ error: "Keine Berechtigung" });
+        }
+        // Tenant gate: this scoped lookup IS the isolation boundary (404 on cross-tenant / unknown id).
+        const emp = await app.prisma.employee.findFirst({
+          where: { id: q.employeeId, tenantId: req.user.tenantId },
+          select: { id: true },
+        });
+        if (!emp) {
+          return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+        }
+        employeeId = emp.id;
+        from = new Date(q.from);
+        to = new Date(q.to);
+      }
+
+      // Overlap: PhorestAppointment.date is @db.Date (UTC midnight). gte/lte is inclusive on both ends.
+      // NARROW groupBy — never findMany-spread appointment rows into the response (DSGVO boundary).
+      const grouped = await app.prisma.phorestAppointment.groupBy({
+        by: ["date"],
+        where: { employeeId, date: { gte: from, lte: to } },
+        _count: { _all: true },
+        orderBy: { date: "asc" },
+      });
+
+      const collisions = grouped.map((g) => ({
+        date: g.date.toISOString().slice(0, 10), // "YYYY-MM-DD" — no PII
+        count: g._count._all,
+      }));
+      const total = collisions.reduce((sum, c) => sum + c.count, 0);
+
+      // Deep-link (graceful degrade): phorestBaseUrl is the third-party API host, NOT a user-facing
+      // calendar URL, and there is no calendar-URL config field yet (owner-gated via 85-05). Keep
+      // deepLink null now; the field stays `string | null` so a real URL drops in WITHOUT a
+      // response-contract change once the owner pins the Phorest web-calendar URL shape.
+      const deepLink: string | null = null;
+
+      return { total, collisions, deepLink };
     },
   });
 }
