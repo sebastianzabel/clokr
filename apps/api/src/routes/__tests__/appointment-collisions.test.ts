@@ -33,6 +33,10 @@ describe("GET /phorest/appointment-collisions", () => {
   const EMPTY_FROM = "2026-06-01"; // a window with no bookings
   const EMPTY_TO = "2026-06-30";
 
+  // Shifts for the {shiftId} shape: one on D1 (2 appts) for the seeded employee, one in the OTHER tenant.
+  let shiftOnD1Id: string;
+  let otherTenantShiftId: string;
+
   beforeAll(async () => {
     app = await getTestApp();
     seed = await seedTestData(app, "collide");
@@ -65,6 +69,27 @@ describe("GET /phorest/appointment-collisions", () => {
         },
       ],
     });
+
+    // A dated shift on D1 (which has 2 appointments) for the seeded employee, plus one in the OTHER
+    // tenant to prove cross-tenant shift resolution returns 404.
+    const shiftOnD1 = await app.prisma.shift.create({
+      data: {
+        employeeId: seed.employee.id,
+        date: new Date(D1),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+    shiftOnD1Id = shiftOnD1.id;
+    const otherShift = await app.prisma.shift.create({
+      data: {
+        employeeId: other.employee.id,
+        date: new Date(D1),
+        startTime: "08:00",
+        endTime: "16:00",
+      },
+    });
+    otherTenantShiftId = otherShift.id;
   });
 
   afterAll(async () => {
@@ -155,5 +180,52 @@ describe("GET /phorest/appointment-collisions", () => {
   it("T-87-03 authz: admin may pre-check any employeeId → 200", async () => {
     const res = await get(`?employeeId=${seed.employee.id}&from=${D1}&to=${D2}`, seed.adminToken);
     expect(res.statusCode).toBe(200);
+  });
+
+  // ── CO-02: {shiftId} shape ───────────────────────────────────────────
+
+  it("CO-02 shift shape: resolves shift → employee + single day, returns that day's count", async () => {
+    const res = await get(`?shiftId=${shiftOnD1Id}`, seed.adminToken);
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    // The shift is on D1, which has exactly two appointments → single-day count 2.
+    expect(body.total).toBe(2);
+    expect(body.collisions).toEqual([{ date: D1, count: 2 }]);
+    expect(body.deepLink).toBeNull();
+  });
+
+  it("CO-03 PII-free (shift shape): key-set exactly {total,collisions,deepLink}; collision keys {date,count}", async () => {
+    const res = await get(`?shiftId=${shiftOnD1Id}`, seed.adminToken);
+    const body = JSON.parse(res.body);
+    expect(Object.keys(body).sort()).toEqual(ALLOWED_RESPONSE_KEYS);
+    for (const c of body.collisions) {
+      expect(Object.keys(c).sort()).toEqual(ALLOWED_COLLISION_KEYS);
+    }
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("startTime");
+    expect(serialized).not.toContain("endTime");
+    expect(serialized).not.toContain("externalId");
+    expect(serialized).not.toContain("employeeId");
+  });
+
+  it("T-87-01 tenant gate (shift shape): a shift in another tenant → 404", async () => {
+    const res = await get(`?shiftId=${otherTenantShiftId}`, seed.adminToken);
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("T-87-03 authz: a non-manager sending any {shiftId} → 403 (shift removal is a manager action)", async () => {
+    const res = await get(`?shiftId=${shiftOnD1Id}`, seed.empToken);
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("CO-03 deepLink is null AND present in the response across both shapes", async () => {
+    const rangeBody = JSON.parse(
+      (await get(`?employeeId=${seed.employee.id}&from=${D1}&to=${D2}`, seed.adminToken)).body,
+    );
+    const shiftBody = JSON.parse((await get(`?shiftId=${shiftOnD1Id}`, seed.adminToken)).body);
+    expect("deepLink" in rangeBody).toBe(true);
+    expect(rangeBody.deepLink).toBeNull();
+    expect("deepLink" in shiftBody).toBe(true);
+    expect(shiftBody.deepLink).toBeNull();
   });
 });

@@ -67,6 +67,29 @@ const collisionQuerySchema = z.union([
   z.object({ shiftId: z.string().uuid() }),
 ]);
 
+/**
+ * Build the Phorest web-calendar deep-link for a staff member on a date, or null when it cannot be
+ * built (graceful degrade — the UI omits the link).
+ *
+ * OWNER-GATE (Open Question 1 / 85-05): `phorestBaseUrl` is the THIRD-PARTY API host
+ * (api.phorest.com/third-party-api-server), NOT a user-facing calendar URL, and there is no
+ * calendar-URL config field today. Until the owner pins the real Phorest web-calendar URL shape,
+ * this returns null. The function signature already carries everything a real URL needs
+ * (business/branch + employee + date), so a URL can be dropped in here WITHOUT changing the
+ * endpoint's `deepLink: string | null` response contract.
+ */
+function buildPhorestCalendarDeepLink(
+  _cfg: {
+    phorestBusinessId: string | null;
+    phorestBranchId: string | null;
+    phorestBaseUrl: string | null;
+  } | null,
+  _employeeId: string,
+  _date: Date,
+): string | null {
+  return null; // TODO(owner-gate 85-05): construct once the Phorest calendar URL format is pinned.
+}
+
 declare module "fastify" {
   interface FastifyInstance {
     refreshScheduler?: () => Promise<void>;
@@ -541,11 +564,14 @@ export async function integrationRoutes(app: FastifyInstance) {
       }));
       const total = collisions.reduce((sum, c) => sum + c.count, 0);
 
-      // Deep-link (graceful degrade): phorestBaseUrl is the third-party API host, NOT a user-facing
-      // calendar URL, and there is no calendar-URL config field yet (owner-gated via 85-05). Keep
-      // deepLink null now; the field stays `string | null` so a real URL drops in WITHOUT a
-      // response-contract change once the owner pins the Phorest web-calendar URL shape.
-      const deepLink: string | null = null;
+      // Deep-link (graceful degrade). Load the tenant's Phorest identifiers and hand them to the
+      // builder, which currently returns null (owner-gated via 85-05) but keeps the response contract
+      // stable (`deepLink: string | null`) for when the real calendar URL format is pinned.
+      const cfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { phorestBusinessId: true, phorestBranchId: true, phorestBaseUrl: true },
+      });
+      const deepLink = buildPhorestCalendarDeepLink(cfg, employeeId, from);
 
       return { total, collisions, deepLink };
     },
