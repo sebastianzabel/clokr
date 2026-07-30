@@ -8,6 +8,11 @@
   import Card from "$components/ui/Card.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
+  import {
+    checkAppointmentCollisions,
+    type CollisionSummary,
+  } from "$lib/phorest/appointmentCollisions";
   import { dndzone, type DndEvent } from "svelte-dnd-action";
 
   // ── Types ──────────────────────────────────────────────────────────────────
@@ -196,6 +201,12 @@
     id: null,
     closeAfter: false,
   });
+  // Phase 87: appointment-collision summary for the shift being deleted. When
+  // non-null (>=1 booked appointment on the shift's day) the existing delete
+  // ConfirmDialog renders the warn body via its additive `body` snippet — one
+  // dialog, one scrim. Null on zero-collision / fail-open (delete confirm as before).
+  let shiftDeleteCollisions = $state<CollisionSummary | null>(null);
+  let shiftDeletePrecheckPending = $state(false);
 
   // 260601-g8l — BS-Tag removal confirmation. absenceId is resolved at click time
   // via GET /vocational-school/upcoming (no client-side cache of absence ids), then
@@ -1262,7 +1273,17 @@
     await saveShift(true);
   }
 
-  function askDeleteShift(id: string, closeAfter = false) {
+  async function askDeleteShift(id: string, closeAfter = false) {
+    // Phase 87: fail-open appointment-collision pre-check by shiftId. On >=1
+    // booked appointment the existing delete ConfirmDialog surfaces the warn
+    // body; on zero-collision / error (null) it behaves exactly as before.
+    shiftDeletePrecheckPending = true;
+    try {
+      const summary = await checkAppointmentCollisions({ shiftId: id });
+      shiftDeleteCollisions = summary && summary.total > 0 ? summary : null;
+    } finally {
+      shiftDeletePrecheckPending = false;
+    }
     shiftDeleteConfirm = { open: true, id, closeAfter };
   }
 
@@ -1276,6 +1297,7 @@
         modalOpen = false;
         editingShiftId = null;
       }
+      shiftDeleteCollisions = null;
       await load();
     } catch (e) {
       toasts.error(e instanceof Error ? e.message : "Löschen fehlgeschlagen.");
@@ -1779,6 +1801,7 @@
           type="button"
           class="btn btn-danger sm"
           onclick={() => askDeleteShift(editingShiftId!, true)}
+          disabled={shiftDeletePrecheckPending}
         >
           Löschen
         </button>
@@ -1805,7 +1828,14 @@
     confirmLabel="Löschen"
     danger
     onConfirm={confirmDeleteShift}
-  />
+    onCancel={() => (shiftDeleteCollisions = null)}
+  >
+    {#snippet body()}
+      {#if shiftDeleteCollisions}
+        <CollisionWarnBody summary={shiftDeleteCollisions} variant="shift" />
+      {/if}
+    {/snippet}
+  </ConfirmDialog>
 
   <!-- 260601-g8l: BS-Tag removal confirmation dialog. The description is built
        from the resolved employee name + DD.MM.YYYY date at the moment the user
