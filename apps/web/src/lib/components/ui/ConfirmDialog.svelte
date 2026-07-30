@@ -15,6 +15,14 @@
     cancelLabel?: string;
     /** When true, the confirm button uses .btn-danger styling. */
     danger?: boolean;
+    /**
+     * Optional additive body content rendered inside the modal AFTER the
+     * `description` paragraph and BEFORE the footer. Backward-compatible: every
+     * existing caller omits `body` and is unaffected. Used e.g. to render the
+     * appointment-collision list (Phase 87) — structured markup a plain
+     * `description` string cannot carry.
+     */
+    body?: import("svelte").Snippet;
     /** Confirm handler — may return a Promise. Dialog stays open while pending. */
     onConfirm: () => void | Promise<void>;
     /** Optional cancel handler. */
@@ -28,6 +36,7 @@
     confirmLabel = "Bestätigen",
     cancelLabel = "Abbrechen",
     danger = false,
+    body,
     onConfirm,
     onCancel,
   }: Props = $props();
@@ -89,6 +98,7 @@
   {#if description}
     <p class="confirm-description">{description}</p>
   {/if}
+  {@render body?.()}
   {#snippet footer()}
     <button class="btn btn-ghost" type="button" onclick={handleCancel} disabled={pending}>
       {cancelLabel}

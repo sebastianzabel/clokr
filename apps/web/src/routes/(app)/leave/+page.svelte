@@ -10,6 +10,14 @@
   import Card from "$components/ui/Card.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
+  import {
+    checkAppointmentCollisions,
+    COLLISION_UNAVAILABLE_TOAST,
+    type CollisionSummary,
+  } from "$lib/phorest/appointmentCollisions";
+  import { toasts } from "$stores/toast";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -574,7 +582,39 @@
   }
 
   // ── Antrag einreichen / bearbeiten ────────────────────────────────────────
+  // Phase 87: appointment-collision warn-and-confirm gate on CREATE only. The
+  // dialog is parent-owned; on ≥1 collision it must be confirmed before POST.
+  let collisionConfirmOpen = $state(false);
+  let collisionSummary = $state<CollisionSummary | null>(null);
+
   async function submitRequest() {
+    // Edit path is unchanged — no collision pre-check on PATCH.
+    if (editingRequest) {
+      await performLeaveMutation();
+      return;
+    }
+    // Create path: fail-open pre-check before the POST.
+    const summary = await checkAppointmentCollisions({
+      employeeId: $authStore.user?.employeeId ?? "",
+      from: formStart,
+      to: formEnd,
+    });
+    if (summary && summary.total > 0) {
+      // Booked appointments in range → require explicit confirm before POST.
+      collisionSummary = summary;
+      collisionConfirmOpen = true;
+      return;
+    }
+    if (summary === null) {
+      // Fail-open: endpoint unreachable — proceed without blocking, notify.
+      toasts.error(COLLISION_UNAVAILABLE_TOAST);
+    }
+    await performLeaveMutation();
+  }
+
+  // The actual create/edit mutation, shared by the direct path and the
+  // collision-confirm path.
+  async function performLeaveMutation() {
     formSaving = true;
     formError = "";
     try {
@@ -1803,6 +1843,21 @@
         </button>
       {/snippet}
     </Modal>
+  {/if}
+
+  <!-- ── Phase 87: Terminkollision-Warnung (Urlaub anlegen) ──────────────────── -->
+  {#if collisionSummary}
+    <ConfirmDialog
+      bind:open={collisionConfirmOpen}
+      title="Kundentermine im Zeitraum gebucht"
+      confirmLabel="Trotzdem fortfahren"
+      cancelLabel="Abbrechen"
+      onConfirm={performLeaveMutation}
+    >
+      {#snippet body()}
+        <CollisionWarnBody summary={collisionSummary} variant="range" />
+      {/snippet}
+    </ConfirmDialog>
   {/if}
 </div>
 

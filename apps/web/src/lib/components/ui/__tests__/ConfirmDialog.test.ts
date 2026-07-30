@@ -5,6 +5,7 @@
 // stay in a "phantom-on" half-state.
 
 import { describe, it, expect, vi } from "vitest";
+import { createRawSnippet } from "svelte";
 import { screen, fireEvent, waitFor } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import ConfirmDialog from "../ConfirmDialog.svelte";
@@ -128,6 +129,34 @@ describe("ConfirmDialog — dismiss paths (Phase 76.13 UI-V19-05)", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  // ── Phase 87: additive `body?: Snippet` prop (backward-compatible) ──────────
+
+  it("body omitted → existing dismiss behavior is unchanged (backward-compat)", async () => {
+    const props = baseProps(); // no `body`
+    renderWithTheme(ConfirmDialog, props);
+    // Description still renders; no extra body content leaks in.
+    expect(screen.getByText("Wirklich fortfahren?")).toBeTruthy();
+    // Cancel path behaves exactly as before.
+    await fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    expect(props.onCancel).toHaveBeenCalledTimes(1);
+    expect(props.onConfirm).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("body snippet → its content renders after the description, before the footer", async () => {
+    const body = createRawSnippet(() => ({
+      render: () => `<p data-testid="collision-body">COLLISION-BODY-MARKER</p>`,
+    }));
+    const props = baseProps({ body });
+    renderWithTheme(ConfirmDialog, props);
+    // Both the description and the injected body are present.
+    expect(screen.getByText("Wirklich fortfahren?")).toBeTruthy();
+    expect(screen.getByText("COLLISION-BODY-MARKER")).toBeTruthy();
+    // Footer buttons still render — body sits between description and footer.
+    expect(screen.getByRole("button", { name: "Bestätigen" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Abbrechen" })).toBeTruthy();
   });
 
   it("Re-open after dismiss → effect re-arms, no stale onCancel", async () => {
