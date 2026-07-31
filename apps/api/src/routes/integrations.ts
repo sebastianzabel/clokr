@@ -72,7 +72,7 @@ const collisionQuerySchema = z.union([
  * built (graceful degrade — the UI omits the link).
  *
  * OWNER-GATE (Open Question 1 / 85-05): `phorestBaseUrl` is the THIRD-PARTY API host
- * (api.phorest.com/third-party-api-server), NOT a user-facing calendar URL, and there is no
+ * (api-gateway-eu.phorest.com/third-party-api-server), NOT a user-facing calendar URL, and there is no
  * calendar-URL config field today. Until the owner pins the real Phorest web-calendar URL shape,
  * this returns null. The function signature already carries everything a real URL needs
  * (business/branch + employee + date), so a URL can be dropped in here WITHOUT changing the
@@ -190,14 +190,14 @@ export async function integrationRoutes(app: FastifyInstance) {
 
       try {
         const staff = await phorestFetch(
-          cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server",
+          cfg.phorestBaseUrl ?? "https://api-gateway-eu.phorest.com/third-party-api-server",
           `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
           cfg.phorestUsername,
           phorestPwd,
           { size: "1", page: "0" },
         );
 
-        const staffArr = staff._embedded?.staff ?? staff.staff ?? [];
+        const staffArr = staff._embedded?.staffs ?? staff.staffs ?? [];
         const staffCount =
           typeof staff.totalElements === "number" ? staff.totalElements : staffArr.length;
         const branchName = typeof staff.branchName === "string" ? staff.branchName : undefined;
@@ -256,7 +256,7 @@ export async function integrationRoutes(app: FastifyInstance) {
 
       // Phorest-Mitarbeiter laden
       const phorestData = await phorestFetch(
-        cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server",
+        cfg.phorestBaseUrl ?? "https://api-gateway-eu.phorest.com/third-party-api-server",
         `/api/business/${cfg.phorestBusinessId}/branch/${cfg.phorestBranchId}/staff`,
         cfg.phorestUsername,
         staffPwd,
@@ -264,8 +264,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       );
 
       const phorestStaff: PhorestStaffItem[] = (
-        phorestData._embedded?.staff ??
-        phorestData.staff ??
+        phorestData._embedded?.staffs ??
+        phorestData.staffs ??
         []
       ).map((s) => ({
         staffId: s.staffId,

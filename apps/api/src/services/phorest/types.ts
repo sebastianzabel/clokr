@@ -3,18 +3,17 @@
 // plugins/scheduler.ts and routes/integrations.ts. Follows the services/clock/types.ts
 // header-comment + named-export convention.
 //
-// WIRE FIDELITY (v3, CONFIRMED): the staff + worktimetable shapes below are the REAL
-// Phorest "Third Party API" v3 wire-shape, captured from the OpenAPI spec at
+// WIRE FIDELITY (v3, CONFIRMED): the staff + worktimetable + appointment shapes below are
+// the REAL Phorest "Third Party API" v3 wire-shape, captured from the OpenAPI spec at
 // .planning/phases/85-phorest-shift-sync-produktionsreif/ref/phorest-openapi-v3.json
-// (schemas DataPagedModelStaff / DataPagedModelWorkTimeTable / Staff / WorkTimeTable /
-// WorkTimeSlot). Staff live under `_embedded.staffs`; worktimetables under
-// `_embedded.workTimeTables` with a NESTED `timeSlots[]` whose times are Joda LocalTime
-// "HH:mm:ss" strings (NOT ISO datetimes) and whose dates are "yyyy-MM-dd". There is NO
-// per-slot id → the shift externalId stays the deterministic composite key.
-// NOTE: the appointment shape (PhorestAppointmentItem) is still ASSUMED and is reconciled
-// to v3 in plan 07; the legacy `staff` / `staffWorkTimeTables` envelope keys are retained
-// only so the not-yet-migrated config/preview reads in routes/integrations.ts keep
-// compiling — they are removed once plan 07 lands.
+// (schemas DataPagedModelStaff / DataPagedModelWorkTimeTable / DataPagedModelAppointmentResponse
+// / Staff / WorkTimeTable / WorkTimeSlot / AppointmentResponse). Staff live under
+// `_embedded.staffs`; worktimetables under `_embedded.workTimeTables` with a NESTED
+// `timeSlots[]` whose times are Joda LocalTime "HH:mm:ss" strings (NOT ISO datetimes) and
+// whose dates are "yyyy-MM-dd"; appointments under `_embedded.appointments` with a SEPARATE
+// `appointmentDate` "yyyy-MM-dd" + Joda LocalTime `startTime`/`endTime`. There is NO per-slot
+// id on a worktimetable slot → the shift externalId stays the deterministic composite key,
+// while an appointment carries a stable `appointmentId`.
 
 // ── Phorest wire shapes ──────────────────────────────────────────────
 
@@ -56,41 +55,38 @@ export interface PhorestWorkTimeItem {
   endTime?: string; // LocalTime "HH:mm:ss" (from the slot)
 }
 
-// Phase 86 (SA-01/SA-02) — Phorest appointment wire shape, DSGVO-minimally modeled.
+// Phase 85 Plan 07 (SA-01/SA-02) — Phorest appointment wire shape, DSGVO-minimally modeled.
 //
-// CRITICAL: this interface deliberately models ONLY staffId + start/end + an optional stable id.
-// It does NOT model clientName / clientId / serviceName / price or any other appointment field —
-// so the closed mapAppointment() literal that consumes it CANNOT read PII by construction, and a
-// TypeScript reader of `a.clientName` would not compile. The DSGVO minimization is structural.
-// Wire shape is ASSUMED (inherits the 85-05 owner-recording gate) — see the header note above.
+// CRITICAL: this interface deliberately models ONLY staffId + appointmentDate + start/end + the
+// stable appointmentId. It does NOT model clientName / clientId / serviceName / price / notes or any
+// other AppointmentResponse field the real payload ALSO carries — so the closed mapAppointment()
+// literal that consumes it CANNOT read PII by construction, and a TypeScript reader of `a.clientName`
+// would not compile. The DSGVO minimization is structural: the closed mapper is exactly what keeps
+// the PII fields the confirmed v3 AppointmentResponse also carries out of the DB (see header note;
+// source: ref/phorest-openapi-v3.json schema AppointmentResponse).
 export interface PhorestAppointmentItem {
-  // `appointmentId` is OPTIONAL: if the real Phorest response carries a stable per-appointment id
-  // it becomes the externalId; otherwise phorestAppointmentKey() falls back to a deterministic composite.
+  // `appointmentId` is the confirmed v3 stable id → the externalId; phorestAppointmentKey() keeps a
+  // deterministic composite fallback for the (spec-improbable) missing-id case.
   appointmentId?: string;
   staffId: string;
-  startTime?: string; // ISO datetime
-  endTime?: string; // ISO datetime
+  appointmentDate?: string; // "yyyy-MM-dd" (the date lives in a SEPARATE field, NOT in startTime)
+  startTime?: string; // Joda LocalTime "HH:mm:ss" (NOT an ISO datetime)
+  endTime?: string; // Joda LocalTime "HH:mm:ss"
 }
 
 export interface PhorestApiResponse {
   totalElements?: unknown;
   _embedded?: {
-    // v3 envelope keys (CONFIRMED)
+    // v3 envelope keys (CONFIRMED) — the ONLY keys the reconciled sync/config paths read.
     staffs?: PhorestStaffItem[];
     workTimeTables?: PhorestWorkTimeTable[];
     appointments?: PhorestAppointmentItem[];
-    // Legacy keys — retained so the not-yet-migrated config/preview reads in
-    // routes/integrations.ts keep compiling; removed when plan 07 reconciles them.
-    staff?: PhorestStaffItem[];
-    staffWorkTimeTables?: PhorestWorkTimeItem[];
   };
-  staff?: PhorestStaffItem[];
   staffs?: PhorestStaffItem[];
-  staffWorkTimeTables?: PhorestWorkTimeItem[];
   appointments?: PhorestAppointmentItem[];
-  // Spring-HATEOAS pagination envelope (ASSUMED, Open Question 2). `page.number` is the
+  // Spring-HATEOAS pagination envelope (CONFIRMED v3, PageMetadata). `page.number` is the
   // zero-based current page, `page.totalPages` the count. `_links.next` is the fallback
-  // has-more indicator. Kept here so the 85-05 owner-recording gate can pin the exact keys.
+  // has-more indicator.
   page?: { size?: number; totalElements?: number; totalPages?: number; number?: number };
   _links?: { next?: { href?: string } | null };
   [key: string]: unknown;
@@ -206,8 +202,7 @@ export function extractAppointments(data: PhorestApiResponse): PhorestAppointmen
  */
 export function phorestAppointmentKey(a: PhorestAppointmentItem): string {
   if (a.appointmentId) return a.appointmentId;
-  const date = a.startTime ? a.startTime.split("T")[0] : "";
-  return `${a.staffId}|${date}|${a.startTime ?? ""}|${a.endTime ?? ""}`;
+  return `${a.staffId}|${a.appointmentDate ?? ""}|${a.startTime ?? ""}|${a.endTime ?? ""}`;
 }
 
 export interface AppointmentSyncOpts {
