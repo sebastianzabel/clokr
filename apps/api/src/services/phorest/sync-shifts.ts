@@ -22,6 +22,18 @@
 //     the fresh window still contains is UPDATED in place (externalId + origin=PHOREST), never
 //     duplicated.
 //   - Configurable window (SS-06): windowEnd = windowStart + TenantConfig.phorestSyncWindowDays.
+//
+// Plan 85.1-02 adds three refinements surfaced during the INT live-test:
+//   - Vor-/Nachbereitungszeit (D-01/D-02/D-03): tenant-global prep/wrap-up padding on the STORED
+//     Shift.startTime/endTime only — externalId/phorestShiftKey() stay on RAW Phorest times so a
+//     puffer config change self-heals via the idempotent upsert update-branch (no cancel churn).
+//   - "BS gewinnt" (D-06/D-07): a VOCATIONAL_SCHOOL day is skipped (not created/adopted) and
+//     protected from the soft-cancel pass.
+//   - "Phorest ist Master" (D-11/D-11a/D-11b): on a Phorest-covered day, EVERY other active shift
+//     (including genuine origin=MANUAL rows — this SUPERSEDES the prior "MANUAL is never touched"
+//     invariant for mapped employees on covered days) whose externalId is not in the fresh set is
+//     soft-deleted (deletedReason "PHOREST_REPLACED"). Runs strictly AFTER the three-gate
+//     guardrail and the soft-cancel loop, scoped per (employeeId, date), never tenant-wide.
 
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
@@ -191,6 +203,9 @@ export async function syncPhorestShifts(
 
     const freshExternalIds = new Set<string>();
     const seenUnmapped = new Set<string>();
+    // Phase 85.1 (D-11) — every (employeeId, date) that received an upserted/adopted WORKING slot
+    // this run. Feeds the Phorest-master replace pass below (never skipped/unmapped days).
+    const freshCoveredDays = new Set<string>();
     for (const wt of workTimes) {
       const employeeId = mapping.get(wt.staffId);
       if (!employeeId) {
@@ -258,10 +273,12 @@ export async function syncPhorestShifts(
       // with a different/absent externalId, adopt it in place instead of inserting a second row.
       //
       // CRITICAL: the query is restricted to label="Phorest" so a GENUINE, hand-entered MANUAL
-      // shift that happens to share the same slot is NEVER reclassified to origin=PHOREST — that
-      // would make it eligible for auto soft-cancel, violating the locked invariant "MANUAL shifts
-      // are NEVER touched by the sync" (85-CONTEXT <decisions>). A same-slot genuine-MANUAL
-      // collision is left untouched here; parallel-shift collision handling is Phase 87.
+      // shift that happens to share the same slot is NEVER reclassified (adopted) to
+      // origin=PHOREST here. Phase 85.1 (D-11) CHANGES what happens to that surviving duplicate
+      // afterwards, though: on a Phorest-covered day, the replace pass below now soft-deletes it
+      // (deletedReason "PHOREST_REPLACED") — the 85-CONTEXT "MANUAL shifts are NEVER touched"
+      // invariant is explicitly superseded for mapped employees on Phorest-covered days (see
+      // 85.1-CONTEXT D-11). It is NOT reclassified/adopted here, just soft-deleted later.
       const occupant = await app.prisma.shift.findFirst({
         where: {
           employeeId,
@@ -287,6 +304,7 @@ export async function syncPhorestShifts(
           },
         });
         result.updated++;
+        freshCoveredDays.add(`${employeeId}|${date}`);
         await app.audit({
           userId: opts.actorUserId,
           action: "UPDATE",
@@ -326,6 +344,7 @@ export async function syncPhorestShifts(
 
       if (existing) result.updated++;
       else result.created++;
+      freshCoveredDays.add(`${employeeId}|${date}`);
 
       // Revisionssicherheit — audit every create/update. Cron actor is undefined (SYSTEM).
       await app.audit({
@@ -428,6 +447,54 @@ export async function syncPhorestShifts(
         },
         newValue: { deletedReason: "PHOREST_REMOVED", deletedAt: new Date(), source: "Phorest" },
       });
+    }
+
+    // ── Phorest-master replace pass (D-11) — runs ONLY after all three gates passed ──
+    // For every (employeeId, date) this run actually upserted/adopted a WORKING slot for
+    // (freshCoveredDays), soft-delete every OTHER active shift on that exact day whose externalId
+    // is not in the fresh set — regardless of origin/label (this REACHES genuine origin=MANUAL
+    // rows, unlike the origin=PHOREST-scoped soft-cancel above). D-11a: this block is textually
+    // AFTER both GATE-3 return-early exits and the soft-cancel loop, so a fetch-error/SUSPECT run
+    // never reaches it (zero deletes). D-11b: a BS-skipped day is excluded — BS wins, leave it
+    // alone. Scoped per Phorest-covered day only — never a tenant-wide delete (Pitfall 2).
+    for (const key of freshCoveredDays) {
+      if (bsSkippedDays.has(key)) continue;
+      const [employeeId, dateStr] = key.split("|");
+      const replaceCandidates = await app.prisma.shift.findMany({
+        where: {
+          employeeId,
+          date: new Date(dateStr),
+          deletedAt: null,
+          employee: { tenantId },
+          // MANUAL rows carry externalId=null; Prisma `notIn` does NOT match NULL, so the null
+          // branch is OR'd in explicitly (regardless of origin/label — this is the whole point
+          // of D-11: reach MANUAL rows too, not just origin=PHOREST ones).
+          OR: [{ externalId: null }, { externalId: { notIn: [...freshExternalIds] } }],
+        },
+      });
+      for (const dup of replaceCandidates) {
+        await app.prisma.shift.update({
+          where: { id: dup.id },
+          data: { deletedAt: new Date(), deletedReason: "PHOREST_REPLACED" },
+        });
+        result.replaced++;
+        await app.audit({
+          userId: opts.actorUserId,
+          action: "DELETE",
+          entity: "Shift",
+          entityId: dup.id,
+          oldValue: {
+            origin: dup.origin,
+            externalId: dup.externalId,
+            label: dup.label,
+            date: dup.date,
+            startTime: dup.startTime,
+            endTime: dup.endTime,
+            deletedAt: null,
+          },
+          newValue: { deletedReason: "PHOREST_REPLACED", deletedAt: new Date(), source: "Phorest" },
+        });
+      }
     }
 
     await finalizeRun(app, run.id, result);

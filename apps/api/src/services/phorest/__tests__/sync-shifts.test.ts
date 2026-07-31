@@ -191,6 +191,7 @@ describe("phorest sync-shifts", () => {
       const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(res.status).toBe("ERROR");
       expect(res.cancelled).toBe(0);
+      expect(res.replaced).toBe(0); // D-11a: a fetch-error must delete ZERO shifts, not just cancel
 
       // Nothing was cancelled — the two seeded shifts are still active.
       const stillActive = await app.prisma.shift.count({
@@ -213,6 +214,7 @@ describe("phorest sync-shifts", () => {
       const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(res.status).toBe("SUSPECT");
       expect(res.cancelled).toBe(0);
+      expect(res.replaced).toBe(0); // D-11a: an empty-200 SUSPECT run must delete ZERO shifts
 
       const stillActive = await app.prisma.shift.count({
         where: { employeeId: seed.mappedEmployeeId, origin: "PHOREST", deletedAt: null },
@@ -254,14 +256,19 @@ describe("phorest sync-shifts", () => {
     }
   });
 
-  it("SS-03 MANUAL-safety: a MANUAL shift in the same window is never soft-cancelled", async () => {
+  it("SS-03 MANUAL-safety: a MANUAL shift on a date the window does NOT cover is never touched", async () => {
     const seed = await seedPhorestTenant(app, "manual");
     try {
-      // A MANUAL shift in-window whose slot does NOT match any fixture entry (so no adopt).
+      // Phase 85.1 (D-11) note: this used to sit on 07-30 (a Phorest-covered day), where the new
+      // D-11 replace pass now DOES soft-delete a same-day MANUAL shift by design (see the
+      // "Phorest-master replace" describe block below). Moved to a date the fixture returns NO
+      // slot for at all, to keep this test's original SS-04-only intent (windowed soft-cancel is
+      // origin=PHOREST-scoped, so it structurally never touches a MANUAL row) uncontaminated by
+      // the D-11 replace pass (which is scoped per Phorest-COVERED day only — Pitfall 2).
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
-          date: new Date("2026-07-30"),
+          date: new Date("2026-08-15"),
           startTime: "12:00",
           endTime: "20:00",
           origin: "MANUAL",
@@ -272,6 +279,7 @@ describe("phorest sync-shifts", () => {
       mockPhorest(wttFixture);
       const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(res.status).toBe("SUCCESS");
+      expect(res.replaced).toBe(0);
 
       const stillActive = await app.prisma.shift.findUnique({ where: { id: manual.id } });
       expect(stillActive?.deletedAt).toBeNull();
@@ -376,13 +384,16 @@ describe("phorest sync-shifts", () => {
     }
   });
 
-  it("CR-01 adopt-safety: a genuine MANUAL shift (non-'Phorest' label) at the exact fixture slot is NEVER adopted or cancelled", async () => {
+  it("CR-01 adopt-safety: a genuine MANUAL shift (non-'Phorest' label) at the exact fixture slot is NEVER reclassified to origin=PHOREST", async () => {
     const seed = await seedPhorestTenant(app, "manualslot");
     try {
       // A genuinely hand-entered MANUAL shift occupying the EXACT slot of the 07-30 mapped
       // fixture entry (08:00-16:00), but with a real label — NOT the legacy "Phorest" marker.
-      // The sync must not reclassify it to origin=PHOREST (which would make it eligible for
-      // auto soft-cancel), honouring the locked "MANUAL shifts are NEVER touched" invariant.
+      // The sync must not reclassify it to origin=PHOREST via the adopt-on-match path (that path
+      // is restricted to label="Phorest" rows only). Phase 85.1 (D-11) CHANGES what happens next,
+      // though: on this Phorest-COVERED day, the D-11 replace pass now soft-deletes the surviving
+      // duplicate (deletedReason PHOREST_REPLACED) — this is the intended double-planning fix, no
+      // longer "left untouched" as the pre-85.1 comment described.
       const manual = await app.prisma.shift.create({
         data: {
           employeeId: seed.mappedEmployeeId,
@@ -397,15 +408,17 @@ describe("phorest sync-shifts", () => {
       mockPhorest(wttFixture);
       const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(first.status).toBe("SUCCESS");
+      expect(first.replaced).toBe(1);
 
-      // The MANUAL shift is untouched: still origin=MANUAL, still active, externalId untouched.
-      const untouched = await app.prisma.shift.findUnique({ where: { id: manual.id } });
-      expect(untouched?.origin).toBe("MANUAL");
-      expect(untouched?.deletedAt).toBeNull();
-      expect(untouched?.externalId).toBeNull();
+      // The MANUAL shift was NEVER reclassified — origin stays MANUAL, externalId stays null,
+      // right up to the soft-delete. It is now replaced, not adopted.
+      const replaced = await app.prisma.shift.findUnique({ where: { id: manual.id } });
+      expect(replaced?.origin).toBe("MANUAL");
+      expect(replaced?.externalId).toBeNull();
+      expect(replaced?.deletedReason).toBe("PHOREST_REPLACED");
+      expect(replaced?.deletedAt).not.toBeNull();
 
-      // The Phorest entry is created as a SEPARATE PHOREST row (collision handling = Phase 87),
-      // so the slot now holds two active rows: the untouched MANUAL one + the new PHOREST one.
+      // Exactly ONE active row remains for the slot — the new PHOREST entry.
       const slot = await app.prisma.shift.findMany({
         where: {
           employeeId: seed.mappedEmployeeId,
@@ -415,15 +428,120 @@ describe("phorest sync-shifts", () => {
           deletedAt: null,
         },
       });
-      expect(slot.some((s) => s.origin === "MANUAL" && s.id === manual.id)).toBe(true);
-      expect(slot.some((s) => s.origin === "PHOREST" && s.externalId !== null)).toBe(true);
+      expect(slot.length).toBe(1);
+      expect(slot[0].origin).toBe("PHOREST");
+      expect(slot[0].externalId).not.toBeNull();
 
-      // A second sync must still never touch the MANUAL row (idempotent, no late adopt/cancel).
+      // An audit DELETE row was written for the replace (Revisionssicherheit).
+      const replaceAudits = await app.prisma.auditLog.count({
+        where: { entity: "Shift", action: "DELETE", entityId: manual.id },
+      });
+      expect(replaceAudits).toBeGreaterThanOrEqual(1);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+// Phase 85.1 (D-08/D-11/D-11a/D-11b) — "Phorest ist Master": replace, no double-planning.
+describe("phorest sync-shifts Phorest-master replace (85.1)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("D-11 replaces a wrong-time legacy label=Phorest row on a covered day (different externalId, not adopted)", async () => {
+    const seed = await seedPhorestTenant(app, "wrongtime");
+    try {
+      // A legacy label="Phorest" row at a DIFFERENT slot than any current fixture entry for
+      // 07-30 — the adopt-on-match occupant lookup (exact-time match) will NOT find it, so it
+      // falls through to D-11's replace pass instead of being adopted.
+      const wrongTime = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "06:00",
+          endTime: "07:00",
+          origin: "MANUAL",
+          label: "Phorest",
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.replaced).toBe(1);
+
+      const replaced = await app.prisma.shift.findUnique({ where: { id: wrongTime.id } });
+      expect(replaced?.deletedReason).toBe("PHOREST_REPLACED");
+      expect(replaced?.deletedAt).not.toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-11b: a MANUAL shift on a BS-skipped day survives untouched (BS wins)", async () => {
+    const seed = await seedPhorestTenant(app, "bsreplace");
+    try {
+      await seedVocationalSchoolAbsence(app, seed.mappedEmployeeId, "2026-07-31");
+
+      const manual = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-31"),
+          startTime: "10:00",
+          endTime: "18:00",
+          origin: "MANUAL",
+          label: "Handeintrag",
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.skippedVocationalSchool).toBe(1);
+      expect(res.replaced).toBe(0); // 07-31 was skipped, never entered freshCoveredDays
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: manual.id } });
+      expect(stillActive?.deletedAt).toBeNull();
+      expect(stillActive?.origin).toBe("MANUAL");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-11a GUARDRAIL fetch-error: replaced===0 alongside cancelled===0 (zero deletes on gate failure)", async () => {
+    const seed = await seedPhorestTenant(app, "replaceerr");
+    try {
       mockPhorest(wttFixture);
       await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
-      const stillUntouched = await app.prisma.shift.findUnique({ where: { id: manual.id } });
-      expect(stillUntouched?.origin).toBe("MANUAL");
-      expect(stillUntouched?.deletedAt).toBeNull();
+
+      // A MANUAL shift on a day the first sync already covers — would be a replace candidate
+      // IF the second run reached the replace pass.
+      const manual = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "06:00",
+          endTime: "07:00",
+          origin: "MANUAL",
+          label: "Handeintrag",
+        },
+      });
+
+      mockPhorestWttStatus(503);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("ERROR");
+      expect(res.replaced).toBe(0);
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: manual.id } });
+      expect(stillActive?.deletedAt).toBeNull();
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
@@ -469,6 +587,7 @@ describe("phorest sync-shifts padding (85.1)", () => {
       const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(second.status).toBe("SUCCESS");
       expect(second.cancelled).toBe(0); // D-03: NO mass cancel/recreate from the puffer change
+      expect(second.replaced).toBe(0); // a puffer change must NOT trip the D-11 replace pass
       expect(second.updated).toBeGreaterThan(0); // self-heals via the upsert update-branch
 
       const afterPadding = await app.prisma.shift.findFirst({
