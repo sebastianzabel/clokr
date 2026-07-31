@@ -96,8 +96,8 @@ export interface PhorestApiResponse {
 //
 // The worktimetables endpoint is paginated. A page-1-only read must NEVER drive a
 // soft-cancel of a page-2 shift, so the sync loops until the page set is exhausted.
-// The exact paging keys are ASSUMED (Open Question 2) and centralised here so the
-// 85-05 gate pins them in one place.
+// The paging keys are the CONFIRMED v3 Spring-HATEOAS `page{size,totalElements,totalPages,number}`
+// envelope (from the OpenAPI spec — closes RESEARCH Open Question 2) and are centralised here.
 
 /** Worktimetable page size requested per page (Phorest `size` param). */
 export const PHOREST_PAGE_SIZE = 200;
