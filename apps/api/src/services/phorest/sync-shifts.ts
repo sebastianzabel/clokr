@@ -26,6 +26,7 @@
 import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../utils/timezone";
+import { applyPrepWrapup } from "../../utils/time-arithmetic";
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
@@ -59,6 +60,8 @@ export async function syncPhorestShifts(
     cancelled: 0,
     unmapped: 0,
     unmappedStaff: [],
+    skippedVocationalSchool: 0,
+    replaced: 0,
   };
 
   try {
@@ -160,6 +163,12 @@ export async function syncPhorestShifts(
     }
 
     // 4. Upsert / adopt each mapped entry, building the fresh in-window externalId set (SS-03/SS-07).
+    // Phase 85.1 (D-01/D-02): tenant-global Vor-/Nachbereitungszeit puffer, read once outside the
+    // loop. Padding is applied ONLY to the STORED Shift.startTime/endTime below (D-02) — the
+    // externalId / phorestShiftKey() and the adopt-on-match occupant lookup stay on the RAW
+    // wt.startTime/endTime the whole way through (D-03, key-stability across puffer changes).
+    const prepMin = cfg.phorestPrepMinutes ?? 0;
+    const wrapMin = cfg.phorestWrapupMinutes ?? 0;
     const freshExternalIds = new Set<string>();
     const seenUnmapped = new Set<string>();
     for (const wt of workTimes) {
@@ -192,6 +201,19 @@ export async function syncPhorestShifts(
       const externalId = phorestShiftKey(wt);
       freshExternalIds.add(externalId);
 
+      // Phase 85.1 (D-02/D-05): pad the STORED window only — NEVER feed padded values into
+      // phorestShiftKey() or the adopt-on-match occupant WHERE (both stay on raw startH/endH).
+      // D-05 edge (documented, not covered by code): Phorest models a break as
+      // timeOffStart/EndTime WITHIN one slot and extractWorkTimes drops NON_WORKING slots, so one
+      // contiguous slot/day is the norm — but two adjacent same-day slots could, in principle,
+      // overlap after padding (e.g. 11:45 & 12:15). No merge logic is built in this phase.
+      const { startTime: paddedStart, endTime: paddedEnd } = applyPrepWrapup(
+        startH,
+        endH,
+        prepMin,
+        wrapMin,
+      );
+
       // ── Adopt-on-match (SS-07 dedup) ─────────────────────────────
       // Before creating, look for a LEGACY Phorest-imported row already occupying this exact
       // slot (employeeId + date + startTime + endTime). Such a row is left by the old untested
@@ -222,6 +244,10 @@ export async function syncPhorestShifts(
             origin: "PHOREST",
             externalId,
             label: occupant.label ?? "Phorest",
+            // Phase 85.1 (D-02): an adopted legacy row's STORED time is padded too, same as a
+            // fresh create/update — only the occupant WHERE lookup above stays on raw times.
+            startTime: paddedStart,
+            endTime: paddedEnd,
           },
         });
         result.updated++;
@@ -244,8 +270,8 @@ export async function syncPhorestShifts(
         create: {
           employeeId,
           date: new Date(date),
-          startTime: startH,
-          endTime: endH,
+          startTime: paddedStart,
+          endTime: paddedEnd,
           label: "Phorest",
           origin: "PHOREST",
           externalId,
@@ -254,8 +280,8 @@ export async function syncPhorestShifts(
         update: {
           employeeId,
           date: new Date(date),
-          startTime: startH,
-          endTime: endH,
+          startTime: paddedStart,
+          endTime: paddedEnd,
           // A re-appearing entry revives a previously soft-cancelled shift (idempotent, self-healing).
           deletedAt: null,
           deletedReason: null,
@@ -279,8 +305,8 @@ export async function syncPhorestShifts(
           origin: "PHOREST",
           externalId,
           date,
-          startTime: startH,
-          endTime: endH,
+          startTime: paddedStart,
+          endTime: paddedEnd,
         },
       });
     }
@@ -391,6 +417,8 @@ export async function syncPhorestShifts(
           updated: result.updated,
           cancelled: result.cancelled,
           unmapped: result.unmapped,
+          skippedVocationalSchool: result.skippedVocationalSchool,
+          replaced: result.replaced,
         },
       })
       .catch(() => {
@@ -411,6 +439,8 @@ async function finalizeRun(app: FastifyInstance, runId: string, result: SyncResu
       updated: result.updated,
       cancelled: result.cancelled,
       unmapped: result.unmapped,
+      skippedVocationalSchool: result.skippedVocationalSchool,
+      replaced: result.replaced,
     },
   });
 }

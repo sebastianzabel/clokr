@@ -425,6 +425,106 @@ describe("phorest sync-shifts", () => {
   });
 });
 
+// Phase 85.1 (D-01/D-02/D-03) — Vor-/Nachbereitungszeit padding.
+describe("phorest sync-shifts padding (85.1)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("D-03 key-stability: a 0→15 puffer change pads stored times, keeps externalId raw, cancelled===0", async () => {
+    const seed = await seedPhorestTenant(app, "puffer");
+    try {
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+      expect(first.created).toBe(2);
+
+      const jul31 = new Date("2026-07-31");
+      const beforePadding = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(beforePadding?.startTime).toBe("09:00");
+      expect(beforePadding?.endTime).toBe("17:00");
+      const rawExternalId = beforePadding?.externalId;
+      expect(rawExternalId).toBe("ph-staff-mapped|2026-07-31|09:00:00|17:00:00");
+
+      // Turn on a 15/15 puffer and re-sync against the IDENTICAL fixture.
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+      expect(second.cancelled).toBe(0); // D-03: NO mass cancel/recreate from the puffer change
+      expect(second.updated).toBeGreaterThan(0); // self-heals via the upsert update-branch
+
+      const afterPadding = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(afterPadding?.startTime).toBe("08:45");
+      expect(afterPadding?.endTime).toBe("17:15");
+      // externalId is UNCHANGED — still the raw-time key, proving key-stability across the puffer
+      // change (this IS the same row, updated in place, not cancelled+recreated).
+      expect(afterPadding?.id).toBe(beforePadding?.id);
+      expect(afterPadding?.externalId).toBe(rawExternalId);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-11 adopt-under-padding: a raw-time legacy label=Phorest row is UPDATEd in place with padded stored times, not replaced", async () => {
+    const seed = await seedPhorestTenant(app, "adoptpad");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+
+      // Pre-existing (pre-migration) label="Phorest" origin=MANUAL row at the RAW (unpadded)
+      // 07-30 fixture slot (08:00-16:00) — legacy rows are always stored on raw times.
+      const legacy = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-30"),
+          startTime: "08:00",
+          endTime: "16:00",
+          origin: "MANUAL",
+          label: "Phorest",
+        },
+      });
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      // Same id, adopted in place, origin flipped, stored times now padded.
+      const adopted = await app.prisma.shift.findUnique({ where: { id: legacy.id } });
+      expect(adopted?.origin).toBe("PHOREST");
+      expect(adopted?.startTime).toBe("07:45");
+      expect(adopted?.endTime).toBe("16:15");
+      expect(adopted?.externalId).toBe("ph-staff-mapped|2026-07-30|08:00:00|16:00:00");
+      expect(adopted?.deletedAt).toBeNull();
+
+      // Not double-counted as a replace (Task 3 introduces `replaced`, asserted here for D-11's
+      // adopt-on-match carve-out: an adopted row must never ALSO show up in the replace pass).
+      const activeOnSlotDate = await app.prisma.shift.count({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30"), deletedAt: null },
+      });
+      expect(activeOnSlotDate).toBe(1); // exactly the adopted row — no duplicate PHOREST insert
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
 // WR-01 regression: the slot-type filter is an ALLOW-LIST, not a NON_WORKING deny-list.
 // extractWorkTimes is the ONLY filter point (it drops `type` before the sync sees the item), so a
 // NOT_SPECIFIED / absent-type slot must NOT survive as a phantom working shift on the §615 roster.

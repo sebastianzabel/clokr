@@ -176,6 +176,14 @@ export interface SyncResult {
   cancelled: number; // count of shifts soft-cancelled by windowed reconciliation (Plan 02)
   unmapped: number; // count of worktime entries whose staffId has no explicit mapping
   unmappedStaff: { phorestStaffId: string; name?: string }[]; // deduplicated, for the UI warning
+  // Phase 85.1 (D-06/D-08): count of Phorest worktime slots skipped because the employee has an
+  // active VOCATIONAL_SCHOOL absence that day ("BS gewinnt") — the shift is neither created nor
+  // adopted, and the day is protected from soft-cancel/replace.
+  skippedVocationalSchool: number;
+  // Phase 85.1 (D-08/D-11): count of shifts soft-deleted by the Phorest-master replace pass
+  // (deletedReason "PHOREST_REPLACED") because a Phorest-covered day's roster no longer includes
+  // them — distinct from `cancelled` (PHOREST_REMOVED windowed reconcile of origin=PHOREST rows).
+  replaced: number;
   error?: string;
 }
 
