@@ -61,6 +61,10 @@ const configSchema = z.object({
   phorestSyncCron: z.string().optional(),
   // SS-05: configurable sync window (Zeitfenster) surfaced in the admin observability panel.
   phorestSyncWindowDays: z.coerce.number().int().min(1).max(90).optional(),
+  // Phase 85.1 (D-01): tenant-global Vor-/Nachbereitungszeit puffer, applied to every imported
+  // Phorest shift's stored start/end times.
+  phorestPrepMinutes: z.coerce.number().int().min(0).max(30).optional(),
+  phorestWrapupMinutes: z.coerce.number().int().min(0).max(30).optional(),
 });
 
 // Phase 87 (CO-01/CO-02/CO-03): read-only appointment-collision pre-check.
@@ -124,6 +128,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestAutoSync: true,
           phorestSyncCron: true,
           phorestSyncWindowDays: true,
+          phorestPrepMinutes: true,
+          phorestWrapupMinutes: true,
           // Passwort nicht zurückgeben
         },
       });
@@ -153,6 +159,12 @@ export async function integrationRoutes(app: FastifyInstance) {
           ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),
           ...(body.phorestSyncWindowDays !== undefined
             ? { phorestSyncWindowDays: body.phorestSyncWindowDays }
+            : {}),
+          ...(body.phorestPrepMinutes !== undefined
+            ? { phorestPrepMinutes: body.phorestPrepMinutes }
+            : {}),
+          ...(body.phorestWrapupMinutes !== undefined
+            ? { phorestWrapupMinutes: body.phorestWrapupMinutes }
             : {}),
         },
       });
