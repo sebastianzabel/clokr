@@ -1,12 +1,17 @@
 {
-  "__note": "ASSUMED Phorest /staffworktimetables PAGE 2 (final, of 2). Carries the ph-staff-mapped 2026-07-31 entry (byte-identical to worktimetables.json) with a `page` envelope totalPages=2/number=1 (no more pages). Paired with worktimetables-paged-p1.json for the pagination-exhaustion guardrail test — once both pages are merged the fresh set contains BOTH shifts, so the 07-31 shift is NOT soft-cancelled. Entries carry NO 'id' → composite externalId.",
   "_embedded": {
-    "staffWorkTimeTables": [
+    "workTimeTables": [
       {
         "staffId": "ph-staff-mapped",
-        "date": "2026-07-31",
-        "startTime": "2026-07-31T09:00:00.000Z",
-        "endTime": "2026-07-31T17:00:00.000Z"
+        "branchId": "branch-1",
+        "timeSlots": [
+          {
+            "date": "2026-07-31",
+            "startTime": "09:00:00",
+            "endTime": "17:00:00",
+            "type": "WORKING"
+          }
+        ]
       }
     ]
   },
