@@ -1,16 +1,21 @@
 {
-  "__note": "ASSUMED Phorest /appointment PAGE 2 (final, of 2) for the same date as appointments-paged-p1.json. Carries the ph-staff-mapped 14:00 slot with a `page` envelope totalPages=2/number=1 (no more pages). Paired with page 1 for the GATE-2 pagination-exhaustion test — once both pages are merged the fresh set contains BOTH slots, so both are hard-replaced into the cache. The date part of startTime/endTime is rewritten to an in-window date by the test.",
+  "_comment": "Phase 85 Plan 07 — CONFIRMED v3 /appointment PAGE 2 (final, of 2) for the same date as appointments-paged-p1.json. Carries the ph-staff-mapped 14:00 slot with a `page` envelope totalPages=2/number=1 (no more pages). Paired with page 1 for the GATE-2 pagination-exhaustion test — once both pages are merged the fresh set contains BOTH slots, so both are hard-replaced into the cache. v3 shape: date in appointmentDate, LocalTime 'HH:mm:ss'. The test rewrites appointmentDate onto an in-window date and dispatches on the page param.",
   "_embedded": {
     "appointments": [
       {
         "appointmentId": "appt-paged-2",
+        "version": 1,
         "staffId": "ph-staff-mapped",
-        "startTime": "2026-07-30T14:00:00Z",
-        "endTime": "2026-07-30T15:15:00Z",
+        "appointmentDate": "2026-07-30",
+        "startTime": "14:00:00",
+        "endTime": "15:15:00",
         "clientId": "cust-page-2",
         "clientName": "Page Two Client",
+        "serviceId": "svc-p2",
         "serviceName": "Color",
-        "price": 60
+        "price": 60,
+        "notes": "Zweite Seite",
+        "state": "BOOKED"
       }
     ]
   },

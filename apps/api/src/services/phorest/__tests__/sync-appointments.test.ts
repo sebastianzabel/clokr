@@ -1,6 +1,10 @@
-// Phase 86 (SA-01/SA-02/SA-03) — fetch-mocked fixture test for the Phorest appointment cache sync.
-// Mirrors sync-shifts.test.ts's fetch-mock harness (afterEach restores global.fetch).
-// Run via `pnpm --filter @clokr/api test -- sync-appointments` (pretest db-push) — NOT bare vitest.
+// Phase 85 Plan 07 (SA-01/SA-02/SA-03) — fetch-mocked fixture test for the Phorest appointment cache sync.
+// Reconciled to the REAL v3 /appointment wire-shape: a DATE-RANGE fetch (from_date/to_date, paged),
+// items carrying a SEPARATE appointmentDate ("yyyy-MM-dd") + Joda LocalTime "HH:mm:ss" start/end, and the
+// full PII payload (clientId/clientName/serviceName/price/notes). The DSGVO drop test feeds those PII fields
+// and asserts they never reach the stored row. Mirrors sync-shifts.test.ts's fetch-mock harness
+// (afterEach restores global.fetch). Run via `pnpm --filter @clokr/api test -- sync-appointments`
+// (pretest db-push) — NOT bare vitest.
 
 import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
@@ -34,8 +38,8 @@ const ALLOWED_KEYS = [
 ];
 
 /**
- * Compute an in-window target date the SAME way the service does (todayInTz + N UTC days), so the
- * service's per-date loop will request exactly this appointmentDate.
+ * Compute an in-window target date the SAME way the service does (todayInTz + N UTC days). The service
+ * fetches a SINGLE date range today..today+horizon, so any date within the window is covered by one request.
  */
 function targetDateStr(daysAhead: number): string {
   const day = todayInTz(TZ);
@@ -43,23 +47,19 @@ function targetDateStr(daysAhead: number): string {
   return dateStrInTz(day, TZ);
 }
 
-/** Shape of any of the appointment fixtures (PII-laden items + an optional page envelope). */
+/** Shape of any of the appointment fixtures (v3 PII-laden items + a page envelope). */
 type AppointmentFixture = {
-  _embedded: { appointments: { startTime: string; endTime: string }[] };
+  _embedded: { appointments: { appointmentDate: string; startTime: string; endTime: string }[] };
   page?: unknown;
 };
 
 /**
- * Rewrite a fixture's appointment dates onto `dateStr` (keeping the time-of-day + every PII field),
- * so a test runs against a real in-window date regardless of the calendar day the suite executes on.
- * All non-`_embedded` top-level keys (notably the `page` pagination envelope) are preserved.
+ * Rewrite every fixture item's `appointmentDate` onto `dateStr` (keeping the LocalTime "HH:mm:ss"
+ * startTime/endTime + every PII field), so a test runs against a real in-window date regardless of the
+ * calendar day the suite executes on. All non-`_embedded` top-level keys (notably `page`) are preserved.
  */
 function remapFixtureToDate(fixture: AppointmentFixture, dateStr: string): unknown {
-  const items = fixture._embedded.appointments.map((a) => ({
-    ...a,
-    startTime: dateStr + a.startTime.slice(10),
-    endTime: dateStr + a.endTime.slice(10),
-  }));
+  const items = fixture._embedded.appointments.map((a) => ({ ...a, appointmentDate: dateStr }));
   return { ...fixture, _embedded: { appointments: items } };
 }
 
@@ -72,16 +72,23 @@ function jsonResponse(payload: unknown, status = 200): Response {
   });
 }
 
-// Mock the appointment endpoint: return the (remapped, PII-laden) fixture ONLY for the target
-// appointmentDate; every other forward date in the window returns an empty appointment page.
+/** True when the request's [from_date, to_date] range covers `dateStr` (yyyy-MM-dd sorts lexically). */
+function rangeCovers(params: URLSearchParams, dateStr: string): boolean {
+  const from = params.get("from_date");
+  const to = params.get("to_date");
+  return !!from && !!to && from <= dateStr && dateStr <= to;
+}
+
+// Mock the range /appointment endpoint: return the (remapped, PII-laden) fixture when the requested
+// from_date/to_date window covers the target date; otherwise an empty appointment page.
 function mockPhorestAppointments(
   dateStr: string,
   fixture: AppointmentFixture = appointmentsFixture,
 ): void {
   const body = remapFixtureToDate(fixture, dateStr);
   global.fetch = vi.fn(async (url: string | URL) => {
-    const requested = new URL(url.toString()).searchParams.get("appointmentDate");
-    return jsonResponse(requested === dateStr ? body : EMPTY_PAGE);
+    const params = new URL(url.toString()).searchParams;
+    return jsonResponse(rangeCovers(params, dateStr) ? body : EMPTY_PAGE);
   }) as unknown as typeof fetch;
 }
 
@@ -92,23 +99,23 @@ function mockPhorestAppointments503(): void {
   ) as unknown as typeof fetch;
 }
 
-// Paginated: for the target date, dispatch on the `page` query param — page 0 → p1 (has-more),
-// page 1 → p2 (final). Every other date returns a single empty page.
+// Paginated: when the range covers the target date, dispatch on the `page` query param — page 0 → p1
+// (has-more), page 1 → p2 (final). A range that does not cover the target date returns a single empty page.
 function mockPhorestAppointmentsPaged(dateStr: string): void {
   const p1 = remapFixtureToDate(appointmentsPagedP1, dateStr);
   const p2 = remapFixtureToDate(appointmentsPagedP2, dateStr);
   global.fetch = vi.fn(async (url: string | URL) => {
-    const u = new URL(url.toString());
-    if (u.searchParams.get("appointmentDate") !== dateStr) return jsonResponse(EMPTY_PAGE);
-    return jsonResponse(u.searchParams.get("page") === "1" ? p2 : p1);
+    const params = new URL(url.toString()).searchParams;
+    if (!rangeCovers(params, dateStr)) return jsonResponse(EMPTY_PAGE);
+    return jsonResponse(params.get("page") === "1" ? p2 : p1);
   }) as unknown as typeof fetch;
 }
 
-// Return an inline (unmapped-staff) appointment body ONLY for the target date.
+// Return an inline appointment body when the requested range covers the target date.
 function mockPhorestAppointmentsBody(dateStr: string, body: unknown): void {
   global.fetch = vi.fn(async (url: string | URL) => {
-    const requested = new URL(url.toString()).searchParams.get("appointmentDate");
-    return jsonResponse(requested === dateStr ? body : EMPTY_PAGE);
+    const params = new URL(url.toString()).searchParams;
+    return jsonResponse(rangeCovers(params, dateStr) ? body : EMPTY_PAGE);
   }) as unknown as typeof fetch;
 }
 
@@ -140,7 +147,8 @@ describe("phorest sync-appointments", () => {
       });
       expect(rows.length).toBe(2);
 
-      // SA-01: the busy window is stored with the correct employee + date + start/end.
+      // SA-01: the busy window is stored with the correct employee + date + start/end. The date comes
+      // from appointmentDate; start/end from the LocalTime "HH:mm:ss" sliced to "HH:mm".
       const first = rows[0];
       expect(first.employeeId).toBe(seed.mappedEmployeeId);
       expect(dateStrInTz(first.date, TZ)).toBe(dateStr);
@@ -148,15 +156,19 @@ describe("phorest sync-appointments", () => {
       expect(first.endTime).toBe("10:30");
       expect(rows[1].startTime).toBe("11:00");
       expect(rows[1].endTime).toBe("11:45");
+      // externalId is the Phorest appointmentId.
+      expect(first.externalId).toBe("appt-mapped-1");
+      expect(rows[1].externalId).toBe("appt-mapped-2");
 
       // SA-02 (load-bearing): the stored row carries ONLY the five allowed columns (+ id/createdAt).
-      // The fixture item ALSO carried clientId/clientName/serviceName/price — none reached the row.
+      // The fixture item ALSO carried clientId/clientName/serviceName/price/notes — none reached the row.
       expect(Object.keys(first).sort()).toEqual(ALLOWED_KEYS);
       const serialized = JSON.stringify(rows);
       expect(serialized).not.toContain("Jane Doe");
       expect(serialized).not.toContain("Haircut");
       expect(serialized).not.toContain("cust-abc-123");
       expect(serialized).not.toContain("89.5");
+      expect(serialized).not.toContain("Allergie: PPD");
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
@@ -269,10 +281,11 @@ describe("phorest sync-appointments", () => {
     }
   });
 
-  it("SA-03 horizon-bound: an appointment beyond today+horizon is never fetched or stored", async () => {
+  it("SA-03 horizon-bound: the fetch window is today..today+horizon; an appointment beyond to_date is never stored", async () => {
     const seed = await seedPhorestTenant(app, "horizon");
     try {
-      // horizonDays=2 → the loop only requests today..today+2. Place the fixture on today+5 (OUT).
+      // horizonDays=2 → the range fetch is from_date=today, to_date=today+2. Place the fixture on
+      // today+5 (OUT of window) → the mock returns an empty page, nothing is stored.
       const outOfWindow = targetDateStr(5);
       mockPhorestAppointments(outOfWindow, appointmentsFixture);
 
@@ -285,15 +298,16 @@ describe("phorest sync-appointments", () => {
       });
       expect(rows.length).toBe(0);
 
-      // The out-of-window date was NEVER requested (loop upper bound = today+horizon).
+      // The request window bounds are exactly today..today+horizon (a single date-range fetch, no
+      // per-day loop). The out-of-window date lies beyond to_date, so it is never covered.
       const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
-      const requestedDates = fetchMock.mock.calls.map((c) =>
-        new URL(String(c[0])).searchParams.get("appointmentDate"),
-      );
-      expect(requestedDates).not.toContain(outOfWindow);
-      expect(requestedDates).toContain(targetDateStr(0));
-      expect(requestedDates).toContain(targetDateStr(2));
-      expect(requestedDates).not.toContain(targetDateStr(3));
+      const rangeParams = fetchMock.mock.calls.map((c) => new URL(String(c[0])).searchParams);
+      expect(rangeParams.length).toBeGreaterThanOrEqual(1);
+      const first = rangeParams[0];
+      expect(first.get("from_date")).toBe(targetDateStr(0));
+      expect(first.get("to_date")).toBe(targetDateStr(2));
+      // No request ever carried a to_date reaching the out-of-window date.
+      expect(rangeParams.every((p) => (p.get("to_date") ?? "") < outOfWindow)).toBe(true);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
@@ -310,8 +324,9 @@ describe("phorest sync-appointments", () => {
             {
               appointmentId: "appt-unmapped-1",
               staffId: UNMAPPED_STAFF_ID,
-              startTime: dateStr + "T09:00:00Z",
-              endTime: dateStr + "T10:00:00Z",
+              appointmentDate: dateStr,
+              startTime: "09:00:00",
+              endTime: "10:00:00",
               clientName: "Walk In",
               serviceName: "Cut",
               price: 20,
@@ -356,8 +371,9 @@ describe("phorest sync-appointments", () => {
             {
               appointmentId: "appt-dup-1",
               staffId: MAPPED_STAFF_ID,
-              startTime: dateStr + "T09:00:00Z",
-              endTime: dateStr + "T10:00:00Z",
+              appointmentDate: dateStr,
+              startTime: "09:00:00",
+              endTime: "10:00:00",
               clientName: "Jane Doe",
               serviceName: "Haircut",
               price: 42,
@@ -365,8 +381,9 @@ describe("phorest sync-appointments", () => {
             {
               appointmentId: "appt-dup-1", // SAME externalId → must collapse to one stored row
               staffId: MAPPED_STAFF_ID,
-              startTime: dateStr + "T09:00:00Z",
-              endTime: dateStr + "T10:00:00Z",
+              appointmentDate: dateStr,
+              startTime: "09:00:00",
+              endTime: "10:00:00",
               clientName: "John Smith",
               serviceName: "Beard Trim",
               price: 25,
@@ -397,7 +414,7 @@ describe("phorest sync-appointments", () => {
     }
   });
 
-  it("GATE-2 pagination: a two-page date is fully read before the hard-replace → both pages' slots stored", async () => {
+  it("GATE-2 pagination: a two-page range is fully read before the hard-replace → both pages' slots stored", async () => {
     const seed = await seedPhorestTenant(app, "paged");
     try {
       const dateStr = targetDateStr(3);

@@ -1,27 +1,38 @@
 {
-  "_comment_ASSUMED_SHAPE": "Phase 86 — ASSUMED Phorest appointment wire shape (inherits the 85-05 owner-recording gate; no live recording captured yet). The mapped-staff items DELIBERATELY carry PII (clientId/clientName/serviceName/price) so the SA-02 PII-drop test is meaningful: the closed mapAppointment() must ignore every field except staffId + start/end. The date part of startTime/endTime is rewritten to an in-window date by the test.",
+  "_comment": "Phase 85 Plan 07 — CONFIRMED Phorest v3 AppointmentResponse subset (source: ref/phorest-openapi-v3.json, schema AppointmentResponse under DataPagedModelAppointmentResponse). Two mapped-staff slots (09:00-10:30, 11:00-11:45). The date lives in the SEPARATE appointmentDate field ('yyyy-MM-dd'); startTime/endTime are Joda LocalTime 'HH:mm:ss' (NOT ISO datetimes). Each item DELIBERATELY carries the real PII fields the live payload also carries (clientId/clientName/serviceName/price/notes) so the SA-02 DSGVO drop test bites: the closed mapAppointment() must keep every one of them out of the stored row. The test rewrites appointmentDate onto an in-window date.",
   "_embedded": {
     "appointments": [
       {
         "appointmentId": "appt-mapped-1",
+        "version": 1,
         "staffId": "ph-staff-mapped",
-        "startTime": "2026-07-30T09:00:00Z",
-        "endTime": "2026-07-30T10:30:00Z",
+        "appointmentDate": "2026-07-30",
+        "startTime": "09:00:00",
+        "endTime": "10:30:00",
         "clientId": "cust-abc-123",
         "clientName": "Jane Doe",
+        "serviceId": "svc-1",
         "serviceName": "Haircut & Color",
-        "price": 89.5
+        "price": 89.5,
+        "notes": "Allergie: PPD; bevorzugt Hafermilch",
+        "state": "BOOKED"
       },
       {
         "appointmentId": "appt-mapped-2",
+        "version": 1,
         "staffId": "ph-staff-mapped",
-        "startTime": "2026-07-30T11:00:00Z",
-        "endTime": "2026-07-30T11:45:00Z",
+        "appointmentDate": "2026-07-30",
+        "startTime": "11:00:00",
+        "endTime": "11:45:00",
         "clientId": "cust-def-456",
         "clientName": "John Smith",
+        "serviceId": "svc-2",
         "serviceName": "Beard Trim",
-        "price": 25
+        "price": 25,
+        "notes": "Stammkunde seit 2019",
+        "state": "BOOKED"
       }
     ]
-  }
+  },
+  "page": { "size": 200, "totalElements": 2, "totalPages": 1, "number": 0 }
 }
