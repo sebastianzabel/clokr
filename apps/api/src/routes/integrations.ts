@@ -11,10 +11,14 @@ import type { PhorestStaffItem, SyncResult } from "../services/phorest/types";
 /**
  * Phorest API Integration
  *
- * Endpoints:
- *   GET  /api/business/{bid}/branch/{brid}/staff
- *   GET  /api/business/{bid}/branch/{brid}/staffworktimetables?start_date=&end_date=
- *   GET  /api/business/{bid}/branch/{brid}/appointment?appointmentDate=
+ * Host (EU gateway, default): https://api-gateway-eu.phorest.com/third-party-api-server
+ *
+ * Endpoints (real v3 "Third Party API" wire-shape — CONFIRMED from the OpenAPI spec, see
+ * services/phorest/types.ts + ref/phorest-openapi-v3.json):
+ *   GET  /api/business/{bid}/branch/{brid}/staff?size=&page=
+ *   GET  /api/business/{bid}/branch/{brid}/staff/worktimetable?from_date=&to_date=&size=&page=
+ *   GET  /api/business/{bid}/branch/{brid}/appointment?from_date=&to_date=&staff_id=&size=&page=
+ * Staff live under `_embedded.staffs`; the paged envelope is `page{size,totalElements,totalPages,number}`.
  *
  * Auth: Basic Auth with "global/{email}" as username
  *
@@ -71,12 +75,13 @@ const collisionQuerySchema = z.union([
  * Build the Phorest web-calendar deep-link for a staff member on a date, or null when it cannot be
  * built (graceful degrade — the UI omits the link).
  *
- * OWNER-GATE (Open Question 1 / 85-05): `phorestBaseUrl` is the THIRD-PARTY API host
+ * OWNER-GATE (Phase-87 deep-link, out of scope here): `phorestBaseUrl` is the THIRD-PARTY API host
  * (api-gateway-eu.phorest.com/third-party-api-server), NOT a user-facing calendar URL, and there is no
- * calendar-URL config field today. Until the owner pins the real Phorest web-calendar URL shape,
- * this returns null. The function signature already carries everything a real URL needs
- * (business/branch + employee + date), so a URL can be dropped in here WITHOUT changing the
- * endpoint's `deepLink: string | null` response contract.
+ * calendar-URL config field today. The real v3 API access (which closed the 85-05 wire-shape gate) does
+ * NOT expose a web-calendar URL — that stays a separate owner decision. Until the owner pins the real
+ * Phorest web-calendar URL shape, this returns null. The function signature already carries everything a
+ * real URL needs (business/branch + employee + date), so a URL can be dropped in here WITHOUT changing
+ * the endpoint's `deepLink: string | null` response contract.
  */
 function buildPhorestCalendarDeepLink(
   _cfg: {
@@ -87,7 +92,7 @@ function buildPhorestCalendarDeepLink(
   _employeeId: string,
   _date: Date,
 ): string | null {
-  return null; // TODO(owner-gate 85-05): construct once the Phorest calendar URL format is pinned.
+  return null; // TODO(owner-gate): construct once the Phorest web-calendar URL format is pinned.
 }
 
 declare module "fastify" {
@@ -197,7 +202,14 @@ export async function integrationRoutes(app: FastifyInstance) {
           { size: "1", page: "0" },
         );
 
-        const staffArr = staff._embedded?.staffs ?? staff.staffs ?? [];
+        // v3: staff live under _embedded.staffs; archived staff are skipped in the fallback count
+        // (consistent with the sync/preview paths — see sync-shifts.ts). NOTE: this is a size=1
+        // connectivity probe, so `page.totalElements` (the upstream total, archived-inclusive) stays
+        // the authoritative count when present — the archived-excluded headcount is surfaced by the
+        // full GET /phorest/staff preview, not by this lightweight test.
+        const staffArr = (staff._embedded?.staffs ?? staff.staffs ?? []).filter(
+          (s) => s.archived !== true,
+        );
         const staffCount =
           typeof staff.totalElements === "number" ? staff.totalElements : staffArr.length;
         const branchName = typeof staff.branchName === "string" ? staff.branchName : undefined;
@@ -263,16 +275,20 @@ export async function integrationRoutes(app: FastifyInstance) {
         { size: "200", page: "0" },
       );
 
+      // v3: staff live under _embedded.staffs; archived staff are skipped so they can't be mapped
+      // (consistent with the sync path — see sync-shifts.ts).
       const phorestStaff: PhorestStaffItem[] = (
         phorestData._embedded?.staffs ??
         phorestData.staffs ??
         []
-      ).map((s) => ({
-        staffId: s.staffId,
-        firstName: s.firstName,
-        lastName: s.lastName,
-        email: s.email,
-      }));
+      )
+        .filter((s) => s.archived !== true)
+        .map((s) => ({
+          staffId: s.staffId,
+          firstName: s.firstName,
+          lastName: s.lastName,
+          email: s.email,
+        }));
 
       // Clokr-Mitarbeiter laden
       const clokrEmployees = await app.prisma.employee.findMany({
@@ -565,8 +581,9 @@ export async function integrationRoutes(app: FastifyInstance) {
       const total = collisions.reduce((sum, c) => sum + c.count, 0);
 
       // Deep-link (graceful degrade). Load the tenant's Phorest identifiers and hand them to the
-      // builder, which currently returns null (owner-gated via 85-05) but keeps the response contract
-      // stable (`deepLink: string | null`) for when the real calendar URL format is pinned.
+      // builder, which currently returns null (owner-gated: the web-calendar URL shape is not exposed
+      // by the v3 API) but keeps the response contract stable (`deepLink: string | null`) for when the
+      // real calendar URL format is pinned.
       const cfg = await app.prisma.tenantConfig.findUnique({
         where: { tenantId: req.user.tenantId },
         select: { phorestBusinessId: true, phorestBranchId: true, phorestBaseUrl: true },

@@ -83,7 +83,7 @@ describe("integrations phorest routes", () => {
   it("POST /phorest/test success surfaces staffCount + branchName", async () => {
     mockStaffOk({
       branchName: "Hauptfiliale",
-      _embedded: { staff: [{ staffId: "a" }, { staffId: "b" }] },
+      _embedded: { staffs: [{ staffId: "a" }, { staffId: "b" }] },
     });
     const res = await app.inject({
       method: "POST",
@@ -205,7 +205,7 @@ describe("integrations phorest routes", () => {
   it("GET /phorest/staff surfaces an unmapped staff member with savedEmployeeId null, never erroring", async () => {
     mockStaffOk({
       _embedded: {
-        staff: [{ staffId: "ph-unmapped-1", firstName: "Nn", lastName: "Xx", email: "nn@x.de" }],
+        staffs: [{ staffId: "ph-unmapped-1", firstName: "Nn", lastName: "Xx", email: "nn@x.de" }],
       },
     });
     const res = await app.inject({
@@ -220,6 +220,32 @@ describe("integrations phorest routes", () => {
     ).find((s) => s.phorestStaffId === "ph-unmapped-1");
     expect(entry).toBeDefined();
     expect(entry?.savedEmployeeId).toBeNull();
+  });
+
+  it("GET /phorest/staff skips archived Phorest staff (consistent with the sync path)", async () => {
+    mockStaffOk({
+      _embedded: {
+        staffs: [
+          { staffId: "ph-active-1", firstName: "Aa", lastName: "Yy", email: "aa@x.de" },
+          {
+            staffId: "ph-archived-1",
+            firstName: "Zz",
+            lastName: "Qq",
+            email: "zz@x.de",
+            archived: true,
+          },
+        ],
+      },
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: `${PREFIX}/phorest/staff`,
+      headers: auth(),
+    });
+    expect(res.statusCode).toBe(200);
+    const staff = JSON.parse(res.body).staff as Array<{ phorestStaffId: string }>;
+    expect(staff.some((s) => s.phorestStaffId === "ph-active-1")).toBe(true);
+    expect(staff.some((s) => s.phorestStaffId === "ph-archived-1")).toBe(false);
   });
 
   // ── Sync-run history (SS-05) ──────────────────────────────────────────
