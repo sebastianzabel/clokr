@@ -33,7 +33,7 @@ export interface PhorestWorkTimeSlot {
   endTime: string; // Joda LocalTime "HH:mm:ss"
   timeOffStartTime?: string; // LocalTime — break within a working slot (not modeled as a shift)
   timeOffEndTime?: string; // LocalTime
-  type?: string; // e.g. "NON_WORKING" (skip) or a working type (keep)
+  type?: string; // v3 enum WORKING | NON_WORKING | NOT_SPECIFIED — only "WORKING" is kept (allow-list)
   custom?: unknown;
   branchId?: string;
   workActivityId?: string;
@@ -105,9 +105,10 @@ export const PHOREST_PAGE_SIZE = 200;
 /**
  * Flatten the NESTED v3 worktimetable envelope into a FLAT PhorestWorkTimeItem[] the sync
  * consumes: for each `_embedded.workTimeTables[]` and each of its `timeSlots[]`, emit one item
- * carrying the parent table's `staffId` plus the slot's `date`/`startTime`/`endTime`. Slots whose
- * `type === "NON_WORKING"` are SKIPPED (they are days off, not shifts). Slot times are Joda
- * LocalTime "HH:mm:ss" — passed through verbatim here; the sync slices them to "HH:mm".
+ * carrying the parent table's `staffId` plus the slot's `date`/`startTime`/`endTime`. Only slots
+ * whose `type === "WORKING"` are KEPT (allow-list) — NON_WORKING, NOT_SPECIFIED, and any
+ * unknown/absent type are days off, not shifts. Slot times are Joda LocalTime "HH:mm:ss" — passed
+ * through verbatim here; the sync slices them to "HH:mm".
  */
 export function extractWorkTimes(data: PhorestApiResponse): PhorestWorkTimeItem[] {
   const tables = data._embedded?.workTimeTables;
@@ -117,7 +118,12 @@ export function extractWorkTimes(data: PhorestApiResponse): PhorestWorkTimeItem[
     const slots = table?.timeSlots;
     if (!Array.isArray(slots)) continue;
     for (const slot of slots) {
-      if (slot?.type === "NON_WORKING") continue;
+      // ALLOW-LIST (WR-01): keep ONLY confirmed working slots. The v3 WorkTimeSlot.type enum is
+      // WORKING | NON_WORKING | NOT_SPECIFIED — a deny-list on "NON_WORKING" alone would let a
+      // NOT_SPECIFIED slot (or an absent/unknown/future type) fall through as a phantom working
+      // shift onto the §615 roster (inflated Soll / false undertime). extractWorkTimes drops `type`
+      // entirely, so this is the ONLY filter point — non-working types are days off, not shifts.
+      if (slot?.type !== "WORKING") continue;
       items.push({
         staffId: table.staffId,
         date: slot.date,

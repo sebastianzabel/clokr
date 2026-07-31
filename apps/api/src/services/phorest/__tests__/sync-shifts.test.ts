@@ -6,6 +6,8 @@ import { describe, it, expect, vi, beforeAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp } from "../../../__tests__/setup";
 import { syncPhorestShifts } from "../sync-shifts";
+import { extractWorkTimes } from "../types";
+import type { PhorestApiResponse } from "../types";
 import { seedPhorestTenant, cleanupPhorestTenant, UNMAPPED_STAFF_ID } from "./helpers";
 import staffFixture from "./fixtures/staff.json";
 import wttFixture from "./fixtures/worktimetables.json";
@@ -420,5 +422,50 @@ describe("phorest sync-shifts", () => {
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
+  });
+});
+
+// WR-01 regression: the slot-type filter is an ALLOW-LIST, not a NON_WORKING deny-list.
+// extractWorkTimes is the ONLY filter point (it drops `type` before the sync sees the item), so a
+// NOT_SPECIFIED / absent-type slot must NOT survive as a phantom working shift on the §615 roster.
+describe("extractWorkTimes slot-type allow-list (WR-01)", () => {
+  it("keeps ONLY WORKING slots; NON_WORKING, NOT_SPECIFIED, and untyped slots are dropped", () => {
+    const data: PhorestApiResponse = {
+      _embedded: {
+        workTimeTables: [
+          {
+            staffId: "ph-staff-mapped",
+            timeSlots: [
+              { date: "2026-08-03", startTime: "08:00:00", endTime: "16:00:00", type: "WORKING" },
+              {
+                date: "2026-08-04",
+                startTime: "00:00:00",
+                endTime: "00:00:00",
+                type: "NON_WORKING",
+              },
+              {
+                date: "2026-08-05",
+                startTime: "09:00:00",
+                endTime: "17:00:00",
+                type: "NOT_SPECIFIED",
+              },
+              // Slot with NO `type` at all — must also be treated as a non-working day, not a shift.
+              { date: "2026-08-06", startTime: "10:00:00", endTime: "18:00:00" },
+            ],
+          },
+        ],
+      },
+    };
+
+    const items = extractWorkTimes(data);
+
+    // ONLY the single WORKING slot survives.
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      staffId: "ph-staff-mapped",
+      date: "2026-08-03",
+      startTime: "08:00:00",
+      endTime: "16:00:00",
+    });
   });
 });
