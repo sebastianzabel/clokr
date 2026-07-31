@@ -34,7 +34,11 @@ export async function phorestFetch(
   password: string,
   query?: Record<string, string>,
 ): Promise<PhorestApiResponse> {
-  const url = new URL(path, baseUrl);
+  // IMPORTANT: build the URL by joining base + path, NOT `new URL(path, baseUrl)`.
+  // The Phorest base URL carries a path prefix (`/third-party-api-server`); an
+  // absolute `path` (leading "/") in `new URL(path, base)` resolves against the
+  // ORIGIN and silently drops that prefix → every call 404s against the real gateway.
+  const url = new URL(baseUrl.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, ""));
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       url.searchParams.set(k, v);
