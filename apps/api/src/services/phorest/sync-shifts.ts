@@ -169,6 +169,26 @@ export async function syncPhorestShifts(
     // wt.startTime/endTime the whole way through (D-03, key-stability across puffer changes).
     const prepMin = cfg.phorestPrepMinutes ?? 0;
     const wrapMin = cfg.phorestWrapupMinutes ?? 0;
+
+    // Phase 85.1 (D-06/D-07/D-09): "BS gewinnt" — bulk-load VOCATIONAL_SCHOOL absences for all
+    // mapped employees in the window in ONE query (mirrors vocational-school-generator.ts's
+    // bulk-fetch idiom), then look up per-slot via a Set — never a per-slot query inside the loop.
+    const mappedEmployeeIds = [...new Set(mappingRows.map((r) => r.employeeId))];
+    const bsAbsences = await app.prisma.absence.findMany({
+      where: {
+        employeeId: { in: mappedEmployeeIds },
+        type: "VOCATIONAL_SCHOOL",
+        deletedAt: null,
+        startDate: { gte: windowStartDate, lte: windowEndDate },
+      },
+      select: { employeeId: true, startDate: true },
+    });
+    const bsSet = new Set(
+      bsAbsences.map((a) => `${a.employeeId}|${a.startDate.toISOString().slice(0, 10)}`),
+    );
+    // Consumed below by the soft-cancel exclusion (D-07) and Task 3's replace pass (D-11b).
+    const bsSkippedDays = new Set<string>();
+
     const freshExternalIds = new Set<string>();
     const seenUnmapped = new Set<string>();
     for (const wt of workTimes) {
@@ -190,6 +210,22 @@ export async function syncPhorestShifts(
       // v3: the slot `date` is already "yyyy-MM-dd" (no ISO datetime to split).
       const date = wt.date ?? null;
       if (!date) continue;
+
+      // Phase 85.1 (D-06) — "BS gewinnt": a VOCATIONAL_SCHOOL day is never overwritten by a
+      // Phorest shift. Skip BEFORE parsing raw slot times — the raw wt is never touched for a
+      // skipped day. Ferien are auto-covered: the Ferien-aware BS generator produces no BS row
+      // during school holidays, so bsSet simply has no entry for those dates.
+      if (bsSet.has(`${employeeId}|${date}`)) {
+        result.skippedVocationalSchool++;
+        bsSkippedDays.add(`${employeeId}|${date}`);
+        await app.audit({
+          userId: opts.actorUserId,
+          action: "UPDATE",
+          entity: "Shift",
+          newValue: { source: "Phorest", skipped: "VOCATIONAL_SCHOOL", employeeId, date },
+        });
+        continue;
+      }
 
       // v3 slot times are Joda LocalTime "HH:mm:ss" (bare local wall-clock, NOT ISO). Slice the
       // first 5 chars to the stored "HH:mm". NEVER new Date(...) a LocalTime — that would apply a
@@ -353,6 +389,9 @@ export async function syncPhorestShifts(
     // ── Soft-cancel reconciliation (SS-04) — all three gates passed ──
     // Candidates: active, in-window, origin=PHOREST shifts of this tenant whose externalId is
     // absent from the fresh set. MANUAL shifts and out-of-window shifts are structurally excluded.
+    // Phase 85.1 (D-07): a day deliberately skipped this run for "BS gewinnt" must NOT be treated
+    // as "vanished from Phorest" — exclude every (employeeId, date) in bsSkippedDays. An empty NOT
+    // array is a harmless Prisma no-op when no day was skipped.
     const staleCandidates = await app.prisma.shift.findMany({
       where: {
         origin: "PHOREST",
@@ -360,6 +399,10 @@ export async function syncPhorestShifts(
         date: { gte: windowStartDate, lte: windowEndDate },
         externalId: { notIn: [...freshExternalIds] },
         employee: { tenantId },
+        NOT: [...bsSkippedDays].map((key) => {
+          const [eid, d] = key.split("|");
+          return { employeeId: eid, date: new Date(d) };
+        }),
       },
     });
 

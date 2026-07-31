@@ -100,6 +100,25 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
   return { tenantId: tenant.id, mappedEmployeeId: erika.id, unmappedEmployeeId: max.id };
 }
 
+// Phase 85.1 (D-06) — seed a single-day VOCATIONAL_SCHOOL Absence for the "BS gewinnt" tests.
+// Mirrors the single-day-row invariant of vocational-school-generator.ts.
+export async function seedVocationalSchoolAbsence(
+  app: FastifyInstance,
+  employeeId: string,
+  dateStr: string,
+): Promise<void> {
+  await app.prisma.absence.create({
+    data: {
+      employeeId,
+      type: "VOCATIONAL_SCHOOL",
+      startDate: new Date(dateStr),
+      endDate: new Date(dateStr),
+      days: 1,
+      createdBy: "SYSTEM",
+    },
+  });
+}
+
 export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: string): Promise<void> {
   const prisma = app.prisma;
   const employees = await prisma.employee.findMany({
@@ -117,6 +136,8 @@ export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: strin
   // Phase 86 — PhorestAppointment.employee is onDelete: Restrict, so it MUST be removed before the
   // employees (mirror the PhorestStaffMapping ordering above).
   await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 85.1 — Absence.employee is onDelete: Restrict too (seedVocationalSchoolAbsence above).
+  await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

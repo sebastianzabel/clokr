@@ -8,7 +8,12 @@ import { getTestApp } from "../../../__tests__/setup";
 import { syncPhorestShifts } from "../sync-shifts";
 import { extractWorkTimes } from "../types";
 import type { PhorestApiResponse } from "../types";
-import { seedPhorestTenant, cleanupPhorestTenant, UNMAPPED_STAFF_ID } from "./helpers";
+import {
+  seedPhorestTenant,
+  cleanupPhorestTenant,
+  seedVocationalSchoolAbsence,
+  UNMAPPED_STAFF_ID,
+} from "./helpers";
 import staffFixture from "./fixtures/staff.json";
 import wttFixture from "./fixtures/worktimetables.json";
 import wttDeletedFixture from "./fixtures/worktimetables-deleted.json";
@@ -519,6 +524,99 @@ describe("phorest sync-shifts padding (85.1)", () => {
         where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30"), deletedAt: null },
       });
       expect(activeOnSlotDate).toBe(1); // exactly the adopted row — no duplicate PHOREST insert
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+// Phase 85.1 (D-06/D-07/D-09) — "BS gewinnt": VOCATIONAL_SCHOOL wins over a Phorest shift.
+describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("D-06 BS-skip: a VOCATIONAL_SCHOOL day is not created/adopted, counted, and audited", async () => {
+    const seed = await seedPhorestTenant(app, "bsskip");
+    try {
+      // 07-31 is a BS day for the mapped employee — the fixture's 09:00-17:00 slot must be skipped.
+      await seedVocationalSchoolAbsence(app, seed.mappedEmployeeId, "2026-07-31");
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.skippedVocationalSchool).toBe(1);
+      expect(res.created).toBe(1); // only the 07-30 slot is created; 07-31 is skipped
+
+      const jul31Active = await app.prisma.shift.count({
+        where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-31"), deletedAt: null },
+      });
+      expect(jul31Active).toBe(0);
+
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "Shift", action: "UPDATE", entityId: null },
+      });
+      expect(
+        audits.some(
+          (a) =>
+            a.newValue &&
+            (a.newValue as Record<string, unknown>).skipped === "VOCATIONAL_SCHOOL" &&
+            (a.newValue as Record<string, unknown>).employeeId === seed.mappedEmployeeId,
+        ),
+      ).toBe(true);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-06 Ferien: no BS absence seeded → the Phorest shift applies normally", async () => {
+    const seed = await seedPhorestTenant(app, "ferien");
+    try {
+      // No VOCATIONAL_SCHOOL absence seeded — Ferien-aware generator produces none during holidays.
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.skippedVocationalSchool).toBe(0);
+      expect(res.created).toBe(2); // both fixture slots apply
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-07 BS-skip protects pre-existing shift from false soft-cancel", async () => {
+    const seed = await seedPhorestTenant(app, "bsprotect");
+    try {
+      // Pre-existing active PHOREST shift on 07-31, seeded directly (simulates a prior sync).
+      const preExisting = await app.prisma.shift.create({
+        data: {
+          employeeId: seed.mappedEmployeeId,
+          date: new Date("2026-07-31"),
+          startTime: "09:00",
+          endTime: "17:00",
+          origin: "PHOREST",
+          externalId: `bs-protect-${seed.tenantId}`,
+          label: "Phorest",
+        },
+      });
+
+      // The day BECOMES a BS day this run.
+      await seedVocationalSchoolAbsence(app, seed.mappedEmployeeId, "2026-07-31");
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.skippedVocationalSchool).toBe(1);
+      expect(res.cancelled).toBe(0); // NOT false-soft-cancelled
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(stillActive?.deletedAt).toBeNull();
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
