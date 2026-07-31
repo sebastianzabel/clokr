@@ -50,7 +50,11 @@ const configSchema = z.object({
   phorestBusinessId: z.string().min(1),
   phorestBranchId: z.string().min(1),
   phorestUsername: z.string().min(1),
-  phorestPassword: z.string().min(1),
+  // Password is OPTIONAL on update: GET /phorest/config never returns it (masked), so an admin who
+  // edits any OTHER field and re-saves would otherwise be forced to re-type it — and a missing value
+  // would 400 the whole save. When omitted/blank we keep the stored (encrypted) password untouched;
+  // only a non-empty value is re-encrypted and persisted below.
+  phorestPassword: z.string().min(1).optional(),
   phorestBaseUrl: z.string().url().optional(),
   phorestAutoSync: z.boolean().optional(),
   phorestSyncCron: z.string().optional(),
@@ -141,7 +145,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           phorestBusinessId: body.phorestBusinessId,
           phorestBranchId: body.phorestBranchId,
           phorestUsername: body.phorestUsername,
-          phorestPassword: encrypt(body.phorestPassword),
+          // Only re-encrypt/overwrite when a new password was actually supplied (see schema note).
+          ...(body.phorestPassword ? { phorestPassword: encrypt(body.phorestPassword) } : {}),
           ...(body.phorestBaseUrl ? { phorestBaseUrl: body.phorestBaseUrl } : {}),
           ...(body.phorestAutoSync !== undefined ? { phorestAutoSync: body.phorestAutoSync } : {}),
           ...(body.phorestSyncCron ? { phorestSyncCron: body.phorestSyncCron } : {}),

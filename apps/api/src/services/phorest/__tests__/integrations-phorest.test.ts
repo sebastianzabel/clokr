@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import { encrypt, decryptSafe } from "../../../utils/crypto";
 
 const originalFetch = global.fetch;
 const PREFIX = "/api/v1/integrations";
@@ -135,6 +136,67 @@ describe("integrations phorest routes", () => {
     const body = JSON.parse(res.body);
     expect(body.ok).toBe(false);
     expect(body.reason).toBe("unreachable");
+  });
+
+  // ── PUT /phorest/config password preservation (BUG-2 regression) ──────
+  //
+  // GET /phorest/config never returns the password (masked). So an admin editing any OTHER field
+  // must be able to re-save WITHOUT re-typing it. The old schema made phorestPassword required →
+  // a save without it 400'd and nothing persisted. These pin: omit-preserves, new-value-overwrites.
+
+  it("PUT /phorest/config without a password preserves the stored password", async () => {
+    // Seed a known, ENCRYPTED password so we can assert it survives untouched.
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: { phorestPassword: encrypt("original-secret") },
+    });
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: {
+        phorestBusinessId: "biz-changed",
+        phorestBranchId: "branch-changed",
+        phorestUsername: "user@salon.de",
+        // NOTE: no phorestPassword — this must NOT 400 and must NOT wipe the stored password.
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).success).toBe(true);
+
+    const cfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: seed.tenant.id },
+    });
+    expect(cfg?.phorestBusinessId).toBe("biz-changed");
+    expect(decryptSafe(cfg?.phorestPassword)).toBe("original-secret");
+  });
+
+  it("PUT /phorest/config with a new password re-encrypts and overwrites it", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: { phorestPassword: encrypt("original-secret") },
+    });
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: {
+        phorestBusinessId: "biz-1",
+        phorestBranchId: "branch-1",
+        phorestUsername: "user@salon.de",
+        phorestPassword: "new-secret",
+      },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const cfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: seed.tenant.id },
+    });
+    // Stored value is encrypted (iv:tag:ct), not plaintext, and decrypts to the new password.
+    expect(cfg?.phorestPassword).not.toBe("new-secret");
+    expect(decryptSafe(cfg?.phorestPassword)).toBe("new-secret");
   });
 
   // ── Mapping CRUD (SS-01) ──────────────────────────────────────────────
