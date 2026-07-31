@@ -51,10 +51,11 @@ const configSchema = z.object({
   phorestBranchId: z.string().min(1),
   phorestUsername: z.string().min(1),
   // Password is OPTIONAL on update: GET /phorest/config never returns it (masked), so an admin who
-  // edits any OTHER field and re-saves would otherwise be forced to re-type it — and a missing value
-  // would 400 the whole save. When omitted/blank we keep the stored (encrypted) password untouched;
-  // only a non-empty value is re-encrypted and persisted below.
-  phorestPassword: z.string().min(1).optional(),
+  // edits any OTHER field and re-saves would otherwise be forced to re-type it. The masked field
+  // submits an EMPTY STRING (not undefined) when left blank, so we must accept "" too — `.min(1)`
+  // here would ZodError-400 the whole save (BUG-3). We keep the stored (encrypted) password
+  // untouched unless a non-empty value is sent; only then is it re-encrypted and persisted below.
+  phorestPassword: z.string().optional(),
   phorestBaseUrl: z.string().url().optional(),
   phorestAutoSync: z.boolean().optional(),
   phorestSyncCron: z.string().optional(),

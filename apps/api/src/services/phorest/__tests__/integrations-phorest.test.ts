@@ -199,6 +199,40 @@ describe("integrations phorest routes", () => {
     expect(decryptSafe(cfg?.phorestPassword)).toBe("new-secret");
   });
 
+  it("PUT /phorest/config with an EMPTY-STRING password preserves it (BUG-3: masked field submits '')", async () => {
+    // The web form's masked password input submits "" (not undefined) when left blank. The old
+    // `.min(1).optional()` schema accepted undefined but 400'd on "" — so toggling auto-sync /
+    // window without re-typing the password failed. Empty string must be treated as "unchanged".
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: seed.tenant.id },
+      data: { phorestPassword: encrypt("original-secret"), phorestAutoSync: false },
+    });
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `${PREFIX}/phorest/config`,
+      headers: auth(),
+      payload: {
+        phorestBusinessId: "biz-1",
+        phorestBranchId: "branch-1",
+        phorestUsername: "user@salon.de",
+        phorestPassword: "", // masked field left blank → empty string, not undefined
+        phorestAutoSync: true,
+        phorestSyncWindowDays: 30,
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).success).toBe(true);
+
+    const cfg = await app.prisma.tenantConfig.findUnique({
+      where: { tenantId: seed.tenant.id },
+    });
+    expect(cfg?.phorestAutoSync).toBe(true);
+    expect(cfg?.phorestSyncWindowDays).toBe(30);
+    // Empty string must NOT wipe the stored password.
+    expect(decryptSafe(cfg?.phorestPassword)).toBe("original-secret");
+  });
+
   // ── Mapping CRUD (SS-01) ──────────────────────────────────────────────
 
   it("mapping POST → GET round-trips and DELETE removes it", async () => {
