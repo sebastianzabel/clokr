@@ -91,7 +91,7 @@ model TenantConfig {
   phorestBranchId                     String?
   phorestUsername                     String?
   phorestPassword                     String?
-  phorestBaseUrl                      String? @default("https://api.phorest.com/third-party-api-server")
+  phorestBaseUrl                      String? @default("https://api-gateway-eu.phorest.com/third-party-api-server")
   phorestAutoSync                     Boolean @default(false)
   phorestSyncCron                     String  @default("0 3 * * *") // Default: täglich 03:00
   // Phase 85 (SS-06): configurable sync window in days ahead of today. Default 7 matches the previously

@@ -3,10 +3,18 @@
 // plugins/scheduler.ts and routes/integrations.ts. Follows the services/clock/types.ts
 // header-comment + named-export convention.
 //
-// NOTE ON WIRE FIDELITY: the wire shapes below are ASSUMED, derived from the existing
-// (never-run-against-live) code. Open Questions 1-3 (RESEARCH) — stable entry id, exact
-// endpoint path/params, time/TZ format — remain unresolved until an owner-recorded Phorest
-// response is captured (the 85-05 gate). Do not trust live sync until then.
+// WIRE FIDELITY (v3, CONFIRMED): the staff + worktimetable shapes below are the REAL
+// Phorest "Third Party API" v3 wire-shape, captured from the OpenAPI spec at
+// .planning/phases/85-phorest-shift-sync-produktionsreif/ref/phorest-openapi-v3.json
+// (schemas DataPagedModelStaff / DataPagedModelWorkTimeTable / Staff / WorkTimeTable /
+// WorkTimeSlot). Staff live under `_embedded.staffs`; worktimetables under
+// `_embedded.workTimeTables` with a NESTED `timeSlots[]` whose times are Joda LocalTime
+// "HH:mm:ss" strings (NOT ISO datetimes) and whose dates are "yyyy-MM-dd". There is NO
+// per-slot id → the shift externalId stays the deterministic composite key.
+// NOTE: the appointment shape (PhorestAppointmentItem) is still ASSUMED and is reconciled
+// to v3 in plan 07; the legacy `staff` / `staffWorkTimeTables` envelope keys are retained
+// only so the not-yet-migrated config/preview reads in routes/integrations.ts keep
+// compiling — they are removed once plan 07 lands.
 
 // ── Phorest wire shapes ──────────────────────────────────────────────
 
@@ -15,16 +23,37 @@ export interface PhorestStaffItem {
   firstName: string;
   lastName: string;
   email?: string;
+  archived?: boolean; // v3 Staff.archived — archived staff are skipped in the sync path
 }
 
-export interface PhorestWorkTimeItem {
-  // `id` is OPTIONAL: if the real Phorest response carries a stable per-entry id it becomes
-  // the externalId; otherwise phorestShiftKey() falls back to a deterministic composite.
-  id?: string;
+// v3 worktimetable is NESTED: DataPagedModelWorkTimeTable._embedded.workTimeTables[] where
+// each WorkTimeTable groups a staff member's slots for the window.
+export interface PhorestWorkTimeSlot {
+  date: string; // "yyyy-MM-dd"
+  startTime: string; // Joda LocalTime "HH:mm:ss" (NEVER an ISO datetime)
+  endTime: string; // Joda LocalTime "HH:mm:ss"
+  timeOffStartTime?: string; // LocalTime — break within a working slot (not modeled as a shift)
+  timeOffEndTime?: string; // LocalTime
+  type?: string; // e.g. "NON_WORKING" (skip) or a working type (keep)
+  custom?: unknown;
+  branchId?: string;
+  workActivityId?: string;
+}
+
+export interface PhorestWorkTimeTable {
   staffId: string;
-  date?: string; // ISO date "yyyy-MM-dd" (may be absent — then derived from startTime)
-  startTime?: string; // ISO datetime
-  endTime?: string; // ISO datetime
+  branchId?: string;
+  timeSlots: PhorestWorkTimeSlot[];
+}
+
+// The FLAT per-slot item the sync consumes — produced by flattening workTimeTables[].timeSlots[]
+// (extractWorkTimes). There is no slot-level id → phorestShiftKey() derives the deterministic
+// composite `${staffId}|${date}|${startTime}|${endTime}`.
+export interface PhorestWorkTimeItem {
+  staffId: string;
+  date?: string; // "yyyy-MM-dd" (from the slot)
+  startTime?: string; // LocalTime "HH:mm:ss" (from the slot)
+  endTime?: string; // LocalTime "HH:mm:ss" (from the slot)
 }
 
 // Phase 86 (SA-01/SA-02) — Phorest appointment wire shape, DSGVO-minimally modeled.
@@ -46,11 +75,17 @@ export interface PhorestAppointmentItem {
 export interface PhorestApiResponse {
   totalElements?: unknown;
   _embedded?: {
+    // v3 envelope keys (CONFIRMED)
+    staffs?: PhorestStaffItem[];
+    workTimeTables?: PhorestWorkTimeTable[];
+    appointments?: PhorestAppointmentItem[];
+    // Legacy keys — retained so the not-yet-migrated config/preview reads in
+    // routes/integrations.ts keep compiling; removed when plan 07 reconciles them.
     staff?: PhorestStaffItem[];
     staffWorkTimeTables?: PhorestWorkTimeItem[];
-    appointments?: PhorestAppointmentItem[];
   };
   staff?: PhorestStaffItem[];
+  staffs?: PhorestStaffItem[];
   staffWorkTimeTables?: PhorestWorkTimeItem[];
   appointments?: PhorestAppointmentItem[];
   // Spring-HATEOAS pagination envelope (ASSUMED, Open Question 2). `page.number` is the
@@ -71,13 +106,31 @@ export interface PhorestApiResponse {
 /** Worktimetable page size requested per page (Phorest `size` param). */
 export const PHOREST_PAGE_SIZE = 200;
 
-/** Extract the worktimetable entries from a (possibly paged) Phorest response. */
+/**
+ * Flatten the NESTED v3 worktimetable envelope into a FLAT PhorestWorkTimeItem[] the sync
+ * consumes: for each `_embedded.workTimeTables[]` and each of its `timeSlots[]`, emit one item
+ * carrying the parent table's `staffId` plus the slot's `date`/`startTime`/`endTime`. Slots whose
+ * `type === "NON_WORKING"` are SKIPPED (they are days off, not shifts). Slot times are Joda
+ * LocalTime "HH:mm:ss" — passed through verbatim here; the sync slices them to "HH:mm".
+ */
 export function extractWorkTimes(data: PhorestApiResponse): PhorestWorkTimeItem[] {
-  const entries =
-    data._embedded?.staffWorkTimeTables ??
-    data.staffWorkTimeTables ??
-    (Array.isArray(data) ? (data as PhorestWorkTimeItem[]) : []);
-  return Array.isArray(entries) ? entries : [];
+  const tables = data._embedded?.workTimeTables;
+  if (!Array.isArray(tables)) return [];
+  const items: PhorestWorkTimeItem[] = [];
+  for (const table of tables) {
+    const slots = table?.timeSlots;
+    if (!Array.isArray(slots)) continue;
+    for (const slot of slots) {
+      if (slot?.type === "NON_WORKING") continue;
+      items.push({
+        staffId: table.staffId,
+        date: slot.date,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+      });
+    }
+  }
+  return items;
 }
 
 /**
@@ -125,15 +178,13 @@ export interface SyncResult {
 }
 
 /**
- * Stable externalId for a Phorest worktimetable entry — the idempotency key for upsert (SS-07).
- * Uses the Phorest entry id when present (Open Question 1), else a deterministic composite
- * `${staffId}|${date}|${startTime}|${endTime}` (Pitfall 3). The exact key is pinned by the
- * 85-05 owner-recording gate; until then the composite path applies.
+ * Stable externalId for a Phorest worktimetable slot — the idempotency key for upsert (SS-07).
+ * The v3 WorkTimeSlot has NO id, so the key is always the deterministic composite
+ * `${staffId}|${date}|${startTime}|${endTime}` (CONFIRMS RESEARCH OQ1). `date` is "yyyy-MM-dd"
+ * and start/end are the raw LocalTime "HH:mm:ss" slot values.
  */
 export function phorestShiftKey(wt: PhorestWorkTimeItem): string {
-  if (wt.id) return wt.id;
-  const date = wt.date ?? (wt.startTime ? wt.startTime.split("T")[0] : "");
-  return `${wt.staffId}|${date}|${wt.startTime ?? ""}|${wt.endTime ?? ""}`;
+  return `${wt.staffId}|${wt.date ?? ""}|${wt.startTime ?? ""}|${wt.endTime ?? ""}`;
 }
 
 // ── Appointment sync contract (Phase 86, SA-01/SA-02/SA-03) ──────────

@@ -37,7 +37,7 @@ import {
   type SyncResult,
 } from "./types";
 
-const DEFAULT_BASE_URL = "https://api.phorest.com/third-party-api-server";
+const DEFAULT_BASE_URL = "https://api-gateway-eu.phorest.com/third-party-api-server";
 // Safety cap on the pagination loop so a misbehaving next-link can't spin forever.
 const MAX_WTT_PAGES = 100;
 
@@ -99,7 +99,10 @@ export async function syncPhorestShifts(
       password,
       { size: "200", page: "0" },
     );
-    const phorestStaff = staffData._embedded?.staff ?? staffData.staff ?? [];
+    // v3: staff live under _embedded.staffs; archived staff are skipped (never mapped/synced).
+    const phorestStaff = (staffData._embedded?.staffs ?? staffData.staffs ?? []).filter(
+      (s) => s.archived !== true,
+    );
     const staffById = new Map(phorestStaff.map((s) => [s.staffId, s]));
 
     // 2. Explicit mapping ONLY (SS-01) — never name/email match in the sync path.
@@ -115,12 +118,12 @@ export async function syncPhorestShifts(
     for (;;) {
       const wttData = await phorestFetch(
         baseUrl,
-        `/api/business/${biz}/branch/${branch}/staffworktimetables`,
+        `/api/business/${biz}/branch/${branch}/staff/worktimetable`,
         cfg.phorestUsername,
         password,
         {
-          start_date: startDate,
-          end_date: endDate,
+          from_date: startDate,
+          to_date: endDate,
           size: String(PHOREST_PAGE_SIZE),
           page: String(page),
         },
@@ -175,11 +178,15 @@ export async function syncPhorestShifts(
         continue;
       }
 
-      const date = wt.date ?? (wt.startTime ? wt.startTime.split("T")[0] : null);
+      // v3: the slot `date` is already "yyyy-MM-dd" (no ISO datetime to split).
+      const date = wt.date ?? null;
       if (!date) continue;
 
-      const startH = wt.startTime ? new Date(wt.startTime).toISOString().slice(11, 16) : null;
-      const endH = wt.endTime ? new Date(wt.endTime).toISOString().slice(11, 16) : null;
+      // v3 slot times are Joda LocalTime "HH:mm:ss" (bare local wall-clock, NOT ISO). Slice the
+      // first 5 chars to the stored "HH:mm". NEVER new Date(...) a LocalTime — that would apply a
+      // TZ offset and corrupt both the Shift time and the composite externalId (T-85-06-01).
+      const startH = wt.startTime ? wt.startTime.slice(0, 5) : null;
+      const endH = wt.endTime ? wt.endTime.slice(0, 5) : null;
       if (!startH || !endH) continue;
 
       const externalId = phorestShiftKey(wt);

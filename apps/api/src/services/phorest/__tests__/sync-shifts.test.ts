@@ -202,7 +202,7 @@ describe("phorest sync-shifts", () => {
       await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
 
       // A 200 with an EMPTY window (e.g. wrong branchId) must NOT be read as "everything deleted".
-      mockPhorest({ _embedded: { staffWorkTimeTables: [] } });
+      mockPhorest({ _embedded: { workTimeTables: [] } });
       const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
       expect(res.status).toBe("SUSPECT");
       expect(res.cancelled).toBe(0);
