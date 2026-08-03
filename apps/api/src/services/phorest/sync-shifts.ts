@@ -201,6 +201,18 @@ export async function syncPhorestShifts(
     // Consumed below by the soft-cancel exclusion (D-07) and Task 3's replace pass (D-11b).
     const bsSkippedDays = new Set<string>();
 
+    // Phase 85.1.1 (D-02) — bulk-load per-employee Phorest puffer overrides for all mapped
+    // employees (mirrors the D-09 BS-absence bulk-load idiom directly above). One query, not N.
+    const employeeOverrides = await app.prisma.employee.findMany({
+      where: { id: { in: mappedEmployeeIds } },
+      select: {
+        id: true,
+        phorestPrepMinutesOverride: true,
+        phorestWrapupMinutesOverride: true,
+      },
+    });
+    const overrideById = new Map(employeeOverrides.map((e) => [e.id, e]));
+
     const freshExternalIds = new Set<string>();
     const seenUnmapped = new Set<string>();
     // Phase 85.1 (D-11) — every (employeeId, date) that received an upserted/adopted WORKING slot
@@ -252,6 +264,13 @@ export async function syncPhorestShifts(
       const externalId = phorestShiftKey(wt);
       freshExternalIds.add(externalId);
 
+      // Phase 85.1.1 (D-02) — per-employee override wins over tenant default. `??` (NOT `||`) so
+      // an explicit 0 override is honoured (0 || default would silently fall back — the exact
+      // Merle bug: a tight-contract employee's padded roster must be able to equal her raw hours).
+      const override = overrideById.get(employeeId);
+      const effectivePrep = override?.phorestPrepMinutesOverride ?? prepMin;
+      const effectiveWrapup = override?.phorestWrapupMinutesOverride ?? wrapMin;
+
       // Phase 85.1 (D-02/D-05): pad the STORED window only — NEVER feed padded values into
       // phorestShiftKey() or the adopt-on-match occupant WHERE (both stay on raw startH/endH).
       // D-05 edge (documented, not covered by code): Phorest models a break as
@@ -261,8 +280,8 @@ export async function syncPhorestShifts(
       const { startTime: paddedStart, endTime: paddedEnd } = applyPrepWrapup(
         startH,
         endH,
-        prepMin,
-        wrapMin,
+        effectivePrep,
+        effectiveWrapup,
       );
 
       // ── Adopt-on-match (SS-07 dedup) ─────────────────────────────
