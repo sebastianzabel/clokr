@@ -54,6 +54,7 @@
   // 5-group admin nav per docs/ADMIN_STRUCTURE.md §1 (Phase 51 Regulatorium).
   // Labels are UPPERCASE visual-only section headers — never clickable.
   // SYSTEM group entries use Phase-52 labels: Allgemein / Branding & Themes / Integrationen.
+  // Phorest added Phase 85.1-03 (D-10: own admin tab, extracted from Allgemein).
   const adminNav: NavGroup[] = [
     {
       label: "PERSONAL",
@@ -92,6 +93,8 @@
         { href: "/admin/system", label: "Allgemein", icon: "settings" },
         { href: "/admin/themes", label: "Branding & Themes", icon: "palette" },
         { href: "/admin/integrations", label: "Integrationen", icon: "wifi" },
+        // Phase 85.1-03 (D-10): dedicated Phorest admin tab, extracted from Allgemein.
+        { href: "/admin/phorest", label: "Phorest", icon: "calendar" },
       ],
     },
   ];
