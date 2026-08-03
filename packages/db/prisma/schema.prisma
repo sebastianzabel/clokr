@@ -312,6 +312,10 @@ model Employee {
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
   breakOver6hOverride        Int? // null = TenantConfig.defaultBreakOver6h verwenden
   breakOver9hOverride        Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  // Phase 85.1.1 (D-01) — per-employee Phorest Vor-/Nachbereitungszeit override.
+  // null = fall back to TenantConfig.phorestPrepMinutes/phorestWrapupMinutes; 0 = explicit "no puffer".
+  phorestPrepMinutesOverride   Int? // null = TenantConfig.phorestPrepMinutes verwenden (0-30 wenn gesetzt)
+  phorestWrapupMinutesOverride Int? // null = TenantConfig.phorestWrapupMinutes verwenden (0-30 wenn gesetzt)
   // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 per-employee override layer).
   // NULL = delegate to EmployeeVocationalSchoolPattern.
   bsSlotFirstLongDayMinutes  Int?
