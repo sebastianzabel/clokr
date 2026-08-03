@@ -10,23 +10,23 @@ Gestartet werden: PostgreSQL, Redis, MinIO, API, Web.
 
 ## Umgebungsvariablen
 
-| Variable | Pflicht | Beschreibung |
-|----------|---------|--------------|
-| `JWT_SECRET` | ✓ | Zufälliger String, min. 32 Zeichen |
-| `JWT_REFRESH_SECRET` | ✓ | Zufälliger String, min. 32 Zeichen |
-| `ENCRYPTION_KEY` | ✓ | Zufälliger String, min. 32 Zeichen |
-| `DATABASE_URL` | ✓ | PostgreSQL Connection String |
-| `CORS_ORIGIN` | ✓ | URL des Web-Frontends (kein Wildcard) |
-| `APP_URL` | ✓ | Öffentliche URL (für E-Mail-Links) |
-| `CLOKR_VERSION` | – | Docker-Image-Tag (Standard: `latest`) |
-| `SMTP_HOST` | – | SMTP-Server für E-Mail-Versand |
-| `SMTP_PORT` | – | SMTP-Port (z.B. 587) |
-| `SMTP_USER` | – | SMTP-Benutzername |
-| `SMTP_PASSWORD` | – | SMTP-Passwort |
-| `MINIO_*` | – | S3-Storage für Datei-Uploads |
-| `LOG_LEVEL` | – | `debug` / `info` / `warn` / `error` |
-| `LOG_FORMAT` | – | `json` / `ecs` / `pretty` |
-| `SEED_DEMO_DATA` | – | Demo-Daten beim Start anlegen (`true`) |
+| Variable             | Pflicht | Beschreibung                           |
+| -------------------- | ------- | -------------------------------------- |
+| `JWT_SECRET`         | ✓       | Zufälliger String, min. 32 Zeichen     |
+| `JWT_REFRESH_SECRET` | ✓       | Zufälliger String, min. 32 Zeichen     |
+| `ENCRYPTION_KEY`     | ✓       | Zufälliger String, min. 32 Zeichen     |
+| `DATABASE_URL`       | ✓       | PostgreSQL Connection String           |
+| `CORS_ORIGIN`        | ✓       | URL des Web-Frontends (kein Wildcard)  |
+| `APP_URL`            | ✓       | Öffentliche URL (für E-Mail-Links)     |
+| `CLOKR_VERSION`      | –       | Docker-Image-Tag (Standard: `latest`)  |
+| `SMTP_HOST`          | –       | SMTP-Server für E-Mail-Versand         |
+| `SMTP_PORT`          | –       | SMTP-Port (z.B. 587)                   |
+| `SMTP_USER`          | –       | SMTP-Benutzername                      |
+| `SMTP_PASSWORD`      | –       | SMTP-Passwort                          |
+| `MINIO_*`            | –       | S3-Storage für Datei-Uploads           |
+| `LOG_LEVEL`          | –       | `debug` / `info` / `warn` / `error`    |
+| `LOG_FORMAT`         | –       | `json` / `ecs` / `pretty`              |
+| `SEED_DEMO_DATA`     | –       | Demo-Daten beim Start anlegen (`true`) |
 
 ## Reverse Proxy (nginx)
 
@@ -50,7 +50,7 @@ HSTS wird von Clokr selbst gesetzt, sobald `NODE_ENV=production`.
 Die wichtigsten Daten liegen in PostgreSQL. Tägliches Backup:
 
 ```bash
-docker exec clokr-postgres-1 pg_dump -U postgres clokr > backup-$(date +%F).sql
+docker exec clokr-db pg_dump -U clokr clokr > backup-$(date +%F).sql
 ```
 
 MinIO-Daten (Dokumente, Avatare) separat sichern:
@@ -72,5 +72,5 @@ Datenbankmigrationen laufen automatisch beim Start.
 
 ```bash
 # .env
-CLOKR_VERSION=1.0.0
+CLOKR_VERSION=1.9.2
 ```

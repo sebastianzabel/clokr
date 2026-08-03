@@ -2,7 +2,7 @@
 
 Clokr ist als **revisionssichere** Zeiterfassung für den deutschen Rechtsraum konzipiert. Diese Seite dokumentiert alle implementierten gesetzlichen Prüfungen und Aufbewahrungsregeln.
 
-> **Status:** Stand v1.4 (2026-05-11). Geprüft gegen den Code unter `apps/api/src/utils/arbzg.ts`, `apps/api/src/utils/vacation-calc.ts`, `apps/api/src/plugins/data-retention.ts`.
+> **Status:** Stand v1.9 (aktuell 1.9.2, 2026-08-03). Geprüft gegen den Code unter `apps/api/src/utils/arbzg.ts`, `apps/api/src/utils/vacation-calc.ts`, `apps/api/src/plugins/data-retention.ts`.
 
 ---
 
@@ -102,7 +102,7 @@ Urlaub vom 30.12. – 5.1. wird automatisch gesplittet (2 Tage altes Jahr + 3 Ta
 
 ### § 5 BUrlG — Juni-30-Regel (v1.4)
 
-Bei Austritt nach dem 30. Juni: **voller Jahresanspruch** (statt 1/12-Regel der ersten Jahreshälfte). Implementiert in `vacation-calc.ts:applyJune30Rule()`.
+Bei Austritt nach dem 30. Juni: **voller Jahresanspruch** (statt 1/12-Regel der ersten Jahreshälfte). Implementiert in `vacation-calc.ts:calculateProRataVacation()` (§ 5 Abs. 2 BUrlG).
 
 ---
 
@@ -173,7 +173,7 @@ Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit
    - `userId`, `tenantId`, `timestamp`, `ipAddress`, `userAgent`
    - `entity`, `entityId`, `action`
    - `oldValue` und `newValue` als JSONB
-3. **Locked Months** (`MonthlyClose.isLocked`) sind nach Abschluss **immutable** — auch für Admins
+3. **Locked Months** (`TimeEntry.isLocked`; Monats-Snapshot via `SaldoSnapshot.closedAt`) sind nach Abschluss **immutable** — auch für Admins
 4. **Korrekturen** an gesperrten Monaten erzeugen einen neuen Eintrag (`TimeEntry.source = CORRECTION`) mit Referenz auf das Original, nie Inplace-Update
 5. **CASCADE = Restrict** für kritische Relationen (Employee → TimeEntry/LeaveRequest/Absence)
 
@@ -187,13 +187,13 @@ Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit
 | `WIFI_OPT_IN_BY_ADMIN`, `WIFI_OPT_OUT_BY_ADMIN`                            | Employee              | Admin setzt/widerruft Opt-In     |
 | `ASSIGN_DEVICE`, `UNASSIGN_DEVICE`                                         | PresenceDevice        | MAC↔MA-Mapping                   |
 | `MANAGER_CREATED`                                                          | LeaveRequest, Absence | Manager-on-behalf-of (v1.4)      |
-| `LOCK_MONTH`, `UNLOCK_MONTH`                                               | MonthlyClose          | Monatsabschluss-Operationen      |
+| `CREATE`, `UNLOCK`                                                         | SaldoSnapshot         | Monatsabschluss / Wiederöffnung  |
 
 ---
 
 ## Migrations- und Datenintegrität
 
-- **Schema-Änderungen:** Prisma `db push` für dev, `prisma migrate` für Produktion (geplant, aktuell beides via push)
+- **Schema-Änderungen:** Versionierte Prisma-Migrationen (`prisma migrate dev` → `migrate deploy`), **nicht** `db push`. Siehe `docs/migrations.md`.
 - **CASCADE-Verhalten:** Critical Relations (`Employee → TimeEntry`, `Employee → LeaveRequest`, `Employee → Absence`) verwenden `onDelete: Restrict` — verhindert versehentlichen Cascade-Delete
 - **Soft-Delete-Queries:** ALLE Queries auf `TimeEntry`, `LeaveRequest`, `Absence` MÜSSEN `deletedAt: null` im `where` enthalten (Projektregel, enforced in Code-Reviews)
 
@@ -214,8 +214,14 @@ Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit
 
 ---
 
+### Phorest-Schichtimport & §615 (v1.9)
+
+Aus Phorest importierte Schichten können den Roster-Soll um eine Vor-/Nachbereitungszeit erweitern (`TenantConfig.phorestPrepMinutes`/`phorestWrapupMinutes`, pro Mitarbeiter via `phorestPrepMinutesOverride`/`phorestWrapupMinutesOverride` überschreibbar). Dieser gepaddete Roster fließt in den SHIFT_BASED-Saldo (§615 Annahmeverzug, `apps/api/src/utils/shift-based-saldo.ts`) ein. Berufsschul-Abwesenheiten (`Absence.type = VOCATIONAL_SCHOOL`) haben Vorrang vor kollidierenden Phorest-Schichten (Schicht wird beim Import übersprungen). Der Import ist einseitig (Phorest führend); ein Rückschreiben nach Phorest findet nicht statt.
+
+---
+
 ## Disclaimer
 
-Diese Dokumentation beschreibt den **implementierten Stand** von Clokr v1.4. Sie ersetzt keine rechtliche Beratung. Tenants sind selbst verantwortlich für die korrekte Konfiguration (Aufbewahrungsfristen, Bundesland, Arbeitszeitmodelle, Betriebsvereinbarungen).
+Diese Dokumentation beschreibt den **implementierten Stand** von Clokr v1.9. Sie ersetzt keine rechtliche Beratung. Tenants sind selbst verantwortlich für die korrekte Konfiguration (Aufbewahrungsfristen, Bundesland, Arbeitszeitmodelle, Betriebsvereinbarungen).
 
 Bei rechtlichen Änderungen (z.B. Anpassungen am ArbZG, neuen EuGH-Urteilen zu BUrlG) ist eine Code-Anpassung erforderlich — die Test-Suite (`pnpm --filter @clokr/api test arbzg`) dient als Regression-Schutz.

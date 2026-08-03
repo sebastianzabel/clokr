@@ -76,7 +76,7 @@ What is **preserved**: TimeEntry rows, LeaveRequest rows, Absence rows, WorkSche
 
 - SSH access to `prod-host` as a user with `docker exec` on `clokr-db` (the operator's `operator` account)
 - `kubectl` context for the `homelab` cluster with read/write in the `clokr` namespace
-- Local `psql`, `pg_restore`, `pg_dump` (Postgres 17 client; Homebrew: `brew install libpq && brew link --force libpq`)
+- Local `psql`, `pg_restore`, `pg_dump` (Postgres 18 client; Homebrew: `brew install libpq && brew link --force libpq`)
 - Repo checked out with `pnpm install` already run
 
 ## Step-by-step (verbose)

@@ -32,8 +32,10 @@ Per Phase 71 decision **D-01**: TLS terminates on OPNsense HAProxy, not in `dock
 Copy this template to `${CLOKR_DIR}/.env` on prod-host and fill in real values. Never commit it to this repo.
 
 ```bash
-# Required: the GHCR image tag to deploy. Bump on each release.
-CLOKR_VERSION=v1.8.0
+# Required: the GHCR images to deploy. Bump BOTH on each release.
+# The prod compose file references ${CLOKR_API_IMAGE} and ${CLOKR_WEB_IMAGE} (NOT ${CLOKR_VERSION}).
+CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.2
+CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.9.2
 
 # Required: database
 POSTGRES_PASSWORD=<strong-random>
@@ -82,9 +84,10 @@ ssh prod-host
 # On prod-host:
 cd ${CLOKR_DIR}                     # the directory containing docker-compose.prod.yml + .env
 
-# Edit .env to bump CLOKR_VERSION to the new tag (e.g. v1.8.0):
+# Edit .env to bump BOTH image vars to the new tag (e.g. 1.9.2):
 nano .env
-# Change: CLOKR_VERSION=v1.7.4  →  CLOKR_VERSION=v1.8.0
+# Change: CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.1  →  ...clokr-api:1.9.2
+#         CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:1.9.1  →  ...clokr-web:1.9.2
 
 # Pull the new images
 docker compose -f docker-compose.prod.yml pull api web
@@ -106,14 +109,38 @@ curl -sfS --max-time 10 https://clokr.example.com/api/v1/health | jq .status
 # Expected: "ok"
 
 curl -sfS --max-time 10 https://clokr.example.com/api/v1/version | jq .version
-# Expected: matches CLOKR_VERSION (without the leading "v")
-#   e.g. CLOKR_VERSION=v1.8.0 ⇒ .version == "1.8.0"
+# Expected: matches the tag in CLOKR_API_IMAGE / CLOKR_WEB_IMAGE
+#   e.g. CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:1.9.2 ⇒ .version == "1.9.2"
 ```
 
 If either assertion fails — **STOP** and consider rolling back (next section).
 
 Per Phase 71 decision **D-19**: smoke is **only** these two HTTP probes. Do NOT add DB-probes,
 login probes, or E2E flows here. E2E smoke is gated behind Phase 73 (E2E Foundation).
+
+---
+
+## Post-deploy: image cleanup / disk capacity
+
+The prod root disk is small (24G) and each release leaves ~2.2G of superseded images.
+On this host images live in the **containerd content store** (`/var/lib/containerd`), NOT
+`/var/lib/docker/overlay2` — `docker system df` still reports them. A full disk crashes
+Postgres and the API (this was the root cause of an outage).
+
+After a successful deploy **and** passing smoke test, reclaim space:
+
+    df -h /            # check headroom on the / mount
+    docker system df   # image/container/volume usage
+
+    # Remove all images not used by a running container (old releases are
+    # re-pullable from GHCR, so this is safe once the new version is verified):
+    docker image prune -a -f
+
+    df -h /            # confirm reclaimed
+
+Only run `docker image prune -a -f` AFTER the new version's smoke test passes — a pending
+rollback needs the previous image present, or confirm it is re-pullable from
+`ghcr.io/sebastianzabel/clokr-{api,web}` before pruning.
 
 ---
 
@@ -144,7 +171,9 @@ crane copy \
 # Then on prod-host:
 ssh prod-host
 cd ${CLOKR_DIR}
-# Set CLOKR_VERSION=vROLLBACK in .env
+# Set both CLOKR_API_IMAGE and CLOKR_WEB_IMAGE to the :vROLLBACK tag in .env
+#   CLOKR_API_IMAGE=ghcr.io/sebastianzabel/clokr-api:vROLLBACK
+#   CLOKR_WEB_IMAGE=ghcr.io/sebastianzabel/clokr-web:vROLLBACK
 nano .env
 docker compose -f docker-compose.prod.yml pull api web
 docker compose -f docker-compose.prod.yml up -d api web
@@ -162,7 +191,8 @@ retention keeps several recent releases).
 ```bash
 ssh prod-host
 cd ${CLOKR_DIR}
-# Set CLOKR_VERSION back to the previous good release (e.g. v1.7.4 if v1.8.0 was bad)
+# Set both CLOKR_API_IMAGE and CLOKR_WEB_IMAGE back to the previous good release
+# (e.g. ...clokr-api:1.9.1 / ...clokr-web:1.9.1 if 1.9.2 was bad)
 nano .env
 docker compose -f docker-compose.prod.yml pull api web
 docker compose -f docker-compose.prod.yml up -d api web
@@ -180,7 +210,7 @@ specific intermediate SHA.
 - Do **not** restore from a Postgres dump unless you are certain the new release ran a
   destructive migration. Schema rollbacks are rare; most rollbacks are stateless.
 - Do **not** edit `docker-compose.prod.yml` to pin a different image — keep the file source-of-truth
-  identical to the repo and parameterise via `CLOKR_VERSION` only.
+  identical to the repo and parameterise via the `CLOKR_API_IMAGE` / `CLOKR_WEB_IMAGE` vars only.
 - Do **not** trigger a fresh CI run hoping for a hotfix — first restore service, then fix forward
   in a new PR.
 
@@ -195,11 +225,11 @@ operator machine; it SSHes into prod-host and runs the steps above.
 # Deploy the version currently set in prod-host's .env file:
 ./scripts/prod-deploy.sh
 
-# Deploy a specific version (rewrites CLOKR_VERSION in .env on prod-host):
-./scripts/prod-deploy.sh v1.8.0
+# Deploy a specific version (rewrites CLOKR_API_IMAGE + CLOKR_WEB_IMAGE in .env on prod-host):
+./scripts/prod-deploy.sh v1.9.2
 
 # "Rollback" is just deploying a previous version tag:
-./scripts/prod-deploy.sh v1.7.4
+./scripts/prod-deploy.sh v1.9.1
 ```
 
 The script is **idempotent** — running it twice with the same version is a no-op because Docker

@@ -1,33 +1,33 @@
 # Integration Environment (int)
 
-The `int` environment is the integration / pre-production cluster for clokr. It runs on the k3s homelab cluster via ArgoCD GitOps sync, with anonymized data refreshed from prod (Phase 72).
+The `int` environment is the integration / pre-production cluster for clokr. It runs on the k3s homelab cluster via ArgoCD GitOps sync, tracking the `release/1.9.x` branch, with anonymized data refreshed from prod (Phase 72).
 
 ## TL;DR
 
 - **URL:** `https://clokr-int.example.com`
 - **Cluster:** k3s in the homelab
-- **Source of truth:** `https://github.com/sebastianzabel/sebastianzabel/clokr` (public)
+- **Source of truth:** `https://github.com/sebastianzabel/clokr` (public), branch `release/1.9.x`
 - **Helm chart:** `charts/clokr-app/` in the clokr repo (single umbrella chart)
 - **ArgoCD Application:** `argocd-apps/clokr-app.yaml` in the `git.internal/home/homelab` repo
 - **Smoke-test gate:** `release.yml` → `smoke-test` job, activated by `vars.INT_BASE_URL`
 
 ## How int Differs From dev and prod
 
-| Aspect          | dev                  | int                            | prod                      |
-| --------------- | -------------------- | ------------------------------ | ------------------------- |
-| Runtime         | Local Docker Compose | k3s + ArgoCD                   | VPS Docker Compose        |
-| TLS termination | none (http)          | k3s Traefik Ingress            | OPNsense HAProxy SNI      |
-| Data            | dev seeds            | anonymized prod (Phase 72)     | live customer data        |
-| Deploy trigger  | `pnpm dev`           | git push → ArgoCD sync         | manual SSH (the operator)    |
-| Update cadence  | dev workflow         | every push to main (auto-sync) | release tag only          |
-| Smoke-test      | none                 | release.yml smoke-test job     | manual `curl` per runbook |
+| Aspect          | dev                  | int                                                                      | prod                      |
+| --------------- | -------------------- | ------------------------------------------------------------------------ | ------------------------- |
+| Runtime         | Local Docker Compose | k3s + ArgoCD                                                             | VPS Docker Compose        |
+| TLS termination | none (http)          | k3s Traefik Ingress                                                      | OPNsense HAProxy SNI      |
+| Data            | dev seeds            | anonymized prod (Phase 72)                                               | live customer data        |
+| Deploy trigger  | `pnpm dev`           | git push `release/1.9.x` → ArgoCD sync                                   | manual SSH (the operator) |
+| Update cadence  | dev workflow         | tracks `release/1.9.x` (imagePullPolicy=Always; `rollout restart` pulls) | release tag only          |
+| Smoke-test      | none                 | release.yml smoke-test job                                               | manual `curl` per runbook |
 
 ## Architecture
 
 ```
 GitHub (public)              GitLab (homelab)            k3s (homelab)
 ─────────────────            ────────────────            ─────────────
-clokr repo
+clokr repo (release/1.9.x)
 ├── charts/clokr-app/  ──┐
 │   ├── Chart.yaml       │   homelab repo               clokr namespace
 │   ├── values.yaml      │   └── argocd-apps/               ├── deployment-api
@@ -42,14 +42,14 @@ clokr repo
 
 ## Deploy to int
 
-There is no manual deploy step for int. ArgoCD auto-syncs every push to `main` of the clokr repo within ~3 minutes. The Application is configured with `syncPolicy.automated.prune + selfHeal`.
+There is no manual deploy step for int. ArgoCD tracks the `release/1.9.x` branch of the clokr repo and syncs new HEADs within ~3 minutes. The Application is configured with `syncPolicy.automated.prune + selfHeal`. Because the deployment uses `imagePullPolicy: Always`, a `kubectl -n clokr rollout restart` pulls the freshly built image for the current tag.
 
 To deploy a specific revision:
 
-1. Push a tag (e.g. `v1.8.1`) to clokr main
+1. Push to `release/1.9.x` (or a tag on that line, e.g. `v1.9.2`) of the clokr repo
 2. ArgoCD detects the new HEAD on the next reconcile loop
 3. Helm chart re-templates and applies any drift
-4. Pods roll over (RollingUpdate strategy)
+4. Pods roll over (RollingUpdate strategy); `rollout restart` forces a fresh image pull
 
 To force a re-sync:
 
@@ -104,7 +104,7 @@ Revert the offending commit in the clokr repo:
 
 ```bash
 git revert <bad-sha>
-git push origin main
+git push origin release/1.9.x
 ```
 
 ArgoCD detects the new HEAD on the next sync loop and rolls back the cluster state to the reverted manifests. No manual cluster intervention needed.
@@ -133,15 +133,15 @@ Or via UI: ArgoCD UI → clokr → History and Rollback → pick a previous revi
 
 ## Operator Cheat-Sheet
 
-| Action                           | Command                                                                               |
-| -------------------------------- | ------------------------------------------------------------------------------------- |
-| Check sync status                | `argocd app get clokr`                                                                |
-| Tail API logs                    | `kubectl -n clokr logs deployment/clokr-api -f`                                       |
-| Connect to int Postgres          | `kubectl -n clokr port-forward statefulset/clokr-db 5432:5432`                        |
-| Force re-sync                    | `argocd app sync clokr`                                                               |
-| Rollback                         | `argocd app rollback clokr <N>`                                                       |
+| Action                           | Command                                                                             |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| Check sync status                | `argocd app get clokr`                                                              |
+| Tail API logs                    | `kubectl -n clokr logs deployment/clokr-api -f`                                     |
+| Connect to int Postgres          | `kubectl -n clokr port-forward statefulset/clokr-db 5432:5432`                      |
+| Force re-sync                    | `argocd app sync clokr`                                                             |
+| Rollback                         | `argocd app rollback clokr <N>`                                                     |
 | Set repo variable for smoke gate | `gh variable set INT_BASE_URL --body 'https://clokr-int.example.com'` (already set) |
-| Verify smoke gate active         | `gh variable get INT_BASE_URL`                                                        |
+| Verify smoke gate active         | `gh variable get INT_BASE_URL`                                                      |
 
 ## Pre-Reqs (One-Time Setup)
 
@@ -168,12 +168,12 @@ These must be done before int is fully functional. Each should be ticked off:
 
 After all pre-reqs are ticked, run this dry-run to verify the full chain:
 
-1. Push any commit to clokr main (e.g., update this doc's typo)
+1. Push any commit to clokr `release/1.9.x` (e.g., update this doc's typo)
 2. ArgoCD picks it up, re-templates the Helm chart, applies changes
 3. Wait ~3 min for sync to settle (`argocd app get clokr` → Synced + Healthy)
-4. Push a release tag: `git tag v1.8.1-int-test && git push --tags`
+4. Push a release tag: `git tag v1.9.2-int-test && git push --tags`
 5. `release.yml` runs: build → promote → smoke-test
-6. Smoke-test hits `https://clokr-int.example.com/api/v1/health` → 200, version matches `v1.8.1-int-test`
+6. Smoke-test hits `https://clokr-int.example.com/api/v1/health` → 200, version matches `v1.9.2-int-test`
 7. GitHub Actions → release.yml run → smoke-test job → green ✓
 
 If any step fails: read the failed step's log, fix the underlying issue, re-run.

@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/stack-SvelteKit%20%2B%20Fastify%20%2B%20PostgreSQL-blueviolet" alt="Stack" />
   <img src="https://img.shields.io/badge/docker-compose%20ready-2496ED?logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/compliant-ArbZG%20%7C%20BUrlG%20%7C%20DSGVO-green" alt="Compliance" />
-  <a href="https://github.com/the operatorZ84/clokr/releases"><img src="https://img.shields.io/github/v/release/the operatorZ84/clokr" alt="Latest Release" /></a>
+  <a href="https://github.com/sebastianzabel/clokr/releases"><img src="https://img.shields.io/github/v/release/sebastianzabel/clokr" alt="Latest Release" /></a>
 </p>
 
 ---
@@ -21,20 +21,20 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 - **Self-hosted** — your data stays on your server. No vendor lock-in, no monthly fees.
 - **Legally compliant** — built specifically for German labor law: ArbZG daily limits, BUrlG vacation rules, DSGVO-compliant employee deletion, 10-year data retention (§ 147 AO)
 - **Audit-proof** — soft deletes, full audit trail (who/when/what), locked months are immutable
-- **Complete** — time tracking, leave management, overtime account, shift planning, reports, DATEV export — everything in one place
+- **Complete** — time tracking, leave management, overtime account, shift planning, reports, DATEV export, Phorest calendar integration — everything in one place
 
 ## Screenshots
 
-| Dashboard | Time Entries |
-|-----------|-------------|
+| Dashboard                                     | Time Entries                                        |
+| --------------------------------------------- | --------------------------------------------------- |
 | ![Dashboard](images/screenshot-dashboard.png) | ![Time Entries](images/screenshot-time-entries.png) |
 
-| Leave Calendar | Reports |
-|---------------|---------|
+| Leave Calendar                        | Reports                                   |
+| ------------------------------------- | ----------------------------------------- |
 | ![Leave](images/screenshot-leave.png) | ![Reports](images/screenshot-reports.png) |
 
-| Employee Management | Admin Settings |
-|--------------------|-|
+| Employee Management                           | Admin Settings                              |
+| --------------------------------------------- | ------------------------------------------- |
 | ![Employees](images/screenshot-employees.png) | ![Settings](images/screenshot-settings.png) |
 
 ---
@@ -43,8 +43,8 @@ Clokr is a self-hosted web application for tracking working hours, managing leav
 
 ```bash
 # 1. Download compose file and env template
-curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/docker-compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/.env.example
 cp .env.example .env
 
 # 2. Generate secrets and edit .env
@@ -59,10 +59,10 @@ Open **http://localhost:3000** — first start seeds a demo admin account.
 
 **Demo credentials:**
 
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | admin@clokr.de | admin1234 |
-| Employee | max@clokr.de | mitarbeiter5678 |
+| Role     | Email          | Password        |
+| -------- | -------------- | --------------- |
+| Admin    | admin@clokr.de | admin1234       |
+| Employee | max@clokr.de   | mitarbeiter5678 |
 
 ### Updates
 
@@ -73,7 +73,7 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### Pin a version
 
-Set `CLOKR_VERSION=1.0.0` in `.env` to pin to a specific release.
+Set `CLOKR_VERSION=1.9.2` in `.env` to pin to a specific release.
 
 ---
 
@@ -84,6 +84,7 @@ Set `CLOKR_VERSION=1.0.0` in `.env` to pin to a specific release.
 - **Overtime Account** — Balance tracking with monthly closing (Monatsabschluss), yearly carry-over (FULL/CAPPED/RESET), payout support
 - **Monatsabschluss** — Automatic monthly closing, completeness check, manager notifications for missing entries
 - **Shift Planning** — Weekly grid view, templates, quick-assign mode
+- **Phorest Integration** — One-way shift import (Phorest as master), read-only appointment cache (DSGVO-compliant, no PII), collision warnings on leave and shift flows
 - **Employee Management** — Invite-based onboarding, role management, bulk CSV import, DSGVO-compliant anonymization on deletion
 - **Reports** — Monthly summaries, leave overview, PDF export, DATEV CSV export
 - **Audit-Proof** — Soft delete, full audit trail, isLocked enforcement, configurable data retention (default 10 years)
@@ -97,25 +98,25 @@ Set `CLOKR_VERSION=1.0.0` in `.env` to pin to a specific release.
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | SvelteKit + Svelte 5, TypeScript |
-| Backend | Fastify 5, TypeScript |
-| Database | PostgreSQL 18 + Prisma 7 |
-| Cache | Redis 7 |
-| Storage | MinIO (S3-compatible) |
-| Auth | JWT (Access + Refresh) + optional Email OTP |
-| Monorepo | pnpm workspaces |
+| Layer    | Technology                                  |
+| -------- | ------------------------------------------- |
+| Frontend | SvelteKit + Svelte 5, TypeScript            |
+| Backend  | Fastify 5, TypeScript                       |
+| Database | PostgreSQL 18 + Prisma 7                    |
+| Cache    | Redis 7                                     |
+| Storage  | MinIO (S3-compatible)                       |
+| Auth     | JWT (Access + Refresh) + optional Email OTP |
+| Monorepo | pnpm workspaces                             |
 
 ---
 
 ## Roles
 
-| Role | Permissions |
-|------|-------------|
-| `ADMIN` | Full access: employees, system settings, audit log, shifts, imports |
-| `MANAGER` | Approve leave, view reports, manage shifts |
-| `EMPLOYEE` | Own time entries, leave requests, overtime view |
+| Role       | Permissions                                                         |
+| ---------- | ------------------------------------------------------------------- |
+| `ADMIN`    | Full access: employees, system settings, audit log, shifts, imports |
+| `MANAGER`  | Approve leave, view reports, manage shifts                          |
+| `EMPLOYEE` | Own time entries, leave requests, overtime view                     |
 
 ---
 
@@ -124,7 +125,7 @@ Set `CLOKR_VERSION=1.0.0` in `.env` to pin to a specific release.
 ### 1. Clone
 
 ```bash
-git clone https://github.com/the operatorZ84/clokr.git
+git clone https://github.com/sebastianzabel/clokr.git
 cd clokr
 ```
 
@@ -141,13 +142,13 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-| Service | Port | Description |
-|---------|------|-------------|
-| **web** | 3000 | SvelteKit frontend |
-| **api** | 4000 | Fastify backend |
-| **postgres** | 5432 | PostgreSQL 18 |
-| **redis** | 6379 | Redis 7 |
-| **minio** | 9000/9001 | MinIO object storage |
+| Service      | Port      | Description          |
+| ------------ | --------- | -------------------- |
+| **web**      | 3000      | SvelteKit frontend   |
+| **api**      | 4000      | Fastify backend      |
+| **postgres** | 5432      | PostgreSQL 18        |
+| **redis**    | 6379      | Redis 7              |
+| **minio**    | 9000/9001 | MinIO object storage |
 
 The API auto-migrates the database on startup.
 
@@ -213,7 +214,7 @@ Swagger UI at `/docs` when the API is running. Key endpoints:
 
 For NFC-based time tracking with a USB smart card reader:
 
-Download the latest client from the [Releases page](https://github.com/the operatorZ84/clokr/releases):
+Download the latest client from the [Releases page](https://github.com/sebastianzabel/clokr/releases):
 
 - **macOS**: `clokr-nfc-*.dmg`
 - **Windows**: `clokr-nfc-*.msi`
