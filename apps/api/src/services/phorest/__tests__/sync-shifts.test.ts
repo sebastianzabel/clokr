@@ -19,6 +19,7 @@ import wttFixture from "./fixtures/worktimetables.json";
 import wttDeletedFixture from "./fixtures/worktimetables-deleted.json";
 import wttPagedP1 from "./fixtures/worktimetables-paged-p1.json";
 import wttPagedP2 from "./fixtures/worktimetables-paged-p2.json";
+import wttTwoMapped from "./fixtures/worktimetables-two-mapped.json";
 
 const originalFetch = global.fetch;
 
@@ -643,6 +644,174 @@ describe("phorest sync-shifts padding (85.1)", () => {
         where: { employeeId: seed.mappedEmployeeId, date: new Date("2026-07-30"), deletedAt: null },
       });
       expect(activeOnSlotDate).toBe(1); // exactly the adopted row — no duplicate PHOREST insert
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+// Phase 85.1.1 (D-02/D-05) — per-employee Phorest puffer override wins over the tenant default.
+describe("phorest sync-shifts per-employee puffer override (85.1.1)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("D-02/D-05 override=0 beats a non-zero tenant default: stored times are UNPADDED (raw)", async () => {
+    const seed = await seedPhorestTenant(app, "ovr0");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+      await app.prisma.employee.update({
+        where: { id: seed.mappedEmployeeId },
+        data: { phorestPrepMinutesOverride: 0, phorestWrapupMinutesOverride: 0 },
+      });
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const jul31 = new Date("2026-07-31");
+      const stored = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      // Raw fixture slot is 09:00-17:00 — the explicit 0/0 override must win over the 15/15
+      // tenant default (?? not ||), so the stored roster equals the bookable hours exactly.
+      expect(stored?.startTime).toBe("09:00");
+      expect(stored?.endTime).toBe("17:00");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-02 null override inherits the tenant default: stored times are padded (existing behaviour)", async () => {
+    const seed = await seedPhorestTenant(app, "ovrnull");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+      // No override set for the mapped employee — must inherit the tenant default.
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+
+      const jul31 = new Date("2026-07-31");
+      const stored = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(stored?.startTime).toBe("08:45");
+      expect(stored?.endTime).toBe("17:15");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-02/D-05 two mapped employees resolve independently in the SAME sync run", async () => {
+    const seed = await seedPhorestTenant(app, "ovrtwo");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+      // Employee A gets an explicit zero override; employee B keeps the null/inherit default.
+      await app.prisma.employee.update({
+        where: { id: seed.mappedEmployeeId },
+        data: { phorestPrepMinutesOverride: 0, phorestWrapupMinutesOverride: 0 },
+      });
+
+      mockPhorest(wttTwoMapped);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.created).toBe(2);
+
+      const jul30 = new Date("2026-07-30");
+      const shiftA = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul30, deletedAt: null },
+      });
+      const shiftB = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId2, date: jul30, deletedAt: null },
+      });
+      // Both fixture slots are raw 09:00-17:00. A (override=0) stays unpadded; B (null → tenant
+      // default 15/15) is padded — proving independent per-employee resolution in one run.
+      expect(shiftA?.startTime).toBe("09:00");
+      expect(shiftA?.endTime).toBe("17:00");
+      expect(shiftB?.startTime).toBe("08:45");
+      expect(shiftB?.endTime).toBe("17:15");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("D-02/D-05 key-stability: an override change re-pads stored times but never churns externalId (cancelled===0, replaced===0)", async () => {
+    const seed = await seedPhorestTenant(app, "ovrkey");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: seed.tenantId },
+        data: { phorestPrepMinutes: 15, phorestWrapupMinutes: 15 },
+      });
+
+      // Initial sync: no override → tenant-default-padded stored times.
+      mockPhorest(wttFixture);
+      const first = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(first.status).toBe("SUCCESS");
+
+      const jul31 = new Date("2026-07-31");
+      const beforeOverride = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(beforeOverride?.startTime).toBe("08:45");
+      expect(beforeOverride?.endTime).toBe("17:15");
+      const rawExternalId = beforeOverride?.externalId;
+      expect(rawExternalId).toBe("ph-staff-mapped|2026-07-31|09:00:00|17:00:00");
+
+      // Set an explicit 0/0 override and re-sync against the IDENTICAL fixture.
+      await app.prisma.employee.update({
+        where: { id: seed.mappedEmployeeId },
+        data: { phorestPrepMinutesOverride: 0, phorestWrapupMinutesOverride: 0 },
+      });
+      mockPhorest(wttFixture);
+      const second = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(second.status).toBe("SUCCESS");
+      expect(second.cancelled).toBe(0);
+      expect(second.replaced).toBe(0);
+
+      const afterOverride = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(afterOverride?.startTime).toBe("09:00");
+      expect(afterOverride?.endTime).toBe("17:00");
+      // Same row, same raw-time externalId — no cancel/replace churn from the override change.
+      expect(afterOverride?.id).toBe(beforeOverride?.id);
+      expect(afterOverride?.externalId).toBe(rawExternalId);
+
+      // Clear the override again — self-heals back to the tenant-default padding, still no churn.
+      await app.prisma.employee.update({
+        where: { id: seed.mappedEmployeeId },
+        data: { phorestPrepMinutesOverride: null, phorestWrapupMinutesOverride: null },
+      });
+      mockPhorest(wttFixture);
+      const third = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(third.status).toBe("SUCCESS");
+      expect(third.cancelled).toBe(0);
+      expect(third.replaced).toBe(0);
+
+      const afterClear = await app.prisma.shift.findFirst({
+        where: { employeeId: seed.mappedEmployeeId, date: jul31, deletedAt: null },
+      });
+      expect(afterClear?.startTime).toBe("08:45");
+      expect(afterClear?.endTime).toBe("17:15");
+      expect(afterClear?.id).toBe(beforeOverride?.id);
+      expect(afterClear?.externalId).toBe(rawExternalId);
     } finally {
       await cleanupPhorestTenant(app, seed.tenantId);
     }
