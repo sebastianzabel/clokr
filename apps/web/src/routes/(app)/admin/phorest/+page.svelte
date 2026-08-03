@@ -27,6 +27,9 @@
   let phSyncing = $state(false);
   let phSyncWindowDays = $state(7); // SS-05 Zeitfenster (Tage) — auto + manuell
   let phSyncError = $state(""); // Block C: Sync-Fehler/SUSPECT-Alert
+  // Phase 85.1-03 (D-01) — Vor-/Nachbereitungszeit puffer (tenant-global, 0-30 Min.)
+  let phPrepMinutes = $state(0);
+  let phWrapupMinutes = $state(0);
 
   // ── Block A: Staff-Zuordnung (mapping table) ──────────────────────────────
   interface PhEmployee {
@@ -75,6 +78,9 @@
     cancelled: number;
     unmapped: number;
     error: string | null;
+    // Phase 85.1-03 (D-08) — BS-übersprungene + Phorest-Master-ersetzte Schichten
+    skippedVocationalSchool: number;
+    replaced: number;
   }
   let phLatestRun: PhSyncRun | null = $state(null);
   let phRunHistory: PhSyncRun[] = $state([]);
@@ -108,6 +114,8 @@
         phorestAutoSync: boolean;
         phorestSyncCron: string | null;
         phorestSyncWindowDays: number | null;
+        phorestPrepMinutes: number | null;
+        phorestWrapupMinutes: number | null;
       }>("/integrations/phorest/config");
       phConfigured = ph.configured;
       phBusinessId = ph.phorestBusinessId ?? "";
@@ -116,6 +124,8 @@
       phAutoSync = ph.phorestAutoSync ?? false;
       phSyncCron = ph.phorestSyncCron ?? "0 3 * * *";
       phSyncWindowDays = ph.phorestSyncWindowDays ?? 7;
+      phPrepMinutes = ph.phorestPrepMinutes ?? 0;
+      phWrapupMinutes = ph.phorestWrapupMinutes ?? 0;
       // Von/Bis bleiben leer: das Zeitfenster (Tage) ist der Default für den
       // manuellen Sync, eine explizite Range ist nur ein optionaler Override.
       // SS-01/SS-05: wenn konfiguriert, Mapping-Tabelle + Observability laden
@@ -142,6 +152,8 @@
         phorestAutoSync: phAutoSync,
         phorestSyncCron: phSyncCron,
         phorestSyncWindowDays: phSyncWindowDays,
+        phorestPrepMinutes: phPrepMinutes,
+        phorestWrapupMinutes: phWrapupMinutes,
       });
       phConfigured = true;
       phSaved = true;
@@ -391,6 +403,37 @@
       </div>
     </div>
 
+    <!-- Phase 85.1-03 (D-01) — Vor-/Nachbereitungszeit (tenant-global, 0-30 Min.) -->
+    <h4 class="sys-subtitle">Vor-/Nachbereitungszeit</h4>
+    <p class="text-muted ph-empty-msg">
+      Phorest hält die buchbare Zeit fest — die tatsächliche Arbeitszeit beginnt früher und endet
+      später. Dieser Puffer wird bei jedem Import auf die gespeicherte Schicht angewendet.
+    </p>
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label" for="ph-prep-min">Vorbereitungszeit (Min.)</label>
+        <input
+          id="ph-prep-min"
+          type="number"
+          min="0"
+          max="30"
+          bind:value={phPrepMinutes}
+          class="form-input"
+        />
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="ph-wrapup-min">Nachbereitungszeit (Min.)</label>
+        <input
+          id="ph-wrapup-min"
+          type="number"
+          min="0"
+          max="30"
+          bind:value={phWrapupMinutes}
+          class="form-input"
+        />
+      </div>
+    </div>
+
     {#snippet footer()}
       <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
         {phSaving ? "Speichern…" : "Konfiguration speichern"}
@@ -586,6 +629,8 @@
             <strong>{phLatestRun.created}</strong> importiert ·
             <strong>{phLatestRun.cancelled}</strong> abgesagt ·
             <strong>{phLatestRun.unmapped}</strong> ohne Zuordnung ·
+            <strong>{phLatestRun.skippedVocationalSchool ?? 0}</strong> BS übersprungen ·
+            <strong>{phLatestRun.replaced ?? 0}</strong> ersetzt ·
             <strong>{phLatestRun.status === "ERROR" ? 1 : 0}</strong> Fehler
           </div>
           {#if phLatestRun.status === "ERROR" && phLatestRun.error}
@@ -624,6 +669,8 @@
                   <th>Importiert</th>
                   <th>Abgesagt</th>
                   <th>Ohne Zuordnung</th>
+                  <th>BS übersprungen</th>
+                  <th>Ersetzt</th>
                 </tr>
               </thead>
               <tbody>
@@ -641,6 +688,8 @@
                     <td>{run.created}</td>
                     <td>{run.cancelled}</td>
                     <td>{run.unmapped}</td>
+                    <td>{run.skippedVocationalSchool ?? 0}</td>
+                    <td>{run.replaced ?? 0}</td>
                   </tr>
                 {/each}
               </tbody>
