@@ -420,6 +420,11 @@ export async function settingsRoutes(app: FastifyInstance) {
         // Phase 64 D-07 — Pausendauer defaults (mirror schema @default 30/45).
         defaultBreakOver6h: 30,
         defaultBreakOver9h: 45,
+        // Phase 85.1.1 (D-03) — Phorest Vor-/Nachbereitungszeit tenant defaults
+        // (mirror schema @default 0), exposed so the per-employee UI inherit
+        // hint can show "leer = Firmenstandard (X Min.)".
+        phorestPrepMinutes: 0,
+        phorestWrapupMinutes: 0,
       };
 
       return {
@@ -440,6 +445,14 @@ export async function settingsRoutes(app: FastifyInstance) {
           (base as { defaultBreakOver6h?: number | null }).defaultBreakOver6h ?? 30,
         defaultBreakOver9h:
           (base as { defaultBreakOver9h?: number | null }).defaultBreakOver9h ?? 45,
+        // Phase 85.1.1 (D-03) — fail-open Phorest puffer tenant defaults (mirror
+        // schema @default 0). The ...base spread above already carries the real
+        // values when the config row exists; this guarantees the keys are always
+        // present for the per-employee UI inherit hint.
+        phorestPrepMinutes:
+          (base as { phorestPrepMinutes?: number | null }).phorestPrepMinutes ?? 0,
+        phorestWrapupMinutes:
+          (base as { phorestWrapupMinutes?: number | null }).phorestWrapupMinutes ?? 0,
       };
     },
   });
