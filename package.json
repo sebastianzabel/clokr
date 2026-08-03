@@ -28,7 +28,7 @@
     "globals": "^17.8.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.2.0",
-    "prettier": "3.8.3",
+    "prettier": "3.9.6",
     "prettier-plugin-svelte": "^3.5.2",
     "svelte-eslint-parser": "^1.6.1",
     "tsx": "^4.23.1",
@@ -67,7 +67,7 @@
       "find-my-way": ">=9.7.0",
       "@fastify/static": ">=10.1.1",
       "postcss": ">=8.5.18",
-      "prettier": "3.8.3",
+      "prettier": "3.9.6",
       "@playwright/test": "1.60.0"
     }
   }

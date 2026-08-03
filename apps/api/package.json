@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@types/node-cron": "^3.0.11",
-    "@types/nodemailer": "^8.0.0",
+    "@types/nodemailer": "^8.0.1",
     "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.20.0",
     "dotenv": "^17.4.2",
