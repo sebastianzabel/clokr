@@ -47,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -335,7 +335,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -364,7 +364,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
 
@@ -442,7 +442,7 @@ jobs:
         run: |
           echo "::notice title=Visual regression skipped::No changes under apps/web/**, tokens.css, or apps/e2e/** — skipping visual-regression job (D-06)."
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.changes.outputs.visual == 'true'
         with:
           node-version: 24
