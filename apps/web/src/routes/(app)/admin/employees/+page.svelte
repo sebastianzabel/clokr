@@ -184,7 +184,9 @@
     loading = true;
     error = "";
     try {
-      employees = await api.get<Employee[]>("/employees");
+      // Admin list requests anonymized rows too (ADMIN-only server-side); the
+      // "Anonymisierte anzeigen" toggle then filters them client-side (isAnonymized).
+      employees = await api.get<Employee[]>("/employees?includeAnonymized=true");
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
@@ -441,10 +443,15 @@
               <option value="expired">Einladung abgelaufen</option>
               <option value="inactive">Inaktiv</option>
             </select>
-            <label class="filter-checkbox">
-              <input type="checkbox" bind:checked={showAnonymized} />
+            <button
+              type="button"
+              class="filter-toggle"
+              class:filter-toggle--on={showAnonymized}
+              aria-pressed={showAnonymized}
+              onclick={() => (showAnonymized = !showAnonymized)}
+            >
               Anonymisierte anzeigen
-            </label>
+            </button>
             <span class="spacer"></span>
             <span class="filter-count">{filteredEmployees.length} von {employees.length}</span>
           </div>
@@ -849,17 +856,40 @@
     flex: 0 0 auto;
     min-width: 170px;
   }
-  .filter-checkbox {
-    display: flex;
+  .filter-toggle {
+    display: inline-flex;
     align-items: center;
     gap: 6px;
+    flex: 0 0 auto;
     font-size: 13px;
+    font-weight: 500;
     color: var(--text-muted);
     white-space: nowrap;
     cursor: pointer;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-card);
+    transition:
+      background 0.15s ease,
+      color 0.15s ease,
+      border-color 0.15s ease;
   }
-  .filter-checkbox input[type="checkbox"] {
-    cursor: pointer;
+  .filter-toggle:hover {
+    border-color: var(--brand);
+    color: var(--text);
+  }
+  .filter-toggle:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  .filter-toggle--on {
+    background: var(--brand);
+    border-color: var(--brand);
+    color: #fff;
+  }
+  .filter-toggle--on:hover {
+    color: #fff;
   }
   .filter-count {
     font-size: 12.5px;

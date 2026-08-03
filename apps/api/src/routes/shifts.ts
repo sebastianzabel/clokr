@@ -12,6 +12,7 @@ import {
   dateStrInTz,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../utils/anonymize";
 import { updateOvertimeAccount } from "./time-entries";
 // ARBZG_MARKER_47_4_01
 
@@ -769,7 +770,9 @@ export async function shiftRoutes(app: FastifyInstance) {
           orderBy: [{ date: "asc" }, { startTime: "asc" }],
         }),
         app.prisma.employee.findMany({
-          where: { tenantId },
+          // Hide DSGVO-anonymized employees from shift planning — they keep their WorkSchedule
+          // for retention but must never appear as plannable staff in the week grid.
+          where: { tenantId, ...NOT_ANONYMIZED_EMPLOYEE_WHERE },
           select: {
             id: true,
             firstName: true,
@@ -2230,6 +2233,8 @@ export async function shiftRoutes(app: FastifyInstance) {
             where: {
               tenantId,
               OR: [{ exitDate: null }, { exitDate: { gt: weekStartDate } }],
+              // Never auto-generate shifts for DSGVO-anonymized employees.
+              ...NOT_ANONYMIZED_EMPLOYEE_WHERE,
             },
             select: { id: true, hireDate: true, exitDate: true },
           }),

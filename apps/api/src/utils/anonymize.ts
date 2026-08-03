@@ -42,6 +42,22 @@
  */
 import type { Prisma } from "@clokr/db";
 
+/**
+ * The sentinel that marks a DSGVO-anonymized Employee row (set by anonymizeEmployeeData below):
+ * firstName === "Gelöscht" AND lastName startsWith "GELÖSCHT-". Centralized here so every list
+ * query that must hide anonymized employees uses the exact same predicate (single source of truth).
+ * GET /employees/:id (audit view) is intentionally NOT filtered — anonymized rows stay resolvable by
+ * UUID for audit-trail traceability.
+ */
+export const ANONYMIZED_EMPLOYEE_WHERE = {
+  AND: [{ firstName: "Gelöscht" }, { lastName: { startsWith: "GELÖSCHT-" } }],
+} satisfies Prisma.EmployeeWhereInput;
+
+/** Negation to splice into a list query's `where` to EXCLUDE anonymized employees. */
+export const NOT_ANONYMIZED_EMPLOYEE_WHERE = {
+  NOT: ANONYMIZED_EMPLOYEE_WHERE,
+} satisfies Prisma.EmployeeWhereInput;
+
 export interface AnonymizeEmployeeOptions {
   tx: Prisma.TransactionClient;
   employeeId: string;

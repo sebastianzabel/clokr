@@ -8,7 +8,7 @@ import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 import { calculateProRataVacation } from "../utils/vacation-calc";
 import { normalizeMac } from "../utils/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
-import { anonymizeEmployeeData } from "../utils/anonymize";
+import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../utils/anonymize";
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -213,17 +213,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
+      // v1.8.8 — anonymized rows are hidden by default (team picker etc. must stay clean).
+      // ADMINs can opt in via ?includeAnonymized=true so the admin employee list can surface
+      // DSGVO-deleted rows for audit/management (the "Anonymisierte anzeigen" toggle). The flag
+      // is honored for ADMIN only; MANAGERs never receive anonymized rows. GET /:id (audit view)
+      // is NOT filtered — anonymized rows must remain resolvable by UUID (T-188-06).
+      const { includeAnonymized } = req.query as { includeAnonymized?: string };
+      const showAnonymized = req.user.role === "ADMIN" && includeAnonymized === "true";
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          // v1.8.8 — hide DSGVO-anonymized rows from the team picker.
-          // Anonymization marker (per CLAUDE.md DSGVO Employee Deletion):
-          //   firstName='Gelöscht' AND lastName starts with 'GELÖSCHT-'.
-          // GET /:id (audit view) is NOT filtered — anonymized rows must remain
-          // resolvable by UUID for audit-trail traceability (T-188-06).
-          NOT: {
-            AND: [{ firstName: "Gelöscht" }, { lastName: { startsWith: "GELÖSCHT-" } }],
-          },
+          ...(showAnonymized ? {} : NOT_ANONYMIZED_EMPLOYEE_WHERE),
         },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
