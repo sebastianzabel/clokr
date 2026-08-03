@@ -11,17 +11,21 @@ import type { FastifyInstance } from "fastify";
 
 export const MAPPED_STAFF_ID = "ph-staff-mapped";
 export const UNMAPPED_STAFF_ID = "ph-staff-unmapped";
+// Phase 85.1.1 (D-02/D-05) — a SECOND genuinely-mapped employee for the two-mapped-same-run test.
+// Do NOT repurpose Max/UNMAPPED_STAFF_ID — that fixture guards the SS-01 negative-match test.
+export const MAPPED_STAFF_ID_2 = "ph-staff-mapped-2";
 
 export interface PhorestSeed {
   tenantId: string;
   mappedEmployeeId: string; // Erika — has a PhorestStaffMapping
   unmappedEmployeeId: string; // Max — name/email matches staff.json but NO mapping (SS-01)
+  mappedEmployeeId2: string; // Bea — a second genuinely-mapped employee (85.1.1 two-mapped tests)
 }
 
 // The Phorest staff emails/names are NOT suffixed — the SS-01 negative-match test needs them to
 // equal the static fixture entries so that an (incorrect) implicit match WOULD fire. That makes the
 // User.email unique constraint global, so purge any leftovers from a crashed prior run first.
-const FIXED_EMAILS = ["erika@salon.de", "max.beispiel@salon.de"];
+const FIXED_EMAILS = ["erika@salon.de", "max.beispiel@salon.de", "bea@salon.de"];
 
 async function purgeFixedEmails(app: FastifyInstance): Promise<void> {
   const prisma = app.prisma;
@@ -92,12 +96,36 @@ export async function seedPhorestTenant(app: FastifyInstance, suffix = ""): Prom
     },
   });
 
-  // EXPLICIT mapping ONLY for Erika. Max is intentionally left unmapped (SS-01).
+  // Second genuinely-mapped employee (85.1.1) — no static fixture email needed, this staffId is
+  // only ever exercised via the per-test worktimetables-two-mapped.json fixture, not staff.json.
+  const beaUser = await prisma.user.create({
+    data: { email: `bea@salon.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+  });
+  const bea = await prisma.employee.create({
+    data: {
+      tenantId: tenant.id,
+      userId: beaUser.id,
+      employeeNumber: `B-${s}`,
+      firstName: "Bea",
+      lastName: "Zweitfrau",
+      hireDate: new Date("2024-01-01"),
+    },
+  });
+
+  // EXPLICIT mapping ONLY for Erika + Bea. Max is intentionally left unmapped (SS-01).
   await prisma.phorestStaffMapping.create({
     data: { tenantId: tenant.id, phorestStaffId: MAPPED_STAFF_ID, employeeId: erika.id },
   });
+  await prisma.phorestStaffMapping.create({
+    data: { tenantId: tenant.id, phorestStaffId: MAPPED_STAFF_ID_2, employeeId: bea.id },
+  });
 
-  return { tenantId: tenant.id, mappedEmployeeId: erika.id, unmappedEmployeeId: max.id };
+  return {
+    tenantId: tenant.id,
+    mappedEmployeeId: erika.id,
+    unmappedEmployeeId: max.id,
+    mappedEmployeeId2: bea.id,
+  };
 }
 
 // Phase 85.1 (D-06) — seed a single-day VOCATIONAL_SCHOOL Absence for the "BS gewinnt" tests.
