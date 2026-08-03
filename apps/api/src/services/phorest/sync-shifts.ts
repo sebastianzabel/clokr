@@ -265,8 +265,8 @@ export async function syncPhorestShifts(
       freshExternalIds.add(externalId);
 
       // Phase 85.1.1 (D-02) — per-employee override wins over tenant default. `??` (NOT `||`) so
-      // an explicit 0 override is honoured (0 || default would silently fall back — the exact
-      // Merle bug: a tight-contract employee's padded roster must be able to equal her raw hours).
+      // an explicit 0 override is honoured (0 || default would silently fall back): a tight-contract
+      // employee's padded roster must be able to equal her raw (unpadded) hours, else §615 undertime.
       const override = overrideById.get(employeeId);
       const effectivePrep = override?.phorestPrepMinutesOverride ?? prepMin;
       const effectiveWrapup = override?.phorestWrapupMinutesOverride ?? wrapMin;
