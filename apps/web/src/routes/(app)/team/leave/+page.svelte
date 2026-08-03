@@ -5,6 +5,14 @@
   import { authStore } from "$stores/auth";
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
+  import {
+    checkAppointmentCollisions,
+    COLLISION_UNAVAILABLE_TOAST,
+    type CollisionSummary,
+  } from "$lib/phorest/appointmentCollisions";
+  import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
@@ -382,17 +390,67 @@
     reviewModal = null;
   }
 
+  // ── Phase 87: appointment-collision warn-and-confirm on APPROVE ────────────
+  // The review Modal is already open on approve, so we SEQUENCE dialogs (never
+  // stack two scrims — Pitfall 5 / T-87-08): close the review Modal first, then
+  // open the collision ConfirmDialog whose confirm runs the APPROVED mutation.
+  let approveCollisionOpen = $state(false);
+  let approveCollisionSummary = $state<CollisionSummary | null>(null);
+  let pendingApprove = $state<{ id: string; typeCode: TypeCode } | null>(null);
+
   async function submitReview(status: "APPROVED" | "REJECTED") {
     if (!reviewModal) return;
+    // Pre-check only a genuine leave APPROVAL. A CANCELLATION_REQUESTED review
+    // shares this "APPROVED" path, but approving a cancellation makes the
+    // employee present again — booked appointments are a reason TO cancel, not a
+    // risk of proceeding — so the collision warning would be semantically
+    // inverted and is skipped. Reject is never gated either.
+    if (status === "APPROVED" && reviewModal.status !== "CANCELLATION_REQUESTED") {
+      const summary = await checkAppointmentCollisions({
+        employeeId: reviewModal.employeeId,
+        from: reviewModal.startDate,
+        to: reviewModal.endDate,
+      });
+      if (summary && summary.total > 0) {
+        pendingApprove = { id: reviewModal.id, typeCode: reviewModal.typeCode };
+        approveCollisionSummary = summary;
+        // Close the review Modal so exactly ONE scrim is live.
+        reviewOpen = false;
+        reviewModal = null;
+        approveCollisionOpen = true;
+        return;
+      }
+      if (summary === null) {
+        // Fail-open: proceed with the approval, surface a non-blocking notice.
+        toasts.error(COLLISION_UNAVAILABLE_TOAST);
+      }
+    }
+    await runReview(status, { id: reviewModal.id, typeCode: reviewModal.typeCode });
+  }
+
+  // Confirm handler for the collision dialog on the approve path. Throws on
+  // failure so the ConfirmDialog stays open (its documented contract).
+  async function confirmApproveWithCollisions() {
+    if (!pendingApprove) return;
+    const ok = await runReview("APPROVED", pendingApprove);
+    if (!ok) throw new Error("Genehmigung fehlgeschlagen");
+  }
+
+  // Shared review mutation. Returns true on success, false on failure (so the
+  // collision-confirm path can decide whether to keep its dialog open).
+  async function runReview(
+    status: "APPROVED" | "REJECTED",
+    ctx: { id: string; typeCode: TypeCode },
+  ): Promise<boolean> {
     reviewSaving = true;
     reviewError = "";
     try {
-      await api.patch(`/leave/requests/${reviewModal.id}/review`, {
+      await api.patch(`/leave/requests/${ctx.id}/review`, {
         status,
         reviewNote: reviewNote || null,
       });
-      if (SICK_CODES.includes(reviewModal.typeCode)) {
-        await api.patch(`/leave/requests/${reviewModal.id}/attest`, {
+      if (SICK_CODES.includes(ctx.typeCode)) {
+        await api.patch(`/leave/requests/${ctx.id}/attest`, {
           attestPresent: reviewAttestPresent,
           attestValidFrom: reviewAttestPresent && reviewAttestFrom ? reviewAttestFrom : null,
           attestValidTo: reviewAttestPresent && reviewAttestTo ? reviewAttestTo : null,
@@ -400,9 +458,16 @@
       }
       reviewOpen = false;
       reviewModal = null;
+      pendingApprove = null;
       await Promise.all([loadData(), loadCalendar()]);
+      return true;
     } catch (e: unknown) {
-      reviewError = e instanceof Error ? e.message : "Fehler";
+      const msg = e instanceof Error ? e.message : "Fehler";
+      reviewError = msg;
+      // If the review Modal was already closed (collision-confirm path), the
+      // inline error is not visible — surface it via a toast instead.
+      if (!reviewModal) toasts.error(msg);
+      return false;
     } finally {
       reviewSaving = false;
     }
@@ -591,6 +656,10 @@
     if (createSaving) return;
     createModalOpen = false;
   }
+  // ── Phase 87: appointment-collision warn-and-confirm on on-behalf CREATE ───
+  let createCollisionOpen = $state(false);
+  let createCollisionSummary = $state<CollisionSummary | null>(null);
+
   async function submitCreate(e: Event) {
     e.preventDefault();
     createError = "";
@@ -602,6 +671,34 @@
       createError = "Enddatum muss nach Startdatum liegen";
       return;
     }
+    // Fail-open pre-check before the POST.
+    const summary = await checkAppointmentCollisions({
+      employeeId: createForm.employeeId,
+      from: createForm.startDate,
+      to: createForm.endDate,
+    });
+    if (summary && summary.total > 0) {
+      createCollisionSummary = summary;
+      // Close the create Modal so exactly ONE scrim is live.
+      createModalOpen = false;
+      createCollisionOpen = true;
+      return;
+    }
+    if (summary === null) {
+      toasts.error(COLLISION_UNAVAILABLE_TOAST);
+    }
+    await runCreate();
+  }
+
+  // Confirm handler for the collision dialog on the create path. Throws on
+  // failure so the ConfirmDialog stays open (its documented contract).
+  async function confirmCreateWithCollisions() {
+    const ok = await runCreate();
+    if (!ok) throw new Error("Anlegen fehlgeschlagen");
+  }
+
+  // Shared create mutation. Returns true on success, false on failure.
+  async function runCreate(): Promise<boolean> {
     createSaving = true;
     try {
       await api.post("/leave/requests", {
@@ -613,10 +710,17 @@
         note: createForm.note || null,
       });
       createModalOpen = false;
+      createCollisionSummary = null;
       await Promise.all([loadData(), loadCalendar()]);
+      return true;
     } catch (err: unknown) {
       const apiErr = err as { data?: { error?: string }; message?: string };
-      createError = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Anlegen";
+      const msg = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Anlegen";
+      createError = msg;
+      // If the create Modal was already closed (collision-confirm path), the
+      // inline error is not visible — surface it via a toast instead.
+      if (!createModalOpen) toasts.error(msg);
+      return false;
     } finally {
       createSaving = false;
     }
@@ -1422,6 +1526,36 @@
       </button>
     {/snippet}
   </Modal>
+{/if}
+
+<!-- ── Phase 87: Terminkollision-Warnung (Genehmigen) ─────────────────────── -->
+{#if approveCollisionSummary}
+  <ConfirmDialog
+    bind:open={approveCollisionOpen}
+    title="Kundentermine im Zeitraum gebucht"
+    confirmLabel="Trotzdem fortfahren"
+    cancelLabel="Abbrechen"
+    onConfirm={confirmApproveWithCollisions}
+  >
+    {#snippet body()}
+      <CollisionWarnBody summary={approveCollisionSummary} variant="range" />
+    {/snippet}
+  </ConfirmDialog>
+{/if}
+
+<!-- ── Phase 87: Terminkollision-Warnung (Abwesenheit anlegen) ────────────── -->
+{#if createCollisionSummary}
+  <ConfirmDialog
+    bind:open={createCollisionOpen}
+    title="Kundentermine im Zeitraum gebucht"
+    confirmLabel="Trotzdem fortfahren"
+    cancelLabel="Abbrechen"
+    onConfirm={confirmCreateWithCollisions}
+  >
+    {#snippet body()}
+      <CollisionWarnBody summary={createCollisionSummary} variant="range" />
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 
 <style>

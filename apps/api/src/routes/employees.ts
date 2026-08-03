@@ -8,7 +8,7 @@ import { validatePassword, loadPasswordPolicy } from "../utils/password-policy";
 import { calculateProRataVacation } from "../utils/vacation-calc";
 import { normalizeMac } from "../utils/normalize-mac";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
-import { anonymizeEmployeeData } from "../utils/anonymize";
+import { anonymizeEmployeeData, NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../utils/anonymize";
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -137,6 +137,23 @@ const createEmployeeSchema = z.object({
     )
     .nullable()
     .optional(),
+  // Phase 85.1.1 (D-01, D-04) — per-employee Phorest Vor-/Nachbereitungszeit
+  // Override (create). Plain 0-30 bound (no ArbZG floor). null = fall back to
+  // TenantConfig.phorestPrepMinutes/phorestWrapupMinutes; 0 = explicit "no puffer".
+  phorestPrepMinutesOverride: z
+    .number()
+    .int()
+    .min(0, "Vorbereitungszeit darf nicht negativ sein.")
+    .max(30, "Vorbereitungszeit darf 30 Minuten nicht überschreiten.")
+    .nullable()
+    .optional(),
+  phorestWrapupMinutesOverride: z
+    .number()
+    .int()
+    .min(0, "Nachbereitungszeit darf nicht negativ sein.")
+    .max(30, "Nachbereitungszeit darf 30 Minuten nicht überschreiten.")
+    .nullable()
+    .optional(),
   // Phase 76.31 D-06 — per-employee bsSlot* overrides (create).
   ...bsSlotEmployeeFields,
 });
@@ -185,6 +202,23 @@ const updateEmployeeSchema = z.object({
     )
     .nullable()
     .optional(),
+  // Phase 85.1.1 (D-01, D-04) — per-employee Phorest Vor-/Nachbereitungszeit
+  // Override (update). undefined = no change, null = clear (fall back to
+  // TenantConfig defaults), number 0-30 = set explicit override.
+  phorestPrepMinutesOverride: z
+    .number()
+    .int()
+    .min(0, "Vorbereitungszeit darf nicht negativ sein.")
+    .max(30, "Vorbereitungszeit darf 30 Minuten nicht überschreiten.")
+    .nullable()
+    .optional(),
+  phorestWrapupMinutesOverride: z
+    .number()
+    .int()
+    .min(0, "Nachbereitungszeit darf nicht negativ sein.")
+    .max(30, "Nachbereitungszeit darf 30 Minuten nicht überschreiten.")
+    .nullable()
+    .optional(),
   // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. ADMIN-only (route
   // already gated by requireRole("ADMIN")). Boolean — null is NOT a valid value.
   // undefined = no change. Audit row SET_TIME_TRACKING_EXEMPT fires only on
@@ -213,17 +247,17 @@ export async function employeeRoutes(app: FastifyInstance) {
     schema: { tags: ["Mitarbeiter"], security: [{ bearerAuth: [] }] },
     preHandler: requireRole("ADMIN", "MANAGER"),
     handler: async (req) => {
+      // v1.8.8 — anonymized rows are hidden by default (team picker etc. must stay clean).
+      // ADMINs can opt in via ?includeAnonymized=true so the admin employee list can surface
+      // DSGVO-deleted rows for audit/management (the "Anonymisierte anzeigen" toggle). The flag
+      // is honored for ADMIN only; MANAGERs never receive anonymized rows. GET /:id (audit view)
+      // is NOT filtered — anonymized rows must remain resolvable by UUID (T-188-06).
+      const { includeAnonymized } = req.query as { includeAnonymized?: string };
+      const showAnonymized = req.user.role === "ADMIN" && includeAnonymized === "true";
       const employees = await app.prisma.employee.findMany({
         where: {
           tenantId: req.user.tenantId,
-          // v1.8.8 — hide DSGVO-anonymized rows from the team picker.
-          // Anonymization marker (per CLAUDE.md DSGVO Employee Deletion):
-          //   firstName='Gelöscht' AND lastName starts with 'GELÖSCHT-'.
-          // GET /:id (audit view) is NOT filtered — anonymized rows must remain
-          // resolvable by UUID for audit-trail traceability (T-188-06).
-          NOT: {
-            AND: [{ firstName: "Gelöscht" }, { lastName: { startsWith: "GELÖSCHT-" } }],
-          },
+          ...(showAnonymized ? {} : NOT_ANONYMIZED_EMPLOYEE_WHERE),
         },
         include: {
           user: { select: { email: true, role: true, isActive: true, lastLoginAt: true } },
@@ -358,6 +392,10 @@ export async function employeeRoutes(app: FastifyInstance) {
               // undefined / omitted → null (fall back to tenant default).
               breakOver6hOverride: body.breakOver6hOverride ?? null,
               breakOver9hOverride: body.breakOver9hOverride ?? null,
+              // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
+              // create. undefined / omitted → null (fall back to tenant default).
+              phorestPrepMinutesOverride: body.phorestPrepMinutesOverride ?? null,
+              phorestWrapupMinutesOverride: body.phorestWrapupMinutesOverride ?? null,
               // Phase 76.31 (D-06): per-employee bsSlot* overrides on create.
               // undefined / omitted → null (delegate down the slot hierarchy).
               bsSlotFirstLongDayMinutes: body.bsSlotFirstLongDayMinutes ?? null,
@@ -502,6 +540,15 @@ export async function employeeRoutes(app: FastifyInstance) {
       if (body.breakOver9hOverride !== undefined) {
         updates.breakOver9hOverride = body.breakOver9hOverride;
       }
+      // Phase 85.1.1 (D-01, D-04): per-employee Phorest puffer override on
+      // update. body.phorest*MinutesOverride: undefined = no change, null =
+      // clear (fall back to tenant default), number 0-30 = set explicit override.
+      if (body.phorestPrepMinutesOverride !== undefined) {
+        updates.phorestPrepMinutesOverride = body.phorestPrepMinutesOverride;
+      }
+      if (body.phorestWrapupMinutesOverride !== undefined) {
+        updates.phorestWrapupMinutesOverride = body.phorestWrapupMinutesOverride;
+      }
       // Phase 76.7 (D-11, EMP-V19-01) — § 18 ArbZG-Befreiung. undefined = no
       // change, true/false = explicit set. Audit row SET_TIME_TRACKING_EXEMPT
       // fires only when the value actually changes (see Phase 76.7 audit block
@@ -615,6 +662,38 @@ export async function employeeRoutes(app: FastifyInstance) {
             breakOver9hOverride: changedOver9h
               ? (body.breakOver9hOverride ?? null)
               : employee.breakOver9hOverride,
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
+
+      // Phase 85.1.1 (D-04): Dedicated audit row for Phorest puffer override
+      // changes — emitted ONLY when the PATCH body actually changed at least
+      // one of the two fields. A no-op (body absent or identical value) does
+      // NOT emit. Mirrors the Phase 64 break-override audit pattern above.
+      const changedPrepOverride =
+        body.phorestPrepMinutesOverride !== undefined &&
+        body.phorestPrepMinutesOverride !== employee.phorestPrepMinutesOverride;
+      const changedWrapupOverride =
+        body.phorestWrapupMinutesOverride !== undefined &&
+        body.phorestWrapupMinutesOverride !== employee.phorestWrapupMinutesOverride;
+      if (changedPrepOverride || changedWrapupOverride) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+          entity: "Employee",
+          entityId: id,
+          oldValue: {
+            phorestPrepMinutesOverride: employee.phorestPrepMinutesOverride,
+            phorestWrapupMinutesOverride: employee.phorestWrapupMinutesOverride,
+          },
+          newValue: {
+            phorestPrepMinutesOverride: changedPrepOverride
+              ? (body.phorestPrepMinutesOverride ?? null)
+              : employee.phorestPrepMinutesOverride,
+            phorestWrapupMinutesOverride: changedWrapupOverride
+              ? (body.phorestWrapupMinutesOverride ?? null)
+              : employee.phorestWrapupMinutesOverride,
           },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });

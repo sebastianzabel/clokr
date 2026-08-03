@@ -9,8 +9,8 @@
 
 ```bash
 # 1. Konfigurationsdateien herunterladen
-curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/docker-compose.prod.yml
-curl -fsSLO https://raw.githubusercontent.com/the operatorZ84/clokr/main/.env.example
+curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/docker-compose.prod.yml
+curl -fsSLO https://raw.githubusercontent.com/sebastianzabel/clokr/main/.env.example
 cp .env.example .env
 ```
 
@@ -45,17 +45,17 @@ Clokr ist danach unter **http://localhost:3000** erreichbar.
 
 Beim ersten Start werden automatisch Demo-Daten angelegt:
 
-| Rolle         | E-Mail            | Passwort          |
-|---------------|-------------------|-------------------|
-| Administrator | admin@clokr.de    | admin1234         |
-| Mitarbeiter   | max@clokr.de      | mitarbeiter5678   |
+| Rolle         | E-Mail         | Passwort        |
+| ------------- | -------------- | --------------- |
+| Administrator | admin@clokr.de | admin1234       |
+| Mitarbeiter   | max@clokr.de   | mitarbeiter5678 |
 
 > **Wichtig:** Demo-Passwörter nach dem ersten Login unbedingt ändern.
 
 ## Ersten echten Mitarbeiter anlegen
 
 1. Als Admin anmelden
-2. **Admin → Mitarbeiter → + Mitarbeiter anlegen**
+2. **Admin → Mitarbeitende → + Mitarbeiter anlegen**
 3. Name, E-Mail und Rolle eingeben
 4. Mitarbeiter erhält eine Einladungs-E-Mail mit Link zur Passwort-Vergabe
 
@@ -70,5 +70,5 @@ docker compose -f docker-compose.prod.yml up -d
 
 ```bash
 # In .env
-CLOKR_VERSION=1.0.0
+CLOKR_VERSION=1.9.2
 ```

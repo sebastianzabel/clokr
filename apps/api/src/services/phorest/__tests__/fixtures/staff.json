@@ -1,0 +1,28 @@
+{
+  "_embedded": {
+    "staffs": [
+      {
+        "staffId": "ph-staff-mapped",
+        "firstName": "Erika",
+        "lastName": "Musterfrau",
+        "email": "erika@salon.de",
+        "archived": false
+      },
+      {
+        "staffId": "ph-staff-unmapped",
+        "firstName": "Max",
+        "lastName": "Beispiel",
+        "email": "max.beispiel@salon.de",
+        "archived": false
+      },
+      {
+        "staffId": "ph-staff-archived",
+        "firstName": "Alt",
+        "lastName": "Archiviert",
+        "email": "archiv@salon.de",
+        "archived": true
+      }
+    ]
+  },
+  "page": { "size": 200, "totalElements": 3, "totalPages": 1, "number": 0 }
+}

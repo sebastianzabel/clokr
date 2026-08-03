@@ -114,6 +114,56 @@ describe("GET /shifts/week — Ø-Methode leave/absence aggregation (Phase 76.12
     await app.prisma.leaveRequest.delete({ where: { id: lr.id } });
   });
 
+  it("excludes DSGVO-anonymized employees from the week grid employees list", async () => {
+    const uid = `anon-week-${Date.now().toString(36)}`;
+    const anonUser = await app.prisma.user.create({
+      data: {
+        email: `deleted-${uid}@anonymized.local`,
+        passwordHash: "ANONYMIZED",
+        role: "EMPLOYEE",
+        isActive: false,
+      },
+    });
+    const anonEmp = await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: anonUser.id,
+        firstName: "Gelöscht",
+        lastName: `GELÖSCHT-${uid}`,
+        employeeNumber: `GELÖSCHT-${uid}`,
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    // Anonymized employees keep a SHIFT_BASED schedule for retention — must STILL be hidden.
+    await app.prisma.workSchedule.create({
+      data: {
+        employeeId: anonEmp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+    await app.prisma.overtimeAccount.create({ data: { employeeId: anonEmp.id, balanceHours: 0 } });
+
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/shifts/week?date=${WEEK_START}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as { employees: Array<{ id: string }> };
+      expect(body.employees.some((e) => e.id === anonEmp.id)).toBe(false);
+      // sanity: the non-anonymized A.S. fixture IS present
+      expect(body.employees.some((e) => e.id === asEmployeeId)).toBe(true);
+    } finally {
+      await app.prisma.workSchedule.deleteMany({ where: { employeeId: anonEmp.id } });
+      await app.prisma.overtimeAccount.deleteMany({ where: { employeeId: anonEmp.id } });
+      await app.prisma.employee.delete({ where: { id: anonEmp.id } });
+      await app.prisma.user.delete({ where: { id: anonUser.id } });
+    }
+  });
+
   it("VOCATIONAL_SCHOOL + PATTERN Absence is excluded from absenceMinutes (BBiG §15)", async () => {
     // Seed an Absence type=VOCATIONAL_SCHOOL, source=PATTERN on Tue 2026-06-02.
     const ab = await app.prisma.absence.create({

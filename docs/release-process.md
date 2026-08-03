@@ -19,15 +19,27 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
 8. **`release.yml` runs automatically** on the published release. It runs `crane copy` for both `clokr-api` and `clokr-web`, tagging each with `:X.Y.Z`, `:X.Y`, and `:latest`. No rebuild.
 9. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The Sidebar in the web UI shows `vX.Y.Z` below the logout button.
 
-## What `release.yml` does NOT do (yet)
+## Patch releases (1.9.x)
 
-- Post-promote smoke tests (curl `/api/v1/health` + `/api/v1/version`-matches-tag assertion). **TODO:** Phase 70 (DEVOPS-V8-05).
-- SBOM attachment to the GitHub Release. **TODO:** Phase 70 (DEVOPS-V8-04).
-- Rollback automation. **TODO:** Phase 71 — see `docs/rollback.md` once it lands (DEVOPS-V8-08).
+The 1.9.x patch line does **not** merge to `main`. Instead:
 
-## Manual rollback (interim, until Phase 71 lands)
+1. The GitHub Release is tagged directly on `release/1.9.x` HEAD (no merge to main).
+2. `build-push.yml` runs on the `release/**` push and builds `:sha-<commit>` + `:release-1.9.x`.
+3. Cutting the GitHub Release then triggers `release.yml` (Promote & Publish), which `crane copy`s `:sha-<commit>` → `:X.Y.Z` / `:X.Y` / `:latest` (Trivy-scanned, digest-identical to the built image).
 
-To roll back production to a previous release `vX.Y.W` while the rollback runbook is still pending:
+## What `release.yml` now does (previously "not yet")
+
+All three items below have shipped:
+
+- **Post-promote smoke tests** — the `smoke-test` job in `release.yml` curls `/api/v1/health` + asserts `/api/v1/version` matches the tag (Phase 70, DEVOPS-V8-05). It runs against int (`vars.INT_BASE_URL`); prod stays manual per D-04.
+- **SBOM generation** — `release.yml` runs `anchore/sbom-action` to generate an SBOM for the published images (Phase 70, DEVOPS-V8-04).
+- **Rollback automation** — shipped as the operator runbook `docs/prod-deploy.md` (there is no `docs/rollback.md`). It documents `crane copy` re-tag + `.env` image-var rollback paths (DEVOPS-V8-08).
+
+## Manual rollback (superseded by `docs/prod-deploy.md`)
+
+> **Superseded.** The full rollback runbook now lives in [`docs/prod-deploy.md`](prod-deploy.md) ("Rollback" section). Use that. The interim snippet below is kept only for quick reference.
+
+To roll back production to a previous release `vX.Y.W`:
 
 ```bash
 crane copy ghcr.io/{owner}/clokr-api:X.Y.W ghcr.io/{owner}/clokr-api:latest

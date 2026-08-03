@@ -1,6 +1,6 @@
 # Clokr Admin Area Regulatorium
 
-> **Version:** v1.6.1 · **Status:** Binding
+> **Version:** v1.6.2 · **Status:** Binding
 >
 > This document is the **canonical, self-sufficient rulebook** for the Clokr admin area. Every executor working on Phases 51–57 (admin page migrations) MUST read this document and check their work against it before merging. Readers do not need to follow any external link to understand what to build or what to avoid — all required context is inlined here.
 >
@@ -38,11 +38,14 @@ SYSTEM
   Allgemein
   Branding & Themes
   Integrationen
+  Phorest
 ```
 
 These 5 groups and their exact entries are the authoritative target structure for Phase 51 (sidebar regrouping). No entries may be added, removed, or renamed without updating this Regulatorium first.
 
 > **Note (v1.6.1 closing decision):** Sonderurlaubs-Typen consolidated into `/admin/vacation#sonderurlaub` (Phase 57). The standalone `/admin/special-leave` route is now a redirect-only stub kept for old deep links. The PERSONAL group went from 4 to 3 entries as a result.
+
+> **Note (Phase 85.1-03):** Phorest configuration/test/staff-mapping/sync/observability UI was extracted out of `/admin/system` (D-10 — dedicated admin tab) into its own `/admin/phorest` route. The SYSTEM group went from 3 to 4 entries as a result.
 
 ### 1.2 Group → Pages Mapping
 
@@ -60,6 +63,7 @@ These 5 groups and their exact entries are the authoritative target structure fo
 | SYSTEM     | Allgemein         | /admin/system       | — (feature flags + defaults; theme picker moved to Branding)                            |
 | SYSTEM     | Branding & Themes | /admin/themes       | —                                                                                       |
 | SYSTEM     | Integrationen     | /admin/integrations | /admin/wifi-presence (renamed in Phase 52; 301 redirect — see §8)                       |
+| SYSTEM     | Phorest           | /admin/phorest      | — (extracted out of /admin/system in Phase 85.1-03; D-10)                               |
 
 ### 1.3 Section Label Rules
 
@@ -929,7 +933,7 @@ export function load() {
 
 ## Appendix A: Page → Template Assignment
 
-All 12 admin pages, their template assignment, migration phase, and requirement ID. (Sonderurlaubs-Typen consolidated into Urlaubsverwaltung — see §1.1 note.)
+All 13 admin pages, their template assignment, migration phase, and requirement ID. (Sonderurlaubs-Typen consolidated into Urlaubsverwaltung — see §1.1 note. Phorest added Phase 85.1-03 — see §1.1 note.)
 
 | Group      | Page              | Route               | Template                                                                         | Phase | Requirement                                          |
 | ---------- | ----------------- | ------------------- | -------------------------------------------------------------------------------- | ----- | ---------------------------------------------------- |
@@ -945,6 +949,7 @@ All 12 admin pages, their template assignment, migration phase, and requirement 
 | SYSTEM     | Allgemein         | /admin/system       | Section-Stack                                                                    | 52    | ADMIN-MIG-01                                         |
 | SYSTEM     | Branding & Themes | /admin/themes       | Section-Stack                                                                    | 52    | ADMIN-MIG-02                                         |
 | SYSTEM     | Integrationen     | /admin/integrations | Section-Stack                                                                    | 52    | ADMIN-MIG-03                                         |
+| SYSTEM     | Phorest           | /admin/phorest      | Section-Stack                                                                    | 85.1  | D-10 (85.1-CONTEXT.md)                               |
 
 **Reading this table:**
 
@@ -959,4 +964,4 @@ All 12 admin pages, their template assignment, migration phase, and requirement 
 
 ---
 
-_Regulatorium version: v1.6.1 · Last updated: 2026-05-23 · Owned by: Phase 50 executor + v1.6.1 audit closing pass · Next update: when v1.7 ships any admin-area changes_
+_Regulatorium version: v1.6.2 · Last updated: 2026-08-03 · Owned by: Phase 50 executor + v1.6.1 audit closing pass + Phase 85.1-03 (Phorest tab extraction) · Next update: when the next admin-area change lands_

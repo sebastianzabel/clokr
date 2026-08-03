@@ -65,6 +65,11 @@
     birthDate?: string | null; // ISO date or null
     breakOver6hOverride?: number | null; // null = use tenant default
     breakOver9hOverride?: number | null;
+    // Phase 85.1.1 (D-01, D-03) — Phorest Vor-/Nachbereitungszeit per-Employee
+    // overrides. null = use tenant default (TenantConfig.phorestPrepMinutes/
+    // phorestWrapupMinutes); 0 = explicit "no puffer".
+    phorestPrepMinutesOverride?: number | null;
+    phorestWrapupMinutesOverride?: number | null;
     // Phase 76.7 (UI-V19-04a) — § 18 ArbZG exemption flag (ADMIN-only toggle).
     isTimeTrackingExempt?: boolean;
     // Phase 76.36 — per-employee bsSlot* overrides (highest layer of 4-layer hierarchy).
@@ -90,6 +95,10 @@
     bsSlotSecondLongDayMinutes?: number | null;
     bsSlotShortDayMinutes?: number | null;
     bsSlotBlockWeekMinutes?: number | null;
+    // Phase 85.1.1 (D-03) — tenant Phorest puffer defaults for the inherit hint
+    // (returned by GET /settings/work per Task 1; reuses this existing fetch).
+    phorestPrepMinutes?: number;
+    phorestWrapupMinutes?: number;
   }
 
   // Phase 67 (BERSCH-15) — Vocational-school pattern row returned by
@@ -351,6 +360,14 @@
   let pausendauerError = $state("");
   let pausendauerSaved = $state(false);
 
+  // Phase 85.1.1 (D-01, D-03) — Per-employee Phorest Vor-/Nachbereitungszeit override
+  // String state lets us distinguish "" (= null, use tenant) from typed integer values
+  let ePhorestPrepOverride = $state<string>("");
+  let ePhorestWrapupOverride = $state<string>("");
+  let phorestPufferSaving = $state(false);
+  let phorestPufferError = $state("");
+  let phorestPufferSaved = $state(false);
+
   // Phase 76.36 — per-employee bsSlot* overrides (BBIG-V19-03 employee layer).
   // "" = inherit (field cleared → PATCH sends null → re-enables inheritance).
   // Bounds mirror apps/api/src/utils/vocational-school-constants.ts.
@@ -538,6 +555,19 @@
         ? String(employee.breakOver9hOverride)
         : "";
 
+    // Phase 85.1.1 (D-01, D-03) — override fields ("" = null in PATCH body,
+    // fall back to tenant default)
+    ePhorestPrepOverride =
+      employee.phorestPrepMinutesOverride !== undefined &&
+      employee.phorestPrepMinutesOverride !== null
+        ? String(employee.phorestPrepMinutesOverride)
+        : "";
+    ePhorestWrapupOverride =
+      employee.phorestWrapupMinutesOverride !== undefined &&
+      employee.phorestWrapupMinutesOverride !== null
+        ? String(employee.phorestWrapupMinutesOverride)
+        : "";
+
     // Phase 76.7 (UI-V19-04a) — hydrate § 18 ArbZG exemption flag.
     // `preChangeExempt` tracks the last server-confirmed value so a Abbrechen
     // click on the ConfirmDialog can revert the visual toggle.
@@ -699,6 +729,47 @@
       pausendauerError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       pausendauerSaving = false;
+    }
+  }
+
+  // Phase 85.1.1 (D-01, D-03) — Persist per-employee Phorest puffer override
+  async function savePhorestPuffer() {
+    if (!employee) return;
+    phorestPufferSaving = true;
+    phorestPufferError = "";
+    phorestPufferSaved = false;
+
+    // Empty/cleared → null (fall back to tenant); typed → integer.
+    // NOTE: Even though state is typed `string`, Svelte 5 `bind:value` on
+    // `<input type="number">` coerces the bound value to `number | null` at
+    // runtime. Accept both shapes so .trim() never lands on a non-string.
+    const parse = (v: string | number | null | undefined): number | null => {
+      if (v === null || v === undefined) return null;
+      if (typeof v === "number") return Number.isFinite(v) ? Math.trunc(v) : null;
+      if (v.trim() === "") return null;
+      const n = Number.parseInt(v, 10);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    try {
+      const newPrep = parse(ePhorestPrepOverride);
+      const newWrapup = parse(ePhorestWrapupOverride);
+      await api.patch(`/employees/${employee.id}`, {
+        phorestPrepMinutesOverride: newPrep,
+        phorestWrapupMinutesOverride: newWrapup,
+      });
+      // Reflect persisted state so derived flags update
+      employee = {
+        ...employee,
+        phorestPrepMinutesOverride: newPrep,
+        phorestWrapupMinutesOverride: newWrapup,
+      };
+      phorestPufferSaved = true;
+      setTimeout(() => (phorestPufferSaved = false), 3000);
+    } catch (e: unknown) {
+      phorestPufferError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      phorestPufferSaving = false;
     }
   }
 
@@ -1936,6 +2007,70 @@
                 data-testid="pausendauer-over9h"
               />
               <p class="form-hint text-muted">ArbZG-Minimum: 45 Min</p>
+            </div>
+          </Section>
+        </div>
+
+        <!-- Phase 85.1.1 (D-01, D-03) — Phorest Vor-/Nachbereitungszeit (Optional) per-Employee
+             Override. Mirrors the Pausendauer (Optional) Section above end-to-end. -->
+        <div data-testid="phorest-puffer-editor" style="display: contents;">
+          <Section
+            title="Phorest Vor-/Nachbereitungszeit (Optional)"
+            sub="Überschreibt Tenant-Standard für diesen Mitarbeiter. Leer = Standard verwenden."
+          >
+            {#snippet footer()}
+              <button
+                class="btn btn-primary"
+                onclick={savePhorestPuffer}
+                disabled={phorestPufferSaving}
+                data-testid="phorest-puffer-save"
+              >
+                {phorestPufferSaving ? "Speichern…" : "Speichern"}
+              </button>
+              {#if phorestPufferSaved}<span class="saved-hint">Gespeichert</span>{/if}
+            {/snippet}
+
+            {#if phorestPufferError}
+              <div class="callout error" data-testid="phorest-puffer-error">
+                {phorestPufferError}
+              </div>
+            {/if}
+
+            <p class="form-hint text-muted" style="margin-bottom: 1rem;">
+              Leer = Firmenstandard nutzen ({tenantBreakConfig?.phorestPrepMinutes ??
+                0}/{tenantBreakConfig?.phorestWrapupMinutes ?? 0} Min)
+            </p>
+
+            <div class="form-group">
+              <label class="form-label" for="emp-phorest-prep">Vorbereitungszeit (Min.)</label>
+              <input
+                id="emp-phorest-prep"
+                type="number"
+                min="0"
+                max="30"
+                step="1"
+                bind:value={ePhorestPrepOverride}
+                placeholder={`Standard: ${tenantBreakConfig?.phorestPrepMinutes ?? 0} Min`}
+                class="form-input"
+                disabled={phorestPufferSaving}
+                data-testid="phorest-puffer-prep"
+              />
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="emp-phorest-wrapup">Nachbereitungszeit (Min.)</label>
+              <input
+                id="emp-phorest-wrapup"
+                type="number"
+                min="0"
+                max="30"
+                step="1"
+                bind:value={ePhorestWrapupOverride}
+                placeholder={`Standard: ${tenantBreakConfig?.phorestWrapupMinutes ?? 0} Min`}
+                class="form-input"
+                disabled={phorestPufferSaving}
+                data-testid="phorest-puffer-wrapup"
+              />
             </div>
           </Section>
         </div>

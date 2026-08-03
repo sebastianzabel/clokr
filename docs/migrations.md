@@ -58,13 +58,18 @@ On a genuinely empty database, `migrate deploy` simply runs `0_init` (and any la
 migrations) in order — no prompts, no data loss. This is exactly what the container
 entrypoint does on first boot.
 
-## ⚠️ One-time int/prod baseline runbook — SAFETY-CRITICAL, HUMAN-EXECUTED
+## ⚠️ One-time int/prod baseline runbook — SAFETY-CRITICAL, HUMAN-EXECUTED (COMPLETED)
 
-The int and prod databases **already contain the full schema** (created by prior
-`db push`) but have **no `_prisma_migrations` table yet** — they are _un-baselined_.
-You must tell Prisma that `0_init` is already applied, **without executing its DDL**.
+> **Historical / completed.** This one-time baselining was carried out once per
+> environment during the v1.8.x migration-foundation rollout. Both int and prod are now
+> baselined and run `migrate deploy` normally. The runbook is retained for reference and
+> for any _future_ environment that starts from an un-baselined `db push` state.
 
-**This is NOT automated by any code in this repo.** An operator runs it deliberately,
+At that time the int and prod databases **already contained the full schema** (created by
+prior `db push`) but had **no `_prisma_migrations` table yet** — they were _un-baselined_.
+Prisma had to be told that `0_init` was already applied, **without executing its DDL**.
+
+**This was NOT automated by any code in this repo.** An operator ran it deliberately,
 once per environment, at the post-migration-foundation checkpoint.
 
 Steps (per environment — int first, then prod):

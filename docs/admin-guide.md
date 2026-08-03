@@ -40,11 +40,11 @@ Ausgeschiedene Mitarbeiter werden **nicht hard-gelöscht**, sondern anonymisiert
 
 ---
 
-## Urlaub & Zeiten (Admin)
+## Urlaubsverwaltung (Admin)
 
 ### Urlaubsansprüche konfigurieren
 
-**Admin → Urlaub & Zeiten** — pro Mitarbeiter und Jahr:
+**Admin → Urlaubsverwaltung** — der jahresbezogene Überblick; die Urlaubskonfiguration pro Mitarbeiter liegt auf der Mitarbeiter-Detailseite (Admin → Mitarbeitende → Mitarbeiter):
 
 - Jahresanspruch in Tagen
 - Übertrag aus dem Vorjahr (manuell oder automatisch nach Monatsabschluss)
@@ -52,7 +52,7 @@ Ausgeschiedene Mitarbeiter werden **nicht hard-gelöscht**, sondern anonymisiert
 
 ### Genehmigungen
 
-Ausstehende Urlaubsanträge erscheinen in **Abwesenheiten → Genehmigungen**. Manager können genehmigen oder ablehnen. Stornierungsanfragen müssen von einem **anderen** Manager bearbeitet werden (kein Selbst-Genehmigen).
+Ausstehende Urlaubsanträge erscheinen im Posteingang unter **Team → Anträge**. Manager können genehmigen oder ablehnen. Stornierungsanfragen müssen von einem **anderen** Manager bearbeitet werden (kein Selbst-Genehmigen).
 
 ---
 
@@ -68,7 +68,7 @@ Ausstehende Urlaubsanträge erscheinen in **Abwesenheiten → Genehmigungen**. M
 
 ## Sonderurlaub
 
-**Admin → Sonderurlaub** — Konfiguration der Sonderurlaubstypen:
+**Admin → Urlaubsverwaltung → Tab „Sonderurlaub"** — Konfiguration der Sonderurlaubstypen:
 
 - Typ, gesetzliche Grundlage, Anzahl Tage
 - Beispiele: Hochzeit (2 Tage), Umzug (1 Tag), Todesfall (3 Tage)
@@ -99,12 +99,37 @@ Der Monatsabschluss friert den Überstunden-Saldo eines Monats ein:
 
 ## Import
 
-**Admin → Import** — Massendaten importieren per CSV:
+**Admin → CSV Import** — Massendaten importieren per CSV:
 
 - **Mitarbeiter-Import**: Name, E-Mail, Rolle, Eintrittsdatum, Arbeitsstunden
 - **Zeiteintrags-Import**: Mitarbeiternummer, Datum, Beginn, Ende, Pausen
 
 CSV-Vorlagen stehen zum Download bereit.
+
+---
+
+## DATEV-Export
+
+**Admin → DATEV Export** — Export der Lohn-/Zeitdaten im DATEV-CSV-Format für die Weitergabe an die Lohnbuchhaltung. Zeitraum (Monat) wählen, exportieren, CSV herunterladen.
+
+---
+
+## Integrationen (WiFi-Präsenz)
+
+**Admin → Integrationen** — Anwesenheitserkennung über WLAN-Präsenz (FRITZ!Box). Präsenzquellen konfigurieren und Geräte den Mitarbeitenden zuordnen. (Hinweis: Nicht zu verwechseln mit **Phorest** — das ist ein eigener Tab.)
+
+---
+
+## Phorest-Integration
+
+**Admin → Phorest** — Import von Schichten aus der Salon-Software Phorest (eigener Admin-Tab, getrennt von „Integrationen").
+
+- **Verbindung**: Business ID, Branch ID, API-Benutzername (E-Mail) und API-Passwort eintragen, dann **Verbindung testen**.
+- **Import-Einstellungen**: Vor-/Nachbereitungszeit-Puffer (0–30 Min., tenant-global; pro Mitarbeiter auf der Mitarbeiter-Detailseite überschreibbar), Zeitfenster in Tagen (Standard 7) und optionaler automatischer Sync (Cron-Zeitplan).
+- **Mitarbeiter-Zuordnung**: Phorest-Mitarbeiter mit clokr-Mitarbeitenden verbinden. Nicht zugeordnete Mitarbeitende werden beim Sync übersprungen.
+- **Synchronisation**: Manuell („Jetzt synchronisieren") oder automatisch. Der Import ist einseitig (Phorest ist führend → clokr). Der Verlauf zeigt Status (Erfolg/Fehler/Verdächtig) sowie importierte/abgesagte/ersetzte und wegen Berufsschule übersprungene Schichten.
+
+Termine (Appointments) werden nur als DSGVO-konformer, PII-freier Read-only-Cache vorgehalten; Kollisionswarnungen erscheinen schreibgeschützt in den Urlaubs-/Schicht-Flows. Ein Rückschreiben von Abwesenheiten nach Phorest ist nicht implementiert.
 
 ---
 
@@ -120,9 +145,9 @@ Details zu rechtlichen Aufbewahrungsfristen, Anonymisierungs-Verhalten, ArbZG-Pr
 
 ---
 
-## Systemeinstellungen
+## Allgemein (Systemeinstellungen)
 
-**Admin → System**:
+**Admin → Allgemein**:
 
 | Einstellung     | Beschreibung                                      |
 | --------------- | ------------------------------------------------- |

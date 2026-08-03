@@ -5,23 +5,26 @@ Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 
 This runbook documents the operational `gh api` commands for applying, auditing, and recovering from drift in `main` branch protection. Linked from `CLAUDE.md` § GSD Workflow Enforcement and from `docs/release-process.md`.
 
+Branch protection is now also relevant for `release/1.9.x` — the patch line (1.9.x) branches and tags there (see `docs/release-process.md`). Apply the same required-checks set to `release/1.9.x` by substituting the branch name in the `gh api` commands below.
+
 ## Required checks (Phase 70 baseline)
 
-| Check         | Workflow | Job           | Why required                                                                                                                                                                |
-| ------------- | -------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test`        | ci.yml   | `test`        | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web |
-| `codeql`      | ci.yml   | `codeql`      | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                          |
-| `secret-scan` | ci.yml   | `secret-scan` | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                     |
-| `docker`      | ci.yml   | `docker`      | Validates `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (matrix build, no push). Warms the GHA cache for the subsequent `build-push.yml` main-branch run.          |
+| Check               | Workflow | Job                 | Why required                                                                                                                                                                                                 |
+| ------------------- | -------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `test`              | ci.yml   | `test`              | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web     |
+| `codeql`            | ci.yml   | `codeql`            | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                          |
+| `secret-scan`       | ci.yml   | `secret-scan`       | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                     |
+| `docker`            | ci.yml   | `docker`            | Validates `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (matrix build, no push). Warms the GHA cache for the subsequent `build-push.yml` main-branch run.                                          |
+| `visual-regression` | ci.yml   | `visual-regression` | Playwright `toHaveScreenshot()` baseline gate — merge-blocking on PRs that touch `apps/web/**`, `apps/web/src/tokens.css`, or `apps/e2e/**` (path-filtered, D-06). See `docs/visual-regression-workflow.md`. |
 
 Note: the `docker` PR-gate job is in `ci.yml`, not `build-push.yml`. `build-push.yml` runs ONLY on push to `main` (after merge) and is therefore not a PR-blocking candidate. Trivy container-scan results from `build-push.yml` are post-merge and surface via the GitHub Security tab.
 
 ## NOT required (advisory in Phase 70)
 
-| Check        | Workflow | Job          | Promotion path                                                                                                                                                |
-| ------------ | -------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Check        | Workflow | Job          | Promotion path                                                                                                                                                         |
+| ------------ | -------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lighthouse` | ci.yml   | `lighthouse` | Phase 73 — remove `continue-on-error: true` and flip `lighthouserc.json` thresholds from `warn` → `error`. Extend to authenticated pages via docker-compose webServer. |
-| `axe-scan`   | ci.yml   | `axe-scan`   | Phase 73 — remove `continue-on-error: true` and tighten the spec assertion from advisory to `expect(violations).toEqual([])`.                                                              |
+| `axe-scan`   | ci.yml   | `axe-scan`   | Phase 73 — remove `continue-on-error: true` and tighten the spec assertion from advisory to `expect(violations).toEqual([])`.                                          |
 
 These jobs run on every PR but their failures do not block merging in Phase 70.
 
@@ -33,7 +36,7 @@ The command below is **idempotent** — safe to re-run at any time. It preserves
 gh api \
   --method PUT \
   -H "Accept: application/vnd.github+json" \
-  /repos/the operatorZ84/clokr/branches/main/protection \
+  /repos/sebastianzabel/clokr/branches/main/protection \
   --input - <<'EOF'
 {
   "required_status_checks": {
@@ -62,7 +65,7 @@ EOF
 GitHub's branch-protection PUT API requires the **full** settings object — fields not included are reset to their defaults. Always snapshot the current state and copy any non-null fields into the PUT body before re-applying:
 
 ```bash
-gh api /repos/the operatorZ84/clokr/branches/main/protection > /tmp/branch-protection-before.json
+gh api /repos/sebastianzabel/clokr/branches/main/protection > /tmp/branch-protection-before.json
 cat /tmp/branch-protection-before.json | jq '{required_pull_request_reviews, enforce_admins, restrictions}'
 ```
 
@@ -73,7 +76,7 @@ If `required_pull_request_reviews` is non-null (it is in Phase 70 pre-state), co
 ## Audit command
 
 ```bash
-gh api /repos/the operatorZ84/clokr/branches/main/protection \
+gh api /repos/sebastianzabel/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | sort
 ```
 
@@ -91,20 +94,20 @@ If output is empty or missing any of these → re-run the Apply command above.
 Lighthouse + axe-scan MUST NOT appear in the audit output during Phase 70:
 
 ```bash
-gh api /repos/the operatorZ84/clokr/branches/main/protection \
+gh api /repos/sebastianzabel/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | grep -cE '^(lighthouse|axe-scan)$'
 # Expected: 0
 ```
 
 ## When this list changes
 
-| Trigger                                            | Action                                                                                                  |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Phase 73 ships `axe-scan` + `lighthouse` as blocking | Add `lighthouse` + `axe-scan` to the `checks` array; re-apply.                                          |
-| Phase 73 adds new E2E job (e.g. `e2e-tests`)       | Add the new job context to the `checks` array; re-apply.                                                |
-| A workflow job is renamed                          | Update both the workflow file AND this runbook in the same PR; re-apply after the rename merges.        |
-| A workflow job is removed                          | Remove from this list; re-apply. (Otherwise PRs block forever on a non-existent check.)                 |
-| Required-approving-review-count raised             | Update `required_approving_review_count` in the PUT body above before re-applying.                      |
+| Trigger                                              | Action                                                                                           |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Phase 73 ships `axe-scan` + `lighthouse` as blocking | Add `lighthouse` + `axe-scan` to the `checks` array; re-apply.                                   |
+| Phase 73 adds new E2E job (e.g. `e2e-tests`)         | Add the new job context to the `checks` array; re-apply.                                         |
+| A workflow job is renamed                            | Update both the workflow file AND this runbook in the same PR; re-apply after the rename merges. |
+| A workflow job is removed                            | Remove from this list; re-apply. (Otherwise PRs block forever on a non-existent check.)          |
+| Required-approving-review-count raised               | Update `required_approving_review_count` in the PUT body above before re-applying.               |
 
 ## Why `required_status_checks.strict: true`
 
@@ -112,7 +115,7 @@ gh api /repos/the operatorZ84/clokr/branches/main/protection \
 
 ## Why `enforce_admins: false`
 
-Admins can override branch protection for emergency hotfixes. Phase 70 preserves the pre-state value (`enabled: false`). To flip on, set `"enforce_admins": true` in the PUT body. Caveat: with `enforce_admins: true`, even `the operatorZ84` cannot push hotfixes directly to `main` — every change must go via PR + green checks.
+Admins can override branch protection for emergency hotfixes. Phase 70 preserves the pre-state value (`enabled: false`). To flip on, set `"enforce_admins": true` in the PUT body. Caveat: with `enforce_admins: true`, even `sebastianzabel` cannot push hotfixes directly to `main` — every change must go via PR + green checks.
 
 ## Dependabot interaction
 
@@ -130,7 +133,7 @@ If branch protection is accidentally deleted or reset to defaults:
 
 ## Files
 
-- `.github/workflows/ci.yml` — defines the 4 required jobs (`test`, `codeql`, `secret-scan`, `docker`) and 2 advisory jobs (`lighthouse`, `axe-scan`).
+- `.github/workflows/ci.yml` — defines the required jobs (`test`, `codeql`, `secret-scan`, `docker`, and the path-filtered `visual-regression`) and 2 advisory jobs (`lighthouse`, `axe-scan`).
 - `.github/workflows/build-push.yml` — runs post-merge on push to `main`; not a PR-gate candidate.
 - `docs/cve-handling.md` — companion runbook for `.trivyignore` exceptions surfaced by these gates.
 - `docs/release-process.md` — companion runbook for the release flow that depends on these gates being green.

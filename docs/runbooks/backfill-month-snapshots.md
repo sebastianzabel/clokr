@@ -69,16 +69,17 @@ Do not proceed to int until the dev run is clean.
 
 ### 0.2 int (k3s/homelab)
 
-> **int is currently pinned off main to a v1.8.x tag** (v1.8.17 as of 2026-07-20, via
-> `~/git/homelab clokr-app.yaml`). See `docs/int-environment.md`.
+> **int now tracks `release/1.9.x` via ArgoCD.** See `docs/int-environment.md`. (Historical: during
+> the v1.8→v1.9 transition int was temporarily pinned off main to a v1.8.x tag; that forward-port is
+> now done and no longer required.)
 
 Before running on int:
 
-1. **Forward-port / bump int to the same version as prod** will run. Edit `homelab/argocd-apps/clokr-app.yaml`
-   to point at the release tag that contains Phase 76.30 Plan 00 (the backfill script). Wait for
-   ArgoCD to sync and the smoke-test to pass before continuing.
+1. **Confirm int is on a version that contains the backfill script** (Phase 76.30 Plan 00). Since int
+   tracks `release/1.9.x`, this is normally already the case — verify via the version check in Step 2.
+   Wait for ArgoCD to be Synced + Healthy and the smoke-test to pass before continuing.
 2. **Verify cron parity** (see Step 2 below) — confirm int's `auto-close-month.ts` is the same
-   version as prod (same commit SHA). A pinned tag drift here means the cron behaviour in int does
+   version as prod (same commit SHA). A version drift here means the cron behaviour in int does
    not match prod.
 
 Connect to int Postgres:
@@ -150,19 +151,20 @@ commit as the backfill script. On prod:
 
 ```bash
 ssh prod-host
-docker compose -f ${CLOKR_DIR}/docker-compose.prod.yml \
-  exec api node -e "console.log(process.env.CLOKR_VERSION)"
+# prod pins the deployed images via CLOKR_API_IMAGE / CLOKR_WEB_IMAGE in .env (NOT CLOKR_VERSION).
+# Read the pinned tag, or query the running app:
+grep -E '^CLOKR_(API|WEB)_IMAGE=' ${CLOKR_DIR}/.env
+curl -sf https://clokr.example.com/api/v1/version | jq .version
 # Should match the release tag you deployed for Phase 76.30.
 ```
 
 On int:
 
 ```bash
-kubectl -n clokr exec deployment/clokr-api -- \
-  node -e "console.log(process.env.CLOKR_VERSION)"
+curl -sf https://clokr-int.example.com/api/v1/version | jq .version
 ```
 
-If the version does not match — **STOP**. Forward-port the environment first (Step 0.2).
+If the version does not match — **STOP**. Update the environment first (Step 0.2).
 
 ### 2.2 Pause the cron
 
@@ -446,19 +448,18 @@ docker compose -f docker-compose.yml up -d api web
 
 ## Step 7 — Environment-specific notes (int before prod)
 
-### int — pinned to v1.8.x
+### int — tracks release/1.9.x
 
-int is currently pinned off main to a v1.8.x tag via `~/git/homelab clokr-app.yaml`. Before
+int tracks the `release/1.9.x` branch via ArgoCD (`~/git/homelab clokr-app.yaml`). Before
 running the backfill on int:
 
-1. Check the pinned tag: `cat ~/git/homelab/argocd-apps/clokr-app.yaml | grep targetRevision`
-2. If the pinned tag does not include Phase 76.30 Plan 00 (the backfill script), bump it to the
-   release that does.
+1. Check the tracked revision: `cat ~/git/homelab/argocd-apps/clokr-app.yaml | grep targetRevision`
+2. Confirm the current `release/1.9.x` HEAD includes Phase 76.30 Plan 00 (the backfill script).
+   It normally does; if not, land the fix on `release/1.9.x` first.
 3. ArgoCD will auto-sync within ~3 minutes. Confirm with:
    ```bash
    argocd app get clokr   # should show Synced + Healthy
-   kubectl -n clokr exec deployment/clokr-api -- \
-     node -e "console.log(process.env.CLOKR_VERSION)"
+   curl -sf https://clokr-int.example.com/api/v1/version | jq .version
    ```
 4. Run the full procedure (Steps 1–6) on int before touching prod.
 
@@ -524,5 +525,5 @@ After the post-apply verification (Step 5) passes for all affected employees:
 - [`apps/api/scripts/backfill-month-snapshots.ts`](../../apps/api/scripts/backfill-month-snapshots.ts) — The script this runbook drives (Phase 76.30 Plan 00)
 - [`apps/api/src/plugins/auto-close-month.ts`](../../apps/api/src/plugins/auto-close-month.ts) — The cron to pause/reconcile during backfill
 - [`apps/api/src/routes/overtime.ts`](../../apps/api/src/routes/overtime.ts) — `unlock-month` endpoint (rollback, lines 1149–1228)
-- [`docs/prod-deploy.md`](../prod-deploy.md) — Prod deploy runbook (SSH, Docker Compose, smoke tests)
+- [`docs/prod-deploy.md`](../prod-deploy.md) — Prod deploy runbook (SSH, Docker Compose, smoke tests); see its "Post-deploy: image cleanup / disk capacity" section to reclaim disk after the deploy that ships this script
 - [`docs/int-environment.md`](../int-environment.md) — Int environment (k3s, ArgoCD, pinned tag management)

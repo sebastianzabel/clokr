@@ -167,6 +167,53 @@ describe("Employees API", () => {
 
       expect(res.statusCode).toBe(403);
     });
+
+    it("hides DSGVO-anonymized employees by default, surfaces them with ?includeAnonymized=true", async () => {
+      const uid = `anon-list-${Date.now().toString(36)}`;
+      const user = await app.prisma.user.create({
+        data: {
+          email: `deleted-${uid}@anonymized.local`,
+          passwordHash: "ANONYMIZED",
+          role: "EMPLOYEE",
+          isActive: false,
+        },
+      });
+      const anon = await app.prisma.employee.create({
+        data: {
+          tenantId: data.tenant.id,
+          userId: user.id,
+          firstName: "Gelöscht",
+          lastName: `GELÖSCHT-${uid}`,
+          employeeNumber: `GELÖSCHT-${uid}`,
+          hireDate: new Date("2024-01-01"),
+        },
+      });
+
+      try {
+        // Default: anonymized row is excluded.
+        const defaultRes = await app.inject({
+          method: "GET",
+          url: "/api/v1/employees",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+        });
+        expect(defaultRes.statusCode).toBe(200);
+        const defaultIds = (JSON.parse(defaultRes.body) as Array<{ id: string }>).map((e) => e.id);
+        expect(defaultIds).not.toContain(anon.id);
+
+        // ADMIN opt-in: anonymized row IS returned.
+        const inclRes = await app.inject({
+          method: "GET",
+          url: "/api/v1/employees?includeAnonymized=true",
+          headers: { authorization: `Bearer ${data.adminToken}` },
+        });
+        expect(inclRes.statusCode).toBe(200);
+        const inclIds = (JSON.parse(inclRes.body) as Array<{ id: string }>).map((e) => e.id);
+        expect(inclIds).toContain(anon.id);
+      } finally {
+        await app.prisma.employee.delete({ where: { id: anon.id } });
+        await app.prisma.user.delete({ where: { id: user.id } });
+      }
+    });
   });
 
   describe("PATCH /api/v1/employees/:id/deactivate", () => {

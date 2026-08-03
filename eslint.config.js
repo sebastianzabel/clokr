@@ -51,7 +51,7 @@ export default [
     files: ["**/*.ts"],
     // Standalone scripts (not part of any app's tsconfig) opt out of
     // type-aware linting; they still get the non-type-aware rules below.
-    ignores: ["apps/web/scripts/**", "apps/api/scripts/**"],
+    ignores: ["apps/web/scripts/**", "apps/api/scripts/**", "packages/db/src/seed-demo.ts"],
     languageOptions: {
       parserOptions: {
         project: true,

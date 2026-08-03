@@ -1,0 +1,31 @@
+{
+  "_embedded": {
+    "workTimeTables": [
+      {
+        "staffId": "ph-staff-mapped",
+        "branchId": "branch-1",
+        "timeSlots": [
+          {
+            "date": "2026-07-30",
+            "startTime": "08:00:00",
+            "endTime": "16:00:00",
+            "type": "WORKING"
+          }
+        ]
+      },
+      {
+        "staffId": "ph-staff-unmapped",
+        "branchId": "branch-1",
+        "timeSlots": [
+          {
+            "date": "2026-07-30",
+            "startTime": "10:00:00",
+            "endTime": "18:00:00",
+            "type": "WORKING"
+          }
+        ]
+      }
+    ]
+  },
+  "page": { "size": 200, "totalElements": 2, "totalPages": 1, "number": 0 }
+}

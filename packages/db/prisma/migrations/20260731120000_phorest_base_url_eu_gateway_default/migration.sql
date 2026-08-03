@@ -1,0 +1,12 @@
+-- Phorest base URL default → EU gateway (Phase 85-06 gap closure).
+--
+-- The real Phorest "Third Party API" v3 is served from the regional gateway
+-- (https://api-gateway-eu.phorest.com/third-party-api-server), NOT the assumed
+-- https://api.phorest.com/third-party-api-server. This alters ONLY the column DEFAULT so
+-- newly-created TenantConfig rows point at the EU gateway.
+--
+-- DATA NOTE (Revisionssicherheit — intentionally NOT auto-migrated): existing TenantConfig
+-- rows keep their stored phorestBaseUrl value. Any tenant still on the old
+-- api.phorest.com default MUST be re-pointed to the EU gateway separately (owner action,
+-- via /phorest/config). We do NOT overwrite tenant-set URLs here.
+ALTER TABLE "TenantConfig" ALTER COLUMN "phorestBaseUrl" SET DEFAULT 'https://api-gateway-eu.phorest.com/third-party-api-server';

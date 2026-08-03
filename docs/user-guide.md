@@ -22,7 +22,7 @@ Das Dashboard zeigt auf einen Blick:
 
 ### Zeiteinträge manuell erfassen
 
-1. **Zeiterfassung → + Eintrag hinzufügen**
+1. **Zeiterfassung → + Neuer Eintrag**
 2. Datum, Beginn, Ende und optional Pausen eintragen
 3. Speichern
 
@@ -104,7 +104,7 @@ Unter **Zeiterfassung** (Monats-Saldo und Gesamt-Saldo) sowie im Überstundenkon
 
 ## Persönliche Einstellungen
 
-Unter **Einstellungen** (Profilbild oben links → Einstellungen):
+Unter **Mein Profil** (Profilmenü oben rechts → Mein Profil):
 
 - Passwort ändern
 - Benachrichtigungseinstellungen

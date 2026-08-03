@@ -1,0 +1,23 @@
+{
+  "_comment": "Phase 85 Plan 07 — CONFIRMED v3 /appointment PAGE 1 (of 2) for a single in-window date. Carries ONLY the ph-staff-mapped 09:00 slot and a Spring-HATEOAS `page` envelope with totalPages=2/number=0 (has-more). The second slot lives on page 2. Drives the pagination-exhaustion (GATE-2) test: a page-1-only read would omit the page-2 slot; the sync MUST read both pages before the hard-replace so BOTH slots are stored. v3 shape: date in appointmentDate, LocalTime 'HH:mm:ss'. The test rewrites appointmentDate onto an in-window date and dispatches on the page param.",
+  "_embedded": {
+    "appointments": [
+      {
+        "appointmentId": "appt-paged-1",
+        "version": 1,
+        "staffId": "ph-staff-mapped",
+        "appointmentDate": "2026-07-30",
+        "startTime": "09:00:00",
+        "endTime": "09:45:00",
+        "clientId": "cust-page-1",
+        "clientName": "Page One Client",
+        "serviceId": "svc-p1",
+        "serviceName": "Cut",
+        "price": 30,
+        "notes": "Erste Seite",
+        "state": "BOOKED"
+      }
+    ]
+  },
+  "page": { "size": 1, "totalElements": 2, "totalPages": 2, "number": 0 }
+}

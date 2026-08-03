@@ -1,141 +1,20 @@
 import fp from "fastify-plugin";
 import cron, { type ScheduledTask } from "node-cron";
-import { decryptSafe } from "../utils/crypto";
 import { withAdvisoryLock, tenantAdvisoryKey } from "../utils/with-advisory-lock";
-
-interface PhorestApiResponse {
-  _embedded?: { staff?: PhorestStaffItem[]; staffWorkTimeTables?: PhorestWorkTimeItem[] };
-  staff?: PhorestStaffItem[];
-  staffWorkTimeTables?: PhorestWorkTimeItem[];
-}
-
-interface PhorestStaffItem {
-  staffId: string;
-  firstName: string;
-  lastName: string;
-  email?: string;
-}
-
-interface PhorestWorkTimeItem {
-  staffId: string;
-  date?: string;
-  startTime?: string;
-  endTime?: string;
-}
+import { syncPhorestShifts } from "../services/phorest/sync-shifts";
+import { syncPhorestAppointments } from "../services/phorest/sync-appointments";
 
 /**
  * Background scheduler for recurring tasks.
  * Currently: Phorest shift sync (per-tenant cron).
+ *
+ * Phase 85 (SS-07): the sync body now lives in the ONE shared service
+ * services/phorest/sync-shifts.ts — this plugin only owns cron registration and the
+ * per-tenant advisory lock. The manual endpoint (routes/integrations.ts) calls the same
+ * function, so there is no behavior drift.
  */
 export const schedulerPlugin = fp(async (app) => {
   const tasks: ScheduledTask[] = [];
-
-  async function syncPhorestForTenant(tenantId: string) {
-    const cfg = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-    if (
-      !cfg?.phorestBusinessId ||
-      !cfg?.phorestUsername ||
-      !cfg?.phorestPassword ||
-      !cfg?.phorestAutoSync
-    ) {
-      return;
-    }
-
-    const baseUrl = cfg.phorestBaseUrl ?? "https://api.phorest.com/third-party-api-server";
-    const biz = cfg.phorestBusinessId;
-    const branch = cfg.phorestBranchId;
-
-    app.log.info({ tenantId }, "Phorest Auto-Sync gestartet");
-
-    try {
-      const phorestPwd = decryptSafe(cfg.phorestPassword) ?? "";
-      const auth = Buffer.from(`global/${cfg.phorestUsername}:${phorestPwd}`).toString("base64");
-      const headers = { Authorization: `Basic ${auth}`, Accept: "application/json" };
-
-      // Sync next 7 days
-      const today = new Date();
-      const endDate = new Date(today);
-      endDate.setDate(endDate.getDate() + 7);
-      const startStr = today.toISOString().split("T")[0];
-      const endStr = endDate.toISOString().split("T")[0];
-
-      // 1. Load staff
-      const staffRes = await fetch(
-        `${baseUrl}/api/business/${biz}/branch/${branch}/staff?size=200&page=0`,
-        { headers },
-      );
-      if (!staffRes.ok) throw new Error(`Staff API ${staffRes.status}`);
-      const staffData = (await staffRes.json()) as PhorestApiResponse;
-      const phorestStaff = staffData._embedded?.staff ?? staffData.staff ?? [];
-
-      // 2. Map to Clokr employees
-      const clokrEmployees = await app.prisma.employee.findMany({
-        where: { tenantId },
-        include: { user: { select: { email: true } } },
-      });
-
-      const staffMap = new Map<string, string>();
-      for (const ps of phorestStaff) {
-        const match = clokrEmployees.find(
-          (ce) =>
-            ce.user.email.toLowerCase() === (ps.email ?? "").toLowerCase() ||
-            (ce.firstName.toLowerCase() === ps.firstName.toLowerCase() &&
-              ce.lastName.toLowerCase() === ps.lastName.toLowerCase()),
-        );
-        if (match) staffMap.set(ps.staffId, match.id);
-      }
-
-      // 3. Load WorkTimeTables
-      const wttRes = await fetch(
-        `${baseUrl}/api/business/${biz}/branch/${branch}/staffworktimetables?start_date=${startStr}&end_date=${endStr}`,
-        { headers },
-      );
-      if (!wttRes.ok) throw new Error(`WorkTimeTables API ${wttRes.status}`);
-      const wttData = (await wttRes.json()) as PhorestApiResponse;
-      const entries =
-        wttData._embedded?.staffWorkTimeTables ?? wttData.staffWorkTimeTables ?? wttData ?? [];
-
-      // 4. Create shifts
-      let created = 0;
-      for (const wt of Array.isArray(entries) ? entries : []) {
-        const employeeId = staffMap.get(wt.staffId);
-        if (!employeeId) continue;
-
-        const date = wt.date ?? wt.startTime?.split("T")[0];
-        if (!date) continue;
-
-        const startH = wt.startTime ? new Date(wt.startTime).toISOString().slice(11, 16) : null;
-        const endH = wt.endTime ? new Date(wt.endTime).toISOString().slice(11, 16) : null;
-        if (!startH || !endH) continue;
-
-        const existing = await app.prisma.shift.findFirst({
-          where: {
-            employeeId,
-            date: new Date(date),
-            startTime: startH,
-            endTime: endH,
-            deletedAt: null, // Phase 67.2 — Phorest sync only checks active shifts
-          },
-        });
-        if (existing) continue;
-
-        await app.prisma.shift.create({
-          data: {
-            employeeId,
-            date: new Date(date),
-            startTime: startH,
-            endTime: endH,
-            label: "Phorest",
-          },
-        });
-        created++;
-      }
-
-      app.log.info({ tenantId, created, mapped: staffMap.size }, "Phorest Auto-Sync abgeschlossen");
-    } catch (err) {
-      app.log.error({ err, tenantId }, "Phorest Auto-Sync fehlgeschlagen");
-    }
-  }
 
   async function setupSchedules() {
     // Cancel existing tasks
@@ -162,7 +41,12 @@ export const schedulerPlugin = fp(async (app) => {
           withAdvisoryLock(
             app.prisma,
             tenantAdvisoryKey(cfg.tenantId),
-            () => syncPhorestForTenant(cfg.tenantId),
+            async () => {
+              // Phase 86 (SA-03): shifts + appointments sync under the SAME lock and record onto
+              // the SAME PhorestSyncRun row (runId hand-off). Cron actor = SYSTEM (no actorUserId).
+              const shiftRun = await syncPhorestShifts(app, cfg.tenantId);
+              await syncPhorestAppointments(app, cfg.tenantId, { runId: shiftRun.runId });
+            },
             app.log,
           ).catch((err) => app.log.error({ err, tenantId: cfg.tenantId }, "Scheduler-Fehler"));
         },

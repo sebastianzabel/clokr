@@ -132,8 +132,7 @@
     <div class="login-form-panel">
       <div class="login-card">
         <div class="login-logo">
-          <img src="/clokr-icon.png" alt="Clokr" class="login-logo-img" />
-          <span class="login-logo-text">Clokr</span>
+          <img src="/clokr-wordmark.png" alt="Clokr" class="login-logo-img" />
         </div>
         <h2 class="login-heading">Willkommen zurück</h2>
         <p class="login-subtitle">Bitte melden Sie sich an</p>
@@ -374,11 +373,14 @@
   }
 
   .login-brand-logo {
-    max-width: 180px;
+    width: 200px;
+    max-width: 60%;
     height: auto;
     margin-bottom: 2rem;
+    background: #fff;
+    padding: 1.5rem 1.75rem;
     border-radius: 16px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   }
 
   .login-brand-title {
@@ -446,15 +448,10 @@
   }
 
   .login-logo-img {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-  }
-
-  .login-logo-text {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--brand);
+    height: 44px;
+    width: auto;
+    max-width: 200px;
+    object-fit: contain;
   }
 
   .login-heading {

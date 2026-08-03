@@ -1,0 +1,23 @@
+{
+  "_comment": "Phase 85 Plan 07 — the SAME mapped-staff window as appointments.json MINUS the second slot (appt-mapped-2 gone, e.g. the client cancelled/moved). Drives the hard-replace test: a re-sync against this fixture must HARD-DELETE the appt-mapped-2 row (not soft) and count appointmentsRemoved >= 1. The surviving item still carries real PII so the SA-02 drop invariant stays exercised. v3 shape: date in appointmentDate, LocalTime 'HH:mm:ss' times. The test rewrites appointmentDate onto an in-window date.",
+  "_embedded": {
+    "appointments": [
+      {
+        "appointmentId": "appt-mapped-1",
+        "version": 1,
+        "staffId": "ph-staff-mapped",
+        "appointmentDate": "2026-07-30",
+        "startTime": "09:00:00",
+        "endTime": "10:30:00",
+        "clientId": "cust-abc-123",
+        "clientName": "Jane Doe",
+        "serviceId": "svc-1",
+        "serviceName": "Haircut & Color",
+        "price": 89.5,
+        "notes": "Allergie: PPD; bevorzugt Hafermilch",
+        "state": "BOOKED"
+      }
+    ]
+  },
+  "page": { "size": 200, "totalElements": 1, "totalPages": 1, "number": 0 }
+}

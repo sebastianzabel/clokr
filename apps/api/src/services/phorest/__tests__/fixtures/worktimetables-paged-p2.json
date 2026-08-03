@@ -1,0 +1,19 @@
+{
+  "_embedded": {
+    "workTimeTables": [
+      {
+        "staffId": "ph-staff-mapped",
+        "branchId": "branch-1",
+        "timeSlots": [
+          {
+            "date": "2026-07-31",
+            "startTime": "09:00:00",
+            "endTime": "17:00:00",
+            "type": "WORKING"
+          }
+        ]
+      }
+    ]
+  },
+  "page": { "size": 1, "totalElements": 2, "totalPages": 2, "number": 1 }
+}
