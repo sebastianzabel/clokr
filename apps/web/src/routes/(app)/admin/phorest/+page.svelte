@@ -3,6 +3,7 @@
   import { api } from "$api/client";
   import SectionStack from "$lib/components/admin/SectionStack.svelte";
   import Section from "$lib/components/admin/Section.svelte";
+  import KPIStat from "$components/ui/KPIStat.svelte";
   import Pagination from "$components/ui/Pagination.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import { toasts } from "$stores/toast";
@@ -63,6 +64,8 @@
     name: "",
   });
   let phUnmappedCount = $derived(phMappingRows.filter((r) => !r.savedEmployeeId).length);
+  let phMappedCount = $derived(phMappingRows.filter((r) => r.savedEmployeeId).length);
+  let phStaffTotal = $derived(phMappingRows.length);
   let phPagedRows = $derived(
     phMappingRows.slice((phMapPage - 1) * phMapPageSize, phMapPage * phMapPageSize),
   );
@@ -90,6 +93,14 @@
   let phHistPage = $state(1);
   let phHistPageSize = $state(10);
 
+  const CRON_LABELS: Record<string, string> = {
+    "0 3 * * *": "Täglich 03:00",
+    "0 */6 * * *": "Alle 6 Std.",
+    "0 */2 * * *": "Alle 2 Std.",
+    "0 0 * * 1": "Montags 00:00",
+  };
+  let phCronLabel = $derived(CRON_LABELS[phSyncCron] ?? "Benutzerdefiniert");
+
   function phRunBadgeClass(status: string): string {
     if (status === "SUCCESS") return "badge-green";
     if (status === "RUNNING") return "badge-gray";
@@ -101,6 +112,12 @@
     if (status === "RUNNING") return "Läuft…";
     if (status === "SUSPECT") return "Verdächtig";
     return "Fehler";
+  }
+  function phRunTone(status: string): "good" | "bad" | "warn" | "neutral" {
+    if (status === "SUCCESS") return "good";
+    if (status === "SUSPECT") return "warn";
+    if (status === "RUNNING") return "neutral";
+    return "bad";
   }
 
   onMount(async () => {
@@ -158,6 +175,12 @@
       phConfigured = true;
       phSaved = true;
       setTimeout(() => (phSaved = false), 3000);
+      // Nach dem ersten Speichern Mapping + Observability nachladen.
+      if (phMappingRows.length === 0) {
+        void loadPhEmployees();
+        void loadPhMapping();
+        void loadPhSyncRuns();
+      }
     } catch (e: unknown) {
       phError = e instanceof Error ? e.message : "Fehler";
     } finally {
@@ -347,15 +370,57 @@
   sub="Schichten aus Salon-Software importieren"
   animate
 >
-  <!-- ── Phorest-Integration ──────────────────────────────────────────── -->
-  <Section title="Phorest-Integration" sub="Schichten aus Salon-Software importieren">
+  <!-- ── Übersicht (KPI-Widgets) ─────────────────────────────────────────── -->
+  {#if phConfigured}
+    <Section title="Übersicht" sub="Status der Phorest-Anbindung auf einen Blick">
+      <div class="kpi-row">
+        <KPIStat
+          label="Verbindung"
+          value={phConfigured ? "Konfiguriert" : "Offen"}
+          delta={phTestOk === true
+            ? "Zuletzt erfolgreich getestet"
+            : phTestOk === false
+              ? "Letzter Test fehlgeschlagen"
+              : "Noch nicht getestet"}
+          deltaTone={phTestOk === true ? "good" : phTestOk === false ? "bad" : "neutral"}
+        />
+        <KPIStat
+          label="Zuordnung"
+          value={`${phMappedCount}/${phStaffTotal || 0}`}
+          unit="MA"
+          progress={{
+            value: phMappedCount,
+            max: phStaffTotal || 1,
+            label: phUnmappedCount > 0 ? `${phUnmappedCount} offen` : "vollständig",
+          }}
+        />
+        <KPIStat
+          label="Auto-Sync"
+          value={phAutoSync ? "An" : "Aus"}
+          delta={phAutoSync ? phCronLabel : `Fenster ${phSyncWindowDays} Tage`}
+          deltaTone={phAutoSync ? "good" : "neutral"}
+        />
+        <KPIStat
+          label="Letzter Lauf"
+          value={phLatestRun ? phRunBadgeLabel(phLatestRun.status) : "—"}
+          delta={phLatestRun
+            ? new Date(phLatestRun.startedAt).toLocaleString("de-DE")
+            : "Noch kein Lauf"}
+          deltaTone={phLatestRun ? phRunTone(phLatestRun.status) : "neutral"}
+        />
+      </div>
+    </Section>
+  {/if}
+
+  <!-- ── Verbindung (Zugangsdaten) ───────────────────────────────────────── -->
+  <Section title="Verbindung" sub="Zugangsdaten zur Phorest-API">
     {#if phError}
-      <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+      <div class="alert alert-error ph-alert" role="alert">
         <span>⚠</span><span>{phError}</span>
       </div>
     {/if}
     {#if phSaved}
-      <div class="alert alert-success" role="alert" style="margin-bottom: 1rem;">
+      <div class="alert alert-success ph-alert" role="alert">
         <span>✓</span><span>Phorest-Konfiguration gespeichert.</span>
       </div>
     {/if}
@@ -400,48 +465,9 @@
           class="form-input"
           placeholder="••••••••"
         />
+        <p class="form-hint text-muted">Leer lassen, um das gespeicherte Passwort beizubehalten.</p>
       </div>
     </div>
-
-    <!-- Phase 85.1-03 (D-01) — Vor-/Nachbereitungszeit (tenant-global, 0-30 Min.) -->
-    <h4 class="sys-subtitle">Vor-/Nachbereitungszeit</h4>
-    <p class="text-muted ph-empty-msg">
-      Phorest hält die buchbare Zeit fest — die tatsächliche Arbeitszeit beginnt früher und endet
-      später. Dieser Puffer wird bei jedem Import auf die gespeicherte Schicht angewendet.
-    </p>
-    <div class="form-grid">
-      <div class="form-group">
-        <label class="form-label" for="ph-prep-min">Vorbereitungszeit (Min.)</label>
-        <input
-          id="ph-prep-min"
-          type="number"
-          min="0"
-          max="30"
-          bind:value={phPrepMinutes}
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label" for="ph-wrapup-min">Nachbereitungszeit (Min.)</label>
-        <input
-          id="ph-wrapup-min"
-          type="number"
-          min="0"
-          max="30"
-          bind:value={phWrapupMinutes}
-          class="form-input"
-        />
-      </div>
-    </div>
-
-    {#snippet footer()}
-      <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
-        {phSaving ? "Speichern…" : "Konfiguration speichern"}
-      </button>
-      <button class="btn btn-outline" onclick={testPhorest} disabled={phTesting || !phConfigured}>
-        {phTesting ? "Teste…" : "Verbindung testen"}
-      </button>
-    {/snippet}
 
     {#if phTestResult}
       <div
@@ -452,13 +478,115 @@
       </div>
     {/if}
 
-    {#if phConfigured}
+    {#snippet footer()}
+      <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
+        {phSaving ? "Speichern…" : "Zugangsdaten speichern"}
+      </button>
+      <button class="btn btn-outline" onclick={testPhorest} disabled={phTesting || !phConfigured}>
+        {phTesting ? "Teste…" : "Verbindung testen"}
+      </button>
+    {/snippet}
+  </Section>
+
+  <!-- ── Import-Einstellungen ────────────────────────────────────────────── -->
+  {#if phConfigured}
+    <Section title="Import-Einstellungen" sub="Puffer, Zeitfenster & automatischer Abgleich">
+      <h4 class="ph-subtitle">Vor-/Nachbereitungszeit</h4>
+      <p class="text-muted ph-note">
+        Phorest hält die buchbare Zeit fest — die tatsächliche Arbeitszeit beginnt früher und endet
+        später. Dieser Puffer wird bei jedem Import auf die gespeicherte Schicht angewendet.
+      </p>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label" for="ph-prep-min">Vorbereitungszeit (Min.)</label>
+          <input
+            id="ph-prep-min"
+            type="number"
+            min="0"
+            max="30"
+            bind:value={phPrepMinutes}
+            class="form-input"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="ph-wrapup-min">Nachbereitungszeit (Min.)</label>
+          <input
+            id="ph-wrapup-min"
+            type="number"
+            min="0"
+            max="30"
+            bind:value={phWrapupMinutes}
+            class="form-input"
+          />
+        </div>
+      </div>
+
       <hr class="ph-divider" />
 
-      <!-- ── Block A: Staff-Zuordnung ──────────────────────────────── -->
-      <h4 class="sys-subtitle">Staff-Zuordnung</h4>
+      <h4 class="ph-subtitle">Zeitfenster</h4>
+      <div class="form-group ph-narrow">
+        <label class="form-label" for="ph-window">Zeitfenster (Tage)</label>
+        <input
+          id="ph-window"
+          type="number"
+          min="1"
+          max="90"
+          bind:value={phSyncWindowDays}
+          class="form-input"
+        />
+        <p class="form-hint text-muted">
+          Gilt für automatischen und manuellen Sync. Standard: 7 Tage.
+        </p>
+      </div>
+
+      <hr class="ph-divider" />
+
+      <h4 class="ph-subtitle">Automatischer Sync</h4>
+      <label class="ph-toggle">
+        <input type="checkbox" bind:checked={phAutoSync} class="ph-toggle-cb" />
+        <span>
+          <strong>Auto-Sync aktivieren</strong><br />
+          <span class="text-muted ph-note-sm"
+            >Schichten werden automatisch aus Phorest importiert.</span
+          >
+        </span>
+      </label>
+
+      {#if phAutoSync}
+        <div class="form-group ph-narrow ph-cron">
+          <label class="form-label" for="ph-cron">Zeitplan</label>
+          <select id="ph-cron" bind:value={phSyncCron} class="form-input">
+            <option value="0 3 * * *">Täglich um 03:00</option>
+            <option value="0 */6 * * *">Alle 6 Stunden</option>
+            <option value="0 */2 * * *">Alle 2 Stunden</option>
+            <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
+          </select>
+        </div>
+      {/if}
+
+      {#snippet footer()}
+        <button class="btn btn-primary" onclick={savePhorest} disabled={phSaving}>
+          {phSaving ? "Speichern…" : "Einstellungen speichern"}
+        </button>
+        <span class="text-muted ph-footer-hint">Zeitplan wird beim Speichern aktiviert.</span>
+      {/snippet}
+    </Section>
+
+    <!-- ── Mitarbeiter-Zuordnung ─────────────────────────────────────────── -->
+    <Section
+      title="Mitarbeiter-Zuordnung"
+      sub="Phorest-Mitarbeiter mit clokr-Mitarbeitern verbinden"
+    >
+      {#snippet actions()}
+        {#if phStaffTotal > 0}
+          <span class="badge {phUnmappedCount > 0 ? 'badge-yellow' : 'badge-green'}">
+            {phMappedCount}/{phStaffTotal} zugeordnet
+          </span>
+        {/if}
+      {/snippet}
+
       {#if phUnmappedCount > 0}
-        <div class="alert alert-warning" role="alert" style="margin-bottom: 0.75rem;">
+        <div class="alert alert-warning ph-alert" role="alert">
           <span>⚠</span>
           <span>
             {phUnmappedCount} Phorest-Mitarbeiter ohne Zuordnung. Ihre Schichten werden übersprungen,
@@ -536,56 +664,79 @@
           />
         </div>
       {:else}
-        <p class="text-muted ph-empty-msg">
+        <p class="text-muted ph-note">
           Keine Phorest-Mitarbeiter gefunden. Prüfen Sie Branch-ID und Zugangsdaten.
         </p>
+      {/if}
+    </Section>
+
+    <!-- ── Synchronisation ───────────────────────────────────────────────── -->
+    <Section title="Synchronisation" sub="Schichten jetzt abgleichen & Verlauf ansehen">
+      {#snippet actions()}
+        <button class="btn btn-primary btn-sm" onclick={syncPhorest} disabled={phSyncing}>
+          {phSyncing ? "Synchronisiere…" : "Jetzt synchronisieren"}
+        </button>
+      {/snippet}
+
+      <!-- Letzter Lauf als KPI-Kacheln -->
+      <div class="ph-run-hd">
+        <span class="ph-subtitle ph-subtitle--inline">Letzter Lauf</span>
+        {#if phLatestRun}
+          <span class="badge {phRunBadgeClass(phLatestRun.status)}">
+            {phRunBadgeLabel(phLatestRun.status)}
+          </span>
+          <span class="ph-run-time">{new Date(phLatestRun.startedAt).toLocaleString("de-DE")}</span>
+        {/if}
+      </div>
+
+      {#if phRunsLoading && !phLatestRun}
+        <div class="skeleton skeleton-text ph-skel"></div>
+      {:else if phLatestRun}
+        <div class="kpi-row ph-run-kpis">
+          <KPIStat label="Importiert" value={String(phLatestRun.created)} />
+          <KPIStat label="Aktualisiert" value={String(phLatestRun.updated)} />
+          <KPIStat
+            label="Ersetzt"
+            value={String(phLatestRun.replaced ?? 0)}
+            deltaTone={(phLatestRun.replaced ?? 0) > 0 ? "warn" : "neutral"}
+          />
+          <KPIStat label="Abgesagt" value={String(phLatestRun.cancelled)} />
+          <KPIStat
+            label="BS übersprungen"
+            value={String(phLatestRun.skippedVocationalSchool ?? 0)}
+          />
+          <KPIStat
+            label="Ohne Zuordnung"
+            value={String(phLatestRun.unmapped)}
+            deltaTone={phLatestRun.unmapped > 0 ? "warn" : "neutral"}
+          />
+        </div>
+        {#if phLatestRun.status === "ERROR" && phLatestRun.error}
+          <div class="alert alert-error ph-alert" role="alert">
+            <span>✕</span><span>{phLatestRun.error}</span>
+          </div>
+        {:else if phLatestRun.status === "SUSPECT" && phLatestRun.error}
+          <div class="alert alert-warning ph-alert" role="alert">
+            <span>⚠</span><span>{phLatestRun.error}</span>
+          </div>
+        {/if}
+      {:else}
+        <p class="text-muted ph-note">Noch kein Sync-Lauf. Starten Sie einen manuellen Sync.</p>
+      {/if}
+
+      {#if phSyncError}
+        <div class="alert alert-error ph-alert" role="alert">
+          <span>✕</span><span>{phSyncError}</span>
+        </div>
       {/if}
 
       <hr class="ph-divider" />
 
-      <h4 class="sys-subtitle">Automatischer Sync</h4>
-      <label class="toggle-label" style="margin-bottom: 1rem;">
-        <input type="checkbox" bind:checked={phAutoSync} class="toggle-cb" />
-        <span>
-          <strong>Auto-Sync aktivieren</strong><br />
-          <span class="text-muted ph-sync-hint"
-            >Schichten werden automatisch aus Phorest importiert (nächste 7 Tage).</span
-          >
-        </span>
-      </label>
-
-      {#if phAutoSync}
-        <div class="form-group ph-cron-group">
-          <label class="form-label" for="ph-cron">Zeitplan</label>
-          <select id="ph-cron" bind:value={phSyncCron} class="form-input">
-            <option value="0 3 * * *">Täglich um 03:00</option>
-            <option value="0 */6 * * *">Alle 6 Stunden</option>
-            <option value="0 */2 * * *">Alle 2 Stunden</option>
-            <option value="0 0 * * 1">Wöchentlich (Montag 00:00)</option>
-          </select>
-          <p class="form-hint text-muted">
-            Zeitplan wird beim Speichern der Konfiguration aktiviert.
-          </p>
-        </div>
-      {/if}
-
-      <!-- ── Block C: Manueller Sync + Observability ───────────────── -->
-      <h4 class="sys-subtitle">Manueller Sync</h4>
-      <div class="form-group ph-window-group">
-        <label class="form-label" for="ph-window">Zeitfenster (Tage)</label>
-        <input
-          id="ph-window"
-          type="number"
-          min="1"
-          max="90"
-          bind:value={phSyncWindowDays}
-          class="form-input"
-        />
-        <p class="form-hint text-muted">
-          Gilt für automatischen und manuellen Sync. Standard: 7 Tage. Wird beim Speichern der
-          Konfiguration übernommen.
-        </p>
-      </div>
+      <!-- Optionaler Zeitraum-Override -->
+      <h4 class="ph-subtitle">Zeitraum (optional)</h4>
+      <p class="text-muted ph-note">
+        Ohne Angabe wird das Zeitfenster verwendet (heute bis heute + {phSyncWindowDays} Tage).
+      </p>
       <div class="form-grid">
         <div class="form-group">
           <label class="form-label" for="ph-sync-start">Von</label>
@@ -596,60 +747,9 @@
           <input id="ph-sync-end" type="date" bind:value={phSyncEnd} class="form-input" />
         </div>
       </div>
-      <p class="form-hint text-muted">
-        Optional. Ohne Angabe wird das Zeitfenster oben verwendet (heute bis heute +
-        {phSyncWindowDays} Tage).
-      </p>
-      <div class="settings-actions">
-        <button class="btn btn-primary" onclick={syncPhorest} disabled={phSyncing}>
-          {phSyncing ? "Synchronisiere…" : "Jetzt synchronisieren"}
-        </button>
-      </div>
-
-      {#if phSyncError}
-        <div class="alert alert-error" role="alert" style="margin-top: 0.75rem;">
-          <span>✕</span><span>{phSyncError}</span>
-        </div>
-      {/if}
-
-      <h4 class="sys-subtitle">Letzter Lauf</h4>
-      {#if phRunsLoading && !phLatestRun}
-        <div class="skeleton skeleton-text ph-skel"></div>
-      {:else if phLatestRun}
-        <div class="ph-run-panel">
-          <div class="ph-run-head">
-            <span class="ph-run-time"
-              >{new Date(phLatestRun.startedAt).toLocaleString("de-DE")}</span
-            >
-            <span class="badge {phRunBadgeClass(phLatestRun.status)}"
-              >{phRunBadgeLabel(phLatestRun.status)}</span
-            >
-          </div>
-          <div class="ph-sync-result">
-            <strong>{phLatestRun.created}</strong> importiert ·
-            <strong>{phLatestRun.cancelled}</strong> abgesagt ·
-            <strong>{phLatestRun.unmapped}</strong> ohne Zuordnung ·
-            <strong>{phLatestRun.skippedVocationalSchool ?? 0}</strong> BS übersprungen ·
-            <strong>{phLatestRun.replaced ?? 0}</strong> ersetzt ·
-            <strong>{phLatestRun.status === "ERROR" ? 1 : 0}</strong> Fehler
-          </div>
-          {#if phLatestRun.status === "ERROR" && phLatestRun.error}
-            <div class="alert alert-error" role="alert" style="margin-top: 0.5rem;">
-              <span>✕</span><span>{phLatestRun.error}</span>
-            </div>
-          {:else if phLatestRun.status === "SUSPECT" && phLatestRun.error}
-            <div class="alert alert-warning" role="alert" style="margin-top: 0.5rem;">
-              <span>⚠</span><span>{phLatestRun.error}</span>
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <p class="text-muted ph-empty-msg">
-          Noch kein Sync-Lauf. Starten Sie einen manuellen Sync.
-        </p>
-      {/if}
 
       {#if phRunsTotal > 0}
+        <hr class="ph-divider" />
         <button
           class="btn btn-sm btn-ghost ph-history-toggle"
           onclick={() => {
@@ -657,7 +757,7 @@
             if (phHistoryOpen) void loadPhSyncRuns();
           }}
         >
-          {phHistoryOpen ? "Verlauf ausblenden" : "Verlauf anzeigen"}
+          {phHistoryOpen ? "Verlauf ausblenden" : `Verlauf anzeigen (${phRunsTotal})`}
         </button>
         {#if phHistoryOpen}
           <div class="table-wrap">
@@ -703,8 +803,8 @@
           </div>
         {/if}
       {/if}
-    {/if}
-  </Section>
+    </Section>
+  {/if}
 </SectionStack>
 
 <!-- ── Phorest: Zuordnung aufheben (danger) ──────────────────────────────── -->
@@ -718,36 +818,63 @@
 />
 
 <style>
-  /* Duplicated from admin/system/+page.svelte — these utility classes are
-     also used by other (still-present) sections there, so they are copied
-     rather than moved (Phase 85.1-03 extraction). */
-  .sys-subtitle {
+  .ph-subtitle {
     font-size: 0.875rem;
     font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin: 1rem 0 0.5rem;
+    margin: 0 0 0.5rem;
+  }
+  .ph-subtitle:not(:first-child) {
+    margin-top: 0.25rem;
+  }
+  .ph-subtitle--inline {
+    margin: 0;
   }
 
-  .toggle-label {
+  .kpi-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+  .ph-run-kpis {
+    gap: 1.75rem;
+    margin-top: 0.5rem;
+  }
+  .ph-run-hd {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .ph-run-time {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  .ph-toggle {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
     cursor: pointer;
     font-weight: 500;
-    margin-top: 0.375rem;
   }
-
-  .toggle-cb {
+  .ph-toggle-cb {
     width: 16px;
     height: 16px;
     accent-color: var(--brand);
+  }
+  .ph-cron {
+    margin-top: 1rem;
   }
 
   .table-wrap {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    margin-top: 0.75rem;
   }
 
   .form-grid {
@@ -755,41 +882,39 @@
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
   }
+  .ph-narrow {
+    max-width: 320px;
+  }
 
   /* Same pattern as admin/integrations/+page.svelte's "Aufheben" action. */
   .btn-danger-text {
     color: var(--bad);
   }
 
-  /* Phorest integration extras — moved verbatim from admin/system/+page.svelte. */
   .ph-divider {
     margin: 1.5rem 0;
     border: none;
     border-top: 1px solid var(--border);
   }
+  .ph-alert {
+    margin-bottom: 1rem;
+  }
+  .ph-alert:last-child {
+    margin-bottom: 0;
+  }
   .ph-test-alert {
     margin-top: 0.75rem;
   }
-  .ph-sync-hint {
+  .ph-note {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+  }
+  .ph-note-sm {
     font-size: 0.8125rem;
   }
-  .ph-cron-group {
-    max-width: 320px;
-    margin-bottom: 1.25rem;
+  .ph-footer-hint {
+    font-size: 0.8125rem;
   }
-  .ph-window-group {
-    max-width: 320px;
-    margin-bottom: 1.25rem;
-  }
-  .ph-sync-result {
-    margin-top: 1rem;
-    padding: 0.75rem 1rem;
-    background: var(--bg-subtle);
-    border-radius: var(--r-md);
-    font-size: 0.875rem;
-    color: var(--text);
-  }
-  /* Block A/C helpers */
   .mono-sm {
     font-family: var(--font-mono);
     font-size: 0.8125rem;
@@ -804,43 +929,20 @@
     gap: 0.5rem;
     flex-wrap: wrap;
   }
-  .ph-empty-msg {
-    margin: 0.75rem 0;
-    font-size: 0.875rem;
-  }
   .ph-skel {
     height: 3rem;
     margin: 0.75rem 0;
   }
-  .ph-run-panel {
-    margin-top: 0.5rem;
-  }
-  .ph-run-head {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-  .ph-run-time {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--text-muted);
-  }
   .ph-history-toggle {
-    margin-top: 1rem;
-  }
-
-  .settings-actions {
-    display: flex;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
-    align-items: center;
-    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
   }
 
   @media (max-width: 640px) {
     .form-grid {
       grid-template-columns: 1fr;
+    }
+    .kpi-row {
+      gap: 1.25rem;
     }
   }
 </style>
