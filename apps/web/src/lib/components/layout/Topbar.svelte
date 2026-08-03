@@ -396,7 +396,9 @@
   .topbar {
     grid-area: topbar;
     background: var(--bg-card);
-    border-bottom: 1px solid var(--border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    position: relative;
+    z-index: 10;
     display: flex;
     align-items: center;
     padding: 0 24px;

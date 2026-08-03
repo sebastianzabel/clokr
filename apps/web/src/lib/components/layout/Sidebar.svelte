@@ -163,8 +163,7 @@
 
 <aside class="sidebar" aria-label="Hauptnavigation" data-testid="sidebar">
   <a href="/dashboard" class="sidebar-brand" data-testid="sidebar-brand">
-    <img class="mark" src="/clokr-icon.png" alt="" aria-hidden="true" />
-    <div class="name" translate="no">clo<em>kr</em></div>
+    <img class="mark" src="/clokr-wordmark.png" alt="Clokr Zeiterfassung" />
   </a>
 
   <div class="sidebar-scroll">
@@ -233,7 +232,9 @@
   .sidebar {
     grid-area: sidebar;
     background: var(--bg-card);
-    border-right: 1px solid var(--border);
+    box-shadow: 1px 0 3px rgba(0, 0, 0, 0.04);
+    position: relative;
+    z-index: 10;
     display: flex;
     flex-direction: column;
     position: sticky;
@@ -247,7 +248,7 @@
   .sidebar-brand,
   .sidebar-brand:hover,
   .sidebar-brand:focus {
-    padding: 22px 20px 18px;
+    padding: 44px 20px 22px;
     margin-bottom: 14px;
     display: flex;
     flex-direction: column;
@@ -255,29 +256,15 @@
     gap: 8px;
     text-decoration: none;
     border: 0;
-    border-bottom: 1px solid var(--border);
     color: var(--text);
   }
 
   .sidebar-brand .mark {
-    width: 48px;
-    height: 48px;
-    border-radius: 12px;
+    width: auto;
+    max-width: 190px;
+    height: auto;
     object-fit: contain;
     display: block;
-  }
-
-  .sidebar-brand .name {
-    font-family: var(--font-serif);
-    font-size: 24px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    text-decoration: none;
-  }
-
-  .sidebar-brand .name em {
-    font-style: italic;
-    color: var(--brand-light);
   }
 
   .sidebar-scroll {
@@ -380,7 +367,6 @@
   .sidebar-foot {
     margin-top: auto;
     padding: 14px;
-    border-top: 1px solid var(--border);
     display: flex;
     align-items: center;
     gap: 10px;
@@ -448,7 +434,6 @@
      Literal font-size 0.75rem per D-07 (no --text-xs token exists in tokens.css). */
   .sidebar-version {
     padding: var(--s-2) var(--s-3) var(--s-3);
-    border-top: 1px solid var(--border);
     text-align: center;
   }
 
