@@ -444,3 +444,184 @@ describe("break-config: employee overrides", () => {
     expect(auditRow).toBeNull();
   });
 });
+
+// ── Phase 85.1.1 (D-01, D-04) — Phorest puffer override: PATCH validation + audit ──
+
+describe("phorest puffer: employee overrides (85.1.1)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "bcfg-phorest");
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  // Reset employee overrides to null and wipe override audit rows for clean assertions.
+  beforeEach(async () => {
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { phorestPrepMinutesOverride: null, phorestWrapupMinutesOverride: null },
+    });
+    await app.prisma.auditLog.deleteMany({
+      where: {
+        action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+        entity: "Employee",
+        entityId: data.employee.id,
+      },
+    });
+  });
+
+  // ── Range validation ──────────────────────────────────────────────────────────
+
+  it("rejects phorestPrepMinutesOverride above cap (31) with German message", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestPrepMinutesOverride: 31 },
+    });
+    expect(res.statusCode).toBe(400);
+    const blob = JSON.stringify(JSON.parse(res.body));
+    expect(blob).toMatch(/30 Minuten/);
+    expect(blob).toMatch(/Vorbereitungszeit/);
+  });
+
+  it("rejects phorestWrapupMinutesOverride below floor (-1) with German message", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestWrapupMinutesOverride: -1 },
+    });
+    expect(res.statusCode).toBe(400);
+    const blob = JSON.stringify(JSON.parse(res.body));
+    expect(blob).toMatch(/nicht negativ/);
+    expect(blob).toMatch(/Nachbereitungszeit/);
+  });
+
+  // ── Persistence: 0 and null ───────────────────────────────────────────────────
+
+  it("persists phorestPrepMinutesOverride=0 and phorestWrapupMinutesOverride=0 (not null, not tenant default)", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestPrepMinutesOverride: 0, phorestWrapupMinutesOverride: 0 },
+    });
+    expect(res.statusCode).toBe(200);
+    const after = await app.prisma.employee.findUnique({
+      where: { id: data.employee.id },
+      select: { phorestPrepMinutesOverride: true, phorestWrapupMinutesOverride: true },
+    });
+    expect(after?.phorestPrepMinutesOverride).toBe(0);
+    expect(after?.phorestWrapupMinutesOverride).toBe(0);
+  });
+
+  it("clears phorestPrepMinutesOverride to null", async () => {
+    // First set a value, then clear it.
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { phorestPrepMinutesOverride: 10 },
+    });
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestPrepMinutesOverride: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const after = await app.prisma.employee.findUnique({
+      where: { id: data.employee.id },
+      select: { phorestPrepMinutesOverride: true },
+    });
+    expect(after?.phorestPrepMinutesOverride).toBeNull();
+  });
+
+  // ── Audit emission on change ─────────────────────────────────────────────────
+
+  it("emits EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED audit row when override is set", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestPrepMinutesOverride: 5 },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+        entity: "Employee",
+        entityId: data.employee.id,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(auditRow).not.toBeNull();
+    const oldVal = auditRow!.oldValue as { phorestPrepMinutesOverride: number | null };
+    const newVal = auditRow!.newValue as { phorestPrepMinutesOverride: number | null };
+    expect(oldVal.phorestPrepMinutesOverride).toBeNull();
+    expect(newVal.phorestPrepMinutesOverride).toBe(5);
+  });
+
+  // ── Audit NOT emitted on no-op ───────────────────────────────────────────────
+
+  it("does NOT emit EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED when no puffer field is in the body", async () => {
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { firstName: "NewName" },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+        entity: "Employee",
+        entityId: data.employee.id,
+      },
+    });
+    expect(auditRow).toBeNull();
+  });
+
+  it("does NOT emit EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED when value is identical to current", async () => {
+    // Pre-set a value so the submitted identical value is a no-op.
+    await app.prisma.employee.update({
+      where: { id: data.employee.id },
+      data: { phorestPrepMinutesOverride: 5 },
+    });
+    // Wipe any audit row produced by the previous update.
+    await app.prisma.auditLog.deleteMany({
+      where: {
+        action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+        entity: "Employee",
+        entityId: data.employee.id,
+      },
+    });
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/employees/${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { phorestPrepMinutesOverride: 5 },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const auditRow = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "EMPLOYEE_PHOREST_PUFFER_OVERRIDE_CHANGED",
+        entity: "Employee",
+        entityId: data.employee.id,
+      },
+    });
+    expect(auditRow).toBeNull();
+  });
+});
