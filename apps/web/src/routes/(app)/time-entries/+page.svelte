@@ -240,6 +240,8 @@
   let waiveReason = $state("");
   // Anpassen (Task 2) reveals the existing break start/end editor.
   let showBreakEditor = $state(false);
+  // Ref to the existing break editor so Anpassen can scroll it into view.
+  let breakEditorEl: HTMLElement | null = $state(null);
 
   // Break-confirm controls only render in edit mode, when the feature is on, and
   // when the entry is NOT in a locked month (Revisionssicherheit — badge stays,
@@ -971,6 +973,34 @@
       await loadAll();
     } catch {
       toasts.error("Pause konnte nicht bestätigt werden. Bitte erneut versuchen.");
+    } finally {
+      breakActionPending = false;
+    }
+  }
+
+  // Anpassen → reveal + scroll to the EXISTING break start/end editor. Saving via
+  // the modal footer runs the existing PUT /:id path, which flips AUTO→CONFIRMED
+  // server-side (Phase 91) — no new endpoint, no duplicate editor.
+  function revealBreakEditor() {
+    showBreakEditor = true;
+    breakEditorEl?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  // Durchgearbeitet → PATCH /:id/break-status { action: "waive", reason? } zeros the
+  // break, sets WAIVED, alerts the manager (no approval). Optional reason omitted
+  // when empty. Refetch so the badge turns gray, then close.
+  async function waiveBreak() {
+    if (!editEntry) return;
+    breakActionPending = true;
+    try {
+      const body: { action: "waive"; reason?: string } = { action: "waive" };
+      const trimmed = waiveReason.trim();
+      if (trimmed) body.reason = trimmed;
+      await api.patch(`/time-entries/${editEntry.id}/break-status`, body);
+      closeModal();
+      await loadAll();
+    } catch {
+      toasts.error("Aktion fehlgeschlagen. Bitte erneut versuchen.");
     } finally {
       breakActionPending = false;
     }
@@ -1752,7 +1782,12 @@
           />
         </div>
       </div>
-      <div class="breaks-section" data-testid="break-slots-editor">
+      <div
+        class="breaks-section"
+        class:break-editor-highlight={showBreakEditor}
+        bind:this={breakEditorEl}
+        data-testid="break-slots-editor"
+      >
         <span class="form-label">Pausen</span>
         {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
           <div class="break-legacy">
@@ -1871,18 +1906,87 @@
           </span>
 
           {#if showBreakConfirm && editEntry.breakStatus === "AUTO"}
-            <div class="break-actions" data-testid="break-actions">
-              <button
-                class="btn btn-primary btn-sm"
-                type="button"
-                onclick={confirmBreak}
-                disabled={breakActionPending}
-                data-testid="break-confirm-btn"
-              >
-                {#if breakActionPending}<span class="btn-spinner"></span>{/if}
-                Bestätigen
-              </button>
-            </div>
+            {#if !waivePanelOpen}
+              <div class="break-actions" data-testid="break-actions">
+                <button
+                  class="btn btn-primary btn-sm"
+                  type="button"
+                  onclick={confirmBreak}
+                  disabled={breakActionPending}
+                  data-testid="break-confirm-btn"
+                >
+                  {#if breakActionPending}<span class="btn-spinner"></span>{/if}
+                  Bestätigen
+                </button>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  onclick={revealBreakEditor}
+                  disabled={breakActionPending}
+                  data-testid="break-adjust-btn"
+                >
+                  Anpassen
+                </button>
+                <button
+                  class="btn btn-ghost btn-sm"
+                  type="button"
+                  onclick={() => (waivePanelOpen = true)}
+                  disabled={breakActionPending}
+                  data-testid="break-waive-btn"
+                >
+                  Durchgearbeitet
+                </button>
+              </div>
+            {:else}
+              <!-- Inline waive confirm (audited self-declaration — NOT a red
+                   destructive dialog; no --bad styling). -->
+              <div class="break-waive-panel" data-testid="break-waive-panel">
+                <h4 class="break-waive-heading">Ohne Pause durchgearbeitet?</h4>
+                <p class="break-waive-body">
+                  Die automatische Pause wird auf 0 Minuten gesetzt. Deine Führungskraft wird
+                  informiert.
+                </p>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="Grund (optional)"
+                  bind:value={waiveReason}
+                  maxlength="200"
+                  disabled={breakActionPending}
+                  data-testid="break-waive-reason"
+                />
+                <div class="break-actions">
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    onclick={() => {
+                      waivePanelOpen = false;
+                      waiveReason = "";
+                    }}
+                    disabled={breakActionPending}
+                    data-testid="break-waive-cancel"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    onclick={waiveBreak}
+                    disabled={breakActionPending}
+                    data-testid="break-waive-confirm"
+                  >
+                    {#if breakActionPending}<span class="btn-spinner"></span>{/if}
+                    Durchgearbeitet bestätigen
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {/if}
+
+          {#if editEntry.breakStatus === "WAIVED" && editEntry.breakWaivedReason}
+            <p class="break-waived-reason" data-testid="break-waived-reason">
+              {editEntry.breakWaivedReason}
+            </p>
           {/if}
         </div>
       {/if}
@@ -1976,6 +2080,44 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  .break-waive-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background-color: var(--bg-subtle);
+  }
+  .break-waive-heading {
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1.3;
+    margin: 0;
+    color: var(--text);
+  }
+  .break-waive-body {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    margin: 0;
+    color: var(--text-muted);
+  }
+  /* long-text backstop (UI-SPEC T-93-02): wrap free text, never overflow. */
+  .break-waived-reason {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    margin: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  /* Anpassen highlight — draws the eye to the existing break editor. */
+  .break-editor-highlight {
+    outline: 2px solid var(--brand-soft);
+    outline-offset: 4px;
+    border-radius: var(--r-sm);
+    transition: outline-color 0.2s ease;
   }
   .btn-spinner {
     display: inline-block;
