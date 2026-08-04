@@ -817,6 +817,21 @@
     return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
   }
 
+  // Phase 93 (BREAK-07, locked #7 / decision #8) — suggested break in minutes by
+  // gross Start→Ende, mirroring the backend getEffectiveBreakDuration thresholds
+  // exactly so UI and server agree: <=6h -> 0, >6h..<=9h -> 30, >9h -> 45. Invalid
+  // / end-not-set returns 0.
+  function suggestedBreakMinutes(startHHmm: string, endHHmm: string): number {
+    if (!startHHmm || !endHHmm) return 0;
+    const [sh, sm] = startHHmm.split(":").map(Number);
+    const [eh, em] = endHHmm.split(":").map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return 0;
+    const gross = eh * 60 + em - (sh * 60 + sm);
+    if (gross <= 360) return 0; // <= 6h — no Pflichtpause
+    if (gross <= 540) return 30; // > 6h and <= 9h
+    return 45; // > 9h
+  }
+
   function openAdd(forDate?: string) {
     const targetDate = forDate ?? selectedDate;
     // If an entry already exists for this day, open it for editing instead
@@ -830,8 +845,14 @@
     formStart = "09:00";
     formEnd = "17:00";
     formHasEnd = true;
-    if (defaultBreakStart) {
-      formBreaks = [{ start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, 30) }];
+    // Phase 93 (BREAK-07) — dynamic 0/30/45 prefill for NEW entries. <=6h yields
+    // no break row (no auto-break, no AUTO, no nudge). When defaultBreakStart is
+    // null, fall back to no prefilled row — do not invent a start time.
+    const suggested = suggestedBreakMinutes(formStart, formEnd);
+    if (suggested > 0 && defaultBreakStart) {
+      formBreaks = [
+        { start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, suggested) },
+      ];
     } else {
       formBreaks = [];
     }
