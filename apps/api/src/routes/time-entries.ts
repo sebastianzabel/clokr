@@ -1981,6 +1981,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           newValue: { breakStatus: "CONFIRMED" },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
+        // Phase 92 (BREAK-06): clear the employee BREAK_UNCONFIRMED nudge for this entry.
+        // Type-scoped so the manager BREAK_COMPLIANCE_ALERT (same relatedId) is never touched.
+        await app.dismissByRelated("TimeEntry", id, "BREAK_UNCONFIRMED");
         return { entry: updated };
       }
 
@@ -2024,6 +2027,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newValue: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      // Phase 92 (BREAK-06): clear the employee BREAK_UNCONFIRMED nudge for this entry.
+      // Type-scoped so it never dismisses the manager BREAK_COMPLIANCE_ALERT emitted below
+      // (this call's or any pre-existing one for the same entry).
+      await app.dismissByRelated("TimeEntry", id, "BREAK_UNCONFIRMED");
 
       // 0-ing the break changes net worked time — every other break-mutating path recomputes.
       await updateOvertimeAccount(app, entry.employeeId);
