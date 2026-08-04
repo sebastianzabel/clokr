@@ -113,6 +113,13 @@ describe("PATCH /:id/break-status", () => {
     });
     expect(audit).not.toBeNull();
     expect((audit?.oldValue as { breakMinutes?: number } | null)?.breakMinutes).toBeDefined();
+    // WR-01: the pre-waive Break slots must be captured in the audit oldValue so a later
+    // "durchgearbeitet" dispute is reconstructable (Break is not a soft-delete model).
+    const capturedBreaks = (audit?.oldValue as { breaks?: unknown[] } | null)?.breaks;
+    expect(Array.isArray(capturedBreaks)).toBe(true);
+    expect(capturedBreaks?.length ?? 0).toBeGreaterThan(0);
+    expect(capturedBreaks?.[0]).toHaveProperty("startTime");
+    expect(capturedBreaks?.[0]).toHaveProperty("endTime");
 
     // data.adminUser is ADMIN role in the same tenant -> manager-alert recipient
     const notification = await app.prisma.notification.findFirst({

@@ -1986,6 +1986,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // action === "waive" — "durchgearbeitet": no break taken, time is really worked and
       // therefore payable. No manager approval required (LOCKED Decision 5).
+
+      // Capture the exact pre-waive break slots BEFORE deletion. Break is not a soft-delete model,
+      // so these rows are gone after deleteMany — the audit oldValue is the only reconstruction
+      // path for a later "durchgearbeitet" dispute (Revisionssicherheit, WR-01).
+      const priorBreaks = await app.prisma.break.findMany({
+        where: { timeEntryId: id },
+        select: { id: true, startTime: true, endTime: true },
+      });
       await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
       const updated = await app.prisma.timeEntry.update({
         where: { id },
@@ -1997,7 +2005,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         action: "BREAK_WAIVED",
         entity: "TimeEntry",
         entityId: id,
-        oldValue: { breakStatus: oldStatus, breakMinutes: entry.breakMinutes },
+        oldValue: {
+          breakStatus: oldStatus,
+          breakMinutes: entry.breakMinutes,
+          breaks: priorBreaks,
+        },
         newValue: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
