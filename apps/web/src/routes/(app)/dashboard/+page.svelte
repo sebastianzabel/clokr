@@ -1424,7 +1424,11 @@
                   data-testid="dashboard-break-nudge"
                 >
                   <span class="oi-dot oi-dot--warn"></span>
-                  <span>{unconfirmedBreakDays} Tage: Pause bestätigen</span>
+                  <span
+                    >{unconfirmedBreakDays === 1
+                      ? "1 Tag: Pause bestätigen"
+                      : `${unconfirmedBreakDays} Tage: Pause bestätigen`}</span
+                  >
                   <span class="oi-link">→</span>
                 </a>
               {/if}
