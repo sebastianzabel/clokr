@@ -376,7 +376,12 @@
         enforceBreakConfirmation = workCfg?.enforceBreakConfirmation === true;
 
         if (enforceBreakConfirmation) {
-          const prev = subMonths(new Date(), 1);
+          // Phase 93 (BREAK-07) — look back 12 months, not just to the 1st of last
+          // month. Phase 92-04 defers auto-close on unconfirmed AUTO breaks, so a
+          // still-open (non-locked) month can carry unconfirmed breaks well beyond
+          // last month; a narrow window would silently undercount the most overdue
+          // days this nudge exists to surface. Locked months self-exclude below.
+          const prev = subMonths(new Date(), 12);
           const from = format(new Date(prev.getFullYear(), prev.getMonth(), 1), "yyyy-MM-dd");
           const breakRows = await api
             .get<
