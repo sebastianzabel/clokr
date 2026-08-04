@@ -175,6 +175,15 @@
     total: number;
   } | null = $state(null);
 
+  // ── Pausen-Bestätigung Nudge (BREAK-07) ──────────────────────────────────────
+  // Self-service dashboard nudge: points the employee at their own unconfirmed
+  // AUTO break days on /time-entries. Sourced client-side from the self-scoped
+  // GET /time-entries (breakStatus === "AUTO" && !isLocked). Gated behind the
+  // tenant dormancy flag `enforceBreakConfirmation` (fail-safe false) so the
+  // feature stays invisible until the tenant enables it.
+  let enforceBreakConfirmation = $state(false);
+  let unconfirmedBreakDays = $state(0);
+
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   interface TodayEntry {
     id: string;
@@ -352,6 +361,39 @@
         }
       } catch {
         isExempt = false;
+      }
+
+      // Pausen-Bestätigung Nudge (BREAK-07) — self-service, employee-scoped.
+      // Read the tenant dormancy flag first; fail-safe to false so a network
+      // blip or a tenant without the feature never surfaces the nudge. Only
+      // when the flag is ON do we fetch the caller's own recent entries and
+      // count the DISTINCT dates that carry an unconfirmed AUTO break in a
+      // still-open (non-locked) month. Locked months self-exclude via isLocked.
+      try {
+        const workCfg = await api
+          .get<{ enforceBreakConfirmation?: boolean }>("/settings/work")
+          .catch(() => null);
+        enforceBreakConfirmation = workCfg?.enforceBreakConfirmation === true;
+
+        if (enforceBreakConfirmation) {
+          const prev = subMonths(new Date(), 1);
+          const from = format(new Date(prev.getFullYear(), prev.getMonth(), 1), "yyyy-MM-dd");
+          const breakRows = await api
+            .get<
+              Array<{ date: string; breakStatus?: string; isLocked?: boolean }>
+            >(`/time-entries?from=${from}&to=${today}`)
+            .catch(() => [] as Array<{ date: string; breakStatus?: string; isLocked?: boolean }>);
+          const days = new Set<string>();
+          for (const row of breakRows) {
+            if (row.breakStatus === "AUTO" && row.isLocked !== true) days.add(row.date);
+          }
+          unconfirmedBreakDays = days.size;
+        } else {
+          unconfirmedBreakDays = 0;
+        }
+      } catch {
+        enforceBreakConfirmation = false;
+        unconfirmedBreakDays = 0;
       }
 
       // Today's entry breakdown (row 2 / col-7)
@@ -1372,6 +1414,17 @@
                 <a href="/time-entries" class="oi-row">
                   <span class="oi-dot oi-dot--fix"></span>
                   <span>{openItems.invalidEntries} zu korrigieren</span>
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
+                <a
+                  href="/time-entries?view=list"
+                  class="oi-row"
+                  data-testid="dashboard-break-nudge"
+                >
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span>{unconfirmedBreakDays} Tage: Pause bestätigen</span>
                   <span class="oi-link">→</span>
                 </a>
               {/if}
