@@ -1946,7 +1946,7 @@
       {#if editEntry && enforceBreakConfirmation && editEntry.breakStatus}
         <div class="break-confirm-section" data-testid="break-status">
           <span
-            class="badge {breakBadgeClass(editEntry.breakStatus)}"
+            class="badge break-status-badge {breakBadgeClass(editEntry.breakStatus)}"
             data-testid="break-status-badge"
           >
             {breakBadgeLabel(editEntry.breakStatus)}
@@ -2122,6 +2122,9 @@
     margin-top: 16px;
     padding-top: 16px;
     border-top: 1px solid var(--border);
+  }
+  .break-status-badge {
+    font-weight: 500;
   }
   .break-actions {
     display: flex;
