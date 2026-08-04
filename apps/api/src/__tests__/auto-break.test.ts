@@ -66,6 +66,7 @@ describe("Auto-Break on Clock-out", () => {
     const body = JSON.parse(res.body);
     expect(body.entry.breakMinutes).toBe(30);
     expect(body.entry.breaks.length).toBe(1);
+    expect(body.entry.breakStatus).toBe("AUTO");
   });
 
   it("auto-inserts 45min break on clock-out after >9h work", async () => {
@@ -92,6 +93,7 @@ describe("Auto-Break on Clock-out", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.entry.breakMinutes).toBe(45);
+    expect(body.entry.breakStatus).toBe("AUTO");
   });
 
   it("does not auto-insert break when manual breaks provided", async () => {
@@ -119,6 +121,8 @@ describe("Auto-Break on Clock-out", () => {
     const body = JSON.parse(res.body);
     // Manual break provided, auto-break should NOT override
     expect(body.entry.breakMinutes).toBe(15);
+    // Phase 91 (BREAK-02): human-provided break stays default CONFIRMED, never AUTO
+    expect(body.entry.breakStatus).toBe("CONFIRMED");
   });
 
   it("does not auto-insert break for short shifts (<6h)", async () => {
@@ -145,5 +149,30 @@ describe("Auto-Break on Clock-out", () => {
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.entry.breakMinutes).toBe(0);
+    // Phase 91 (BREAK-02): no Pflichtpause inserted → stays default CONFIRMED, never AUTO
+    expect(body.entry.breakStatus).toBe("CONFIRMED");
+  });
+
+  it("migration backfill: a plain seeded entry is CONFIRMED", async () => {
+    const startTime = new Date(Date.now() - 7 * 60 * 60 * 1000);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Bare WORK entry via direct Prisma create — no clock-out side-effect involved.
+    const entry = await app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date: today,
+        startTime,
+        endTime: new Date(),
+        source: "MANUAL",
+      },
+    });
+
+    // Phase 91 (BREAK-04): column DEFAULT backfills every non-AUTO-written row to CONFIRMED.
+    expect(entry.breakStatus).toBe("CONFIRMED");
+
+    const stillConfirmed = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+    expect(stillConfirmed?.breakStatus).toBe("CONFIRMED");
   });
 });

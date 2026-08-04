@@ -530,9 +530,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                   endTime: breakEndTime,
                 },
               });
+              // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
               await app.prisma.timeEntry.update({
                 where: { id: clockedOutEntryId },
-                data: { breakMinutes: autoBreakMin },
+                data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
               });
             }
           }
@@ -766,9 +767,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                   endTime: breakEndTime,
                 },
               });
+              // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
               await app.prisma.timeEntry.update({
                 where: { id: closedEntryId },
-                data: { breakMinutes: autoBreakMin },
+                data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
               });
             }
           }
@@ -1307,12 +1309,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               },
             });
 
+            // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
             await app.prisma.timeEntry.update({
               where: { id: entry.id },
-              data: { breakMinutes: autoBreakMin },
+              data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
             });
             // Update entry object for response
             entry.breakMinutes = autoBreakMin;
+            entry.breakStatus = "AUTO";
           }
         }
       }
