@@ -1771,3 +1771,215 @@ describe("cron day-N window boundary (76.29-00 RED — SUPERSEDES day-15 grace)"
     90_000,
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 92 — Plan 01 (Wave 0 RED scaffold): BREAK-05 unconfirmed-break auto-close defer
+//
+// Mirrors the existing gap-defer idiom (F-02): when a tenant opts into BOTH
+// `enforceBreakConfirmation` AND `blockMonthCloseOnUnconfirmedBreak`, a month with
+// an unconfirmed (breakStatus AUTO) day must never be auto-closed — the cron defers
+// it (manual-only) exactly like a gap-blocked month, and notifies managers.
+//
+// Fixture: a FULL January 2024 month (no gaps) for a FIXED_SCHEDULE employee — one
+// day's entry carries breakStatus AUTO. "Today" = 2024-02-16 (closes January).
+//
+// RED reason: auto-close-month.ts never reads breakStatus today — the month closes
+// regardless (a snapshot IS created), so the "must defer" assertion fails now.
+// Cases marked "(GREEN guard)" already pass (the month currently closes anyway) and
+// must stay green once the block branch lands — they pin the non-blocking paths.
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 Wave 0)", () => {
+  let app: FastifyInstance;
+
+  const AUTO_DAY = "2024-01-10"; // Wednesday — part of January 2024 Mon-Fri fixture
+
+  function janMonFriLocal(): string[] {
+    const out: string[] = [];
+    const cur = new Date("2024-01-01T00:00:00Z");
+    const end = new Date("2024-01-31T00:00:00Z");
+    while (cur <= end) {
+      const dow = cur.getUTCDay();
+      if (dow >= 1 && dow <= 5) out.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return out;
+  }
+
+  async function seedBreakDeferTenant(
+    suffix: string,
+    opts: { enforceBreakConfirmation: boolean; blockMonthCloseOnUnconfirmedBreak: boolean },
+  ) {
+    const s = `bd-${suffix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `BreakDefer ${s}`, slug: `bd-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    await prisma.tenantConfig.create({
+      data: {
+        tenantId: tenant.id,
+        defaultVacationDays: 30,
+        timezone: "Europe/Berlin",
+        defaultBreakOver6h: 30,
+        defaultBreakOver9h: 45,
+        enforceBreakConfirmation: opts.enforceBreakConfirmation,
+        blockMonthCloseOnUnconfirmedBreak: opts.blockMonthCloseOnUnconfirmedBreak,
+      },
+    });
+
+    const empUser = await prisma.user.create({
+      data: { email: `bd-emp-${s}@test.de`, passwordHash: "x", role: "EMPLOYEE", isActive: true },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: empUser.id,
+        employeeNumber: `BD-${s}`,
+        firstName: "Break",
+        lastName: "Defer",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+        isTimeTrackingExempt: false,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    // Full January — no gaps, but AUTO_DAY carries breakStatus AUTO instead of CONFIRMED.
+    for (const d of janMonFriLocal()) {
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: new Date(d + "T07:00:00Z"),
+          endTime: new Date(d + "T15:30:00Z"),
+          breakMinutes: 30,
+          breakStatus: d === AUTO_DAY ? "AUTO" : "CONFIRMED",
+          type: "WORK",
+        },
+      });
+    }
+
+    // Manager to receive the (future) defer notification.
+    const mgrUser = await prisma.user.create({
+      data: { email: `bd-mgr-${s}@test.de`, passwordHash: "x", role: "ADMIN", isActive: true },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: mgrUser.id,
+        employeeNumber: `BD-MGR-${s}`,
+        firstName: "Manager",
+        lastName: "Defer",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+
+    return { tenant, empId: emp.id, mgrUserId: mgrUser.id };
+  }
+
+  async function januarySnapshot(empId: string) {
+    const janRange = monthRangeUtc(2024, 1, "Europe/Berlin");
+    return app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId: empId,
+        periodType: "MONTHLY",
+        periodStart: {
+          gte: janRange.start,
+          lt: new Date(janRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+        },
+        superseded: false,
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  it("(RED) enforceBreakConfirmation=true + blockMonthCloseOnUnconfirmedBreak=true + AUTO day → NO snapshot (deferred) + manager notified", async () => {
+    const seed = await seedBreakDeferTenant("block", {
+      enforceBreakConfirmation: true,
+      blockMonthCloseOnUnconfirmedBreak: true,
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const snap = await januarySnapshot(seed.empId);
+    expect(
+      snap,
+      "RED: unconfirmed AUTO day must defer auto-close (no snapshot) once the block branch is built",
+    ).toBeNull();
+
+    const notif = await app.prisma.notification.findFirst({
+      where: { userId: seed.mgrUserId, type: "MONTH_CLOSE_BLOCKED" },
+    });
+    expect(
+      notif,
+      "RED: manager must be notified about the deferred month once the block branch is built",
+    ).not.toBeNull();
+
+    await cleanupTestData(app, seed.tenant.id);
+  }, 60_000);
+
+  it("(GREEN guard) blockMonthCloseOnUnconfirmedBreak=false (warn-only) → month DOES close despite the AUTO day", async () => {
+    const seed = await seedBreakDeferTenant("warnonly", {
+      enforceBreakConfirmation: true,
+      blockMonthCloseOnUnconfirmedBreak: false,
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const snap = await januarySnapshot(seed.empId);
+    expect(snap, "warn-only must not block auto-close").not.toBeNull();
+
+    await cleanupTestData(app, seed.tenant.id);
+  }, 60_000);
+
+  it("(GREEN guard / master gate) enforceBreakConfirmation=false → month DOES close regardless of block flag", async () => {
+    const seed = await seedBreakDeferTenant("gateoff", {
+      enforceBreakConfirmation: false,
+      blockMonthCloseOnUnconfirmedBreak: true,
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const snap = await januarySnapshot(seed.empId);
+    expect(snap, "master gate off — auto-close must not be affected").not.toBeNull();
+
+    await cleanupTestData(app, seed.tenant.id);
+  }, 60_000);
+});

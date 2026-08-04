@@ -375,3 +375,318 @@ describe("close-month-gate — HTTP confirmGaps gate (Cases 1/2/3/4)", () => {
     void monthRangeUtc; // imported for potential use in future extensions
   }, 60_000);
 });
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Phase 92 — Plan 01 (Wave 0 RED scaffold): BREAK-05 unconfirmedBreakDays gate
+//
+// Covers the completeness-check side of BREAK-05: `GET /close-month/status` must
+// surface AUTO (unconfirmed Pflichtpause) days via `unconfirmedBreakDays[]`, and
+// `POST /close-month` must hard-block (409) when both `enforceBreakConfirmation`
+// AND `blockMonthCloseOnUnconfirmedBreak` are true. Both flags default to false
+// (Phase 91) — the master-gate cases below prove the feature stays fully dormant
+// until a tenant opts in (T-92-04).
+//
+// Fixture: a FULL June 2026 month (no gaps — reuses JUNE_WORKDAYS) so the
+// pre-existing confirmGaps gate never interferes; exactly one day's entry carries
+// breakStatus AUTO/WAIVED per case.
+//
+// RED reason: `unconfirmedBreakDays` does not exist on the status response yet
+// (undefined, not []) and the close mutation never checks blockMonthCloseOnUnconfirmedBreak
+// (always 201). Cases explicitly marked "(GREEN guard)" already pass today and must
+// stay green once the feature lands — they pin the no-regression contract.
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe("close-month-gate — BREAK-05 unconfirmedBreakDays gate (RED, Phase 92 Wave 0)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let adminToken: string;
+
+  const AUTO_DAY = "2026-06-10"; // Wednesday — part of JUNE_WORKDAYS
+
+  type StatusEmployee = {
+    employeeId: string;
+    status: string;
+    unconfirmedBreakDays?: string[];
+  };
+
+  async function createFullMonthEmployee(
+    suffix: string,
+    opts: {
+      scheduleType?: "FIXED_SCHEDULE" | "MONTHLY_HOURS" | "FLEXTIME";
+      autoBreakDate?: string;
+      autoBreakWaived?: boolean;
+      autoBreakLocked?: boolean;
+    } = {},
+  ): Promise<string> {
+    const prisma = app.prisma;
+    const scheduleType = opts.scheduleType ?? "FIXED_SCHEDULE";
+    const isFixed = scheduleType === "FIXED_SCHEDULE";
+    const empUser = await prisma.user.create({
+      data: {
+        email: `bg-${suffix}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: empUser.id,
+        employeeNumber: `BG-${suffix}`,
+        firstName: "Break",
+        lastName: suffix,
+        hireDate: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: scheduleType,
+        weeklyHours: isFixed ? 40 : 0,
+        mondayHours: isFixed ? 8 : 0,
+        tuesdayHours: isFixed ? 8 : 0,
+        wednesdayHours: isFixed ? 8 : 0,
+        thursdayHours: isFixed ? 8 : 0,
+        fridayHours: isFixed ? 8 : 0,
+        saturdayHours: 0,
+        sundayHours: 0,
+        workDays: isFixed ? [1, 2, 3, 4, 5] : [],
+        monthlyHours: scheduleType === "MONTHLY_HOURS" ? 80 : null,
+        validFrom: new Date("2026-06-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    for (const d of JUNE_WORKDAYS) {
+      const isAutoDay = opts.autoBreakDate === d;
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: new Date(d + "T07:00:00Z"),
+          endTime: new Date(d + "T15:30:00Z"),
+          breakMinutes: 30,
+          breakStatus: isAutoDay ? (opts.autoBreakWaived ? "WAIVED" : "AUTO") : "CONFIRMED",
+          type: "WORK",
+          isLocked: isAutoDay && opts.autoBreakLocked === true,
+        },
+      });
+    }
+
+    return emp.id;
+  }
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = `bg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `BreakGate ${s}`, slug: `bg-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: {
+        tenantId,
+        defaultVacationDays: 30,
+        timezone: TZ,
+        enforceBreakConfirmation: true,
+        blockMonthCloseOnUnconfirmedBreak: true,
+      },
+    });
+
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-bg-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    const adminEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `ADM-BG-${s}`,
+        firstName: "Admin",
+        lastName: "BreakGate",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: adminEmp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: adminEmp.id, balanceHours: 0 } });
+
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-bg-${s}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(loginRes.body).accessToken;
+  }, 120_000);
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("close-month-gate BREAK-05 cleanup:", err);
+    }
+  });
+
+  async function getStatusRow(employeeId: string): Promise<StatusEmployee | undefined> {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/overtime/close-month/status",
+      headers: { authorization: `Bearer ${adminToken}` },
+      query: { year: "2026", month: "6" },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { employees: StatusEmployee[] };
+    return body.employees.find((e) => e.employeeId === employeeId);
+  }
+
+  it("(RED) GET /status returns unconfirmedBreakDays=[AUTO_DAY] for an AUTO entry", async () => {
+    const empId = await createFullMonthEmployee("listing", { autoBreakDate: AUTO_DAY });
+    const row = await getStatusRow(empId);
+    expect(row, "employee must appear in status response").toBeDefined();
+    expect(
+      row!.unconfirmedBreakDays,
+      "RED: unconfirmedBreakDays field does not exist on the response yet",
+    ).toEqual([AUTO_DAY]);
+  });
+
+  it("(RED) GET /status returns [] for a CONFIRMED entry (no AUTO days)", async () => {
+    const empId = await createFullMonthEmployee("confirmed");
+    const row = await getStatusRow(empId);
+    expect(row!.unconfirmedBreakDays, "RED: field must be [] not undefined").toEqual([]);
+  });
+
+  it("(RED) GET /status returns [] for a WAIVED day (durchgearbeitet already declared)", async () => {
+    const empId = await createFullMonthEmployee("waived", {
+      autoBreakDate: AUTO_DAY,
+      autoBreakWaived: true,
+    });
+    const row = await getStatusRow(empId);
+    expect(row!.unconfirmedBreakDays, "RED: field must be [] not undefined").toEqual([]);
+  });
+
+  it("(RED / master gate T-92-04) enforceBreakConfirmation=false → [] despite an AUTO day", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId },
+      data: { enforceBreakConfirmation: false },
+    });
+    try {
+      const empId = await createFullMonthEmployee("gateoff", { autoBreakDate: AUTO_DAY });
+      const row = await getStatusRow(empId);
+      expect(
+        row!.unconfirmedBreakDays,
+        "master gate off — listing must be dormant for un-opted tenants",
+      ).toEqual([]);
+    } finally {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId },
+        data: { enforceBreakConfirmation: true },
+      });
+    }
+  });
+
+  it("(RED, T-92-02) locked-exclusion: an AUTO entry with isLocked=true is NOT listed", async () => {
+    const empId = await createFullMonthEmployee("locked", {
+      autoBreakDate: AUTO_DAY,
+      autoBreakLocked: true,
+    });
+    const row = await getStatusRow(empId);
+    expect(
+      row!.unconfirmedBreakDays,
+      "a locked (closed-month) AUTO entry is un-actionable and must never be listed",
+    ).toEqual([]);
+  });
+
+  it("(RED) flexible-exclusion: MONTHLY_HOURS employee with an AUTO entry is NOT listed", async () => {
+    const empId = await createFullMonthEmployee("monthly", {
+      scheduleType: "MONTHLY_HOURS",
+      autoBreakDate: AUTO_DAY,
+    });
+    const row = await getStatusRow(empId);
+    expect(row!.unconfirmedBreakDays, "MONTHLY_HOURS has no daily gate — RESOLVED Q1").toEqual([]);
+  });
+
+  it("(RED) POST /close-month → 409 with unconfirmedBreakDays + requiresBreakConfirmation", async () => {
+    const empId = await createFullMonthEmployee("block409", { autoBreakDate: AUTO_DAY });
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v1/overtime/close-month",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: { employeeId: empId, year: 2026, month: 6 },
+    });
+    expect(res.statusCode, `expected 409 got ${res.statusCode} — body: ${res.body}`).toBe(409);
+    const body = JSON.parse(res.body);
+    expect(body.unconfirmedBreakDays).toEqual([AUTO_DAY]);
+    expect(body.requiresBreakConfirmation).toBe(true);
+  });
+
+  it("(GREEN guard) blockMonthCloseOnUnconfirmedBreak=false (warn-only) → 201/close despite AUTO days", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId },
+      data: { blockMonthCloseOnUnconfirmedBreak: false },
+    });
+    try {
+      const empId = await createFullMonthEmployee("warnonly", { autoBreakDate: AUTO_DAY });
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { employeeId: empId, year: 2026, month: 6 },
+      });
+      expect(
+        res.statusCode,
+        `warn-only must still close (201) — got ${res.statusCode}: ${res.body}`,
+      ).toBe(201);
+    } finally {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId },
+        data: { blockMonthCloseOnUnconfirmedBreak: true },
+      });
+    }
+  });
+
+  it("(GREEN guard / master gate) enforceBreakConfirmation=false → 201/close regardless of block flag", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId },
+      data: { enforceBreakConfirmation: false },
+    });
+    try {
+      const empId = await createFullMonthEmployee("gateoffclose", { autoBreakDate: AUTO_DAY });
+      const res = await app.inject({
+        method: "POST",
+        url: "/api/v1/overtime/close-month",
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { employeeId: empId, year: 2026, month: 6 },
+      });
+      expect(
+        res.statusCode,
+        `master gate off — close must succeed regardless of blockMonthCloseOnUnconfirmedBreak — got ${res.statusCode}: ${res.body}`,
+      ).toBe(201);
+    } finally {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId },
+        data: { enforceBreakConfirmation: true },
+      });
+    }
+  });
+});
