@@ -61,3 +61,11 @@ CVE-2026-48815
 CVE-2026-14257
 CVE-2026-13149
 CVE-2026-69152
+
+# ip-address: SSRF/parsing DoS (CVE-2026-69192). The vulnerable copy (10.2.0) lives ONLY in
+# build tooling — npm's own bundle (/usr/local/lib/node_modules/npm/node_modules/ip-address,
+# pulled in via socks-proxy-agent) and corepack's pnpm cache (…/corepack/v1/pnpm/*/dist/
+# node_modules/ip-address). Our app dependency tree resolves ip-address@10.4.0 (fixed, via the
+# pnpm.overrides pin >=10.3.1), so no runtime code path is affected. Revisit when npm/corepack
+# bundle ip-address>=10.3.1.
+CVE-2026-69192
