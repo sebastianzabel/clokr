@@ -205,6 +205,15 @@ const tenantConfigSchema = z
         "Pausendauer für Arbeitstage über 9 Stunden darf 180 Minuten nicht überschreiten.",
       )
       .optional(),
+    // Phase 93.06 — v1.9.3 Pausen-Enforcement (BREAK-05 / BREAK-01).
+    // enforceBreakConfirmation gates whether employees must confirm/adjust/mark
+    // auto-inserted mandatory breaks as "durchgearbeitet"; when off the check is
+    // advisory-only. blockMonthCloseOnUnconfirmedBreak escalates unconfirmed
+    // breaks from a warning to a hard Monatsabschluss block (only meaningful
+    // when enforceBreakConfirmation is on). Both flow into the PUT /work upsert
+    // via the ...configBody spread; schema @default(false).
+    enforceBreakConfirmation: z.boolean().optional(),
+    blockMonthCloseOnUnconfirmedBreak: z.boolean().optional(),
     // Phase 76.29 — CFG-01: Retro-entry window (RETRO-01).
     // How many calendar days back an employee can create or edit time entries without
     // an approved RetroEntryRequest. Default 10 days (see retro-config.ts).
