@@ -31,12 +31,14 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   MONTH_CLOSED: "emailOnMonthClose",
   GAP_WARNING_EMPLOYEE: "emailOnMissingEntries",
   GAP_WARNING_MANAGER: "emailOnMissingEntries",
+  BREAK_UNCONFIRMED: "emailOnMissingEntries", // Phase 92 (BREAK-06)
+  BREAK_COMPLIANCE_ALERT: "emailOnMissingEntries", // Phase 92 (BREAK-06)
 };
 
 declare module "fastify" {
   interface FastifyInstance {
     notify: (params: NotifyParams) => Promise<void>;
-    dismissByRelated: (relatedType: string, relatedId: string) => Promise<number>;
+    dismissByRelated: (relatedType: string, relatedId: string, type?: string) => Promise<number>;
   }
 }
 
@@ -66,9 +68,13 @@ export const notifyPlugin = fp(async (app) => {
     }
   }
 
-  async function dismissByRelated(relatedType: string, relatedId: string): Promise<number> {
+  async function dismissByRelated(
+    relatedType: string,
+    relatedId: string,
+    type?: string,
+  ): Promise<number> {
     const { count } = await app.prisma.notification.updateMany({
-      where: { relatedType, relatedId, dismissedAt: null },
+      where: { relatedType, relatedId, dismissedAt: null, ...(type ? { type } : {}) },
       data: { dismissedAt: new Date() },
     });
     return count;
