@@ -1008,13 +1008,17 @@
     breakActionPending = true;
     try {
       await api.patch(`/time-entries/${editEntry.id}/break-status`, { action: "confirm" });
-      closeModal();
-      await loadAll();
     } catch {
+      // Only a genuine PATCH failure toasts an error. A post-mutation refetch
+      // blip must NOT surface "action failed" after a committed mutation.
       toasts.error("Pause konnte nicht bestätigt werden. Bitte erneut versuchen.");
-    } finally {
       breakActionPending = false;
+      return;
     }
+    closeModal();
+    // Refetch is best-effort — the stale badge self-corrects on the next load.
+    await loadAll().catch(() => {});
+    breakActionPending = false;
   }
 
   // Anpassen → reveal + scroll to the EXISTING break start/end editor. Saving via
@@ -1031,18 +1035,22 @@
   async function waiveBreak() {
     if (!editEntry) return;
     breakActionPending = true;
+    const body: { action: "waive"; reason?: string } = { action: "waive" };
+    const trimmed = waiveReason.trim();
+    if (trimmed) body.reason = trimmed;
     try {
-      const body: { action: "waive"; reason?: string } = { action: "waive" };
-      const trimmed = waiveReason.trim();
-      if (trimmed) body.reason = trimmed;
       await api.patch(`/time-entries/${editEntry.id}/break-status`, body);
-      closeModal();
-      await loadAll();
     } catch {
+      // Only a genuine PATCH failure toasts an error. A post-mutation refetch
+      // blip must NOT surface "action failed" after a committed mutation.
       toasts.error("Aktion fehlgeschlagen. Bitte erneut versuchen.");
-    } finally {
       breakActionPending = false;
+      return;
     }
+    closeModal();
+    // Refetch is best-effort — the stale badge self-corrects on the next load.
+    await loadAll().catch(() => {});
+    breakActionPending = false;
   }
 
   async function deleteEntry(id: string) {
