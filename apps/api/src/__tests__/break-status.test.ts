@@ -128,6 +128,65 @@ describe("PATCH /:id/break-status", () => {
     expect(notification).not.toBeNull();
   });
 
+  it("waive: rejected on a CONFIRMED entry -> 409 German message; real breaks preserved (WR-02)", async () => {
+    // A CONFIRMED day carries the employee's affirmed real breaks — the waive shortcut
+    // (which hard-deletes Break rows) must NOT be allowed to destroy them.
+    const entry = await createAutoEntry();
+
+    // Move it into CONFIRMED first.
+    const confirmRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "confirm" },
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    const breaksBefore = await app.prisma.break.count({ where: { timeEntryId: entry.id } });
+    expect(breaksBefore).toBeGreaterThan(0);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "waive", reason: "durchgearbeitet" },
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe(
+      "Durchgearbeitet kann nur für eine automatisch eingetragene Pause erklärt werden.",
+    );
+
+    // The confirmed real breaks and status must be untouched.
+    const unchanged = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+    expect(unchanged?.breakStatus).toBe("CONFIRMED");
+    const breaksAfter = await app.prisma.break.count({ where: { timeEntryId: entry.id } });
+    expect(breaksAfter).toBe(breaksBefore);
+  });
+
+  it("waive: a second waive on an already-WAIVED entry -> 409 (no repeat, no duplicate alert)", async () => {
+    // IN-02 fallout of WR-02: once WAIVED, the entry is no longer AUTO, so a repeat waive
+    // is rejected — it cannot re-fire the manager BREAK_COMPLIANCE_ALERT.
+    const entry = await createAutoEntry();
+
+    const first = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "waive", reason: "durchgearbeitet" },
+    });
+    expect(first.statusCode).toBe(200);
+
+    const second = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "waive", reason: "durchgearbeitet" },
+    });
+    expect(second.statusCode).toBe(409);
+    expect(JSON.parse(second.body).error).toBe(
+      "Durchgearbeitet kann nur für eine automatisch eingetragene Pause erklärt werden.",
+    );
+  });
+
   it("waive: does not self-notify when the actor is themselves a manager/admin", async () => {
     // Admin creates + waives their OWN entry -> the admin must not receive a self-alert.
     const today = new Date();

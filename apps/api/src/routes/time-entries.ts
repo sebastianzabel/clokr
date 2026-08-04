@@ -1986,6 +1986,17 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       // action === "waive" — "durchgearbeitet": no break taken, time is really worked and
       // therefore payable. No manager approval required (LOCKED Decision 5).
+      //
+      // "Durchgearbeitet" answers the auto-inserted-break nudge (Decision 5); it may ONLY be
+      // declared for an AUTO entry. A CONFIRMED day already carries the employee's affirmed real
+      // breaks — the waive shortcut must not silently hard-delete those (Revisionssicherheit,
+      // WR-02). An already-WAIVED entry is likewise rejected (no repeat waive → no duplicate
+      // manager alerts).
+      if (oldStatus !== "AUTO") {
+        return reply.code(409).send({
+          error: "Durchgearbeitet kann nur für eine automatisch eingetragene Pause erklärt werden.",
+        });
+      }
 
       // Capture the exact pre-waive break slots BEFORE deletion. Break is not a soft-delete model,
       // so these rows are gone after deleteMany — the audit oldValue is the only reconstruction
