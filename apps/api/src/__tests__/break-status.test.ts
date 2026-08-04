@@ -339,4 +339,129 @@ describe("PATCH /:id/break-status", () => {
     });
     expect(overtimeRes.statusCode).toBe(200);
   });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Phase 92 — Plan 01 (Wave 0 RED scaffold): BREAK-06 auto-dismiss + manager-alert
+  // survival (T-92-03).
+  //
+  // RESEARCH finding (verified by grep): neither the confirm nor the waive branch
+  // of PATCH /:id/break-status calls dismissByRelated today — a pre-seeded
+  // BREAK_UNCONFIRMED notification stays open forever. These cases are RED until
+  // Plan 03 wires the type-scoped 3-arg dismissByRelated("TimeEntry", id,
+  // "BREAK_UNCONFIRMED") into both branches.
+  // ────────────────────────────────────────────────────────────────────────────
+
+  it("(RED) confirm dismisses the BREAK_UNCONFIRMED nudge but the manager BREAK_COMPLIANCE_ALERT survives", async () => {
+    const entry = await createAutoEntry();
+
+    const unconfirmedNotif = await app.prisma.notification.create({
+      data: {
+        userId: data.empUser.id,
+        type: "BREAK_UNCONFIRMED",
+        title: "Pause bestätigen",
+        message: "Test-Nudge",
+        relatedType: "TimeEntry",
+        relatedId: entry.id,
+      },
+    });
+    const complianceAlert = await app.prisma.notification.create({
+      data: {
+        userId: data.adminUser.id,
+        type: "BREAK_COMPLIANCE_ALERT",
+        title: "Pause als „durchgearbeitet“ erklärt",
+        message: "Test-Alert",
+        relatedType: "TimeEntry",
+        relatedId: entry.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "confirm" },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const nudgeAfter = await app.prisma.notification.findUnique({
+      where: { id: unconfirmedNotif.id },
+    });
+    const alertAfter = await app.prisma.notification.findUnique({
+      where: { id: complianceAlert.id },
+    });
+
+    expect(
+      nudgeAfter?.dismissedAt,
+      "RED: confirm must dismiss the BREAK_UNCONFIRMED nudge",
+    ).not.toBeNull();
+    expect(
+      alertAfter?.dismissedAt,
+      "T-92-03: manager BREAK_COMPLIANCE_ALERT must survive the employee's confirm action",
+    ).toBeNull();
+  });
+
+  it("(RED) waive dismisses the BREAK_UNCONFIRMED nudge; manager alerts (pre-seeded AND the fresh waive alert) are NOT dismissed", async () => {
+    const entry = await createAutoEntry();
+
+    const unconfirmedNotif = await app.prisma.notification.create({
+      data: {
+        userId: data.empUser.id,
+        type: "BREAK_UNCONFIRMED",
+        title: "Pause bestätigen",
+        message: "Test-Nudge",
+        relatedType: "TimeEntry",
+        relatedId: entry.id,
+      },
+    });
+    const preSeededAlert = await app.prisma.notification.create({
+      data: {
+        userId: data.adminUser.id,
+        type: "BREAK_COMPLIANCE_ALERT",
+        title: "Pause als „durchgearbeitet“ erklärt",
+        message: "Vorher-Alert",
+        relatedType: "TimeEntry",
+        relatedId: entry.id,
+      },
+    });
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/time-entries/${entry.id}/break-status`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { action: "waive", reason: "durchgearbeitet" },
+    });
+    expect(res.statusCode).toBe(200);
+
+    const nudgeAfter = await app.prisma.notification.findUnique({
+      where: { id: unconfirmedNotif.id },
+    });
+    const preSeededAlertAfter = await app.prisma.notification.findUnique({
+      where: { id: preSeededAlert.id },
+    });
+    const freshAlert = await app.prisma.notification.findFirst({
+      where: {
+        type: "BREAK_COMPLIANCE_ALERT",
+        relatedId: entry.id,
+        userId: data.adminUser.id,
+        id: { not: preSeededAlert.id },
+      },
+    });
+
+    expect(
+      nudgeAfter?.dismissedAt,
+      "RED: waive must dismiss the BREAK_UNCONFIRMED nudge",
+    ).not.toBeNull();
+    expect(
+      preSeededAlertAfter?.dismissedAt,
+      "T-92-03: pre-seeded manager alert must survive the waive action",
+    ).toBeNull();
+    expect(
+      freshAlert,
+      "waive still emits its own fresh manager BREAK_COMPLIANCE_ALERT",
+    ).not.toBeNull();
+    expect(
+      freshAlert?.dismissedAt,
+      "the fresh manager alert must not be dismissed by the same waive call",
+    ).toBeNull();
+  });
 });

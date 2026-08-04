@@ -12,8 +12,15 @@ interface NotifyParams {
   relatedId?: string; // id of the related entity
 }
 
-/** Map notification types to TenantConfig email toggle field names. */
-const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
+/**
+ * Map notification types to TenantConfig email toggle field names.
+ *
+ * Exported (Phase 92, Rule 3 deviation — see 92-01-SUMMARY.md) so the RED scaffold
+ * in notifications.test.ts can assert on the map directly instead of racing the
+ * fire-and-forget email dispatch inside notify(). Export-only change, no behavior
+ * change: the map's contents are unchanged by this edit.
+ */
+export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   LEAVE_REQUEST: "emailOnLeaveRequest",
   LEAVE_APPROVED: "emailOnLeaveDecision",
   LEAVE_REJECTED: "emailOnLeaveDecision",
