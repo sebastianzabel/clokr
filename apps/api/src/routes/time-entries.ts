@@ -65,6 +65,15 @@ const manualEntrySchema = z.object({
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+// Phase 91 (BREAK-03) — BAG 12.02.2025, 5 AZR 51/24: an automatically inserted break does not
+// prove the break was actually taken. `confirm` lets the employee/manager acknowledge it was
+// taken; `waive` ("durchgearbeitet") declares no break was taken — time is really worked and
+// therefore payable, so it requires NO manager approval (LOCKED Decision 5).
+const breakStatusSchema = z.object({
+  action: z.enum(["confirm", "waive"]),
+  reason: z.string().max(500).optional(), // only meaningful for waive ("durchgearbeitet")
+});
+
 const updateEntrySchema = z.object({
   date: z
     .string()
@@ -1899,6 +1908,119 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       });
 
       return reply.code(204).send();
+    },
+  });
+
+  // PATCH /api/v1/time-entries/:id/break-status  (Phase 91 — BREAK-01/BREAK-03/BREAK-04)
+  // Confirm/waive an auto-inserted break (BAG 12.02.2025, 5 AZR 51/24 — an automatic break
+  // deduction alone does not prove the break was taken). `waive` ("durchgearbeitet") zeroes the
+  // break out and marks the time worked/payable — see the audit-proof guards below.
+  app.patch("/:id/break-status", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const { action, reason } = breakStatusSchema.parse(req.body);
+      const user = req.user;
+
+      const entry = await app.prisma.timeEntry.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          employee: { select: { tenantId: true, userId: true, firstName: true, lastName: true } },
+        },
+      });
+      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Tenant isolation (fetch-then-compare, existing idiom — no existence leak on 404).
+      if (entry.employee.tenantId !== user.tenantId) {
+        await app.audit({
+          userId: user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "TimeEntry",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
+      // Owner or manager/admin.
+      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
+      if (!isManager && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Lock wins (Revisionssicherheit) — checked BEFORE any write, even for admins.
+      if (entry.isLocked) {
+        return reply
+          .code(409)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      const oldStatus = entry.breakStatus;
+
+      if (action === "confirm") {
+        // Idempotent — allowed from any non-locked state.
+        const updated = await app.prisma.timeEntry.update({
+          where: { id },
+          data: { breakStatus: "CONFIRMED" },
+          include: { breaks: { orderBy: { startTime: "asc" } } },
+        });
+        await app.audit({
+          userId: user.sub,
+          action: "BREAK_CONFIRMED",
+          entity: "TimeEntry",
+          entityId: id,
+          oldValue: { breakStatus: oldStatus },
+          newValue: { breakStatus: "CONFIRMED" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return { entry: updated };
+      }
+
+      // action === "waive" — "durchgearbeitet": no break taken, time is really worked and
+      // therefore payable. No manager approval required (LOCKED Decision 5).
+      await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
+      const updated = await app.prisma.timeEntry.update({
+        where: { id },
+        data: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
+        include: { breaks: true },
+      });
+      await app.audit({
+        userId: user.sub,
+        action: "BREAK_WAIVED",
+        entity: "TimeEntry",
+        entityId: id,
+        oldValue: { breakStatus: oldStatus, breakMinutes: entry.breakMinutes },
+        newValue: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      // 0-ing the break changes net worked time — every other break-mutating path recomputes.
+      await updateOvertimeAccount(app, entry.employeeId);
+
+      // In-app manager alert (Phase 91: in-app only; EMAIL_TYPE_MAP entry deferred to Phase 92).
+      const managers = await app.prisma.employee.findMany({
+        where: {
+          tenantId: entry.employee.tenantId,
+          user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+        },
+        include: { user: { select: { id: true } } },
+      });
+      for (const mgr of managers) {
+        if (mgr.user.id === entry.employee.userId) continue; // don't self-notify
+        await app.notify({
+          userId: mgr.user.id,
+          type: "BREAK_COMPLIANCE_ALERT",
+          title: "Pause als „durchgearbeitet“ erklärt",
+          message: `${entry.employee.firstName} ${entry.employee.lastName} hat für einen Tag „durchgearbeitet – keine Pause“ erklärt.`,
+          link: `/time-entries?highlight=${id}`,
+          tenantId: entry.employee.tenantId,
+          relatedType: "TimeEntry",
+          relatedId: id,
+        });
+      }
+
+      return { entry: updated };
     },
   });
 }
