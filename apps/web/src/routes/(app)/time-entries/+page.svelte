@@ -45,6 +45,11 @@
     isInvalid?: boolean;
     invalidReason?: string | null;
     isLocked?: boolean;
+    // Phase 93 (BREAK-07) — break-confirmation state (Phase-91 backend). Already
+    // present on the GET /time-entries response (Prisma include); dormant unless
+    // TenantConfig.enforceBreakConfirmation is on.
+    breakStatus?: "AUTO" | "CONFIRMED" | "WAIVED";
+    breakWaivedReason?: string | null;
   }
 
   interface WorkSchedule {
@@ -223,6 +228,26 @@
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
 
+  // ── Phase 93 (BREAK-07) break-confirmation UI state ─────────────────────────
+  // Feature gate (fail-safe dormant). When false the badge + all action buttons
+  // are hidden entirely (no placeholder). Sourced from GET /settings/work.
+  let enforceBreakConfirmation = $state(false);
+  // In-flight guard shared by Bestätigen (confirm) and Durchgearbeitet (waive)
+  // PATCHes — disables the buttons + drives the .btn-spinner.
+  let breakActionPending = $state(false);
+  // Durchgearbeitet inline confirm panel (Task 2) + its optional reason.
+  let waivePanelOpen = $state(false);
+  let waiveReason = $state("");
+  // Anpassen (Task 2) reveals the existing break start/end editor.
+  let showBreakEditor = $state(false);
+
+  // Break-confirm controls only render in edit mode, when the feature is on, and
+  // when the entry is NOT in a locked month (Revisionssicherheit — badge stays,
+  // buttons vanish). AUTO is only ever set by the backend on a Pflichtpause day.
+  let showBreakConfirm = $derived(
+    !!editEntry && enforceBreakConfirmation && editEntry.isLocked !== true,
+  );
+
   const ownEmployeeId = $authStore.user?.employeeId ?? null;
 
   // ── Laden ─────────────────────────────────────────────────────────────────
@@ -283,6 +308,7 @@
             arbzgEnabled?: boolean;
             defaultBreakStart?: string | null;
             monthlyHoursHolidayDeduction?: boolean;
+            enforceBreakConfirmation?: boolean;
           }>("/settings/work")
           .catch(() => null),
         // 260611-ly6 / bs-tage-cross-employee-leak — own Berufsschultage (BS) for
@@ -318,6 +344,9 @@
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
       monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
+      // Phase 93 (BREAK-07) — fail-safe dormant: only ON when the field is
+      // explicitly true (absent config row / missing field → break-confirm UI hidden).
+      enforceBreakConfirmation = rawConfig?.enforceBreakConfirmation === true;
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // EMPLOYEE role: no employeeId param — endpoint defaults to req.user.employeeId.
       // SHIFT_BASED removed from monthly-path shortcut: the workaround (monthly=true
@@ -745,6 +774,22 @@
           : "Manuell";
   }
 
+  // ── Phase 93 (BREAK-07) — status-badge mapping (UI-SPEC color/copy contract) ─
+  function breakBadgeClass(status: TimeEntry["breakStatus"]): string {
+    return status === "CONFIRMED"
+      ? "badge-green"
+      : status === "WAIVED"
+        ? "badge-gray"
+        : "badge-yellow"; // AUTO — action required
+  }
+  function breakBadgeLabel(status: TimeEntry["breakStatus"]): string {
+    return status === "CONFIRMED"
+      ? "Pause bestätigt"
+      : status === "WAIVED"
+        ? "Durchgearbeitet"
+        : "Pause unbestätigt"; // AUTO
+  }
+
   function fmtBreaks(e: TimeEntry): string {
     if (e.breaks && e.breaks.length > 0) {
       return e.breaks.map((b) => `${fmtTime(b.startTime)}–${fmtTime(b.endTime)}`).join(", ");
@@ -821,6 +866,10 @@
     retroReason = "";
     retroReasonError = "";
     retroSubmitError = "";
+    // Phase 93 — reset break-confirm sub-panels so a reopened modal starts clean.
+    waivePanelOpen = false;
+    waiveReason = "";
+    showBreakEditor = false;
   }
 
   // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
@@ -835,6 +884,10 @@
       retroReason = "";
       retroReasonError = "";
       retroSubmitError = "";
+      // Phase 93 — mirror closeModal for Escape/backdrop dismiss paths.
+      waivePanelOpen = false;
+      waiveReason = "";
+      showBreakEditor = false;
     }
   });
 
@@ -902,6 +955,24 @@
       }
     } finally {
       saving = false;
+    }
+  }
+
+  // ── Phase 93 (BREAK-07) — confirm the auto-inserted mandatory break ─────────
+  // Bestätigen → PATCH /:id/break-status { action: "confirm" } flips AUTO→CONFIRMED
+  // server-side (idempotent; server re-enforces tenant/authz/isLocked). Refetch so
+  // the badge reflects CONFIRMED, then close the modal.
+  async function confirmBreak() {
+    if (!editEntry) return;
+    breakActionPending = true;
+    try {
+      await api.patch(`/time-entries/${editEntry.id}/break-status`, { action: "confirm" });
+      closeModal();
+      await loadAll();
+    } catch {
+      toasts.error("Pause konnte nicht bestätigt werden. Bitte erneut versuchen.");
+    } finally {
+      breakActionPending = false;
     }
   }
 
@@ -1786,6 +1857,36 @@
         </div>
       {/if}
 
+      <!-- ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────── -->
+      <!-- Dormant unless enforceBreakConfirmation; badge renders in edit mode
+           whenever the entry carries a breakStatus. Locked entries show the
+           badge only (showBreakConfirm is false → no action row). -->
+      {#if editEntry && enforceBreakConfirmation && editEntry.breakStatus}
+        <div class="break-confirm-section" data-testid="break-status">
+          <span
+            class="badge {breakBadgeClass(editEntry.breakStatus)}"
+            data-testid="break-status-badge"
+          >
+            {breakBadgeLabel(editEntry.breakStatus)}
+          </span>
+
+          {#if showBreakConfirm && editEntry.breakStatus === "AUTO"}
+            <div class="break-actions" data-testid="break-actions">
+              <button
+                class="btn btn-primary btn-sm"
+                type="button"
+                onclick={confirmBreak}
+                disabled={breakActionPending}
+                data-testid="break-confirm-btn"
+              >
+                {#if breakActionPending}<span class="btn-spinner"></span>{/if}
+                Bestätigen
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <!-- ── Beyond-window retro request form (Surface 2) ─────────────────── -->
       <!-- Shown when save/delete returns 403 RETRO_WINDOW_EXCEEDED for own entries. -->
       {#if retroWindowExceeded}
@@ -1862,6 +1963,37 @@
 <!-- /data-testid="time-entries-page" -->
 
 <style>
+  /* ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────────── */
+  .break-confirm-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .break-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .btn-spinner {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 0.4rem;
+    vertical-align: -0.15rem;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   /* ── Retro-window request section (Surface 2) ───────────────────────────── */
   .retro-request-section {
     display: flex;
