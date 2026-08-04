@@ -13,6 +13,13 @@ export interface ArbZGWarning {
     | "MIN_REST_VIOLATED";
   severity: "warning" | "error";
   message: string;
+  /**
+   * Phase 91 (BREAK-03) — set when the §4 BREAK_TOO_SHORT finding was downgraded
+   * from a blocking "error" because the day's TimeEntry.breakStatus is WAIVED
+   * ("durchgearbeitet" — BAG 12.02.2025, 5 AZR 51/24). Optional/additive so
+   * existing consumers reading only .code/.severity/.message are unaffected.
+   */
+  waived?: boolean;
 }
 
 /**
@@ -128,6 +135,13 @@ export async function checkArbZG(
   });
 
   if (daySlots.length > 0) {
+    // Phase 91 (BREAK-03) — a WAIVED day ("durchgearbeitet") downgrades the §4
+    // BREAK_TOO_SHORT finding from a blocking error to a compliance-flag (BAG
+    // 12.02.2025, 5 AZR 51/24: time worked without a documented break is still
+    // payable, so it must not hard-block). One entry per day makes `some`/`every`
+    // equivalent here; `some` is used defensively.
+    const dayIsWaived = daySlots.some((s) => s.breakStatus === "WAIVED");
+
     // Netto-Arbeitszeit + explizite Pausen
     let netWorkedMin = 0;
     let explicitBreakMin = 0;
@@ -148,17 +162,22 @@ export async function checkArbZG(
     const totalBreakMin = explicitBreakMin + gapBreakMin;
 
     // § 4 ArbZG – Ruhepausenvorschrift
+    // Phase 91 (BREAK-03): WAIVED downgrades the >9h branch from "error" to
+    // "warning" and flags waived:true — the >6h branch is already a "warning"
+    // and only gets the waived flag added, not a further downgrade.
     if (netWorkedMin > 9 * 60 && totalBreakMin < 45) {
       warnings.push({
         code: "BREAK_TOO_SHORT",
-        severity: "error",
+        severity: dayIsWaived ? "warning" : "error", // waived → downgrade from blocking error
         message: `§ 4 ArbZG: Bei über 9 Stunden Arbeitszeit sind mindestens 45 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+        ...(dayIsWaived ? { waived: true } : {}),
       });
     } else if (netWorkedMin > 6 * 60 && totalBreakMin < 30) {
       warnings.push({
         code: "BREAK_TOO_SHORT",
         severity: "warning",
         message: `§ 4 ArbZG: Bei über 6 Stunden Arbeitszeit sind mindestens 30 Minuten Pause vorgeschrieben. Erfasst: ${Math.round(totalBreakMin)} Min.`,
+        ...(dayIsWaived ? { waived: true } : {}),
       });
     }
 
