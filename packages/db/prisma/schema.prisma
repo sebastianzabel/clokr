@@ -151,70 +151,73 @@ model TenantConfig {
   carryoverWarningThresholds          Int[]   @default([60, 30, 14, 7]) // Days before deadline at which to issue a warning
 
   // E-Mail-Benachrichtigungen
-  emailNotificationsEnabled      Boolean  @default(false) // Master switch
-  emailOnLeaveRequest            Boolean  @default(true) // Neuer Urlaubsantrag
-  emailOnLeaveDecision           Boolean  @default(true) // Urlaub genehmigt/abgelehnt
-  emailOnOvertimeWarning         Boolean  @default(false) // Überstunden-Schwellwert
-  emailOnMissingEntries          Boolean  @default(false) // Fehlende Zeiteinträge
-  emailOnClockOutReminder        Boolean  @default(false) // Vergessene Stempelung
-  emailOnMonthClose              Boolean  @default(true) // Monatsabschluss
+  emailNotificationsEnabled         Boolean  @default(false) // Master switch
+  emailOnLeaveRequest               Boolean  @default(true) // Neuer Urlaubsantrag
+  emailOnLeaveDecision              Boolean  @default(true) // Urlaub genehmigt/abgelehnt
+  emailOnOvertimeWarning            Boolean  @default(false) // Überstunden-Schwellwert
+  emailOnMissingEntries             Boolean  @default(false) // Fehlende Zeiteinträge
+  emailOnClockOutReminder           Boolean  @default(false) // Vergessene Stempelung
+  emailOnMonthClose                 Boolean  @default(true) // Monatsabschluss
   // Automatische Erinnerungen
-  reminderPendingLeaveHours      Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
-  reminderUpcomingAbsenceDays    Int      @default(3) // MA erinnern X Tage vor Abwesenheit
-  reminderPendingLeaveEnabled    Boolean  @default(true)
-  reminderUpcomingAbsenceEnabled Boolean  @default(true)
+  reminderPendingLeaveHours         Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
+  reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
+  reminderPendingLeaveEnabled       Boolean  @default(true)
+  reminderUpcomingAbsenceEnabled    Boolean  @default(true)
   // Benachrichtigungen
-  clockOutReminderHours          Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
-  missingEntriesDays             Int      @default(7) // Tage ohne Einträge bevor erinnert wird
-  autoDeleteOpenHours            Int      @default(14) // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
+  clockOutReminderHours             Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
+  missingEntriesDays                Int      @default(7) // Tage ohne Einträge bevor erinnert wird
+  autoDeleteOpenHours               Int      @default(14) // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
   // Pausen-Slots
-  autoBreakEnabled               Boolean  @default(false)
-  defaultBreakStart              String?  @db.VarChar(5) // e.g. "12:00"
+  autoBreakEnabled                  Boolean  @default(false)
+  defaultBreakStart                 String?  @db.VarChar(5) // e.g. "12:00"
   // Phase 64 — Pausendauer (D-01, BREAK-01, BREAK-08): per-tenant default break durations.
   // Defaults 30/45 match the previously hard-coded auto-break behavior — Migration neutral.
   // ArbZG-Floor is HARD-CODED in apps/api/src/utils/break-constants.ts (NOT here) — these are defaults, not the legal minimum.
-  defaultBreakOver6h             Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
-  defaultBreakOver9h             Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
+  defaultBreakOver6h                Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
+  defaultBreakOver9h                Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
+  // Phase 91/92 (BREAK-05) — Break-Confirmation enforcement (consumed from Phase 92).
+  enforceBreakConfirmation          Boolean  @default(false)
+  blockMonthCloseOnUnconfirmedBreak Boolean  @default(false)
   // Phase 76.2 (ARCH-V19-01, D-04) — Cross-source same-day consolidation gap (NFC/MOBILE/WIFI). Default 4h widens 76.1's NFC-only 2h to all sources.
-  consolidationGapHours          Int      @default(4)
+  consolidationGapHours             Int      @default(4)
   // Überstunden-Jahresübertrag
-  overtimeCarryOverMode          String   @default("FULL") // FULL | CAPPED | RESET
-  overtimeCarryOverCap           Int? // Max. Übertrag in Minuten (nur bei CAPPED)
+  overtimeCarryOverMode             String   @default("FULL") // FULL | CAPPED | RESET
+  overtimeCarryOverCap              Int? // Max. Übertrag in Minuten (nur bei CAPPED)
   // Max. Minusstunden (null = unbegrenzt, Wert in Minuten)
-  maxNegativeBalanceMinutes      Int?
+  maxNegativeBalanceMinutes         Int?
   // Account-Lockout
-  loginMaxAttempts               Int      @default(5) // Fehlversuche bis Sperre
-  loginLockoutMinutes            Int      @default(15) // Sperrzeit in Minuten
+  loginMaxAttempts                  Int      @default(5) // Fehlversuche bis Sperre
+  loginLockoutMinutes               Int      @default(15) // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
-  dataRetentionYears             Int      @default(10)
+  dataRetentionYears                Int      @default(10)
   // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll
-  monthlyHoursHolidayDeduction   Boolean  @default(false)
+  monthlyHoursHolidayDeduction      Boolean  @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
-  datevNormalstundenNr           Int      @default(100)
-  datevUrlaubNr                  Int      @default(300)
-  datevKrankNr                   Int      @default(200)
-  datevSonderurlaubNr            Int      @default(302)
+  datevNormalstundenNr              Int      @default(100)
+  datevUrlaubNr                     Int      @default(300)
+  datevKrankNr                      Int      @default(200)
+  datevSonderurlaubNr               Int      @default(302)
   // FLEXTIME Kernarbeitszeit-Defaults (Phase 49.2) — pre-fill suggestion for new FLEXTIME employees
-  defaultCoreStart               String?  @db.VarChar(5) // HH:MM, optional tenant default
-  defaultCoreEnd                 String?  @db.VarChar(5) // HH:MM, optional tenant default
-  defaultCoreDays                Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
+  defaultCoreStart                  String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreEnd                    String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreDays                   Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
-  wifiPresenceWindowMinutes      Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
+  wifiPresenceWindowMinutes         Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
   // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
   // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
   // Default: Mo-Sa 08:00-20:00, So closed
-  storeHours                     Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
+  storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
   //   STRICT:             shift time must be within [open, close]
   //   OFF:                no store-hours check
-  shiftStoreHoursMode            String   @default("DAY_ONLY")
+  shiftStoreHoursMode               String   @default("DAY_ONLY")
   // Phase 76.29 CFG-01 — retro self-service window (days back from today an employee may submit a retro request)
-  retroEntryWindowDays           Int      @default(10)
+  retroEntryWindowDays              Int      @default(10)
   // Phase 76.29 CFG-01 — allows cron/manual month-close to proceed when open gaps exist (gap-warning only, not blocking)
-  closeMonthWithGapsAllowed      Boolean  @default(true)
-  createdAt                      DateTime @default(now()) @db.Timestamptz
-  updatedAt                      DateTime @updatedAt @db.Timestamptz
+  closeMonthWithGapsAllowed         Boolean  @default(true)
+  createdAt                         DateTime @default(now()) @db.Timestamptz
+  updatedAt                         DateTime @updatedAt @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
@@ -288,47 +291,47 @@ model Invitation {
 // ─────────────────────────────────────────────
 
 model Employee {
-  id                         String                 @id @default(uuid())
-  tenantId                   String
-  userId                     String                 @unique
-  employeeNumber             String
-  firstName                  String
-  lastName                   String
-  nfcCardId                  String?                @unique // NFC Karten-ID
-  wifiMacs                   String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
-  wifiPresenceEnabled        Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
-  wifiOptInAt                DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
-  avatarPath                 String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
+  id                           String                 @id @default(uuid())
+  tenantId                     String
+  userId                       String                 @unique
+  employeeNumber               String
+  firstName                    String
+  lastName                     String
+  nfcCardId                    String?                @unique // NFC Karten-ID
+  wifiMacs                     String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled          Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt                  DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  avatarPath                   String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
-  classification             EmployeeClassification @default(VOLLZEIT)
-  coverageWeight             Decimal                @default(1.00) @db.Decimal(3, 2)
-  requiresSupervision        Boolean                @default(false)
-  hireDate                   DateTime               @db.Timestamptz
-  exitDate                   DateTime?              @db.Timestamptz
+  classification               EmployeeClassification @default(VOLLZEIT)
+  coverageWeight               Decimal                @default(1.00) @db.Decimal(3, 2)
+  requiresSupervision          Boolean                @default(false)
+  hireDate                     DateTime               @db.Timestamptz
+  exitDate                     DateTime?              @db.Timestamptz
   // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
   // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
-  birthDate                  DateTime?              @db.Date
+  birthDate                    DateTime?              @db.Date
   // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
-  breakOver6hOverride        Int? // null = TenantConfig.defaultBreakOver6h verwenden
-  breakOver9hOverride        Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  breakOver6hOverride          Int? // null = TenantConfig.defaultBreakOver6h verwenden
+  breakOver9hOverride          Int? // null = TenantConfig.defaultBreakOver9h verwenden
   // Phase 85.1.1 (D-01) — per-employee Phorest Vor-/Nachbereitungszeit override.
   // null = fall back to TenantConfig.phorestPrepMinutes/phorestWrapupMinutes; 0 = explicit "no puffer".
   phorestPrepMinutesOverride   Int? // null = TenantConfig.phorestPrepMinutes verwenden (0-30 wenn gesetzt)
   phorestWrapupMinutesOverride Int? // null = TenantConfig.phorestWrapupMinutes verwenden (0-30 wenn gesetzt)
   // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 per-employee override layer).
   // NULL = delegate to EmployeeVocationalSchoolPattern.
-  bsSlotFirstLongDayMinutes  Int?
-  bsSlotSecondLongDayMinutes Int?
-  bsSlotShortDayMinutes      Int?
-  bsSlotBlockWeekMinutes     Int?
+  bsSlotFirstLongDayMinutes    Int?
+  bsSlotSecondLongDayMinutes   Int?
+  bsSlotShortDayMinutes        Int?
+  bsSlotBlockWeekMinutes       Int?
   // Phase 76.7 (D-01, EMP-V19-01) — § 18 ArbZG-Befreiung für Inhaber/Geschäftsführer/leitende
   // Angestellte. Wenn true: SKIP updateOvertimeAccount + checkArbZG + recalculateSnapshots
   // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
   // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
-  isTimeTrackingExempt       Boolean                @default(false)
-  createdAt                  DateTime               @default(now()) @db.Timestamptz
-  updatedAt                  DateTime               @updatedAt @db.Timestamptz
+  isTimeTrackingExempt         Boolean                @default(false)
+  createdAt                    DateTime               @default(now()) @db.Timestamptz
+  updatedAt                    DateTime               @updatedAt @db.Timestamptz
 
   tenant                   Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user                     User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -422,6 +425,9 @@ model TimeEntry {
   createdAt     DateTime        @default(now()) @db.Timestamptz
   updatedAt     DateTime        @updatedAt @db.Timestamptz
   createdBy     String? // userId wer es angelegt hat
+
+  breakStatus       BreakStatus @default(CONFIRMED) // Phase 91 (BREAK-01)
+  breakWaivedReason String? // Phase 91 (BREAK-03)
 
   employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   breaks   Break[]
@@ -872,6 +878,14 @@ enum TimeEntrySource {
   MANUAL
   CORRECTION
   WIFI
+}
+
+// Phase 91 (BREAK-01) — proves the auto-inserted break was actually taken.
+// Legal: BAG 12.02.2025, 5 AZR 51/24; ArbZG §4 employer duty.
+enum BreakStatus {
+  AUTO
+  CONFIRMED
+  WAIVED
 }
 
 enum OvertimeTransactionType {
