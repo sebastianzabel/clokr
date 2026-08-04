@@ -12,6 +12,10 @@ import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-0
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — gap detector
+import {
+  unconfirmedDaysFromEntries,
+  findUnconfirmedBreakDays,
+} from "../utils/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 
@@ -308,6 +312,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
 
+      // Phase 92 (BREAK-05): master gate — single tenant-config read outside the
+      // per-employee loop (N+1-safe, PERF-V1814-01 preserved).
+      const statusTenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+      const enforceBreakConfirmation = statusTenantConfig?.enforceBreakConfirmation ?? false;
+
       // PERF-V1814-01: bulk-fetch all per-employee data in 5 parallel queries (replaces N+1)
       const stateCode = STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
       const holidayDateStrings = new Set<string>(getHolidays(year, stateCode).map((h) => h.date));
@@ -331,6 +340,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         status: "ready" | "missing" | "closed";
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
+        unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
       }[] = [];
 
       for (const emp of employees) {
@@ -357,6 +367,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
               closedAt: existingSnapshot.closedAt,
               closedBy: existingSnapshot.closedBy,
             },
+            unconfirmedBreakDays: [], // Pitfall 1 — closed months are done, never actionable
           });
           continue;
         }
@@ -372,6 +383,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
             status: "ready",
+            unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
           });
           continue;
         }
@@ -426,6 +438,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Build missingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
         const missingDates = gapResultSt.gaps.map((g) => g.date);
 
+        // Phase 92 (BREAK-05): derive unconfirmedBreakDays from the SAME bulk-fetched
+        // `entries` (now carrying breakStatus+isLocked, close-month-data.ts Q2) — no
+        // new DB call in the loop. Gated by enforceBreakConfirmation (master gate).
+        // Additive/parallel to `status` — an employee can be gap-`ready` yet still
+        // have unconfirmed AUTO breaks when the tenant is opted in.
+        const unconfirmedBreakDays = unconfirmedDaysFromEntries(
+          entries,
+          tz,
+          scheduleTypeSt,
+          enforceBreakConfirmation,
+        );
+
         if (missingDates.length > 0) {
           result.push({
             employeeId: emp.id,
@@ -433,6 +457,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "missing",
             missingDates,
+            unconfirmedBreakDays,
           });
         } else {
           result.push({
@@ -440,6 +465,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
             status: "ready",
+            unconfirmedBreakDays,
           });
         }
       }
@@ -1115,6 +1141,34 @@ export async function overtimeRoutes(app: FastifyInstance) {
           gapDates: gaps.map((g) => g.date),
           requiresConfirmation: true,
         });
+      }
+
+      // Phase 92 (BREAK-05): hard block when the tenant has opted into BOTH the
+      // master gate (enforceBreakConfirmation) AND the block flag
+      // (blockMonthCloseOnUnconfirmedBreak) and unconfirmed AUTO Pflichtpause
+      // days exist. Doubly-gated by design — findUnconfirmedBreakDays returns []
+      // unless enforceBreakConfirmation is true, so an un-opted tenant is never
+      // blocked. NO override-and-proceed bypass field (unlike gaps' confirmGaps) —
+      // the block clears only by actually confirming/waiving the days via
+      // PATCH /:id/break-status.
+      // Read-only check — never mutates, audit-proof intact.
+      if (tenantConfig?.blockMonthCloseOnUnconfirmedBreak) {
+        const unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+          employeeId,
+          monthFirstDay,
+          monthLastDay,
+          tz,
+          scheduleType,
+          enforceBreakConfirmation: tenantConfig?.enforceBreakConfirmation ?? false,
+        });
+        if (unconfirmedBreakDays.length > 0) {
+          return reply.code(409).send({
+            error: `${unconfirmedBreakDays.length} Tag${unconfirmedBreakDays.length === 1 ? "" : "e"} mit unbestätigter Pflichtpause. Bitte zuerst bestätigen oder „durchgearbeitet" erklären.`,
+            unconfirmedBreakCount: unconfirmedBreakDays.length,
+            unconfirmedBreakDays,
+            requiresBreakConfirmation: true,
+          });
+        }
       }
 
       // Alias effectiveCarryOverOut → effectiveCarryOver for the $transaction below
