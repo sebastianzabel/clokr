@@ -1982,4 +1982,148 @@ describe("auto-close-month — BREAK-05 unconfirmed-break defer (RED, Phase 92 W
 
     await cleanupTestData(app, seed.tenant.id);
   }, 60_000);
+
+  // Plan 04 Task 2 — cases missing from the Plan-01 RED scaffold (added per the plan's action block).
+
+  it("(later-month integrity) deferring January must NOT close February on stale carryOver", async () => {
+    const seed = await seedBreakDeferTenant("integrity", {
+      enforceBreakConfirmation: true,
+      blockMonthCloseOnUnconfirmedBreak: true,
+    });
+
+    // Seed a full, gap-free, fully-CONFIRMED February so it WOULD close if the
+    // per-employee month loop did not `break` on January's defer (F-02/B2 parity).
+    const febDates: string[] = [];
+    const cur = new Date("2024-02-01T00:00:00Z");
+    const end = new Date("2024-02-29T00:00:00Z"); // 2024 is a leap year
+    while (cur <= end) {
+      const dow = cur.getUTCDay();
+      if (dow >= 1 && dow <= 5) febDates.push(cur.toISOString().slice(0, 10));
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    for (const d of febDates) {
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: seed.empId,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: new Date(d + "T07:00:00Z"),
+          endTime: new Date(d + "T15:30:00Z"),
+          breakMinutes: 30,
+          breakStatus: "CONFIRMED",
+          type: "WORK",
+        },
+      });
+    }
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-03-16T06:00:00.000Z")); // backfill ceiling = February 2024
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const janSnap = await januarySnapshot(seed.empId);
+    expect(janSnap, "January must stay deferred (unconfirmed AUTO day)").toBeNull();
+
+    const febRange = monthRangeUtc(2024, 2, "Europe/Berlin");
+    const febSnap = await app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId: seed.empId,
+        periodType: "MONTHLY",
+        periodStart: {
+          gte: febRange.start,
+          lt: new Date(febRange.start.getTime() + 2 * 24 * 60 * 60 * 1000),
+        },
+        superseded: false,
+      },
+    });
+    expect(
+      febSnap,
+      "February must NOT close on stale carryOver while January is deferred (F-02/B2)",
+    ).toBeNull();
+
+    await cleanupTestData(app, seed.tenant.id);
+  }, 60_000);
+
+  it("(flexible schedule) MONTHLY_HOURS employee with an AUTO day still auto-closes (not break-deferred)", async () => {
+    const s = `bd-flex-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const prisma = app.prisma;
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `BreakDeferFlex ${s}`, slug: `bd-flex-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    await prisma.tenantConfig.create({
+      data: {
+        tenantId: tenant.id,
+        defaultVacationDays: 30,
+        timezone: "Europe/Berlin",
+        defaultBreakOver6h: 30,
+        defaultBreakOver9h: 45,
+        enforceBreakConfirmation: true,
+        blockMonthCloseOnUnconfirmedBreak: true,
+      },
+    });
+
+    const empUser = await prisma.user.create({
+      data: {
+        email: `bd-flex-emp-${s}@test.de`,
+        passwordHash: "x",
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: empUser.id,
+        employeeNumber: `BD-FLEX-${s}`,
+        firstName: "Flex",
+        lastName: "Defer",
+        hireDate: new Date("2024-01-01T00:00:00Z"),
+        isTimeTrackingExempt: false,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "MONTHLY_HOURS",
+        monthlyHours: 15,
+        workDays: [1, 2, 3, 4, 5],
+        validFrom: new Date("2024-01-01T00:00:00Z"),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    // A Minijobber (MONTHLY_HOURS) can still trigger a >6h Pflichtpause (per-entry, not
+    // per-schedule — RESOLVED Q1 / 92-RESEARCH.md Pitfall 2). D-01 excludes MONTHLY_HOURS
+    // from the gap check, and the same exclusion applies to the unconfirmed-break defer.
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: emp.id,
+        date: new Date("2024-01-10T00:00:00Z"),
+        startTime: new Date("2024-01-10T07:00:00Z"),
+        endTime: new Date("2024-01-10T14:00:00Z"),
+        breakMinutes: 30,
+        breakStatus: "AUTO",
+        type: "WORK",
+      },
+    });
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2024-02-16T06:00:00.000Z"));
+    try {
+      await app.tryAutoCloseMonth();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const snap = await januarySnapshot(emp.id);
+    expect(
+      snap,
+      "MONTHLY_HOURS/FLEXTIME schedules are never break-deferred (RESOLVED Q1)",
+    ).not.toBeNull();
+
+    await cleanupTestData(app, tenant.id);
+  }, 60_000);
 });
