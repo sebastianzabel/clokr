@@ -183,6 +183,10 @@
   // feature stays invisible until the tenant enables it.
   let enforceBreakConfirmation = $state(false);
   let unconfirmedBreakDays = $state(0);
+  // Earliest (lexicographically smallest, i.e. oldest) unconfirmed AUTO day —
+  // used to deep-link the nudge straight to the most overdue day. null when
+  // there are no unconfirmed days.
+  let earliestUnconfirmedBreakDate = $state<string | null>(null);
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   interface TodayEntry {
@@ -393,12 +397,18 @@
             if (row.breakStatus === "AUTO" && row.isLocked !== true) days.add(row.date);
           }
           unconfirmedBreakDays = days.size;
+          // ISO yyyy-MM-dd sorts lexicographically, so the smallest string is
+          // the oldest (most overdue) day — the natural deep-link target.
+          earliestUnconfirmedBreakDate =
+            days.size > 0 ? [...days].reduce((a, b) => (a < b ? a : b)) : null;
         } else {
           unconfirmedBreakDays = 0;
+          earliestUnconfirmedBreakDate = null;
         }
       } catch {
         enforceBreakConfirmation = false;
         unconfirmedBreakDays = 0;
+        earliestUnconfirmedBreakDate = null;
       }
 
       // Today's entry breakdown (row 2 / col-7)
@@ -1424,7 +1434,9 @@
               {/if}
               {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
                 <a
-                  href="/time-entries?view=list"
+                  href={earliestUnconfirmedBreakDate
+                    ? `/time-entries?view=list&date=${earliestUnconfirmedBreakDate}`
+                    : "/time-entries?view=list"}
                   class="oi-row"
                   data-testid="dashboard-break-nudge"
                 >
