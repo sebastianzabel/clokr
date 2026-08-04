@@ -19,7 +19,8 @@ import type { PrismaClient } from "@clokr/db";
  *
  * @returns
  *  snapshotsByEmp - Map<employeeId, SaldoSnapshot[]> — non-superseded MONTHLY snapshots
- *  entriesByEmp   - Map<employeeId, {date: Date}[]> — WORK TimeEntries with non-null endTime
+ *  entriesByEmp   - Map<employeeId, {id, date, breakStatus, isLocked}[]> — WORK TimeEntries
+ *                   with non-null endTime (Phase 92 — breakStatus/isLocked added for BREAK-05)
  *  leaveByEmp     - Map<employeeId, LeaveRequest[]> — APPROVED leave overlapping range
  *  absencesByEmp  - Map<employeeId, Absence[]> — absences overlapping range
  *  holidays       - PublicHoliday[] — tenant-specific DB holidays in range (tenant-wide)
@@ -43,7 +44,10 @@ export async function fetchCloseMonthData(
       },
     }),
 
-    // Q2: all completed WORK TimeEntries in range (narrow select — only date needed).
+    // Q2: all completed WORK TimeEntries in range. Select extended (Phase 92,
+    // BREAK-05) with id + breakStatus + isLocked so the status endpoint can
+    // derive unconfirmedBreakDays from this SAME bulk fetch (N+1-safe,
+    // PERF-V1814-01 — no extra per-employee query added).
     // CLAUDE.md Soft Delete Convention: deletedAt: null is mandatory.
     prisma.timeEntry.findMany({
       where: {
@@ -53,7 +57,7 @@ export async function fetchCloseMonthData(
         endTime: { not: null },
         type: "WORK",
       },
-      select: { employeeId: true, date: true },
+      select: { employeeId: true, id: true, date: true, breakStatus: true, isLocked: true },
     }),
 
     // Q3: all APPROVED LeaveRequests overlapping this date range.
