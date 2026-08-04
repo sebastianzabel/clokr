@@ -53,9 +53,11 @@ CVE-2026-59874
 # npm@latest still bundles the affected sigstore. Revisit when npm bundles sigstore>=4.1.1.
 CVE-2026-48815
 
-# brace-expansion: ReDoS (CVE-2026-14257 / -13149). The vulnerable copies (2.1.2 / 5.0.4) live
-# ONLY in npm's bundle and corepack's pnpm cache (build tooling). Our app dependency tree
-# already resolves brace-expansion@5.0.8 (fixed, via the existing pnpm.overrides pin), so no
-# runtime code path is affected. Revisit when npm/corepack bundle brace-expansion>=5.0.8.
+# brace-expansion: ReDoS (CVE-2026-14257 / -13149) + unbounded-intermediate-arrays DoS
+# (CVE-2026-69152). The vulnerable copies (2.1.2 / 5.0.4) live ONLY in npm's bundle and
+# corepack's pnpm cache (build tooling). Our app dependency tree resolves brace-expansion@5.0.9
+# (fixed for all three, via the pnpm.overrides pin bumped 5.0.8 -> 5.0.9 for CVE-2026-69152), so
+# no runtime code path is affected. Revisit when npm/corepack bundle brace-expansion>=5.0.9.
 CVE-2026-14257
 CVE-2026-13149
+CVE-2026-69152
