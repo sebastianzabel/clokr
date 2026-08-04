@@ -8,6 +8,7 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-loc
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -429,6 +430,37 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     }
                     // pastWindow && closeAllowed → fall through to force-close (gaps=0h)
                   }
+                }
+              }
+
+              // ── BREAK-05: unconfirmed-break defer (mirrors the gap-defer above) ──
+              // Only runs when the tenant explicitly opted into the hard block. The
+              // master gate (enforceBreakConfirmation) is inherited from
+              // findUnconfirmedBreakDays — it returns [] for an un-opted tenant, so no
+              // silent behavior change ever occurs (BREAK-05 Gesamt-Opt-in, CLAUDE.md).
+              if (tenant.config?.blockMonthCloseOnUnconfirmedBreak) {
+                const breakScheduleType = scheduleForMonth ? String(scheduleForMonth.type) : "";
+                const unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+                  employeeId: emp.id,
+                  monthFirstDay,
+                  monthLastDay,
+                  tz,
+                  scheduleType: breakScheduleType,
+                  enforceBreakConfirmation: tenant.config?.enforceBreakConfirmation ?? false,
+                });
+
+                if (unconfirmedBreakDays.length > 0) {
+                  app.log.warn(
+                    { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                    "Auto-Monatsabschluss: unbestätigte Pflichtpausen — verschoben (manuell)",
+                  );
+                  missing.push({
+                    employee: emp,
+                    missingDates: unconfirmedBreakDays,
+                    month: monthKey.month,
+                    year: monthKey.year,
+                  });
+                  break; // defer — never auto-finalize over unconfirmed breaks (F-02/B2 parity)
                 }
               }
 
