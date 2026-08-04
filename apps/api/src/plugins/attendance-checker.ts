@@ -1179,6 +1179,25 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(beginningOfMonthGapTask);
       app.log.info("Reminder: Monatsanfang-Lückenerinnerung geplant (täglich 09:00, erste 3 Tage)");
+
+      // Feature 9 (Phase 92-05, BREAK-06): Unconfirmed-break employee nudge — daily
+      // at 09:00, NOT window-gated (continuous until confirmed/waived).
+      const breakUnconfirmedTask = cron.schedule(
+        "0 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_BREAK_UNCONFIRMED,
+            () => checkUnconfirmedBreaks(),
+            app.log,
+          ).catch((err) =>
+            app.log.error({ err }, "Reminder: Pausen-Bestätigung Nudge Job fehlgeschlagen"),
+          );
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(breakUnconfirmedTask);
+      app.log.info("Reminder: Pausen-Bestätigung Nudge geplant (täglich 09:00, kontinuierlich)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }
