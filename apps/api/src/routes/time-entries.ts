@@ -889,7 +889,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const totalBreakMin = Math.round(calcBreakMinutes(allBreaks));
       await app.prisma.timeEntry.update({
         where: { id },
-        data: { breakMinutes: totalBreakMin },
+        // Phase 91 (BREAK-01): human appended a break -> CONFIRMED (runs after the isLocked
+        // gate above, so locked entries never reach this point).
+        data: { breakMinutes: totalBreakMin, breakStatus: "CONFIRMED" },
       });
 
       await app.audit({
@@ -1577,6 +1579,11 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
       if (body.breakMinutes !== undefined && !body.breaks) patch.breakMinutes = body.breakMinutes;
       if ("note" in body) patch.note = body.note ?? null;
+      // Phase 91 (BREAK-01): human edited the break -> CONFIRMED (runs after the isLocked
+      // gate above, so locked entries never reach this point).
+      if (body.breaks !== undefined || body.breakMinutes !== undefined) {
+        patch.breakStatus = "CONFIRMED";
+      }
 
       // Auto-revalidate: if endTime is now set and entry was invalid due to missing clock-out
       if (updatedEnd && existing.isInvalid && existing.invalidReason === "Ausstempeln fehlt") {
