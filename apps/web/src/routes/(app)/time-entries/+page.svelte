@@ -227,6 +227,13 @@
   });
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
+  // Phase 93 (BREAK-07) — tenant-configured break durations for the new-entry
+  // prefill. Sourced from GET /settings/work (defaultBreakOver6h/9h). These are
+  // the tenant DEFAULTS only; per-employee overrides (breakOver6hOverride /
+  // breakOver9hOverride) are backend-only and not exposed on this endpoint, so
+  // the prefill is a close approximation, not an exact mirror of the server.
+  let breakOver6h = $state(30);
+  let breakOver9h = $state(45);
 
   // ── Phase 93 (BREAK-07) break-confirmation UI state ─────────────────────────
   // Feature gate (fail-safe dormant). When false the badge + all action buttons
@@ -309,6 +316,8 @@
           .get<{
             arbzgEnabled?: boolean;
             defaultBreakStart?: string | null;
+            defaultBreakOver6h?: number | null;
+            defaultBreakOver9h?: number | null;
             monthlyHoursHolidayDeduction?: boolean;
             enforceBreakConfirmation?: boolean;
           }>("/settings/work")
@@ -345,6 +354,10 @@
       isExempt = rawEmployee?.isTimeTrackingExempt === true;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
+      // Phase 93 (BREAK-07) — tenant break-duration defaults for the prefill;
+      // fall back to the schema defaults (30/45) when absent/null.
+      breakOver6h = rawConfig?.defaultBreakOver6h ?? 30;
+      breakOver9h = rawConfig?.defaultBreakOver9h ?? 45;
       monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
       // Phase 93 (BREAK-07) — fail-safe dormant: only ON when the field is
       // explicitly true (absent config row / missing field → break-confirm UI hidden).
@@ -819,8 +832,13 @@
 
   // Phase 93 (BREAK-07, locked #7 / decision #8) — suggested break in minutes by
   // gross Start→Ende, mirroring the backend getEffectiveBreakDuration thresholds
-  // exactly so UI and server agree: <=6h -> 0, >6h..<=9h -> 30, >9h -> 45. Invalid
-  // / end-not-set returns 0.
+  // (<=6h -> 0, >6h..<=9h, >9h). The threshold boundaries (6h/9h, strict >) match
+  // the server exactly; the durations use the tenant defaults (defaultBreakOver6h/
+  // defaultBreakOver9h) so non-default tenants agree with the backend for the
+  // tenant-default case. Per-employee overrides are backend-only (not exposed on
+  // /settings/work), so this is a close approximation, not an exact mirror — the
+  // backend re-derives the authoritative AUTO break on save. Invalid / end-not-set
+  // returns 0.
   function suggestedBreakMinutes(startHHmm: string, endHHmm: string): number {
     if (!startHHmm || !endHHmm) return 0;
     const [sh, sm] = startHHmm.split(":").map(Number);
@@ -828,8 +846,8 @@
     if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return 0;
     const gross = eh * 60 + em - (sh * 60 + sm);
     if (gross <= 360) return 0; // <= 6h — no Pflichtpause
-    if (gross <= 540) return 30; // > 6h and <= 9h
-    return 45; // > 9h
+    if (gross <= 540) return breakOver6h; // > 6h and <= 9h — tenant default
+    return breakOver9h; // > 9h — tenant default
   }
 
   function openAdd(forDate?: string) {
