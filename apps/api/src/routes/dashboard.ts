@@ -11,8 +11,9 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   iterateDaysInTz,
+  timeStrInTz,
 } from "../utils/timezone";
-import { resolvePresenceState } from "../utils/presence";
+import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 
@@ -423,17 +424,31 @@ export async function dashboardRoutes(app: FastifyInstance) {
               ? ((empSchedule as { workDays: number[] }).workDays ?? [])
               : []
           ) as number[];
-          // SHIFT_BASED: only the planned shift defines a workday.
-          // Otherwise: workDays array is the explicit source of truth.
-          const isWorkday =
-            schedType === "SHIFT_BASED"
-              ? shift !== null
-              : scheduleWorkDays.length > 0
-                ? scheduleWorkDays.includes(dow)
-                : expectedHours > 0;
+          // Schedule-type-aware obligation: SHIFT_BASED → only a planned shift
+          // makes the day a workday; FLEXTIME/MONTHLY_HOURS → never per-day
+          // (free daily distribution → no "Fehlt"); FIXED/unknown → workDays
+          // array or expectedHours fallback.
+          const isWorkday = isObligatedWorkday({
+            scheduleType: schedType,
+            workDays: scheduleWorkDays,
+            dow,
+            expectedHours,
+            hasShift: shift !== null,
+          });
 
           const todayStr = dateStrInTz(new Date(), tz);
-          const isFuture = dayStr > todayStr;
+          const nowHHMM = timeStrInTz(new Date(), tz);
+          // "Due" = late enough that an absence counts as "Fehlt": past days
+          // always; today only after the shift start time has passed (or never
+          // for schedules without a known start time). A not-yet-due obligated
+          // day must render "scheduled", not "missing" → pass isFuture: !isDue.
+          const isDue = isDayDue({
+            dayStr,
+            todayStr,
+            nowHHMM,
+            shiftStartTime: shift?.startTime ?? null,
+          });
+          const isFuture = !isDue;
 
           // Build typed inputs for the presence resolver
           const presenceEntries: PresenceEntry[] = dayEntries.map((e) => ({
@@ -605,14 +620,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
             ? ((empSchedule as { workDays: number[] }).workDays ?? [])
             : []
         ) as number[];
-        // SHIFT_BASED: no shift fetched here → treat as never-workday (avoids false "Fehlt").
-        // Otherwise: workDays array is the explicit source of truth.
-        const isWorkday =
-          schedType === "SHIFT_BASED"
-            ? false
-            : scheduleWorkDays.length > 0
-              ? scheduleWorkDays.includes(dow)
-              : expectedHours > 0;
+        // No shift data fetched here → hasShift:false, so SHIFT_BASED resolves
+        // to "not a workday" (avoids false "Fehlt"). FLEXTIME/MONTHLY_HOURS also
+        // resolve to false (free daily distribution) so they no longer inflate
+        // the "missing" count. FIXED/unknown → workDays or expectedHours.
+        const isWorkday = isObligatedWorkday({
+          scheduleType: schedType,
+          workDays: scheduleWorkDays,
+          dow,
+          expectedHours,
+          hasShift: false,
+        });
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
         const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
@@ -838,10 +856,8 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // Feiertage reduzieren das Soll auf 0
         const expectedMin =
           schedule && !holidayName ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
-        const isWorkday = expectedMin > 0;
         const hasEntry = dayEntries.length > 0;
         const isClockedIn = dayEntries.some((e) => !e.endTime);
-        const isPast = new Date(dateStr) < todayInTz(tz);
         const isWeekend = dow === 0 || dow === 6;
 
         const leave = myWeekLeaves.find(
@@ -863,6 +879,26 @@ export async function dashboardRoutes(app: FastifyInstance) {
             : null;
         const hasShift = shift !== null;
 
+        // Schedule-type-aware obligation (fixes flexible schedules never being
+        // "Fehlt" and SHIFT_BASED-without-shift no longer being "Fehlt").
+        const isWorkday = isObligatedWorkday({
+          scheduleType,
+          workDays: (schedule as { workDays?: number[] } | null)?.workDays ?? [],
+          dow,
+          expectedHours: expectedMin / 60,
+          hasShift,
+        });
+        // Due-aware timing: past days always due; today only after the shift
+        // start time has passed (or never for a schedule without a start time).
+        // Replaces the isPast-only branch so a today shift whose start has passed
+        // renders "missing", while flexible/before-shift days render "scheduled".
+        const isDue = isDayDue({
+          dayStr: dateStr,
+          todayStr: dateStrInTz(new Date(), tz),
+          nowHHMM: timeStrInTz(new Date(), tz),
+          shiftStartTime: shift?.startTime ?? null,
+        });
+
         let status = "none";
         if (isClockedIn) status = "clocked_in";
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
@@ -871,7 +907,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
           status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
         } else if (holidayName) status = "holiday";
         else if (isWeekend && !hasShift) status = "weekend";
-        else if (isPast && (isWorkday || hasShift)) status = "missing";
+        else if (isDue && (isWorkday || hasShift)) status = "missing";
         else if (isWorkday || hasShift) status = "scheduled";
 
         return {
