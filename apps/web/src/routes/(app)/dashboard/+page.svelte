@@ -76,7 +76,15 @@
 
   interface TeamDay {
     date: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
+    status:
+      | "present"
+      | "absent"
+      | "clocked_in"
+      | "missing"
+      | "scheduled"
+      | "requested"
+      | "none"
+      | "holiday";
     workedHours: number;
     reason: string | null;
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
@@ -1683,6 +1691,13 @@
                             <span class="shift-time">{fmtHours(day.expectedHours)}</span>
                           {/if}
                         </span>
+                      {:else if day.status === "requested"}
+                        <span
+                          class="cell-badge cell-badge--requested"
+                          title={day.reason ?? "Antrag offen"}
+                        >
+                          <Icon name="clock" size={14} title="beantragt" />
+                        </span>
                       {:else}
                         <span class="cell-badge cell-badge--none" title="Frei">–</span>
                       {/if}
@@ -1731,6 +1746,10 @@
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
+            Beantragt
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--none">–</span> Keine Daten
@@ -2660,6 +2679,15 @@
     color: var(--text-muted);
     border: 1px dashed var(--border);
     font-size: 0.6875rem;
+  }
+
+  /* Open (pending) leave request — amber/warn tone signals "attention/awaiting decision",
+     distinct from the neutral "none"/Frei state and from approved (brand) leave. */
+  .cell-badge--requested {
+    background: var(--warn-soft);
+    color: var(--warn);
+    border: 1px solid var(--warn-soft);
+    font-size: 0.875rem;
   }
 
   .cell-badge--none {
