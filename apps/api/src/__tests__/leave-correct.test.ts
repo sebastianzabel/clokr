@@ -486,13 +486,18 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
       days: 10,
     });
     const usedBefore = await getVacationUsed();
-    const balBefore = await getBalance();
+    const corrBefore = await countTx("CORRECTION");
+    const redBefore = await countTx("REDUCTION");
 
     const res = await correct(req.id, { startDate: "2026-03-16", endDate: "2026-03-20" });
 
     expect(res.statusCode).toBe(200);
+    // Entitlement-neutral BOOKING: PARENTAL reverses/applies nothing on either side.
+    // (The unconditional recalc tail still reconciles the saldo — expected minutes
+    // change when an unpaid leave shortens — so balanceHours is NOT asserted here.)
     expect(await getVacationUsed()).toBe(usedBefore);
-    expect(await getBalance()).toBe(balBefore);
+    expect(await countTx("CORRECTION")).toBe(corrBefore);
+    expect(await countTx("REDUCTION")).toBe(redBefore);
   });
 
   it("halfDay:true with a SICK new type → 400 pre-write (no partial saldo write)", async () => {

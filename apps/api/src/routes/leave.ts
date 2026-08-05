@@ -1219,21 +1219,149 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
-      // Tage neu berechnen (uniform für alle Typen — typ-spezifischer Split ist 94-02)
+      // ── Recalc model (94-02): REVERSE the OLD booking (by the OLD leaveType),
+      //    then APPLY the NEW booking (by the NEW leaveType). Never branches on
+      //    the effective type alone — that would leave a VACATION/OVERTIME_COMP
+      //    day consumed when corrected INTO a sick type. All domain guards run
+      //    PRE-WRITE so a rejected correction never leaves a partial saldo write.
       const tenantId = req.user.tenantId;
-      const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
+      const oldTypeCode = existingTypeCode; // from existing.leaveType.name (delta-lock step)
+      const newType = body.type ?? oldTypeCode;
+
+      // ── Step 7a: half-day-sick reject (pre-write) — Krankheit ist immer ganztägig.
+      if (body.halfDay && (newType === "SICK" || newType === "SICK_CHILD")) {
+        return reply.code(400).send({
+          error:
+            "Halbe Kranktage sind nicht zulässig — Krankheit wird immer ganztägig gutgeschrieben.",
+        });
+      }
+
+      // ── Step 7b: overlap guard (pre-write) for a CHANGED date range. Excludes
+      //    the request itself (id:{not}). An identical-range correction (type/
+      //    halfDay-only) introduces no new collision, so it is not re-checked.
+      const dateChanged =
+        start.getTime() !== existing.startDate.getTime() ||
+        end.getTime() !== existing.endDate.getTime();
+      if (dateChanged) {
+        const overlap = await app.prisma.leaveRequest.findFirst({
+          where: {
+            employeeId: existing.employeeId,
+            deletedAt: null,
+            status: { in: ["PENDING", "APPROVED"] },
+            startDate: { lte: end },
+            endDate: { gte: start },
+            id: { not: existing.id },
+          },
+        });
+        if (overlap) {
+          return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+        }
+      }
+
+      // Holidays across the UNION of old+new range: the reverse needs the OLD
+      // range, the apply + day recompute need the NEW range.
+      const unionStart = existing.startDate < start ? existing.startDate : start;
+      const unionEnd = existing.endDate > end ? existing.endDate : end;
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, unionStart, unionEnd);
       const holidays = new Set(holidayMap.keys());
       const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
       const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
 
+      // Resolve the NEW leaveTypeId when the type changed (ensureLeaveType migrates
+      // legacy names / creates the canonical type on demand).
+      const newLeaveTypeId =
+        typeChanged && body.type != null
+          ? await ensureLeaveType(app.prisma, tenantId, body.type)
+          : existing.leaveTypeId;
+
+      // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ────────
+      if (oldTypeCode === "VACATION") {
+        await reverseVacationDays(
+          app.prisma,
+          existing.employeeId,
+          existing.leaveTypeId,
+          existing.startDate,
+          existing.endDate,
+          Number(existing.days),
+          holidays,
+          tenantId,
+        );
+      } else if (oldTypeCode === "OVERTIME_COMP") {
+        const [acct, hrs] = await Promise.all([
+          app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
+          getScheduledHours(
+            app.prisma,
+            existing.employeeId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            holidays,
+          ),
+        ]);
+        if (acct && hrs > 0) {
+          await app.prisma.overtimeAccount.update({
+            where: { id: acct.id },
+            data: { balanceHours: { increment: hrs } },
+          });
+          await app.prisma.overtimeTransaction.create({
+            data: {
+              overtimeAccountId: acct.id,
+              hours: hrs,
+              type: "CORRECTION",
+              description: `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+            },
+          });
+        }
+      }
+      // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
+      // entitlement-neutral on the reverse side (no usedDays / balance booking).
+
+      // ── Step 9: update the row (94-01 base + NEW leaveTypeId) ─────────────────
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
-        data: { startDate: start, endDate: end, halfDay: body.halfDay, days, note: body.note },
+        data: {
+          startDate: start,
+          endDate: end,
+          halfDay: body.halfDay,
+          days,
+          note: body.note,
+          leaveTypeId: newLeaveTypeId,
+        },
         include: {
           leaveType: true,
           employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
         },
       });
+
+      // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) — 94-02 T2
+
+      // ── Step 11: revalidate removed-day time entries (old range \ new range).
+      //    A shortened/moved leave frees days whose leave-caused invalidation must
+      //    be cleared. Delta-lock already guarantees these fall in unlocked months;
+      //    locked / soft-deleted entries are never touched (Revisionssicherheit).
+      const revalidateRemoved = async (from: Date, to: Date) => {
+        if (from > to) return;
+        await app.prisma.timeEntry.updateMany({
+          where: {
+            employeeId: existing.employeeId,
+            date: { gte: from, lte: to },
+            isInvalid: true,
+            invalidReason: "Urlaubsstornierung ausstehend",
+            deletedAt: null,
+            isLocked: false,
+          },
+          data: { isInvalid: false, invalidReason: null },
+        });
+      };
+      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+      if (start > existing.startDate) {
+        // head removed: [oldStart .. newStart-1]
+        await revalidateRemoved(existing.startDate, new Date(start.getTime() - ONE_DAY_MS));
+      }
+      if (end < existing.endDate) {
+        // tail removed: [newEnd+1 .. oldEnd]
+        await revalidateRemoved(new Date(end.getTime() + ONE_DAY_MS), existing.endDate);
+      }
 
       // Revisionssicherheit (EDIT-02): jede Korrektur wird LEAVE_CORRECTED-auditiert.
       await app.audit({
@@ -1910,6 +2038,58 @@ async function deductVacationDays(
     });
 
     // Recalculate next year's carry-over (current year usage changed)
+    await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year1 + 1);
+  }
+}
+
+/**
+ * Symmetrischer Gegenpart zu deductVacationDays (Phase 94-02): bucht Urlaubstage
+ * wieder ZURÜCK, wenn eine genehmigte Urlaubskorrektur den alten Buchungsstand
+ * rückgängig macht. DECREMENTIERT usedDays pro Jahr (cross-year via
+ * splitDaysAcrossYears) und rechnet den Folgejahres-Übertrag neu — NICHT der naive
+ * Single-Year-Decrement, damit ein jahresübergreifender Urlaub korrekt zurückgebucht
+ * wird (T-94-07).
+ */
+async function reverseVacationDays(
+  prisma: FastifyInstance["prisma"],
+  employeeId: string,
+  leaveTypeId: string,
+  startDate: Date,
+  endDate: Date,
+  totalDays: number,
+  holidays: Set<string>,
+  tenantId: string,
+): Promise<void> {
+  const year1 = startDate.getFullYear();
+  const year2 = endDate.getFullYear();
+  const isCrossYear = year1 !== year2;
+
+  if (isCrossYear) {
+    const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
+    const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
+
+    if (split.year1Days > 0) {
+      await prisma.leaveEntitlement.updateMany({
+        where: { employeeId, leaveTypeId, year: year1 },
+        data: { usedDays: { decrement: split.year1Days } },
+      });
+    }
+    if (split.year2Days > 0) {
+      await prisma.leaveEntitlement.updateMany({
+        where: { employeeId, leaveTypeId, year: year2 },
+        data: { usedDays: { decrement: split.year2Days } },
+      });
+    }
+
+    // Year 1 remaining changed → recompute year 2 carry-over
+    await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year2);
+  } else {
+    await prisma.leaveEntitlement.updateMany({
+      where: { employeeId, leaveTypeId, year: year1 },
+      data: { usedDays: { decrement: totalDays } },
+    });
+
+    // Current year usage changed → recompute next year's carry-over
     await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year1 + 1);
   }
 }
