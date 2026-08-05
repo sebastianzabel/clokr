@@ -184,6 +184,13 @@ export interface SyncResult {
   // (deletedReason "PHOREST_REPLACED") because a Phorest-covered day's roster no longer includes
   // them — distinct from `cancelled` (PHOREST_REMOVED windowed reconcile of origin=PHOREST rows).
   replaced: number;
+  // Phase 95 (SHIFT-02): count of active PHOREST shifts NOT soft-cancelled because the employee has
+  // an active, not-yet-APPROVED leave (status PENDING | CANCELLATION_REQUESTED) on that day — the
+  // "pending-leave gewinnt" protection, mirroring skippedVocationalSchool. IN-MEMORY ONLY: no
+  // PhorestSyncRun DB column is written for it this phase (per 95-CONTEXT open question — the
+  // per-day app.audit() row is sufficient observability; a persisted counter is an additive
+  // migration deferred until the owner wants sync-run history for it). Not touched by finalizeRun.
+  protectedPendingLeave: number;
   error?: string;
 }
 
