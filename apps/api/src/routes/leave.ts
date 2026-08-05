@@ -116,6 +116,28 @@ const updateSchema = z
     path: ["endDate"],
   });
 
+// Phase 94-01: Manager/Admin DIRECT-correction of an already-APPROVED request.
+// Mirrors updateSchema but adds an optional `type` switch (type-specific recalc
+// split lands in 94-02 — stored uniformly here).
+const correctSchema = z
+  .object({
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    halfDay: z.boolean().default(false),
+    note: z.string().optional().nullable(),
+    type: z.enum(TYPE_CODES).optional(),
+  })
+  .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
+    message: "Enddatum muss nach Startdatum liegen",
+    path: ["endDate"],
+  });
+
 const attestSchema = z.object({
   attestPresent: z.boolean(),
   attestValidFrom: z
@@ -1106,6 +1128,104 @@ export async function leaveRoutes(app: FastifyInstance) {
         newValue: updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
+
+      return {
+        ...updated,
+        typeCode:
+          TYPE_CODES.find((c) => LEAVE_TYPE_DEFS[c].name === updated.leaveType.name) ?? "VACATION",
+        startDate: updated.startDate.toISOString().split("T")[0],
+        endDate: updated.endDate.toISOString().split("T")[0],
+      };
+    },
+  });
+
+  // ── PATCH /requests/:id/correct  – Manager DIRECT-Korrektur eines
+  //    bereits GENEHMIGTEN Antrags (EDIT-01/02/03) ─────────────────────────
+  // Erlaubt es einer Führungskraft, einen genehmigten Antrag (z.B. eine lange
+  // Elternzeit) direkt zu verkürzen/anzupassen — ohne den heutigen Stornierungs-
+  // Roundtrip. Guard-Reihenfolge (CONTEXT): tenant(404+Audit) → authz(requireRole)
+  // → Status APPROVED(409) → Delta-Lock(409) → Domänen-Validierung(400).
+  app.patch("/requests/:id/correct", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = correctSchema.parse(req.body);
+
+      const existing = await app.prisma.leaveRequest.findFirst({
+        where: { id, deletedAt: null }, // D-09: soft-deleted requests are not-found
+        include: { leaveType: true, employee: { select: { tenantId: true } } },
+      });
+      if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+
+      // Tenant isolation (SEC-V1814-03 / D-02): fetch-then-compare via employee.tenantId
+      if (existing.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Nur GENEHMIGTE Anträge sind direkt korrigierbar (EDIT-01, per CONTEXT).
+      if (existing.status !== "APPROVED") {
+        return reply.code(409).send({ error: "Nur genehmigte Anträge können korrigiert werden" });
+      }
+
+      // start <= end ist bereits durch correctSchema.refine (Zod → 400) garantiert.
+      const start = new Date(body.startDate);
+      const end = new Date(body.endDate);
+
+      // ── Delta-Lock guard (EDIT-03) — implemented in 94-02 ──────────────────
+      // Insertion point: between the APPROVED-status check and the day recompute.
+      // Blocks (409) any correction whose changed days (symmetric date diff; plus
+      // retained days when type/halfDay changed) touch an isLocked month.
+
+      // Tage neu berechnen (uniform für alle Typen — typ-spezifischer Split ist 94-02)
+      const tenantId = req.user.tenantId;
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
+      const holidays = new Set(holidayMap.keys());
+      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
+      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+
+      const updated = await app.prisma.leaveRequest.update({
+        where: { id },
+        data: { startDate: start, endDate: end, halfDay: body.halfDay, days, note: body.note },
+        include: {
+          leaveType: true,
+          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
+        },
+      });
+
+      // Revisionssicherheit (EDIT-02): jede Korrektur wird LEAVE_CORRECTED-auditiert.
+      await app.audit({
+        userId: req.user.sub,
+        action: "LEAVE_CORRECTED",
+        entity: "LeaveRequest",
+        entityId: id,
+        oldValue: existing,
+        newValue: updated,
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      // Saldo-Recalc: ab dem FRÜHEREN von alt/neu Start, damit ein erweiterter
+      // Bereich vom richtigen Monat an neu berechnet wird (EDIT / T-94-05).
+      const recalcFrom = existing.startDate < start ? existing.startDate : start;
+      await recalculateSnapshots(app, existing.employeeId, recalcFrom).catch((err) =>
+        app.log.error(
+          { err, employeeId: existing.employeeId },
+          "Failed to recalculate snapshots after leave correction",
+        ),
+      );
+      await updateOvertimeAccount(app, existing.employeeId).catch((err) =>
+        app.log.error(
+          { err, employeeId: existing.employeeId },
+          "Failed to update overtime account after leave correction",
+        ),
+      );
 
       return {
         ...updated,
