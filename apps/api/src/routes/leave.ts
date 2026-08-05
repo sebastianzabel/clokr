@@ -9,6 +9,8 @@ import { recalculateSnapshots } from "../utils/recalculate-snapshots";
 import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { calculateWorkDays } from "../utils/calculate-work-days";
+import { computeAffectedMonths } from "../utils/correction-lock";
+import { periodStartWindow } from "../utils/snapshot-period";
 import { updateOvertimeAccount } from "./time-entries";
 
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
@@ -1139,7 +1141,7 @@ export async function leaveRoutes(app: FastifyInstance) {
     },
   });
 
-  // ── PATCH /requests/:id/correct  – Manager DIRECT-Korrektur eines
+  // ── PATCH .../correct  – Manager DIRECT-Korrektur eines
   //    bereits GENEHMIGTEN Antrags (EDIT-01/02/03) ─────────────────────────
   // Erlaubt es einer Führungskraft, einen genehmigten Antrag (z.B. eine lange
   // Elternzeit) direkt zu verkürzen/anzupassen — ohne den heutigen Stornierungs-
@@ -1179,10 +1181,43 @@ export async function leaveRoutes(app: FastifyInstance) {
       const start = new Date(body.startDate);
       const end = new Date(body.endDate);
 
-      // ── Delta-Lock guard (EDIT-03) — implemented in 94-02 ──────────────────
-      // Insertion point: between the APPROVED-status check and the day recompute.
-      // Blocks (409) any correction whose changed days (symmetric date diff; plus
-      // retained days when type/halfDay changed) touch an isLocked month.
+      // ── Delta-Lock guard (EDIT-03 / T-94-01) ───────────────────────────────
+      // Blocks (409) any correction whose CHANGED days (symmetric date diff; plus
+      // retained days when type/halfDay changed) touch a finalized (locked) month.
+      // The retained overlap of a shortened leave stays untouched, so shortening a
+      // long Elternzeit at its unlocked tail is allowed even if early months closed.
+      const existingTypeCode = TYPE_CODES.find(
+        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
+      );
+      const typeChanged = body.type != null && body.type !== existingTypeCode;
+      const halfDayChanged = body.halfDay !== existing.halfDay;
+      const affectedMonths = computeAffectedMonths({
+        oldStart: existing.startDate,
+        oldEnd: existing.endDate,
+        newStart: start,
+        newEnd: end,
+        typeChanged,
+        halfDayChanged,
+      });
+      if (affectedMonths.length > 0) {
+        const tz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
+        for (const { year, month } of affectedMonths) {
+          const { start: monthStart } = monthRangeUtc(year, month, tz);
+          // MONTHLY SaldoSnapshot(superseded:false) = the canonical Monatsabschluss
+          // signal (convention-robust window, see utils/snapshot-period.ts).
+          const locked = await app.prisma.saldoSnapshot.findFirst({
+            where: {
+              employeeId: existing.employeeId,
+              periodType: "MONTHLY",
+              periodStart: periodStartWindow(monthStart),
+              superseded: false,
+            },
+          });
+          if (locked) {
+            return reply.code(409).send({ error: "Gesperrter Monat — Korrektur nicht möglich" });
+          }
+        }
+      }
 
       // Tage neu berechnen (uniform für alle Typen — typ-spezifischer Split ist 94-02)
       const tenantId = req.user.tenantId;
