@@ -313,12 +313,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         },
       });
 
-      // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen)
+      // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen) + offene Anträge (PENDING).
+      // Phase 95 SHIFT-01: PENDING leave surfaces as "beantragt" instead of "–".
       const leaveRequests = await app.prisma.leaveRequest.findMany({
         where: {
           employee: { tenantId },
           deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
         },
@@ -376,12 +377,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
             }
           }
 
-          const leave = leaveRequests.find(
-            (lr) =>
-              lr.employeeId === emp.id &&
-              dateStrInTz(lr.startDate, tz) <= dayStr &&
-              dateStrInTz(lr.endDate, tz) >= dayStr,
-          );
+          // Phase 95 SHIFT-01 (Pitfall 2): an employee can have both an APPROVED and a
+          // PENDING leave overlapping one day (rare, via corrections). Prefer the
+          // non-PENDING (real) leave so APPROVED "Urlaub" wins over "beantragt".
+          const leaveMatches = (lr: (typeof leaveRequests)[number]) =>
+            lr.employeeId === emp.id &&
+            dateStrInTz(lr.startDate, tz) <= dayStr &&
+            dateStrInTz(lr.endDate, tz) >= dayStr;
+          const leave =
+            leaveRequests.find((lr) => leaveMatches(lr) && lr.status !== "PENDING") ??
+            leaveRequests.find(leaveMatches);
 
           const absence = absences.find(
             (a) =>
@@ -458,7 +463,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           const presenceLeave: PresenceLeave | null = leave
             ? {
-                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
                 leaveTypeName: leave.leaveType.name,
               }
             : null;
@@ -813,11 +818,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: {
           employeeId,
           deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          // Phase 95 SHIFT-01: include PENDING so an open request shows "beantragt".
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
           startDate: { lte: end },
           endDate: { gte: start },
         },
-        select: { startDate: true, endDate: true, leaveType: { select: { name: true } } },
+        // `status` is required for the inline "requested" vs "leave" branch below.
+        select: {
+          startDate: true,
+          endDate: true,
+          status: true,
+          leaveType: { select: { name: true } },
+        },
       });
       const myWeekAbsences = await app.prisma.absence.findMany({
         where: {
@@ -860,10 +872,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         const isClockedIn = dayEntries.some((e) => !e.endTime);
         const isWeekend = dow === 0 || dow === 6;
 
-        const leave = myWeekLeaves.find(
-          (lr) =>
-            dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr,
-        );
+        // Phase 95 SHIFT-01 (Pitfall 2): prefer a non-PENDING leave so a real
+        // APPROVED "Urlaub" wins over a coincident PENDING "beantragt" on the same day.
+        const myLeaveMatches = (lr: (typeof myWeekLeaves)[number]) =>
+          dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr;
+        const leave =
+          myWeekLeaves.find((lr) => myLeaveMatches(lr) && lr.status !== "PENDING") ??
+          myWeekLeaves.find(myLeaveMatches);
         const absence = myWeekAbsences.find(
           (a) => dateStrInTz(a.startDate, tz) <= dateStr && dateStrInTz(a.endDate, tz) >= dateStr,
         );
@@ -902,7 +917,9 @@ export async function dashboardRoutes(app: FastifyInstance) {
         let status = "none";
         if (isClockedIn) status = "clocked_in";
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
-        else if (leave) status = "leave";
+        // Phase 95 SHIFT-01: a PENDING leave surfaces as "requested" ("beantragt"),
+        // an APPROVED/CANCELLATION_REQUESTED one stays green "leave".
+        else if (leave) status = leave.status === "PENDING" ? "requested" : "leave";
         else if (absence) {
           status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
         } else if (holidayName) status = "holiday";
