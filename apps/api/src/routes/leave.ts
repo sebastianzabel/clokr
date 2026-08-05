@@ -1333,7 +1333,42 @@ export async function leaveRoutes(app: FastifyInstance) {
         },
       });
 
-      // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) — 94-02 T2
+      // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) ─────────
+      //    "Light" for Krankheit = NO entitlement apply on the new side (it does
+      //    NOT skip the OLD-side reversal nor the recalc tail).
+      if (newType === "VACATION") {
+        await deductVacationDays(
+          app.prisma,
+          existing.employeeId,
+          newLeaveTypeId,
+          start,
+          end,
+          days,
+          holidays,
+          tenantId,
+        );
+      } else if (newType === "OVERTIME_COMP") {
+        const [acct, hrs] = await Promise.all([
+          app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
+          getScheduledHours(app.prisma, existing.employeeId, start, end, body.halfDay, holidays),
+        ]);
+        if (acct && hrs > 0) {
+          await app.prisma.overtimeAccount.update({
+            where: { id: acct.id },
+            data: { balanceHours: { decrement: hrs } },
+          });
+          await app.prisma.overtimeTransaction.create({
+            data: {
+              overtimeAccountId: acct.id,
+              hours: -hrs,
+              type: "REDUCTION",
+              description: `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
+            },
+          });
+        }
+      }
+      // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
+      // entitlement-neutral on the apply side (light).
 
       // ── Step 11: revalidate removed-day time entries (old range \ new range).
       //    A shortened/moved leave frees days whose leave-caused invalidation must
