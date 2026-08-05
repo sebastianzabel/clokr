@@ -147,6 +147,51 @@ export async function seedVocationalSchoolAbsence(
   });
 }
 
+// Phase 95 (SHIFT-02) — seed a (multi-day) LeaveRequest for the pending-leave-protection tests.
+// LeaveRequest.leaveTypeId is required (schema.prisma, onDelete: Restrict), so we find-or-create a
+// minimal "Urlaub" LeaveType for the tenant first (reusing the @@unique([tenantId, name])).
+// `startStr`/`endStr` are inclusive "yyyy-MM-dd" (LeaveRequest.startDate/endDate are @db.Date).
+export async function seedPendingLeaveRequest(
+  app: FastifyInstance,
+  employeeId: string,
+  startStr: string,
+  endStr: string,
+  status: "PENDING" | "CANCELLATION_REQUESTED" | "APPROVED" = "PENDING",
+): Promise<void> {
+  const prisma = app.prisma;
+  const emp = await prisma.employee.findUnique({
+    where: { id: employeeId },
+    select: { tenantId: true },
+  });
+  if (!emp) throw new Error(`seedPendingLeaveRequest: employee ${employeeId} not found`);
+
+  let leaveType = await prisma.leaveType.findFirst({
+    where: { tenantId: emp.tenantId, name: "Urlaub" },
+  });
+  if (!leaveType) {
+    leaveType = await prisma.leaveType.create({
+      data: { tenantId: emp.tenantId, name: "Urlaub" },
+    });
+  }
+
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  // Inclusive calendar-day span (UTC midnight @db.Date → exact day arithmetic).
+  const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+
+  await prisma.leaveRequest.create({
+    data: {
+      employeeId,
+      leaveTypeId: leaveType.id,
+      startDate: start,
+      endDate: end,
+      days,
+      status,
+      createdAt: new Date(),
+    },
+  });
+}
+
 export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: string): Promise<void> {
   const prisma = app.prisma;
   const employees = await prisma.employee.findMany({
@@ -166,6 +211,10 @@ export async function cleanupPhorestTenant(app: FastifyInstance, tenantId: strin
   await prisma.phorestAppointment.deleteMany({ where: { employeeId: { in: employeeIds } } });
   // Phase 85.1 — Absence.employee is onDelete: Restrict too (seedVocationalSchoolAbsence above).
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 95 — LeaveRequest.employee + LeaveRequest.leaveType are BOTH onDelete: Restrict, so the
+  // requests must be removed before the employees, and the LeaveType before the tenant.
+  await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  await prisma.leaveType.deleteMany({ where: { tenantId } });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { tenantId } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });

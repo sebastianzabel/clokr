@@ -12,6 +12,7 @@ import {
   seedPhorestTenant,
   cleanupPhorestTenant,
   seedVocationalSchoolAbsence,
+  seedPendingLeaveRequest,
   UNMAPPED_STAFF_ID,
 } from "./helpers";
 import staffFixture from "./fixtures/staff.json";
@@ -902,6 +903,209 @@ describe("phorest sync-shifts BS-gewinnt skip (85.1)", () => {
       expect(res.status).toBe("SUCCESS");
       expect(res.skippedVocationalSchool).toBe(1);
       expect(res.cancelled).toBe(0); // NOT false-soft-cancelled
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(stillActive?.deletedAt).toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+});
+
+// Phase 95 (SHIFT-02) — a Phorest-covered shift on a day where the employee has an active,
+// not-yet-APPROVED leave request must NOT be soft-cancelled by the PHOREST_REMOVED reconcile.
+// Mirrors the D-07 BS-skip protection precisely, but the protected day comes from a LeaveRequest
+// DATE RANGE (expanded per-day), and Phorest DROPPED the slot (the day is never in wttFixture).
+describe("SHIFT-02 pending-leave protection", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  // Seed an active PHOREST shift on a day that wttFixture does NOT cover (08-xx), so on the next
+  // sync its externalId is absent from the fresh set → it WOULD be a stale soft-cancel candidate.
+  async function seedVanishedPhorestShift(employeeId: string, dateStr: string, tag: string) {
+    return app.prisma.shift.create({
+      data: {
+        employeeId,
+        date: new Date(dateStr),
+        startTime: "09:00",
+        endTime: "17:00",
+        origin: "PHOREST",
+        externalId: `pending-protect-${tag}-${dateStr}`,
+        label: "Phorest",
+      },
+    });
+  }
+
+  it("PENDING leave protects a Phorest-vanished shift from soft-cancel", async () => {
+    const seed = await seedPhorestTenant(app, "pl-pending");
+    try {
+      const preExisting = await seedVanishedPhorestShift(
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        seed.tenantId,
+      );
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        "2026-08-15",
+        "PENDING",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(0); // NOT soft-cancelled — pending leave protects the day
+      expect(res.protectedPendingLeave).toBe(1);
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(stillActive?.deletedAt).toBeNull();
+
+      // Revisionssicherheit: the protected skip is audited (no silent skip), no hard delete.
+      const audits = await app.prisma.auditLog.findMany({
+        where: { entity: "Shift", action: "UPDATE", entityId: null },
+      });
+      expect(
+        audits.some(
+          (a) =>
+            a.newValue &&
+            (a.newValue as Record<string, unknown>).skipped === "PENDING_LEAVE" &&
+            (a.newValue as Record<string, unknown>).employeeId === seed.mappedEmployeeId,
+        ),
+      ).toBe(true);
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("CANCELLATION_REQUESTED leave protects the shift the same way", async () => {
+    const seed = await seedPhorestTenant(app, "pl-cancreq");
+    try {
+      const preExisting = await seedVanishedPhorestShift(
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        seed.tenantId,
+      );
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        "2026-08-15",
+        "CANCELLATION_REQUESTED",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(0);
+      expect(res.protectedPendingLeave).toBe(1);
+
+      const stillActive = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(stillActive?.deletedAt).toBeNull();
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("APPROVED leave does NOT protect — the vanished shift IS soft-cancelled", async () => {
+    const seed = await seedPhorestTenant(app, "pl-approved");
+    try {
+      const preExisting = await seedVanishedPhorestShift(
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        seed.tenantId,
+      );
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        "2026-08-15",
+        "APPROVED",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(1); // APPROVED → normal removal
+      expect(res.protectedPendingLeave).toBe(0);
+
+      const removed = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(removed?.deletedAt).not.toBeNull();
+      expect(removed?.deletedReason).toBe("PHOREST_REMOVED");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("multi-day PENDING leave protects every in-window day in its range", async () => {
+    const seed = await seedPhorestTenant(app, "pl-range");
+    try {
+      const days = ["2026-08-17", "2026-08-18", "2026-08-19"];
+      const preExisting = [];
+      for (const d of days) {
+        preExisting.push(await seedVanishedPhorestShift(seed.mappedEmployeeId, d, seed.tenantId));
+      }
+      // One leave request spanning Mon–Wed.
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-17",
+        "2026-08-19",
+        "PENDING",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(0); // every day in the range is protected
+      expect(res.protectedPendingLeave).toBe(3);
+
+      for (const s of preExisting) {
+        const still = await app.prisma.shift.findUnique({ where: { id: s.id } });
+        expect(still?.deletedAt).toBeNull();
+      }
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
+  it("two overlapping leaves on one day (APPROVED + PENDING) — PENDING still protects", async () => {
+    const seed = await seedPhorestTenant(app, "pl-overlap");
+    try {
+      const preExisting = await seedVanishedPhorestShift(
+        seed.mappedEmployeeId,
+        "2026-08-22",
+        seed.tenantId,
+      );
+      // Both an APPROVED and a PENDING leave land on the same day (rare, via corrections).
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-22",
+        "2026-08-22",
+        "APPROVED",
+      );
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-22",
+        "2026-08-22",
+        "PENDING",
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(0); // ONE protecting status (PENDING) is enough
+      expect(res.protectedPendingLeave).toBe(1);
 
       const stillActive = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
       expect(stillActive?.deletedAt).toBeNull();
