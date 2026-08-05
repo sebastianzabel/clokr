@@ -13,6 +13,14 @@ import { computeAffectedMonths } from "../utils/correction-lock";
 import { periodStartWindow } from "../utils/snapshot-period";
 import { updateOvertimeAccount } from "./time-entries";
 
+/**
+ * A Prisma client that may be either the top-level app.prisma or an interactive
+ * transaction client (Prisma.TransactionClient). Entitlement/overtime helpers accept
+ * this union so the leave-correction handler can run them inside a single
+ * $transaction (Phase 94 CR-01: atomic reverse-OLD → apply-NEW booking).
+ */
+type DbClient = FastifyInstance["prisma"] | Prisma.TransactionClient;
+
 // ── Feste Abwesenheitstypen ──────────────────────────────────────────────────
 const TYPE_CODES = [
   "VACATION",
@@ -1274,129 +1282,147 @@ export async function leaveRoutes(app: FastifyInstance) {
           ? await ensureLeaveType(app.prisma, tenantId, body.type)
           : existing.leaveTypeId;
 
-      // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ────────
-      if (oldTypeCode === "VACATION") {
-        await reverseVacationDays(
-          app.prisma,
-          existing.employeeId,
-          existing.leaveTypeId,
-          existing.startDate,
-          existing.endDate,
-          Number(existing.days),
-          holidays,
-          tenantId,
-        );
-      } else if (oldTypeCode === "OVERTIME_COMP") {
-        const [acct, hrs] = await Promise.all([
-          app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-          getScheduledHours(
-            app.prisma,
+      // ── Steps 8-11 run inside ONE interactive transaction (94 CR-01) ──────────
+      //    The correction issues TWO authoritative ledger writes (reverse OLD +
+      //    apply NEW). Without a transaction a mid-sequence failure would leave the
+      //    OLD booking reversed but the NEW one unapplied — permanently corrupting
+      //    the vacation Kontingent (usedDays is never self-healed by the recalc
+      //    tail). All pre-write guards (half-day-sick 400, overlap 409, delta-lock
+      //    409) already ran ABOVE, so a rejection never opens the transaction.
+      const updated = await app.prisma.$transaction(async (tx) => {
+        // ── Step 8: REVERSE the OLD booking (dispatch on the OLD typeCode) ──────
+        if (oldTypeCode === "VACATION") {
+          await reverseVacationDays(
+            tx,
+            existing.employeeId,
+            existing.leaveTypeId,
+            existing.startDate,
+            existing.endDate,
+            Number(existing.days),
+            holidays,
+            tenantId,
+          );
+        } else if (oldTypeCode === "OVERTIME_COMP") {
+          const acct = await tx.overtimeAccount.findUnique({
+            where: { employeeId: existing.employeeId },
+          });
+          const hrs = await getScheduledHours(
+            tx,
             existing.employeeId,
             existing.startDate,
             existing.endDate,
             existing.halfDay,
             holidays,
-          ),
-        ]);
-        if (acct && hrs > 0) {
-          await app.prisma.overtimeAccount.update({
-            where: { id: acct.id },
-            data: { balanceHours: { increment: hrs } },
-          });
-          await app.prisma.overtimeTransaction.create({
-            data: {
-              overtimeAccountId: acct.id,
-              hours: hrs,
-              type: "CORRECTION",
-              description: `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
-            },
-          });
+          );
+          if (acct && hrs > 0) {
+            await tx.overtimeAccount.update({
+              where: { id: acct.id },
+              data: { balanceHours: { increment: hrs } },
+            });
+            await tx.overtimeTransaction.create({
+              data: {
+                overtimeAccountId: acct.id,
+                hours: hrs,
+                type: "CORRECTION",
+                description: `Korrektur Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]}`,
+              },
+            });
+          }
         }
-      }
-      // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
-      // entitlement-neutral on the reverse side (no usedDays / balance booking).
+        // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
+        // entitlement-neutral on the reverse side (no usedDays / balance booking).
 
-      // ── Step 9: update the row (94-01 base + NEW leaveTypeId) ─────────────────
-      const updated = await app.prisma.leaveRequest.update({
-        where: { id },
-        data: {
-          startDate: start,
-          endDate: end,
-          halfDay: body.halfDay,
-          days,
-          note: body.note,
-          leaveTypeId: newLeaveTypeId,
-        },
-        include: {
-          leaveType: true,
-          employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
-        },
-      });
-
-      // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) ─────────
-      //    "Light" for Krankheit = NO entitlement apply on the new side (it does
-      //    NOT skip the OLD-side reversal nor the recalc tail).
-      if (newType === "VACATION") {
-        await deductVacationDays(
-          app.prisma,
-          existing.employeeId,
-          newLeaveTypeId,
-          start,
-          end,
-          days,
-          holidays,
-          tenantId,
-        );
-      } else if (newType === "OVERTIME_COMP") {
-        const [acct, hrs] = await Promise.all([
-          app.prisma.overtimeAccount.findUnique({ where: { employeeId: existing.employeeId } }),
-          getScheduledHours(app.prisma, existing.employeeId, start, end, body.halfDay, holidays),
-        ]);
-        if (acct && hrs > 0) {
-          await app.prisma.overtimeAccount.update({
-            where: { id: acct.id },
-            data: { balanceHours: { decrement: hrs } },
-          });
-          await app.prisma.overtimeTransaction.create({
-            data: {
-              overtimeAccountId: acct.id,
-              hours: -hrs,
-              type: "REDUCTION",
-              description: `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
-            },
-          });
-        }
-      }
-      // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
-      // entitlement-neutral on the apply side (light).
-
-      // ── Step 11: revalidate removed-day time entries (old range \ new range).
-      //    A shortened/moved leave frees days whose leave-caused invalidation must
-      //    be cleared. Delta-lock already guarantees these fall in unlocked months;
-      //    locked / soft-deleted entries are never touched (Revisionssicherheit).
-      const revalidateRemoved = async (from: Date, to: Date) => {
-        if (from > to) return;
-        await app.prisma.timeEntry.updateMany({
-          where: {
-            employeeId: existing.employeeId,
-            date: { gte: from, lte: to },
-            isInvalid: true,
-            invalidReason: "Urlaubsstornierung ausstehend",
-            deletedAt: null,
-            isLocked: false,
+        // ── Step 9: update the row (94-01 base + NEW leaveTypeId) ───────────────
+        const updatedRow = await tx.leaveRequest.update({
+          where: { id },
+          data: {
+            startDate: start,
+            endDate: end,
+            halfDay: body.halfDay,
+            days,
+            note: body.note,
+            leaveTypeId: newLeaveTypeId,
           },
-          data: { isInvalid: false, invalidReason: null },
+          include: {
+            leaveType: true,
+            employee: { select: { firstName: true, lastName: true, employeeNumber: true } },
+          },
         });
-      };
-      const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-      if (start > existing.startDate) {
-        // head removed: [oldStart .. newStart-1]
-        await revalidateRemoved(existing.startDate, new Date(start.getTime() - ONE_DAY_MS));
-      }
-      if (end < existing.endDate) {
-        // tail removed: [newEnd+1 .. oldEnd]
-        await revalidateRemoved(new Date(end.getTime() + ONE_DAY_MS), existing.endDate);
-      }
+
+        // ── Step 10: APPLY the NEW booking (dispatch on the NEW typeCode) ───────
+        //    "Light" for Krankheit = NO entitlement apply on the new side (it does
+        //    NOT skip the OLD-side reversal nor the recalc tail).
+        if (newType === "VACATION") {
+          await deductVacationDays(
+            tx,
+            existing.employeeId,
+            newLeaveTypeId,
+            start,
+            end,
+            days,
+            holidays,
+            tenantId,
+          );
+        } else if (newType === "OVERTIME_COMP") {
+          const acct = await tx.overtimeAccount.findUnique({
+            where: { employeeId: existing.employeeId },
+          });
+          const hrs = await getScheduledHours(
+            tx,
+            existing.employeeId,
+            start,
+            end,
+            body.halfDay,
+            holidays,
+          );
+          if (acct && hrs > 0) {
+            await tx.overtimeAccount.update({
+              where: { id: acct.id },
+              data: { balanceHours: { decrement: hrs } },
+            });
+            await tx.overtimeTransaction.create({
+              data: {
+                overtimeAccountId: acct.id,
+                hours: -hrs,
+                type: "REDUCTION",
+                description: `Überstundenausgleich ${start.toISOString().split("T")[0]} – ${end.toISOString().split("T")[0]}`,
+              },
+            });
+          }
+        }
+        // SICK / SICK_CHILD / PARENTAL / MATERNITY / SPECIAL / UNPAID / EDUCATION:
+        // entitlement-neutral on the apply side (light).
+
+        // ── Step 11: revalidate removed-day time entries (old range \ new range).
+        //    A shortened/moved leave frees days whose leave-caused invalidation must
+        //    be cleared. Delta-lock already guarantees these fall in unlocked months;
+        //    locked / soft-deleted entries are never touched (Revisionssicherheit).
+        const revalidateRemoved = async (from: Date, to: Date) => {
+          if (from > to) return;
+          await tx.timeEntry.updateMany({
+            where: {
+              employeeId: existing.employeeId,
+              date: { gte: from, lte: to },
+              isInvalid: true,
+              invalidReason: "Urlaubsstornierung ausstehend",
+              deletedAt: null,
+              isLocked: false,
+            },
+            data: { isInvalid: false, invalidReason: null },
+          });
+        };
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        if (start > existing.startDate) {
+          // head removed: [oldStart .. newStart-1]
+          await revalidateRemoved(existing.startDate, new Date(start.getTime() - ONE_DAY_MS));
+        }
+        if (end < existing.endDate) {
+          // tail removed: [newEnd+1 .. oldEnd]
+          await revalidateRemoved(new Date(end.getTime() + ONE_DAY_MS), existing.endDate);
+        }
+
+        return updatedRow;
+      });
 
       // Revisionssicherheit (EDIT-02): jede Korrektur wird LEAVE_CORRECTED-auditiert.
       await app.audit({
@@ -1954,7 +1980,7 @@ async function autoCarryOver(
  * Called after every booking/cancellation to keep projected carry-over accurate.
  */
 async function recalculateCarryOver(
-  prisma: FastifyInstance["prisma"],
+  prisma: DbClient,
   tenantId: string,
   employeeId: string,
   leaveTypeId: string,
@@ -2029,7 +2055,7 @@ function getEffectiveCarryOver(
  * danach reguläre Tage.
  */
 async function deductVacationDays(
-  prisma: FastifyInstance["prisma"],
+  prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
   startDate: Date,
@@ -2086,7 +2112,7 @@ async function deductVacationDays(
  * wird (T-94-07).
  */
 async function reverseVacationDays(
-  prisma: FastifyInstance["prisma"],
+  prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
   startDate: Date,
@@ -2176,7 +2202,7 @@ async function getHolidayMap(
  * 4. Sonst: Mo-Fr.
  */
 async function resolveWorkDays(
-  prisma: FastifyInstance["prisma"],
+  prisma: DbClient,
   employeeId: string,
   tenantId: string,
 ): Promise<number[]> {
@@ -2238,7 +2264,7 @@ async function resolveWorkDays(
  * section for the original deferral rationale.
  */
 async function getScheduledHours(
-  prisma: FastifyInstance["prisma"],
+  prisma: DbClient,
   employeeId: string,
   start: Date,
   end: Date,

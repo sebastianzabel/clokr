@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { computeAffectedMonths } from "../utils/correction-lock";
@@ -708,5 +708,55 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
     expect(await getVacationUsed()).toBe(usedBefore);
     expect(await countTx("CORRECTION")).toBe(corrBefore);
     expect(await countTx("REDUCTION")).toBe(redBefore);
+  });
+
+  // ── CR-01: the whole reverse-OLD → apply-NEW sequence is atomic ─────────────
+
+  it("a mid-sequence failure inside the tx rolls back the OLD reversal — usedDays unchanged (94 CR-01)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-12-01",
+      end: "2026-12-04",
+      days: 4,
+    });
+    await setVacationUsed(4); // approval consumed 4
+
+    // Force a failure at Step 9 (leaveRequest.update) INSIDE the transaction, AFTER
+    // Step 8 already reversed usedDays (4 → 0). If the sequence is atomic, the failed
+    // tx must roll back the reversal, leaving usedDays back at 4 and the row untouched.
+    const orig = app.prisma.$transaction.bind(app.prisma);
+    const spy = vi.spyOn(app.prisma, "$transaction").mockImplementation(((fn: unknown) =>
+      orig(async (tx: unknown) => {
+        const proxy = new Proxy(tx as object, {
+          get(target, prop, receiver) {
+            if (prop === "leaveRequest") {
+              const real = Reflect.get(target, prop, receiver);
+              return new Proxy(real as object, {
+                get(t, p, r) {
+                  if (p === "update") {
+                    return () => {
+                      throw new Error("forced mid-tx failure");
+                    };
+                  }
+                  return Reflect.get(t, p, r);
+                },
+              });
+            }
+            return Reflect.get(target, prop, receiver);
+          },
+        });
+        return (fn as (client: unknown) => unknown)(proxy);
+      })) as unknown as typeof app.prisma.$transaction);
+
+    const res = await correct(req.id, { startDate: "2026-12-01", endDate: "2026-12-03" });
+    spy.mockRestore();
+
+    // The throw propagates out of the un-caught $transaction → Fastify 500.
+    expect(res.statusCode).toBe(500);
+    // Step 8 reverse (4 → 0) was rolled back together with the failed tx.
+    expect(await getVacationUsed()).toBe(4);
+    // The row itself was never mutated (still the original range).
+    const row = await app.prisma.leaveRequest.findUnique({ where: { id: req.id } });
+    expect(row?.endDate.toISOString().slice(0, 10)).toBe("2026-12-04");
   });
 });
