@@ -720,13 +720,34 @@ describe("Shift Planning API", () => {
   });
 
   describe("Phase 43 — Shift conflict + force-override", () => {
+    // Dates MUST always be in the future relative to the wall clock. The route's
+    // Phase 47.2 past-immutability guard (assertShiftNotPast) returns 422
+    // SHIFT_PAST_IMMUTABLE for any date before today, which would short-circuit the
+    // leave-conflict / force-override logic under test. Previously hardcoded
+    // 2026-08-03/04 — these became past dates and turned the tests into time-bombs.
+    const toIso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const businessDayFromToday = (offset: number): Date => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + offset);
+      while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1); // land on a weekday
+      return d;
+    };
+    const conflictD = businessDayFromToday(14);
+    const forceD = new Date(conflictD);
+    forceD.setDate(forceD.getDate() + 1);
+    while (forceD.getDay() === 0 || forceD.getDay() === 6) forceD.setDate(forceD.getDate() + 1);
+    const conflictDate = toIso(conflictD); // future weekday
+    const forceDate = toIso(forceD); // distinct, later future weekday
+
     it("POST /shifts returns 409 when leave covers the date", async () => {
       const leave = await app.prisma.leaveRequest.create({
         data: {
           employeeId: data.employee.id,
           leaveTypeId: data.vacationType.id,
-          startDate: new Date("2026-08-03"),
-          endDate: new Date("2026-08-03"),
+          startDate: new Date(conflictDate),
+          endDate: new Date(conflictDate),
           days: 1,
           status: "APPROVED",
         },
@@ -738,7 +759,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${managerToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-08-03",
+          date: conflictDate,
           startTime: "08:00",
           endTime: "16:00",
         },
@@ -757,8 +778,8 @@ describe("Shift Planning API", () => {
         data: {
           employeeId: data.employee.id,
           leaveTypeId: data.vacationType.id,
-          startDate: new Date("2026-08-04"),
-          endDate: new Date("2026-08-04"),
+          startDate: new Date(forceDate),
+          endDate: new Date(forceDate),
           days: 1,
           status: "APPROVED",
         },
@@ -770,7 +791,7 @@ describe("Shift Planning API", () => {
         headers: { authorization: `Bearer ${managerToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: "2026-08-04",
+          date: forceDate,
           startTime: "08:00",
           endTime: "16:00",
         },
