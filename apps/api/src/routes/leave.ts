@@ -1256,6 +1256,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const oldTypeCode = existingTypeCode; // from existing.leaveType.name (delta-lock step)
       const newType = body.type ?? oldTypeCode;
 
+      // IN-94-01: if the existing leaveType.name is neither canonical nor a known
+      // alias, existingTypeCode (hence oldTypeCode) is undefined; when the type is
+      // also left unchanged, newType is undefined too. The reverse/apply dispatch
+      // would then silently fall through to no-op — updating dates/days on the row
+      // WITHOUT adjusting the entitlement ledger (a stranded Kontingent). For
+      // audit-proof code, fail loud rather than skip the authoritative booking.
+      if (!oldTypeCode || !newType) {
+        app.log.error(
+          { id, name: existing.leaveType.name, oldTypeCode, newType },
+          "Unresolved leaveType on leave correction — refusing to skip entitlement booking",
+        );
+        return reply.code(400).send({ error: "Unbekannter Antragstyp — Korrektur nicht möglich" });
+      }
+
       // ── Step 7a: half-day-sick reject (pre-write) — Krankheit ist immer ganztägig.
       if (body.halfDay && (newType === "SICK" || newType === "SICK_CHILD")) {
         return reply.code(400).send({

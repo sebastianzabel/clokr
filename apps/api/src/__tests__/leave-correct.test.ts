@@ -267,6 +267,34 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
   });
+
+  it("unresolvable leaveType name → 400 instead of a silent booking skip (IN-94-01)", async () => {
+    const weird = await app.prisma.leaveType.create({
+      data: {
+        tenantId: data.tenant.id,
+        name: "Völlig-Unbekannt-XYZ",
+        isPaid: true,
+        requiresApproval: true,
+      },
+    });
+    const req = await createApproved({
+      leaveTypeId: weird.id,
+      startDate: "2028-03-06",
+      endDate: "2028-03-10",
+    });
+
+    // No type in the payload → newType would resolve to the unresolvable oldTypeCode
+    // (undefined). Rather than silently no-op the entitlement dispatch, reject.
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2028-03-06", endDate: "2028-03-09" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toBe("Unbekannter Antragstyp — Korrektur nicht möglich");
+  });
 });
 
 describe("computeAffectedMonths (pure delta helper)", () => {
