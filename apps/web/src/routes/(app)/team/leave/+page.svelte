@@ -102,6 +102,17 @@
   let reviewAttestFrom = $state("");
   let reviewAttestTo = $state("");
 
+  // Korrektur-Modal (EDIT-05): Manager korrigiert einen bereits GENEHMIGTEN Antrag
+  let correctModal: LeaveRequest | null = $state(null);
+  let correctOpen = $state(false);
+  let correctStart = $state("");
+  let correctEnd = $state("");
+  let correctType: TypeCode = $state("VACATION");
+  let correctHalfDay = $state(false);
+  let correctNote = $state("");
+  let correctSaving = $state(false);
+  let correctError = $state("");
+
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
 
@@ -388,6 +399,61 @@
   function closeReview() {
     reviewOpen = false;
     reviewModal = null;
+  }
+
+  // ── Korrektur-Modal (EDIT-05) ─────────────────────────────────────────────
+  // Manager korrigiert einen bereits GENEHMIGTEN Antrag (Zeitraum/Typ/halbtags).
+  // Wire-Kontrakt aus 94-01: PATCH /leave/requests/:id/correct. Server-Guards
+  // (requireRole + APPROVED + Delta-Lock) sind maßgeblich — die UI umgeht sie nie.
+  function openCorrect(req: LeaveRequest) {
+    correctModal = req;
+    correctStart = req.startDate;
+    correctEnd = req.endDate;
+    correctType = req.typeCode;
+    // Halbe Kranktage gibt es nicht — bei Krank-Typen halbtags erzwungen aus.
+    correctHalfDay = SICK_CODES.includes(req.typeCode) ? false : req.halfDay;
+    correctNote = req.note ?? "";
+    correctError = "";
+    correctOpen = true;
+  }
+
+  function closeCorrect() {
+    correctOpen = false;
+    correctModal = null;
+  }
+
+  // halbtags bei Krank-Typen immer zurücksetzen (teilweise AU gibt es nicht).
+  $effect(() => {
+    if (SICK_CODES.includes(correctType)) correctHalfDay = false;
+  });
+
+  async function submitCorrection() {
+    if (!correctModal) return;
+    // Client-Vorabprüfung (Server ist maßgeblich): Enddatum >= Startdatum.
+    if (correctStart > correctEnd) {
+      correctError = "Enddatum muss nach Startdatum liegen";
+      return;
+    }
+    correctSaving = true;
+    correctError = "";
+    try {
+      await api.patch(`/leave/requests/${correctModal.id}/correct`, {
+        startDate: correctStart,
+        endDate: correctEnd,
+        halfDay: SICK_CODES.includes(correctType) ? false : correctHalfDay,
+        type: correctType,
+        note: correctNote || null,
+      });
+      closeCorrect();
+      await Promise.all([loadData(), loadCalendar()]);
+      toasts.success("Antrag korrigiert");
+    } catch (e: unknown) {
+      // Delta-Lock 409 ("Gesperrter Monat — Korrektur nicht möglich") und
+      // Validierungs-400 landen hier und bleiben im offenen Modal sichtbar.
+      correctError = e instanceof Error ? e.message : "Fehler";
+    } finally {
+      correctSaving = false;
+    }
   }
 
   // ── Phase 87: appointment-collision warn-and-confirm on APPROVE ────────────
@@ -1205,6 +1271,14 @@
                     >
                       {req.status === "CANCELLATION_REQUESTED" ? "Stornierung prüfen" : "Prüfen"}
                     </button>
+                  {:else if req.status === "APPROVED"}
+                    <button
+                      data-testid={`leave-team-row-${req.id}-correct`}
+                      class="btn btn-sm btn-ghost"
+                      onclick={() => openCorrect(req)}
+                    >
+                      Korrigieren
+                    </button>
                   {/if}
                 </td>
               </tr>
@@ -1445,6 +1519,98 @@
           Eigene Anträge können nicht selbst genehmigt werden.
         </p>
       {/if}
+    {/snippet}
+  </Modal>
+{/if}
+
+<!-- ── Korrektur-Modal: Genehmigten Antrag korrigieren (EDIT-05) ─────────── -->
+{#if correctModal}
+  <Modal bind:open={correctOpen} eyebrow="Antrag" title="Antrag korrigieren">
+    <div data-testid="leave-correct-modal" style="display: contents">
+      <div class="form-group">
+        <span class="review-label">Mitarbeiter</span>
+        <span class="review-value"
+          >{correctModal.employee.firstName} {correctModal.employee.lastName}</span
+        >
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="correct-type">Art</label>
+        <select id="correct-type" class="form-input" bind:value={correctType}>
+          {#each TYPE_OPTIONS as opt (opt.code)}
+            <option value={opt.code}>{opt.label}</option>
+          {/each}
+        </select>
+      </div>
+      <div class="form-grid-2col">
+        <div class="form-group">
+          <label class="form-label" for="correct-start">Von</label>
+          <input
+            id="correct-start"
+            data-testid="leave-correct-modal-start"
+            type="date"
+            class="form-input"
+            bind:value={correctStart}
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="correct-end">Bis</label>
+          <input
+            id="correct-end"
+            data-testid="leave-correct-modal-end"
+            type="date"
+            class="form-input"
+            bind:value={correctEnd}
+          />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-row">
+          <input
+            type="checkbox"
+            data-testid="leave-correct-modal-halfday"
+            bind:checked={correctHalfDay}
+            disabled={SICK_CODES.includes(correctType)}
+          />
+          Halber Tag
+        </label>
+        {#if SICK_CODES.includes(correctType)}
+          <p class="form-hint">Halbe Kranktage sind nicht zulässig</p>
+        {/if}
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="correct-note">Notiz (optional)</label>
+        <textarea id="correct-note" class="form-input" rows="3" bind:value={correctNote}></textarea>
+      </div>
+      {#if correctError}
+        <div
+          class="alert alert-error review-error"
+          role="alert"
+          data-testid="leave-correct-modal-error"
+        >
+          <span>⚠</span><span>{correctError}</span>
+        </div>
+      {/if}
+    </div>
+
+    {#snippet footer()}
+      <button
+        type="button"
+        data-testid="leave-correct-modal-cancel"
+        class="btn btn-ghost"
+        onclick={closeCorrect}
+        disabled={correctSaving}
+      >
+        Abbrechen
+      </button>
+      <button
+        type="button"
+        data-testid="leave-correct-modal-submit"
+        class="btn btn-primary"
+        onclick={submitCorrection}
+        disabled={correctSaving}
+      >
+        {correctSaving ? "Speichert…" : "Bestätigen"}
+      </button>
     {/snippet}
   </Modal>
 {/if}
