@@ -1045,6 +1045,40 @@ describe("SHIFT-02 pending-leave protection", () => {
     }
   });
 
+  // LO-04: the pendingLeaves query is guarded by `deletedAt: null` (source comment T-95-02).
+  // A soft-deleted PENDING leave must NOT protect the shift — it is soft-cancelled normally.
+  it("soft-deleted PENDING leave does NOT protect — the vanished shift IS soft-cancelled", async () => {
+    const seed = await seedPhorestTenant(app, "pl-softdel");
+    try {
+      const preExisting = await seedVanishedPhorestShift(
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        seed.tenantId,
+      );
+      // Seed a PENDING leave that is soft-deleted (deletedAt set, NOT null) → must be ignored.
+      await seedPendingLeaveRequest(
+        app,
+        seed.mappedEmployeeId,
+        "2026-08-15",
+        "2026-08-15",
+        "PENDING",
+        new Date("2026-08-01T00:00:00Z"),
+      );
+
+      mockPhorest(wttFixture);
+      const res = await syncPhorestShifts(app, seed.tenantId, WIDE_WINDOW);
+      expect(res.status).toBe("SUCCESS");
+      expect(res.cancelled).toBe(1); // soft-deleted leave → no protection → normal removal
+      expect(res.protectedPendingLeave).toBe(0);
+
+      const removed = await app.prisma.shift.findUnique({ where: { id: preExisting.id } });
+      expect(removed?.deletedAt).not.toBeNull();
+      expect(removed?.deletedReason).toBe("PHOREST_REMOVED");
+    } finally {
+      await cleanupPhorestTenant(app, seed.tenantId);
+    }
+  });
+
   it("multi-day PENDING leave protects every in-window day in its range", async () => {
     const seed = await seedPhorestTenant(app, "pl-range");
     try {
