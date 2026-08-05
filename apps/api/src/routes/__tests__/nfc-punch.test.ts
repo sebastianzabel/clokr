@@ -13,7 +13,13 @@ describe("NFC Punch API", () => {
     app = await getTestApp();
     data = await seedTestData(app, "nfc");
 
-    // Assign NFC card to the employee
+    // Assign NFC card to the employee.
+    // nfcCardId is globally unique — release it from any leftover employee
+    // (residue from a prior run whose beforeAll threw partway) so setup is idempotent.
+    await app.prisma.employee.updateMany({
+      where: { nfcCardId: NFC_CARD_ID },
+      data: { nfcCardId: null },
+    });
     await app.prisma.employee.update({
       where: { id: data.employee.id },
       data: { nfcCardId: NFC_CARD_ID },
