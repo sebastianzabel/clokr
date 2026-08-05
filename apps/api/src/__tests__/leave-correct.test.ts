@@ -579,4 +579,134 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
     expect(lockedAfter?.isInvalid).toBe(true); // locked month never mutated
     expect(deletedAfter?.isInvalid).toBe(true); // soft-deleted never touched
   });
+
+  // ── Task 2: apply-NEW side (dispatch on NEW type) ───────────────────────────
+
+  it("VACATION date-only change nets usedDays exactly (reverse N + apply M)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-08-03",
+      end: "2026-08-07",
+      days: 5,
+    });
+    await setVacationUsed(5); // approval consumed 5
+
+    const res = await correct(req.id, { startDate: "2026-08-03", endDate: "2026-08-05" }); // → 3 days
+    expect(res.statusCode).toBe(200);
+    // OLD 5 fully reversed, NEW 3 applied → net baseline(0) + 3
+    expect(await getVacationUsed()).toBe(3);
+  });
+
+  it("SICK→VACATION correction applies the NEW deduction (old SICK not reversed)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: sickTypeId,
+      start: "2026-09-07",
+      end: "2026-09-11",
+      days: 5,
+    });
+    await setVacationUsed(0);
+
+    const res = await correct(req.id, {
+      startDate: "2026-09-07",
+      endDate: "2026-09-11",
+      type: "VACATION",
+    });
+    expect(res.statusCode).toBe(200);
+    // old SICK reverses nothing; new VACATION deducts 5
+    expect(await getVacationUsed()).toBe(5);
+  });
+
+  it("cross-year VACATION correction recomputes next-year carry-over", async () => {
+    const YEAR2 = YEAR + 1;
+    await app.prisma.leaveEntitlement.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: YEAR2,
+        },
+      },
+      create: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: YEAR2,
+        totalDays: 30,
+        usedDays: 0,
+      },
+      update: {},
+    });
+    await setVacationUsed(4);
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: `${YEAR}-12-28`,
+      end: `${YEAR2}-01-08`,
+      days: 6,
+    });
+
+    const res = await correct(req.id, {
+      startDate: `${YEAR}-12-28`,
+      endDate: `${YEAR2}-01-08`,
+    });
+    expect(res.statusCode).toBe(200);
+
+    const ent1 = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year: YEAR },
+    });
+    const ent2 = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year: YEAR2 },
+    });
+    const expectedCarry = Math.max(
+      0,
+      Number(ent1!.totalDays) + Number(ent1!.carriedOverDays) - Number(ent1!.usedDays),
+    );
+    // carry-over row for YEAR2 was recomputed from YEAR1 remaining (T-94-07)
+    expect(Number(ent2!.carriedOverDays)).toBeCloseTo(expectedCarry, 5);
+  });
+
+  it("OVERTIME_COMP date change nets balanceHours to old−new (CORRECTION + REDUCTION)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: overtimeTypeId,
+      start: "2026-10-05",
+      end: "2026-10-09",
+      days: 5,
+    });
+    const corrBefore = await countTx("CORRECTION");
+    const redBefore = await countTx("REDUCTION");
+
+    const res = await correct(req.id, { startDate: "2026-10-05", endDate: "2026-10-07" }); // 40h → 24h
+    expect(res.statusCode).toBe(200);
+    expect(await countTx("CORRECTION")).toBe(corrBefore + 1); // credit back OLD 40h
+    expect(await countTx("REDUCTION")).toBe(redBefore + 1); // debit NEW 24h
+
+    const acct = await app.prisma.overtimeAccount.findUnique({
+      where: { employeeId: data.employee.id },
+    });
+    const reduction = await app.prisma.overtimeTransaction.findFirst({
+      where: { overtimeAccountId: acct!.id, type: "REDUCTION" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(Number(reduction!.hours)).toBeCloseTo(-24, 5);
+  });
+
+  it("SICK new type apply is a no-op (light) — no entitlement or overtime booking", async () => {
+    const req = await mkApproved({
+      leaveTypeId: parentalTypeId,
+      start: "2026-11-02",
+      end: "2026-11-06",
+      days: 5,
+    });
+    const usedBefore = await getVacationUsed();
+    const corrBefore = await countTx("CORRECTION");
+    const redBefore = await countTx("REDUCTION");
+
+    const res = await correct(req.id, {
+      startDate: "2026-11-02",
+      endDate: "2026-11-06",
+      type: "SICK",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(await getVacationUsed()).toBe(usedBefore);
+    expect(await countTx("CORRECTION")).toBe(corrBefore);
+    expect(await countTx("REDUCTION")).toBe(redBefore);
+  });
 });
