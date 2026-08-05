@@ -307,3 +307,271 @@ describe("computeAffectedMonths (pure delta helper)", () => {
     expect(months).toEqual([]);
   });
 });
+
+/**
+ * Phase 94-02 — reverse-OLD → apply-NEW recalc in the correction handler.
+ *
+ * Every correction REVERSES the old booking (dispatched on the OLD leaveType) and
+ * then APPLIES the new booking (dispatched on the NEW leaveType). This makes every
+ * type-change direction saldo-correct by construction and never leaves a day consumed.
+ * Task 1 pins the reverse side + the pre-write guards + removed-day revalidation.
+ */
+describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let overtimeTypeId: string;
+  let sickTypeId: string;
+  let parentalTypeId: string;
+  const YEAR = new Date().getFullYear();
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "lc3");
+    overtimeTypeId = (
+      await app.prisma.leaveType.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Überstundenausgleich",
+          isPaid: true,
+          requiresApproval: true,
+        },
+      })
+    ).id;
+    sickTypeId = (
+      await app.prisma.leaveType.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+        },
+      })
+    ).id;
+    parentalTypeId = (
+      await app.prisma.leaveType.create({
+        data: {
+          tenantId: data.tenant.id,
+          name: "Elternzeit",
+          isPaid: false,
+          requiresApproval: true,
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  async function mkApproved(opts: {
+    leaveTypeId: string;
+    start: string;
+    end: string;
+    days: number;
+    halfDay?: boolean;
+  }) {
+    return app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: opts.leaveTypeId,
+        startDate: new Date(opts.start),
+        endDate: new Date(opts.end),
+        days: opts.days,
+        halfDay: opts.halfDay ?? false,
+        status: "APPROVED",
+        reviewedBy: "system",
+        reviewedAt: new Date(),
+      },
+    });
+  }
+
+  function correct(id: string, payload: Record<string, unknown>) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/correct`,
+      headers: {
+        authorization: `Bearer ${data.adminToken}`,
+        "user-agent": "vitest-agent/1.0",
+      },
+      payload,
+    });
+  }
+
+  async function setVacationUsed(n: number, year = YEAR) {
+    await app.prisma.leaveEntitlement.updateMany({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year },
+      data: { usedDays: n },
+    });
+  }
+
+  async function getVacationUsed(year = YEAR): Promise<number> {
+    const e = await app.prisma.leaveEntitlement.findFirst({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year },
+    });
+    return Number(e?.usedDays ?? -999);
+  }
+
+  async function getBalance(): Promise<number> {
+    const a = await app.prisma.overtimeAccount.findUnique({
+      where: { employeeId: data.employee.id },
+    });
+    return Number(a?.balanceHours ?? 0);
+  }
+
+  async function countTx(type: "CORRECTION" | "REDUCTION"): Promise<number> {
+    const a = await app.prisma.overtimeAccount.findUnique({
+      where: { employeeId: data.employee.id },
+    });
+    if (!a) return 0;
+    return app.prisma.overtimeTransaction.count({
+      where: { overtimeAccountId: a.id, type },
+    });
+  }
+
+  // ── Task 1: reverse-OLD side + pre-write guards + revalidation ──────────────
+
+  it("VACATION→SICK correction reverses the OLD usedDays back to baseline", async () => {
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-03-02",
+      end: "2026-03-06",
+      days: 5,
+    });
+    await setVacationUsed(5); // approval had consumed 5 days
+
+    const res = await correct(req.id, {
+      startDate: "2026-03-02",
+      endDate: "2026-03-06",
+      type: "SICK",
+    });
+
+    expect(res.statusCode).toBe(200);
+    // OLD VACATION (5) fully reversed; new SICK side adds no entitlement
+    expect(await getVacationUsed()).toBe(0);
+  });
+
+  it("OVERTIME_COMP→SICK correction credits back the OLD scheduled hours (+CORRECTION tx)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: overtimeTypeId,
+      start: "2026-03-09",
+      end: "2026-03-13",
+      days: 5,
+    });
+    const balBefore = await getBalance();
+    const corrBefore = await countTx("CORRECTION");
+
+    const res = await correct(req.id, {
+      startDate: "2026-03-09",
+      endDate: "2026-03-13",
+      type: "SICK",
+    });
+
+    expect(res.statusCode).toBe(200);
+    // 5 × 8h Mon–Fri credited back to the overtime balance
+    expect(await getBalance()).toBeCloseTo(balBefore + 40, 5);
+    expect(await countTx("CORRECTION")).toBe(corrBefore + 1);
+  });
+
+  it("PARENTAL (Elternzeit) tail-shorten stays entitlement-neutral", async () => {
+    const req = await mkApproved({
+      leaveTypeId: parentalTypeId,
+      start: "2026-03-16",
+      end: "2026-03-27",
+      days: 10,
+    });
+    const usedBefore = await getVacationUsed();
+    const balBefore = await getBalance();
+
+    const res = await correct(req.id, { startDate: "2026-03-16", endDate: "2026-03-20" });
+
+    expect(res.statusCode).toBe(200);
+    expect(await getVacationUsed()).toBe(usedBefore);
+    expect(await getBalance()).toBe(balBefore);
+  });
+
+  it("halfDay:true with a SICK new type → 400 pre-write (no partial saldo write)", async () => {
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-05-04",
+      end: "2026-05-08",
+      days: 5,
+    });
+    await setVacationUsed(5);
+
+    const res = await correct(req.id, {
+      startDate: "2026-05-04",
+      endDate: "2026-05-08",
+      type: "SICK",
+      halfDay: true,
+    });
+
+    expect(res.statusCode).toBe(400);
+    // reverse never ran — the OLD booking is untouched
+    expect(await getVacationUsed()).toBe(5);
+  });
+
+  it("changed range overlapping a DIFFERENT approved request → 409; self is excluded", async () => {
+    const a = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-06-01",
+      end: "2026-06-05",
+      days: 5,
+    });
+    await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-06-15",
+      end: "2026-06-19",
+      days: 5,
+    });
+
+    // extend A into B's range → overlap 409
+    const res = await correct(a.id, { startDate: "2026-06-01", endDate: "2026-06-16" });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toContain("Überschneidung");
+
+    // a changed range that does NOT collide with B must NOT flag self → 200
+    const res2 = await correct(a.id, { startDate: "2026-06-01", endDate: "2026-06-03" });
+    expect(res2.statusCode).toBe(200);
+  });
+
+  it("removed-day leave-caused isInvalid entries are revalidated; locked/soft-deleted untouched", async () => {
+    const req = await mkApproved({
+      leaveTypeId: data.vacationType.id,
+      start: "2026-07-06",
+      end: "2026-07-17",
+      days: 10,
+    });
+    const mkEntry = (date: string, extra: Record<string, unknown>) =>
+      app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(date),
+          startTime: new Date(`${date}T08:00:00Z`),
+          isInvalid: true,
+          invalidReason: "Urlaubsstornierung ausstehend",
+          ...extra,
+        },
+      });
+    const eOpen = await mkEntry("2026-07-15", { isLocked: false });
+    const eLocked = await mkEntry("2026-07-16", { isLocked: true });
+    const eDeleted = await mkEntry("2026-07-17", { isLocked: false, deletedAt: new Date() });
+
+    const res = await correct(req.id, { startDate: "2026-07-06", endDate: "2026-07-10" });
+    expect(res.statusCode).toBe(200);
+
+    const openAfter = await app.prisma.timeEntry.findUnique({ where: { id: eOpen.id } });
+    const lockedAfter = await app.prisma.timeEntry.findUnique({ where: { id: eLocked.id } });
+    const deletedAfter = await app.prisma.timeEntry.findUnique({ where: { id: eDeleted.id } });
+
+    expect(openAfter?.isInvalid).toBe(false);
+    expect(openAfter?.invalidReason).toBeNull();
+    expect(lockedAfter?.isInvalid).toBe(true); // locked month never mutated
+    expect(deletedAfter?.isInvalid).toBe(true); // soft-deleted never touched
+  });
+});
