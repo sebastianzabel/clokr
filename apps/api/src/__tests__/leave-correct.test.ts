@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { computeAffectedMonths } from "../utils/correction-lock";
 
 /**
  * Phase 94-01 — Manager/Admin DIRECT-correction of an already-APPROVED LeaveRequest.
@@ -167,5 +168,142 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       payload: { startDate: "2027-10-15", endDate: "2027-10-04" },
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  // ── Delta-based locked-month protection (EDIT-03 / T-94-01) ───────────────
+
+  /** Seed a MONTHLY superseded:false SaldoSnapshot = "month is closed/locked". */
+  async function lockMonth(employeeId: string, year: number, month: number) {
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId,
+        periodType: "MONTHLY",
+        // UTC-naive convention (matches periodStartWindow's 2-day window)
+        periodStart: new Date(Date.UTC(year, month - 1, 1)),
+        periodEnd: new Date(Date.UTC(year, month, 0)),
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+  }
+
+  it("shortening Elternzeit at its unlocked tail is allowed even when early months are locked (200)", async () => {
+    const req = await createApproved({ startDate: "2025-01-01", endDate: "2027-12-31" });
+    // Jan 2025 is closed — but it stays in the RETAINED overlap, so untouched.
+    await lockMonth(data.employee.id, 2025, 1);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2025-01-01", endDate: "2026-07-31" },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).endDate).toBe("2026-07-31");
+  });
+
+  it("moving endDate INTO an already-locked month → 409", async () => {
+    const req = await createApproved({ startDate: "2025-05-01", endDate: "2025-05-09" });
+    await lockMonth(data.employee.id, 2025, 5);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2025-05-01", endDate: "2025-05-20" },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
+  });
+
+  it("halfDay change on a leave overlapping a locked month → 409 (retained day)", async () => {
+    const req = await createApproved({ startDate: "2025-06-02", endDate: "2025-06-13" });
+    await lockMonth(data.employee.id, 2025, 6);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2025-06-02", endDate: "2025-06-13", halfDay: true },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
+  });
+
+  it("identical range with no type/halfDay change is a no-op → allowed even in a locked month (200)", async () => {
+    const req = await createApproved({ startDate: "2025-11-03", endDate: "2025-11-14" });
+    await lockMonth(data.employee.id, 2025, 11);
+
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2025-11-03", endDate: "2025-11-14" },
+    });
+
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe("computeAffectedMonths (pure delta helper)", () => {
+  const has = (arr: { year: number; month: number }[], y: number, m: number) =>
+    arr.some((x) => x.year === y && x.month === m);
+
+  it("shorten (no type/halfDay change) → only the removed tail months", () => {
+    const months = computeAffectedMonths({
+      oldStart: new Date("2025-01-01"),
+      oldEnd: new Date("2027-12-31"),
+      newStart: new Date("2025-01-01"),
+      newEnd: new Date("2026-07-31"),
+      typeChanged: false,
+      halfDayChanged: false,
+    });
+    expect(has(months, 2026, 8)).toBe(true);
+    expect(has(months, 2027, 12)).toBe(true);
+    // retained overlap must NOT appear
+    expect(has(months, 2025, 1)).toBe(false);
+    expect(has(months, 2026, 7)).toBe(false);
+  });
+
+  it("extend into a month → that month is affected", () => {
+    const months = computeAffectedMonths({
+      oldStart: new Date("2025-05-01"),
+      oldEnd: new Date("2025-05-09"),
+      newStart: new Date("2025-05-01"),
+      newEnd: new Date("2025-05-20"),
+      typeChanged: false,
+      halfDayChanged: false,
+    });
+    expect(months).toEqual([{ year: 2025, month: 5 }]);
+  });
+
+  it("halfDay change on identical range → retained days included", () => {
+    const months = computeAffectedMonths({
+      oldStart: new Date("2025-06-02"),
+      oldEnd: new Date("2025-06-13"),
+      newStart: new Date("2025-06-02"),
+      newEnd: new Date("2025-06-13"),
+      typeChanged: false,
+      halfDayChanged: true,
+    });
+    expect(months).toEqual([{ year: 2025, month: 6 }]);
+  });
+
+  it("identical range, no flags → empty affected set", () => {
+    const months = computeAffectedMonths({
+      oldStart: new Date("2025-11-03"),
+      oldEnd: new Date("2025-11-14"),
+      newStart: new Date("2025-11-03"),
+      newEnd: new Date("2025-11-14"),
+      typeChanged: false,
+      halfDayChanged: false,
+    });
+    expect(months).toEqual([]);
   });
 });
