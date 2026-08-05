@@ -165,6 +165,12 @@
       }
       case "weekend":
         return { name: "leaf", label: "Wochenende", cls: "is-muted" };
+      case "requested":
+        return {
+          name: "clock",
+          label: day.leaveType ? `Antrag: ${day.leaveType}` : "Antrag offen",
+          cls: "is-requested",
+        };
       default:
         return { name: "minus", label: "—", cls: "is-muted" };
     }
@@ -172,6 +178,8 @@
 
   function hoursLine(day: MyWeekDay, scheduleType: string | null): string | null {
     if (day.status === "leave" || day.status === "sick" || day.status === "absent") return null;
+    // Open (pending) leave request: no worked/expected pill, matching leave/sick/holiday.
+    if (day.status === "requested") return null;
     if (day.status === "holiday") return null;
     if (day.status === "weekend") return null;
     // "scheduled" already carries the plan in the label — don't duplicate as right-side pill.
@@ -429,6 +437,10 @@
   }
   .status-icon.is-scheduled {
     color: var(--brand);
+  }
+  /* Open (pending) leave request — warn tone matches the team-week 'beantragt' badge. */
+  .status-icon.is-requested {
+    color: var(--warn);
   }
   .status-label {
     color: var(--text);
