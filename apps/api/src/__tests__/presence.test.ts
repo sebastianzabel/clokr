@@ -132,10 +132,24 @@ describe("resolvePresenceState", () => {
   // "requested" status (rendered as the German "beantragt" badge) instead of falling
   // through to "none"/"missing". The leave is not yet legally active, so it is NOT
   // "absent" — the day is "requested".
-  it("PENDING leave → requested with 'Antrag offen' reason", () => {
+  it("PENDING leave → requested with 'Antrag: {leaveType}' reason (LO-02)", () => {
     const result = resolvePresenceState({
       entries: [],
       leave: pendingLeave,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    // LO-02: team-week tooltip now mirrors my-week ("Antrag: {leaveType}").
+    expect(result).toEqual({ status: "requested", reason: "Antrag: Urlaub" });
+  });
+
+  it("PENDING leave without a leave type → requested with 'Antrag offen' fallback (LO-02)", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: { status: "PENDING" as const, leaveTypeName: "" },
       absence: null,
       isWorkday: workday,
       isFuture: past,

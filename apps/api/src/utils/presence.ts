@@ -161,7 +161,12 @@ export function resolvePresenceState(params: {
       // Phase 95 SHIFT-01: a not-yet-APPROVED leave request. The leave is not yet
       // legally active (not "absent") but the day must not collapse to "none"/"missing".
       // Surface a distinct status; Plan 03 renders the German "beantragt" badge.
-      return { status: "requested", reason: "Antrag offen" };
+      // LO-02: mirror the my-week tooltip ("Antrag: {leaveType}"), falling back to
+      // the generic "Antrag offen" when no leave type is available.
+      return {
+        status: "requested",
+        reason: leave.leaveTypeName ? `Antrag: ${leave.leaveTypeName}` : "Antrag offen",
+      };
     }
     if (leave.status === "CANCELLATION_REQUESTED") {
       // D-09: leave legally active until cancellation approved → employee is absent
