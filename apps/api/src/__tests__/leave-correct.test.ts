@@ -249,6 +249,24 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
 
     expect(res.statusCode).toBe(200);
   });
+
+  it("note-only edit on a fully-locked approved entry → 409 (WR-94-01)", async () => {
+    const req = await createApproved({ startDate: "2028-02-07", endDate: "2028-02-11" });
+    await lockMonth(data.employee.id, 2028, 2);
+
+    // Identical dates/type/halfDay — only the note changes. The day-based delta-lock
+    // sees zero affected days, but the entry lies wholly in a locked month, so the
+    // metadata edit must still be rejected (Revisionssicherheit).
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${req.id}/correct`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { startDate: "2028-02-07", endDate: "2028-02-11", note: "Korrektur-Notiz" },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toBe("Gesperrter Monat — Korrektur nicht möglich");
+  });
 });
 
 describe("computeAffectedMonths (pure delta helper)", () => {

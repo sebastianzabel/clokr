@@ -1207,9 +1207,29 @@ export async function leaveRoutes(app: FastifyInstance) {
         typeChanged,
         halfDayChanged,
       });
-      if (affectedMonths.length > 0) {
+
+      // WR-94-01: a day-invariant metadata edit (note-only — identical dates, type
+      // and halfDay) produces zero affected days, so the day-based delta-lock above
+      // would wave it through. But Revisionssicherheit forbids editing an entry that
+      // lies in a finalized (locked) month — even a note change fires a net-zero
+      // reverse/apply pair against the locked year's entitlement ledger. When nothing
+      // day-related changed but the note did, lock-check the FULL retained range.
+      const noteChanged = (body.note ?? null) !== (existing.note ?? null);
+      const monthsToCheck =
+        affectedMonths.length === 0 && noteChanged
+          ? computeAffectedMonths({
+              oldStart: existing.startDate,
+              oldEnd: existing.endDate,
+              newStart: start,
+              newEnd: end,
+              typeChanged: true, // force the retained intersection into the affected set
+              halfDayChanged: false,
+            })
+          : affectedMonths;
+
+      if (monthsToCheck.length > 0) {
         const tz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
-        for (const { year, month } of affectedMonths) {
+        for (const { year, month } of monthsToCheck) {
           const { start: monthStart } = monthRangeUtc(year, month, tz);
           // MONTHLY SaldoSnapshot(superseded:false) = the canonical Monatsabschluss
           // signal (convention-robust window, see utils/snapshot-period.ts).
