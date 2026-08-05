@@ -9,6 +9,7 @@ export type PresenceStatus =
   | "missing"
   | "holiday"
   | "scheduled"
+  | "requested"
   | "none";
 
 export interface PresenceEntry {
@@ -17,7 +18,7 @@ export interface PresenceEntry {
 }
 
 export interface PresenceLeave {
-  status: "APPROVED" | "CANCELLATION_REQUESTED";
+  status: "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING";
   leaveTypeName: string;
 }
 
@@ -117,13 +118,14 @@ export function isDayDue(params: {
  * Priority order (D-08, D-09):
  * 1. Valid clocked_in entry (endTime null, isInvalid false)
  * 2. Valid completed entry (endTime not null, isInvalid false)
- * 3. CANCELLATION_REQUESTED leave → absent + "Urlaubsstornierung beantragt"
- * 4. APPROVED leave → absent + leaveTypeName
- * 5. Absence → absent + German label
- * 6. Public holiday (isHoliday) → holiday + holidayName
- * 7. Future workday/shift → scheduled
- * 8. Past workday/shift → missing
- * 9. Default → none
+ * 3. PENDING leave → requested + "Antrag offen" (Phase 95 SHIFT-01)
+ * 4. CANCELLATION_REQUESTED leave → absent + "Urlaubsstornierung beantragt"
+ * 5. APPROVED leave → absent + leaveTypeName
+ * 6. Absence → absent + German label
+ * 7. Public holiday (isHoliday) → holiday + holidayName
+ * 8. Future workday/shift → scheduled
+ * 9. Past workday/shift → missing
+ * 10. Default → none
  *
  * isInvalid:true entries are ignored entirely (D-08).
  */
@@ -155,6 +157,12 @@ export function resolvePresenceState(params: {
   }
 
   if (leave) {
+    if (leave.status === "PENDING") {
+      // Phase 95 SHIFT-01: a not-yet-APPROVED leave request. The leave is not yet
+      // legally active (not "absent") but the day must not collapse to "none"/"missing".
+      // Surface a distinct status; Plan 03 renders the German "beantragt" badge.
+      return { status: "requested", reason: "Antrag offen" };
+    }
     if (leave.status === "CANCELLATION_REQUESTED") {
       // D-09: leave legally active until cancellation approved → employee is absent
       return { status: "absent", reason: "Urlaubsstornierung beantragt" };
