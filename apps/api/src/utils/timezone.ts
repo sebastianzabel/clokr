@@ -54,6 +54,18 @@ export function dateStrInTz(utcDate: Date, tz: string): string {
 }
 
 /**
+ * Format a UTC date as "HH:MM" (24h, zero-padded) in the given timezone.
+ *
+ * Mirrors `dateStrInTz`. The returned string is directly, lexicographically
+ * comparable to `Shift.startTime`/`Shift.endTime`, which are stored as "HH:MM"
+ * strings — enabling "has the shift start time already passed?" checks without
+ * parsing into numbers.
+ */
+export function timeStrInTz(utcDate: Date, tz: string): string {
+  return formatInTimeZone(utcDate, tz, "HH:mm");
+}
+
+/**
  * Get the day-of-week (0=Sunday, 1=Monday, …, 6=Saturday)
  * for a UTC date interpreted in the given timezone.
  */

@@ -40,6 +40,78 @@ const ABSENCE_LABELS: Record<string, string> = {
 };
 
 /**
+ * Whether a given weekday is an *obligated* workday for an employee — i.e. a day
+ * on which absence-without-reason should surface as "Fehlt" (missing).
+ *
+ * Schedule-type aware (the day-granular, type-agnostic logic this replaces
+ * produced false "missing" for flexible schedules and for SHIFT_BASED employees):
+ *
+ *   - SHIFT_BASED  → obligation exists ONLY when a shift is planned for the day
+ *     (`hasShift`). The planned shift IS the obligation; default per-day
+ *     `{day}Hours` are irrelevant for shift workers.
+ *   - FLEXTIME / MONTHLY_HOURS → never a per-day obligation. These are
+ *     weekly/monthly budgets with free daily distribution, so no single day can
+ *     be "Fehlt".
+ *   - FIXED_SCHEDULE / null / unknown → the explicit `workDays` array is the
+ *     source of truth when populated; otherwise fall back to `expectedHours > 0`.
+ */
+export function isObligatedWorkday(params: {
+  scheduleType: string | null;
+  workDays: number[];
+  dow: number;
+  expectedHours: number;
+  hasShift: boolean;
+}): boolean {
+  const { scheduleType, workDays, dow, expectedHours, hasShift } = params;
+
+  if (scheduleType === "SHIFT_BASED") {
+    return hasShift;
+  }
+
+  if (scheduleType === "FLEXTIME" || scheduleType === "MONTHLY_HOURS") {
+    return false;
+  }
+
+  // FIXED_SCHEDULE / null / unknown
+  return workDays.length > 0 ? workDays.includes(dow) : expectedHours > 0;
+}
+
+/**
+ * Whether a day is "due" — i.e. late enough that an absence on it may count as
+ * "Fehlt". Separates the *obligation* (isObligatedWorkday) from the *timing*.
+ *
+ *   - past day  (`dayStr < todayStr`) → true (the day is over, absence is final).
+ *   - future day (`dayStr > todayStr`) → false (not yet reached).
+ *   - today:
+ *       - with a shift → due only once the shift start time has passed
+ *         (`nowHHMM >= shiftStartTime`). Before the shift starts, a missing
+ *         clock-in is expected, not a violation.
+ *       - without a shift → false. FIXED_SCHEDULE has no known intra-day start
+ *         time, so "today" is never yet "Fehlt"; only past days are.
+ *
+ * A day is eligible for "missing" only when it is BOTH an obligated workday AND
+ * due. Callers pass `isFuture: !(isObligatedWorkday && isDayDue)` into
+ * `resolvePresenceState`, whose scheduled/missing branches key off `isFuture`.
+ */
+export function isDayDue(params: {
+  dayStr: string;
+  todayStr: string;
+  nowHHMM: string;
+  shiftStartTime: string | null;
+}): boolean {
+  const { dayStr, todayStr, nowHHMM, shiftStartTime } = params;
+
+  if (dayStr < todayStr) return true;
+  if (dayStr > todayStr) return false;
+
+  // today
+  if (shiftStartTime) {
+    return nowHHMM >= shiftStartTime;
+  }
+  return false;
+}
+
+/**
  * Resolves the presence status for a single employee on a single day.
  *
  * Priority order (D-08, D-09):
