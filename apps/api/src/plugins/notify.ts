@@ -25,14 +25,19 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   LEAVE_APPROVED: "emailOnLeaveDecision",
   LEAVE_REJECTED: "emailOnLeaveDecision",
   LEAVE_CANCELLED: "emailOnLeaveDecision",
-  OVERTIME_WARNING: "emailOnOvertimeWarning",
-  MISSING_ENTRY: "emailOnMissingEntries",
+  // NOTE: keys MUST match the exact `type` string passed to app.notify() at the
+  // emit site — a mismatched key makes the per-type toggle silently ineffective
+  // (the gate below is skipped, so the email sends regardless of the toggle).
+  MISSING_ENTRIES: "emailOnMissingEntries", // emitted by attendance-checker.ts (plural)
   CLOCK_OUT_REMINDER: "emailOnClockOutReminder",
-  MONTH_CLOSED: "emailOnMonthClose",
+  MONTH_CLOSE_BLOCKED: "emailOnMonthClose", // emitted by auto-close-month.ts
   GAP_WARNING_EMPLOYEE: "emailOnMissingEntries",
   GAP_WARNING_MANAGER: "emailOnMissingEntries",
   BREAK_UNCONFIRMED: "emailOnMissingEntries", // Phase 92 (BREAK-06)
   BREAK_COMPLIANCE_ALERT: "emailOnMissingEntries", // Phase 92 (BREAK-06)
+  // NOTE: emailOnOvertimeWarning has no matching notification type — no code path
+  // emits an "overtime warning" via app.notify(), so there is nothing to gate here.
+  // Intentionally omitted rather than mapping a type that is never emitted.
 };
 
 declare module "fastify" {
@@ -92,7 +97,15 @@ export const notifyPlugin = fp(async (app) => {
   }) {
     // Check tenant master switch
     const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-    if (!config?.emailNotificationsEnabled) return;
+    if (!config?.emailNotificationsEnabled) {
+      // Observability: this is the most common reason a notification produces a
+      // bell entry but no email. Debug level, no PII (tenantId + type only).
+      app.log.debug(
+        { tenantId, type },
+        "Notification email skipped: emailNotificationsEnabled is off for tenant",
+      );
+      return;
+    }
 
     // Check per-type toggle
     const toggleField = EMAIL_TYPE_MAP[type];
@@ -104,7 +117,15 @@ export const notifyPlugin = fp(async (app) => {
 
     // Check SMTP configured
     const smtpConfig = await app.mailer.getSmtpConfig(tenantId);
-    if (!smtpConfig) return;
+    if (!smtpConfig) {
+      // Observability: master switch + toggles were on, but SMTP is not set up
+      // (neither per-tenant DB config nor SMTP_* env). Debug level, no PII.
+      app.log.debug(
+        { tenantId, type },
+        "Notification email skipped: SMTP not configured for tenant",
+      );
+      return;
+    }
 
     // Get user's name
     const employee = await app.prisma.employee.findFirst({ where: { userId } });
