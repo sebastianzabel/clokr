@@ -253,6 +253,9 @@ describe("Notifications API", () => {
           n.type === "LEAVE_REQUEST" && n.link?.includes(requestId),
       );
       expect(beforeNotif).toBeDefined();
+      // Manager-facing notification must deep-link to the approval surface
+      // (/team/leave honors ?request=), NOT the recipient's own /leave page.
+      expect(beforeNotif.link).toBe(`/team/leave?request=${requestId}`);
 
       // Admin approves the request
       const reviewRes = await app.inject({

@@ -400,7 +400,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 where: {
                   userId: mgr.id,
                   type: "PENDING_LEAVE_REMINDER",
-                  link: `/leave?request=${req.id}`,
+                  link: `/team/leave?request=${req.id}`,
                 },
               });
               if (existing) continue;
@@ -410,7 +410,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 type: "PENDING_LEAVE_REMINDER",
                 title: "Offener Urlaubsantrag",
                 message: `${req.employee.firstName} ${req.employee.lastName}: ${req.leaveType.name} wartet seit über ${thresholdHours}h auf Genehmigung.`,
-                link: `/leave?request=${req.id}`,
+                // Manager-facing: link to the approval surface (/team/leave honors ?request=).
+                link: `/team/leave?request=${req.id}`,
                 tenantId: tenant.id,
               });
             }

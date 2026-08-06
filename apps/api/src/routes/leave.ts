@@ -483,7 +483,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           type: "LEAVE_REQUEST",
           title: "Neuer Urlaubsantrag",
           message: `${request.employee.firstName} ${request.employee.lastName} hat einen ${typeDef.name}-Antrag gestellt (${body.startDate} – ${body.endDate})`,
-          link: `/leave?request=${request.id}`,
+          // Manager-facing: link to the approval surface (/team/leave honors ?request=),
+          // NOT /leave (which only shows the recipient's OWN requests).
+          link: `/team/leave?request=${request.id}`,
           tenantId,
           relatedType: "LeaveRequest",
           relatedId: request.id,
