@@ -640,6 +640,11 @@ model RetroEntryRequest {
   employeeId String
   targetDate DateTime         @db.Date // the entry date the grant covers
   reason     String // mandatory (Revisionssicherheit)
+  // Proposed worked times so the approver can review them before granting.
+  // Nullable/additive: pre-existing rows backfill to null (no data migration).
+  startTime    String? // "HH:MM" — proposed work start (mirrors TimeEntry.startTime style)
+  endTime      String? // "HH:MM" — proposed work end
+  breakMinutes Int? // proposed total break minutes (optional)
   status     RetroEntryStatus @default(PENDING)
   reviewedBy String? // approver userId
   reviewedAt DateTime?        @db.Timestamptz
