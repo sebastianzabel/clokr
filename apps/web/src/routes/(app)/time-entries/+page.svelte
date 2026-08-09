@@ -1093,6 +1093,11 @@
       retroReasonError = "Bitte gib eine Begründung an.";
       return;
     }
+    // Proposed times are required so the approver can review them.
+    if (!formStart || !formEnd) {
+      retroReasonError = "Bitte gib Von- und Bis-Uhrzeit an.";
+      return;
+    }
     retroReasonError = "";
     retroSubmitError = "";
     retroSubmitting = true;
@@ -1100,6 +1105,9 @@
       await api.post("/retro-entry-requests", {
         targetDate: formDate,
         reason: retroReason,
+        startTime: formStart,
+        endTime: formEnd,
+        breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
       });
       closeModal();
       toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
@@ -2049,6 +2057,10 @@
               stelle einen Antrag auf rückwirkende Bearbeitung.
             </p>
           </div>
+          <p class="retro-times-hint text-muted">
+            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakTotal > 0}
+              · Pause: {formBreakTotal} Min.{/if}
+          </p>
           <div class="form-group">
             <label class="form-label" for="retro-reason-field">Begründung (Pflichtfeld) *</label>
             <textarea
@@ -2199,6 +2211,10 @@
     font-size: 12.5px;
     color: var(--bad);
     margin-top: 4px;
+  }
+  .retro-times-hint {
+    font-size: 13px;
+    margin: 0;
   }
   .retro-actions {
     display: flex;

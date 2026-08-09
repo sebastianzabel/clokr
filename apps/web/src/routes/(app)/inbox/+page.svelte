@@ -65,6 +65,9 @@
     reason: string;
     status: RetroStatus;
     reviewNote: string | null;
+    startTime: string | null; // "HH:MM" — proposed work start
+    endTime: string | null; // "HH:MM" — proposed work end
+    breakMinutes: number | null; // proposed break minutes
     windowDays?: number;
     entryAgeInDays?: number;
     createdAt: string;
@@ -277,7 +280,8 @@
 
   async function submitRetroReview(status: "APPROVED" | "REJECTED") {
     if (!retroDetail) return;
-    if (!retroReviewNote.trim()) {
+    // Note is mandatory only when rejecting (Revisionssicherheit); optional on approve.
+    if (status === "REJECTED" && !retroReviewNote.trim()) {
       retroReviewError = "Bitte gib eine Begründung an (revisionssicherheitspflichtig).";
       return;
     }
@@ -286,7 +290,7 @@
     try {
       await api.patch(`/retro-entry-requests/${retroDetail.id}/review`, {
         status,
-        reviewNote: retroReviewNote,
+        reviewNote: retroReviewNote.trim() ? retroReviewNote : null,
       });
       retroDetailOpen = false;
       retroDetail = null;
@@ -583,7 +587,7 @@
       <ApprovalRow
         avatar={initials(req.employee.firstName, req.employee.lastName)}
         name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`Eintrag vom ${fmtDate(req.targetDate)} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
+        dates={`Eintrag vom ${fmtDate(req.targetDate)}${req.startTime && req.endTime ? ` · ${req.startTime}–${req.endTime}` : ""} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
         onclick={() => openRetroDetail(req)}
       >
         {#snippet metaContent()}
@@ -653,6 +657,17 @@
       </div>
     </div>
 
+    <!-- Vorgeschlagene Zeiten (proposed worked times to review) -->
+    {#if retroDetail.startTime && retroDetail.endTime}
+      <div class="note-block">
+        <div class="note-label">Vorgeschlagene Zeiten</div>
+        <div class="note-text">
+          {retroDetail.startTime}–{retroDetail.endTime}{#if retroDetail.breakMinutes}
+            · Pause: {retroDetail.breakMinutes} Min.{/if}
+        </div>
+      </div>
+    {/if}
+
     <!-- Begründung Mitarbeiter -->
     <div class="note-block">
       <div class="note-label">Begründung Mitarbeiter</div>
@@ -676,9 +691,12 @@
       <p>Rückwirkende Korrekturen müssen revisionssicher begründet sein (ArbZG § 16 Abs. 2).</p>
     </div>
 
-    <!-- Review note — MANDATORY for both approve and reject -->
+    <!-- Review note — optional on approve, mandatory on reject (Revisionssicherheit) -->
     <div class="review-note-field">
-      <label class="review-note-label" for="retro-review-note">Anmerkung (Pflichtfeld) *</label>
+      <label class="review-note-label" for="retro-review-note"
+        >Kommentar <span class="text-muted">(optional bei Genehmigung, Pflicht bei Ablehnung)</span
+        ></label
+      >
       <input
         id="retro-review-note"
         type="text"
@@ -714,7 +732,7 @@
         <button
           class="btn btn-primary"
           onclick={() => submitRetroReview("APPROVED")}
-          disabled={retroReviewSaving || !retroReviewNote.trim()}
+          disabled={retroReviewSaving}
         >
           {retroReviewSaving ? "…" : "Genehmigen"}
         </button>
