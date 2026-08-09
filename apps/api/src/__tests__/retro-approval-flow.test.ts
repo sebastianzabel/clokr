@@ -24,6 +24,7 @@ import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../utils/timezone";
+import { computeEntryAgeInDays } from "../utils/retro-config";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -159,6 +160,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             employeeId,
             targetDate,
             reason: "Vergessen einzutragen wegen Dienstreise",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
           },
         });
         // RED: route not yet implemented (Plan 03)
@@ -167,6 +171,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         expect(body.status, "new request must be PENDING").toBe("PENDING");
         expect(body.targetDate, "targetDate must match").toBe(targetDate);
         expect(body.reason).toBeTruthy();
+        expect(body.startTime, "proposed startTime must persist").toBe("08:00");
+        expect(body.endTime, "proposed endTime must persist").toBe("17:00");
+        expect(body.breakMinutes, "proposed breakMinutes must persist").toBe(30);
       } finally {
         vi.useRealTimers();
       }
@@ -222,7 +229,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Test self-approval block" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Test self-approval block",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return; // route not yet exists; RED expected
         const requestId = JSON.parse(createRes.body).id;
@@ -257,7 +271,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${manager1Token}` },
-          payload: { employeeId: manager1EmpId, targetDate, reason: "Manager own entry test" },
+          payload: {
+            employeeId: manager1EmpId,
+            targetDate,
+            reason: "Manager own entry test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
@@ -287,7 +308,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Eintrag vergessen" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Eintrag vergessen",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
@@ -311,7 +339,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
   // ── RETRO-03 audit trail ───────────────────────────────────────────────────────
 
   describe("RETRO-03 audit: RETRO_ENTRY_APPROVED action with mandatory fields", () => {
-    it("RETRO-03: reviewNote absent on PATCH review → 400 (mandatory, Revisionssicherheit)", async () => {
+    it("RETRO-03: reviewNote OPTIONAL on APPROVE → 200 (note not legally required to grant)", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
@@ -321,20 +349,139 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Nachträgliche Erfassung" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Nachträgliche Erfassung",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
 
-        // Attempt approval without reviewNote
+        // Approve WITHOUT reviewNote → must succeed
         const res = await app.inject({
           method: "PATCH",
           url: `/api/v1/retro-entry-requests/${requestId}/review`,
           headers: { authorization: `Bearer ${manager2Token}` },
           payload: { status: "APPROVED" }, // reviewNote omitted
         });
-        // RED: reviewNote is mandatory
-        expect(res.statusCode).toBe(400);
+        expect(res.statusCode, "approve without note must succeed").toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("APPROVED");
+        expect(body.reviewNote, "absent note is stored as null").toBeNull();
+
+        // Audit newValue.reviewNote must be null (true absence recorded)
+        const auditLog = await app.prisma.auditLog.findFirst({
+          where: { action: "RETRO_ENTRY_APPROVED", entityId: requestId },
+          orderBy: { createdAt: "desc" },
+        });
+        const newValue = auditLog?.newValue as Record<string, unknown> | null;
+        expect(newValue?.reviewNote, "audit reviewNote null when not given").toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-03: reviewNote REQUIRED on REJECT → 400 when omitted (Revisionssicherheit)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 15);
+
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Reject-ohne-Begründung Test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const requestId = JSON.parse(createRes.body).id;
+
+        // Reject WITHOUT reviewNote → must fail with 400
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${requestId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED" }, // reviewNote omitted
+        });
+        expect(res.statusCode, "reject without note must be 400").toBe(400);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-02 create: missing startTime/endTime → 400 (proposed times mandatory for reviewability)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 19);
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { employeeId, targetDate, reason: "Zeiten fehlen" }, // no start/end
+        });
+        expect(res.statusCode, "missing proposed times must be 400").toBe(400);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-02/03 GET: list returns entryAgeInDays (number) + proposed times per row", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 21);
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "GET-Shape Test",
+            startTime: "09:00",
+            endTime: "16:30",
+            breakMinutes: 45,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const createdId = JSON.parse(createRes.body).id;
+
+        const listRes = await app.inject({
+          method: "GET",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${manager2Token}` },
+        });
+        expect(listRes.statusCode).toBe(200);
+        const rows = JSON.parse(listRes.body) as Array<{
+          id: string;
+          entryAgeInDays: number;
+          startTime: string | null;
+          endTime: string | null;
+          breakMinutes: number | null;
+        }>;
+        const row = rows.find((r) => r.id === createdId);
+        expect(row, "created row must be in list").toBeTruthy();
+        expect(typeof row?.entryAgeInDays, "entryAgeInDays must be a number").toBe("number");
+        // DST-correct expectation: derive age the same way the route does
+        // (tenant-TZ day diff), never assume 21×24h == 21 calendar days.
+        const expectedAge = computeEntryAgeInDays(dateStrInTz(new Date(), TZ), targetDate);
+        expect(row?.entryAgeInDays, "age of backdated day").toBe(expectedAge);
+        expect(expectedAge, "sanity: age is a positive backdated span").toBeGreaterThan(0);
+        expect(row?.startTime).toBe("09:00");
+        expect(row?.endTime).toBe("16:30");
+        expect(row?.breakMinutes).toBe(45);
       } finally {
         vi.useRealTimers();
       }
@@ -350,7 +497,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Dienstreise — Eintrag vergessen" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Dienstreise — Eintrag vergessen",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestBody = JSON.parse(createRes.body);
@@ -407,7 +561,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Eintrag fehlt" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Eintrag fehlt",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const grantId = JSON.parse(createRes.body).id;
@@ -482,7 +643,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Race condition test" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Race condition test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const grantId = JSON.parse(createRes.body).id;
@@ -574,7 +742,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "SC-2 PUT test: entry needs correction" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "SC-2 PUT test: entry needs correction",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
           201,
@@ -683,6 +858,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             employeeId,
             targetDate: lockedDate,
             reason: "SC-2 lock-first test: should never bypass lock",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
           },
         });
         expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
@@ -769,7 +947,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate: lockedDate, reason: "Locked month entry" },
+          payload: {
+            employeeId,
+            targetDate: lockedDate,
+            reason: "Locked month entry",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) {
           // Route not yet implemented — test is RED as expected

@@ -6,19 +6,53 @@ import { computeEntryAgeInDays } from "../utils/retro-config";
 
 // ── Zod schemas ───────────────────────────────────────────────────────────────
 
-const createRetroRequestSchema = z.object({
-  employeeId: z.string().uuid().optional(), // optional: falls back to req.user.employeeId
-  targetDate: z
-    .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, "Ungültiges Datum")
-    .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
-  reason: z.string().min(1, "Begründung ist erforderlich (revisionssicherheitspflichtig)."),
-});
+const HHMM_REGEX = /^\d{2}:\d{2}$/;
 
-const reviewRetroRequestSchema = z.object({
-  status: z.enum(["APPROVED", "REJECTED"]),
-  reviewNote: z.string().min(1, "Bitte gib eine Begründung an (revisionssicherheitspflichtig)."),
-});
+/** Convert an "HH:MM" string to minutes since midnight. */
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+const createRetroRequestSchema = z
+  .object({
+    employeeId: z.string().uuid().optional(), // optional: falls back to req.user.employeeId
+    targetDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Ungültiges Datum")
+      .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum"),
+    reason: z.string().min(1, "Begründung ist erforderlich (revisionssicherheitspflichtig)."),
+    // Proposed worked times — required so the approver can review them.
+    startTime: z.string().regex(HHMM_REGEX, "Ungültige Uhrzeit (Format HH:MM)."),
+    endTime: z.string().regex(HHMM_REGEX, "Ungültige Uhrzeit (Format HH:MM)."),
+    breakMinutes: z.number().int().min(0).optional(),
+  })
+  .superRefine((data, ctx) => {
+    // Same-day: end must be strictly after start.
+    if (hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endTime"],
+        message: "Ende muss nach dem Beginn liegen.",
+      });
+    }
+  });
+
+const reviewRetroRequestSchema = z
+  .object({
+    status: z.enum(["APPROVED", "REJECTED"]),
+    // Optional on APPROVE, mandatory (min 1) on REJECT — enforced in superRefine.
+    reviewNote: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.status === "REJECTED" && !data.reviewNote?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reviewNote"],
+        message: "Bitte gib eine Begründung an (revisionssicherheitspflichtig).",
+      });
+    }
+  });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
@@ -78,6 +112,9 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           employeeId,
           targetDate: new Date(body.targetDate),
           reason: body.reason,
+          startTime: body.startTime,
+          endTime: body.endTime,
+          breakMinutes: body.breakMinutes ?? null,
           status: "PENDING",
         },
       });
@@ -92,6 +129,9 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           targetDate: body.targetDate,
           ageInDays,
           reason: body.reason,
+          startTime: body.startTime,
+          endTime: body.endTime,
+          breakMinutes: body.breakMinutes ?? null,
           requesterId: user.sub,
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
@@ -125,10 +165,20 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         orderBy: { createdAt: "desc" },
       });
 
-      return rows.map((r) => ({
-        ...r,
-        targetDate: r.targetDate.toISOString().split("T")[0],
-      }));
+      // Compute the age of the backdated day (targetDate → today) per row so the
+      // inbox can render "X Tage" instead of "?". Tenant-TZ, DST-safe (same as
+      // POST/review). One TZ lookup for the whole list.
+      const tz = await getTenantTimezone(app.prisma, user.tenantId);
+      const todayStr = dateStrInTz(todayInTz(tz), tz);
+
+      return rows.map((r) => {
+        const targetDateStr = r.targetDate.toISOString().split("T")[0];
+        return {
+          ...r,
+          targetDate: targetDateStr,
+          entryAgeInDays: computeEntryAgeInDays(todayStr, targetDateStr),
+        };
+      });
     },
   });
 
@@ -192,13 +242,17 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       const targetDateStr = existing.targetDate.toISOString().split("T")[0];
       const ageInDays = computeEntryAgeInDays(todayStr, targetDateStr);
 
+      // reviewNote is optional on APPROVE (Zod enforces it on REJECT). Store null
+      // when empty/absent so the audit trail records the true absence of a note.
+      const reviewNote = body.reviewNote?.trim() ? body.reviewNote : null;
+
       const updated = await app.prisma.retroEntryRequest.update({
         where: { id },
         data: {
           status: body.status,
           reviewedBy: user.sub,
           reviewedAt: new Date(),
-          reviewNote: body.reviewNote,
+          reviewNote,
         },
       });
 
@@ -215,7 +269,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           targetDate: targetDateStr,
           ageInDays,
           reason: existing.reason,
-          reviewNote: body.reviewNote,
+          reviewNote,
           status: body.status,
         },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
