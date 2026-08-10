@@ -10,6 +10,7 @@ import {
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
+  timeStrInTz,
   monthRangeUtc,
   monthDayBounds,
   calcExpectedMinutesTz,
@@ -61,6 +62,7 @@ const manualEntrySchema = z.object({
   source: z.nativeEnum(TimeEntrySource).default("MANUAL"),
   breaks: z.array(breakSlotSchema).optional(),
   grantId: z.string().uuid().optional(), // Phase 76.29 Plan 03: pre-approved RetroEntryRequest id
+  reason: z.string().trim().min(1).optional(), // Phase 96 (RETRO-10): entry-first Nachtrag reason
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
@@ -1100,16 +1102,33 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // validateTimeEntryInvariants. Re-run against `tx` after a successful flip.
         deferConflictChecksToTx: !!resolvedGrantId,
       });
+      // Phase 96 (RETRO-10) — fall-through discriminator: true only when the create is
+      // being allowed to proceed as a pending entry-first Nachtrag (see below).
+      let pendingRetroCreate = false;
+      // Phase 96 (RETRO-10) — entry-first Nachtrag: when the ONLY invariant failure is
+      // RETRO_WINDOW_EXCEEDED and the caller supplied a reason (and no grant), do NOT
+      // return 403 here. Set a flag and let control FALL THROUGH into the shared create
+      // path below (finalBreakMinutes/breakSlots, the checkJArbSchG minor-protection
+      // hard-block, checkArbZG, the generic CREATE audit) so a pending Nachtrag is
+      // gated exactly like a normal create — see the `pendingRetroCreate` branch inside
+      // the shared try/catch further down. Without a reason (or with a grantId), the
+      // response stays byte-identical to today.
       if (invariantError) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
-          return reply.code(403).send({
-            error: invariantError.error,
-            windowDays: invariantError.windowDays,
-            entryAgeInDays: invariantError.entryAgeInDays,
-          });
+          const retroReason = body.reason?.trim();
+          if (retroReason && !resolvedGrantId) {
+            pendingRetroCreate = true;
+          } else {
+            return reply.code(403).send({
+              error: invariantError.error,
+              windowDays: invariantError.windowDays,
+              entryAgeInDays: invariantError.entryAgeInDays,
+            });
+          }
+        } else {
+          const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
+          return reply.code(code).send({ error: invariantError.error });
         }
-        const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
-        return reply.code(code).send({ error: invariantError.error });
       }
 
       // Determine breakMinutes from break slots or body
@@ -1223,6 +1242,56 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               entityId: grantIdForTx,
               newValue: { timeEntryId: created.id, employeeId, date: body.date },
               tx,
+            });
+
+            return created;
+          });
+          entry = result;
+        } else if (pendingRetroCreate) {
+          // Phase 96 (RETRO-10) — entry-first Nachtrag: create the RetroEntryRequest
+          // and the coupled pending TimeEntry atomically in one transaction. The entry
+          // starts isInvalid=true and is only released (isInvalid=false) when a manager
+          // approves via PATCH /retro-entry-requests/:id/review (96-02 Task 2). No
+          // second CREATE audit here — the shared post-create tail below (unchanged)
+          // already writes the generic TimeEntry CREATE audit for every create path,
+          // including this one; this branch only owns the RETRO_ENTRY_REQUESTED audit
+          // for the request. Reuses the SAME try/catch as the plain path — a P2002 on
+          // the (employeeId,date) unique index maps to the existing 409 below.
+          const result = await app.prisma.$transaction(async (tx) => {
+            const request = await tx.retroEntryRequest.create({
+              data: {
+                employeeId,
+                targetDate: new Date(body.date),
+                reason: body.reason!.trim(),
+                startTime: timeStrInTz(newStart, tz),
+                endTime: newEnd ? timeStrInTz(newEnd, tz) : null,
+                breakMinutes: finalBreakMinutes || null,
+                status: "PENDING",
+              },
+            });
+            const created = await tx.timeEntry.create({
+              data: {
+                employeeId,
+                date: new Date(body.date),
+                startTime: newStart,
+                endTime: newEnd,
+                breakMinutes: finalBreakMinutes,
+                note: body.note,
+                source: "MANUAL",
+                createdBy: user.sub,
+                isInvalid: true,
+                invalidReason: "Nachtrag – Genehmigung ausstehend",
+                retroRequestId: request.id,
+              },
+            });
+
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "RETRO_ENTRY_REQUESTED",
+              entity: "RetroEntryRequest",
+              entityId: request.id,
+              newValue: { ...request, timeEntryId: created.id },
             });
 
             return created;
