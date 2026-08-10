@@ -24,6 +24,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import bcrypt from "bcryptjs";
+import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../utils/timezone";
@@ -954,6 +955,182 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
           },
         });
         expect(audit, "CROSS_TENANT_ACCESS_DENIED audit must exist").not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-16 manager edit-on-approve (D-10) ───────────────────────────────────
+
+  describe("RETRO-16 manager edit-on-approve: corrected times written to the coupled entry", () => {
+    it("approve with corrected startTime/endTime/breakMinutes -> written to entry, released, audited old=as-submitted/new=corrected, employee notified", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 21);
+        // seedCoupledPending as-submitted defaults: 08:00-16:00, 30min break.
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: {
+            status: "APPROVED",
+            reviewNote: "Freigegeben mit Korrektur",
+            startTime: "07:30",
+            endTime: "15:30",
+            breakMinutes: 15,
+          },
+        });
+        expect(res.statusCode, "approve with correction must succeed").toBe(200);
+
+        const releasedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(releasedEntry?.isInvalid, "released").toBe(false);
+        expect(releasedEntry?.breakMinutes, "corrected breakMinutes written").toBe(15);
+        const expectedStart = fromZonedTime(`${targetDate}T07:30:00`, TZ);
+        const expectedEnd = fromZonedTime(`${targetDate}T15:30:00`, TZ);
+        expect(releasedEntry?.startTime.getTime(), "corrected startTime written (tz-derived)").toBe(
+          expectedStart.getTime(),
+        );
+        expect(releasedEntry?.endTime?.getTime(), "corrected endTime written (tz-derived)").toBe(
+          expectedEnd.getTime(),
+        );
+
+        const entryAudit = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: entry.id, action: "MANAGER_CORRECTION" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(entryAudit, "MANAGER_CORRECTION audit must exist").not.toBeNull();
+        const oldVal = entryAudit?.oldValue as { breakMinutes?: number } | null;
+        expect(oldVal?.breakMinutes, "audit oldValue = as-submitted (30min)").toBe(30);
+        const newVal = entryAudit?.newValue as { breakMinutes?: number } | null;
+        expect(newVal?.breakMinutes, "audit newValue = corrected (15min)").toBe(15);
+
+        // The request's own proposed-times fields stay as originally submitted
+        // (historical record of what the employee asked for).
+        const requestAfter = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(requestAfter?.startTime, "request proposed time unchanged (historical)").toBe(
+          "08:00",
+        );
+        expect(requestAfter?.endTime, "request proposed time unchanged (historical)").toBe("16:00");
+
+        // Decision notification fires for the employee.
+        const empUser = await app.prisma.employee.findUnique({
+          where: { id: employeeId },
+          select: { userId: true },
+        });
+        const notif = await app.prisma.notification.findFirst({
+          where: { userId: empUser!.userId, type: "RETRO_ENTRY_DECIDED", relatedId: entry.id },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(notif, "employee must be notified of the approve decision").not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("approve WITHOUT corrected times -> byte-identical to 96-02's plain release (UPDATE audit, not MANAGER_CORRECTION)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 22);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: "Freigegeben ohne Korrektur" },
+        });
+        expect(res.statusCode).toBe(200);
+
+        const releasedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(releasedEntry?.isInvalid).toBe(false);
+        expect(releasedEntry?.breakMinutes, "unchanged (no correction supplied)").toBe(30);
+        expect(releasedEntry?.startTime.toISOString()).toBe(
+          new Date(`${targetDate}T08:00:00.000Z`).toISOString(),
+        );
+
+        const entryAudit = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: entry.id, action: "UPDATE" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(
+          entryAudit,
+          "plain UPDATE audit (not MANAGER_CORRECTION) when no correction",
+        ).not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-16 notify: submit + decision (net-new call sites) ──────────────────
+
+  describe("RETRO-16 notify: submit notifies managers", () => {
+    it("out-of-window POST with reason -> all tenant managers/admins get a RETRO_ENTRY_REQUESTED notification", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 23);
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            date: targetDate,
+            startTime: `${targetDate}T08:00:00.000Z`,
+            endTime: `${targetDate}T16:00:00.000Z`,
+            breakMinutes: 30,
+            reason: "Notify-Test",
+          },
+        });
+        expect(res.statusCode).toBe(201);
+        const body = JSON.parse(res.body);
+
+        const notifs = await app.prisma.notification.findMany({
+          where: { type: "RETRO_ENTRY_REQUESTED", relatedId: body.entry.retroRequestId },
+        });
+        // admin + manager1 + manager2 (seedEntryFirstTenant) — the actor (employee) is
+        // never a manager here, so no self-notify to verify structurally, but the
+        // count must match exactly all 3 tenant managers/admins.
+        expect(notifs.length, "all tenant managers/admins must be notified").toBe(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe("RETRO-16 notify: reject decision notifies the employee", () => {
+    it("reject -> employee gets a RETRO_ENTRY_DECIDED notification", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 24);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "Nicht plausibel" },
+        });
+        expect(res.statusCode).toBe(200);
+
+        const empUser = await app.prisma.employee.findUnique({
+          where: { id: employeeId },
+          select: { userId: true },
+        });
+        const notif = await app.prisma.notification.findFirst({
+          where: { userId: empUser!.userId, type: "RETRO_ENTRY_DECIDED", relatedId: entry.id },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(notif, "employee must be notified of the reject decision").not.toBeNull();
       } finally {
         vi.useRealTimers();
       }
