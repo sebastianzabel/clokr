@@ -1067,6 +1067,81 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         vi.useRealTimers();
       }
     });
+
+    // Phase 96-review (WR-02): manager edit-on-approve must re-run the same
+    // JArbSchG §9 minor-protection hard-block POST/PUT enforce on every other
+    // TimeEntry time write — a corrected-times approval must NOT be able to write
+    // illegal hours for an AZUBI under 18 on a Berufsschultag.
+    it("WR-02: corrected times over the JArbSchG minor limit -> 400 JARBSCHG_MINOR_LIMIT, nothing mutated (transaction rolled back)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 25);
+        await app.prisma.employee.update({
+          where: { id: azubiId },
+          data: { birthDate: birthDateForAge(targetDate, 16) },
+        });
+        await app.prisma.absence.create({
+          data: {
+            employeeId: azubiId,
+            type: "VOCATIONAL_SCHOOL",
+            source: "MANUAL",
+            startDate: new Date(targetDate),
+            endDate: new Date(targetDate),
+            days: 1.0,
+            createdBy: "retro-review-wr02-test",
+          },
+        });
+        // Seeded as-submitted times are compliant (08:00-16:00/30min break, but the
+        // seed bypasses create-path validation) — only the MANAGER'S correction below
+        // must trigger the block.
+        const { request, entry } = await seedCoupledPending(app, azubiId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: {
+            status: "APPROVED",
+            reviewNote: "Korrektur über dem JArbSchG-Limit",
+            startTime: "08:00",
+            endTime: "14:00", // 6h net = 360 min > 225 min JArbSchG cap on a BS-day
+            breakMinutes: 0,
+          },
+        });
+        expect(
+          res.statusCode,
+          "manager-corrected times violating the AZUBI<18 JArbSchG limit must be blocked",
+        ).toBe(400);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("JARBSCHG_MINOR_LIMIT");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.isInvalid, "entry must stay pending, unmutated").toBe(true);
+        expect(unchangedEntry?.breakMinutes, "original (as-submitted) breakMinutes untouched").toBe(
+          30,
+        );
+        expect(unchangedEntry?.startTime.toISOString()).toBe(
+          new Date(`${targetDate}T08:00:00.000Z`).toISOString(),
+        );
+
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING, unmutated").toBe("PENDING");
+        expect(
+          unchangedRequest?.reviewedBy,
+          "no reviewer recorded on a blocked approval",
+        ).toBeNull();
+
+        const entryAudit = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: entry.id, action: "MANAGER_CORRECTION" },
+        });
+        expect(entryAudit, "no MANAGER_CORRECTION audit on a hard-blocked correction").toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   // ── RETRO-16 notify: submit + decision (net-new call sites) ──────────────────

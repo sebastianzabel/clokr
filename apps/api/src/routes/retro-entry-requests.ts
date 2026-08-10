@@ -2,6 +2,8 @@ import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { fromZonedTime } from "date-fns-tz";
 import { requireAuth, requireRole } from "../middleware/auth";
+import { checkArbZG, ArbZGWarning } from "../utils/arbzg";
+import { checkJArbSchG } from "../utils/jarbschg";
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../utils/timezone";
 import { computeEntryAgeInDays } from "../utils/retro-config";
 
@@ -288,6 +290,10 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       const reviewNote = body.reviewNote?.trim() ? body.reviewNote : null;
 
       let updated: Awaited<ReturnType<typeof app.prisma.retroEntryRequest.update>>;
+      // Phase 96-review (WR-02) — populated only on the manager-corrected-times
+      // approve branch below; folded into the response so the manager sees the
+      // same §3/§4/§5 ArbZG feedback a PUT with these times would surface.
+      let approveWarnings: ArbZGWarning[] | undefined;
 
       if (coupledEntry && body.status === "APPROVED") {
         // Phase 96 (RETRO-16/D-10) — manager edit-on-approve: when the reviewer
@@ -304,6 +310,11 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           body.breakMinutes !== undefined;
         let correctedFields: { startTime?: Date; endTime?: Date | null; breakMinutes?: number } =
           {};
+        // Phase 96-review (WR-02) — carries the JArbSchG soft-warn (if any) out of the
+        // block below so it can be folded into checkArbZG's warnings after the tx commits.
+        let correctionSoftWarn:
+          | NonNullable<Awaited<ReturnType<typeof checkJArbSchG>>["softWarn"]>
+          | undefined;
         if (hasManagerCorrection) {
           const correctedStart = body.startTime
             ? fromZonedTime(`${targetDateStr}T${body.startTime}:00`, tz)
@@ -319,6 +330,30 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             endTime: correctedEnd,
             breakMinutes: body.breakMinutes ?? coupledEntry.breakMinutes,
           };
+
+          // Phase 96-review (WR-02) — manager edit-on-approve writes corrected times
+          // straight onto the coupled TimeEntry; it must pass the SAME §9 JArbSchG
+          // minor-protection gate POST/PUT enforce on every other time write
+          // (time-entries.ts:1167-1176 / :1688-1697) — hard-block BEFORE the
+          // $transaction so an illegal correction never reaches the DB.
+          const correctedNetWorkMin = correctedEnd
+            ? Math.max(
+                0,
+                Math.round((correctedEnd.getTime() - correctedStart.getTime()) / 60_000) -
+                  (correctedFields.breakMinutes ?? 0),
+              )
+            : 0;
+          const jarbSchgApprove = await checkJArbSchG(app.prisma, {
+            employeeId: existing.employeeId,
+            date: existing.targetDate,
+            plannedNetWorkMin: correctedNetWorkMin,
+          });
+          if (jarbSchgApprove.blocked) {
+            return reply
+              .code(400)
+              .send({ error: "JARBSCHG_MINOR_LIMIT", message: jarbSchgApprove.message });
+          }
+          correctionSoftWarn = jarbSchgApprove.softWarn;
         }
 
         // Release the coupled entry atomically with the approval: isInvalid flips
@@ -369,6 +404,15 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
           return reqAfter;
         });
+
+        // Phase 96-review (WR-02) — surface the same §3/§4/§5 ArbZG feedback a PUT
+        // with these times would return, now that the correction is committed.
+        if (hasManagerCorrection) {
+          approveWarnings = await checkArbZG(app.prisma, existing.employeeId, existing.targetDate);
+          if (correctionSoftWarn) {
+            approveWarnings.push(correctionSoftWarn);
+          }
+        }
 
         // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
         // (net-new call site, Pitfall 3: no prior notify wiring existed for
@@ -488,6 +532,9 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       return reply.code(200).send({
         ...updated,
         targetDate: updated.targetDate.toISOString().split("T")[0],
+        // Phase 96-review (WR-02) — only present when a manager correction ran
+        // checkArbZG (approve-with-corrected-times branch above).
+        ...(approveWarnings ? { warnings: approveWarnings } : {}),
       });
     },
   });
