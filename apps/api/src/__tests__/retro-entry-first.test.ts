@@ -1321,4 +1321,80 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       }
     });
   });
+
+  // ── WR-03: decision-notify failure must not surface as a false 500 ──────────
+  // app.notify()'s first step is an awaited prisma.notification.create() that is
+  // NOT itself wrapped — if it throws, the exception must be swallowed (matching
+  // the other three notify() sites in this file) since the approve/reject already
+  // committed successfully before notify() runs.
+
+  describe("WR-03 notify resilience: approve/reject stay 200 even when notify() throws", () => {
+    it("approve: notify() throws -> still 200, decision fully committed (not a false 500)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      const notifySpy = vi.spyOn(app, "notify").mockRejectedValueOnce(new Error("notify boom"));
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 28);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: "WR-03 notify-throws test" },
+        });
+        expect(
+          res.statusCode,
+          "a notify() failure after a successful commit must NOT surface as a 500",
+        ).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("APPROVED");
+
+        const releasedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(
+          releasedEntry?.isInvalid,
+          "decision must be fully committed despite the notify failure",
+        ).toBe(false);
+
+        expect(notifySpy, "notify() must have been attempted").toHaveBeenCalled();
+      } finally {
+        notifySpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+
+    it("reject: notify() throws -> still 200, decision fully committed (not a false 500)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      const notifySpy = vi.spyOn(app, "notify").mockRejectedValueOnce(new Error("notify boom"));
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 29);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "WR-03 notify-throws test" },
+        });
+        expect(
+          res.statusCode,
+          "a notify() failure after a successful commit must NOT surface as a 500",
+        ).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("REJECTED");
+
+        const rejectedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(
+          rejectedEntry?.deletedAt,
+          "decision must be fully committed despite the notify failure",
+        ).not.toBeNull();
+
+        expect(notifySpy, "notify() must have been attempted").toHaveBeenCalled();
+      } finally {
+        notifySpy.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
 });

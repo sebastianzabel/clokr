@@ -436,17 +436,28 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
         // (net-new call site, Pitfall 3: no prior notify wiring existed for
         // RetroEntryRequest).
+        // Phase 96-review (WR-03) — wrapped in try/catch (matches the other three
+        // notify() sites in this file, e.g. the withdraw-notify loop below): the
+        // approve already committed successfully, so a transient notify failure
+        // must not surface as a false 500 to the manager.
         if (existing.employee.userId) {
-          await app.notify({
-            userId: existing.employee.userId,
-            type: "RETRO_ENTRY_DECIDED",
-            title: "Zeitnachtrag genehmigt",
-            message: `Dein Zeitnachtrag für den ${targetDateStr} wurde genehmigt.`,
-            link: `/time-entries?highlight=${entryIdToRelease}`,
-            tenantId: user.tenantId,
-            relatedType: "TimeEntry",
-            relatedId: entryIdToRelease,
-          });
+          try {
+            await app.notify({
+              userId: existing.employee.userId,
+              type: "RETRO_ENTRY_DECIDED",
+              title: "Zeitnachtrag genehmigt",
+              message: `Dein Zeitnachtrag für den ${targetDateStr} wurde genehmigt.`,
+              link: `/time-entries?highlight=${entryIdToRelease}`,
+              tenantId: user.tenantId,
+              relatedType: "TimeEntry",
+              relatedId: entryIdToRelease,
+            });
+          } catch (err) {
+            app.log.warn(
+              { err, requestId: id },
+              "Failed to notify employee of retro-entry approve decision",
+            );
+          }
         }
       } else if (coupledEntry && body.status === "REJECTED") {
         // Reject: soft-delete the coupled entry (deletedAt set — NEVER
@@ -520,17 +531,27 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
         // (net-new call site, Pitfall 3: no prior notify wiring existed for
         // RetroEntryRequest).
+        // Phase 96-review (WR-03) — wrapped in try/catch, symmetric to the approve
+        // branch above: the reject already committed successfully, so a transient
+        // notify failure must not surface as a false 500 to the manager.
         if (existing.employee.userId) {
-          await app.notify({
-            userId: existing.employee.userId,
-            type: "RETRO_ENTRY_DECIDED",
-            title: "Zeitnachtrag abgelehnt",
-            message: `Dein Zeitnachtrag für den ${targetDateStr} wurde abgelehnt.`,
-            link: `/time-entries?highlight=${entryIdToReject}`,
-            tenantId: user.tenantId,
-            relatedType: "TimeEntry",
-            relatedId: entryIdToReject,
-          });
+          try {
+            await app.notify({
+              userId: existing.employee.userId,
+              type: "RETRO_ENTRY_DECIDED",
+              title: "Zeitnachtrag abgelehnt",
+              message: `Dein Zeitnachtrag für den ${targetDateStr} wurde abgelehnt.`,
+              link: `/time-entries?highlight=${entryIdToReject}`,
+              tenantId: user.tenantId,
+              relatedType: "TimeEntry",
+              relatedId: entryIdToReject,
+            });
+          } catch (err) {
+            app.log.warn(
+              { err, requestId: id },
+              "Failed to notify employee of retro-entry reject decision",
+            );
+          }
         }
       } else {
         // Phase 96-review (WR-01) — race-safe status guard for the legacy
