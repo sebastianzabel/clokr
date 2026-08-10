@@ -519,4 +519,142 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       }
     });
   });
+
+  // ── RETRO-12 reject-soft-delete ─────────────────────────────────────────────
+
+  describe("RETRO-12 reject: coupled entry soft-deleted via PATCH /:id/review", () => {
+    it("DIFFERENT manager rejects -> coupled entry deletedAt set (not hard-deleted), request REJECTED, both audited, day free for a fresh submission", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 11);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "Nicht plausibel" },
+        });
+        expect(res.statusCode, "reject-soft-delete must return 200").toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("REJECTED");
+
+        const rejectedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(
+          rejectedEntry,
+          "row must be preserved (soft-delete, never prisma.delete())",
+        ).not.toBeNull();
+        expect(rejectedEntry?.deletedAt, "coupled entry must be soft-deleted").not.toBeNull();
+
+        const requestAfter = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(requestAfter?.status, "request must be REJECTED").toBe("REJECTED");
+
+        const entryAudit = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: entry.id, action: "DELETE" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(entryAudit, "TimeEntry DELETE (soft-delete) audit row must exist").not.toBeNull();
+
+        const requestAudit = await app.prisma.auditLog.findFirst({
+          where: {
+            entity: "RetroEntryRequest",
+            entityId: request.id,
+            action: "RETRO_ENTRY_REJECTED",
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(
+          requestAudit,
+          "RetroEntryRequest RETRO_ENTRY_REJECTED audit row must exist",
+        ).not.toBeNull();
+
+        // deletedAt frees the (employeeId, date) partial unique slot — checkOneEntryPerDay
+        // and the DB index both filter deletedAt:null only — so the day must be open for
+        // a corrected resubmission via the same entry-first out-of-window path.
+        const retryRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            date: targetDate,
+            startTime: `${targetDate}T09:00:00.000Z`,
+            endTime: `${targetDate}T17:00:00.000Z`,
+            breakMinutes: 30,
+            reason: "Korrigierter Nachtrag nach Ablehnung",
+          },
+        });
+        expect(
+          retryRes.statusCode,
+          "day must be free for a fresh out-of-window submission after rejection",
+        ).toBe(201);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("without reviewNote -> 400, nothing mutated (existing Zod refine, unchanged for the coupled path too)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 12);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED" }, // reviewNote omitted
+        });
+        expect(res.statusCode, "reject without note must stay 400").toBe(400);
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "entry must stay untouched").toBeNull();
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-18 reject-into-locked-month ───────────────────────────────────────
+
+  describe("RETRO-18 reject-into-locked-month: coupled entry inside a locked month", () => {
+    it("reject attempt on a locked coupled entry -> 403, nothing mutated", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 13);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate, {
+          isLocked: true,
+        });
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "Abgelehnt" },
+        });
+        expect(res.statusCode, "reject into a locked month must be rejected").toBe(403);
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "entry must stay non-deleted").toBeNull();
+        expect(unchangedEntry?.isInvalid, "entry stays pending, unmutated").toBe(true);
+        expect(unchangedEntry?.invalidReason).toBe("Nachtrag – Genehmigung ausstehend");
+
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request stays PENDING, unmutated").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

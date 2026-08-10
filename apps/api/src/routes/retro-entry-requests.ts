@@ -240,22 +240,21 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Nur Manager oder Admins können Anträge genehmigen" });
       }
 
-      // ── Phase 96 (RETRO-11) — coupled entry-first release ─────────────────────
+      // ── Phase 96 (RETRO-11/12) — coupled entry-first release/reject ───────────
       // Only applies when this request has a coupled TimeEntry (entry-first flow,
       // 96-02 Task 1) that is not itself soft-deleted. Legacy grant-first requests
-      // (no coupled entry, D-12) and REJECT decisions fall through to the
-      // unchanged behavior below — reject-side entry cleanup (D-08) is out of
-      // scope for this tracer and lands in a later plan. Inserted strictly AFTER
-      // the C3-a/C3-b self-approval block + role check above (never before —
-      // Elevation-of-Privilege guard, RETRO-13).
+      // (no coupled entry, D-12) fall through to the unchanged behavior below.
+      // Inserted strictly AFTER the C3-a/C3-b self-approval block + role check
+      // above (never before — Elevation-of-Privilege guard, RETRO-13).
       const coupledEntry =
         existing.timeEntry && !existing.timeEntry.deletedAt ? existing.timeEntry : null;
 
-      if (coupledEntry && body.status === "APPROVED" && coupledEntry.isLocked) {
-        // D-09: locked months stay immutable — explicit 403 (mirrors
-        // time-entries.ts's `if (existing.isLocked) return reply.code(403)...`
-        // idiom), NOT leave.ts's silent isLocked:false-in-WHERE updateMany, which
-        // would silently no-op instead of surfacing an error.
+      if (coupledEntry && coupledEntry.isLocked) {
+        // D-09: locked months stay immutable — explicit 403 for BOTH approve AND
+        // reject decisions on a coupled entry (mirrors time-entries.ts's
+        // `if (existing.isLocked) return reply.code(403)...` idiom), NOT leave.ts's
+        // silent isLocked:false-in-WHERE updateMany, which would silently no-op
+        // instead of surfacing an error. Runs before any write (RETRO-18).
         return reply
           .code(403)
           .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
@@ -314,6 +313,59 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             action: "UPDATE",
             entity: "TimeEntry",
             entityId: entryIdToRelease,
+            oldValue: coupledEntry,
+            newValue: entryAfter,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+
+          return reqAfter;
+        });
+      } else if (coupledEntry && body.status === "REJECTED") {
+        // Reject: soft-delete the coupled entry (deletedAt set — NEVER
+        // prisma.delete(), Revisionssicherheit) + REJECTED + audit, in one
+        // transaction. retroRequestId stays set (the audit link is preserved);
+        // deletedAt alone drops the row out of every deletedAt:null query
+        // (checkArbZG, saldo, the partial unique index), freeing the day for a
+        // corrected resubmission. No new enum value — reuses the existing
+        // deletedAt soft-delete convention (D-11).
+        const entryIdToReject = coupledEntry.id;
+        updated = await app.prisma.$transaction(async (tx) => {
+          const reqAfter = await tx.retroEntryRequest.update({
+            where: { id },
+            data: {
+              status: body.status,
+              reviewedBy: user.sub,
+              reviewedAt: new Date(),
+              reviewNote,
+            },
+          });
+          const entryAfter = await tx.timeEntry.update({
+            where: { id: entryIdToReject },
+            data: { deletedAt: new Date() },
+          });
+
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "RETRO_ENTRY_REJECTED",
+            entity: "RetroEntryRequest",
+            entityId: id,
+            oldValue: existing,
+            newValue: {
+              ...reqAfter,
+              requesterId: existing.employee.userId ?? existing.employeeId,
+              approverId: user.sub,
+              targetDate: targetDateStr,
+              ageInDays,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "DELETE",
+            entity: "TimeEntry",
+            entityId: entryIdToReject,
             oldValue: coupledEntry,
             newValue: entryAfter,
             request: { ip: req.ip, headers: req.headers as Record<string, string> },
