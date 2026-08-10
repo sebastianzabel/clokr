@@ -108,6 +108,47 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
   };
 }
 
+/** Phase 96 (96-03) — directly seed a coupled pending TimeEntry + RetroEntryRequest
+ * pair (entry-first flow), bypassing POST /time-entries, so the RETRO-13/RETRO-18
+ * entry-first regression cases below exercise ONLY the PATCH /:id/review guard
+ * ordering (4-eyes self-approval + locked-month), independent of the create branch.
+ * Mirrors retro-entry-first.test.ts's seedCoupledPending. */
+async function seedEntryFirstCoupled(
+  app: FastifyInstance,
+  employeeId: string,
+  targetDate: string,
+  opts: { isLocked?: boolean } = {},
+) {
+  const prisma = app.prisma;
+  const request = await prisma.retroEntryRequest.create({
+    data: {
+      employeeId,
+      targetDate: new Date(targetDate),
+      reason: "RETRO-13/18 entry-first regression fixture",
+      startTime: "08:00",
+      endTime: "16:00",
+      breakMinutes: 30,
+      status: "PENDING",
+    },
+  });
+  const entry = await prisma.timeEntry.create({
+    data: {
+      employeeId,
+      date: new Date(targetDate),
+      startTime: new Date(`${targetDate}T08:00:00.000Z`),
+      endTime: new Date(`${targetDate}T16:00:00.000Z`),
+      breakMinutes: 30,
+      source: "MANUAL",
+      createdBy: employeeId,
+      isInvalid: true,
+      invalidReason: "Nachtrag – Genehmigung ausstehend",
+      retroRequestId: request.id,
+      isLocked: opts.isLocked ?? false,
+    },
+  });
+  return { request, entry };
+}
+
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () => {
@@ -1056,6 +1097,132 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         await app.prisma.saldoSnapshot.deleteMany({
           where: { employeeId, periodStart: janStart, superseded: false },
         });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-13 self-approval (entry-first) ────────────────────────────────────
+  // Regression coverage (96-03): proves the 4-eyes/self-approval block (C3-a/C3-b,
+  // unchanged since 76.29) still holds on the entry-first coupled path, for BOTH
+  // decision directions, and that a blocked decision mutates nothing.
+
+  describe("RETRO-13 self-approval (entry-first): both distinctness checks block approve + reject", () => {
+    it("entry-first C3-a approve: requester attempting PATCH review (APPROVED) of own request -> 403; coupled entry stays isInvalid=true", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 22);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { status: "APPROVED", reviewNote: "Ich genehmige mich selbst" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.isInvalid, "coupled entry must stay pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING, unmutated").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("entry-first C3-b approve: MANAGER who IS the target employee cannot approve their own request -> 403; coupled entry stays isInvalid=true", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 23);
+        const { request, entry } = await seedEntryFirstCoupled(app, manager1EmpId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager1Token}` },
+          payload: { status: "APPROVED", reviewNote: "Manager approves their own request" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.isInvalid, "coupled entry must stay pending, unmutated").toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("entry-first C3-a reject: requester attempting PATCH review (REJECTED) of own request -> 403; coupled entry NOT soft-deleted", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 24);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { status: "REJECTED", reviewNote: "Ich lehne mich selbst ab" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "coupled entry must NOT be soft-deleted").toBeNull();
+        expect(unchangedEntry?.isInvalid, "coupled entry stays pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING, unmutated").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-18 lock-first (entry-first reject) ────────────────────────────────
+  // The approve lock-first case already lives in retro-entry-first.test.ts (96-02
+  // RETRO-11 "locked month -> 403") — not duplicated here.
+
+  describe("RETRO-18 lock-first (entry-first): reject on a locked coupled entry", () => {
+    it("entry-first pending in a locked month -> REJECTED attempt 403; entry deletedAt still null", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 25);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate, {
+          isLocked: true,
+        });
+
+        // DIFFERENT manager (passes 4-eyes) attempts to reject into the locked month.
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "Abgelehnt" },
+        });
+        expect(res.statusCode, "reject into a locked month must be rejected").toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eintrag ist gesperrt und kann nicht bearbeitet werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "entry must stay non-deleted").toBeNull();
+        expect(unchangedEntry?.isInvalid, "entry stays pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request stays PENDING, unmutated").toBe("PENDING");
       } finally {
         vi.useRealTimers();
       }
