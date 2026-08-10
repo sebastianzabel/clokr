@@ -1,5 +1,6 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { fromZonedTime } from "date-fns-tz";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { getTenantTimezone, dateStrInTz, todayInTz } from "../utils/timezone";
 import { computeEntryAgeInDays } from "../utils/retro-config";
@@ -407,6 +408,135 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       return reply.code(200).send({
         ...updated,
         targetDate: updated.targetDate.toISOString().split("T")[0],
+      });
+    },
+  });
+
+  // ── DELETE /:id  — withdraw own PENDING request (RETRO-16 / D-11) ───────────
+  // A dedicated endpoint, NOT a reuse of DELETE /time-entries/:id (which would
+  // incorrectly re-run the retro-window guard on the coupled entry). Soft-deletes
+  // BOTH the request and its coupled TimeEntry — no new RetroEntryStatus enum
+  // value; `deletedAt` alone is the withdrawn signal (D-11). Guard order mirrors
+  // leave.ts:1501-1521 — tenant (with CROSS_TENANT_ACCESS_DENIED audit) BEFORE
+  // ownership BEFORE status BEFORE the locked-month check.
+  app.delete("/:id", {
+    schema: { tags: ["Retro-Anfragen"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const user = req.user;
+
+      const existing = await app.prisma.retroEntryRequest.findFirst({
+        where: { id, deletedAt: null }, // already-withdrawn requests are not-found
+        include: {
+          employee: { select: { tenantId: true, userId: true, firstName: true, lastName: true } },
+          timeEntry: true,
+        },
+      });
+      if (!existing) return reply.code(404).send({ error: "Antrag nicht gefunden" });
+
+      // Tenant isolation — BEFORE ownership (T-96-14), mirrors leave.ts:1511-1521.
+      if (existing.employee.tenantId !== user.tenantId) {
+        await app.audit({
+          userId: user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "RetroEntryRequest",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Antrag nicht gefunden" });
+      }
+
+      // Ownership: only the REQUESTING EMPLOYEE may withdraw their own request —
+      // managers act via approve/reject, never withdraw (unconditional, no
+      // isManager bypass — this is employee self-service, not a correction path).
+      if (existing.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Only a PENDING request can be withdrawn.
+      if (existing.status !== "PENDING") {
+        return reply.code(409).send({ error: "Antrag kann nicht mehr zurückgezogen werden" });
+      }
+
+      const coupledEntry =
+        existing.timeEntry && !existing.timeEntry.deletedAt ? existing.timeEntry : null;
+
+      // D-09: a locked coupled entry stays immutable — explicit 403 before any write.
+      if (coupledEntry?.isLocked) {
+        return reply
+          .code(403)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      const now = new Date();
+      const reqAfter = await app.prisma.$transaction(async (tx) => {
+        const updatedRequest = await tx.retroEntryRequest.update({
+          where: { id },
+          data: { deletedAt: now },
+        });
+        await app.audit({
+          tx,
+          userId: user.sub,
+          action: "RETRO_ENTRY_WITHDRAWN",
+          entity: "RetroEntryRequest",
+          entityId: id,
+          oldValue: existing,
+          newValue: updatedRequest,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+
+        if (coupledEntry) {
+          const entryAfter = await tx.timeEntry.update({
+            where: { id: coupledEntry.id },
+            data: { deletedAt: now },
+          });
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "DELETE",
+            entity: "TimeEntry",
+            entityId: coupledEntry.id,
+            oldValue: coupledEntry,
+            newValue: entryAfter,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+
+        return updatedRequest;
+      });
+
+      // Discretionary: let managers know a pending item is no longer waiting on
+      // them (net-new call site, mirrors the BREAK_COMPLIANCE_ALERT manager
+      // iteration — skip the actor).
+      try {
+        const managers = await app.prisma.employee.findMany({
+          where: {
+            tenantId: user.tenantId,
+            user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+          },
+          include: { user: { select: { id: true } } },
+        });
+        for (const mgr of managers) {
+          if (mgr.user.id === user.sub) continue; // don't self-notify
+          await app.notify({
+            userId: mgr.user.id,
+            type: "RETRO_ENTRY_WITHDRAWN",
+            title: "Zeitnachtrag zurückgezogen",
+            message: `${existing.employee.firstName} ${existing.employee.lastName} hat einen Zeitnachtrag-Antrag zurückgezogen.`,
+            link: "/inbox",
+            tenantId: user.tenantId,
+            relatedType: "RetroEntryRequest",
+            relatedId: id,
+          });
+        }
+      } catch (err) {
+        app.log.warn({ err, requestId: id }, "Failed to notify managers on retro-entry withdraw");
+      }
+
+      return reply.code(200).send({
+        ...reqAfter,
+        targetDate: reqAfter.targetDate.toISOString().split("T")[0],
       });
     },
   });
