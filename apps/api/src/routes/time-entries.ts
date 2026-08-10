@@ -281,6 +281,11 @@ export async function validateTimeEntryInvariants(
     excludeEntryId?: string;
     isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
     grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
+    // Phase 96 (RETRO-16/D-10): employee editing their OWN still-pending coupled
+    // Nachtrag entry (retroRequestId set, isInvalid=true, coupled request still
+    // PENDING) — exempt from the retro-window guard so a typo fix doesn't 403.
+    // PUT-only; POST never has an `existing` row to compute this from.
+    isOwnPendingEdit?: boolean;
     // Race fix (retro-grant-race-403-vs-409, 2026-07): the POST grant-consumption path
     // passes true here. Both the one-per-day check (step 1) AND the overlap check
     // (step 3) below are advisory pre-tx queries against the TimeEntry table — under
@@ -307,6 +312,7 @@ export async function validateTimeEntryInvariants(
     excludeEntryId,
     isCorrectionByManager,
     grantId,
+    isOwnPendingEdit,
     deferConflictChecksToTx,
   } = params;
 
@@ -341,7 +347,7 @@ export async function validateTimeEntryInvariants(
   // Fires when the entry date is older than the tenant's configured window AND neither
   // an approved manager correction nor a pre-validated retro grant is present.
   // Uses tenant-TZ date strings — never raw UTC arithmetic (C1 / DST-safety).
-  if (!isCorrectionByManager && !grantId) {
+  if (!isCorrectionByManager && !grantId && !isOwnPendingEdit) {
     const windowDays = await getRetroEntryWindowDays(app.prisma, tenantId);
     const todayStr = dateStrInTz(todayInTz(tz), tz);
     const retroLimitStr = computeRetroLimitStr(tz, windowDays);
@@ -1449,7 +1455,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true, userId: true, firstName: true, lastName: true } },
+          // Phase 96 (RETRO-16/D-10): loaded so the own-pending-edit exemption below can
+          // verify the coupled request is still PENDING (strictness, Pitfall 2) — not
+          // just that a retroRequestId happens to be set.
+          retroRequest: { select: { status: true } },
+        },
       });
       if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
 
@@ -1553,6 +1565,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
 
+      // Phase 96 (RETRO-16/D-10) — employee editing their OWN still-pending coupled
+      // Nachtrag entry must not be re-blocked by the retro-window guard (Pitfall 2).
+      // Scoped tightly: retroRequestId set + isInvalid=true + the coupled request is
+      // still PENDING (verified via the retroRequest include above) + the entry
+      // belongs to the ACTOR themselves (a manager correcting a DIFFERENT employee's
+      // entry already has its own exemption via putIsCorrectionByManager above — this
+      // is specifically the self-edit case, regardless of role, matching C6 parity).
+      const isOwnPendingNachtragEdit =
+        !!existing.retroRequestId &&
+        existing.isInvalid &&
+        existing.retroRequest?.status === "PENDING" &&
+        existing.employeeId === user.employeeId;
+
       // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
       // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
       // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
@@ -1589,6 +1614,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         excludeEntryId: id,
         isCorrectionByManager: putIsCorrectionByManager,
         grantId: putResolvedGrantId,
+        isOwnPendingEdit: isOwnPendingNachtragEdit,
       });
       if (invalid) {
         if (invalid.error === "RETRO_WINDOW_EXCEEDED") {
@@ -1659,6 +1685,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         patch.isInvalid = false;
         patch.invalidReason = null;
       }
+      // Phase 96 (RETRO-16/D-10): a pending Nachtrag edit (isOwnPendingNachtragEdit) is
+      // intentionally NOT auto-revalidated here — the string check above matches ONLY
+      // "Ausstempeln fehlt" (verified non-collision, Pitfall 2), never "Nachtrag –
+      // Genehmigung ausstehend". `isInvalid`/`retroRequestId` are never set in `patch`
+      // for this case, so the update preserves both — the entry stays pending until a
+      // manager decides via PATCH /retro-entry-requests/:id/review. Do not add an
+      // isInvalid-clearing branch here for the Nachtrag reason without going through
+      // that endpoint (Elevation-of-Privilege guard, T-96-12).
 
       // Handle break slots update (non-grant path: runs before the update, as before)
       // For the grant path, break-slots are handled inside the $transaction below.
@@ -1797,6 +1831,41 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           app.log.warn(
             { err, timeEntryId: id },
             "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update",
+          );
+        }
+      }
+
+      // Phase 96 (RETRO-16/D-10) — re-notify the approver(s): editing an own
+      // still-pending Nachtrag stays pending, but the manager should learn the
+      // proposed times changed (net-new call site — no prior notify wiring existed
+      // for RetroEntryRequest, Pitfall 3). Mirrors the BREAK_COMPLIANCE_ALERT
+      // manager-iteration precedent (:2042-2052), skipping the actor.
+      if (isOwnPendingNachtragEdit && existing.retroRequestId) {
+        try {
+          const editManagers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: existing.employee.tenantId,
+              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            },
+            include: { user: { select: { id: true } } },
+          });
+          for (const mgr of editManagers) {
+            if (mgr.user.id === user.sub) continue; // don't self-notify
+            await app.notify({
+              userId: mgr.user.id,
+              type: "RETRO_ENTRY_UPDATED",
+              title: "Zeitnachtrag geändert",
+              message: `${existing.employee.firstName} ${existing.employee.lastName} hat einen Zeitnachtrag geändert. Er wartet weiter auf Genehmigung.`,
+              link: "/inbox",
+              tenantId: existing.employee.tenantId,
+              relatedType: "RetroEntryRequest",
+              relatedId: existing.retroRequestId,
+            });
+          }
+        } catch (err) {
+          app.log.warn(
+            { err, timeEntryId: id },
+            "Failed to re-notify approvers on pending Nachtrag edit",
           );
         }
       }
