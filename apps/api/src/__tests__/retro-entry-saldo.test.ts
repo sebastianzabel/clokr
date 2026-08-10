@@ -440,6 +440,11 @@ describe("RETRO-15: pending Nachtrag excluded from saldo/reports, included in Ar
           closeRes.statusCode,
           "close-month must succeed even with a still-pending Nachtrag in range",
         ).toBe(201);
+        const closeBody = JSON.parse(closeRes.body);
+        expect(
+          closeBody.workedMinutes,
+          "D-04 holds through close-month too: the SaldoSnapshot's workedMinutes must NOT include the still-pending entry's hours (it is this employee's only entry this month)",
+        ).toBe(0);
 
         const lockedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entryId } });
         expect(
