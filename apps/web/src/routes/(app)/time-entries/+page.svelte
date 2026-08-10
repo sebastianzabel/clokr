@@ -45,6 +45,11 @@
     isInvalid?: boolean;
     invalidReason?: string | null;
     isLocked?: boolean;
+    // Phase 96 (RETRO-17) — set when this entry is the coupled pending Nachtrag
+    // of a RetroEntryRequest (entry-first flow, 96-02). Already present on the
+    // GET /time-entries response (plain scalar column, no select restriction).
+    // Used to target the withdraw affordance (DELETE /retro-entry-requests/:id).
+    retroRequestId?: string | null;
     // Phase 93 (BREAK-07) — break-confirmation state (Phase-91 backend). Already
     // present on the GET /time-entries response (Prisma include); dormant unless
     // TenantConfig.enforceBreakConfirmation is on.
@@ -156,6 +161,9 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Phase 96 (RETRO-17) — confirm-step id for the "Zurückziehen" (withdraw)
+  // action on an own pending Nachtrag row, mirrors deleteConfirmId's pattern.
+  let withdrawConfirmId = $state("");
   let absences: Absence[] = $state([]);
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   // Self-scope is enforced server-side from req.user.employeeId.
@@ -789,6 +797,18 @@
           : "Manuell";
   }
 
+  // Phase 96 (RETRO-17/D-13) — exact invalidReason string set by the backend's
+  // entry-first pendingRetroCreate branch (time-entries.ts). Distinguishes a
+  // pending Nachtrag from the OTHER isInvalid case (pending leave-cancellation,
+  // "Urlaubsstornierung ausstehend") so the withdraw affordance only ever
+  // targets a row that is actually coupled to a RetroEntryRequest.
+  const PENDING_NACHTRAG_REASON = "Nachtrag – Genehmigung ausstehend";
+  function isPendingNachtrag(e: TimeEntry): boolean {
+    return (
+      e.isInvalid === true && e.invalidReason === PENDING_NACHTRAG_REASON && !!e.retroRequestId
+    );
+  }
+
   // ── Phase 93 (BREAK-07) — status-badge mapping (UI-SPEC color/copy contract) ─
   function breakBadgeClass(status: TimeEntry["breakStatus"]): string {
     return status === "CONFIRMED"
@@ -932,18 +952,26 @@
     }
   });
 
-  async function saveEntry() {
-    saving = true;
-    saveError = "";
+  // Convert the current form state (formDate/formStart/formEnd/formHasEnd/
+  // formBreaks) into the ISO-timestamp fields POST/PUT /time-entries expects.
+  // Shared by saveEntry() and submitRetroRequest()'s entry-first branch
+  // (Phase 96 / RETRO-17) so both create paths build an identical payload.
+  function buildManualEntryFields() {
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
     const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
-    // Convert break slots to full ISO timestamps
     const breaksPayload = formBreaks
       .filter((b) => b.start && b.end)
       .map((b) => ({
         startTime: new Date(`${formDate}T${b.start}:00`).toISOString(),
         endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
       }));
+    return { startISO, endISO, breaksPayload };
+  }
+
+  async function saveEntry() {
+    saving = true;
+    saveError = "";
+    const { startISO, endISO, breaksPayload } = buildManualEntryFields();
     try {
       if (editEntry) {
         await api.put(`/time-entries/${editEntry.id}`, {
@@ -1088,6 +1116,17 @@
   }
 
   // ── Submit retro entry request ─────────────────────────────────────────────
+  // Phase 96 (RETRO-17/D-02) — branches on editEntry:
+  //  - editEntry === null: brand-new out-of-window entry, no existing row for
+  //    the day → entry-first (RETRO-10). The reason travels WITH the create in
+  //    a single POST /time-entries call so a pending entry never exists without
+  //    its audit reason (Revisionssicherheit). Backend creates the pending
+  //    TimeEntry (isInvalid=true) + coupled PENDING RetroEntryRequest
+  //    atomically (time-entries.ts pendingRetroCreate branch, 96-02).
+  //  - editEntry set: an EXISTING out-of-window entry is being edited/deleted
+  //    (correction case, D-02) → unchanged legacy correction-proposal POST
+  //    /retro-entry-requests. The existing valid entry stays untouched and
+  //    keeps counting in the saldo until a manager applies the correction.
   async function submitRetroRequest() {
     if (!retroReason.trim()) {
       retroReasonError = "Bitte gib eine Begründung an.";
@@ -1102,19 +1141,52 @@
     retroSubmitError = "";
     retroSubmitting = true;
     try {
-      await api.post("/retro-entry-requests", {
-        targetDate: formDate,
-        reason: retroReason,
-        startTime: formStart,
-        endTime: formEnd,
-        breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
-      });
-      closeModal();
-      toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
+      if (editEntry === null) {
+        const { startISO, endISO, breaksPayload } = buildManualEntryFields();
+        await api.post("/time-entries", {
+          date: formDate,
+          startTime: startISO,
+          endTime: endISO,
+          breakMinutes: formBreakTotal,
+          breaks: breaksPayload,
+          note: formNote || null,
+          reason: retroReason,
+        });
+        closeModal();
+        toasts.success("Eintrag gespeichert – wartet auf Genehmigung.");
+        await loadAll();
+      } else {
+        await api.post("/retro-entry-requests", {
+          targetDate: formDate,
+          reason: retroReason,
+          startTime: formStart,
+          endTime: formEnd,
+          breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
+        });
+        closeModal();
+        toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
+      }
     } catch (e: unknown) {
       retroSubmitError = e instanceof Error ? e.message : "Fehler beim Einreichen des Antrags.";
     } finally {
       retroSubmitting = false;
+    }
+  }
+
+  // ── Withdraw own pending Nachtrag ────────────────────────────────────────
+  // Phase 96 (RETRO-16/RETRO-17/D-11) — soft-deletes the coupled
+  // RetroEntryRequest + TimeEntry pair (audit-proof; server re-checks
+  // ownership/status/isLocked regardless of what the UI sends, T-96-19).
+  async function withdrawRetroRequest(entry: TimeEntry) {
+    if (!entry.retroRequestId) return;
+    try {
+      await api.delete(`/retro-entry-requests/${entry.retroRequestId}`);
+      withdrawConfirmId = "";
+      toasts.success("Zeitnachtrag zurückgezogen.");
+      await loadAll();
+    } catch (e: unknown) {
+      withdrawConfirmId = "";
+      error = e instanceof Error ? e.message : "Fehler beim Zurückziehen";
     }
   }
 
@@ -1714,6 +1786,22 @@
                           data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
                         >
                       </span>
+                    {:else if withdrawConfirmId === slot.id}
+                      <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
+                           delete-confirm pattern above with its own label/testids. -->
+                      <span class="del-confirm">
+                        <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
+                        <button
+                          class="btn btn-sm btn-danger"
+                          onclick={() => withdrawRetroRequest(slot)}
+                          data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
+                        >
+                        <button
+                          class="btn btn-sm btn-ghost"
+                          onclick={() => (withdrawConfirmId = "")}
+                          data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
+                        >
+                      </span>
                     {:else}
                       <span class="row-actions row-actions--visible">
                         <button
@@ -1722,12 +1810,26 @@
                           title="Bearbeiten"
                           data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
                         >
-                        <button
-                          class="btn-icon btn-icon-danger"
-                          onclick={() => (deleteConfirmId = slot.id)}
-                          title="Löschen"
-                          data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                        >
+                        {#if isPendingNachtrag(slot)}
+                          <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
+                               withdrawn via DELETE /retro-entry-requests/:id
+                               (soft-deletes request + coupled entry), not the
+                               plain DELETE /time-entries/:id (which would
+                               re-run the retro-window guard and 403). -->
+                          <button
+                            class="btn-icon btn-icon-danger"
+                            onclick={() => (withdrawConfirmId = slot.id)}
+                            title="Zurückziehen"
+                            data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
+                          >
+                        {:else}
+                          <button
+                            class="btn-icon btn-icon-danger"
+                            onclick={() => (deleteConfirmId = slot.id)}
+                            title="Löschen"
+                            data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                          >
+                        {/if}
                       </span>
                     {/if}
                   </td>
