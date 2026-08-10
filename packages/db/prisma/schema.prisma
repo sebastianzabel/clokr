@@ -429,8 +429,11 @@ model TimeEntry {
   breakStatus       BreakStatus @default(CONFIRMED) // Phase 91 (BREAK-01)
   breakWaivedReason String? // Phase 91 (BREAK-03)
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  breaks   Break[]
+  retroRequestId String? @unique // Phase 96 (RETRO-18) — 1:1 coupling to the Nachtrag request
+
+  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  breaks       Break[]
+  retroRequest RetroEntryRequest? @relation(fields: [retroRequestId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, date], map: "TimeEntry_employeeId_date_unique_not_deleted")
   @@index([date])
@@ -653,7 +656,8 @@ model RetroEntryRequest {
   createdAt  DateTime         @default(now()) @db.Timestamptz
   updatedAt  DateTime         @updatedAt @db.Timestamptz
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee  Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  timeEntry TimeEntry? // Phase 96 (RETRO-18) — back-relation, no column here; TimeEntry owns the FK
 
   @@index([employeeId])
   @@index([employeeId, targetDate])
