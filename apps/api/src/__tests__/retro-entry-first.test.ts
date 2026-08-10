@@ -169,6 +169,10 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
   let manager2Token: string;
   let azubiId: string;
   let azubiToken: string;
+  // Phase 96-05 (RETRO-16 withdraw) — a second, wholly separate tenant so the
+  // cross-tenant withdraw case exercises a genuine tenant mismatch.
+  let crossTenantId: string;
+  let crossEmployeeId: string;
 
   beforeAll(async () => {
     app = await getTestApp();
@@ -179,6 +183,10 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
     manager2Token = seed.manager2.token;
     azubiId = seed.azubi.emp.id;
     azubiToken = seed.azubi.token;
+
+    const crossSeed = await seedEntryFirstTenant(app, "cross");
+    crossTenantId = crossSeed.tenantId;
+    crossEmployeeId = crossSeed.employee.emp.id;
   });
 
   afterAll(async () => {
@@ -189,9 +197,14 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       // does not delete RetroEntryRequest rows itself (pre-existing gap shared
       // with retro-approval-flow.test.ts) — scoped here so this file's tenant
       // doesn't leave residue.
-      await app.prisma.timeEntry.deleteMany({ where: { employee: { tenantId } } });
-      await app.prisma.retroEntryRequest.deleteMany({ where: { employee: { tenantId } } });
+      await app.prisma.timeEntry.deleteMany({
+        where: { employee: { tenantId: { in: [tenantId, crossTenantId] } } },
+      });
+      await app.prisma.retroEntryRequest.deleteMany({
+        where: { employee: { tenantId: { in: [tenantId, crossTenantId] } } },
+      });
       await cleanupTestData(app, tenantId);
+      await cleanupTestData(app, crossTenantId);
     } catch (err) {
       console.error("retro-entry-first cleanup:", err);
     }
@@ -763,6 +776,184 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         expect(res.statusCode, "normal out-of-window self-edit must stay blocked").toBe(403);
         const body = JSON.parse(res.body);
         expect(body.error).toBe("RETRO_WINDOW_EXCEEDED");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-16 withdraw: DELETE /retro-entry-requests/:id (D-11) ───────────────
+
+  describe("RETRO-16 withdraw: DELETE /retro-entry-requests/:id", () => {
+    it("owner withdraws own PENDING request -> 200, both rows soft-deleted, both audited, day free for a fresh submission", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 17);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/retro-entry-requests/${request.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+        });
+        expect(res.statusCode, "owner withdraw of own PENDING must succeed").toBe(200);
+
+        const reqAfter = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(reqAfter?.deletedAt, "request must be soft-deleted").not.toBeNull();
+        expect(
+          reqAfter?.status,
+          "no new enum value — status left as PENDING, deletedAt is the signal",
+        ).toBe("PENDING");
+
+        const entryAfter = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(
+          entryAfter,
+          "row must be preserved (soft-delete, never prisma.delete())",
+        ).not.toBeNull();
+        expect(entryAfter?.deletedAt, "coupled entry must be soft-deleted").not.toBeNull();
+
+        const reqAudit = await app.prisma.auditLog.findFirst({
+          where: {
+            entity: "RetroEntryRequest",
+            entityId: request.id,
+            action: "RETRO_ENTRY_WITHDRAWN",
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(reqAudit, "RETRO_ENTRY_WITHDRAWN audit must exist").not.toBeNull();
+
+        const entryAudit = await app.prisma.auditLog.findFirst({
+          where: { entity: "TimeEntry", entityId: entry.id, action: "DELETE" },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(entryAudit, "TimeEntry DELETE (soft-delete) audit must exist").not.toBeNull();
+
+        // deletedAt frees the (employeeId, date) partial unique slot — a fresh
+        // out-of-window submission for the same day must succeed afterward.
+        const retryRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/time-entries",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            date: targetDate,
+            startTime: `${targetDate}T09:00:00.000Z`,
+            endTime: `${targetDate}T17:00:00.000Z`,
+            breakMinutes: 30,
+            reason: "Erneuter Versuch nach Rückzug",
+          },
+        });
+        expect(retryRes.statusCode, "day must be free for a fresh submission after withdraw").toBe(
+          201,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("non-owner withdraw -> 403, no mutation", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 18);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/retro-entry-requests/${request.id}`,
+          headers: { authorization: `Bearer ${azubiToken}` }, // different employee, same tenant
+        });
+        expect(res.statusCode, "non-owner withdraw must be rejected").toBe(403);
+
+        const unchangedReq = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedReq?.deletedAt).toBeNull();
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("non-PENDING request (already APPROVED) -> 409, no mutation", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 19);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+        await app.prisma.retroEntryRequest.update({
+          where: { id: request.id },
+          data: { status: "APPROVED" },
+        });
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/retro-entry-requests/${request.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+        });
+        expect(res.statusCode, "non-PENDING withdraw must be rejected").toBe(409);
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("locked-month coupled entry -> 403, no mutation (D-09)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 20);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate, {
+          isLocked: true,
+        });
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/retro-entry-requests/${request.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+        });
+        expect(res.statusCode, "withdraw into a locked month must be rejected").toBe(403);
+
+        const unchangedReq = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedReq?.status).toBe("PENDING");
+        expect(unchangedReq?.deletedAt).toBeNull();
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("cross-tenant withdraw -> 404 + CROSS_TENANT_ACCESS_DENIED audit", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 1);
+        const { request } = await seedCoupledPending(app, crossEmployeeId, targetDate);
+
+        const res = await app.inject({
+          method: "DELETE",
+          url: `/api/v1/retro-entry-requests/${request.id}`,
+          headers: { authorization: `Bearer ${empToken}` }, // main tenant's employee
+        });
+        expect(res.statusCode, "cross-tenant withdraw must 404").toBe(404);
+
+        const audit = await app.prisma.auditLog.findFirst({
+          where: {
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "RetroEntryRequest",
+            entityId: request.id,
+          },
+        });
+        expect(audit, "CROSS_TENANT_ACCESS_DENIED audit must exist").not.toBeNull();
       } finally {
         vi.useRealTimers();
       }
