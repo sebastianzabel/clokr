@@ -197,7 +197,10 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.retroEntryRequest.findFirst({
         where: { id, deletedAt: null },
-        include: { employee: { select: { tenantId: true, userId: true } } },
+        include: {
+          employee: { select: { tenantId: true, userId: true } },
+          timeEntry: true, // Phase 96 (RETRO-11) — coupled entry-first pending entry, if any
+        },
       });
       if (!existing) {
         return reply.code(404).send({ error: "Antrag nicht gefunden" });
@@ -237,6 +240,27 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Nur Manager oder Admins können Anträge genehmigen" });
       }
 
+      // ── Phase 96 (RETRO-11) — coupled entry-first release ─────────────────────
+      // Only applies when this request has a coupled TimeEntry (entry-first flow,
+      // 96-02 Task 1) that is not itself soft-deleted. Legacy grant-first requests
+      // (no coupled entry, D-12) and REJECT decisions fall through to the
+      // unchanged behavior below — reject-side entry cleanup (D-08) is out of
+      // scope for this tracer and lands in a later plan. Inserted strictly AFTER
+      // the C3-a/C3-b self-approval block + role check above (never before —
+      // Elevation-of-Privilege guard, RETRO-13).
+      const coupledEntry =
+        existing.timeEntry && !existing.timeEntry.deletedAt ? existing.timeEntry : null;
+
+      if (coupledEntry && body.status === "APPROVED" && coupledEntry.isLocked) {
+        // D-09: locked months stay immutable — explicit 403 (mirrors
+        // time-entries.ts's `if (existing.isLocked) return reply.code(403)...`
+        // idiom), NOT leave.ts's silent isLocked:false-in-WHERE updateMany, which
+        // would silently no-op instead of surfacing an error.
+        return reply
+          .code(403)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
       const tz = await getTenantTimezone(app.prisma, user.tenantId);
       const todayStr = dateStrInTz(todayInTz(tz), tz);
       const targetDateStr = existing.targetDate.toISOString().split("T")[0];
@@ -246,34 +270,87 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       // when empty/absent so the audit trail records the true absence of a note.
       const reviewNote = body.reviewNote?.trim() ? body.reviewNote : null;
 
-      const updated = await app.prisma.retroEntryRequest.update({
-        where: { id },
-        data: {
-          status: body.status,
-          reviewedBy: user.sub,
-          reviewedAt: new Date(),
-          reviewNote,
-        },
-      });
+      let updated: Awaited<ReturnType<typeof app.prisma.retroEntryRequest.update>>;
 
-      const action = body.status === "APPROVED" ? "RETRO_ENTRY_APPROVED" : "RETRO_ENTRY_REJECTED";
+      if (coupledEntry && body.status === "APPROVED") {
+        // Release the coupled entry atomically with the approval: isInvalid flips
+        // false (retroRequestId stays — the audit link is preserved), both
+        // mutations audited with before/after values in one transaction.
+        const entryIdToRelease = coupledEntry.id;
+        updated = await app.prisma.$transaction(async (tx) => {
+          const reqAfter = await tx.retroEntryRequest.update({
+            where: { id },
+            data: {
+              status: body.status,
+              reviewedBy: user.sub,
+              reviewedAt: new Date(),
+              reviewNote,
+            },
+          });
+          const entryAfter = await tx.timeEntry.update({
+            where: { id: entryIdToRelease },
+            data: { isInvalid: false, invalidReason: null },
+          });
 
-      await app.audit({
-        userId: user.sub,
-        action,
-        entity: "RetroEntryRequest",
-        entityId: id,
-        newValue: {
-          requesterId: existing.employee.userId ?? existing.employeeId,
-          approverId: user.sub,
-          targetDate: targetDateStr,
-          ageInDays,
-          reason: existing.reason,
-          reviewNote,
-          status: body.status,
-        },
-        request: { ip: req.ip, headers: req.headers as Record<string, string> },
-      });
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "RETRO_ENTRY_APPROVED",
+            entity: "RetroEntryRequest",
+            entityId: id,
+            oldValue: existing,
+            newValue: {
+              ...reqAfter,
+              requesterId: existing.employee.userId ?? existing.employeeId,
+              approverId: user.sub,
+              targetDate: targetDateStr,
+              ageInDays,
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+          await app.audit({
+            tx,
+            userId: user.sub,
+            action: "UPDATE",
+            entity: "TimeEntry",
+            entityId: entryIdToRelease,
+            oldValue: coupledEntry,
+            newValue: entryAfter,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+
+          return reqAfter;
+        });
+      } else {
+        updated = await app.prisma.retroEntryRequest.update({
+          where: { id },
+          data: {
+            status: body.status,
+            reviewedBy: user.sub,
+            reviewedAt: new Date(),
+            reviewNote,
+          },
+        });
+
+        const action = body.status === "APPROVED" ? "RETRO_ENTRY_APPROVED" : "RETRO_ENTRY_REJECTED";
+
+        await app.audit({
+          userId: user.sub,
+          action,
+          entity: "RetroEntryRequest",
+          entityId: id,
+          newValue: {
+            requesterId: existing.employee.userId ?? existing.employeeId,
+            approverId: user.sub,
+            targetDate: targetDateStr,
+            ageInDays,
+            reason: existing.reason,
+            reviewNote,
+            status: body.status,
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+      }
 
       return reply.code(200).send({
         ...updated,
