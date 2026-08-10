@@ -657,4 +657,115 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       }
     });
   });
+
+  // ── RETRO-16 edit: PUT own still-pending coupled entry stays pending (D-10) ──
+
+  describe("RETRO-16 edit: employee PUTs own still-pending coupled entry", () => {
+    it("own pending edit -> 200, isInvalid stays true, retroRequestId unchanged, no RETRO_WINDOW_EXCEEDED, re-notifies managers", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 14);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${entry.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            startTime: `${targetDate}T09:00:00.000Z`,
+            endTime: `${targetDate}T17:00:00.000Z`,
+            breakMinutes: 45,
+          },
+        });
+        expect(res.statusCode, "own pending edit must succeed, not RETRO_WINDOW_EXCEEDED").toBe(
+          200,
+        );
+        const body = JSON.parse(res.body);
+        expect(body.entry?.isInvalid, "must stay pending").toBe(true);
+        expect(body.entry?.retroRequestId, "coupling FK unchanged").toBe(request.id);
+        expect(body.entry?.breakMinutes, "edited fields are applied").toBe(45);
+
+        const reloaded = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(reloaded?.isInvalid).toBe(true);
+        expect(reloaded?.invalidReason).toBe("Nachtrag – Genehmigung ausstehend");
+        expect(reloaded?.retroRequestId).toBe(request.id);
+
+        const requestStillPending = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(requestStillPending?.status, "coupled request untouched by employee edit").toBe(
+          "PENDING",
+        );
+
+        // Re-notify: the edit must fire a fresh in-app notification (net-new call site).
+        const notif = await app.prisma.notification.findFirst({
+          where: {
+            relatedType: "RetroEntryRequest",
+            relatedId: request.id,
+            type: "RETRO_ENTRY_UPDATED",
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(notif, "edit must re-notify the approver(s)").not.toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("locked pending coupled entry PUT still 403 (immutability preserved)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 15);
+        const { entry } = await seedCoupledPending(app, employeeId, targetDate, {
+          isLocked: true,
+        });
+
+        const res = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${entry.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { breakMinutes: 45 },
+        });
+        expect(res.statusCode, "locked pending entry PUT must stay 403").toBe(403);
+
+        const unchanged = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchanged?.breakMinutes, "nothing mutated on a locked entry").toBe(30);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("regression: editing a normal (non-pending, uncoupled) out-of-window entry still 403 RETRO_WINDOW_EXCEEDED", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 16);
+        const plain = await app.prisma.timeEntry.create({
+          data: {
+            employeeId,
+            date: new Date(targetDate),
+            startTime: new Date(`${targetDate}T08:00:00.000Z`),
+            endTime: new Date(`${targetDate}T16:00:00.000Z`),
+            breakMinutes: 30,
+            source: "MANUAL",
+            createdBy: employeeId,
+          },
+        });
+
+        const res = await app.inject({
+          method: "PUT",
+          url: `/api/v1/time-entries/${plain.id}`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { breakMinutes: 45 },
+        });
+        expect(res.statusCode, "normal out-of-window self-edit must stay blocked").toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("RETRO_WINDOW_EXCEEDED");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });
