@@ -961,6 +961,116 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
     });
   });
 
+  // ── WR-01: TOCTOU race on RetroEntryRequest PENDING status transitions ───────
+  // Fires genuinely concurrent app.inject() calls (same pattern as
+  // retro-approval-flow.test.ts's "RETRO-02 grant race" test) against the same
+  // PENDING request so the guarded updateMany(where:{status:"PENDING"}) actually
+  // races at the Postgres row-lock level, not just a sequential double-call.
+
+  describe("WR-01 race-safety: concurrent decisions on the same RetroEntryRequest", () => {
+    it("concurrent PATCH /:id/review (approve vs reject) on the same request -> exactly one succeeds, loser gets 409, entry ends in exactly one coherent terminal state", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 26);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const [approveRes, rejectRes] = await Promise.all([
+          app.inject({
+            method: "PATCH",
+            url: `/api/v1/retro-entry-requests/${request.id}/review`,
+            headers: { authorization: `Bearer ${manager2Token}` },
+            payload: { status: "APPROVED", reviewNote: "Race: Genehmigung" },
+          }),
+          app.inject({
+            method: "PATCH",
+            url: `/api/v1/retro-entry-requests/${request.id}/review`,
+            headers: { authorization: `Bearer ${manager2Token}` },
+            payload: { status: "REJECTED", reviewNote: "Race: Ablehnung" },
+          }),
+        ]);
+
+        const statuses = [approveRes.statusCode, rejectRes.statusCode];
+        const successes = statuses.filter((s) => s === 200).length;
+        const conflicts = statuses.filter((s) => s === 409).length;
+        expect(successes, "exactly one concurrent decision must succeed").toBe(1);
+        expect(conflicts, "the loser must be rejected with 409 (race-safe guard)").toBe(1);
+
+        const finalRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(["APPROVED", "REJECTED"]).toContain(finalRequest?.status);
+
+        const finalEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        // XOR: released (isInvalid=false, not deleted) XOR soft-deleted (deletedAt
+        // set) — never both, never neither. A pre-fix double-write could otherwise
+        // leave the entry double-processed or in an incoherent mixed state.
+        const released = finalEntry?.isInvalid === false && finalEntry?.deletedAt === null;
+        const rejected = finalEntry?.deletedAt !== null;
+        expect(released !== rejected, "entry must be in exactly one terminal state").toBe(true);
+        if (finalRequest?.status === "APPROVED") {
+          expect(released, "APPROVED request must have released the entry").toBe(true);
+        } else {
+          expect(rejected, "REJECTED request must have soft-deleted the entry").toBe(true);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("concurrent DELETE (withdraw) vs PATCH approve on the same request -> exactly one succeeds; an already-approved saldo-counting entry is never silently re-deleted by the losing withdraw", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 27);
+        const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
+
+        const [withdrawRes, approveRes] = await Promise.all([
+          app.inject({
+            method: "DELETE",
+            url: `/api/v1/retro-entry-requests/${request.id}`,
+            headers: { authorization: `Bearer ${empToken}` },
+          }),
+          app.inject({
+            method: "PATCH",
+            url: `/api/v1/retro-entry-requests/${request.id}/review`,
+            headers: { authorization: `Bearer ${manager2Token}` },
+            payload: { status: "APPROVED", reviewNote: "Race: Freigabe" },
+          }),
+        ]);
+
+        const statuses = [withdrawRes.statusCode, approveRes.statusCode];
+        const successes = statuses.filter((s) => s === 200).length;
+        const conflicts = statuses.filter((s) => s === 409).length;
+        expect(successes, "exactly one concurrent action must succeed").toBe(1);
+        expect(conflicts, "the loser must be rejected with 409").toBe(1);
+
+        const finalEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        if (approveRes.statusCode === 200) {
+          // Approve won: the entry must be released, and the losing withdraw must
+          // NOT have silently soft-deleted it — this is the exact worst case WR-01
+          // closes (an already-approved, saldo-counting entry vanishing behind a
+          // stale withdraw).
+          expect(finalEntry?.isInvalid, "approve won: entry released").toBe(false);
+          expect(
+            finalEntry?.deletedAt,
+            "approve won: a losing withdraw must NOT silently soft-delete an already-approved, saldo-counting entry",
+          ).toBeNull();
+        } else {
+          // Withdraw won: the entry must be soft-deleted, and the losing approve
+          // must not have released it.
+          expect(finalEntry?.deletedAt, "withdraw won: entry soft-deleted").not.toBeNull();
+          expect(
+            finalEntry?.isInvalid,
+            "withdraw won: entry never released by the losing approve",
+          ).toBe(true);
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   // ── RETRO-16 manager edit-on-approve (D-10) ───────────────────────────────────
 
   describe("RETRO-16 manager edit-on-approve: corrected times written to the coupled entry", () => {

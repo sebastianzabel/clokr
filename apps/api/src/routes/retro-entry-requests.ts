@@ -360,50 +360,69 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // false (retroRequestId stays — the audit link is preserved), both
         // mutations audited with before/after values in one transaction.
         const entryIdToRelease = coupledEntry.id;
-        updated = await app.prisma.$transaction(async (tx) => {
-          const reqAfter = await tx.retroEntryRequest.update({
-            where: { id },
-            data: {
-              status: body.status,
-              reviewedBy: user.sub,
-              reviewedAt: new Date(),
-              reviewNote,
-            },
-          });
-          const entryAfter = await tx.timeEntry.update({
-            where: { id: entryIdToRelease },
-            data: { isInvalid: false, invalidReason: null, ...correctedFields },
-          });
+        try {
+          updated = await app.prisma.$transaction(async (tx) => {
+            // Phase 96-review (WR-01) — race-safe status guard (mirrors the
+            // grant-consumption pattern at time-entries.ts:1197-1203): updateMany
+            // with status="PENDING" AND deletedAt=null in the WHERE ensures only
+            // ONE concurrent decision — or a race against a concurrent withdraw
+            // (DELETE /:id below, which sets deletedAt but leaves status
+            // "PENDING" — deletedAt:null must be guarded too, not status alone) —
+            // can ever flip this row. The loser's count is 0 and the whole tx
+            // rolls back before any TimeEntry write is attempted.
+            const decided = await tx.retroEntryRequest.updateMany({
+              where: { id, status: "PENDING", deletedAt: null },
+              data: {
+                status: body.status,
+                reviewedBy: user.sub,
+                reviewedAt: new Date(),
+                reviewNote,
+              },
+            });
+            if (decided.count !== 1) {
+              throw new Error("RETRO_REQUEST_ALREADY_DECIDED");
+            }
+            const reqAfter = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
+            const entryAfter = await tx.timeEntry.update({
+              where: { id: entryIdToRelease },
+              data: { isInvalid: false, invalidReason: null, ...correctedFields },
+            });
 
-          await app.audit({
-            tx,
-            userId: user.sub,
-            action: "RETRO_ENTRY_APPROVED",
-            entity: "RetroEntryRequest",
-            entityId: id,
-            oldValue: existing,
-            newValue: {
-              ...reqAfter,
-              requesterId: existing.employee.userId ?? existing.employeeId,
-              approverId: user.sub,
-              targetDate: targetDateStr,
-              ageInDays,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-          await app.audit({
-            tx,
-            userId: user.sub,
-            action: hasManagerCorrection ? "MANAGER_CORRECTION" : "UPDATE",
-            entity: "TimeEntry",
-            entityId: entryIdToRelease,
-            oldValue: coupledEntry,
-            newValue: entryAfter,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "RETRO_ENTRY_APPROVED",
+              entity: "RetroEntryRequest",
+              entityId: id,
+              oldValue: existing,
+              newValue: {
+                ...reqAfter,
+                requesterId: existing.employee.userId ?? existing.employeeId,
+                approverId: user.sub,
+                targetDate: targetDateStr,
+                ageInDays,
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: hasManagerCorrection ? "MANAGER_CORRECTION" : "UPDATE",
+              entity: "TimeEntry",
+              entityId: entryIdToRelease,
+              oldValue: coupledEntry,
+              newValue: entryAfter,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
 
-          return reqAfter;
-        });
+            return reqAfter;
+          });
+        } catch (err) {
+          if (err instanceof Error && err.message === "RETRO_REQUEST_ALREADY_DECIDED") {
+            return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
+          }
+          throw err;
+        }
 
         // Phase 96-review (WR-02) — surface the same §3/§4/§5 ArbZG feedback a PUT
         // with these times would return, now that the correction is committed.
@@ -438,50 +457,65 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
         // corrected resubmission. No new enum value — reuses the existing
         // deletedAt soft-delete convention (D-11).
         const entryIdToReject = coupledEntry.id;
-        updated = await app.prisma.$transaction(async (tx) => {
-          const reqAfter = await tx.retroEntryRequest.update({
-            where: { id },
-            data: {
-              status: body.status,
-              reviewedBy: user.sub,
-              reviewedAt: new Date(),
-              reviewNote,
-            },
-          });
-          const entryAfter = await tx.timeEntry.update({
-            where: { id: entryIdToReject },
-            data: { deletedAt: new Date() },
-          });
+        try {
+          updated = await app.prisma.$transaction(async (tx) => {
+            // Phase 96-review (WR-01) — race-safe status guard, symmetric to the
+            // approve branch above: only ONE concurrent decision (or a race against
+            // a concurrent withdraw, which sets deletedAt but leaves status
+            // "PENDING" — guard both columns) can ever flip this row.
+            const decided = await tx.retroEntryRequest.updateMany({
+              where: { id, status: "PENDING", deletedAt: null },
+              data: {
+                status: body.status,
+                reviewedBy: user.sub,
+                reviewedAt: new Date(),
+                reviewNote,
+              },
+            });
+            if (decided.count !== 1) {
+              throw new Error("RETRO_REQUEST_ALREADY_DECIDED");
+            }
+            const reqAfter = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
+            const entryAfter = await tx.timeEntry.update({
+              where: { id: entryIdToReject },
+              data: { deletedAt: new Date() },
+            });
 
-          await app.audit({
-            tx,
-            userId: user.sub,
-            action: "RETRO_ENTRY_REJECTED",
-            entity: "RetroEntryRequest",
-            entityId: id,
-            oldValue: existing,
-            newValue: {
-              ...reqAfter,
-              requesterId: existing.employee.userId ?? existing.employeeId,
-              approverId: user.sub,
-              targetDate: targetDateStr,
-              ageInDays,
-            },
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
-          await app.audit({
-            tx,
-            userId: user.sub,
-            action: "DELETE",
-            entity: "TimeEntry",
-            entityId: entryIdToReject,
-            oldValue: coupledEntry,
-            newValue: entryAfter,
-            request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          });
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "RETRO_ENTRY_REJECTED",
+              entity: "RetroEntryRequest",
+              entityId: id,
+              oldValue: existing,
+              newValue: {
+                ...reqAfter,
+                requesterId: existing.employee.userId ?? existing.employeeId,
+                approverId: user.sub,
+                targetDate: targetDateStr,
+                ageInDays,
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "DELETE",
+              entity: "TimeEntry",
+              entityId: entryIdToReject,
+              oldValue: coupledEntry,
+              newValue: entryAfter,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
 
-          return reqAfter;
-        });
+            return reqAfter;
+          });
+        } catch (err) {
+          if (err instanceof Error && err.message === "RETRO_REQUEST_ALREADY_DECIDED") {
+            return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
+          }
+          throw err;
+        }
 
         // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
         // (net-new call site, Pitfall 3: no prior notify wiring existed for
@@ -499,8 +533,12 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           });
         }
       } else {
-        updated = await app.prisma.retroEntryRequest.update({
-          where: { id },
+        // Phase 96-review (WR-01) — race-safe status guard for the legacy
+        // (uncoupled/grant-first) review path too: two concurrent reviewers must
+        // not both be able to decide the same request, and a concurrent withdraw
+        // (which sets deletedAt but leaves status "PENDING") must also be caught.
+        const decidedLegacy = await app.prisma.retroEntryRequest.updateMany({
+          where: { id, status: "PENDING", deletedAt: null },
           data: {
             status: body.status,
             reviewedBy: user.sub,
@@ -508,6 +546,10 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
             reviewNote,
           },
         });
+        if (decidedLegacy.count !== 1) {
+          return reply.code(409).send({ error: "Antrag kann nicht mehr geändert werden" });
+        }
+        updated = await app.prisma.retroEntryRequest.findUniqueOrThrow({ where: { id } });
 
         const action = body.status === "APPROVED" ? "RETRO_ENTRY_APPROVED" : "RETRO_ENTRY_REJECTED";
 
@@ -597,41 +639,79 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       }
 
       const now = new Date();
-      const reqAfter = await app.prisma.$transaction(async (tx) => {
-        const updatedRequest = await tx.retroEntryRequest.update({
-          where: { id },
-          data: { deletedAt: now },
-        });
-        await app.audit({
-          tx,
-          userId: user.sub,
-          action: "RETRO_ENTRY_WITHDRAWN",
-          entity: "RetroEntryRequest",
-          entityId: id,
-          oldValue: existing,
-          newValue: updatedRequest,
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
-        });
-
-        if (coupledEntry) {
-          const entryAfter = await tx.timeEntry.update({
-            where: { id: coupledEntry.id },
+      let reqAfter: Awaited<ReturnType<typeof app.prisma.retroEntryRequest.findUniqueOrThrow>>;
+      try {
+        reqAfter = await app.prisma.$transaction(async (tx) => {
+          // Phase 96-review (WR-01) — race-safe status guard (mirrors PATCH
+          // /:id/review above / time-entries.ts:1197-1203): only succeeds if the
+          // request is STILL PENDING, so a withdraw racing a concurrent
+          // approve/reject can never re-mutate a request the other actor already
+          // decided. deletedAt:null is also guarded here (not just status) so two
+          // concurrent withdraws on the same request (which never touch status)
+          // cannot both "succeed" — only one is the true first mover.
+          const withdrawn = await tx.retroEntryRequest.updateMany({
+            where: { id, status: "PENDING", deletedAt: null },
             data: { deletedAt: now },
           });
+          if (withdrawn.count !== 1) {
+            throw new Error("RETRO_REQUEST_ALREADY_DECIDED");
+          }
+          const updatedRequest = await tx.retroEntryRequest.findUniqueOrThrow({ where: { id } });
           await app.audit({
             tx,
             userId: user.sub,
-            action: "DELETE",
-            entity: "TimeEntry",
-            entityId: coupledEntry.id,
-            oldValue: coupledEntry,
-            newValue: entryAfter,
+            action: "RETRO_ENTRY_WITHDRAWN",
+            entity: "RetroEntryRequest",
+            entityId: id,
+            oldValue: existing,
+            newValue: updatedRequest,
             request: { ip: req.ip, headers: req.headers as Record<string, string> },
           });
-        }
 
-        return updatedRequest;
-      });
+          if (coupledEntry) {
+            // Phase 96-review (WR-01) — defense-in-depth: only re-soft-delete the
+            // coupled TimeEntry if it is STILL the pre-decision pending row
+            // (isInvalid=true, deletedAt=null). The request-status guard above
+            // already closes the primary race (a concurrent approve/reject flips
+            // status away from PENDING first, so this withdraw would already have
+            // thrown above) — this second guard ensures a stale pre-tx
+            // `coupledEntry` reference can never silently re-mutate a row a
+            // concurrent decision already changed, so an already-released,
+            // saldo-counting entry can never vanish behind a stale withdraw.
+            const entryWithdrawn = await tx.timeEntry.updateMany({
+              where: { id: coupledEntry.id, deletedAt: null, isInvalid: true },
+              data: { deletedAt: now },
+            });
+            if (entryWithdrawn.count !== 1) {
+              throw new Error("RETRO_ENTRY_ALREADY_DECIDED");
+            }
+            const entryAfter = await tx.timeEntry.findUniqueOrThrow({
+              where: { id: coupledEntry.id },
+            });
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "DELETE",
+              entity: "TimeEntry",
+              entityId: coupledEntry.id,
+              oldValue: coupledEntry,
+              newValue: entryAfter,
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+          }
+
+          return updatedRequest;
+        });
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          (err.message === "RETRO_REQUEST_ALREADY_DECIDED" ||
+            err.message === "RETRO_ENTRY_ALREADY_DECIDED")
+        ) {
+          return reply.code(409).send({ error: "Antrag kann nicht mehr zurückgezogen werden" });
+        }
+        throw err;
+      }
 
       // Discretionary: let managers know a pending item is no longer waiting on
       // them (net-new call site, mirrors the BREAK_COMPLIANCE_ALERT manager
