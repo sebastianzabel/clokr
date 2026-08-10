@@ -38,6 +38,15 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   // NOTE: emailOnOvertimeWarning has no matching notification type — no code path
   // emits an "overtime warning" via app.notify(), so there is nothing to gate here.
   // Intentionally omitted rather than mapping a type that is never emitted.
+  //
+  // Phase 96 (RETRO-16): RETRO_ENTRY_REQUESTED / RETRO_ENTRY_UPDATED /
+  // RETRO_ENTRY_DECIDED / RETRO_ENTRY_WITHDRAWN (retro-entry-requests.ts,
+  // time-entries.ts) are intentionally left OUT of this map — no existing
+  // emailOn* toggle semantically fits "Zeitnachtrag" (the closest candidates,
+  // emailOnMissingEntries and emailOnLeaveDecision, are both domain-mismatched:
+  // one is about missing entries, the other about vacation). The in-app
+  // notification still fires unconditionally for all four; a future phase can
+  // add a dedicated toggle (e.g. emailOnRetroEntry) if email is desired.
 };
 
 declare module "fastify" {

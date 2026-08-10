@@ -1439,6 +1439,40 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newValue: entryWithBreaks,
       });
 
+      // Phase 96 (RETRO-16/D-10) — submit-notify: tell the tenant's managers/admins
+      // a new pending Nachtrag is waiting for them (net-new call site, Pitfall 3;
+      // mirrors the BREAK_COMPLIANCE_ALERT manager-iteration precedent, :2042-2052,
+      // skipping the actor).
+      if (pendingRetroCreate && entry.retroRequestId) {
+        try {
+          const submitManagers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: targetEmployee.tenantId,
+              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            },
+            include: { user: { select: { id: true } } },
+          });
+          for (const mgr of submitManagers) {
+            if (mgr.user.id === targetEmployee.user.id) continue; // don't self-notify
+            await app.notify({
+              userId: mgr.user.id,
+              type: "RETRO_ENTRY_REQUESTED",
+              title: "Neuer Zeitnachtrag",
+              message: `${targetEmployee.firstName} ${targetEmployee.lastName} hat einen Zeitnachtrag für den ${entryDateStr} eingereicht und wartet auf Genehmigung.`,
+              link: "/inbox",
+              tenantId: targetEmployee.tenantId,
+              relatedType: "RetroEntryRequest",
+              relatedId: entry.retroRequestId,
+            });
+          }
+        } catch (err) {
+          app.log.warn(
+            { err, timeEntryId: entry.id },
+            "Failed to notify managers on Nachtrag submit",
+          );
+        }
+      }
+
       return reply.code(201).send({ entry: entryWithBreaks, warnings });
     },
   });

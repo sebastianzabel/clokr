@@ -44,6 +44,12 @@ const reviewRetroRequestSchema = z
     status: z.enum(["APPROVED", "REJECTED"]),
     // Optional on APPROVE, mandatory (min 1) on REJECT — enforced in superRefine.
     reviewNote: z.string().optional(),
+    // Phase 96 (RETRO-16/D-10) — manager edit-on-approve: optional corrected times,
+    // written onto the coupled entry when supplied on an APPROVED coupled (entry-first)
+    // request. Ignored for REJECTED and for legacy (uncoupled/grant-first) requests.
+    startTime: z.string().regex(HHMM_REGEX, "Ungültige Uhrzeit (Format HH:MM).").optional(),
+    endTime: z.string().regex(HHMM_REGEX, "Ungültige Uhrzeit (Format HH:MM).").optional(),
+    breakMinutes: z.number().int().min(0).optional(),
   })
   .superRefine((data, ctx) => {
     if (data.status === "REJECTED" && !data.reviewNote?.trim()) {
@@ -51,6 +57,17 @@ const reviewRetroRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["reviewNote"],
         message: "Bitte gib eine Begründung an (revisionssicherheitspflichtig).",
+      });
+    }
+    if (
+      data.startTime &&
+      data.endTime &&
+      hhmmToMinutes(data.endTime) <= hhmmToMinutes(data.startTime)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endTime"],
+        message: "Ende muss nach dem Beginn liegen.",
       });
     }
   });
@@ -273,6 +290,37 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
       let updated: Awaited<ReturnType<typeof app.prisma.retroEntryRequest.update>>;
 
       if (coupledEntry && body.status === "APPROVED") {
+        // Phase 96 (RETRO-16/D-10) — manager edit-on-approve: when the reviewer
+        // supplies corrected times, they are written onto the coupled entry in the
+        // SAME transaction as the release. Audited against the entry's AS-SUBMITTED
+        // values (research Open Q3), mirroring PUT's existing MANAGER_CORRECTION
+        // pattern. The request's own proposed-times fields are left untouched — they
+        // remain the historical record of what the employee originally asked for.
+        // "HH:MM" -> Date uses the same tz-derivation as the CSV import path
+        // (imports.ts:214-215): fromZonedTime(`${dateStr}T${hhmm}:00`, tz).
+        const hasManagerCorrection =
+          body.startTime !== undefined ||
+          body.endTime !== undefined ||
+          body.breakMinutes !== undefined;
+        let correctedFields: { startTime?: Date; endTime?: Date | null; breakMinutes?: number } =
+          {};
+        if (hasManagerCorrection) {
+          const correctedStart = body.startTime
+            ? fromZonedTime(`${targetDateStr}T${body.startTime}:00`, tz)
+            : coupledEntry.startTime;
+          const correctedEnd = body.endTime
+            ? fromZonedTime(`${targetDateStr}T${body.endTime}:00`, tz)
+            : coupledEntry.endTime;
+          if (correctedEnd && correctedEnd <= correctedStart) {
+            return reply.code(400).send({ error: "Endzeit muss nach der Startzeit liegen" });
+          }
+          correctedFields = {
+            startTime: correctedStart,
+            endTime: correctedEnd,
+            breakMinutes: body.breakMinutes ?? coupledEntry.breakMinutes,
+          };
+        }
+
         // Release the coupled entry atomically with the approval: isInvalid flips
         // false (retroRequestId stays — the audit link is preserved), both
         // mutations audited with before/after values in one transaction.
@@ -289,7 +337,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           });
           const entryAfter = await tx.timeEntry.update({
             where: { id: entryIdToRelease },
-            data: { isInvalid: false, invalidReason: null },
+            data: { isInvalid: false, invalidReason: null, ...correctedFields },
           });
 
           await app.audit({
@@ -311,7 +359,7 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
           await app.audit({
             tx,
             userId: user.sub,
-            action: "UPDATE",
+            action: hasManagerCorrection ? "MANAGER_CORRECTION" : "UPDATE",
             entity: "TimeEntry",
             entityId: entryIdToRelease,
             oldValue: coupledEntry,
@@ -321,6 +369,22 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
           return reqAfter;
         });
+
+        // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
+        // (net-new call site, Pitfall 3: no prior notify wiring existed for
+        // RetroEntryRequest).
+        if (existing.employee.userId) {
+          await app.notify({
+            userId: existing.employee.userId,
+            type: "RETRO_ENTRY_DECIDED",
+            title: "Zeitnachtrag genehmigt",
+            message: `Dein Zeitnachtrag für den ${targetDateStr} wurde genehmigt.`,
+            link: `/time-entries?highlight=${entryIdToRelease}`,
+            tenantId: user.tenantId,
+            relatedType: "TimeEntry",
+            relatedId: entryIdToRelease,
+          });
+        }
       } else if (coupledEntry && body.status === "REJECTED") {
         // Reject: soft-delete the coupled entry (deletedAt set — NEVER
         // prisma.delete(), Revisionssicherheit) + REJECTED + audit, in one
@@ -374,6 +438,22 @@ export async function retroEntryRequestRoutes(app: FastifyInstance) {
 
           return reqAfter;
         });
+
+        // Phase 96 (RETRO-16/D-10) — notify the requesting employee of the decision
+        // (net-new call site, Pitfall 3: no prior notify wiring existed for
+        // RetroEntryRequest).
+        if (existing.employee.userId) {
+          await app.notify({
+            userId: existing.employee.userId,
+            type: "RETRO_ENTRY_DECIDED",
+            title: "Zeitnachtrag abgelehnt",
+            message: `Dein Zeitnachtrag für den ${targetDateStr} wurde abgelehnt.`,
+            link: `/time-entries?highlight=${entryIdToReject}`,
+            tenantId: user.tenantId,
+            relatedType: "TimeEntry",
+            relatedId: entryIdToReject,
+          });
+        }
       } else {
         updated = await app.prisma.retroEntryRequest.update({
           where: { id },
