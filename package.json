@@ -19,22 +19,22 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.0",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
     "@vitest/coverage-v8": "^4.1.10",
-    "eslint": "^10.8.0",
+    "eslint": "^10.8.1",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-svelte": "^3.22.0",
-    "globals": "^17.8.0",
+    "eslint-plugin-svelte": "^3.23.0",
+    "globals": "^17.11.0",
     "husky": "^9.1.7",
-    "lint-staged": "^17.2.0",
-    "prettier": "3.8.3",
+    "lint-staged": "^17.3.0",
+    "prettier": "3.9.6",
     "prettier-plugin-svelte": "^3.5.2",
     "svelte-eslint-parser": "^1.6.1",
-    "tsx": "^4.23.1",
-    "turbo": "^2.10.7",
+    "tsx": "^4.23.12",
+    "turbo": "^2.10.9",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.65.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   },
   "lint-staged": {
@@ -67,7 +67,7 @@
       "find-my-way": ">=9.7.0",
       "@fastify/static": ">=10.1.1",
       "postcss": ">=8.5.18",
-      "prettier": "3.8.3",
+      "prettier": "3.9.6",
       "@playwright/test": "1.60.0"
     }
   }
