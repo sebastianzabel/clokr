@@ -83,6 +83,42 @@ export async function recalculateSnapshots(
   });
   let runningCarryOver = prevSnapshot?.carryOver ?? 0;
 
+  // ── 2026-08 hardening, round 2: unexplained-delta preservation ─────────────────
+  //
+  // The isBridgeSnapshot() skip below (kept — see its own comment for why) only
+  // protects rows with NO real activity. It is blind to a row that has genuine
+  // worked/expected activity AND also carries a hand-injected carry-over correction
+  // on top (e.g. "Vor-Tracking-Leistung restore": an operator adds N minutes of
+  // pre-Clokr overtime directly onto an already-real month's carryOver). Such a row
+  // does not match the zero-activity shape, so the old guard let it fall through to
+  // full recomputation — which silently overwrote the injection. This happened on
+  // prod: a real-activity April snapshot went from a corrected 5216 down to 4200
+  // (≈17h lost) via exactly this loop, tagged "retroactive recalculation".
+  //
+  // Fix: for every row, derive how much of its STORED carryOver is NOT explained by
+  // "previous month's stored carryOver + this month's own stored balance". That
+  // unexplained remainder — injectedDelta — is by definition the hand-injected part.
+  // Recompute the row normally (legitimate worked/expected/balance), then add
+  // injectedDelta back on top of the freshly computed carryOver. injectedDelta is 0
+  // for every well-behaved row (its carryOver is fully explained by the chain), so
+  // this is a mathematical no-op for the vast majority of snapshots.
+  //
+  // CRITICAL: injectedDelta MUST be computed from the ORIGINAL, pre-mutation stored
+  // values — never from a row this same loop has already superseded/recreated.
+  // Deriving "previous month's carryOver" from an already-recomputed row would erase
+  // exactly the delta we're trying to preserve (the bug again, one level removed).
+  // `snapshots` here is the raw findMany() result from above and is never written to
+  // inside this loop (we only ever create NEW rows in the DB and track values in
+  // local variables) — but we freeze it explicitly into its own map, rather than
+  // relying on that invariant holding forever under future refactors.
+  const frozenPrevStoredCarryOverById = new Map<string, number>();
+  snapshots.forEach((s, i) => {
+    frozenPrevStoredCarryOverById.set(
+      s.id,
+      i === 0 ? (prevSnapshot?.carryOver ?? 0) : snapshots[i - 1].carryOver,
+    );
+  });
+
   for (const snapshot of snapshots) {
     // ── 2026-08 hardening: bridge/opening-balance rows MUST NOT be superseded ──
     // A bridge is a manually-injected carry-in for a previously-untracked period
@@ -104,10 +140,32 @@ export async function recalculateSnapshots(
     // skip the row entirely (no supersede, no recreate, no audit entry — nothing
     // changed, so nothing to log) and carry its stored carryOver forward unchanged as
     // the carry-in for the next month in the chain.
+    //
+    // KEPT deliberately alongside injectedDelta preservation below (NOT redundant):
+    // a pure zero-activity bridge row, if allowed through to full recompute, risks
+    // getEffectiveSchedule() conjuring a real (often large) Soll for a period that was
+    // never meant to be tracked at all (e.g. any FIXED_WEEKLY/FLEXTIME/MONTHLY_HOURS
+    // schedule already validFrom-active before the bridge period would produce a
+    // nonzero expectedMinutes against zero real workedMinutes — a fabricated deficit).
+    // injectedDelta preservation only protects the carryOver figure; it does nothing
+    // to stop a fabricated Soll/Ist from being computed and stored for the row's own
+    // month. The full-row freeze remains the only safe handling for genuine
+    // zero-activity bridges; injectedDelta preservation below handles the DIFFERENT
+    // case of a real-activity row with an injected correction on top.
     if (isBridgeSnapshot(snapshot)) {
       runningCarryOver = snapshot.carryOver;
       continue;
     }
+
+    // storedCarryIn: what this row's stored carryOver implies its carry-IN was, per
+    // its own stored balanceMinutes (both are the ORIGINAL fetched values — `snapshot`
+    // is never mutated by this loop before this point).
+    const storedCarryIn = snapshot.carryOver - snapshot.balanceMinutes;
+    const prevStoredCarryOver = frozenPrevStoredCarryOverById.get(snapshot.id) ?? 0;
+    // Unexplained remainder: positive/negative minutes that cannot be derived from
+    // "previous month's stored carryOver + this row's own stored balance" — i.e. a
+    // hand-injected correction. 0 for every well-behaved row.
+    const injectedDelta = storedCarryIn - prevStoredCarryOver;
 
     const oldValues = {
       workedMinutes: snapshot.workedMinutes,
@@ -318,8 +376,51 @@ export async function recalculateSnapshots(
       patternUnterrichtsMinutenByDow,
     });
 
-    const { workedMinutes, balanceMinutes, effectiveCarryOverOut, snapshotExpectedMinutes } = r;
-    const carryOver = effectiveCarryOverOut;
+    const {
+      workedMinutes,
+      balanceMinutes,
+      carryOverOut,
+      effectiveCarryOverOut,
+      snapshotExpectedMinutes,
+    } = r;
+
+    // Apply the preserved injectedDelta on top of the freshly recomputed carryOver.
+    // Exception: MONTHLY_HOURS/TRACK_ONLY employees never carry ANY saldo — closeEmployeeMonth
+    // forces effectiveCarryOverOut to 0 for them regardless of carryOverIn+balanceMinutes
+    // (see close-employee-month.ts's isTrackOnly zeroing). Detect that zeroing by comparing
+    // effectiveCarryOverOut against the pre-zeroing carryOverOut; if it fired, preserve the
+    // 0 (matching the existing TRACK_ONLY contract) instead of re-introducing a carryOver via
+    // injectedDelta. A nonzero injectedDelta on a TRACK_ONLY employee is a data anomaly on its
+    // own (an opening balance was seeded for someone who structurally can't carry one) — surface
+    // it via the same log line below rather than silently dropping or silently applying it.
+    const isTrackOnlyZeroed = effectiveCarryOverOut !== carryOverOut;
+    const carryOver = isTrackOnlyZeroed
+      ? effectiveCarryOverOut
+      : effectiveCarryOverOut + injectedDelta;
+
+    // Non-zero injectedDelta must be visible, not silent — this is exactly the class of value
+    // that got silently destroyed on prod. Log it (truncated employeeId — no PII) so a
+    // preserved (or, for TRACK_ONLY, dropped-with-warning) injection is traceable.
+    if (injectedDelta !== 0) {
+      const logPayload = {
+        employeeId: employeeId.slice(0, 8),
+        periodStart: snapshot.periodStart.toISOString().slice(0, 10),
+        periodEnd: snapshot.periodEnd.toISOString().slice(0, 10),
+        injectedDelta,
+        trackOnlyZeroed: isTrackOnlyZeroed,
+      };
+      if (isTrackOnlyZeroed) {
+        app.log.warn(
+          logPayload,
+          "[recalculateSnapshots] non-zero injectedDelta on a TRACK_ONLY snapshot — dropped, not carried (TRACK_ONLY employees never hold a saldo)",
+        );
+      } else {
+        app.log.info(
+          logPayload,
+          "[recalculateSnapshots] preserved a hand-injected carryOver delta across recompute",
+        );
+      }
+    }
 
     // COMP-V1814-04: supersede the old snapshot, then create a fresh active row.
     // Never update in-place — closed history is immutable (Revisionssicherheit).
@@ -363,11 +464,18 @@ export async function recalculateSnapshots(
         carryOver,
         superseded: true,
         reason: "retroactive recalculation",
+        // 2026-08 hardening: always recorded (0 for the well-behaved majority) so the
+        // audit trail makes an unexplained-delta preservation traceable, not mysterious.
+        injectedDelta,
       },
     });
 
-    // Thread carryOver chain: each month's carryOverIn = prior month's effectiveCarryOverOut.
-    runningCarryOver = effectiveCarryOverOut;
+    // Thread carryOver chain: each month's carryOverIn = prior month's DELTA-ADJUSTED
+    // carryOver (not the raw effectiveCarryOverOut) — the next iteration's injectedDelta
+    // is computed from stored values anyway, but runningCarryOver feeds carryOverIn for
+    // the *legitimate* part of the next month's recompute, which must reflect this
+    // month's preserved value, not the delta-stripped one.
+    runningCarryOver = carryOver;
   }
 
   // Update the OvertimeAccount with the final carry-over.
