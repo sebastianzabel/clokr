@@ -196,8 +196,12 @@ export function iterateDaysInTz(
  * Internal: Ø-Methode math used for SHIFT_BASED + FLEXTIME schedules.
  *
  * Returns weeklyHours / workDaysPerWeek × workdaysInRange × 60, rounded to integer minutes.
- *   - workDaysPerWeek = count of {day}Hours fields where > 0 (D-03)
- *   - workdaysInRange = count of days in [from, to] where {day}Hours[dow] > 0 (D-02)
+ *   - workDaysPerWeek = count of contracted workdays per week
+ *   - workdaysInRange = count of days in [from, to] that are contracted workdays
+ *   Both derived from `WorkSchedule.workDays` when it is non-empty (authoritative,
+ *   per the CLAUDE.md invariant), falling back to `count({day}Hours > 0)` only when
+ *   `workDays` is empty/absent. See the `isWorkday` comment below for the full
+ *   rationale of this precedence (soll-ignores-workdays-on-legacy-schedules).
  *
  * Returns 0 if weeklyHours <= 0 or workDaysPerWeek === 0 (defensive guard).
  *
@@ -228,21 +232,56 @@ function avgWorkMinutesCore(
     "saturdayHours",
   ];
 
-  // workDaysPerWeek = count of {day}Hours > 0 (do NOT consult workDays array —
-  // robust against legacy drift from pre-Phase-61 rows, per CONTEXT.md D-02).
+  // Day-membership source ("is weekday `dow` a contracted workday?"):
+  //
+  // `WorkSchedule.workDays` is authoritative when present and non-empty. Per
+  // CLAUDE.md's invariant ("WorkSchedule.workDays MUST be the set of weekday
+  // indices where the corresponding {day}Hours value is > 0"), workDays and
+  // {day}Hours are supposed to always agree — enforced on every create/update
+  // path since Phase 61's normalizeWorkDays(). This function used to ignore
+  // workDays entirely and trust {day}Hours>0 instead, reasoning (see git
+  // history) that {day}Hours would be "more robust against legacy drift from
+  // pre-Phase-61 rows". That reasoning had it backwards for the rows that
+  // actually diverge in prod: audited via debug session
+  // soll-ignores-workdays-on-legacy-schedules.md, every one of the known
+  // pre-Phase-61 divergent rows carries a STALE bulk-migration placeholder in
+  // {day}Hours (e.g. 1.00 across every Mon-Fri column, which does not even
+  // sum to weeklyHours), while `workDays` was hand-corrected per employee to
+  // the real contractual pattern. Trusting {day}Hours>0 there silently
+  // spread the weekly Soll across days the employee never contractually
+  // works (e.g. Monday/Friday for a Tue/Wed/Thu-only contract), which
+  // under-valued leave/absence credit on the real workdays and left a
+  // phantom residual Soll on the non-workdays. Trusting workDays instead is
+  // what actually achieves "robust against legacy drift" here, and aligns
+  // this function with the precedence `vacation-calc.ts:countWorkDaysPerWeek()`
+  // already uses for BUrlG Urlaubs-Tagezählung — previously the two
+  // sibling functions disagreed on which field to trust for the very same
+  // legacy rows. Falls back to {day}Hours>0, unchanged, when workDays is
+  // empty/absent (e.g. some MONTHLY_HOURS rows never set it) so the
+  // well-behaved majority (workDays and {day}Hours already in sync) sees
+  // byte-identical output.
+  const explicitWorkDays = Array.isArray(schedule.workDays) ? (schedule.workDays as number[]) : [];
+  const useWorkDays = explicitWorkDays.length > 0;
+  const isWorkday = (dow: number): boolean =>
+    useWorkDays ? explicitWorkDays.includes(dow) : Number(schedule[DOW_KEYS[dow]] ?? 0) > 0;
+
+  // workDaysPerWeek = count of contracted workdays per week (workDays.length,
+  // or count of {day}Hours > 0 when workDays is empty). Both this divisor AND
+  // workdaysInRange below MUST use the SAME day-membership test (isWorkday) —
+  // mixing sources here would make the ratio meaningless.
   let workDaysPerWeek = 0;
-  for (const key of DOW_KEYS) {
-    if (Number(schedule[key] ?? 0) > 0) workDaysPerWeek++;
+  for (let dow = 0; dow <= 6; dow++) {
+    if (isWorkday(dow)) workDaysPerWeek++;
   }
   if (workDaysPerWeek === 0) return 0;
 
-  // workdaysInRange = count of calendar days in [from, to] where the
-  // corresponding {day}Hours value is > 0. D-06: a holiday inside the range is
+  // workdaysInRange = count of calendar days in [from, to] that are
+  // contracted workdays per isWorkday(). D-06: a holiday inside the range is
   // excluded so it is not double-deducted (holiday minutes are subtracted separately).
   let workdaysInRange = 0;
   iterateDaysInTz(from, to, tz, (dow, dateStr) => {
     if (excludeHolidays?.has(dateStr)) return;
-    if (Number(schedule[DOW_KEYS[dow]] ?? 0) > 0) workdaysInRange++;
+    if (isWorkday(dow)) workdaysInRange++;
   });
 
   return Math.round((wh * 60 * workdaysInRange) / workDaysPerWeek);

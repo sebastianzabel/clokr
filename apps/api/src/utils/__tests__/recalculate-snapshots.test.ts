@@ -120,6 +120,14 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
           employeeId: asEmp.id,
           type: "FLEXTIME",
           weeklyHours: 38,
+          // workDays explicit (soll-ignores-workdays-on-legacy-schedules fix):
+          // avgWorkMinutesCore is now workDays-primary. Without this, the row
+          // would silently inherit the Prisma schema default workDays=[1..5]
+          // (includes Monday, which this fixture does NOT work per
+          // mondayHours=0 below). Set to the fixture's real Tue-Fri pattern —
+          // matches what normalizeWorkDays() would derive from these same
+          // {day}Hours in production and keeps expected values unchanged.
+          workDays: [2, 3, 4, 5],
           mondayHours: 0,
           tuesdayHours: 9.5,
           wednesdayHours: 9.5,

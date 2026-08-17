@@ -54,6 +54,16 @@ describe("GET /shifts/week — Ø-Methode leave/absence aggregation (Phase 76.12
         employeeId: asEmployee.id,
         type: "SHIFT_BASED",
         weeklyHours: 38,
+        // workDays explicit (soll-ignores-workdays-on-legacy-schedules fix):
+        // avgWorkMinutesCore is now workDays-primary. Without this, the row
+        // would silently inherit the Prisma schema default workDays=[1..5]
+        // (includes Monday, which this fixture does NOT work per
+        // mondayHours=0 below) — the opposite-direction divergence a
+        // workDays-primary divisor must NOT trust. Setting it explicitly to
+        // the fixture's real Tue-Fri pattern matches what normalizeWorkDays()
+        // would derive from these same {day}Hours in production and keeps
+        // this test's expected values (570/285min) unchanged.
+        workDays: [2, 3, 4, 5],
         mondayHours: 0,
         tuesdayHours: 9.5,
         wednesdayHours: 9.5,

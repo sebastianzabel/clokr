@@ -798,6 +798,12 @@ export async function shiftRoutes(app: FastifyInstance) {
                 type: true,
                 weeklyHours: true,
                 monthlyHours: true,
+                // workDays: authoritative day-membership source for the
+                // Ø-Methode divisor in avgWorkMinutesCore (timezone.ts) — must
+                // be selected here or the Soll-Korrelation row silently falls
+                // back to the (possibly stale, for pre-Phase-61 rows) {day}Hours
+                // divisor. See debug session soll-ignores-workdays-on-legacy-schedules.md.
+                workDays: true,
                 mondayHours: true,
                 tuesdayHours: true,
                 wednesdayHours: true,
