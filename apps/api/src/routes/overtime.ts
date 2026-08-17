@@ -350,7 +350,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }
 
         // Check if snapshot already exists (= closed) — PERF-V1814-01: Map lookup, no DB call
-        const existingSnapshot = (snapshotsByEmp.get(emp.id) ?? [])[0] ?? null;
+        // isPeriodStartInMonth is REQUIRED here, not optional: fetchCloseMonthData's Q1 range
+        // pre-fetch (periodStart gte start / lte end) is one day too wide at the upper bound
+        // for the TZ-converted convention — month N+1's snapshot has periodStart equal to the
+        // last UTC day of month N (e.g. July's snapshot carries periodStart=2026-06-30 for
+        // Europe/Berlin), so it lands inside June's query range too. Taking `[0]` unfiltered
+        // would attribute July's snapshot to June and report June as closed when it is not
+        // (see debug session month-detail-shows-next-month-snapshot). year-status below already
+        // guards against this the same way — keep both in sync.
+        const existingSnapshot =
+          (snapshotsByEmp.get(emp.id) ?? []).find((s) =>
+            isPeriodStartInMonth(s.periodStart, monthStart),
+          ) ?? null;
 
         if (existingSnapshot) {
           result.push({

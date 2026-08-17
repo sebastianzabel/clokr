@@ -280,8 +280,9 @@
         `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
       );
       detailEmployees = res.employees;
-    } catch {
-      error = "Details konnten nicht geladen werden";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Details konnten nicht geladen werden";
     } finally {
       detailLoading = false;
     }
@@ -336,8 +337,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Fehler beim Monatsabschluss";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Monatsabschluss";
     } finally {
       closing = false;
       closingProgress = 0;
@@ -446,8 +448,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Abschluss fehlgeschlagen";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Abschluss fehlgeschlagen";
     } finally {
       closingEmployee = null;
     }
@@ -470,8 +473,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Entsperren fehlgeschlagen";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Entsperren fehlgeschlagen";
     } finally {
       unlocking = null;
     }
