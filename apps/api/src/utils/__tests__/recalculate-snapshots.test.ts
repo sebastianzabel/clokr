@@ -280,3 +280,196 @@ describe("recalculateSnapshots (Phase 76.12 Plan 02) — Ø-Methode leave subtra
     });
   });
 });
+
+describe("recalculateSnapshots — bridge/opening-balance snapshot protection (2026-08 hardening)", () => {
+  // Prod incident: recalculateSnapshots() used to unconditionally supersede+recreate
+  // EVERY MONTHLY snapshot in range, including manually-injected opening-balance
+  // "bridge" rows (expectedMinutes=0, workedMinutes=0, balanceMinutes=0, carryOver!=0).
+  // That silently zeroed ~102h of legitimately earned pre-tracking overtime on prod.
+  // This test builds a bridge snapshot followed by a later closed month and calls
+  // recalculateSnapshots with fromDate AT the bridge month (mirroring the real
+  // WorkSchedule-edit trigger) — without the isBridgeSnapshot guard in
+  // recalculate-snapshots.ts, the bridge row would be superseded and its carryOver
+  // recomputed to whatever the (nonexistent) April activity yields, i.e. NOT 6120.
+  let app: FastifyInstance;
+  let tenantId: string;
+  let bridgeEmpId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  // April 2026, Europe/Berlin (CEST, UTC+2) — bridge month.
+  const APRIL_START = new Date("2026-03-31T22:00:00Z"); // April 1 00:00 Berlin
+  const APRIL_END = new Date("2026-04-30T21:59:59.999Z"); // April 30 23:59:59.999 Berlin
+  // May 2026 — the first normally-tracked month after the bridge.
+  const MAY_START = new Date("2026-04-30T22:00:00Z");
+  const MAY_END = new Date("2026-05-31T21:59:59.999Z");
+  // fromDate AT/BEFORE the bridge month — the exact trigger shape of a retroactive
+  // WorkSchedule/leave/holiday edit that walks the chain from an early month forward.
+  const RECALC_FROM = new Date("2026-03-01T00:00:00Z");
+  const BRIDGE_CARRY_OVER = 6120; // 102h × 60min — magnitude mirrors the real prod incident
+
+  let bridgeSnapshotId: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const s = "recalc-bridge-" + Date.now().toString(36);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `Recalc Bridge ${s}`, slug: `rcb-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+
+    const bridgeUser = await prisma.user.create({
+      data: {
+        email: `bridge-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const bridgeEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: bridgeUser.id,
+        employeeNumber: `BR-${s}`,
+        firstName: "B.",
+        lastName: "R.",
+        classification: "VOLLZEIT",
+        hireDate: HIRE_DATE,
+      },
+    });
+    bridgeEmpId = bridgeEmp.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: bridgeEmp.id,
+        type: "FLEXTIME",
+        weeklyHours: 38,
+        workDays: [1, 2, 3, 4, 5],
+        mondayHours: 7.6,
+        tuesdayHours: 7.6,
+        wednesdayHours: 7.6,
+        thursdayHours: 7.6,
+        fridayHours: 7.6,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: HIRE_DATE,
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: bridgeEmp.id, balanceHours: 0 } });
+
+    // The bridge row: shape per isBridgeSnapshot() — all-zero activity, non-zero carryOver.
+    // Simulates a human-operator-injected opening balance for pre-tracking overtime.
+    const bridgeSnap = await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: bridgeEmp.id,
+        periodType: "MONTHLY",
+        periodStart: APRIL_START,
+        periodEnd: APRIL_END,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: BRIDGE_CARRY_OVER,
+        closedAt: new Date("2026-05-01T00:00:00Z"),
+        closedBy: null,
+        note: "Bridge/opening-balance seed for regression test",
+      },
+    });
+    bridgeSnapshotId = bridgeSnap.id;
+
+    // A normal closed month right after the bridge — no time entries, so it will be
+    // pure undertime, but its carryOver MUST chain from the bridge's carryOver.
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: bridgeEmp.id,
+        periodType: "MONTHLY",
+        periodStart: MAY_START,
+        periodEnd: MAY_END,
+        workedMinutes: 0,
+        expectedMinutes: 99999, // stale placeholder — recalc will overwrite (not a bridge row)
+        balanceMinutes: -99999,
+        carryOver: -99999,
+        closedAt: new Date("2026-06-01T00:00:00Z"),
+        closedBy: null,
+        note: "Stale placeholder for bridge regression test",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      const employees = await app.prisma.employee.findMany({
+        where: { tenantId },
+        select: { id: true },
+      });
+      const employeeIds = employees.map((e) => e.id);
+      await app.prisma.saldoSnapshot.deleteMany({
+        where: { employeeId: { in: employeeIds } },
+      });
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("recalculate-snapshots bridge regression test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  it("does NOT supersede the bridge row and threads its carryOver unchanged into the next month", async () => {
+    await recalculateSnapshots(app, bridgeEmpId, RECALC_FROM);
+
+    // (a) Bridge row is untouched: same id, still active, carryOver unchanged.
+    const bridgeAfter = await app.prisma.saldoSnapshot.findUnique({
+      where: { id: bridgeSnapshotId },
+    });
+    expect(bridgeAfter).not.toBeNull();
+    expect(bridgeAfter!.superseded).toBe(false);
+    expect(bridgeAfter!.carryOver).toBe(BRIDGE_CARRY_OVER);
+    expect(bridgeAfter!.expectedMinutes).toBe(0);
+    expect(bridgeAfter!.workedMinutes).toBe(0);
+    expect(bridgeAfter!.balanceMinutes).toBe(0);
+
+    // No audit entry for the bridge row — nothing changed, so nothing to log
+    // (audit-proof rule: audit records real mutations, not no-ops).
+    const bridgeAudits = await app.prisma.auditLog.findMany({
+      where: { entity: "SaldoSnapshot", entityId: bridgeSnapshotId },
+    });
+    expect(bridgeAudits.length).toBe(0);
+
+    // (b) Only ONE active snapshot exists for the bridge month (April) — no duplicate
+    // was created alongside the untouched bridge row.
+    const aprilActiveCount = await app.prisma.saldoSnapshot.count({
+      where: {
+        employeeId: bridgeEmpId,
+        periodType: "MONTHLY",
+        periodStart: APRIL_START,
+        superseded: false,
+      },
+    });
+    expect(aprilActiveCount).toBe(1);
+
+    // (c) May (the normal month) WAS recalculated (superseded+recreated is expected —
+    // it is not a bridge row), and its new carryOver chains from the bridge's carryOver
+    // (byte-identical threading: bridge.carryOver + May's own balanceMinutes).
+    const mayActive = await app.prisma.saldoSnapshot.findFirst({
+      where: {
+        employeeId: bridgeEmpId,
+        periodType: "MONTHLY",
+        periodStart: MAY_START,
+        superseded: false,
+      },
+    });
+    expect(mayActive).not.toBeNull();
+    expect(mayActive!.id).not.toBe(bridgeSnapshotId);
+    expect(mayActive!.carryOver).toBe(BRIDGE_CARRY_OVER + mayActive!.balanceMinutes);
+
+    // Final chain carryOver (OvertimeAccount.balanceHours) matches the recalculated
+    // May row exactly — the bridge's contribution survived the full chain intact.
+    const account = await app.prisma.overtimeAccount.findUnique({
+      where: { employeeId: bridgeEmpId },
+    });
+    expect(account).not.toBeNull();
+    expect(Math.round(Number(account!.balanceHours) * 60)).toBe(mayActive!.carryOver);
+  });
+});

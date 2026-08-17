@@ -20,6 +20,7 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { getHolidays, STATE_MAP } from "./holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -83,6 +84,31 @@ export async function recalculateSnapshots(
   let runningCarryOver = prevSnapshot?.carryOver ?? 0;
 
   for (const snapshot of snapshots) {
+    // ── 2026-08 hardening: bridge/opening-balance rows MUST NOT be superseded ──
+    // A bridge is a manually-injected carry-in for a previously-untracked period
+    // (expectedMinutes==0 && workedMinutes==0 && balanceMinutes==0 && carryOver!=0 —
+    // see isBridgeSnapshot() in saldo-snapshot-cleanup.ts, the single source of truth).
+    //
+    // Prod incident: this loop unconditionally supersedes+recreates every snapshot in
+    // range with recomputed values. For a bridge row, "recomputed" means expected=0,
+    // worked=0, balance=0, carryOver=0 (there is no activity to compute — the row only
+    // exists to seed an opening balance). That silently ZEROED ~102h of legitimately
+    // earned pre-tracking overtime on prod; the value had to be manually re-injected
+    // into a later month, which was then equally exposed to the same bug.
+    //
+    // auto-close-month.ts's SNAP-02/SNAP-04 backfill loop never hits this problem
+    // because its idempotency check (existingSnap lookup) skips ANY month that already
+    // has an active snapshot — bridges included, as a side effect of "already closed".
+    // This loop's entire purpose is to touch already-existing snapshots, so it needs
+    // this explicit shape check instead. Mirror auto-close-month.ts's threading exactly:
+    // skip the row entirely (no supersede, no recreate, no audit entry — nothing
+    // changed, so nothing to log) and carry its stored carryOver forward unchanged as
+    // the carry-in for the next month in the chain.
+    if (isBridgeSnapshot(snapshot)) {
+      runningCarryOver = snapshot.carryOver;
+      continue;
+    }
+
     const oldValues = {
       workedMinutes: snapshot.workedMinutes,
       expectedMinutes: snapshot.expectedMinutes,
