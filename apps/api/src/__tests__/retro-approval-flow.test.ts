@@ -426,6 +426,49 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
       }
     });
 
+    it("RETRO-03: reviewNote explicit null on APPROVE → 200 (regression: matches real frontend payload)", async () => {
+      // Regression test for retro-approve-requires-comment-validation-error:
+      // the inbox review modal (submitRetroReview in
+      // apps/web/src/routes/(app)/inbox/+page.svelte) sends an explicit
+      // `reviewNote: null` — NOT an omitted key — when the comment textarea is
+      // empty. The schema must accept `null`, not just `undefined`.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 15);
+
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Nachträgliche Erfassung",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const requestId = JSON.parse(createRes.body).id;
+
+        // Approve with reviewNote EXPLICITLY null (real frontend payload shape)
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${requestId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: null },
+        });
+        expect(res.statusCode, "approve with explicit null note must succeed").toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("APPROVED");
+        expect(body.reviewNote, "explicit null note is stored as null").toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("RETRO-03: reviewNote REQUIRED on REJECT → 400 when omitted (Revisionssicherheit)", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);

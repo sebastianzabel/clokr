@@ -45,7 +45,11 @@ const reviewRetroRequestSchema = z
   .object({
     status: z.enum(["APPROVED", "REJECTED"]),
     // Optional on APPROVE, mandatory (min 1) on REJECT — enforced in superRefine.
-    reviewNote: z.string().optional(),
+    // `.nullable()` matches leave.ts:108's equivalent field: the review modal
+    // sends explicit `reviewNote: null` (not an omitted key) when the comment
+    // textarea is empty — see submitRetroReview() in
+    // apps/web/src/routes/(app)/inbox/+page.svelte.
+    reviewNote: z.string().optional().nullable(),
     // Phase 96 (RETRO-16/D-10) — manager edit-on-approve: optional corrected times,
     // written onto the coupled entry when supplied on an APPROVED coupled (entry-first)
     // request. Ignored for REJECTED and for legacy (uncoupled/grant-first) requests.
