@@ -21,6 +21,7 @@ import { getHolidays, STATE_MAP } from "./holidays";
 import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
+import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -157,15 +158,11 @@ export async function recalculateSnapshots(
       continue;
     }
 
-    // storedCarryIn: what this row's stored carryOver implies its carry-IN was, per
-    // its own stored balanceMinutes (both are the ORIGINAL fetched values — `snapshot`
-    // is never mutated by this loop before this point).
-    const storedCarryIn = snapshot.carryOver - snapshot.balanceMinutes;
     const prevStoredCarryOver = frozenPrevStoredCarryOverById.get(snapshot.id) ?? 0;
-    // Unexplained remainder: positive/negative minutes that cannot be derived from
-    // "previous month's stored carryOver + this row's own stored balance" — i.e. a
-    // hand-injected correction. 0 for every well-behaved row.
-    const injectedDelta = storedCarryIn - prevStoredCarryOver;
+    // Phase 98: the delta formula now lives in ONE place (saldo-chain-integrity.ts) so the
+    // v1.9.14 preservation path and the AUDIT-CHAIN-01 detector cannot drift apart. The
+    // arithmetic is unchanged: (carryOver - balanceMinutes) - prevStoredCarryOver.
+    const injectedDelta = computeInjectedDelta(snapshot, prevStoredCarryOver);
 
     const oldValues = {
       workedMinutes: snapshot.workedMinutes,
