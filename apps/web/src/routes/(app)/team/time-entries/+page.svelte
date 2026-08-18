@@ -7,6 +7,7 @@
   import CardHeader from "$components/ui/CardHeader.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-05
   import Modal from "$components/ui/Modal.svelte";
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
@@ -151,6 +152,15 @@
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   let bsAbsences: BsAbsence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
+  // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields from GET /overtime/:id,
+  // mirroring the employee's own /time-entries (97-01). undefined when the endpoint didn't
+  // return the split (older cached response / fail-safe branch) — the Gesamt-Saldo snippet
+  // falls back to the pre-existing single-value SaldoAnzeige rendering (via overtimeTotalHours)
+  // in that case.
+  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
+  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
+  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
@@ -166,6 +176,9 @@
     expectedMinutes: number;
     balanceMinutes: number;
     closed: boolean;
+    // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
+    // (never a fabricated false), matching computeMonthSaldo's own contract.
+    rosterIncomplete?: boolean;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -254,6 +267,11 @@
       absences = [];
       bsAbsences = [];
       overtimeTotalHours = null;
+      // Phase 97-05 — reset the split fields alongside the legacy total.
+      overtimeConfirmedMinutes = undefined;
+      overtimeOpenMonthMinutes = undefined;
+      overtimeHasClosedMonth = undefined;
+      overtimeRosterIncomplete = undefined;
       hireDate = null;
       shiftMinByDate = new Map();
       monthSaldo = null;
@@ -281,7 +299,16 @@
         api
           .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
           .catch(() => [] as Absence[]),
-        api.get<{ balanceHours: number }>(`/overtime/${empId}`).catch(() => null),
+        api
+          .get<{
+            balanceHours: number;
+            // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields.
+            confirmedMinutes?: number;
+            openMonthMinutes?: number | null;
+            hasClosedMonth?: boolean;
+            rosterIncomplete?: boolean;
+          }>(`/overtime/${empId}`)
+          .catch(() => null),
         api.get<{ hireDate?: string }>(`/employees/${empId}`).catch(() => null),
         api
           .get<{
@@ -304,6 +331,12 @@
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      // Phase 97-05 — split fields, undefined when the endpoint didn't return them (older
+      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
+      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
+      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
+      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
+      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
@@ -710,6 +743,19 @@
     return undefined;
   }
 
+  // Phase 97-05 — sign-aware formatter matching SaldoAnzeige's own fmt() convention (bare
+  // "0:00" for exact zero, U+2212 minus for negative, no "±" prefix). Used only for the two
+  // MonthBar stat-fallback strings this plan migrated onto SaldoAnzeige (the SHIFT_BASED
+  // "Monat-Saldo" branch, "Gesamt-Saldo"), so the fallback string never competes with the
+  // primitive's own zero convention — even though that fallback is never actually shown in
+  // practice (the statRenders snippet always wins when registered, exactly when this string
+  // would otherwise render). fmtBalance's "±0:00" stays in use for tiles this plan did NOT
+  // migrate (the non-SHIFT_BASED "Monat-Saldo" branch).
+  function fmtSigned(min: number): string {
+    if (min === 0) return fmtMin(0);
+    return (min > 0 ? "+" : "−") + fmtMin(min);
+  }
+
   function absenceLabel(type: string): string {
     const labels: Record<string, string> = {
       VACATION: "Urlaub",
@@ -1032,7 +1078,11 @@
       stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
       stats.push({
         label: "Monat-Saldo",
-        value: fmtBalance(monthSaldo.balanceMinutes),
+        // Phase 97-05 — this tile now renders through SaldoAnzeige (statRenders below; the
+        // monatSaldoStat snippet is registered under the identical isShiftBased && monthSaldo
+        // condition, so this string is a structural fallback only, never actually displayed).
+        // fmtSigned retires fmtBalance's "±0:00" zero convention here per the plan's instruction.
+        value: fmtSigned(monthSaldo.balanceMinutes),
         unit: "h",
         tone: balTone(monthSaldo.balanceMinutes),
       });
@@ -1068,7 +1118,10 @@
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
         label: "Gesamt-Saldo",
-        value: fmtBalance(totalMin),
+        // Phase 97-05 — retire fmtBalance's "±0:00" zero convention here too: this tile now
+        // renders through SaldoAnzeige via statRenders below (registered unconditionally).
+        // Never actually shown, but kept accurate as MonthBar's structural fallback.
+        value: fmtSigned(totalMin),
         unit: "h",
         tone: balTone(totalMin),
       });
@@ -1215,6 +1268,50 @@
 </div>
 
 <!-- ── Combined Month-Bar (MonthBar primitive) ───────────────────────── -->
+<!-- Phase 97-05 (SALDO-DISP-04) — Gesamt-Saldo/Monat-Saldo tile render overrides, mirroring the
+     employee's own /time-entries header (97-01/97-05) exactly so a manager sees the same
+     presentation of the same numbers for the same employee. Snippets declared at template level
+     (not reachable from <script>) and fed to MonthBar's statRenders seam at the <MonthBar> call
+     site below. -->
+{#snippet gesamtSaldoStat()}
+  {#if overtimeConfirmedMinutes !== undefined}
+    <SaldoAnzeige
+      variant="compact"
+      label="Gesamt-Saldo"
+      confirmedMinutes={overtimeConfirmedMinutes}
+      openMonthMinutes={overtimeOpenMonthMinutes ?? null}
+      hasClosedMonth={overtimeHasClosedMonth ?? false}
+      rosterIncomplete={overtimeRosterIncomplete}
+    />
+  {:else}
+    <SaldoAnzeige
+      variant="compact"
+      label="Gesamt-Saldo"
+      saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
+    />
+  {/if}
+{/snippet}
+<!-- Monat-Saldo tile: a compact single-value SaldoAnzeige labelled "Monat-Saldo
+     (Bestätigt)"/"Monat-Saldo (Prognose)" depending on monthSaldo.closed, registered in
+     statRenders ONLY when monthSaldo is loaded (SHIFT_BASED). For every other schedule type the
+     key stays absent from statRenders below, so MonthBar falls back to the plain
+     label/value/tone tile already computed in monthBarStats — this tile is a RELABEL, never a
+     lifetime split (97-CONTEXT post-research decision 1: Monat-Saldo has no lifetime
+     counterpart to split against). -->
+{#snippet monatSaldoStat()}
+  {#if monthSaldo}
+    {@const monatSaldoLabel = monthSaldo.closed
+      ? "Monat-Saldo (Bestätigt)"
+      : "Monat-Saldo (Prognose)"}
+    <SaldoAnzeige
+      variant="compact"
+      label={monatSaldoLabel}
+      saldoMinutes={monthSaldo.balanceMinutes}
+      isLocked={monthSaldo.closed}
+      rosterIncomplete={monthSaldo.rosterIncomplete}
+    />
+  {/if}
+{/snippet}
 {#snippet monthBar()}
   <Card animate class="te-monthbar-card">
     <MonthBar
@@ -1225,6 +1322,10 @@
       onNext={() => gotoMonth(1)}
       onToday={gotoToday}
       onSelectMonth={gotoMonthYear}
+      statRenders={{
+        "Gesamt-Saldo": gesamtSaldoStat,
+        ...(monthSaldo ? { "Monat-Saldo": monatSaldoStat } : {}),
+      }}
     >
       {#snippet extraActions()}
         {#if monthIsLocked}
