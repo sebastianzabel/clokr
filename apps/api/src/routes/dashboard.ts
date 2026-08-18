@@ -1,6 +1,11 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule, computeOvertimeBalanceHours } from "./time-entries";
+import {
+  getEffectiveSchedule,
+  computeOvertimeBalanceHours,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "./time-entries";
 import {
   getTenantTimezone,
   todayInTz,
@@ -16,6 +21,7 @@ import {
 import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-04
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -203,22 +209,55 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // LIVE lifetime saldo through windowEnd (today only if today has completed entries, else
       // yesterday), from the SAME source of truth updateOvertimeAccount persists — so the KPI
       // reflects "as of yesterday" while the current day is incomplete, instead of the stale
-      // event-driven OvertimeAccount.balanceHours. computeOvertimeBalanceHours returns null for
-      // §18-exempt employees → display 0 (matches the prior `?? 0` fallback). Fail-safe: on any
-      // error, fall back to the stored value so the dashboard never 500s on the saldo tile.
+      // event-driven OvertimeAccount.balanceHours. computeOvertimeBalanceBreakdown returns null
+      // for §18-exempt employees. Fail-safe: on any error, fall back to the stored value so the
+      // dashboard never 500s on the saldo tile.
+      //
+      // Phase 97-04 (SALDO-DISP-01/02/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete, mirroring the fail-safe shape
+      // 97-01 established on GET /overtime/:employeeId. Both non-happy branches (exempt →
+      // breakdown null, or the catch) fall back identically: read confirmedMinutes/hasClosedMonth
+      // from the independent getConfirmedCarryOver query and report openMonthMinutes: null so the
+      // forecast renders as unavailable — a fabricated 0 there would be indistinguishable from a
+      // genuine zero forecast. That fallback query is itself never-500 (own try/catch): a failure
+      // of getConfirmedCarryOver still yields the stored balanceHours.
       let overtimeBalance: number;
+      let confirmedMinutes: number;
+      let openMonthMinutes: number | null;
+      let hasClosedMonth: boolean;
+      let rosterIncomplete: boolean | undefined;
+
+      let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
-        const live = await computeOvertimeBalanceHours(app, employeeId);
-        if (live !== null) {
-          overtimeBalance = live;
-        } else {
-          const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
-          overtimeBalance = Number(acct?.balanceHours ?? 0);
-        }
+        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
       } catch (err) {
         app.log.warn({ err, employeeId }, "dashboard: live overtime saldo failed, using stored");
+        // breakdown stays null (its declared initial value) — never reassigned here.
+      }
+
+      if (breakdown !== null) {
+        overtimeBalance = breakdown.totalHours;
+        confirmedMinutes = breakdown.confirmedMinutes;
+        openMonthMinutes = breakdown.openMonthMinutes;
+        hasClosedMonth = breakdown.hasClosedMonth;
+        rosterIncomplete = breakdown.rosterIncomplete;
+      } else {
         const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
         overtimeBalance = Number(acct?.balanceHours ?? 0);
+        try {
+          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          confirmedMinutes = confirmed.minutes;
+          hasClosedMonth = confirmed.hasClosedMonth;
+        } catch (fallbackErr) {
+          app.log.warn(
+            { err: fallbackErr, employeeId },
+            "dashboard: confirmed carry-over fallback failed",
+          );
+          confirmedMinutes = 0;
+          hasClosedMonth = false;
+        }
+        openMonthMinutes = null;
+        rosterIncomplete = undefined;
       }
 
       // ── Resturlaub ────────────────────────────────────────────────────
@@ -253,7 +292,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
               targetHours: round(monthSollMinutes / 60),
             }
           : undefined,
-        overtime: { balanceHours: round(overtimeBalance) },
+        overtime: {
+          balanceHours: round(overtimeBalance),
+          // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields. rosterIncomplete only
+          // present when defined (SHIFT_BASED open partial month) — never a fabricated `false`.
+          confirmedMinutes,
+          openMonthMinutes,
+          hasClosedMonth,
+          ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
+        },
         vacation: {
           remaining: totalVacation - usedVacation,
           total: totalVacation,
