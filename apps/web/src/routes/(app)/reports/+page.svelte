@@ -8,6 +8,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import {
     Chart,
     LineController,
@@ -60,6 +61,13 @@
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
     snapshots: Array<{ periodStart: string; balanceMinutes: number; carryOver: number }>;
+    // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
+    // an older cached response may omit them, in which case the row falls back to a
+    // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
+    confirmedMinutes?: number;
+    openMonthMinutes?: number | null;
+    hasClosedMonth?: boolean;
+    rosterIncomplete?: boolean;
   };
 
   type OvertimeOverview = { employees: OvertimeEmployee[] };
@@ -174,6 +182,15 @@
   let sortColumn: "name" | "balance" = $state("name");
   let sortDir: "asc" | "desc" = $state("asc");
 
+  // Phase 97-07 — sort by the CONFIRMED figure (the entitlement), not the forecast-inclusive
+  // balanceHours: a team's Saldo ordering should reflect what's actually owed, not a number
+  // that moves during the open month. Falls back to balanceHours (converted to minutes, so
+  // the two branches never mix units within one comparison) for a row lacking the split —
+  // an older cached response, per the same fallback shape as the Saldo cell itself.
+  function overtimeSortBalance(r: OvertimeEmployee): number {
+    return r.confirmedMinutes !== undefined ? r.confirmedMinutes : r.balanceHours * 60;
+  }
+
   let sortedOvertime = $derived.by(() => {
     const rows = overtimeOverview?.employees ?? [];
     const copy = rows.slice();
@@ -181,7 +198,7 @@
       const cmp =
         sortColumn === "name"
           ? a.name.localeCompare(b.name, "de")
-          : a.balanceHours - b.balanceHours;
+          : overtimeSortBalance(a) - overtimeSortBalance(b);
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
@@ -1334,7 +1351,25 @@
                 <tr>
                   <td>{row.name}</td>
                   <td>{row.employeeNumber}</td>
-                  <td class="numeric">{formatBalance(row.balanceHours)}</td>
+                  <td class="numeric">
+                    {#if row.confirmedMinutes !== undefined}
+                      <SaldoAnzeige
+                        variant="compact"
+                        confirmedMinutes={row.confirmedMinutes}
+                        openMonthMinutes={row.openMonthMinutes ?? null}
+                        hasClosedMonth={row.hasClosedMonth ?? false}
+                        rosterIncomplete={row.rosterIncomplete}
+                      />
+                    {:else}
+                      <!-- Fallback: an older cached overview response without the split
+                           fields — degrade to the primitive's single-value rendering
+                           rather than an empty cell (matches the dashboard/97-04 shape). -->
+                      <SaldoAnzeige
+                        variant="compact"
+                        saldoMinutes={Math.round(row.balanceHours * 60)}
+                      />
+                    {/if}
+                  </td>
                   <td
                     ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
                     ></td
