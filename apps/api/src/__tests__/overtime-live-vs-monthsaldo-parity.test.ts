@@ -275,4 +275,420 @@ describe("Bug 5 — live overtime helper == month-saldo lastCumulative (SHIFT_BA
       vi.useRealTimers();
     }
   });
+
+  // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — the confirmed/forecast split additively exposed
+  // on the SAME endpoint, against the SAME fixture (SHIFT_BASED, fully-rostered July: shifts exist
+  // on every remaining weekday through 07-31, not just through "today").
+  it("GET /overtime/:id exposes confirmedMinutes/openMonthMinutes/hasClosedMonth/rosterIncomplete (Phase 97-01)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${employeeId}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        balanceHours: number;
+        confirmedMinutes: number;
+        openMonthMinutes: number;
+        hasClosedMonth: boolean;
+        rosterIncomplete?: boolean;
+      };
+
+      // Reconciliation identity (SALDO-DISP-01/03): the two displayed figures always sum to
+      // exactly the number shown today. Compare against the SAME 2-decimal rounding the route
+      // applies to balanceHours (never a bare Number(balanceHours) — see 97-01-PLAN Task 1 verify).
+      expect(body.confirmedMinutes + body.openMonthMinutes).toBe(
+        Math.round(body.balanceHours * 60),
+      );
+      // Bestätigt == the June snapshot's carryOver (+3:14 = 194 min) — the closed-month chain.
+      expect(body.confirmedMinutes).toBe(194);
+      expect(body.hasClosedMonth).toBe(true);
+      // The open month is provably included, not silently dropped (mirrors the Bug 5 guard above).
+      expect(body.openMonthMinutes).not.toBe(0);
+      // July is fully rostered (shifts exist for the WHOLE month, incl. after "today") →
+      // rosterToDateMinutes < rosterPeriodMinutes → NOT flagged incomplete.
+      expect(body.rosterIncomplete).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Phase 97-01 <required_test_assertions> #1 — the pre-existing TRACK_ONLY case in
+// overtime-calc.test.ts:586-628 only asserts balanceHours===0, which passes whether or not the
+// new TRACK_ONLY guard exists (its fixture carries no prior snapshot). This fixture makes the
+// guard provable: a TRACK_ONLY employee with a LEGACY non-zero snapshot carry-over. Without the
+// guard, a naive `0 − confirmedMinutes` would surface as a negative openMonthMinutes leak.
+describe("SALDO-DISP-01 (required_test_assertions #1) — TRACK_ONLY confirmedMinutes/openMonthMinutes stay 0/0 even with a legacy non-zero snapshot carry-over", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let employeeId: string;
+  let adminToken: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const suffix = "trko-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `TrackOnly ${suffix}`, slug: `trko-${suffix}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+
+    const passwordHash = await bcrypt.hash("test1234", 10);
+    const adminUser = await prisma.user.create({
+      data: { email: `trkoadmin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `TRKOA-${suffix}`,
+        firstName: "TrackOnly",
+        lastName: "Admin",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+
+    const user = await prisma.user.create({
+      data: { email: `trko-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `TRKO-${suffix}`,
+        firstName: "TrackOnly",
+        lastName: "Minijob",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    employeeId = emp.id;
+
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "MONTHLY_HOURS",
+        monthlyHours: 10,
+        weeklyHours: 40,
+        overtimeMode: "TRACK_ONLY",
+        validFrom: new Date("2024-01-01"),
+      },
+    });
+
+    // Legacy non-zero MONTHLY snapshot carry-over (e.g. from before this employee was switched to
+    // TRACK_ONLY). This is exactly the fixture the required_test_assertion warns about.
+    const { start: juneStart, end: juneEnd } = monthRangeUtc(PRIOR_YEAR, PRIOR_MONTH, TZ);
+    const { lastDay: juneLast } = monthDayBounds(juneStart, juneEnd, TZ);
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        periodStart: juneStart,
+        periodEnd: juneLast,
+        workedMinutes: 300,
+        expectedMinutes: 0,
+        balanceMinutes: 300,
+        carryOver: 300, // legacy +5:00 carry
+        closedAt: new Date("2026-07-01T06:00:00Z"),
+        superseded: false,
+      },
+    });
+
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    const adminLogin = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `trkoadmin-${suffix}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(adminLogin.body).accessToken;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("TrackOnly test cleanup failed:", err);
+    }
+  });
+
+  it("GET /overtime/:id reports confirmedMinutes=0 AND openMonthMinutes=0 (not a negative leak from the legacy carry-over)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/api/v1/overtime/${employeeId}`,
+        headers: { authorization: `Bearer ${adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body) as {
+        balanceHours: number;
+        confirmedMinutes: number;
+        openMonthMinutes: number;
+        hasClosedMonth: boolean;
+      };
+      expect(Number(body.balanceHours)).toBe(0);
+      expect(body.confirmedMinutes).toBe(0);
+      expect(body.openMonthMinutes).toBe(0);
+      // hasClosedMonth still reports the truth even though TRACK_ONLY clamps the figures to 0.
+      expect(body.hasClosedMonth).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// Phase 97-01 <required_test_assertions> #2 — rosterIncomplete asserted at THIS call site
+// (computeOvertimeBalanceBreakdown's current-partial-month branch), mirroring 97-05's cluster for
+// computeMonthSaldo but proving the copy added HERE, which otherwise has no coverage in the phase.
+describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GET /overtime/:employeeId", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let partlyRosteredEmpId: string;
+  let nonShiftEmpId: string;
+  let zeroRosterEmpId: string;
+  let adminToken: string;
+
+  // "Today" mid-month with NO entry today → windowEnd = yesterday (2026-07-14), leaving a real
+  // remainder of the month (through 2026-07-31) that a roster COULD still cover but doesn't.
+  const RI_NOW = new Date("2026-07-15T10:00:00.000Z");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const suffix = "ri-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        name: `RosterIncomplete ${suffix}`,
+        slug: `ri-${suffix}`,
+        federalState: "NIEDERSACHSEN",
+      },
+    });
+    tenantId = tenant.id;
+    const passwordHash = await bcrypt.hash("test1234", 10);
+
+    const adminUser = await prisma.user.create({
+      data: { email: `riadmin-${suffix}@test.de`, passwordHash, role: "ADMIN", isActive: true },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: adminUser.id,
+        employeeNumber: `RIA-${suffix}`,
+        firstName: "RI",
+        lastName: "Admin",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+
+    // (a) Partly-rostered SHIFT_BASED — shifts exist ONLY for July 1–10 (all already in the past
+    // relative to RI_NOW's windowEnd=July14); nothing planned for the remainder of the month.
+    {
+      const user = await prisma.user.create({
+        data: {
+          email: `ripartial-${suffix}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `RIP-${suffix}`,
+          firstName: "Partial",
+          lastName: "Roster",
+          hireDate: new Date("2026-07-01"),
+          breakOver6hOverride: 0,
+          breakOver9hOverride: 0,
+        },
+      });
+      partlyRosteredEmpId = emp.id;
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          type: "SHIFT_BASED",
+          weeklyHours: 38,
+          mondayHours: 7.6,
+          tuesdayHours: 7.6,
+          wednesdayHours: 7.6,
+          thursdayHours: 7.6,
+          fridayHours: 7.6,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2026-07-01"),
+        },
+      });
+      for (const d of [
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-06",
+        "2026-07-07",
+        "2026-07-08",
+        "2026-07-09",
+        "2026-07-10",
+      ]) {
+        await prisma.shift.create({
+          data: {
+            employeeId: emp.id,
+            date: new Date(d + "T00:00:00Z"),
+            startTime: "08:00",
+            endTime: "16:00",
+          },
+        });
+      }
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    }
+
+    // (c) Non-SHIFT_BASED — rosterIncomplete is meaningless (no roster proration at all); the
+    // field must be ABSENT from the response, never a fabricated `false`.
+    {
+      const user = await prisma.user.create({
+        data: {
+          email: `rinonshift-${suffix}@test.de`,
+          passwordHash,
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `RIN-${suffix}`,
+          firstName: "NonShift",
+          lastName: "Fixed",
+          hireDate: new Date("2026-07-01"),
+        },
+      });
+      nonShiftEmpId = emp.id;
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2026-07-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    }
+
+    // (d) Zero-roster SHIFT_BASED — no Shift rows AT ALL in the current month. Must NOT be flagged
+    // incomplete (the 0 === 0 collision with the pre-existing "nothing rostered" zero-state, which
+    // already has its own guard and contributes 0 — SALDO-DISP-07).
+    {
+      const user = await prisma.user.create({
+        data: { email: `rizero-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `RIZ-${suffix}`,
+          firstName: "Zero",
+          lastName: "Roster",
+          hireDate: new Date("2026-07-01"),
+          breakOver6hOverride: 0,
+          breakOver9hOverride: 0,
+        },
+      });
+      zeroRosterEmpId = emp.id;
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          type: "SHIFT_BASED",
+          weeklyHours: 38,
+          mondayHours: 7.6,
+          tuesdayHours: 7.6,
+          wednesdayHours: 7.6,
+          thursdayHours: 7.6,
+          fridayHours: 7.6,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: new Date("2026-07-01"),
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+    }
+
+    const adminLogin = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `riadmin-${suffix}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(adminLogin.body).accessToken;
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("RosterIncomplete test cleanup failed:", err);
+    }
+  });
+
+  async function readBody(employeeId: string): Promise<{
+    balanceHours: number;
+    confirmedMinutes: number;
+    openMonthMinutes: number | null;
+    hasClosedMonth: boolean;
+    rosterIncomplete?: boolean;
+  }> {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/overtime/${employeeId}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body);
+  }
+
+  it("(a) partly-rostered SHIFT_BASED open month → rosterIncomplete === true", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(RI_NOW);
+    try {
+      const body = await readBody(partlyRosteredEmpId);
+      expect(body.rosterIncomplete).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("(c) non-SHIFT_BASED employee → rosterIncomplete is ABSENT (never a fabricated false)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(RI_NOW);
+    try {
+      const body = await readBody(nonShiftEmpId);
+      expect(body.rosterIncomplete).toBeUndefined();
+      expect(Object.prototype.hasOwnProperty.call(body, "rosterIncomplete")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("(d) zero-roster SHIFT_BASED month → NOT flagged incomplete (0===0 non-collision)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(RI_NOW);
+    try {
+      const body = await readBody(zeroRosterEmpId);
+      expect(body.rosterIncomplete).not.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

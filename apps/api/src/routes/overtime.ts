@@ -4,8 +4,10 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import {
   getEffectiveSchedule,
   updateOvertimeAccount,
-  computeOvertimeBalanceHours,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
 } from "./time-entries";
+import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-01
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
@@ -85,18 +87,56 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // v1.8.24 — return the LIVE lifetime overtime balance (through windowEnd: today only if today
       // has completed entries, else yesterday) instead of the stale event-driven
-      // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceHours, the same
-      // value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This makes
-      // the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the viewed
-      // booking month) and correct. TRACK_ONLY → 0 (handled inside). Fail-safe: null (§18-exempt) or
-      // any error → stored value, so this read never 500s.
+      // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceBreakdown, the
+      // same value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This
+      // makes the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the
+      // viewed booking month) and correct. TRACK_ONLY → 0 (handled inside). Fail-safe: null
+      // (§18-exempt) or any error → stored value, so this read never 500s.
+      //
+      // Phase 97-01 (SALDO-DISP-01/03/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete. Both non-happy branches (exempt →
+      // breakdown null, or the catch) fall back identically, per 97-CONTEXT's post-research decision
+      // 4: read confirmedMinutes/hasClosedMonth from the independent getConfirmedCarryOver query and
+      // report openMonthMinutes: null so the forecast renders as unavailable — a fabricated 0 there
+      // would be indistinguishable from a genuine zero forecast. That fallback query is itself
+      // never-500 (own try/catch): a failure of getConfirmedCarryOver still yields the stored
+      // balanceHours, just with confirmedMinutes/hasClosedMonth degraded to 0/false.
       let balance: number;
+      let confirmedMinutes: number;
+      let openMonthMinutes: number | null;
+      let hasClosedMonth: boolean;
+      let rosterIncomplete: boolean | undefined;
+
+      let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
-        const live = await computeOvertimeBalanceHours(app, employeeId);
-        balance = live !== null ? live : Number(account.balanceHours);
+        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
       } catch (err) {
         app.log.warn({ err, employeeId }, "GET /overtime: live saldo failed, using stored");
+        // breakdown stays null (its declared initial value) — never reassigned here.
+      }
+
+      if (breakdown !== null) {
+        balance = breakdown.totalHours;
+        confirmedMinutes = breakdown.confirmedMinutes;
+        openMonthMinutes = breakdown.openMonthMinutes;
+        hasClosedMonth = breakdown.hasClosedMonth;
+        rosterIncomplete = breakdown.rosterIncomplete;
+      } else {
         balance = Number(account.balanceHours);
+        try {
+          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          confirmedMinutes = confirmed.minutes;
+          hasClosedMonth = confirmed.hasClosedMonth;
+        } catch (fallbackErr) {
+          app.log.warn(
+            { err: fallbackErr, employeeId },
+            "GET /overtime: confirmed carry-over fallback failed",
+          );
+          confirmedMinutes = 0;
+          hasClosedMonth = false;
+        }
+        openMonthMinutes = null;
+        rosterIncomplete = undefined;
       }
       const balanceMinutes = Math.round(balance * 60);
 
@@ -115,6 +155,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
         threshold,
         maxNegativeBalanceMinutes: maxNegMinutes,
         isNegativeLimitExceeded: maxNegMinutes != null && balanceMinutes < -maxNegMinutes,
+        // Phase 97-01 (SALDO-DISP-01/03) — additive split fields. rosterIncomplete only present
+        // when defined (SHIFT_BASED open partial month) — never a fabricated `false` key.
+        confirmedMinutes,
+        openMonthMinutes,
+        hasClosedMonth,
+        ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
       };
     },
   });

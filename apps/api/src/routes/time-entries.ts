@@ -2239,19 +2239,38 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 // Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum
 // seit dem Snapshot neu. Ohne Snapshot: Fallback auf den aktuellen Monat.
 //
-// PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo in hours through the
+// PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo breakdown through the
 // windowEnd cutoff (today only if today has completed entries, else yesterday — the same
 // hasTodayEntries convention the §615 calendar header/cells use). Handles all schedule types:
-//   - MONTHLY_HOURS TRACK_ONLY → 0 (tracked, not accumulated).
+//   - MONTHLY_HOURS TRACK_ONLY → totalHours 0, confirmedMinutes/openMonthMinutes both 0.
 //   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
-// Lifetime-correct: the balance = last-snapshot carryOver (or full history from hireDate when no
+// Lifetime-correct: totalHours = last-snapshot carryOver (or full history from hireDate when no
 // snapshot) + Σ balances of ALL open months (complete + current partial) up to windowEnd. This is
 // the SAME value updateOvertimeAccount persists — it is the single source of truth; the writer
 // wraps this and upserts. Returns null for §18-exempt employees (caller: skip / no value).
-export async function computeOvertimeBalanceHours(
+//
+// Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — decomposes that SAME total into the
+// "Bestätigt" (confirmedMinutes, from the closed-month SaldoSnapshot chain — see
+// confirmed-saldo.ts) vs. "Laufender Monat (Prognose)" (openMonthMinutes) split, DERIVED
+// as total − confirmed (never computed independently, per 97-CONTEXT — one computation
+// path). `computeOvertimeBalanceHours` below is now a thin, signature-preserving wrapper
+// around this breakdown — it MUST stay byte-behaviour-identical for its three external
+// consumers (packages/mcp/src/index.ts, the `read:overtime` API-key scope, and
+// updateOvertimeAccount just below).
+export type OvertimeBalanceBreakdown = {
+  totalHours: number;
+  confirmedMinutes: number;
+  openMonthMinutes: number;
+  hasClosedMonth: boolean;
+  /** SHIFT_BASED only, and only when the current month has an open partial period —
+   *  undefined for every other schedule type/state (never a fabricated `false`). */
+  rosterIncomplete?: boolean;
+};
+
+export async function computeOvertimeBalanceBreakdown(
   app: FastifyInstance,
   employeeId: string,
-): Promise<number | null> {
+): Promise<OvertimeBalanceBreakdown | null> {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
@@ -2273,7 +2292,7 @@ export async function computeOvertimeBalanceHours(
   if (employee?.isTimeTrackingExempt) {
     app.log.info(
       { employeeId, exempt: true },
-      "computeOvertimeBalanceHours skipped (isTimeTrackingExempt)",
+      "computeOvertimeBalanceBreakdown skipped (isTimeTrackingExempt)",
     );
     return null;
   }
@@ -2675,6 +2694,12 @@ export async function computeOvertimeBalanceHours(
   // pre-fetched absences (with unterrichtsMinutes) + employeeSlots/patternSlots — no more
   // per-day getVocationalSchoolMinutesForDate DB calls.
 
+  // Phase 97-01 (SALDO-DISP-07) — set only inside the SHIFT_BASED branch below, right after
+  // rosterProration is assigned. Stays undefined for every non-SHIFT_BASED schedule AND
+  // whenever there is no open partial month at all (this whole block is skipped) — never a
+  // fabricated `false` for a schedule type that has no roster proration.
+  let rosterIncomplete: boolean | undefined;
+
   // effectiveEnd < currentMonthOpenStart → no open partial month (nothing to add).
   if (effectiveEnd >= currentMonthOpenStart) {
     const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
@@ -2749,6 +2774,17 @@ export async function computeOvertimeBalanceHours(
         rosterToDateMinutes: sumShiftNetto(curShiftsToDate, coveredToDate),
         rosterPeriodMinutes: sumShiftNetto(curMonthAllShifts, monthCovered),
       };
+
+      // Phase 97-01 (SALDO-DISP-07, 97-RESEARCH Q4 corrected signal) — the remainder of the
+      // roster is unplanned when every EXISTING shift already lies in the past (rosterToDate
+      // consumed the entire rosterPeriod) while today is still before the month's last day.
+      // The `rosterPeriodMinutes > 0` guard is load-bearing: without it the pre-existing
+      // "nothing rostered at all" zero-state (guarded separately in shift-based-saldo.ts,
+      // contribution 0) would collide with this state because 0 === 0.
+      rosterIncomplete =
+        rosterProration.rosterPeriodMinutes > 0 &&
+        rosterProration.rosterToDateMinutes === rosterProration.rosterPeriodMinutes &&
+        todayStr < dateStrInTz(curMonthLastDay, tz);
     }
 
     // Window-filtered holiday set (partial open window only — SNAP-01 guard).
@@ -2834,7 +2870,39 @@ export async function computeOvertimeBalanceHours(
     String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
   const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
 
-  return effectiveBalanceHours;
+  // Phase 97-01 (SALDO-DISP-01/03) — confirmed/forecast decomposition of the SAME total.
+  // openMonthMinutes is ALWAYS total − confirmed (a subtraction, never a second call into the
+  // saldo core) — 97-CONTEXT's "one computation path" rule (Phase 98 exists precisely because a
+  // value once had two owners that diverged silently; do not repeat that shape here).
+  const hasClosedMonth = lastSnapshot !== null;
+  // TRACK_ONLY already forces the reported total to 0 above; force BOTH split figures to 0 too
+  // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
+  // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
+  const confirmedMinutes = isTrackOnly ? 0 : snapshotCarryOver;
+  const openMonthMinutes = isTrackOnly
+    ? 0
+    : Math.round(effectiveBalanceHours * 60) - confirmedMinutes;
+
+  return {
+    totalHours: effectiveBalanceHours,
+    confirmedMinutes,
+    openMonthMinutes,
+    hasClosedMonth,
+    rosterIncomplete,
+  };
+}
+
+// Thin, signature-preserving wrapper around computeOvertimeBalanceBreakdown (Phase 97-01) — MUST
+// stay byte-behaviour-identical to the pre-Phase-97 computeOvertimeBalanceHours for its three
+// external consumers (packages/mcp/src/index.ts, the `read:overtime` API-key scope, and
+// updateOvertimeAccount just below). Never add logic here; extend the breakdown instead.
+export async function computeOvertimeBalanceHours(
+  app: FastifyInstance,
+  employeeId: string,
+): Promise<number | null> {
+  const breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
+  if (breakdown === null) return null;
+  return breakdown.totalHours;
 }
 
 // ── Überstundensaldo berechnen UND persistieren (event-driven writer) ─────────
