@@ -331,6 +331,24 @@
     <div class="saldo__value" data-testid="saldo-value">Kein Stundenplan</div>
   {:else}
     <div class="saldo__value" data-testid="saldo-value">{fmt(saldoMinutes)}</div>
+    {#if rosterIncomplete}
+      <!-- WR-02 fix (code review) — the badge is a property of the FIGURE's
+           reliability, not of whether a split is being shown: callers that stay in
+           legacy single-value mode on purpose (e.g. the Monat-Saldo tile — 97-CONTEXT
+           post-research decision 1: relabel, not a split) still need state C. Mirrors
+           the split-mode compact dot / expanded badge exactly (same testid, classes,
+           copy, Icon) so both render paths stay visually identical. -->
+      {#if variant === "compact"}
+        <span class="saldo__roster-dot" data-testid="saldo-roster-badge">
+          <Icon name="circle-fill" size={6} title="Restmonat noch nicht vollständig verplant" />
+        </span>
+      {:else}
+        <span class="saldo__roster-badge" data-testid="saldo-roster-badge">
+          <span class="saldo__roster-badge-dot" aria-hidden="true"></span>
+          Restmonat unverplant
+        </span>
+      {/if}
+    {/if}
   {/if}
 
   {#if isLocked && !loading && !error}

@@ -441,6 +441,50 @@ describe("SaldoAnzeige — state C 'Restmonat unverplant' (Phase 97-03)", () => 
   });
 });
 
+// Code-review WR-02 fix — rosterIncomplete was only ever read inside the isSplit
+// branch, so callers that stay in legacy single-value mode on purpose (e.g. the
+// Monat-Saldo tile, which is a relabel per 97-CONTEXT, not a split) could never show
+// the "Restmonat unverplant" badge at all. These tests pin that the badge/dot now
+// render in legacy (non-split) mode too, in both variants.
+describe("SaldoAnzeige — WR-02 fix: rosterIncomplete renders in legacy single-value mode", () => {
+  it("expanded legacy mode: rosterIncomplete=true renders the badge even without confirmedMinutes", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120, rosterIncomplete: true });
+    const root = screen.getByTestId("saldo-anzeige");
+    expect(root).not.toHaveClass("saldo--split");
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("+2:00");
+    expect(screen.getByTestId("saldo-roster-badge")).toHaveTextContent("Restmonat unverplant");
+  });
+
+  it("compact legacy mode: rosterIncomplete=true renders a titled dot (matches the real Monat-Saldo tile usage)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      label: "Monat-Saldo (Prognose)",
+      saldoMinutes: 60,
+      rosterIncomplete: true,
+    });
+    expect(screen.getByTestId("saldo-roster-badge")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Restmonat noch nicht vollständig verplant" }),
+    ).toBeInTheDocument();
+  });
+
+  it("legacy mode: badge absent when rosterIncomplete=false", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120, rosterIncomplete: false });
+    expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+
+  it("legacy mode: badge absent when rosterIncomplete is omitted (undefined) — no regression on the many pre-97 callers", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120 });
+    expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+
+  it("null-saldo legacy mode ('Kein Stundenplan'): badge never renders even if rosterIncomplete=true (no figure to qualify)", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: null, rosterIncomplete: true });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("Kein Stundenplan");
+    expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+});
+
 describe("SaldoAnzeige — collapse states E2-E4 (Phase 97-03)", () => {
   it("E2: exempt still renders the em-dash through the extended precedence chain", () => {
     renderWithTheme(SaldoAnzeige, { exempt: true });
