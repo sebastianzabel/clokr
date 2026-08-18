@@ -28,8 +28,15 @@
   // green). This is how SALDO-DISP-05 ("one presentation, not three") is
   // satisfied: extending this ONE shared primitive rather than growing a fourth
   // saldo variant elsewhere. See 97-UI-SPEC.md for the full state matrix/copy
-  // contract — the tooltip / info-icon / "Restmonat unverplant" badge are a
-  // later plan in this phase, not implemented here.
+  // contract.
+  //
+  // Phase 97-03 — completes the 97-UI-SPEC state matrix: the toggletip (info
+  // icon + keyboard-reachable panel) carrying the one explanation of why the
+  // forecast moves, and the "Restmonat unverplant" badge (state C) for a
+  // SHIFT_BASED month whose remainder isn't rostered yet. Both render on the
+  // forecast block ONLY — the confirmed figure is what this component promises
+  // is stable, so it never carries either affordance.
+  import Icon from "$components/Icon.svelte";
 
   export interface SaldoAnzeigeProps {
     saldoMinutes?: number | null;
@@ -50,6 +57,11 @@
     confirmedLabel?: string;
     forecastLabel?: string;
     combinedLabel?: string;
+    /** Phase 97-03 — SHIFT_BASED only: the remaining month has no roster yet (UI-SPEC
+     *  state C, "Restmonat unverplant"). The forecast there isn't merely uncertain, it's
+     *  known to be biased low (97-CONTEXT "Prognose-Güte"). Renders an always-visible
+     *  badge (expanded) / titled dot (compact) on the forecast block only. */
+    rosterIncomplete?: boolean;
   }
 
   let {
@@ -64,7 +76,21 @@
     confirmedLabel = "Bestätigt",
     forecastLabel = "Laufender Monat (Prognose)",
     combinedLabel = "Voraussichtlich gesamt",
+    rosterIncomplete = false,
   }: SaldoAnzeigeProps = $props();
+
+  // Unique DOM id for the toggletip panel — several SaldoAnzeige instances coexist on one
+  // page (e.g. /reports), so a fixed literal id would collide. $props.id() is Svelte's
+  // SSR/hydration-safe per-instance id generator (must be its own top-level `const`).
+  const tooltipUid = $props.id();
+  const tooltipId = `saldo-tooltip-${tooltipUid}`;
+
+  // 97-UI-SPEC.md → Tooltip: exact three-sentence German copy, do not reword. The SAME
+  // string serves the default case (states B/D) and state C (rosterIncomplete) — the third
+  // sentence already names the unfinished-roster case, so there is exactly one tooltip
+  // body, never two. Deliberately contains NO §615/Annahmeverzug legal reasoning — that
+  // stays on the Überstunden detail page (97-CONTEXT).
+  const TOOLTIP_TEXT = `„Bestätigt" ändert sich nur bei Monatsabschluss – der laufende Monat kann diesen Wert nicht senken. Ist der laufende Monat knapp verplant, sinkt die Prognose an gearbeiteten Tagen und gleicht sich zum Monatsende wieder aus. Ist er noch nicht vollständig verplant, bleibt die Prognose zunächst niedrig und springt, sobald der restliche Plan feststeht.`;
 
   const isSplit = $derived(confirmedMinutes !== undefined);
 
@@ -133,6 +159,26 @@
 </script>
 
 <div class={classes} data-testid="saldo-anzeige">
+  {#snippet infoTrigger(iconSize: number)}
+    <!-- 97-UI-SPEC → Tooltip trigger mechanics: real button + aria-describedby, panel
+         ALWAYS in the DOM, revealed purely by CSS (:hover / :focus-visible / :focus-within
+         on the trigger) — no JS state, no role="tooltip". Rendered on the forecast block
+         only (never the confirmed block). -->
+    <span class="saldo-info-wrap">
+      <button
+        type="button"
+        class="saldo-info-trigger"
+        data-testid="saldo-info-trigger"
+        aria-describedby={tooltipId}
+      >
+        <Icon name="info" size={iconSize} title="Warum ändert sich diese Zahl?" />
+      </button>
+      <div id={tooltipId} class="saldo-tooltip" data-testid="saldo-tooltip">
+        {TOOLTIP_TEXT}
+      </div>
+    </span>
+  {/snippet}
+
   {#if variant === "expanded"}
     <div class="saldo__label" data-testid="saldo-label">{label}</div>
   {/if}
@@ -143,7 +189,8 @@
   {:else if isSplit}
     {#if variant === "compact"}
       <!-- UI-SPEC compact: single line — confirmed leads, forecast follows inline in
-           parentheses. Captions/combined line collapse away, EXCEPT the "noch kein
+           parentheses, then the info trigger (still reachable, shrunk to 14px) and the
+           state-C dot. Captions/combined line collapse away, EXCEPT the "noch kein
            Monatsabschluss" caption (state A3), which is kept even here. -->
       <div class="saldo__split saldo__split--compact">
         <span
@@ -155,6 +202,15 @@
         <span class="saldo__forecast-value" data-testid="saldo-forecast-value">
           ({forecastAvailable ? fmt(openMonthMinutes ?? 0) : "—"})
         </span>
+        {@render infoTrigger(14)}
+        {#if rosterIncomplete}
+          <!-- Compact state C: 6px dot, never the sole carrier of the meaning — the
+               title gives a screen-reader user the full sentence even though a sighted
+               compact user only sees a dot (97-UI-SPEC → Compact vs. expanded). -->
+          <span class="saldo__roster-dot" data-testid="saldo-roster-badge">
+            <Icon name="circle-fill" size={6} title="Restmonat noch nicht vollständig verplant" />
+          </span>
+        {/if}
         {#if isNewHireZero}
           <span
             class="saldo__confirmed-caption saldo__confirmed-caption--faint"
@@ -185,11 +241,25 @@
         </div>
 
         <div class="saldo__forecast">
-          <div class="saldo__forecast-label" data-testid="saldo-forecast-label">
-            {forecastLabel}
+          <div class="saldo__forecast-label-row">
+            <span class="saldo__forecast-label" data-testid="saldo-forecast-label">
+              {forecastLabel}
+            </span>
+            {@render infoTrigger(16)}
           </div>
-          <div class="saldo__forecast-value" data-testid="saldo-forecast-value">
-            {forecastAvailable ? fmt(openMonthMinutes ?? 0) : "—"}
+          <div class="saldo__forecast-value-row">
+            <span class="saldo__forecast-value" data-testid="saldo-forecast-value">
+              {forecastAvailable ? fmt(openMonthMinutes ?? 0) : "—"}
+            </span>
+            {#if rosterIncomplete}
+              <!-- Expanded state C: always-visible badge — text `--text` (NOT `--warn`,
+                   which fails dark-mode contrast on this chip), `--warn` demoted to a
+                   small decorative dot only (97-UI-SPEC → Token Contrast Findings). -->
+              <span class="saldo__roster-badge" data-testid="saldo-roster-badge">
+                <span class="saldo__roster-badge-dot" aria-hidden="true"></span>
+                Restmonat unverplant
+              </span>
+            {/if}
           </div>
         </div>
 
@@ -345,5 +415,100 @@
   }
   .saldo__split--compact .saldo__confirmed-caption {
     font-size: 12px;
+  }
+
+  /* ── Phase 97-03 — toggletip trigger + panel ──────────────────────────────
+     Always-in-DOM panel per 97-UI-SPEC → Tooltip trigger mechanics: CSS-only
+     reveal via :hover / :focus-visible / :focus-within on the trigger, no JS
+     state, no role="tooltip" (aria-describedby already exposes the text
+     regardless of visual state). The global :focus-visible outline (app.css
+     COMP-06) is untouched here — only the panel's opacity/pointer-events are
+     toggled, never the trigger's own outline. */
+  .saldo-info-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+  .saldo-info-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+  }
+  .saldo-info-trigger:hover {
+    color: var(--text);
+  }
+  .saldo-tooltip {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
+    width: max-content;
+    max-width: 280px;
+    padding: var(--s-3) var(--s-4);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-md);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+  .saldo-info-trigger:hover ~ .saldo-tooltip,
+  .saldo-info-trigger:focus-visible ~ .saldo-tooltip,
+  .saldo-info-trigger:focus-within ~ .saldo-tooltip {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ── Phase 97-03 — forecast label/value rows (host the trigger + badge) ── */
+  .saldo__forecast-label-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+  }
+  .saldo__forecast-value-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    flex-wrap: wrap;
+  }
+
+  /* ── Phase 97-03 — state C "Restmonat unverplant": text `--text` (not `--warn`,
+     which fails dark-mode contrast on this chip), `--warn` demoted to a small
+     decorative dot only. Never the sole carrier of the meaning — the badge text,
+     the dot, and the tooltip's own third sentence all say it independently. ── */
+  .saldo__roster-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px var(--s-2);
+    border-radius: 999px;
+    background: var(--warn-soft);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .saldo__roster-badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--warn);
+    flex-shrink: 0;
+  }
+  .saldo__roster-dot {
+    display: inline-flex;
+    align-items: center;
+    color: var(--warn);
   }
 </style>
