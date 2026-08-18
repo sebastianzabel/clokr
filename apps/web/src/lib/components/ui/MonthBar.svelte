@@ -37,6 +37,16 @@
      * on Zeiterfassung. Default keeps existing month-bar surface.
      */
     testIdPrefix?: string;
+    /**
+     * Phase 97-01 (TRACER) seam — optional per-stat-label render override, looked up by
+     * `stat.label` (labels are already unique, matching the `{#each}` key below). When a
+     * snippet exists for the current stat's label, it renders INSIDE the existing `.mstat`
+     * wrapper instead of the default label/value pair, so the consumer owns the whole tile
+     * (e.g. rendering `SaldoAnzeige` in split mode for "Gesamt-Saldo"). Omitted entirely →
+     * every stat renders exactly as before (the other three MonthBar consumers pass no
+     * `statRenders` and stay byte-identical).
+     */
+    statRenders?: Record<string, Snippet>;
   }
 
   let {
@@ -49,6 +59,7 @@
     onSelectMonth,
     extraActions,
     testIdPrefix = "month-bar",
+    statRenders,
   }: Props = $props();
 
   const monthLabel = $derived(
@@ -191,11 +202,16 @@
   {#if stats.length}
     <div class="month-bar-stats" data-testid={`${testIdPrefix}-stats`}>
       {#each stats as s (s.label)}
+        {@const renderStat = statRenders?.[s.label]}
         <div class="mstat" data-testid={`${testIdPrefix}-stat-${s.label}`}>
-          <div class="mstat-label">{s.label}</div>
-          <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
-            {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}
-          </div>
+          {#if renderStat}
+            {@render renderStat()}
+          {:else}
+            <div class="mstat-label">{s.label}</div>
+            <div class="mstat-value" class:pos={s.tone === "pos"} class:neg={s.tone === "neg"}>
+              {s.value}{#if s.unit}<span class="mstat-unit">{s.unit}</span>{/if}
+            </div>
+          {/if}
         </div>
       {/each}
     </div>

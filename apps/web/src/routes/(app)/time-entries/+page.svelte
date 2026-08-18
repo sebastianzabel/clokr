@@ -8,6 +8,7 @@
   import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
   import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-01
   import Modal from "$components/ui/Modal.svelte";
   import {
     format,
@@ -169,6 +170,14 @@
   // Self-scope is enforced server-side from req.user.employeeId.
   let bsAbsences: BsAbsence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
+  // Phase 97-01 (TRACER, SALDO-DISP-01/03) — additive split fields from GET /overtime/:id.
+  // undefined when the endpoint didn't return the split (older cached response / fail-safe
+  // branch) — the Gesamt-Saldo snippet below falls back to the pre-existing single-value
+  // SaldoAnzeige rendering (via overtimeTotalHours) in that case.
+  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
+  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
+  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -310,7 +319,16 @@
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
         activeEmpId
-          ? api.get<{ balanceHours: number }>(`/overtime/${activeEmpId}`).catch(() => null)
+          ? api
+              .get<{
+                balanceHours: number;
+                // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — additive split fields.
+                confirmedMinutes?: number;
+                openMonthMinutes?: number | null;
+                hasClosedMonth?: boolean;
+                rosterIncomplete?: boolean;
+              }>(`/overtime/${activeEmpId}`)
+              .catch(() => null)
           : Promise.resolve(null),
         activeEmpId
           ? api
@@ -354,6 +372,15 @@
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      // Phase 97-01 — split fields, undefined when the endpoint didn't return them (older
+      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
+      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
+      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
+      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
+      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      // Not yet rendered — SaldoAnzeige's "Restmonat unverplant" badge is a later Phase-97
+      // plan. Stored now so the signal already flows end-to-end (TRACER scope).
+      void overtimeRosterIncomplete;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       // Phase 76.7 (D-16) — read isTimeTrackingExempt from the SAME fetch
       // (no extra round-trip). Fail-SAFE to false on missing field so a
@@ -1525,6 +1552,27 @@
   {/if}
 
   <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
+  <!-- Phase 97-01 (TRACER) — Gesamt-Saldo tile render override: split (Bestätigt +
+       Prognose) when the endpoint returned it, else the pre-existing single value. A
+       snippet declared in markup is not reachable from <script>, so it's declared here
+       and fed to MonthBar's statRenders seam at the call site below. -->
+  {#snippet gesamtSaldoStat()}
+    {#if overtimeConfirmedMinutes !== undefined}
+      <SaldoAnzeige
+        variant="compact"
+        label="Gesamt-Saldo"
+        confirmedMinutes={overtimeConfirmedMinutes}
+        openMonthMinutes={overtimeOpenMonthMinutes ?? null}
+        hasClosedMonth={overtimeHasClosedMonth ?? false}
+      />
+    {:else}
+      <SaldoAnzeige
+        variant="compact"
+        label="Gesamt-Saldo"
+        saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
+      />
+    {/if}
+  {/snippet}
   <Card animate class="te-monthbar-card">
     <div data-testid="time-entries-summary">
       <MonthBar
@@ -1536,6 +1584,7 @@
         onToday={gotoToday}
         onSelectMonth={gotoMonthYear}
         testIdPrefix="calendar-month-header"
+        statRenders={{ "Gesamt-Saldo": gesamtSaldoStat }}
       >
         {#snippet extraActions()}
           {#if monthIsLocked}
