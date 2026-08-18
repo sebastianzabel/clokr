@@ -191,6 +191,9 @@
     expectedMinutes: number;
     balanceMinutes: number;
     closed: boolean;
+    // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
+    // (never a fabricated false), matching computeMonthSaldo's own contract.
+    rosterIncomplete?: boolean;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -378,9 +381,10 @@
       overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
       overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
       overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
-      // Not yet rendered — SaldoAnzeige's "Restmonat unverplant" badge is a later Phase-97
-      // plan. Stored now so the signal already flows end-to-end (TRACER scope).
-      void overtimeRosterIncomplete;
+      // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
+      // unverplant" badge and stored this signal but never wired it into the snippet; fixed
+      // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
+      // signal there from scratch) for the same employee — see 97-05-SUMMARY.md Deviations.
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       // Phase 76.7 (D-16) — read isTimeTrackingExempt from the SAME fetch
       // (no extra round-trip). Fail-SAFE to false on missing field so a
@@ -792,6 +796,19 @@
     if (min > 0) return "pos";
     if (min < 0) return "neg";
     return undefined;
+  }
+
+  // Phase 97-05 — sign-aware formatter matching SaldoAnzeige's own fmt() convention (bare
+  // "0:00" for exact zero, U+2212 minus for negative, no "±" prefix). Used only for the two
+  // MonthBar stat-fallback strings this plan/97-01 migrated onto SaldoAnzeige (the SHIFT_BASED
+  // "Monat-Saldo" branch, "Gesamt-Saldo"), so the fallback string never competes with the
+  // primitive's own zero convention — even though that fallback is never actually shown in
+  // practice (the statRenders snippet always wins when registered, exactly when this string
+  // would otherwise render). fmtBalance's "±0:00" stays in use for tiles this plan did NOT
+  // migrate (e.g. "Woche Saldo", the non-SHIFT_BASED "Monat-Saldo" branch).
+  function fmtSigned(min: number): string {
+    if (min === 0) return fmtMin(0);
+    return (min > 0 ? "+" : "−") + fmtMin(min);
   }
 
   function absenceLabel(type: string): string {
@@ -1392,7 +1409,11 @@
       stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
       stats.push({
         label: "Monat-Saldo",
-        value: fmtBalance(monthSaldo.balanceMinutes),
+        // Phase 97-05 — this tile now renders through SaldoAnzeige (statRenders below; the
+        // monatSaldoStat snippet is registered under the identical isShiftBased && monthSaldo
+        // condition, so this string is a structural fallback only, never actually displayed).
+        // fmtSigned retires fmtBalance's "±0:00" zero convention here per the plan's instruction.
+        value: fmtSigned(monthSaldo.balanceMinutes),
         unit: "h",
         tone: balTone(monthSaldo.balanceMinutes),
       });
@@ -1438,7 +1459,11 @@
       const totalMin = Math.round(overtimeTotalHours * 60);
       stats.push({
         label: "Gesamt-Saldo",
-        value: fmtBalance(totalMin),
+        // Phase 97-05 — retire fmtBalance here too: 97-01 migrated the actual rendering to
+        // SaldoAnzeige via statRenders below (registered unconditionally), leaving this
+        // fallback string on the old "±0:00" convention. Never actually shown, but kept
+        // accurate as MonthBar's structural fallback.
+        value: fmtSigned(totalMin),
         unit: "h",
         tone: balTone(totalMin),
       });
@@ -1564,12 +1589,34 @@
         confirmedMinutes={overtimeConfirmedMinutes}
         openMonthMinutes={overtimeOpenMonthMinutes ?? null}
         hasClosedMonth={overtimeHasClosedMonth ?? false}
+        rosterIncomplete={overtimeRosterIncomplete}
       />
     {:else}
       <SaldoAnzeige
         variant="compact"
         label="Gesamt-Saldo"
         saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
+      />
+    {/if}
+  {/snippet}
+  <!-- Phase 97-05 — Monat-Saldo tile render override: a compact single-value SaldoAnzeige
+       labelled "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)" depending on monthSaldo.closed,
+       registered in statRenders ONLY when monthSaldo is loaded (SHIFT_BASED). For every other
+       schedule type the key stays absent from statRenders below, so MonthBar falls back to the
+       plain label/value/tone tile already computed in monthBarStats — this tile is a RELABEL,
+       never a lifetime split (97-CONTEXT post-research decision 1: Monat-Saldo has no lifetime
+       counterpart to split against). -->
+  {#snippet monatSaldoStat()}
+    {#if monthSaldo}
+      {@const monatSaldoLabel = monthSaldo.closed
+        ? "Monat-Saldo (Bestätigt)"
+        : "Monat-Saldo (Prognose)"}
+      <SaldoAnzeige
+        variant="compact"
+        label={monatSaldoLabel}
+        saldoMinutes={monthSaldo.balanceMinutes}
+        isLocked={monthSaldo.closed}
+        rosterIncomplete={monthSaldo.rosterIncomplete}
       />
     {/if}
   {/snippet}
@@ -1584,7 +1631,10 @@
         onToday={gotoToday}
         onSelectMonth={gotoMonthYear}
         testIdPrefix="calendar-month-header"
-        statRenders={{ "Gesamt-Saldo": gesamtSaldoStat }}
+        statRenders={{
+          "Gesamt-Saldo": gesamtSaldoStat,
+          ...(monthSaldo ? { "Monat-Saldo": monatSaldoStat } : {}),
+        }}
       >
         {#snippet extraActions()}
           {#if monthIsLocked}
