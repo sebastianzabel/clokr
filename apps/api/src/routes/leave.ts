@@ -400,12 +400,40 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // Für OVERTIME_COMP: Überstundensaldo prüfen (basierend auf echtem Stundenplan)
+      //
+      // Code review (owner) — this used to read OvertimeAccount.balanceHours directly, the
+      // SAME stale event-driven source 97-CONTEXT names as wrong (v1.8.24 already overrides it
+      // at read time everywhere else) and, worse, the LIVE total (confirmed + open-month
+      // forecast), while the leave form's own affordability UI (97-06) validates against the
+      // CONFIRMED (closed-month) carry-over only — never against a forecast that can still
+      // erode. Rewired onto the SAME source: getConfirmedCarryOver (confirmed-saldo.ts),
+      // already used by GET /leave/overtime-balance for exactly this reason. This is a WRITE
+      // path touching entitlement, so the fail-safe branch intentionally falls back to the
+      // PRE-EXISTING stored-balance check (never 500, never silently permits an unbounded
+      // request) rather than inventing a new default.
       if (body.type === "OVERTIME_COMP") {
-        const [account, hoursNeeded] = await Promise.all([
-          app.prisma.overtimeAccount.findUnique({ where: { employeeId } }),
-          getScheduledHours(app.prisma, employeeId, start, end, body.halfDay, holidays),
-        ]);
-        const balance = account ? Number(account.balanceHours) : 0;
+        const hoursNeeded = await getScheduledHours(
+          app.prisma,
+          employeeId,
+          start,
+          end,
+          body.halfDay,
+          holidays,
+        );
+
+        let balance: number;
+        try {
+          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          balance = confirmed.minutes / 60;
+        } catch (err) {
+          app.log.warn(
+            { err, employeeId },
+            "POST /leave/requests: getConfirmedCarryOver failed for OVERTIME_COMP check, falling back to stored OvertimeAccount.balanceHours",
+          );
+          const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
+          balance = account ? Number(account.balanceHours) : 0;
+        }
+
         if (hoursNeeded > balance) {
           return reply.code(400).send({
             error: "Nicht genug Überstunden",
