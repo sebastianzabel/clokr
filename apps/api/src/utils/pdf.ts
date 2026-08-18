@@ -12,6 +12,10 @@ interface MonthlyReportData {
   workedHours: number;
   targetHours: number;
   overtimeHours: number;
+  /** Phase 97-02 (SALDO-DISP-05): true = confirmed (closed month), false = forecast (open month),
+   *  null = intentionally unlabelled (MONTHLY_HOURS with no budget — mirrors
+   *  resolveReportOvertimeHours's `labelled` flag in reports.ts; renderer omits the label). */
+  overtimeConfirmed: boolean | null;
   sickDays: number;
   sickDaysWithAttest: number;
   vacationDays: number;
@@ -39,6 +43,8 @@ export interface CompanyMonthlyReportData {
     workedHours: number;
     targetHours: number;
     overtimeHours: number;
+    /** Same tri-state meaning as MonthlyReportData.overtimeConfirmed above. */
+    overtimeConfirmed: boolean | null;
     sickDaysWithAttest: number;
     sickDaysWithoutAttest: number;
     vacationDays: number;
@@ -307,7 +313,8 @@ export function streamCompanyMonthlyReportPdf(
     }
 
     let rx = tableMargin;
-    const saldo = row.workedHours - row.targetHours;
+    // Saldo cell sources the already §615-resolved row.overtimeHours (T-97-02-02) — NOT a locally
+    // recomputed workedHours - targetHours, which silently diverges for SHIFT_BASED.
     doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
     rx += summaryWidths[0];
     doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
@@ -316,7 +323,9 @@ export function streamCompanyMonthlyReportPdf(
     rx += summaryWidths[2];
     doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
     rx += summaryWidths[3];
-    doc.text(`${saldo >= 0 ? "+" : ""}${saldo.toFixed(2)}`, rx, rowY, { width: summaryWidths[4] });
+    doc.text(`${row.overtimeHours >= 0 ? "+" : ""}${row.overtimeHours.toFixed(2)}`, rx, rowY, {
+      width: summaryWidths[4],
+    });
     rx += summaryWidths[4];
     doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] });
     rx += summaryWidths[5];

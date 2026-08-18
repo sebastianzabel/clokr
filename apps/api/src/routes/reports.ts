@@ -347,15 +347,26 @@ function computeEmployeeSummary(
 // §615-consistent Überstunden figure for the monthly Stundennachweis PDF (the legal
 // Arbeitszeitnachweis). computeEmployeeSummary computes overtime NAIVELY as worked − target, which is
 // wrong for SHIFT_BASED (no §615, roster Soll lives in the Shift table). This resolver picks the
-// correct source WITHOUT changing the response shape — only the overtime NUMBER's derivation:
-//   - CLOSED month (non-superseded MONTHLY SaldoSnapshot for the exact period) → snapshot.balanceMinutes
-//     for ALL schedule types (immutable — Revisionssicherheit; never recompute a closed month).
+// correct source and also reports the labelling metadata the PDF needs (SALDO-DISP-05): `confirmed`
+// is true only for the CLOSED-month branch (the one figure that is final), and `labelled` is false
+// only for the MONTHLY_HOURS-no-budget branch, whose figure never moves and already has its own
+// dedicated "Keine Soll-Vorgabe" state on screen — the PDF renderer omits the Bestätigt/Prognose
+// label entirely for it rather than calling an unmoving figure a permanent "Prognose". The PDF
+// payload SHAPE is otherwise unchanged beyond the new `overtimeConfirmed` field this resolver feeds:
+//   - MONTHLY_HOURS(null/0) / no schedule → 0, confirmed:false, labelled:false (pure tracking, no
+//     saldo target — this check fires BEFORE the snapshot check below, for every month, open or
+//     closed).
+//   - CLOSED month (non-superseded MONTHLY SaldoSnapshot for the exact period) → snapshot.balanceMinutes,
+//     confirmed:true, labelled:true, for ALL remaining schedule types (immutable —
+//     Revisionssicherheit; never recompute a closed month).
 //   - OPEN month + SHIFT_BASED → computeMonthSaldo(...).balanceMinutes (§615 two-clause; same source of
-//     truth as the live calendar header / dashboard / overtime-overview).
+//     truth as the live calendar header / dashboard / overtime-overview), confirmed:false,
+//     labelled:true.
 //   - OPEN month + non-SHIFT (FIXED_*/FLEXTIME/MONTHLY_HOURS target>0) → keep the naive worked − target
-//     (unchanged: preserves the working absence-deduction + whole-month Stundennachweis model).
-//   - MONTHLY_HOURS(null/0) / no schedule → 0 (pure tracking, no saldo target).
-// Fail-safe: on any error, fall back to the provided naive value so the PDF never fails to generate.
+//     (unchanged: preserves the working absence-deduction + whole-month Stundennachweis model),
+//     confirmed:false, labelled:true.
+// Fail-safe: on any error, fall back to the provided naive value (confirmed:false, labelled:true) so
+// the PDF never fails to generate.
 async function resolveReportOvertimeHours(
   app: FastifyInstance,
   emp: EmployeeWithIncludes,
@@ -363,7 +374,7 @@ async function resolveReportOvertimeHours(
   month: number,
   monthStart: Date,
   naiveOvertimeHours: number,
-): Promise<number> {
+): Promise<{ hours: number; confirmed: boolean; labelled: boolean }> {
   try {
     // Effective schedule for the reported month (latest validFrom ≤ month end already resolved by
     // the caller's include ordering; use the last row as the effective one).
@@ -373,7 +384,9 @@ async function resolveReportOvertimeHours(
 
     // MONTHLY_HOURS pure-tracking (null/0 budget) → no saldo target.
     if (scheduleType === "MONTHLY_HOURS" && !(Number(latest?.monthlyHours ?? 0) > 0)) {
-      return 0;
+      // labelled:false — see the resolver's leading comment. The PDF renderer omits the
+      // Bestätigt/Prognose label entirely for this population instead of mislabelling it.
+      return { hours: 0, confirmed: false, labelled: false };
     }
 
     // CLOSED month → immutable snapshot balance (all types).
@@ -387,22 +400,30 @@ async function resolveReportOvertimeHours(
       select: { balanceMinutes: true },
     });
     if (snapshot) {
-      return Math.round((snapshot.balanceMinutes / 60) * 100) / 100;
+      return {
+        hours: Math.round((snapshot.balanceMinutes / 60) * 100) / 100,
+        confirmed: true,
+        labelled: true,
+      };
     }
 
     // OPEN month + SHIFT_BASED → §615 core (computeMonthSaldo). Non-SHIFT keeps the naive value.
     if (scheduleType === "SHIFT_BASED") {
       const ms = await computeMonthSaldo(app, emp.id, year, month);
-      return Math.round((ms.balanceMinutes / 60) * 100) / 100;
+      return {
+        hours: Math.round((ms.balanceMinutes / 60) * 100) / 100,
+        confirmed: false,
+        labelled: true,
+      };
     }
 
-    return naiveOvertimeHours;
+    return { hours: naiveOvertimeHours, confirmed: false, labelled: true };
   } catch (err) {
     app.log.warn(
       { err, employeeId: emp.id, year, month },
       "resolveReportOvertimeHours failed, using naive worked−target",
     );
-    return naiveOvertimeHours;
+    return { hours: naiveOvertimeHours, confirmed: false, labelled: true };
   }
 }
 
@@ -1098,14 +1119,13 @@ export async function reportRoutes(app: FastifyInstance) {
       const summary = computeEmployeeSummary(emp, start, end, tz, pdfHolidayDeductionOpts);
       // §615-correct Überstunden for the legal Stundennachweis (SHIFT_BASED / closed-month snapshot);
       // non-SHIFT open months keep summary.overtimeHours. Shape unchanged — only the number's source.
-      const reportOvertimeHours = await resolveReportOvertimeHours(
-        app,
-        emp,
-        y,
-        m,
-        start,
-        summary.overtimeHours,
-      );
+      // overtimeConfirmed is null (not a boolean) when labelled is false, so the PDF renderer can
+      // omit the Bestätigt/Prognose label entirely instead of mislabelling it (SALDO-DISP-05).
+      const {
+        hours: reportOvertimeHours,
+        confirmed: reportOvertimeConfirmed,
+        labelled: reportOvertimeLabelled,
+      } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
 
       const pdfBuffer = await generateMonthlyReportPdf({
         tenantName: tenant?.name ?? "",
@@ -1115,6 +1135,7 @@ export async function reportRoutes(app: FastifyInstance) {
         workedHours: summary.workedHours,
         targetHours: summary.targetHours,
         overtimeHours: reportOvertimeHours,
+        overtimeConfirmed: reportOvertimeLabelled ? reportOvertimeConfirmed : null,
         sickDays: summary.sickDays,
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,
@@ -1197,20 +1218,19 @@ export async function reportRoutes(app: FastifyInstance) {
           const summary = computeEmployeeSummary(emp, start, end, tz, allPdfHolidayDeductionOpts);
           // §615-correct Überstunden (SHIFT_BASED / closed-month snapshot); non-SHIFT open months
           // keep summary.overtimeHours. Override AFTER the spread so the shape stays identical.
-          const overtimeHours = await resolveReportOvertimeHours(
-            app,
-            emp,
-            y,
-            m,
-            start,
-            summary.overtimeHours,
-          );
+          // overtimeConfirmed is null when labelled is false (PDF omits the label for this row).
+          const {
+            hours: overtimeHours,
+            confirmed: overtimeConfirmedResolved,
+            labelled: overtimeLabelled,
+          } = await resolveReportOvertimeHours(app, emp, y, m, start, summary.overtimeHours);
           return {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
             role: emp.user.role,
             ...summary,
             overtimeHours,
+            overtimeConfirmed: overtimeLabelled ? overtimeConfirmedResolved : null,
           };
         }),
       );
