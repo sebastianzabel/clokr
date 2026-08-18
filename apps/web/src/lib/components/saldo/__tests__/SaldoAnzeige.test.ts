@@ -279,3 +279,277 @@ describe("SaldoAnzeige — split mode (Phase 97-01)", () => {
     );
   });
 });
+
+// Phase 97-03 — completes the 97-UI-SPEC state matrix: toggletip, state C ("Restmonat
+// unverplant"), loading/error, and the two remaining collapse states (noSchedule explicit,
+// noSollTarget). Split props used below (confirmedMinutes/openMonthMinutes/hasClosedMonth)
+// are the same fixture shape as the 97-01 suite above; only the NEW props under test vary.
+describe("SaldoAnzeige — toggletip (Phase 97-03)", () => {
+  it("renders a real button trigger whose aria-describedby matches the panel's own id", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    const trigger = screen.getByTestId("saldo-info-trigger");
+    const panel = screen.getByTestId("saldo-tooltip");
+    expect(trigger.tagName).toBe("BUTTON");
+    expect(trigger).toHaveAttribute("type", "button");
+    expect(trigger).toHaveAttribute("aria-describedby", panel.id);
+  });
+
+  it("panel is present in the DOM before any interaction (never conditionally rendered)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-tooltip")).toBeInTheDocument();
+  });
+
+  // Three assertions, one per approved sentence, each on a fragment distinctive enough
+  // that a reworded sentence fails the test (per this plan's <critical_constraints>).
+  it("sentence 1: states the confirmed figure cannot fall because of the open month", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-tooltip")).toHaveTextContent("kann diesen Wert nicht senken");
+  });
+
+  it("sentence 2: names the under-rostering (erosion) direction", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-tooltip")).toHaveTextContent(
+      "sinkt die Prognose an gearbeiteten Tagen",
+    );
+  });
+
+  it("sentence 3: names the unfinished-roster (suppress-then-jump) direction", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-tooltip")).toHaveTextContent(
+      "bleibt die Prognose zunächst niedrig und springt",
+    );
+  });
+
+  it("contains NO §615/Annahmeverzug legal reasoning (that stays on the detail page only)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    const text = screen.getByTestId("saldo-tooltip").textContent ?? "";
+    expect(text).not.toMatch(/615|Annahmeverzug/i);
+  });
+
+  it("the SAME tooltip body serves state C too — exactly one panel, never two strings", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      rosterIncomplete: true,
+    });
+    expect(screen.getAllByTestId("saldo-tooltip")).toHaveLength(1);
+    expect(screen.getByTestId("saldo-tooltip")).toHaveTextContent(
+      "bleibt die Prognose zunächst niedrig und springt",
+    );
+  });
+
+  it("trigger still renders in compact, shrunk but reachable", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-info-trigger")).toBeInTheDocument();
+  });
+
+  it("trigger/panel never render on the confirmed block, only inside the forecast block", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    // Exactly one trigger/panel pair exists — proves it isn't duplicated onto the
+    // confirmed block as well as the forecast block.
+    expect(screen.getAllByTestId("saldo-info-trigger")).toHaveLength(1);
+    expect(screen.getAllByTestId("saldo-tooltip")).toHaveLength(1);
+  });
+});
+
+describe("SaldoAnzeige — state C 'Restmonat unverplant' (Phase 97-03)", () => {
+  it("expanded: rosterIncomplete=true renders the always-visible badge with the approved text", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      rosterIncomplete: true,
+    });
+    expect(screen.getByTestId("saldo-roster-badge")).toHaveTextContent("Restmonat unverplant");
+  });
+
+  it("compact: rosterIncomplete=true renders a titled dot carrying the full sentence for screen readers", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      rosterIncomplete: true,
+    });
+    expect(screen.getByTestId("saldo-roster-badge")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Restmonat noch nicht vollständig verplant" }),
+    ).toBeInTheDocument();
+  });
+
+  it("badge absent when rosterIncomplete=false", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      rosterIncomplete: false,
+    });
+    expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+
+  it("badge absent when rosterIncomplete is omitted (undefined)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+
+  it("badge never duplicated — exactly one instance, living on the forecast block only", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+      rosterIncomplete: true,
+    });
+    expect(screen.getAllByTestId("saldo-roster-badge")).toHaveLength(1);
+  });
+});
+
+describe("SaldoAnzeige — collapse states E2-E4 (Phase 97-03)", () => {
+  it("E2: exempt still renders the em-dash through the extended precedence chain", () => {
+    renderWithTheme(SaldoAnzeige, { exempt: true });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("—");
+  });
+
+  it("E3: explicit noSchedule=true renders 'Kein Stundenplan'", () => {
+    renderWithTheme(SaldoAnzeige, { noSchedule: true });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("Kein Stundenplan");
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--no-schedule");
+  });
+
+  it("E4: noSollTarget=true renders 'Keine Soll-Vorgabe', NOT 'Kein Stundenplan'", () => {
+    renderWithTheme(SaldoAnzeige, { noSollTarget: true });
+    const value = screen.getByTestId("saldo-value");
+    expect(value).toHaveTextContent("Keine Soll-Vorgabe");
+    expect(value).not.toHaveTextContent("Kein Stundenplan");
+  });
+
+  it("E4: expanded shows the 'Zeiterfassung ohne Sollvergleich' subline", () => {
+    renderWithTheme(SaldoAnzeige, { noSollTarget: true });
+    expect(screen.getByTestId("saldo-no-soll-subline")).toHaveTextContent(
+      "Zeiterfassung ohne Sollvergleich",
+    );
+  });
+
+  it("E4: compact suppresses the subline (expanded-only per UI-SPEC)", () => {
+    renderWithTheme(SaldoAnzeige, { variant: "compact", noSollTarget: true });
+    expect(screen.queryByTestId("saldo-no-soll-subline")).toBeNull();
+  });
+});
+
+describe("SaldoAnzeige — loading & error states F1-F2 (Phase 97-03)", () => {
+  it("F1: loading renders the skeleton and no value", () => {
+    renderWithTheme(SaldoAnzeige, { loading: true });
+    expect(screen.getByTestId("saldo-skeleton")).toBeInTheDocument();
+    expect(screen.queryByTestId("saldo-value")).toBeNull();
+    expect(screen.queryByTestId("saldo-confirmed-value")).toBeNull();
+  });
+
+  it("F2: error renders the approved German error sentence", () => {
+    renderWithTheme(SaldoAnzeige, { error: true });
+    expect(screen.getByTestId("saldo-error")).toHaveTextContent(
+      "Fehler beim Laden des Saldos. Bitte Seite neu laden.",
+    );
+  });
+});
+
+describe("SaldoAnzeige — precedence chain proven by test (Phase 97-03)", () => {
+  it("loading short-circuits split rendering even when split props are also passed", () => {
+    renderWithTheme(SaldoAnzeige, {
+      loading: true,
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-skeleton")).toBeInTheDocument();
+    expect(screen.queryByTestId("saldo-confirmed-value")).toBeNull();
+    expect(screen.queryByTestId("saldo-forecast-value")).toBeNull();
+  });
+
+  it("noSollTarget short-circuits split rendering even when split props are also passed", () => {
+    renderWithTheme(SaldoAnzeige, {
+      noSollTarget: true,
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("Keine Soll-Vorgabe");
+    expect(screen.queryByTestId("saldo-confirmed-value")).toBeNull();
+    expect(screen.queryByTestId("saldo-forecast-value")).toBeNull();
+  });
+});
+
+describe("SaldoAnzeige — compact vs expanded combined line (Phase 97-03)", () => {
+  it("combined-total testid is present in expanded", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-combined-value")).toBeInTheDocument();
+  });
+
+  it("combined-total testid is absent in compact", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.queryByTestId("saldo-combined-value")).toBeNull();
+  });
+});
+
+// 97-UI-SPEC → Assumptions log #3: locked badge migrated from the literal 🔒 emoji to the
+// SVG Icon grammar. testid/aria-label unchanged (the three pre-97-03 lock tests above stay
+// green unmodified) — this describes the migration itself plus the loading/error suppression.
+describe("SaldoAnzeige — locked badge SVG migration (Phase 97-03)", () => {
+  it("renders an SVG icon inside the locked badge instead of the legacy emoji", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 60, isLocked: true });
+    const badge = screen.getByTestId("saldo-locked-badge");
+    expect(badge.querySelector("svg")).not.toBeNull();
+    expect(badge).not.toHaveTextContent("🔒");
+    expect(badge).toHaveAttribute("aria-label", "Monat abgeschlossen");
+  });
+
+  it("suppresses the locked badge during loading/error even when isLocked=true", () => {
+    renderWithTheme(SaldoAnzeige, { isLocked: true, loading: true });
+    expect(screen.queryByTestId("saldo-locked-badge")).toBeNull();
+  });
+});

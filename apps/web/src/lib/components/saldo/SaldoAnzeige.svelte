@@ -62,6 +62,19 @@
      *  known to be biased low (97-CONTEXT "Prognose-Güte"). Renders an always-visible
      *  badge (expanded) / titled dot (compact) on the forecast block only. */
     rosterIncomplete?: boolean;
+    /** Phase 97-03 — first-class loading/error states (UI-SPEC F1/F2). Short-circuit
+     *  everything else, incl. the lock badge, so every consuming surface degrades
+     *  identically instead of inventing its own skeleton/error markup. */
+    loading?: boolean;
+    error?: boolean;
+    /** Phase 97-03 — explicit no-WorkSchedule collapse (UI-SPEC E3). Formalises the
+     *  pre-existing `saldoMinutes === null` implicit behaviour, which keeps working
+     *  unchanged for legacy (non-split) callers that never pass this prop. */
+    noSchedule?: boolean;
+    /** Phase 97-03 — MONTHLY_HOURS with a null/0 monthly target (UI-SPEC E4): a
+     *  WorkSchedule genuinely exists, there's just no Soll to compare against. Deliberately
+     *  distinct copy from `noSchedule` — reusing "Kein Stundenplan" would misinform. */
+    noSollTarget?: boolean;
   }
 
   let {
@@ -77,6 +90,10 @@
     forecastLabel = "Laufender Monat (Prognose)",
     combinedLabel = "Voraussichtlich gesamt",
     rosterIncomplete = false,
+    loading = false,
+    error = false,
+    noSchedule = false,
+    noSollTarget = false,
   }: SaldoAnzeigeProps = $props();
 
   // Unique DOM id for the toggletip panel — several SaldoAnzeige instances coexist on one
@@ -94,10 +111,19 @@
 
   const isSplit = $derived(confirmedMinutes !== undefined);
 
-  // Root sign class: driven by confirmedMinutes in split mode (so --good/--bad stay reserved
-  // for the entitlement figure), by saldoMinutes in legacy mode (unchanged behaviour).
+  // Root sign class — mirrors the template's precedence chain exactly (97-UI-SPEC →
+  // Component Contract): loading/error short-circuit everything, then exempt, then the
+  // explicit collapse flags, then confirmedMinutes in split mode (so --good/--bad stay
+  // reserved for the entitlement figure), then saldoMinutes in legacy mode (unchanged
+  // behaviour — an explicit noSchedule=true and the implicit saldoMinutes===null path
+  // both resolve to the SAME "no-schedule" sign, so .saldo--no-schedule keeps meaning
+  // exactly what the pre-97-03 tests already assert).
   const sign = $derived.by(() => {
+    if (loading) return "loading";
+    if (error) return "error";
     if (exempt) return "exempt";
+    if (noSchedule) return "no-schedule";
+    if (noSollTarget) return "no-soll-target";
     if (confirmedMinutes !== undefined) {
       return confirmedMinutes === 0 ? "zero" : confirmedMinutes > 0 ? "positive" : "negative";
     }
@@ -183,9 +209,37 @@
     <div class="saldo__label" data-testid="saldo-label">{label}</div>
   {/if}
 
-  {#if exempt}
+  {#if loading}
+    <!-- UI-SPEC F1 — first-class loading state: skeleton only, no text, sized per variant. -->
+    <div
+      class="saldo__skeleton skeleton {variant === 'compact' ? 'skeleton-text' : 'skeleton-stat'}"
+      data-testid="saldo-skeleton"
+    ></div>
+  {:else if error}
+    <!-- UI-SPEC F2 — matches the established MyWeekView.svelte / MyShiftsWeek.svelte
+         error-copy pattern verbatim in structure. -->
+    <div class="saldo__error" data-testid="saldo-error">
+      <Icon name="alert" size={16} />
+      <span>Fehler beim Laden des Saldos. Bitte Seite neu laden.</span>
+    </div>
+  {:else if exempt}
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG exempt: em-dash, no number. -->
     <div class="saldo__value" data-testid="saldo-value">—</div>
+  {:else if noSchedule}
+    <!-- UI-SPEC E3 — explicit no-WorkSchedule collapse. Same copy/testid as the legacy
+         saldoMinutes===null branch further below; kept as two branches so the precedence
+         chain in code reads identically to 97-UI-SPEC's Component Contract order. -->
+    <div class="saldo__value" data-testid="saldo-value">Kein Stundenplan</div>
+  {:else if noSollTarget}
+    <!-- UI-SPEC E4 — MONTHLY_HOURS with a null/0 monthly target: a WorkSchedule exists,
+         there is simply no Soll to compare against. Deliberately NOT "Kein Stundenplan"
+         (SALDO-DISP-07) — reusing that copy would misinform the employee. -->
+    <div class="saldo__value" data-testid="saldo-value">Keine Soll-Vorgabe</div>
+    {#if variant === "expanded"}
+      <div class="saldo__subline" data-testid="saldo-no-soll-subline">
+        Zeiterfassung ohne Sollvergleich
+      </div>
+    {/if}
   {:else if isSplit}
     {#if variant === "compact"}
       <!-- UI-SPEC compact: single line — confirmed leads, forecast follows inline in
@@ -279,13 +333,17 @@
     <div class="saldo__value" data-testid="saldo-value">{fmt(saldoMinutes)}</div>
   {/if}
 
-  {#if isLocked}
+  {#if isLocked && !loading && !error}
+    <!-- 97-UI-SPEC → Assumptions log #3: migrated from the literal 🔒 emoji to the SVG
+         Icon grammar (CalendarCell's equivalent badge already uses it); testid + aria-label
+         unchanged so the three pre-existing lock tests keep passing unchanged. Suppressed
+         during loading/error — we don't know if the month is locked until the data resolves. -->
     <span
       class="saldo__locked-badge"
       data-testid="saldo-locked-badge"
       aria-label="Monat abgeschlossen"
     >
-      🔒
+      <Icon name="lock" size={14} />
     </span>
   {/if}
 </div>
@@ -510,5 +568,23 @@
     display: inline-flex;
     align-items: center;
     color: var(--warn);
+  }
+
+  /* ── Phase 97-03 — loading (F1) / error (F2) / noSollTarget subline (E4) ──
+     Skeleton reuses the app's existing shimmer treatment (app.css); sized per
+     variant via a modifier class, never hand-rolled here. */
+  .saldo__skeleton {
+    display: block;
+  }
+  .saldo__error {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--bad);
+    font-size: 14px;
+  }
+  .saldo__subline {
+    font-size: 12px;
+    color: var(--text-muted);
   }
 </style>
