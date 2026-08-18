@@ -2781,6 +2781,17 @@ export async function computeOvertimeBalanceBreakdown(
       // The `rosterPeriodMinutes > 0` guard is load-bearing: without it the pre-existing
       // "nothing rostered at all" zero-state (guarded separately in shift-based-saldo.ts,
       // contribution 0) would collide with this state because 0 === 0.
+      //
+      // WR-01 (code review) — this "days remain in the month" clause is intentionally
+      // anchored to `todayStr` (literal calendar today), NOT `effectiveEnd`/windowEnd
+      // (today-or-yesterday, whichever has a completed entry). computeMonthSaldo's own
+      // rosterIncomplete (month-saldo.ts) is anchored to the SAME `todayStr` for the SAME
+      // reason: the flag answers "is there still unplanned roster ahead of *now*", which
+      // does not depend on whether today's own time entry happens to be logged yet. Using
+      // windowEnd would make the two flags disagree on the last calendar day of a month
+      // with no entry yet that day (windowEnd = yesterday, one day short of month-end) —
+      // see overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
+      // regression case this anchor choice is pinned against.
       rosterIncomplete =
         rosterProration.rosterPeriodMinutes > 0 &&
         rosterProration.rosterToDateMinutes === rosterProration.rosterPeriodMinutes &&

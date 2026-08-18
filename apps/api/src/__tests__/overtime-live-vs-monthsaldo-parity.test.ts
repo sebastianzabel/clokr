@@ -22,7 +22,10 @@ import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
-import { computeOvertimeBalanceHours } from "../routes/time-entries";
+import {
+  computeOvertimeBalanceHours,
+  computeOvertimeBalanceBreakdown,
+} from "../routes/time-entries";
 import { computeMonthSaldo } from "../utils/month-saldo";
 import bcrypt from "bcryptjs";
 
@@ -687,6 +690,140 @@ describe("SALDO-DISP-07 (required_test_assertions #2) — rosterIncomplete on GE
     try {
       const body = await readBody(zeroRosterEmpId);
       expect(body.rosterIncomplete).not.toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// WR-01 (code review) — computeOvertimeBalanceBreakdown (time-entries.ts) and computeMonthSaldo
+// (month-saldo.ts) used to anchor their shared rosterIncomplete "days remain in the month" clause
+// to DIFFERENT dates (todayStr vs. the day-loop's own lastDayStr cursor). The two formulas only
+// disagreed in one reachable window: today is the LAST calendar day of the month, today has no
+// completed entry yet (so the to-date cursor = yesterday, one day short of month-end), and the
+// roster is otherwise fully consumed through yesterday. This fixture reproduces exactly that
+// window and pins that both functions now agree (both anchored to todayStr per the fix).
+describe("WR-01 — rosterIncomplete anchor parity at the last calendar day of the month", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let employeeId: string;
+
+  // "Today" = the LAST calendar day of July 2026 (a Friday), with NO entry logged yet today →
+  // windowEnd/effectiveEnd = 2026-07-30 (yesterday), one day short of month-end.
+  const WR01_YEAR = 2026;
+  const WR01_MONTH = 7;
+  const WR01_NOW = new Date("2026-07-31T10:00:00.000Z");
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const suffix = "wr01-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `WR01 ${suffix}`, slug: `wr01-${suffix}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    const passwordHash = await bcrypt.hash("test1234", 10);
+
+    const user = await prisma.user.create({
+      data: { email: `wr01-${suffix}@test.de`, passwordHash, role: "EMPLOYEE", isActive: true },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `WR01-${suffix}`,
+        firstName: "WR01",
+        lastName: "LastDay",
+        hireDate: new Date("2026-07-01"),
+        breakOver6hOverride: 0,
+        breakOver9hOverride: 0,
+      },
+    });
+    employeeId = emp.id;
+
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "SHIFT_BASED",
+        weeklyHours: 38,
+        mondayHours: 7.6,
+        tuesdayHours: 7.6,
+        wednesdayHours: 7.6,
+        thursdayHours: 7.6,
+        fridayHours: 7.6,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date("2026-07-01"),
+      },
+    });
+
+    // Every July 2026 Mon-Fri EXCEPT the 31st itself — the roster is fully consumed through
+    // yesterday (07-30) but the month is NOT over: rosterToDateMinutes === rosterPeriodMinutes
+    // by construction, since no shift exists on 07-31 to inflate rosterPeriodMinutes further.
+    const rosterDays = [
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08",
+      "2026-07-09",
+      "2026-07-10",
+      "2026-07-13",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-20",
+      "2026-07-21",
+      "2026-07-22",
+      "2026-07-23",
+      "2026-07-24",
+      "2026-07-27",
+      "2026-07-28",
+      "2026-07-29",
+      "2026-07-30", // last rostered day — deliberately NOT 07-31
+    ];
+    for (const d of rosterDays) {
+      await prisma.shift.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date(d + "T00:00:00Z"),
+          startTime: "08:00",
+          endTime: "16:00",
+        },
+      });
+    }
+
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("WR-01 test cleanup failed:", err);
+    }
+  });
+
+  it("computeOvertimeBalanceBreakdown and computeMonthSaldo agree on rosterIncomplete (both false — today IS month-end)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(WR01_NOW);
+    try {
+      const breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
+      expect(breakdown).not.toBeNull();
+
+      const ms = await computeMonthSaldo(app, employeeId, WR01_YEAR, WR01_MONTH);
+
+      // Pre-fix this pair would have disagreed: computeMonthSaldo anchored to lastDayStr
+      // (07-30, since today has no entry yet) < monthLastStr (07-31) → true, while
+      // computeOvertimeBalanceBreakdown anchored to todayStr (07-31) < curMonthLastDayStr
+      // (07-31) → false. Both now anchor to todayStr, so both must be false: today itself
+      // IS the last calendar day, so there is no "remaining month" left to be unplanned.
+      expect(breakdown!.rosterIncomplete).toBe(false);
+      expect(ms.rosterIncomplete).toBe(false);
+      expect(breakdown!.rosterIncomplete).toBe(ms.rosterIncomplete);
     } finally {
       vi.useRealTimers();
     }
