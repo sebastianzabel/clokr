@@ -159,11 +159,34 @@ ORDER BY "createdAt";
 ## Calibration baseline (2026-08-17, v1.9.14 read-only prod dry-run)
 
 Recorded verbatim so a future run can be compared against it: **95** active MONTHLY snapshots
-across **19** employees in **1** tenant; **89** with delta `0`; exactly **6** non-zero — five
-bridge rows at `-1080`, `90`, `540`, `600`, `750` minutes and one real-activity row at `6129`
-(`worked = expected = 900`, `balance = 0`). A materially different split on the same prod dataset
-is a bug in the audit before it is a discovery. The same split is pinned as a fixture test in
+across **17** employees with a walkable chain, plus **2** reported separately as
+`employees with no closed months (skipped)` (19 employees in the tenant in total), in **1**
+tenant; **89** with delta `0`; exactly **6** non-zero — five bridge rows at `-1080`, `90`, `540`,
+`600`, `750` minutes and one real-activity row at `6129` (`worked = expected = 900`,
+`balance = 0`). A materially different split on the same prod dataset is a bug in the audit
+before it is a discovery. The same split is pinned as a fixture test in
 `apps/api/src/utils/__tests__/saldo-chain-integrity-calibration.test.ts`.
+
+> The employee figure is the one number that invites a false alarm: the script's employee counter
+> counts only employees whose chain was actually walked, and reports employees with no closed
+> months on their own line. Add the two before comparing. The first prod run of this runbook
+> (2026-08-18) briefly looked like a 19-vs-17 divergence for exactly this reason.
+
+**Confirmed by the first real-data runs (2026-08-18, v1.9.14 + Phase 98 code):**
+
+|                                  | prod   | int    |
+| -------------------------------- | ------ | ------ |
+| active MONTHLY snapshots         | 95     | 89     |
+| employees checked / skipped      | 17 / 2 | 16 / 3 |
+| `delta==0 links`                 | 89     | 83     |
+| documented / UNEXPLAINED         | 6 / 0  | 6 / 0  |
+| `TRACK_ONLY` / `duplicate-month` | 0 / 0  | 0 / 0  |
+| exit code                        | 0      | 0      |
+
+Both environments produce the identical non-zero delta multiset, and every deviation classifies
+as documented — five via the `opening balance from old time-tracking system` allowlist entry, one
+via `Vor-Tracking-Leistung`. int carries a smaller snapshot count because it is an older data
+set; that is expected and is not a chain defect.
 
 ## When to run
 
