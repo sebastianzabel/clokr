@@ -9,6 +9,7 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
@@ -106,6 +107,15 @@
 
   // Überstunden- / Urlaubskontostand
   let overtimeBalance: number | null = $state(null);
+  // Phase 97-06 (SALDO-DISP-01/04) — split fields from GET /leave/overtime-balance,
+  // alongside the pre-existing lifetime `overtimeBalance`. Default `undefined` (not
+  // null) so "not yet loaded" and "older cached response without the split fields"
+  // both read as `confirmedMinutes === undefined` — the same fallback-to-legacy
+  // check the dashboard's SaldoAnzeige tile already uses (97-04).
+  let confirmedMinutes: number | undefined = $state(undefined);
+  let openMonthMinutes: number | null | undefined = $state(undefined);
+  let hasClosedMonth = $state(false);
+  let rosterIncomplete: boolean | undefined = $state(undefined);
   let vacationBalance = $state<{
     total: number;
     used: number;
@@ -455,12 +465,30 @@
     }
   }
 
+  // Phase 97-06 — response shape widened additively; balanceHours keeps its
+  // existing meaning (lifetime total) for any consumer that still needs it.
+  interface OvertimeBalanceResponse {
+    balanceHours: number;
+    confirmedMinutes?: number;
+    openMonthMinutes?: number | null;
+    hasClosedMonth?: boolean;
+    rosterIncomplete?: boolean;
+  }
+
   async function loadOvertimeBalance() {
     try {
-      const r = await api.get<{ balanceHours: number }>("/leave/overtime-balance");
+      const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
       overtimeBalance = r.balanceHours;
+      confirmedMinutes = r.confirmedMinutes;
+      openMonthMinutes = r.openMonthMinutes;
+      hasClosedMonth = r.hasClosedMonth ?? false;
+      rosterIncomplete = r.rosterIncomplete;
     } catch {
       overtimeBalance = null;
+      confirmedMinutes = undefined;
+      openMonthMinutes = undefined;
+      hasClosedMonth = false;
+      rosterIncomplete = undefined;
     }
   }
 
@@ -518,10 +546,18 @@
   async function loadBalanceForType(type: TypeCode) {
     if (type === "OVERTIME_COMP") {
       try {
-        const r = await api.get<{ balanceHours: number }>("/leave/overtime-balance");
+        const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
         overtimeBalance = r.balanceHours;
+        confirmedMinutes = r.confirmedMinutes;
+        openMonthMinutes = r.openMonthMinutes;
+        hasClosedMonth = r.hasClosedMonth ?? false;
+        rosterIncomplete = r.rosterIncomplete;
       } catch {
         overtimeBalance = null;
+        confirmedMinutes = undefined;
+        openMonthMinutes = undefined;
+        hasClosedMonth = false;
+        rosterIncomplete = undefined;
       }
     } else if (type === "VACATION") {
       try {
@@ -827,6 +863,14 @@
   let formDays = $derived(calcDays(formStart, formEnd, formHalfDay));
   let effectiveDays = $derived(serverDays ?? formDays); // Server-Wert bevorzugen (Feiertage)
   let hoursNeeded = $derived(hoursPreview ?? formDays * 8); // Fallback auf ×8 solange Preview lädt
+  // Phase 97-06 (SALDO-DISP-04) — the OVERTIME_COMP balance-box's affordability
+  // arithmetic (Guthaben/Verbleibend) uses the CONFIRMED figure, never the
+  // lifetime total (which still includes the unclaimable open-month forecast).
+  // Falls back to the lifetime total when confirmedMinutes hasn't loaded yet,
+  // matching the KPI tile's own degrade-not-blank convention below.
+  let confirmedHours = $derived(
+    confirmedMinutes !== undefined ? confirmedMinutes / 60 : (overtimeBalance ?? 0),
+  );
   let vacRemaining = $derived(
     vacationBalance
       ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used
@@ -1068,13 +1112,28 @@
     </Card>
 
     <Card animate class="kpi-card">
-      <KPIStat
-        label="Überstundenkonto"
-        value={overtimeBalance === null
-          ? "–"
-          : `${overtimeBalance >= 0 ? "+" : "−"}${fmtH(overtimeBalance)}`}
-        delta="aktueller Saldo"
-      />
+      <!-- Phase 97-06 (SALDO-DISP-02/05) — the split primitive replaces the inline
+           KPIStat markup outright (not wrapped), same as the dashboard tile:
+           KPIStat's pure-props string contract cannot express a two-figure tile.
+           Leads with "Bestätigt", subordinates "Laufender Monat (Prognose)". -->
+      {#if confirmedMinutes !== undefined}
+        <SaldoAnzeige
+          variant="expanded"
+          label="Überstundenkonto"
+          confirmedMinutes={confirmedMinutes ?? 0}
+          openMonthMinutes={openMonthMinutes ?? null}
+          hasClosedMonth={hasClosedMonth ?? false}
+          {rosterIncomplete}
+        />
+      {:else}
+        <!-- Fallback: an older cached response without the split fields — degrade
+             to the primitive's single-value rendering instead of blanking. -->
+        <SaldoAnzeige
+          variant="expanded"
+          label="Überstundenkonto"
+          saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
+        />
+      {/if}
     </Card>
 
     <Card animate class="kpi-card">
@@ -1196,8 +1255,38 @@
             <div class="balance-box">
               <div class="balance-row">
                 <span class="balance-label">Guthaben</span>
-                <span class="balance-value">{fmtH(overtimeBalance)}</span>
+                {#if !hasClosedMonth}
+                  <!-- Phase 97-06 (SALDO-DISP-04) — a confirmed value of 0 with no
+                       closed month yet must not read as a genuine 0h entitlement.
+                       Reuses SaldoAnzeige's own "noch kein Monatsabschluss" caption
+                       (state A3) rather than restating that copy locally here. -->
+                  <span class="balance-value">
+                    <SaldoAnzeige
+                      variant="compact"
+                      confirmedMinutes={confirmedMinutes ?? 0}
+                      hasClosedMonth={false}
+                    />
+                  </span>
+                {:else}
+                  <span class="balance-value">{fmtH(confirmedHours)}</span>
+                {/if}
               </div>
+              {#if typeof openMonthMinutes === "number"}
+                <!-- Muted, non-arithmetic — the forecast is shown for context but
+                     never enters the Verbleibend/warning arithmetic below, and is
+                     never presented as claimable (the whole point of this plan).
+                     Omitted entirely when openMonthMinutes is null (fail-safe
+                     shape) rather than showing a fabricated zero. -->
+                <div class="balance-row">
+                  <span class="balance-label">Laufender Monat (Prognose)</span>
+                  <span class="balance-value balance-value--muted"
+                    >{fmtH(openMonthMinutes / 60)}</span
+                  >
+                </div>
+                <p class="balance-hint-muted">
+                  Noch nicht abrufbar – wird mit dem Monatsabschluss zu „Bestätigt“.
+                </p>
+              {/if}
               {#if effectiveDays > 0 || formHalfDay}
                 <div class="balance-row">
                   <span class="balance-label">
@@ -1215,16 +1304,16 @@
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
                   <span
-                    class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}"
+                    class="balance-value {confirmedHours - hoursNeeded < 0 ? 'balance-warn' : ''}"
                   >
                     {#if hoursPreviewLoading}
                       <span class="text-muted">…</span>
                     {:else}
-                      {fmtH(overtimeBalance - hoursNeeded)}
+                      {fmtH(confirmedHours - hoursNeeded)}
                     {/if}
                   </span>
                 </div>
-                {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
+                {#if !hoursPreviewLoading && confirmedHours - hoursNeeded < 0}
                   <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
                 {/if}
               {/if}
@@ -2194,6 +2283,17 @@
   .balance-hint-warn {
     font-size: 0.8125rem;
     color: var(--bad);
+    margin: 0.25rem 0 0;
+  }
+  /* Phase 97-06 (SALDO-DISP-04) — the "Laufender Monat (Prognose)" row: muted like
+     the forecast everywhere else in the app (never --good/--bad/--warn — colour
+     must never imply a certainty this figure doesn't have). */
+  .balance-value--muted {
+    color: var(--text-muted);
+  }
+  .balance-hint-muted {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
     margin: 0.25rem 0 0;
   }
 
