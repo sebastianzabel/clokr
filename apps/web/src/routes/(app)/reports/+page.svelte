@@ -1052,7 +1052,7 @@
               <th>Monat</th>
               <th class="num">Soll</th>
               <th class="num">Ist</th>
-              <th class="num">Diff</th>
+              <th class="num">Saldo (Bestätigt)</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -1068,13 +1068,17 @@
                   <td><b class="emp-month-label">{row.label}</b></td>
                   <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
                   <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
-                  <td
-                    class="num"
-                    class:diff-good={row.balanceMinutes > 0}
-                    class:diff-bad={row.balanceMinutes < 0}
-                    class:diff-zero={row.balanceMinutes === 0}
-                  >
-                    {row.balanceMinutes > 0 ? "+" : ""}{fmtMinutesAsHrs(row.balanceMinutes)}
+                  <td class="num">
+                    <!-- Phase 97-07 — every row here is a non-superseded MONTHLY snapshot
+                         (a closed month by definition), so this figure is final, never a
+                         forecast: label it Bestätigt (header) and render it through the
+                         shared primitive in single-value mode so the U+2212 minus and the
+                         sign colouring match every other saldo on the page. -->
+                    <SaldoAnzeige
+                      variant="compact"
+                      saldoMinutes={row.balanceMinutes}
+                      isLocked={row.isLocked}
+                    />
                   </td>
                   <td>
                     {#if row.isLocked}
@@ -2040,13 +2044,19 @@
   .emp-month-label {
     font-weight: 600;
   }
-  .diff-good {
+  /* Phase 97-07 — the Saldo (Bestätigt) cell now renders through SaldoAnzeige in
+     single-value mode; its own scoped <style> intentionally leaves the legacy
+     .saldo__value unpainted (colour is only wired for split mode). Reapply the same
+     good/bad/muted mapping the old page-local .diff-good/.diff-bad/.diff-zero classes
+     provided, keyed off the primitive's own semantic sign class, scoped to this table's
+     Saldo column only. :global() is required to reach past the child component boundary. */
+  .emp-closes-table .num :global(.saldo--positive .saldo__value) {
     color: var(--good);
   }
-  .diff-bad {
+  .emp-closes-table .num :global(.saldo--negative .saldo__value) {
     color: var(--bad);
   }
-  .diff-zero {
+  .emp-closes-table .num :global(.saldo--zero .saldo__value) {
     color: var(--text-muted);
   }
   .emp-pdf-cell {
