@@ -1116,6 +1116,15 @@
            KPIStat markup outright (not wrapped), same as the dashboard tile:
            KPIStat's pure-props string contract cannot express a two-figure tile.
            Leads with "Bestätigt", subordinates "Laufender Monat (Prognose)". -->
+      <!-- IN-01 (code review) — `loading` (declared above) now reaches the primitive. Note:
+           this KPI's own data arrives via loadOvertimeBalance(), fired (not awaited) AFTER
+           `loading` already flips false in onMount — so this only narrows the "Kein
+           Stundenplan" flash window (covers loadData()'s own fetch), it does not close it
+           completely. A fully precise fix would need a dedicated loading flag for
+           loadOvertimeBalance() itself; not added here to keep this change minimal. `error` is
+           deliberately NOT wired — this page's `error` string is reused for unrelated
+           mutations (delete/iCal-download/etc.), so surfacing it here would mislabel an
+           unrelated failure as "saldo failed to load". -->
       {#if confirmedMinutes !== undefined}
         <SaldoAnzeige
           variant="expanded"
@@ -1124,6 +1133,7 @@
           openMonthMinutes={openMonthMinutes ?? null}
           hasClosedMonth={hasClosedMonth ?? false}
           {rosterIncomplete}
+          {loading}
         />
       {:else}
         <!-- Fallback: an older cached response without the split fields — degrade
@@ -1132,6 +1142,7 @@
           variant="expanded"
           label="Überstundenkonto"
           saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
+          {loading}
         />
       {/if}
     </Card>

@@ -1274,6 +1274,10 @@
      (not reachable from <script>) and fed to MonthBar's statRenders seam at the <MonthBar> call
      site below. -->
 {#snippet gesamtSaldoStat()}
+  <!-- IN-01 (code review) — `loading` (declared above, gates the per-employee reload) now
+       reaches the primitive instead of being wired nowhere: without it, the tile briefly
+       rendered "Kein Stundenplan" on first paint and stale data across an employee switch or
+       month-navigation reload — loading short-circuits both. -->
   {#if overtimeConfirmedMinutes !== undefined}
     <SaldoAnzeige
       variant="compact"
@@ -1282,12 +1286,14 @@
       openMonthMinutes={overtimeOpenMonthMinutes ?? null}
       hasClosedMonth={overtimeHasClosedMonth ?? false}
       rosterIncomplete={overtimeRosterIncomplete}
+      {loading}
     />
   {:else}
     <SaldoAnzeige
       variant="compact"
       label="Gesamt-Saldo"
       saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
+      {loading}
     />
   {/if}
 {/snippet}

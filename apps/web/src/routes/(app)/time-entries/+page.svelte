@@ -1582,6 +1582,10 @@
        snippet declared in markup is not reachable from <script>, so it's declared here
        and fed to MonthBar's statRenders seam at the call site below. -->
   {#snippet gesamtSaldoStat()}
+    <!-- IN-01 (code review) — `loading` (declared above, gates loadAll()) now reaches the
+         primitive instead of being wired nowhere: without it, the tile briefly rendered
+         "Kein Stundenplan" on first paint (before overtimeTotalHours/overtimeConfirmedMinutes
+         arrive) and stale data during a month-navigation reload — loading short-circuits both. -->
     {#if overtimeConfirmedMinutes !== undefined}
       <SaldoAnzeige
         variant="compact"
@@ -1590,12 +1594,14 @@
         openMonthMinutes={overtimeOpenMonthMinutes ?? null}
         hasClosedMonth={overtimeHasClosedMonth ?? false}
         rosterIncomplete={overtimeRosterIncomplete}
+        {loading}
       />
     {:else}
       <SaldoAnzeige
         variant="compact"
         label="Gesamt-Saldo"
         saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
+        {loading}
       />
     {/if}
   {/snippet}

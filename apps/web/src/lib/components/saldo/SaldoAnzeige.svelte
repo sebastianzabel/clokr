@@ -62,18 +62,34 @@
      *  known to be biased low (97-CONTEXT "Prognose-Güte"). Renders an always-visible
      *  badge (expanded) / titled dot (compact) on the forecast block only. */
     rosterIncomplete?: boolean;
-    /** Phase 97-03 — first-class loading/error states (UI-SPEC F1/F2). Short-circuit
-     *  everything else, incl. the lock badge, so every consuming surface degrades
-     *  identically instead of inventing its own skeleton/error markup. */
+    /** Phase 97-03 — first-class loading/error states (UI-SPEC F1/F2), short-circuiting
+     *  everything else (incl. the lock badge) so a consuming surface can degrade through this
+     *  primitive instead of inventing its own skeleton/error markup.
+     *  Adoption (IN-01 code-review fix): `loading` is wired on dashboard/+page.svelte,
+     *  time-entries/+page.svelte, team/time-entries/+page.svelte, and leave/+page.svelte,
+     *  bracketing the same fetch that populates this tile's data on each page. `error` is a
+     *  primitive available for a future consumer with a saldo-specific failure signal, but is
+     *  NOT currently wired anywhere: every shipped page either fail-safes its overtime fetch to
+     *  null (rendering the "no schedule" collapse rather than a hard error) or only has a
+     *  generic, page-wide error string that also covers unrelated actions (delete, iCal
+     *  export, …) — wiring that in would mislabel an unrelated failure as "saldo failed to
+     *  load". reports/+page.svelte's two usages are per-row inside tables that already gate
+     *  loading/error at the table level before any row (and thus any instance of this
+     *  component) ever mounts, so there is no per-instance state to wire there either. */
     loading?: boolean;
     error?: boolean;
     /** Phase 97-03 — explicit no-WorkSchedule collapse (UI-SPEC E3). Formalises the
      *  pre-existing `saldoMinutes === null` implicit behaviour, which keeps working
-     *  unchanged for legacy (non-split) callers that never pass this prop. */
+     *  unchanged for legacy (non-split) callers that never pass this prop. Not currently wired
+     *  by any consuming page (IN-01) — the implicit `saldoMinutes === null` path already covers
+     *  every shipped caller; this stays available for a future caller that wants to be explicit. */
     noSchedule?: boolean;
     /** Phase 97-03 — MONTHLY_HOURS with a null/0 monthly target (UI-SPEC E4): a
      *  WorkSchedule genuinely exists, there's just no Soll to compare against. Deliberately
-     *  distinct copy from `noSchedule` — reusing "Kein Stundenplan" would misinform. */
+     *  distinct copy from `noSchedule` — reusing "Kein Stundenplan" would misinform. Not
+     *  currently wired by any consuming page (IN-01) — no shipped page in this phase
+     *  distinguishes "no WorkSchedule" from "MONTHLY_HOURS with no target" at the call site
+     *  yet; this stays available for the page that first needs the distinction. */
     noSollTarget?: boolean;
   }
 

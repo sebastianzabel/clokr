@@ -1388,7 +1388,13 @@
           {/if}
         {:else}
           <KPIStat label="Urlaubstage" value="–" />
-          <KPIStat label="Überstundenkonto" value="–" />
+          <!-- IN-01 (code review) — SaldoAnzeige's loading/error props were built, tested, and
+               never actually reached by any consuming page. This IS a real loading/error
+               boundary: `loading` (declared above) brackets the exact same /dashboard fetch that
+               populates `stats`, so while it's true the request is still in flight, and once it
+               flips false with `stats` still null the request failed (see loadData()'s
+               Promise.allSettled — a rejected statsResult never reassigns `stats`). -->
+          <SaldoAnzeige variant="expanded" label="Überstundenkonto" {loading} error={!loading} />
         {/if}
       </Card>
 
