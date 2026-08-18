@@ -11,7 +11,12 @@ import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal
 import { calculateWorkDays } from "../utils/calculate-work-days";
 import { computeAffectedMonths } from "../utils/correction-lock";
 import { periodStartWindow } from "../utils/snapshot-period";
-import { updateOvertimeAccount } from "./time-entries";
+import {
+  updateOvertimeAccount,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "./time-entries";
+import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -1732,14 +1737,74 @@ export async function leaveRoutes(app: FastifyInstance) {
   });
 
   // ── GET /overtime-balance  – eigenes Überstundensaldo ───────────────────
+  // Phase 97-06 (SALDO-DISP-01/04) — the Überstundenausgleich request form reads
+  // this endpoint to judge affordability. It used to serve the stale, event-driven
+  // OvertimeAccount.balanceHours directly (no live recompute at all) — exactly the
+  // source 97-CONTEXT names as wrong. Rewired onto computeOvertimeBalanceBreakdown,
+  // the SAME live source GET /overtime/:employeeId already uses (v1.8.24 / 97-01),
+  // with the identical never-500 fail-safe discipline: a live-compute failure or a
+  // § 18 ArbZG-exempt employee (breakdown === null) falls back to the stored
+  // balanceHours, re-derives confirmedMinutes/hasClosedMonth from the independent
+  // getConfirmedCarryOver query (itself never-500), and reports openMonthMinutes:
+  // null — never a fabricated zero, so the UI renders the forecast as unavailable
+  // rather than indistinguishable from a genuine zero forecast.
   app.get("/overtime-balance", {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
       const employeeId = req.user.employeeId;
-      if (!employeeId) return { balanceHours: 0 };
+      if (!employeeId) {
+        return {
+          balanceHours: 0,
+          confirmedMinutes: 0,
+          openMonthMinutes: null,
+          hasClosedMonth: false,
+        };
+      }
+
+      let breakdown: OvertimeBalanceBreakdown | null = null;
+      try {
+        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
+      } catch (err) {
+        app.log.warn(
+          { err, employeeId },
+          "GET /leave/overtime-balance: live saldo failed, using stored",
+        );
+        // breakdown stays null (its declared initial value) — never reassigned here.
+      }
+
+      if (breakdown !== null) {
+        return {
+          // Same 2-decimal rounding GET /overtime/:employeeId applies, so the two
+          // endpoints cannot disagree on the same employee.
+          balanceHours: Math.round(breakdown.totalHours * 100) / 100,
+          confirmedMinutes: breakdown.confirmedMinutes,
+          openMonthMinutes: breakdown.openMonthMinutes,
+          hasClosedMonth: breakdown.hasClosedMonth,
+          ...(breakdown.rosterIncomplete !== undefined
+            ? { rosterIncomplete: breakdown.rosterIncomplete }
+            : {}),
+        };
+      }
+
+      // Fail-safe branch (live compute threw, or § 18 ArbZG-exempt employee).
       const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
-      return { balanceHours: account ? Number(account.balanceHours) : 0 };
+      const balanceHours = account ? Math.round(Number(account.balanceHours) * 100) / 100 : 0;
+      try {
+        const confirmed = await getConfirmedCarryOver(app, employeeId);
+        return {
+          balanceHours,
+          confirmedMinutes: confirmed.minutes,
+          openMonthMinutes: null,
+          hasClosedMonth: confirmed.hasClosedMonth,
+        };
+      } catch (fallbackErr) {
+        app.log.warn(
+          { err: fallbackErr, employeeId },
+          "GET /leave/overtime-balance: confirmed carry-over fallback failed",
+        );
+        return { balanceHours, confirmedMinutes: 0, openMonthMinutes: null, hasClosedMonth: false };
+      }
     },
   });
 
