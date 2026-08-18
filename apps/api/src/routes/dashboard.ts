@@ -2,7 +2,6 @@ import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
 import {
   getEffectiveSchedule,
-  computeOvertimeBalanceHours,
   computeOvertimeBalanceBreakdown,
   type OvertimeBalanceBreakdown,
 } from "./time-entries";
@@ -21,7 +20,7 @@ import {
 import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
-import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-04
+import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -788,33 +787,79 @@ export async function dashboardRoutes(app: FastifyInstance) {
         snapshotsByEmp.set(snap.employeeId, list);
       }
 
+      // Phase 97-04 (SALDO-DISP-01/02) — ONE bulk lookup for the "Bestätigt" carry-over,
+      // placed BEFORE the per-employee Promise.all below (never a per-employee query inside
+      // it — the whole point of getConfirmedCarryOverBulk, see confirmed-saldo.ts and
+      // 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the six-month-bounded
+      // `snapshots` query above: an employee whose last close predates that window would
+      // falsely read as having no closed month at all if reused for this purpose.
+      const confirmedByEmp = await getConfirmedCarryOverBulk(app, employeeIds);
+
       // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
       // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
-      // (computeOvertimeBalanceHours), replacing the stale event-driven OvertimeAccount.balanceHours.
-      // One compute per employee per request (no redundant recompute). computeOvertimeBalanceHours
-      // returns null for §18-exempt → fall back to the stored value. TRACK_ONLY → 0 (handled inside).
-      // Closed months are read from snapshots (not recomputed) inside the shared helper.
-      // Fail-safe: any per-employee error falls back to the stored value so one employee never
-      // 500s the whole team overview.
+      // (computeOvertimeBalanceBreakdown), replacing the stale event-driven
+      // OvertimeAccount.balanceHours. One compute per employee per request (no redundant
+      // recompute) — this pre-existing per-employee fan-out (one saldoSnapshot.findFirst per
+      // employee, inside the shared helper) is NOT changed by this phase; see
+      // dashboard-overtime-overview-n1.test.ts's header for the scope note. TRACK_ONLY → 0
+      // (handled inside). Fail-safe: any per-employee error falls back to the stored value so
+      // one employee never 500s the whole team overview.
+      //
+      // Phase 97-04 (SALDO-DISP-01/02/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete for the happy path (no extra
+      // query — the value it decomposes was already being computed). The per-employee
+      // fail-safe branch and the exempt branch (breakdown null) read confirmedMinutes/
+      // hasClosedMonth from the pre-fetched bulk Map above instead (defaulting to zero/false
+      // for an employee absent from it) and report openMonthMinutes: null.
       const employees = await Promise.all(
         accounts.map(async (a) => {
           let balanceHours: number;
+          let confirmedMinutes: number;
+          let openMonthMinutes: number | null;
+          let hasClosedMonth: boolean;
+          let rosterIncomplete: boolean | undefined;
+
+          let breakdown: OvertimeBalanceBreakdown | null = null;
           try {
-            const live = await computeOvertimeBalanceHours(app, a.employeeId);
-            balanceHours = live !== null ? round(live) : Number(a.balanceHours);
+            breakdown = await computeOvertimeBalanceBreakdown(app, a.employeeId);
           } catch (err) {
             app.log.warn(
               { err, employeeId: a.employeeId },
               "overtime-overview: live saldo failed, using stored",
             );
-            balanceHours = Number(a.balanceHours);
+            // breakdown stays null (its declared initial value) — never reassigned here.
           }
+
+          if (breakdown !== null) {
+            balanceHours = round(breakdown.totalHours);
+            confirmedMinutes = breakdown.confirmedMinutes;
+            openMonthMinutes = breakdown.openMonthMinutes;
+            hasClosedMonth = breakdown.hasClosedMonth;
+            rosterIncomplete = breakdown.rosterIncomplete;
+          } else {
+            balanceHours = Number(a.balanceHours);
+            const confirmed = confirmedByEmp.get(a.employeeId) ?? {
+              minutes: 0,
+              hasClosedMonth: false,
+            };
+            confirmedMinutes = confirmed.minutes;
+            hasClosedMonth = confirmed.hasClosedMonth;
+            openMonthMinutes = null;
+            rosterIncomplete = undefined;
+          }
+
           return {
             id: a.employeeId,
             name: `${a.employee.firstName} ${a.employee.lastName}`,
             employeeNumber: a.employee.employeeNumber,
             balanceHours,
             status: classifyOvertimeBalance(balanceHours),
+            // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields, same shape as
+            // GET /dashboard and GET /overtime/:employeeId.
+            confirmedMinutes,
+            openMonthMinutes,
+            hasClosedMonth,
+            ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
             snapshots: (snapshotsByEmp.get(a.employeeId) ?? []).map((s) => ({
               periodStart: s.periodStart.toISOString().slice(0, 10),
               balanceMinutes: s.balanceMinutes,
