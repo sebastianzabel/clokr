@@ -39,6 +39,16 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   // emits an "overtime warning" via app.notify(), so there is nothing to gate here.
   // Intentionally omitted rather than mapping a type that is never emitted.
   //
+  // SALDO-DISP-08 (verified 2026-08-18, Phase 97-02): confirms the note above is not an
+  // oversight. All 34 notification types passed to app.notify() were enumerated and none
+  // compares a saldo between two points in time; all ten cron registrations in
+  // attendance-checker.ts were read and their notify call sites are unrelated;
+  // CARRYOVER_EXPIRING (carryover-warning.ts) is the BUrlG vacation-day warning, not an
+  // overtime signal. Nothing is suppressed here because nothing exists to suppress — see
+  // docs/saldo-anzeige.md for the full decision record and evidence. Forward-looking rule:
+  // if a day-over-day saldo notification is ever added, it must compare the confirmed
+  // figure only and must exclude the open-month (Prognose) delta.
+  //
   // Phase 96 (RETRO-16): RETRO_ENTRY_REQUESTED / RETRO_ENTRY_UPDATED /
   // RETRO_ENTRY_DECIDED / RETRO_ENTRY_WITHDRAWN (retro-entry-requests.ts,
   // time-entries.ts) are intentionally left OUT of this map — no existing
