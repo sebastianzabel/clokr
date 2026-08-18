@@ -205,9 +205,15 @@
     </span>
   {/snippet}
 
-  {#if variant === "expanded"}
-    <div class="saldo__label" data-testid="saldo-label">{label}</div>
-  {/if}
+  <!-- Code-review fix — the label used to be suppressed entirely in compact mode
+       (pre-existing 76-02 behaviour). For split/relabelled callers this label IS the
+       only thing distinguishing "Bestätigt" from "Laufender Monat (Prognose)" (e.g.
+       the Monat-Saldo tile's "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)"
+       caption) — SALDO-DISP-03 requires that distinction to survive on dense
+       surfaces (calendar headers, Berichte table rows) too, not just expanded tiles.
+       Already styled at the UI-SPEC "Label" size (12px/--text-muted); see the
+       .saldo__label rule below for the accompanying 600-weight fix. -->
+  <div class="saldo__label" data-testid="saldo-label">{label}</div>
 
   {#if loading}
     <!-- UI-SPEC F1 — first-class loading state: skeleton only, no text, sized per variant. -->
@@ -378,7 +384,13 @@
     font-variant-numeric: tabular-nums;
   }
   .saldo__label {
-    font-size: 0.75rem;
+    /* Code-review fix — now also rendered in compact (see markup above); brought in
+       line with the UI-SPEC "Label" typography role (12px/600/1.3) it always
+       claimed to use, matching the sibling .saldo__confirmed-label /
+       .saldo__forecast-label / .saldo__combined-label rules below. */
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.3;
     color: var(--text-muted);
   }
   .saldo__value {

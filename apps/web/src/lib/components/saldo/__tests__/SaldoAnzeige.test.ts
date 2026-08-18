@@ -64,9 +64,14 @@ describe("SaldoAnzeige — locked state", () => {
 });
 
 describe("SaldoAnzeige — variant", () => {
-  it("hides label when variant=compact", () => {
-    renderWithTheme(SaldoAnzeige, { saldoMinutes: 60, variant: "compact" });
-    expect(screen.queryByTestId("saldo-label")).toBeNull();
+  // Code-review fix — compact used to suppress the label entirely (76-02 original
+  // behaviour). Deliberately flipped: on dense surfaces (calendar headers, Berichte
+  // rows) the label is the ONLY thing telling "Bestätigt" apart from "Laufender Monat
+  // (Prognose)" for relabelled callers like the Monat-Saldo tile — see the dedicated
+  // "compact label visibility" describe block below for the concrete real-world case.
+  it("shows label when variant=compact too (SALDO-DISP-03 — dense surfaces still need Bestätigt/Prognose)", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 60, variant: "compact", label: "Übertrag" });
+    expect(screen.getByTestId("saldo-label")).toHaveTextContent("Übertrag");
     expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--compact");
   });
 
@@ -482,6 +487,47 @@ describe("SaldoAnzeige — WR-02 fix: rosterIncomplete renders in legacy single-
     renderWithTheme(SaldoAnzeige, { saldoMinutes: null, rosterIncomplete: true });
     expect(screen.getByTestId("saldo-value")).toHaveTextContent("Kein Stundenplan");
     expect(screen.queryByTestId("saldo-roster-badge")).toBeNull();
+  });
+});
+
+// Code-review fix — compact previously suppressed the outer `label` prop entirely, so
+// two real production surfaces lost the ONLY textual cue distinguishing "Bestätigt"
+// from "Laufender Monat (Prognose)" (SALDO-DISP-03): the Monat-Saldo tile (legacy
+// single-value compact, label = "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)" —
+// time-entries/+page.svelte's monatSaldoStat snippet) and the Gesamt-Saldo tile
+// (split compact, label = "Gesamt-Saldo" — the same page's gesamtSaldoStat snippet).
+// These tests pin the exact real-world prop shapes, not just a synthetic case.
+describe("SaldoAnzeige — compact label visibility (code review fix)", () => {
+  it("legacy compact Monat-Saldo tile shows the Bestätigt/Prognose distinction via the label", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      label: "Monat-Saldo (Bestätigt)",
+      saldoMinutes: 90,
+      isLocked: true,
+    });
+    expect(screen.getByTestId("saldo-label")).toHaveTextContent("Monat-Saldo (Bestätigt)");
+  });
+
+  it("legacy compact Monat-Saldo tile (open month) shows the Prognose label", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      label: "Monat-Saldo (Prognose)",
+      saldoMinutes: 45,
+    });
+    expect(screen.getByTestId("saldo-label")).toHaveTextContent("Monat-Saldo (Prognose)");
+  });
+
+  it("split compact Gesamt-Saldo tile still shows its outer label alongside the confirmed/forecast pair", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      label: "Gesamt-Saldo",
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-label")).toHaveTextContent("Gesamt-Saldo");
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("+1:40");
+    expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent("(+0:40)");
   });
 });
 
