@@ -25,6 +25,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-04
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
   import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
@@ -70,7 +71,16 @@
     // Phase 49.1 — schedule type for per-model widget branching
     scheduleType?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
     month?: { workedHours: number; targetHours: number };
-    overtime: { balanceHours: number };
+    // Phase 97-04 (SALDO-DISP-01/02/04) — additive confirmed/forecast split fields. Optional
+    // so an older cached response (or the API-only no-employeeId branch) still type-checks;
+    // the Überstundenkonto tile falls back to the single-value primitive when undefined.
+    overtime: {
+      balanceHours: number;
+      confirmedMinutes?: number;
+      openMonthMinutes?: number | null;
+      hasClosedMonth?: boolean;
+      rosterIncomplete?: boolean;
+    };
     vacation: { remaining: number; total: number; used: number };
   }
 
@@ -964,11 +974,6 @@
     return `${h}:${String(m).padStart(2, "0")}h`;
   }
 
-  function fmtBalanceHours(hours: number): string {
-    if (hours === 0) return "±0:00";
-    return (hours > 0 ? "+" : "−") + fmtHours(hours);
-  }
-
   function greeting(): string {
     const h = new Date().getHours();
     if (h < 12) return "Guten Morgen";
@@ -1339,23 +1344,32 @@
             delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
           />
           <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
-               an em-dash "—" instead of a numeric saldo + no delta cue. -->
+               an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
+               Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
           {#if isExempt}
             <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
-          {:else}
-            <KPIStat
+          {:else if stats.overtime.confirmedMinutes !== undefined}
+            <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
+                 markup outright (not wrapped): KPIStat's pure-props string contract cannot
+                 express a two-figure tile. Leads with "Bestätigt", subordinates "Laufender
+                 Monat (Prognose)" — the deliberate hierarchy flip this phase exists to ship. -->
+            <SaldoAnzeige
+              variant="expanded"
               label="Überstundenkonto"
-              value={fmtBalanceHours(stats.overtime.balanceHours)}
-              delta={stats.overtime.balanceHours === 0
-                ? "ausgeglichen"
-                : stats.overtime.balanceHours > 0
-                  ? "↗ Guthaben"
-                  : "↘ offen"}
-              deltaTone={stats.overtime.balanceHours === 0
-                ? "neutral"
-                : stats.overtime.balanceHours > 0
-                  ? "good"
-                  : "warn"}
+              confirmedMinutes={stats.overtime.confirmedMinutes}
+              openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
+              hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
+              rosterIncomplete={stats.overtime.rosterIncomplete}
+            />
+          {:else}
+            <!-- Fallback: an older cached /dashboard response without the split fields —
+                 degrade to the primitive's single-value rendering instead of blanking. This
+                 also drops the page-local fmtBalanceHours "±0:00" zero convention in favour of
+                 the primitive's own formatter (SALDO-DISP-05 — one presentation, not three). -->
+            <SaldoAnzeige
+              variant="expanded"
+              label="Überstundenkonto"
+              saldoMinutes={Math.round(stats.overtime.balanceHours * 60)}
             />
           {/if}
           {#if stats.scheduleType === "FLEXTIME"}
