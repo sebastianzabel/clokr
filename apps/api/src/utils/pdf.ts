@@ -4,6 +4,18 @@ import PDFDocument from "pdfkit";
 const BRAND_COLOR = "#4f46e5";
 const HEADER_H = 44;
 
+// ── Saldo labels (SALDO-DISP-05) ─────────────────────────
+// Shared between generateMonthlyReportPdf (single-employee) and streamCompanyMonthlyReportPdf
+// (company-wide) so the exported wording cannot drift between the two generators. Mirrors the
+// screen's vocabulary (apps/web/src/lib/components/saldo/SaldoAnzeige.svelte: confirmedLabel /
+// forecastLabel) — see docs/saldo-anzeige.md.
+export const OVERTIME_LABEL_CONFIRMED = "Überstunden (Bestätigt)";
+export const OVERTIME_LABEL_FORECAST = "Überstunden (Prognose)";
+export const OVERTIME_FORECAST_FOOTNOTE =
+  "Der Monat ist noch nicht abgeschlossen — dieser Wert ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
+export const COMPANY_PROVISIONAL_LEGEND =
+  "* Monat noch nicht abgeschlossen — Saldo ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
+
 interface MonthlyReportData {
   tenantName: string;
   employeeName: string;
@@ -153,8 +165,14 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
 
     doc.text(`Soll-Stunden: ${data.targetHours.toFixed(2)} h`, col1, sy);
     doc.text(`Ist-Stunden: ${data.workedHours.toFixed(2)} h`, col2, sy);
+    const overtimeLabel =
+      data.overtimeConfirmed === null
+        ? "Überstunden"
+        : data.overtimeConfirmed
+          ? OVERTIME_LABEL_CONFIRMED
+          : OVERTIME_LABEL_FORECAST;
     doc.text(
-      `Überstunden: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(2)} h`,
+      `${overtimeLabel}: ${data.overtimeHours >= 0 ? "+" : ""}${data.overtimeHours.toFixed(2)} h`,
       col3,
       sy,
     );
@@ -166,6 +184,19 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
     doc.text(`Sonstige Abwesenheit: ${data.otherAbsenceDays}`, col1, sy);
 
     doc.y = summaryY + 90;
+    // Open-month footnote (Task 2, SALDO-DISP-05) — only when the figure is a labelled Prognose;
+    // omitted for overtimeConfirmed === null (see resolveReportOvertimeHours's `labelled` flag) and
+    // for a confirmed/closed month, which needs no caveat.
+    if (data.overtimeConfirmed === false) {
+      doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+      const footnoteWidth = doc.page.width - 100;
+      const footnoteHeight = doc.heightOfString(OVERTIME_FORECAST_FOOTNOTE, {
+        width: footnoteWidth,
+      });
+      doc.text(OVERTIME_FORECAST_FOOTNOTE, 50, doc.y, { width: footnoteWidth });
+      doc.y += footnoteHeight;
+      doc.fillColor("#111827");
+    }
     doc.moveDown(1);
 
     // Time entries table
@@ -293,6 +324,7 @@ export function streamCompanyMonthlyReportPdf(
 
   doc.fontSize(8).font("Helvetica").fillColor("#111827");
   let rowY = tableTop + 18;
+  let anyProvisional = false; // set when any row's overtimeConfirmed === false (Task 2, SALDO-DISP-05)
 
   for (const row of data.rows) {
     if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
@@ -313,8 +345,13 @@ export function streamCompanyMonthlyReportPdf(
     }
 
     let rx = tableMargin;
-    // Saldo cell sources the already §615-resolved row.overtimeHours (T-97-02-02) — NOT a locally
-    // recomputed workedHours - targetHours, which silently diverges for SHIFT_BASED.
+    // Saldo cell sources the already §615-resolved row.overtimeHours (Task 1 fix, T-97-02-02) —
+    // NOT a locally recomputed workedHours - targetHours, which silently diverges for SHIFT_BASED.
+    let saldoText = `${row.overtimeHours >= 0 ? "+" : ""}${row.overtimeHours.toFixed(2)}`;
+    if (row.overtimeConfirmed === false) {
+      saldoText += " *";
+      anyProvisional = true;
+    }
     doc.text(row.employeeName, rx, rowY, { width: summaryWidths[0] });
     rx += summaryWidths[0];
     doc.text(row.employeeNumber, rx, rowY, { width: summaryWidths[1] });
@@ -323,9 +360,7 @@ export function streamCompanyMonthlyReportPdf(
     rx += summaryWidths[2];
     doc.text(row.workedHours.toFixed(2), rx, rowY, { width: summaryWidths[3] });
     rx += summaryWidths[3];
-    doc.text(`${row.overtimeHours >= 0 ? "+" : ""}${row.overtimeHours.toFixed(2)}`, rx, rowY, {
-      width: summaryWidths[4],
-    });
+    doc.text(saldoText, rx, rowY, { width: summaryWidths[4] });
     rx += summaryWidths[4];
     doc.text(String(row.vacationDays), rx, rowY, { width: summaryWidths[5] });
     rx += summaryWidths[5];
@@ -333,6 +368,19 @@ export function streamCompanyMonthlyReportPdf(
       width: summaryWidths[6],
     });
     rowY += ROW_H;
+  }
+
+  // Provisional-rows legend (Task 2, SALDO-DISP-05) — only when at least one row's month is not
+  // yet closed. Reuses the same pagination discipline as the row loop above.
+  if (anyProvisional) {
+    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
+      rowY = nextPage();
+    }
+    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+    doc.text(COMPANY_PROVISIONAL_LEGEND, tableMargin, rowY, {
+      width: doc.page.width - 2 * tableMargin,
+    });
+    doc.fillColor("#111827");
   }
 
   // Footer on last page
