@@ -134,3 +134,148 @@ describe("SaldoAnzeige — exempt state (Phase 76.7 D-24, UI-V19-04)", () => {
     expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--positive");
   });
 });
+
+// Phase 97-01 (TRACER, SALDO-DISP-01/03/05) — split mode: "Bestätigt" (confirmed) vs.
+// "Laufender Monat (Prognose)" (forecast) vs. "Voraussichtlich gesamt" (combined). Split
+// rendering activates only when `confirmedMinutes` is provided (!== undefined) — the
+// regression test at the end proves omitting it still renders the pre-Phase-97 legacy value.
+// States named per 97-UI-SPEC.md's State Matrix (A1–A4 confirmed, B1–B3 forecast, D combined).
+describe("SaldoAnzeige — split mode (Phase 97-01)", () => {
+  it("A1: confirmed positive renders +sign, .saldo--positive/.saldo--split, and 'Guthaben' caption", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 120,
+      openMonthMinutes: 30,
+      hasClosedMonth: true,
+    });
+    const root = screen.getByTestId("saldo-anzeige");
+    expect(root).toHaveClass("saldo--positive");
+    expect(root).toHaveClass("saldo--split");
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("+2:00");
+    expect(screen.getByTestId("saldo-confirmed-caption")).toHaveTextContent("Guthaben");
+  });
+
+  it("A2: confirmed zero + hasClosedMonth=true renders 'ausgeglichen'", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 0,
+      openMonthMinutes: 15,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--zero");
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("0:00");
+    expect(screen.getByTestId("saldo-confirmed-caption")).toHaveTextContent("ausgeglichen");
+  });
+
+  it("A3: confirmed zero + hasClosedMonth=false renders 'noch kein Monatsabschluss', NOT 'ausgeglichen'", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 0,
+      openMonthMinutes: 15,
+      hasClosedMonth: false,
+    });
+    const caption = screen.getByTestId("saldo-confirmed-caption");
+    expect(caption).toHaveTextContent("noch kein Monatsabschluss");
+    expect(caption).not.toHaveTextContent("ausgeglichen");
+  });
+
+  it("A4: confirmed negative renders U+2212 minus, .saldo--negative, and 'offen' caption", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: -90,
+      openMonthMinutes: 0,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-anzeige")).toHaveClass("saldo--negative");
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("−1:30");
+    expect(screen.getByTestId("saldo-confirmed-caption")).toHaveTextContent("offen");
+  });
+
+  it("B1: positive forecast renders the value without any good/bad/sign class (never colour-coded)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    const fv = screen.getByTestId("saldo-forecast-value");
+    expect(fv).toHaveTextContent("+0:40");
+    expect(fv).not.toHaveClass("saldo--good");
+    expect(fv).not.toHaveClass("saldo--bad");
+    expect(fv).not.toHaveClass("saldo--positive");
+    expect(fv).not.toHaveClass("saldo--negative");
+  });
+
+  it("B2: zero forecast renders 0:00 without any good/bad/sign class", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: 0,
+      hasClosedMonth: true,
+    });
+    const fv = screen.getByTestId("saldo-forecast-value");
+    expect(fv).toHaveTextContent("0:00");
+    expect(fv).not.toHaveClass("saldo--good");
+    expect(fv).not.toHaveClass("saldo--bad");
+  });
+
+  it("B3: negative forecast renders U+2212 minus WITHOUT --bad (locked decision: forecast is never colour-coded)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: -25,
+      hasClosedMonth: true,
+    });
+    const fv = screen.getByTestId("saldo-forecast-value");
+    expect(fv).toHaveTextContent("−0:25");
+    expect(fv).not.toHaveClass("saldo--bad");
+    expect(fv).not.toHaveClass("saldo--negative");
+  });
+
+  it("D: combined value equals confirmed + forecast (pure display arithmetic, no new computation path)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 100,
+      openMonthMinutes: -25,
+      hasClosedMonth: true,
+    });
+    // 100 + (-25) = 75min = +1:15
+    expect(screen.getByTestId("saldo-combined-value")).toHaveTextContent("+1:15");
+  });
+
+  it("null-forecast (Task 1 fail-safe shape): renders en-dash and suppresses the combined line entirely", () => {
+    renderWithTheme(SaldoAnzeige, {
+      confirmedMinutes: 194,
+      openMonthMinutes: null,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent("—");
+    expect(screen.queryByTestId("saldo-combined-value")).toBeNull();
+  });
+
+  it("regression: omitting confirmedMinutes still renders the legacy single value (no split)", () => {
+    renderWithTheme(SaldoAnzeige, { saldoMinutes: 120 });
+    const root = screen.getByTestId("saldo-anzeige");
+    expect(root).not.toHaveClass("saldo--split");
+    expect(screen.getByTestId("saldo-value")).toHaveTextContent("+2:00");
+    expect(screen.queryByTestId("saldo-confirmed-value")).toBeNull();
+  });
+
+  it("compact split mode collapses captions/combined line but keeps confirmed+forecast inline", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 135,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("+2:15");
+    expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent("(+0:40)");
+    expect(screen.queryByTestId("saldo-confirmed-caption")).toBeNull();
+    expect(screen.queryByTestId("saldo-combined-value")).toBeNull();
+    expect(screen.queryByTestId("saldo-forecast-label")).toBeNull();
+  });
+
+  it("compact A3 ('noch kein Monatsabschluss') is the ONE caption UI-SPEC keeps even in compact", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 0,
+      openMonthMinutes: 10,
+      hasClosedMonth: false,
+    });
+    expect(screen.getByTestId("saldo-confirmed-caption")).toHaveTextContent(
+      "noch kein Monatsabschluss",
+    );
+  });
+});
