@@ -158,9 +158,34 @@ export async function recalculateSnapshots(
   // Both sites resolve from the SAME `carryOverBase` local computed above. With both rewired,
   // injectedDelta collapses to 0 for exactly those head rows — the opening balance stops being
   // an "unexplained delta" and becomes an explained input.
+  //
+  // Phase 99 Plan 06 (OB-03) — head-row baseline refinement, found while building the admin
+  // endpoint's Test 7 (an OpeningBalance created via the endpoint for an employee who ALREADY
+  // has an existing, not-yet-recomputed head snapshot). Site B above assumes the stored head row
+  // was already computed/patched WITH the current OpeningBalance in mind (true for an OB-04
+  // migration-patched row, and true on the SECOND+ recalc after this fix runs once) — but a row
+  // that predates the OpeningBalance entirely (S_old == B_old, i.e. its implied predecessor is
+  // exactly 0 — the pristine "no carry-in at all" shape) does NOT meet that assumption. Using
+  // carryOverBase as the delta baseline for such a row computes injectedDelta = -carryOverBase,
+  // which then CANCELS the freshly-applied opening balance back to net zero — the admin's new
+  // value silently vanishes from the very first recalc after creating it.
+  //
+  // Fix: only fall back to carryOverBase when the row's OWN implied predecessor
+  // (storedCarryOver - storedBalanceMinutes) is non-zero — i.e. some value (an unrelated hand
+  // injection, OR an already-applied opening balance) is actually present to preserve. When the
+  // implied predecessor is exactly 0, there is nothing to preserve: use 0 as the baseline so the
+  // recompute's own carryOverBase (which already resolves the OB) applies cleanly. This is a
+  // NARROWING of the guard (it only stops protecting a delta that is provably absent), never a
+  // relaxation — a genuine unrelated hand injection with a non-zero implied predecessor still
+  // falls through to the original carryOverBase baseline, byte-identical to before this change.
   const frozenPrevStoredCarryOverById = new Map<string, number>();
   snapshots.forEach((s, i) => {
-    frozenPrevStoredCarryOverById.set(s.id, i === 0 ? carryOverBase : snapshots[i - 1].carryOver);
+    if (i === 0) {
+      const impliedPredecessor = s.carryOver - s.balanceMinutes;
+      frozenPrevStoredCarryOverById.set(s.id, impliedPredecessor === 0 ? 0 : carryOverBase);
+    } else {
+      frozenPrevStoredCarryOverById.set(s.id, snapshots[i - 1].carryOver);
+    }
   });
 
   for (const snapshot of snapshots) {
