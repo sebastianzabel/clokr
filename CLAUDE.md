@@ -73,6 +73,23 @@ Legal retention periods (Germany):
 
 Current: recalculated from hire date on every request (does not scale). Target architecture (SaldoSnapshot per month, Jahresübertrag, correction flow) — see GitHub issue #6.
 
+## Releases & Deployment
+
+**Read `docs/release-process.md` before cutting, tagging or deploying a release.** It is the
+canonical order and it is NOT reconstructible from the workflows alone.
+
+The two rules that get broken most often:
+
+- **Bump the version BEFORE the tag.** The version is baked into the image from `package.json`
+  (`apps/api/src/app.ts:59-65`); promotion is a digest-preserving re-tag with no rebuild, so tagging
+  a pre-bump image makes `/api/v1/version` report the old version.
+- **Never `kubectl set image` on int.** ArgoCD runs `selfHeal: true` and reverts it in seconds.
+  Change `image.tag` in `k8s-homelab/argocd-apps/clokr-app.yaml` instead.
+
+Environments: dev = local docker · int = k3s (ArgoCD) · prod = dmz-proxy (`/opt/awh-infra/.env`).
+Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` — never restore a raw
+prod dump to int.
+
 ## CVE / Security Vulnerability Handling
 
 Trivy/Dependabot process (update direct/transitive/base-image, justify exceptions in `.trivyignore`, never lower severity, document in commit) → see `docs/cve-handling.md`.
