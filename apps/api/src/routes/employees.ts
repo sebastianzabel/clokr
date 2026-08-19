@@ -1171,6 +1171,13 @@ export async function employeeRoutes(app: FastifyInstance) {
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
           tx,
         });
+        // ⚠️ PRE-EXISTING GAP, recorded in Phase 99 (OB-05) — deliberately NOT fixed here.
+        // This handler does not deleteMany() SaldoSnapshot, whose Employee relation is
+        // onDelete: Restrict — so tx.employee.delete() below will fail with an FK-restrict
+        // violation for any employee that ever had a closed month. Phase 99 adds OpeningBalance
+        // with the same Restrict relation, which inherits (does not cause) the same failure mode.
+        // Fixing the cascade is orthogonal to opening balances and needs its own retention/
+        // Revisionssicherheit decision (what may legally be hard-deleted after §147 AO expiry).
         // Break records (nested under TimeEntry) — delete first
         await tx.break.deleteMany({ where: { timeEntry: { employeeId: id } } });
         // Restrict-protected models

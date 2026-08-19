@@ -28,6 +28,15 @@
  * Preserved (for retention compliance §147 AO / §257 HGB / § 16 ArbZG):
  *   TimeEntry, LeaveRequest, Absence, Schedule, OvertimeAccount row counts
  *   stay unchanged — rows are mutated in place, never deleted.
+ *   OpeningBalance (Phase 99, OB-05): likewise preserved by omission — the row IS the
+ *   Nachweis that a migrated Alt-Überstunden value existed and why. It carries no PII of
+ *   its own (employeeId reference only; reason/evidenceRef are operational text, and MUST
+ *   NOT be used to store personal data). createdBy/approvedBy are left untouched by
+ *   anonymization, following the established SaldoSnapshot.closedBy precedent (also
+ *   preserved by omission — neither this function nor the batch script touches it).
+ *   Retention: default 10-year §147 AO bucket, same as SaldoSnapshot/OvertimeAccount —
+ *   an opening balance is payroll-relevant Buchungsbeleg material, not merely a working-
+ *   time record, so the shorter 2-year §16 ArbZG floor does not apply to it.
  *
  * Caller responsibilities:
  *   - Open the transaction (`prisma.$transaction(...)`)
