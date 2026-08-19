@@ -8,9 +8,22 @@ COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
 COPY packages/types/package.json ./packages/types/
 
-# Install deps — skip only sharp's postinstall to prevent QEMU crash on cross-platform builds.
-# All other scripts run normally so pnpm overrides resolve correctly.
+# Install deps. pnpm 10 blocks ALL dependency build scripts by default; the
+# onlyBuiltDependencies allowlist in pnpm-workspace.yaml permits exactly the Prisma
+# packages (@prisma/engines, prisma), which is what materializes the schema-engine
+# binary at install time. sharp deliberately stays OFF that allowlist — its postinstall
+# crashes under QEMU on this cross-platform (linux/amd64,linux/arm64) build.
 RUN pnpm install --frozen-lockfile
+
+# Build gate: Prisma's schema-engine binary MUST be materialized at install time.
+# pnpm 10 blocks dependency build scripts by default; without the onlyBuiltDependencies
+# allowlist in pnpm-workspace.yaml, @prisma/engines' postinstall never runs, the binary is
+# missing, and `prisma migrate deploy` tries to download it from binaries.prisma.sh at
+# container start. That is what crash-looped release 1.9.15 on int (no cluster egress,
+# ECONNRESET). Do not remove this check — it is the only thing that catches the regression
+# before the image ships.
+RUN test -n "$(find /app/node_modules -name 'schema-engine*' -type f -print -quit)" \
+    || (echo "FATAL: no Prisma schema-engine binary in /app/node_modules — check onlyBuiltDependencies in pnpm-workspace.yaml" >&2; exit 1)
 
 # ── Stage 2: Build ──────────────────────────────────────────────────────────
 FROM deps AS build
@@ -58,6 +71,13 @@ WORKDIR /app
 # If you later switch to `pnpm install --prod`, ensure tsx + prisma stay available
 # (either move to dependencies or pre-compile scripts/anonymize-dump.ts).
 COPY --from=build /app/node_modules/ ./node_modules/
+
+# Build gate (see the identical check in the deps stage): assert the schema-engine binary
+# actually survived the COPY into the runtime stage. The container has no egress to
+# binaries.prisma.sh, so a missing binary here = crash loop at `prisma migrate deploy`.
+RUN test -n "$(find /app/node_modules -name 'schema-engine*' -type f -print -quit)" \
+    || (echo "FATAL: Prisma schema-engine binary missing in runtime node_modules" >&2; exit 1)
+
 COPY --from=build /app/apps/api/ ./apps/api/
 COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./
