@@ -21,6 +21,7 @@ import {
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { recalculateSnapshots } from "../utils/recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -33,6 +34,20 @@ const payoutSchema = z.object({
   employeeId: z.string().uuid(),
   hours: z.number().positive(),
   note: z.string().optional(),
+});
+
+// Phase 99 (OB-03) — an opening balance is an assertion about time before tracking began.
+// `.optional().nullable()` on every optional field, not bare `.optional()`: the Clokr web
+// clients send `field: x ? x : null`, and a bare `.optional()` rejects an explicit `null`
+// with a naked "Validierungsfehler" — this has shipped as a production bug once (v1.9.11).
+const openingBalanceSchema = z.object({
+  employeeId: z.string().uuid(),
+  minutes: z.number().int(), // signed; negative = übernommene Minusstunden
+  effectiveFrom: z.string().date(), // YYYY-MM-DD, @db.Date
+  reason: z.string().min(10).max(500), // Pflichtfeld — Revisionssicherheit
+  evidenceRef: z.string().max(200).optional().nullable(),
+  approvedBy: z.string().uuid().optional().nullable(),
+  supersededReason: z.string().max(500).optional().nullable(), // required when replacing an existing row
 });
 
 // Phase 76.7 (D-07) — § 18 ArbZG exempt employees never appear in close-month*
@@ -1581,6 +1596,141 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
 
       return reply.code(201).send(snapshot);
+    },
+  });
+
+  // ── Eröffnungssaldo (OB-03) ───────────────────────────────────────────────────
+
+  // POST /api/v1/overtime/opening-balance – Eröffnungssaldo erfassen/korrigieren
+  // ADMIN only (locked decision D-05): an opening balance is an assertion about time
+  // before tracking began, not manager routine.
+  app.post("/opening-balance", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const {
+        employeeId,
+        minutes,
+        effectiveFrom,
+        reason,
+        evidenceRef,
+        approvedBy,
+        supersededReason,
+      } = openingBalanceSchema.parse(req.body);
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true, hireDate: true },
+      });
+
+      // Tenant isolation (mirrors leave.ts:1206-1216): fetch-then-compare via
+      // employee.tenantId, 404 (never 403 — which would confirm the id exists).
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "OpeningBalance",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const current = await app.prisma.openingBalance.findFirst({
+        where: { employeeId, superseded: false },
+      });
+
+      if (current && !supersededReason) {
+        return reply.code(400).send({
+          error:
+            "Für die Korrektur eines bestehenden Eröffnungssaldos ist eine Begründung erforderlich.",
+        });
+      }
+
+      const effectiveFromDate = new Date(`${effectiveFrom}T00:00:00Z`);
+
+      // ── ONE $transaction for the mutation + its audit (locked decision D-06) ──
+      // ORDER MATTERS: the partial unique index allows at most ONE superseded=false
+      // row per employee and is NOT deferrable — the old row must be deactivated
+      // BEFORE the new row is created, never the other way round, not even
+      // momentarily inside this transaction.
+      const created = await app.prisma.$transaction(async (tx) => {
+        if (current) {
+          await tx.openingBalance.update({
+            where: { id: current.id },
+            data: { superseded: true, supersededReason },
+          });
+        }
+
+        const row = await tx.openingBalance.create({
+          data: {
+            employeeId,
+            minutes,
+            effectiveFrom: effectiveFromDate,
+            reason,
+            evidenceRef: evidenceRef ?? null,
+            source: "ADMIN_ENTRY",
+            createdBy: req.user.sub,
+            // approvedBy/approvedAt are POPULATED but NOT ENFORCED (locked decision D-05):
+            // with a single admin in the real deployment, a mandatory second-person approval
+            // would either block the operation outright or degrade into a self-approval
+            // fiction. The columns stay for when a second admin exists. This is deliberately
+            // weaker than the leave-cancellation four-eyes rule, stated as such rather than
+            // left to look like an oversight.
+            approvedBy: approvedBy ?? null,
+            approvedAt: approvedBy ? new Date() : null,
+          },
+        });
+
+        if (current) {
+          await tx.openingBalance.update({
+            where: { id: current.id },
+            data: { supersededBy: row.id },
+          });
+        }
+
+        await app.audit({
+          userId: req.user.sub,
+          action: current ? "SUPERSEDE" : "CREATE",
+          entity: "OpeningBalance",
+          entityId: row.id,
+          oldValue: current ?? undefined,
+          newValue: row,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+
+        return row;
+      });
+
+      // Phase 99 (D-06). recalculateSnapshots() opens its OWN $transaction per snapshot
+      // and cannot join an external one, so this deliberately runs AFTER the commit above
+      // rather than inside it. The improvement over the Phase-94 precedent (leave.ts:1510)
+      // is NOT the transaction boundary — it is the absence of .catch(): a failed recalc
+      // must surface as a 5xx so the operator retries, never be logged and forgotten while
+      // the stored value and the chain disagree. recalculateSnapshots is documented
+      // idempotent, so a retry after a partial failure is safe.
+      //
+      // recalcFrom must be at/before the employee's FIRST snapshot, otherwise prevSnapshot
+      // is non-null and the opening balance is (correctly) ignored — the recalc would
+      // appear to do nothing. Taking the earlier of effectiveFrom and hireDate guarantees
+      // a full-history re-thread.
+      const recalcFrom = new Date(
+        Math.min(effectiveFromDate.getTime(), employee.hireDate.getTime()),
+      );
+      const { lockedMonthsSkipped } = await recalculateSnapshots(app, employeeId, recalcFrom);
+
+      const warning =
+        lockedMonthsSkipped.length > 0
+          ? `Der Eröffnungssaldo wurde gespeichert. ${lockedMonthsSkipped.length} abgeschlossene(r) Monat(e) wurden nicht neu berechnet (Abschluss ist unveränderbar) und müssen ggf. manuell geprüft werden.`
+          : undefined;
+
+      return reply.code(201).send({
+        openingBalance: created,
+        supersededId: current?.id ?? null,
+        lockedMonthsSkipped,
+        ...(warning ? { warning } : {}),
+      });
     },
   });
 
