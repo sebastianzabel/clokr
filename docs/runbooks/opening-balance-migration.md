@@ -163,6 +163,169 @@ by superseding the row through `POST /api/v1/overtime/opening-balance` with a
 `SaldoSnapshot`, **no saldo restoration is needed or possible through this path** — the stored
 chain was never at risk in the first place.
 
+## Rehearsal (local, 2026-08-19)
+
+Full end-to-end rehearsal of this runbook on the LOCAL docker-compose stack only
+(`postgresql://clokr:password@localhost:5432/clokr`) — `DATABASE_URL` was echoed and confirmed
+`localhost:5432` before every DB-touching command; the seeding script additionally refuses to run
+at all against any non-`localhost` URL. Nothing here ever touched int or prod.
+
+**Fixture.** Real local data was near-empty for this migration (local dev DB reset/re-seeded
+earlier the same day), so a realistic fixture was constructed rather than relying on "nothing to
+migrate" as the proof:
+
+- A throwaway tenant + ADMIN user + three EMPLOYEE records (a, b, c), hired 2025-09-01.
+- Real `TimeEntry` rows + the REAL `POST /overtime/close-month` endpoint (confirmGaps=true) closed
+  genuine `SaldoSnapshot` rows for a and b (Sept 2025) and c (Sept + Oct 2025) — worked/expected/
+  balance/carryOver are all real `closeEmployeeMonth()` output, not hand-typed numbers.
+- Deltas were then hand-injected directly on the stored `carryOver`, mirroring exactly how the
+  real historical corrections happened (an operator patching a snapshot's `carryOver` by hand):
+  - **a**: `+4200` on its only (first) month, WITH a matching `AuditLog` row
+    (`newValue.reason = "opening balance from old time-tracking system"`, the allowlist entry) →
+    expected `MIGRATED_FROM_SNAPSHOT`.
+  - **b**: `-1080` on its only (first) month, with NO `AuditLog` reason at all → expected
+    `RECONSTRUCTED`.
+  - **c**: `+900` on its SECOND month (Oct 2025), i.e. NOT the chain head → expected
+    `needs_review` / `delta_not_at_chain_head`.
+
+**Step 2 — audit BEFORE (full fixture in place):**
+
+```
+== Tenant: 310de0.. ==
+  -- emp=bf9569f4 -- [UNEXPLAINED] month=2025-10 delta=+900 kind=normal auditReasons=0 rule=none
+  -- emp=c9d5280f -- [UNEXPLAINED] month=2025-09 delta=-1080 kind=normal auditReasons=0 rule=none
+  -- emp=4b83416d -- [documented ] month=2025-09 delta=+4200 rule=allowlist:opening balance from old time-tracking system
+
+Summary: 368 active MONTHLY snapshot(s) / 25 employees / 9 tenants
+  delta==0 links: 365   documented: 1   UNEXPLAINED: 2   duplicate-month: 0
+Exit code: 2
+```
+
+**Step 3 — dry-run, abort path:**
+
+```
+$ tsx scripts/migrate-opening-balances.ts --all-tenants
+  [eligible    ] emp=4b83416d ... minutes=4200 source=MIGRATED_FROM_SNAPSHOT
+  [NEEDS REVIEW] emp=bf9569f4 blocker=delta_not_at_chain_head — Die einzige nicht erklärte
+                 Abweichung liegt in Monat 2025-10, nicht am Kettenanfang. ...
+  [eligible    ] emp=c9d5280f ... minutes=-1080 source=RECONSTRUCTED
+
+1 employee(s) need review — ABORTING. Nothing written, for nobody, not even the employees
+classified eligible above.
+Exit code: 2
+```
+
+Verified directly against the database (not just trusted from the log): `select count(*) from
+"OpeningBalance" where "employeeId" in (a, b, c)` → **0 rows**, for both a and b — proving the
+`needs_review` abort really did write nothing for the eligible employees either.
+
+**Step 4 — repair c, re-run dry-run (clean):**
+
+c's month-2 `carryOver` was reverted to its pre-injection (legit, real `closeEmployeeMonth()`)
+value. Re-running the dry-run:
+
+```
+  [eligible    ] emp=4b83416d month=2025-09 minutes=4200 source=MIGRATED_FROM_SNAPSHOT reason="opening balance from old time-tracking system"
+  [skip        ] emp=bf9569f4 — chain already zero-drift, nothing to migrate
+  [eligible    ] emp=c9d5280f month=2025-09 minutes=-1080 source=RECONSTRUCTED reason="Eröffnungssaldo aus dem Alt-System, übernommen aus SaldoSnapshot 9b4f64.. (Monat 2025-09, -1080 Min.). ..."
+
+DRY-RUN: 2 OpeningBalance row(s) would be created.
+Exit code: 0
+```
+
+Exactly the expected sources: a via the allowlist match, b honestly reconstructed, c no longer a
+candidate at all.
+
+**Audit run immediately BEFORE `--apply` (the true bracket for the byte-identical claim below):**
+
+```
+== Tenant: 310de0.. ==
+  -- emp=c9d5280f -- [UNEXPLAINED] month=2025-09 delta=-1080
+  -- emp=4b83416d -- [documented ] month=2025-09 delta=+4200 rule=allowlist:...
+
+Summary: 368 active MONTHLY snapshot(s) / 25 employees / 9 tenants
+  delta==0 links: 366   documented: 1   UNEXPLAINED: 1   duplicate-month: 0
+Exit code: 2
+```
+
+(b still shows as `UNEXPLAINED` here and after — expected and unchanged: the Phase 98 audit does
+not yet know about `OpeningBalance`, see section 7 below. This is the SAME reason the two audit
+runs bracketing the apply must be compared to EACH OTHER, not to the very first "before fixture"
+run in Step 2, which additionally still had c's mid-chain deviation present.)
+
+**Step 4 cont'd — apply:**
+
+```
+$ tsx scripts/migrate-opening-balances.ts --tenant-id <rehearsal-tenant> --apply --actor-id <local-admin-id>
+  [eligible    ] emp=4b83416d ... minutes=4200 source=MIGRATED_FROM_SNAPSHOT
+  [skip        ] emp=bf9569f4 — chain already zero-drift, nothing to migrate
+  [eligible    ] emp=c9d5280f ... minutes=-1080 source=RECONSTRUCTED
+
+Applied: 2 OpeningBalance row(s) created.
+Exit code: 0
+```
+
+**Step 5 — audit AFTER, and the snapshot comparison:**
+
+`SaldoSnapshot` dump for a/b/c, before `--apply` vs after `--apply`:
+
+```
+a: id=8cb108c7 2025-08-31..2025-09-30 worked=300 expected=10560 balance=-10260 carryOver=-6060
+b: id=9b4f6488 2025-08-31..2025-09-30 worked=300 expected=10560 balance=-10260 carryOver=-11340
+c: id=7f9363.. 2025-08-31..2025-09-30 worked=300 expected=10560 balance=-10260 carryOver=-10260
+c: id=178d78.. 2025-09-30..2025-10-31 worked=300 expected=10080 balance=-9780  carryOver=-20040
+```
+
+`diff before.txt after.txt` → **empty — byte-identical.**
+
+Full Phase 98 audit output, before `--apply` vs after `--apply`:
+
+```
+Summary: 368 active MONTHLY snapshot(s) / 25 employees / 9 tenants
+  delta==0 links: 366   documented: 1   UNEXPLAINED: 1   duplicate-month: 0
+Exit code: 2
+```
+
+`diff before-apply.txt after-apply.txt` → **empty — byte-identical, same counts, same exit code
+(2 — from b's still-open `UNEXPLAINED` finding, unrelated to and unaffected by this migration).**
+This is the proof required by section 6 above: the migration wrote `OpeningBalance` + `AuditLog`
+rows only, and the `SaldoSnapshot` chain — and therefore this audit's entire view of the world —
+did not move by so much as one minute.
+
+**Step 7 — stability under a real recalc trigger.**
+
+Deviation from the plan's literal suggestion (documented per Rule 3 — blocking issue, not an
+architectural change): the running local `api` docker container predates Phase 99 Plan 06's
+`POST /overtime/opening-balance` route, and `docker compose build api` could not be used to
+refresh it — the build hangs indefinitely at `npx prisma generate` fetching `prisma@7.9.1`, which
+this sandbox has no outbound network path for. Rather than skip this step, the rehearsal called
+the exact same exported functions the route handler calls
+(`recalculateSnapshots()` from `apps/api/src/utils/recalculate-snapshots.ts`, plus an
+`app.audit()` shim writing `AuditLog` with the identical shape as the real
+`apps/api/src/plugins/audit.ts` decorator) directly against CURRENT SOURCE via `tsx` — the same
+transaction shape (supersede-then-create inside one `$transaction`) as the route, only skipping
+the HTTP/Zod/tenant-isolation wrapper, which this step is not exercising.
+
+Superseded employee a's `OpeningBalance` with a NEW row carrying the SAME value (`4200` minutes,
+`source=ADMIN_ENTRY`), then called `recalculateSnapshots(app, employeeA, 2025-09-01)` — the exact
+trigger a real supersede-with-same-value through the ADMIN endpoint would fire.
+
+Result: `{"lockedMonthsSkipped":[]}` — no month was skipped, meaning the recompute genuinely ran.
+`SaldoSnapshot` dump for a/b/c afterwards is, again, **byte-identical** to the post-`--apply` dump
+above (same `diff`, empty), and the Phase 98 audit output is **still byte-identical** to the
+before/after-apply runs. This is the real proof the plan asked for: the opening balance is now a
+documented INPUT that `getCarryOverBase()` resolves cleanly — recomputing employee a's chain from
+scratch reproduces exactly the same stored `carryOver`, not a fragile value that only happens to
+still be correct because nothing has touched it yet.
+
+**Cleanup.** All fixture rows (`OpeningBalance`, `AuditLog`, `SaldoSnapshot`, `TimeEntry`,
+`WorkSchedule`, `OvertimeAccount`, `Employee`, `User`, `TenantConfig`, `Tenant`) were deleted after
+the rehearsal. Re-running the Phase 98 audit confirms the local dev DB is back to its pre-rehearsal
+state: `0 UNEXPLAINED / 0 documented`, exit `0`. The seeding/teardown script itself was a scratchpad
+artifact (`node:util`-free, no framework dependency beyond `@clokr/db` + `@prisma/adapter-pg`) and
+was NOT committed — per this plan's instruction not to add a fixture script under
+`apps/api/scripts/`.
+
 ## No-PII note
 
 Output contains truncated employee and tenant ids only — no names, no employee numbers, no
