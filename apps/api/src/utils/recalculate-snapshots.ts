@@ -22,6 +22,7 @@ import { closeEmployeeMonth } from "./close-employee-month"; // Phase 76.26 — 
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
+import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -82,7 +83,14 @@ export async function recalculateSnapshots(
     },
     orderBy: { periodStart: "desc" },
   });
-  let runningCarryOver = prevSnapshot?.carryOver ?? 0;
+  // Phase 99 (OB-02) — chain-head seed. getCarryOverBase() resolves
+  // prevSnapshot?.carryOver ?? openingBalance?.minutes ?? 0: the opening balance is
+  // consulted ONLY when there is no predecessor at all (a true chain head). Computed
+  // ONCE here and reused below for the v1.9.14 guard's frozen base — NEVER call this
+  // helper a second time for the same chain, or the two sites could resolve to
+  // different bases if the underlying data changes between calls.
+  const carryOverBase = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
+  let runningCarryOver = carryOverBase;
 
   // ── 2026-08 hardening, round 2: unexplained-delta preservation ─────────────────
   //
@@ -112,12 +120,37 @@ export async function recalculateSnapshots(
   // inside this loop (we only ever create NEW rows in the DB and track values in
   // local variables) — but we freeze it explicitly into its own map, rather than
   // relying on that invariant holding forever under future refactors.
+  //
+  // Phase 99 (OB-07) — KEPT DELIBERATELY, not left behind.
+  // Once opening balances live in the OpeningBalance model, this guard becomes a no-op for
+  // them (injectedDelta collapses to 0 — see the base rewire below). It is retained anyway:
+  // it is the only protection against the OTHER class of path that caused the 2026-06-10
+  // incident — one-off scripts that re-thread the chain outside this function entirely. The
+  // value was destroyed once precisely because it had a single guardian. Retiring this guard
+  // would be a tidy-up side effect, never a decision; if it ever becomes a burden that must be
+  // its own reasoned change.
+  // Also unchanged: the base MUST come from the ORIGINAL, pre-mutation stored values. Deriving
+  // it from a row this loop has already superseded/recreated reintroduces the bug one level
+  // removed. `carryOverBase` above is read once, before the loop, for exactly that reason.
+  //
+  // Phase 99 (OB-02) — WHY SITE B IS NOT OPTIONAL (do not "simplify" this back to `?? 0`):
+  // injectedDelta = (storedCarryOver - balanceMinutes) - prevStoredCarryOver, and the guard
+  // below adds that delta back on top of the freshly computed carryOver. For a migrated
+  // employee the head row's stored carryOver ALREADY contains the opening balance. If the
+  // chain-head seed above is seeded with the opening balance but this frozen base still used
+  // `0`, then:
+  //   - the legitimate recompute produces carryOver = OB + balance (correct), and
+  //   - injectedDelta evaluates to OB - 0 = OB (non-zero), and
+  //   - the guard adds OB a second time -> the displayed saldo silently DOUBLES the opening
+  //     balance. It looks plausible (right sign, right rough magnitude) which is exactly why
+  //     it is dangerous — see the OB-06 regression test, which pins an exact integer for
+  //     precisely this reason.
+  // Both sites resolve from the SAME `carryOverBase` local computed above. With both rewired,
+  // injectedDelta collapses to 0 for exactly those head rows — the opening balance stops being
+  // an "unexplained delta" and becomes an explained input.
   const frozenPrevStoredCarryOverById = new Map<string, number>();
   snapshots.forEach((s, i) => {
-    frozenPrevStoredCarryOverById.set(
-      s.id,
-      i === 0 ? (prevSnapshot?.carryOver ?? 0) : snapshots[i - 1].carryOver,
-    );
+    frozenPrevStoredCarryOverById.set(s.id, i === 0 ? carryOverBase : snapshots[i - 1].carryOver);
   });
 
   for (const snapshot of snapshots) {
