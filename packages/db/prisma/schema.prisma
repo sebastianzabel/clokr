@@ -338,6 +338,8 @@ model Employee {
   workSchedules            WorkSchedule[]
   overtimeAccount          OvertimeAccount?
   saldoSnapshots           SaldoSnapshot[]
+  // Phase 99 — onDelete: Restrict, mirrors saldoSnapshots (never cascade-delete saldo history)
+  openingBalances          OpeningBalance[]
   timeEntries              TimeEntry[]
   leaveEntitlements        LeaveEntitlement[]
   leaveRequests            LeaveRequest[]
@@ -489,6 +491,52 @@ model SaldoSnapshot {
 enum SaldoPeriodType {
   MONTHLY
   YEARLY
+}
+
+// ─────────────────────────────────────────────
+// ERÖFFNUNGSSALDO (übernommene Alt-Überstunden)
+// ─────────────────────────────────────────────
+
+// Phase 99 (OB-01). Provenance of the value, for a Betriebsprüfer:
+//   MIGRATED_FROM_SNAPSHOT — moved off an existing SaldoSnapshot.carryOver injection,
+//                            provenance recovered from AuditLog.
+//   RECONSTRUCTED          — the value is real but its original justification could not be
+//                            recovered from AuditLog; the row is honestly marked incomplete.
+//   ADMIN_ENTRY            — entered through the ADMIN endpoint (POST /overtime/opening-balance).
+enum OpeningBalanceSource {
+  MIGRATED_FROM_SNAPSHOT
+  RECONSTRUCTED
+  ADMIN_ENTRY
+}
+
+model OpeningBalance {
+  id            String               @id @default(uuid())
+  employeeId    String
+  minutes       Int // signed: positive = übernommenes Guthaben, negativ = übernommene Minusstunden
+  effectiveFrom DateTime             @db.Date // Stichtag, ab dem der Wert gilt (i. d. R. Tracking-Beginn)
+  reason        String // Freitext-Begründung (Revisionssicherheit — Pflichtfeld)
+  evidenceRef   String? // Beleg-Referenz (Ticket, Dokument, Altsystem-Export)
+  source        OpeningBalanceSource
+  createdBy     String // userId (SYSTEM-Migrationen setzen die Actor-Id des Operators)
+  approvedBy    String? // Phase 99: befüllt, aber NICHT erzwungen (Ein-Admin-Deployment)
+  approvedAt    DateTime?            @db.Timestamptz
+  createdAt     DateTime             @default(now()) @db.Timestamptz
+
+  // Korrekturen superseden + neu anlegen, niemals in-place editieren (Revisionssicherheit).
+  superseded       Boolean @default(false)
+  supersededReason String?
+  supersededBy     String? // id der Nachfolge-Zeile
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  // Uniqueness enforced by a PARTIAL unique index in the migration (Prisma's DSL cannot
+  // express a WHERE clause — same asymmetry as SaldoSnapshot above, deliberately):
+  //   CREATE UNIQUE INDEX "OpeningBalance_active_unique"
+  //     ON "OpeningBalance" ("employeeId")
+  //     WHERE "superseded" = false;
+  // At most ONE active (superseded=false) row per employee. Superseded rows are preserved
+  // forever (Revisionssicherheit, retention §147 AO — see anonymize.ts preserve-list).
+  @@index([employeeId])
 }
 
 // ─────────────────────────────────────────────
