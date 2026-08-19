@@ -20,6 +20,7 @@ import {
 } from "../utils/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
+import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -1109,7 +1110,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         },
         orderBy: { periodStart: "desc" },
       });
-      const carryOverIn = prevSnapshot?.carryOver ?? 0;
+      // Phase 99 (OB-02) — chain-head seeds resolve through the one shared helper;
+      // identical to `?? 0` when the employee has no OpeningBalance.
+      const carryOverIn = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
 
       // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so
       // the pure core resolves per-MA / per-pattern slot amounts (null → fallback).
@@ -1504,6 +1507,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
 
       // Last month's carryOver = cumulative balance through year-end
+      //
+      // Phase 99 (OB-02) — YEARLY roll-up review item, resolved: this handler does NOT seed a
+      // chain head from a `?? 0` fallback and therefore does NOT call getCarryOverBase() here.
+      // `decemberSnapshot.carryOver` is an ALREADY-RESOLVED value from a MONTHLY SaldoSnapshot
+      // that was itself either a genuine mid-chain thread-forward (its own predecessor existed)
+      // or — if December happened to be this employee's very first month ever — was already
+      // seeded through getCarryOverBase() at ITS OWN close (overtime.ts manual close, or the
+      // auto-close-month.ts head seed). Re-consulting the opening balance here would either be
+      // a no-op (predecessor existed, so getCarryOverBase would just re-return the same value)
+      // or, worse, incorrectly re-apply it if some future refactor ever loosened the "only at
+      // the head" rule. The opening balance therefore reaches the yearly figure transitively
+      // through the monthly chain it aggregates, never directly.
       const decemberSnapshot = monthSnapshots[monthSnapshots.length - 1];
       const finalCarryOver = decemberSnapshot.carryOver;
 

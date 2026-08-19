@@ -27,6 +27,7 @@
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
+import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { closeEmployeeMonth } from "./close-employee-month";
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "./break-effective";
@@ -225,7 +226,9 @@ export async function computeMonthSaldo(
     },
     orderBy: { periodStart: "desc" },
   });
-  const carryOverIn = prevSnapshot?.carryOver ?? 0;
+  // Phase 99 (OB-02) — chain-head seeds resolve through the one shared helper;
+  // identical to `?? 0` when the employee has no OpeningBalance.
+  const carryOverIn = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
 
   // BS slot overrides for this month
   const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } = await loadBsSlotOverrides(
