@@ -33,8 +33,24 @@
  *   1 — argv/DATABASE_URL/DB failure
  *   2 — one or more employees classified needs_review — nothing written
  */
-import type { ChainLink } from "../src/utils/saldo-chain-integrity";
-import { matchDeliberateReason } from "../src/utils/saldo-chain-classification";
+import { PrismaClient } from "@clokr/db";
+import { PrismaPg } from "@prisma/adapter-pg";
+import pg from "pg";
+import { parseArgs } from "node:util";
+import { pathToFileURL } from "node:url";
+import {
+  walkSaldoChain,
+  isTrackOnlySchedule,
+  monthLabelFromPeriodEnd,
+  type ChainLink,
+} from "../src/utils/saldo-chain-integrity";
+import {
+  matchDeliberateReason,
+  extractAuditReasons,
+} from "../src/utils/saldo-chain-classification";
+// Imported for its READ-ONLY schedule resolution only (same precedent as
+// audit-saldo-chain-integrity.ts) — this script calls no write function from it.
+import { getEffectiveSchedule } from "../src/routes/time-entries";
 
 // ── Part A: exported pure helpers (DB-free, unit-testable) ────────────────────
 
@@ -229,4 +245,262 @@ export function formatCandidateLine(employeeId: string, result: ClassifyCandidat
 /** 0 nothing to do / all applied; 2 one or more employees need review (nothing written). */
 export function exitCodeFor(counts: { needsReview: number }): number {
   return counts.needsReview > 0 ? EXIT_NEEDS_REVIEW : EXIT_OK;
+}
+
+// ── Part B: DB wiring + CLI ─────────────────────────────────────────────────
+
+const USAGE = `Usage:
+  DATABASE_URL=... pnpm --filter @clokr/api exec tsx scripts/migrate-opening-balances.ts \\
+    (--tenant-id <uuid> | --all-tenants) \\
+    [--apply --actor-id <uuid>]
+
+  --tenant-id <uuid>   Scope to one tenant (required, unless --all-tenants).
+  --all-tenants        Scope to every tenant (required, unless --tenant-id). No implicit default.
+  --apply              Opt-in write. WITHOUT this flag the run is a dry-run (the default) and
+                        writes nothing.
+  --actor-id <uuid>    Required whenever --apply is given. Becomes OpeningBalance.createdBy
+                        and the AuditLog userId.
+  --help                Print this message.
+
+Any employee classified needs_review ABORTS THE ENTIRE RUN — nothing is written, for nobody,
+even with --apply.`;
+
+type MigrationPrismaClient = InstanceType<typeof PrismaClient>;
+
+/**
+ * Testable entry point. `injectedPrisma`, when given, is used instead of bootstrapping a new
+ * connection from DATABASE_URL — the README's CLI convention (see "Migration artifacts").
+ */
+export async function main(
+  argv: string[],
+  injectedPrisma?: MigrationPrismaClient,
+): Promise<number> {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      "tenant-id": { type: "string" },
+      "all-tenants": { type: "boolean", default: false },
+      apply: { type: "boolean", default: false },
+      "actor-id": { type: "string" },
+      help: { type: "boolean", default: false },
+    },
+  });
+
+  if (values.help) {
+    console.log(USAGE);
+    return EXIT_OK;
+  }
+
+  const tenantId = values["tenant-id"];
+  const allTenants = values["all-tenants"] ?? false;
+  const APPLY = values["apply"] ?? false;
+  const actorId = values["actor-id"];
+
+  if ((tenantId && allTenants) || (!tenantId && !allTenants)) {
+    console.error(
+      "Exactly one of --tenant-id <uuid> or --all-tenants is required — no implicit scope.\n\n" +
+        USAGE,
+    );
+    return EXIT_ERROR;
+  }
+
+  if (APPLY && !actorId) {
+    console.error("--actor-id <uuid> is required whenever --apply is given. Refusing to write.");
+    return EXIT_ERROR;
+  }
+
+  if (!injectedPrisma && !process.env.DATABASE_URL) {
+    console.error("DATABASE_URL is required");
+    return EXIT_ERROR;
+  }
+
+  let pool: pg.Pool | undefined;
+  let prisma: MigrationPrismaClient;
+  if (injectedPrisma) {
+    prisma = injectedPrisma;
+  } else {
+    pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = new PrismaPg(pool as any);
+    prisma = new PrismaClient({ adapter });
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const appShim: any = {
+    prisma,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    log: { warn: (...a: any[]) => console.warn(...a), info: (...a: any[]) => console.info(...a) },
+  };
+
+  console.log(`Mode: ${APPLY ? "APPLY" : "DRY-RUN"}\n`);
+
+  try {
+    const employees = await prisma.employee.findMany({
+      where: tenantId ? { tenantId } : {},
+      select: { id: true, tenantId: true },
+      orderBy: [{ tenantId: "asc" }, { id: "asc" }],
+    });
+
+    const results: Array<{ employeeId: string; result: ClassifyCandidateResult }> = [];
+    let currentTenant = "";
+
+    for (const emp of employees) {
+      if (emp.tenantId !== currentTenant) {
+        console.log(`\n== Tenant: ${truncId(emp.tenantId)} ==`);
+        currentTenant = emp.tenantId;
+      }
+
+      // Idempotent re-run: an employee that already has an active OpeningBalance is
+      // never reconsidered — running this script twice must be a no-op the second time.
+      const existingOB = await prisma.openingBalance.findFirst({
+        where: { employeeId: emp.id, superseded: false },
+        select: { id: true },
+      });
+      if (existingOB) {
+        console.log(
+          `  [skip        ] emp=${truncId(emp.id)} — already has an active OpeningBalance`,
+        );
+        continue;
+      }
+
+      const rows = await prisma.saldoSnapshot.findMany({
+        where: { employeeId: emp.id, periodType: "MONTHLY", superseded: false },
+        orderBy: { periodStart: "asc" },
+        select: {
+          id: true,
+          periodStart: true,
+          periodEnd: true,
+          workedMinutes: true,
+          expectedMinutes: true,
+          balanceMinutes: true,
+          carryOver: true,
+        },
+      });
+
+      // Legitimate, common, and silent — mirrors the audit script's "no closed months"
+      // bucket. Nothing to migrate for an employee with no active MONTHLY chain yet.
+      if (rows.length === 0) continue;
+
+      const links: ChainLink[] = walkSaldoChain(rows);
+      const headLink = links[0];
+
+      // TRACK_ONLY (MONTHLY_HOURS + overtimeMode TRACK_ONLY) employees never carry a
+      // saldo at all — same filter the Phase 98 audit uses, for the same reason.
+      const midMonth = new Date(
+        (headLink.periodStart.getTime() + headLink.periodEnd.getTime()) / 2,
+      );
+      const schedule = await getEffectiveSchedule(appShim, emp.id, midMonth);
+      if (isTrackOnlySchedule(schedule)) continue;
+
+      // Lineage-aware AuditLog lookup for the HEAD month only — provenance only ever
+      // matters for the head link, the sole link that can become eligible. SaldoSnapshot
+      // has no supersededBy forward pointer, so the original justification may live on a
+      // long-superseded predecessor row for the same month (mirrors the Phase 98 audit).
+      const lineage = await prisma.saldoSnapshot.findMany({
+        where: { employeeId: emp.id, periodType: "MONTHLY" }, // NO superseded filter — deliberate
+        select: { id: true, periodEnd: true },
+      });
+      const lineageIds = lineage
+        .filter((r) => monthLabelFromPeriodEnd(r.periodEnd) === headLink.monthLabel)
+        .map((r) => r.id);
+      if (!lineageIds.includes(headLink.rowId)) lineageIds.push(headLink.rowId);
+
+      const auditRows = await prisma.auditLog.findMany({
+        where: { entity: "SaldoSnapshot", entityId: { in: lineageIds } },
+        orderBy: { createdAt: "asc" },
+        select: { newValue: true },
+      });
+      const reasons = extractAuditReasons(auditRows);
+      const auditReasonsByRowId = new Map<string, readonly string[]>([[headLink.rowId, reasons]]);
+
+      const result = classifyCandidate(links, auditReasonsByRowId);
+      results.push({ employeeId: emp.id, result });
+      console.log(`  ${formatCandidateLine(emp.id, result)}`);
+    }
+
+    // ── D-01 read strictly: ANY needs_review aborts the WHOLE run. ──────────────────
+    const needsReview = results.filter((r) => r.result.status === "needs_review");
+    if (needsReview.length > 0) {
+      console.log(
+        `\n${needsReview.length} employee(s) need review — ABORTING. Nothing written, for ` +
+          "nobody, not even the employees classified eligible above.",
+      );
+      return exitCodeFor({ needsReview: needsReview.length });
+    }
+
+    const eligible = results.filter(
+      (r): r is { employeeId: string; result: EligibleCandidate } => r.result.status === "eligible",
+    );
+
+    if (eligible.length === 0) {
+      console.log("\nNothing to migrate — every chain is already zero-drift.");
+      return EXIT_OK;
+    }
+
+    if (!APPLY) {
+      console.log(
+        `\nDRY-RUN: ${eligible.length} OpeningBalance row(s) would be created. ` +
+          "Re-run with --apply --actor-id <uuid> to write.",
+      );
+      return EXIT_OK;
+    }
+
+    // actorId presence already enforced above whenever APPLY is true.
+    const actor = actorId as string;
+
+    // ── ONE $transaction, all-or-nothing (D-01). Never a SaldoSnapshot mutation verb. ──
+    await prisma.$transaction(async (tx) => {
+      for (const { employeeId, result } of eligible) {
+        const row = await tx.openingBalance.create({
+          data: {
+            employeeId,
+            minutes: result.minutes,
+            // The day the tracked chain begins is exactly the day the opening balance
+            // takes effect — the head link's periodStart.
+            effectiveFrom: result.headPeriodStart,
+            reason: result.reason,
+            evidenceRef: result.evidenceRef,
+            source: result.source,
+            createdBy: actor,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor,
+            action: "OPENING_BALANCE_MIGRATED",
+            entity: "OpeningBalance",
+            entityId: row.id,
+            newValue: {
+              employeeId,
+              monthLabel: result.monthLabel,
+              headRowId: result.headRowId,
+              minutes: result.minutes,
+              source: result.source,
+              matchedAuditReason: result.matchedAuditReason,
+              carrierRemainsBridgeSnapshot: result.carrierRemainsBridgeSnapshot,
+            },
+          },
+        });
+      }
+    });
+
+    console.log(`\nApplied: ${eligible.length} OpeningBalance row(s) created.`);
+    return EXIT_OK;
+  } catch (err) {
+    console.error(err);
+    return EXIT_ERROR;
+  } finally {
+    if (!injectedPrisma) {
+      await prisma.$disconnect();
+      await pool?.end();
+    }
+  }
+}
+
+// Run-guard: only bootstrap the DB + execute when invoked as a script, so importing
+// the module for unit tests is side-effect-free (no connection, no process.exit).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  void main(process.argv.slice(2)).then((code) => {
+    process.exitCode = code;
+  });
 }
