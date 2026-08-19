@@ -1306,3 +1306,634 @@ describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression
     expect(octWithOB).toEqual(octWithoutOB);
   });
 });
+
+describe("recalculateSnapshots — locked-month skip-and-report (Phase 99 Plan 03, D-09)", () => {
+  // Until now this loop unconditionally superseded EVERY month in range, closed ones
+  // included, against CLAUDE.md's "Once a month is closed, entries MUST NOT be
+  // editable — not even by admins". These tests prove: a locked month's active row is
+  // left byte-identical (same id, no audit entry), the skip is reported in the return
+  // value, and the chain stays continuous by threading the locked row's STORED
+  // carryOver forward — mirroring the isBridgeSnapshot skip.
+  let app: FastifyInstance;
+  let tenantId: string;
+  let lockedEmpId: string;
+  let sepSnapshotId: string;
+  let octSnapshotId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const SEP_START = new Date("2026-08-31T22:00:00Z"); // Sept 1 00:00 Berlin (CEST)
+  const SEP_END = new Date("2026-09-30T21:59:59.999Z");
+  const OCT_START = new Date("2026-09-30T22:00:00Z"); // Oct 1 00:00 Berlin (CEST until Oct 25)
+  const OCT_END = new Date("2026-10-31T22:59:59.999Z");
+  const NOV_START = new Date("2026-10-31T23:00:00Z"); // Nov 1 00:00 Berlin (CET)
+  const NOV_END = new Date("2026-11-30T22:59:59.999Z");
+  const RECALC_FROM = SEP_START;
+  // Distinctive, NOT-what-a-legit-recompute-would-produce sentinel — if the locked
+  // month were wrongly recomputed OR its carryOver wrongly re-derived, the threaded
+  // NOV carry-in would differ from this exact number, failing loudly (same technique
+  // as BRIDGE_CARRY_OVER in the bridge-protection block above).
+  const LOCKED_CARRY_OVER = 9999;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const s = "recalc-locked-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `Recalc Locked ${s}`, slug: `rcl-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+
+    const lockedUser = await prisma.user.create({
+      data: {
+        email: `locked-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const lockedEmp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: lockedUser.id,
+        employeeNumber: `LK-${s}`,
+        firstName: "L.",
+        lastName: "K.",
+        classification: "TEILZEIT",
+        hireDate: HIRE_DATE,
+      },
+    });
+    lockedEmpId = lockedEmp.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: lockedEmp.id,
+        type: "FLEXTIME",
+        weeklyHours: 30,
+        workDays: [1, 2, 3, 4],
+        mondayHours: 0,
+        tuesdayHours: 7.5,
+        wednesdayHours: 7.5,
+        thursdayHours: 7.5,
+        fridayHours: 7.5,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: HIRE_DATE,
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: lockedEmp.id, balanceHours: 0 } });
+
+    // SEP: real, unlocked activity — recalc must recompute this month normally.
+    const sepStart = new Date("2026-09-08T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: lockedEmp.id,
+        date: new Date("2026-09-08T00:00:00Z"),
+        startTime: sepStart,
+        endTime: new Date(sepStart.getTime() + 5 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+      },
+    });
+
+    // OCT: real activity, but LOCKED (Monatsabschluss shape — isLocked:true). This is
+    // the canonical "this month is closed" signal isSnapshotLocked() reads.
+    const octStart = new Date("2026-10-06T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: lockedEmp.id,
+        date: new Date("2026-10-06T00:00:00Z"),
+        startTime: octStart,
+        endTime: new Date(octStart.getTime() + 6 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+        isLocked: true,
+        lockedAt: new Date("2026-11-01T00:00:00Z"),
+      },
+    });
+
+    // NOV: real, unlocked activity — recalc must recompute this month normally, and
+    // its carryOverIn must come from OCT's STORED (untouched) carryOver.
+    const novStart = new Date("2026-11-03T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: lockedEmp.id,
+        date: new Date("2026-11-03T00:00:00Z"),
+        startTime: novStart,
+        endTime: new Date(novStart.getTime() + 4 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+      },
+    });
+
+    // Placeholder snapshots for all 3 months. SEP/NOV use the standard
+    // injectedDelta-neutral placeholder (carryOver=0) — first recalc run overwrites
+    // them with real values. OCT's placeholder deliberately carries a DISTINCTIVE
+    // nonzero carryOver (LOCKED_CARRY_OVER) standing in for "whatever a real
+    // Monatsabschluss actually stored" — expectedMinutes=1 (not 0) so this row is
+    // never mistaken for an isBridgeSnapshot() bridge row; it must hit the NEW lock
+    // skip branch under test, not the pre-existing bridge branch.
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: lockedEmp.id,
+        periodType: "MONTHLY",
+        periodStart: SEP_START,
+        periodEnd: SEP_END,
+        workedMinutes: 0,
+        expectedMinutes: 1,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(SEP_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Placeholder for locked-month skip regression test (SEP, unlocked)",
+      },
+    });
+    const octSnap = await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: lockedEmp.id,
+        periodType: "MONTHLY",
+        periodStart: OCT_START,
+        periodEnd: OCT_END,
+        workedMinutes: 0,
+        expectedMinutes: 1,
+        balanceMinutes: 0,
+        carryOver: LOCKED_CARRY_OVER,
+        closedAt: new Date(OCT_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Placeholder for locked-month skip regression test (OCT, LOCKED — must survive untouched)",
+      },
+    });
+    octSnapshotId = octSnap.id;
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: lockedEmp.id,
+        periodType: "MONTHLY",
+        periodStart: NOV_START,
+        periodEnd: NOV_END,
+        workedMinutes: 0,
+        expectedMinutes: 1,
+        balanceMinutes: 0,
+        // injectedDelta-neutral placeholder (see well-behaved-chain/bridge fixtures
+        // above): carryOver - balanceMinutes MUST equal the previous row's STORED
+        // carryOver — here that previous row is the LOCKED October snapshot, whose
+        // stored value is LOCKED_CARRY_OVER, not 0.
+        carryOver: LOCKED_CARRY_OVER,
+        closedAt: new Date(NOV_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Placeholder for locked-month skip regression test (NOV, unlocked)",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("recalculate-snapshots locked-month skip test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  it("Test 1+2+3: the locked month's row is left byte-identical (same id, no audit), reported in the return value, and the chain threads its STORED carryOver forward unchanged into the following month", async () => {
+    const prisma = app.prisma;
+
+    // Capture the OCT placeholder's exact stored values BEFORE the recalc, so "byte
+    // identical afterwards" is a real before/after comparison, not an assumption.
+    const octBefore = await prisma.saldoSnapshot.findUniqueOrThrow({
+      where: { id: octSnapshotId },
+    });
+    sepSnapshotId = (
+      await prisma.saldoSnapshot.findFirstOrThrow({
+        where: { employeeId: lockedEmpId, periodType: "MONTHLY", periodStart: SEP_START },
+      })
+    ).id;
+
+    const result = await recalculateSnapshots(app, lockedEmpId, RECALC_FROM);
+
+    // ── Test 3 (report shape): the skipped month is named in the return value ──
+    expect(result.lockedMonthsSkipped.length).toBe(1);
+    expect(result.lockedMonthsSkipped[0].snapshotId).toBe(octSnapshotId);
+    expect(result.lockedMonthsSkipped[0].periodStart.toISOString().slice(0, 10)).toBe(
+      OCT_START.toISOString().slice(0, 10),
+    );
+    expect(result.lockedMonthsSkipped[0].periodEnd.toISOString().slice(0, 10)).toBe(
+      OCT_END.toISOString().slice(0, 10),
+    );
+
+    // ── Test 1 (byte-identical, never rewritten): same row id, still active, every
+    // value unchanged from what was stored before the recalc ran ──
+    const octAfter = await prisma.saldoSnapshot.findUniqueOrThrow({ where: { id: octSnapshotId } });
+    expect(octAfter.id).toBe(octBefore.id);
+    expect(octAfter.superseded).toBe(false);
+    expect(octAfter.workedMinutes).toBe(octBefore.workedMinutes);
+    expect(octAfter.expectedMinutes).toBe(octBefore.expectedMinutes);
+    expect(octAfter.balanceMinutes).toBe(octBefore.balanceMinutes);
+    expect(octAfter.carryOver).toBe(octBefore.carryOver);
+    expect(octAfter.carryOver).toBe(LOCKED_CARRY_OVER);
+
+    // No SUPERSEDE (or any) audit entry was created for the locked row — nothing
+    // changed, so nothing to log (mirrors the bridge-row contract).
+    const octAudits = await prisma.auditLog.findMany({
+      where: { entity: "SaldoSnapshot", entityId: octSnapshotId },
+    });
+    expect(octAudits.length).toBe(0);
+
+    // Only ONE active snapshot exists for the locked month — no duplicate row.
+    const octActiveCount = await prisma.saldoSnapshot.count({
+      where: {
+        employeeId: lockedEmpId,
+        periodType: "MONTHLY",
+        periodStart: OCT_START,
+        superseded: false,
+      },
+    });
+    expect(octActiveCount).toBe(1);
+
+    // SEP (unlocked) WAS genuinely recomputed — sanity check that the skip branch is
+    // scoped to the locked month only, not the whole chain.
+    const sepAfter = await prisma.saldoSnapshot.findFirstOrThrow({
+      where: {
+        employeeId: lockedEmpId,
+        periodType: "MONTHLY",
+        periodStart: SEP_START,
+        superseded: false,
+      },
+    });
+    expect(sepAfter.id).not.toBe(sepSnapshotId);
+    expect(sepAfter.workedMinutes).not.toBe(0);
+
+    // ── Test 2 (chain continuity): NOV recomputed with carryOverIn = OCT's STORED
+    // (untouched) carryOver, exactly like the bridge-skip threading ──
+    const novAfter = await prisma.saldoSnapshot.findFirstOrThrow({
+      where: {
+        employeeId: lockedEmpId,
+        periodType: "MONTHLY",
+        periodStart: NOV_START,
+        superseded: false,
+      },
+    });
+    expect(novAfter.carryOver).toBe(LOCKED_CARRY_OVER + novAfter.balanceMinutes);
+
+    // Final OvertimeAccount reflects the same threaded value.
+    const account = await prisma.overtimeAccount.findUniqueOrThrow({
+      where: { employeeId: lockedEmpId },
+    });
+    expect(Math.round(Number(account.balanceHours) * 60)).toBe(novAfter.carryOver);
+  });
+});
+
+describe("recalculateSnapshots — no locked months is a provable no-op for the new skip branch (Phase 99 Plan 03, D-09 Test 4)", () => {
+  // The skip branch must never fire, and the return value must report nothing, for a
+  // chain with no locked months — i.e. the change is additive, not a behaviour swap.
+  // Mirrors the pre-existing "well-behaved multi-month chain" fixture style above.
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const SEP_START = new Date("2026-08-31T22:00:00Z");
+  const SEP_END = new Date("2026-09-30T21:59:59.999Z");
+  const OCT_START = new Date("2026-09-30T22:00:00Z");
+  const OCT_END = new Date("2026-10-31T22:59:59.999Z");
+  const RECALC_FROM = SEP_START;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const s = "recalc-nolock-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `Recalc NoLock ${s}`, slug: `rcnl-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+
+    const user = await prisma.user.create({
+      data: {
+        email: `nolock-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `NL-${s}`,
+        firstName: "N.",
+        lastName: "L.",
+        classification: "TEILZEIT",
+        hireDate: HIRE_DATE,
+      },
+    });
+    empId = emp.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FLEXTIME",
+        weeklyHours: 30,
+        workDays: [1, 2, 3, 4],
+        mondayHours: 0,
+        tuesdayHours: 7.5,
+        wednesdayHours: 7.5,
+        thursdayHours: 7.5,
+        fridayHours: 7.5,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: HIRE_DATE,
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    for (const [dateStr, hours] of [
+      ["2026-09-08", 5],
+      ["2026-10-06", 6],
+    ] as const) {
+      const start = new Date(`${dateStr}T07:00:00Z`);
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date(`${dateStr}T00:00:00Z`),
+          startTime: start,
+          endTime: new Date(start.getTime() + hours * 60 * 60_000),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+        },
+      });
+    }
+
+    for (const [start, end] of [
+      [SEP_START, SEP_END],
+      [OCT_START, OCT_END],
+    ] as const) {
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: emp.id,
+          periodType: "MONTHLY",
+          periodStart: start,
+          periodEnd: end,
+          workedMinutes: 0,
+          expectedMinutes: 1,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(end.getTime() + 24 * 60 * 60_000),
+          closedBy: null,
+          note: "Placeholder for no-locked-months no-op regression test",
+        },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("recalculate-snapshots no-locked-months test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  it("Test 4: an employee with NO locked months reports lockedMonthsSkipped:[] and both months are recomputed normally", async () => {
+    const prisma = app.prisma;
+
+    const result = await recalculateSnapshots(app, empId, RECALC_FROM);
+
+    expect(result.lockedMonthsSkipped).toEqual([]);
+
+    const rows = await prisma.saldoSnapshot.findMany({
+      where: { employeeId: empId, periodType: "MONTHLY", superseded: false },
+      orderBy: { periodStart: "asc" },
+    });
+    expect(rows.length).toBe(2);
+    // Both months genuinely recomputed (real, uneven activity) — neither is the
+    // stale (0/1/0/0) placeholder anymore.
+    for (const row of rows) {
+      expect(row.expectedMinutes).not.toBe(1);
+    }
+    // Chain continuity for a normal (never-locked) chain: October's carryOver equals
+    // September's freshly computed carryOver plus October's own balance.
+    expect(rows[1].carryOver).toBe(rows[0].carryOver + rows[1].balanceMinutes);
+  });
+});
+
+describe("recalculateSnapshots — locked HEAD month with an active OpeningBalance (Phase 99 Plan 03, D-09 Test 5)", () => {
+  // A locked month at the HEAD of the chain (no predecessor) is skipped exactly like
+  // any other locked month. The following month must thread from the locked row's
+  // STORED carryOver (which, for a migrated employee, already contains the opening
+  // balance folded in from when it was originally closed) — the opening balance must
+  // NOT be re-derived/re-applied on top of it. getCarryOverBase() is only ever
+  // consulted ONCE, before the loop starts, so this is provable independent of lock
+  // status — this test pins the concrete numbers so a future regression fails loudly.
+  let app: FastifyInstance;
+  let tenantId: string;
+  let empId: string;
+  let userId: string;
+  let sepSnapshotId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const SEP_START = new Date("2026-08-31T22:00:00Z");
+  const SEP_END = new Date("2026-09-30T21:59:59.999Z");
+  const OCT_START = new Date("2026-09-30T22:00:00Z");
+  const OCT_END = new Date("2026-10-31T22:59:59.999Z");
+  const RECALC_FROM = SEP_START;
+  const OPENING_BALANCE_MINUTES = 4200;
+  // SEP's stored carryOver as it would be after a legitimate close that already
+  // folded in the opening balance once (OPENING_BALANCE_MINUTES + that month's own
+  // balance, here a fixed 100 for a deterministic pin).
+  const SEP_STORED_CARRY = OPENING_BALANCE_MINUTES + 100;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    const s = "recalc-ob-lock-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `Recalc OB Lock ${s}`, slug: `rcobl-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+
+    const user = await prisma.user.create({
+      data: {
+        email: `oblock-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    userId = user.id;
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `OL-${s}`,
+        firstName: "O.",
+        lastName: "L.",
+        classification: "TEILZEIT",
+        hireDate: HIRE_DATE,
+      },
+    });
+    empId = emp.id;
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FLEXTIME",
+        weeklyHours: 30,
+        workDays: [1, 2, 3, 4],
+        mondayHours: 0,
+        tuesdayHours: 7.5,
+        wednesdayHours: 7.5,
+        thursdayHours: 7.5,
+        fridayHours: 7.5,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: HIRE_DATE,
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    // SEP: real activity, LOCKED (already closed with the opening balance folded in).
+    const sepStart = new Date("2026-09-08T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: emp.id,
+        date: new Date("2026-09-08T00:00:00Z"),
+        startTime: sepStart,
+        endTime: new Date(sepStart.getTime() + 5 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+        isLocked: true,
+        lockedAt: new Date("2026-10-01T00:00:00Z"),
+      },
+    });
+    const sepSnap = await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        periodStart: SEP_START,
+        periodEnd: SEP_END,
+        workedMinutes: 300,
+        expectedMinutes: 200,
+        balanceMinutes: 100,
+        carryOver: SEP_STORED_CARRY,
+        closedAt: new Date(SEP_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Locked HEAD month for OB-03/D-09 interaction regression test",
+      },
+    });
+    sepSnapshotId = sepSnap.id;
+
+    // The active OpeningBalance row — SEP's stored carryOver already contains it.
+    await prisma.openingBalance.create({
+      data: {
+        employeeId: emp.id,
+        minutes: OPENING_BALANCE_MINUTES,
+        effectiveFrom: HIRE_DATE,
+        reason: "Locked-HEAD-month interaction fixture — must never be re-applied",
+        source: "ADMIN_ENTRY",
+        createdBy: userId,
+      },
+    });
+
+    // OCT: real activity + a placeholder to be recalculated normally.
+    const octStart = new Date("2026-10-06T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: emp.id,
+        date: new Date("2026-10-06T00:00:00Z"),
+        startTime: octStart,
+        endTime: new Date(octStart.getTime() + 6 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+      },
+    });
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        periodStart: OCT_START,
+        periodEnd: OCT_END,
+        workedMinutes: 0,
+        expectedMinutes: 1,
+        balanceMinutes: 0,
+        // injectedDelta-neutral placeholder: carryOver - balanceMinutes MUST equal
+        // the previous row's STORED carryOver — here that previous row is the LOCKED
+        // September snapshot, whose stored value is SEP_STORED_CARRY (already
+        // containing the opening balance once), not 0.
+        carryOver: SEP_STORED_CARRY,
+        closedAt: new Date(OCT_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Placeholder for OB-03/D-09 locked-HEAD-month interaction test",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      // OpeningBalance.employeeId is onDelete: Restrict (Revisionssicherheit) — must be
+      // cleared before cleanupTestData() removes the tenant's employees.
+      await app.prisma.openingBalance.deleteMany({ where: { employee: { tenantId } } });
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("recalculate-snapshots locked-HEAD-with-OB test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  it("Test 5: a locked HEAD month with an active OpeningBalance is skipped too, and OCT threads from SEP's stored carryOver — the opening balance is not re-applied on top", async () => {
+    const prisma = app.prisma;
+
+    const result = await recalculateSnapshots(app, empId, RECALC_FROM);
+
+    // SEP (locked HEAD) is skipped and reported, untouched.
+    expect(result.lockedMonthsSkipped.length).toBe(1);
+    expect(result.lockedMonthsSkipped[0].snapshotId).toBe(sepSnapshotId);
+
+    const sepAfter = await prisma.saldoSnapshot.findUniqueOrThrow({ where: { id: sepSnapshotId } });
+    expect(sepAfter.superseded).toBe(false);
+    expect(sepAfter.carryOver).toBe(SEP_STORED_CARRY);
+
+    const sepAudits = await prisma.auditLog.findMany({
+      where: { entity: "SaldoSnapshot", entityId: sepSnapshotId },
+    });
+    expect(sepAudits.length).toBe(0);
+
+    // OCT threads from SEP's STORED carryOver (which already contains the opening
+    // balance exactly once) — NOT from a freshly re-derived carryOverBase that would
+    // apply the opening balance a second time.
+    const octAfter = await prisma.saldoSnapshot.findFirstOrThrow({
+      where: {
+        employeeId: empId,
+        periodType: "MONTHLY",
+        periodStart: OCT_START,
+        superseded: false,
+      },
+    });
+    expect(octAfter.carryOver).toBe(SEP_STORED_CARRY + octAfter.balanceMinutes);
+    // The double-apply failure mode this pins against: 2x the opening balance.
+    expect(octAfter.carryOver).not.toBe(
+      SEP_STORED_CARRY + OPENING_BALANCE_MINUTES + octAfter.balanceMinutes,
+    );
+
+    const account = await prisma.overtimeAccount.findUniqueOrThrow({
+      where: { employeeId: empId },
+    });
+    expect(Math.round(Number(account.balanceHours) * 60)).toBe(octAfter.carryOver);
+  });
+});

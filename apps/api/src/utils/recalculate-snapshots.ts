@@ -23,6 +23,12 @@ import { loadBsSlotOverrides } from "./load-bs-slot-overrides"; // Phase 76.31 �
 import { isBridgeSnapshot } from "./saldo-snapshot-cleanup"; // 2026-08 hardening — SNAP-04 bridge guard
 import { computeInjectedDelta } from "./saldo-chain-integrity"; // Phase 98 — shared delta formula
 import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { isSnapshotLocked } from "./snapshot-lock"; // Phase 99 (OB-03/D-09) — immutability after lock
+
+// Phase 99 (D-09) — a closed month that recalc skipped, reported so a caller can
+// surface it to a human instead of the change happening silently.
+export type SkippedLockedMonth = { snapshotId: string; periodStart: Date; periodEnd: Date };
+export type RecalcResult = { lockedMonthsSkipped: SkippedLockedMonth[] };
 
 /**
  * Recalculate all MONTHLY SaldoSnapshots for an employee starting from `fromDate`.
@@ -31,6 +37,8 @@ import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — sh
  * - Recalculates workedMinutes, expectedMinutes, balanceMinutes, carryOver.
  * - Updates the OvertimeAccount with the final carryOver.
  * - Creates audit log entries per recalculated snapshot.
+ * - Phase 99 (D-09): a CLOSED (locked) month is never superseded or rewritten — it is
+ *   skipped and reported via the returned RecalcResult.lockedMonthsSkipped.
  *
  * Safe to call multiple times (idempotent).
  */
@@ -38,7 +46,9 @@ export async function recalculateSnapshots(
   app: FastifyInstance,
   employeeId: string,
   fromDate: Date,
-): Promise<void> {
+): Promise<RecalcResult> {
+  const lockedMonthsSkipped: SkippedLockedMonth[] = [];
+
   // Find all MONTHLY snapshots at or after fromDate
   const snapshots = await app.prisma.saldoSnapshot.findMany({
     where: {
@@ -50,7 +60,7 @@ export async function recalculateSnapshots(
     orderBy: { periodStart: "asc" },
   });
 
-  if (snapshots.length === 0) return;
+  if (snapshots.length === 0) return { lockedMonthsSkipped };
 
   const employee = await app.prisma.employee.findUnique({
     where: { id: employeeId },
@@ -64,9 +74,9 @@ export async function recalculateSnapshots(
       tenant: { select: { federalState: true } },
     },
   });
-  if (!employee) return;
+  if (!employee) return { lockedMonthsSkipped };
   // Phase 76.7 (D-06) — exempt employees never get snapshot recalcs.
-  if (employee.isTimeTrackingExempt) return;
+  if (employee.isTimeTrackingExempt) return { lockedMonthsSkipped };
 
   const tz = await getTenantTimezone(app.prisma, employee.tenantId);
   const tenantConfig = await app.prisma.tenantConfig.findUnique({
@@ -187,6 +197,30 @@ export async function recalculateSnapshots(
     // zero-activity bridges; injectedDelta preservation below handles the DIFFERENT
     // case of a real-activity row with an injected correction on top.
     if (isBridgeSnapshot(snapshot)) {
+      runningCarryOver = snapshot.carryOver;
+      continue;
+    }
+
+    // Phase 99 (D-09) — immutability after lock. Until now this loop superseded EVERY
+    // month in range, closed ones included, against CLAUDE.md's "Once a month is
+    // closed, entries MUST NOT be editable — not even by admins". A closed month is
+    // skipped and reported, never rewritten: its stored carryOver threads forward
+    // unchanged (same handling as a bridge row), so the chain stays continuous and the
+    // following months still recalculate correctly.
+    if (await isSnapshotLocked(app.prisma, employeeId, snapshot.periodStart, snapshot.periodEnd)) {
+      lockedMonthsSkipped.push({
+        snapshotId: snapshot.id,
+        periodStart: snapshot.periodStart,
+        periodEnd: snapshot.periodEnd,
+      });
+      app.log.info(
+        {
+          employeeId: employeeId.slice(0, 8), // truncated, no PII (Phase 98 DSGVO convention)
+          periodStart: snapshot.periodStart.toISOString().slice(0, 10),
+          periodEnd: snapshot.periodEnd.toISOString().slice(0, 10),
+        },
+        "[recalculateSnapshots] skipped a locked month (immutability after lock)",
+      );
       runningCarryOver = snapshot.carryOver;
       continue;
     }
@@ -516,4 +550,6 @@ export async function recalculateSnapshots(
     create: { employeeId, balanceHours: runningCarryOver / 60 },
     update: { balanceHours: runningCarryOver / 60 },
   });
+
+  return { lockedMonthsSkipped };
 }
