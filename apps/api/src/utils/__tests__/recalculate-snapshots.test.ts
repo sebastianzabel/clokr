@@ -933,3 +933,376 @@ describe("recalculateSnapshots — well-behaved multi-month chain is a byte-iden
     }
   });
 });
+
+describe("recalculateSnapshots — OB-06 opening-balance-seeded chain regression (Phase 99 Plan 02)", () => {
+  // This is the test that would have caught the original incident: it proves BOTH
+  // seeding sites in recalculate-snapshots.ts resolve from the same carryOverBase,
+  // by pinning EXACT integers rather than relative/unchanged assertions. A regression
+  // to double-application (only Site A rewired, Site B left at `?? 0`) fails Test 2
+  // loudly, not silently.
+  let app: FastifyInstance;
+  let tenantId: string;
+
+  const HIRE_DATE = new Date("2026-01-01T00:00:00Z");
+  const SEP_START = new Date("2026-08-31T22:00:00Z"); // Sept 1 00:00 Berlin (CEST)
+  const SEP_END = new Date("2026-09-30T21:59:59.999Z");
+  const OCT_START = new Date("2026-09-30T22:00:00Z"); // Oct 1 00:00 Berlin (CEST until Oct 25)
+  const OCT_END = new Date("2026-10-31T22:59:59.999Z"); // CET after DST switch
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const s = "ob06-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const tenant = await app.prisma.tenant.create({
+      data: { name: `OB06 ${s}`, slug: `ob06-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await app.prisma.tenantConfig.create({
+      data: { tenantId, defaultVacationDays: 30, timezone: "Europe/Berlin" },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      // OpeningBalance.employeeId is onDelete: Restrict (Revisionssicherheit) — must be
+      // cleared before cleanupTestData() removes the tenant's employees, or the delete
+      // is rejected by the FK constraint.
+      await app.prisma.openingBalance.deleteMany({ where: { employee: { tenantId } } });
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("OB-06 regression test cleanup failed:", err);
+    }
+    await closeTestApp();
+    vi.useRealTimers();
+  });
+
+  const fieldsOf = (row: {
+    workedMinutes: number;
+    expectedMinutes: number;
+    balanceMinutes: number;
+    carryOver: number;
+  }) => ({
+    workedMinutes: row.workedMinutes,
+    expectedMinutes: row.expectedMinutes,
+    balanceMinutes: row.balanceMinutes,
+    carryOver: row.carryOver,
+  });
+
+  async function readActiveRows(empId: string) {
+    return app.prisma.saldoSnapshot.findMany({
+      where: { employeeId: empId, periodType: "MONTHLY", superseded: false },
+      orderBy: { periodStart: "asc" },
+    });
+  }
+
+  // Creates one employee with a FLEXTIME schedule, an OvertimeAccount, real (uneven,
+  // non-zero-balance) September activity, and a September MONTHLY snapshot whose
+  // STORED carryOver ALREADY includes the opening balance — i.e. the state a
+  // migrated employee is actually in (OB-04's migration script writes the opening
+  // balance directly into the head snapshot's carryOver; the same shape results
+  // from a first correct recalc pass under the OB-03 admin-endpoint flow). This is
+  // deliberately NOT a bare carryOver=0 placeholder: per the plan's own worked
+  // example, the doubling risk only manifests when the EXISTING stored row already
+  // carries the opening balance and a SUBSEQUENT recalc runs over it — a zero
+  // placeholder can never exercise that path (its injectedDelta contribution would
+  // be governed entirely by carryOverBase, not by a genuinely pre-existing OB
+  // component), so it would not have caught the original incident.
+  //
+  // Bootstrap sequence: (1) close September legitimately with NO opening balance
+  // (via a normal recalc over a real placeholder — establishes the real, uneven
+  // balance for the month), (2) hand-patch the stored carryOver to fold in the
+  // opening balance directly (simulating the migration write), (3) THEN create the
+  // active OpeningBalance row. The recalc under test always runs AFTER this
+  // bootstrap is complete.
+  // Distinct employee per fixture (initials only — no PII, memory
+  // feedback_no_pii_in_github).
+  async function createHeadFixture(
+    label: string,
+    openingBalanceMinutes: number | null,
+  ): Promise<{ empId: string; userId: string; balanceMinutes: number }> {
+    const prisma = app.prisma;
+    const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const user = await prisma.user.create({
+      data: {
+        email: `${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: user.id,
+        employeeNumber: `OB-${s}`,
+        firstName: label[0]?.toUpperCase() ?? "X",
+        lastName: "T.",
+        classification: "TEILZEIT",
+        hireDate: HIRE_DATE,
+      },
+    });
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FLEXTIME",
+        weeklyHours: 30,
+        workDays: [1, 2, 3, 4],
+        mondayHours: 0,
+        tuesdayHours: 7.5,
+        wednesdayHours: 7.5,
+        thursdayHours: 7.5,
+        fridayHours: 7.5,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: HIRE_DATE,
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    // Uneven real activity in September — deliberately not matching Soll, so the
+    // month has a genuine non-zero balance (fixed calendar date, not new Date()).
+    const start = new Date("2026-09-08T07:00:00Z");
+    await prisma.timeEntry.create({
+      data: {
+        employeeId: emp.id,
+        date: new Date("2026-09-08T00:00:00Z"),
+        startTime: start,
+        endTime: new Date(start.getTime() + 5 * 60 * 60_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+      },
+    });
+
+    // Step 1: a genuine "not yet computed" placeholder — no OpeningBalance exists
+    // yet at this point, so this bootstrap recalc is identical in shape to the
+    // pre-existing well-behaved-chain fixture above.
+    await prisma.saldoSnapshot.create({
+      data: {
+        employeeId: emp.id,
+        periodType: "MONTHLY",
+        periodStart: SEP_START,
+        periodEnd: SEP_END,
+        workedMinutes: 0,
+        expectedMinutes: 1, // nonzero so isBridgeSnapshot() never classifies this a bridge
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(SEP_END.getTime() + 24 * 60 * 60_000),
+        closedBy: null,
+        note: "Placeholder for OB-06 head-fixture bootstrap (pre-OB close)",
+      },
+    });
+    await recalculateSnapshots(app, emp.id, SEP_START);
+    const bootstrapped = await prisma.saldoSnapshot.findFirstOrThrow({
+      where: { employeeId: emp.id, periodType: "MONTHLY", superseded: false },
+    });
+
+    if (openingBalanceMinutes !== null) {
+      // Step 2: hand-patch the stored carryOver to fold in the opening balance —
+      // simulating the migration script (OpeningBalanceSource.MIGRATED_FROM_SNAPSHOT)
+      // having already written it directly, BEFORE this employee's OpeningBalance
+      // row and any subsequent recalc exist. balanceMinutes is untouched (it is the
+      // real, freshly-computed month balance from step 1).
+      await prisma.saldoSnapshot.update({
+        where: { id: bootstrapped.id },
+        data: { carryOver: bootstrapped.carryOver + openingBalanceMinutes },
+      });
+
+      // Step 3: only now does the active OpeningBalance row start existing.
+      await prisma.openingBalance.create({
+        data: {
+          employeeId: emp.id,
+          minutes: openingBalanceMinutes,
+          effectiveFrom: HIRE_DATE,
+          reason: "OB-06 regression fixture — synthetic opening balance",
+          source: "ADMIN_ENTRY",
+          createdBy: user.id,
+        },
+      });
+    }
+
+    return { empId: emp.id, userId: user.id, balanceMinutes: bootstrapped.balanceMinutes };
+  }
+
+  it("Test 1 (OB-06): recalc with fromDate at/before the opening balance is a byte-identical no-op on the second run", async () => {
+    const { empId } = await createHeadFixture("t1", 4200);
+
+    await recalculateSnapshots(app, empId, SEP_START);
+    const run1 = (await readActiveRows(empId)).map(fieldsOf);
+    expect(run1.length).toBe(1);
+    // Sanity: genuine non-zero balance, not a coincidental zero-drift pass.
+    expect(run1[0].balanceMinutes).not.toBe(0);
+
+    await recalculateSnapshots(app, empId, SEP_START);
+    const run2 = (await readActiveRows(empId)).map(fieldsOf);
+
+    expect(run2).toEqual(run1);
+  });
+
+  it("Test 2 (anti-double-apply pin): the head row's carryOver equals openingBalance.minutes + balanceMinutes — EXACTLY, not doubled", async () => {
+    const { empId } = await createHeadFixture("t2", 4200);
+
+    await recalculateSnapshots(app, empId, SEP_START);
+    const [row] = await readActiveRows(empId);
+
+    // The concrete expected integer — this is what fails loudly if Site B (the
+    // v1.9.14 guard's frozen base) were left un-rewired: a doubled application would
+    // produce carryOver = 2 * 4200 + balanceMinutes instead.
+    expect(row.carryOver).toBe(4200 + row.balanceMinutes);
+    expect(row.carryOver).not.toBe(2 * 4200 + row.balanceMinutes);
+  });
+
+  it("Test 3 (negative opening balance): mirrors the one prod row at -1080 — applied once, stable across two runs", async () => {
+    const { empId } = await createHeadFixture("t3", -1080);
+
+    await recalculateSnapshots(app, empId, SEP_START);
+    const run1 = (await readActiveRows(empId)).map(fieldsOf);
+    expect(run1[0].carryOver).toBe(-1080 + run1[0].balanceMinutes);
+    expect(run1[0].carryOver).not.toBe(2 * -1080 + run1[0].balanceMinutes);
+
+    await recalculateSnapshots(app, empId, SEP_START);
+    const run2 = (await readActiveRows(empId)).map(fieldsOf);
+    expect(run2).toEqual(run1);
+  });
+
+  it("Test 4 (mid-chain isolation): with fromDate INSIDE the chain, an active OpeningBalance is never consulted", async () => {
+    // Two employees with an IDENTICAL, already-closed September row (fixed carryOver,
+    // not derived from any recalc) — only one of the two also holds an active
+    // OpeningBalance. fromDate = OCT_START puts September's row in prevSnapshot
+    // (non-null), so per getCarryOverBase() the opening balance must NEVER be
+    // consulted for the October recompute below. If it were, the two employees'
+    // October rows would diverge by exactly the opening balance amount.
+    const SEPT_FIXED_CARRY = 1500;
+    const prisma = app.prisma;
+
+    async function createMidChainFixture(
+      label: string,
+      openingBalanceMinutes: number | null,
+    ): Promise<string> {
+      const s = `${label}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+      const user = await prisma.user.create({
+        data: {
+          email: `${s}@test.de`,
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const emp = await prisma.employee.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          employeeNumber: `OB-${s}`,
+          firstName: label[0]?.toUpperCase() ?? "X",
+          lastName: "T.",
+          classification: "TEILZEIT",
+          hireDate: HIRE_DATE,
+        },
+      });
+      await prisma.workSchedule.create({
+        data: {
+          employeeId: emp.id,
+          type: "FLEXTIME",
+          weeklyHours: 30,
+          workDays: [1, 2, 3, 4],
+          mondayHours: 0,
+          tuesdayHours: 7.5,
+          wednesdayHours: 7.5,
+          thursdayHours: 7.5,
+          fridayHours: 7.5,
+          saturdayHours: 0,
+          sundayHours: 0,
+          validFrom: HIRE_DATE,
+        },
+      });
+      await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+      // September is already a STABLE, closed row (fixed values, identical across
+      // both employees) — it is NEVER touched by the fromDate=OCT_START recalc below
+      // (periodStart < fromDate excludes it from `snapshots`), only read as
+      // prevSnapshot. Both employees get byte-identical September rows.
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: emp.id,
+          periodType: "MONTHLY",
+          periodStart: SEP_START,
+          periodEnd: SEP_END,
+          workedMinutes: 6600,
+          expectedMinutes: 6000,
+          balanceMinutes: 600,
+          carryOver: SEPT_FIXED_CARRY,
+          closedAt: new Date(SEP_END.getTime() + 24 * 60 * 60_000),
+          closedBy: null,
+          note: "Fixed stable September row for OB-06 mid-chain isolation test",
+        },
+      });
+
+      // October: real activity + a placeholder to be recalculated.
+      const start = new Date("2026-10-06T07:00:00Z");
+      await prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: new Date("2026-10-06T00:00:00Z"),
+          startTime: start,
+          endTime: new Date(start.getTime() + 6 * 60 * 60_000),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+        },
+      });
+      await prisma.saldoSnapshot.create({
+        data: {
+          employeeId: emp.id,
+          periodType: "MONTHLY",
+          periodStart: OCT_START,
+          periodEnd: OCT_END,
+          workedMinutes: 0,
+          expectedMinutes: 1,
+          balanceMinutes: 0,
+          carryOver: 0,
+          closedAt: new Date(OCT_END.getTime() + 24 * 60 * 60_000),
+          closedBy: null,
+          note: "Placeholder for OB-06 mid-chain isolation test",
+        },
+      });
+
+      if (openingBalanceMinutes !== null) {
+        await prisma.openingBalance.create({
+          data: {
+            employeeId: emp.id,
+            minutes: openingBalanceMinutes,
+            effectiveFrom: HIRE_DATE,
+            reason: "OB-06 mid-chain isolation fixture — must never be consulted",
+            source: "ADMIN_ENTRY",
+            createdBy: user.id,
+          },
+        });
+      }
+
+      return emp.id;
+    }
+
+    const withOBEmpId = await createMidChainFixture("t4a", 4200);
+    const withoutOBEmpId = await createMidChainFixture("t4b", null);
+
+    await recalculateSnapshots(app, withOBEmpId, OCT_START);
+    await recalculateSnapshots(app, withoutOBEmpId, OCT_START);
+
+    // Filter by periodEnd's month label, not periodStart equality: periodStart/periodEnd
+    // are @db.Date columns, so Postgres truncates the stored value to its UTC calendar
+    // date — comparing against the original in-memory OCT_START (which carries a
+    // nonzero time component, by the TZ-converted-boundary convention used throughout
+    // this file) would never match. periodEnd is the house convention for month
+    // attribution (see monthLabelFromPeriodEnd in saldo-chain-integrity.ts) precisely
+    // because periodStart's on-disk representation is convention-ambiguous.
+    const octOf = async (empId: string) => {
+      const rows = await readActiveRows(empId);
+      return rows.filter((r) => r.periodEnd.toISOString().slice(0, 7) === "2026-10").map(fieldsOf);
+    };
+
+    const octWithOB = await octOf(withOBEmpId);
+    const octWithoutOB = await octOf(withoutOBEmpId);
+
+    expect(octWithOB.length).toBe(1);
+    expect(octWithOB).toEqual(octWithoutOB);
+  });
+});
