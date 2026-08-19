@@ -55,6 +55,30 @@ describe("auto-close-month plugin (Phase 76.12 Plan 02) — Ø-Methode + bsAbsen
     expect(pluginSource).toMatch(/halfDay: Boolean\(lr\.halfDay\)/);
   });
 
+  // ── Structural invariant (Phase 99, OB-02): getCarryOverBase() rewired at EXACTLY ONE site ──
+  // Of the four `carryOverIn` assignments in this file, only the TRUE head-of-chain seed
+  // (before the per-month loop) may route through getCarryOverBase(). The three mid-chain
+  // thread-forwards (idempotency skip, mid-loop safety-net re-derivation, forward-threading
+  // the month just closed) read ALREADY-RESOLVED stored values — routing any of them through
+  // the helper would double-apply or corrupt the opening balance. This is a structural test,
+  // not an integration test, because the failure mode being guarded is textual (a future
+  // pattern-match refactor on the `carryOverIn` variable name) while the integration path for
+  // the cron backfill is expensive to set up.
+  it("OB-02: getCarryOverBase( appears EXACTLY ONCE in auto-close-month.ts (the chain-head seed)", () => {
+    const occurrences = pluginSource.match(/getCarryOverBase\(/g) ?? [];
+    expect(occurrences.length).toBe(1);
+  });
+
+  it("OB-02: the three mid-chain carryOverIn thread-forwards remain byte-unchanged", () => {
+    // Idempotency skip (~line 293): threads an already-resolved stored value forward.
+    expect(pluginSource).toMatch(/carryOverIn = existingSnap\.carryOver;/);
+    // Mid-loop safety-net re-derivation (~line 498): re-derives from a specific prior
+    // MONTH's stored snapshot.
+    expect(pluginSource).toMatch(/carryOverIn = prevSnapForCarryOver\.carryOver;/);
+    // Forward-threading the month just closed (~line 739).
+    expect(pluginSource).toMatch(/carryOverIn = effectiveCarryOverOut;/);
+  });
+
   // ── Integration: snapshot created with Ø-Methode-consistent balance ──
   describe("integration: snapshot creation honors Ø-Methode leave subtraction", () => {
     let app: FastifyInstance;
