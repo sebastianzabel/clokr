@@ -70,7 +70,8 @@
       "nanoid": "^3.3.17",
       "postcss": ">=8.5.18",
       "prettier": "3.8.3",
-      "@playwright/test": "1.60.0"
+      "@playwright/test": "1.60.0",
+      "deepmerge-ts": ">=8.0.0"
     }
   }
 }
