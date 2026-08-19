@@ -1,6 +1,10 @@
 /**
+ * Migration artifact — committed 2026-08-19 for audit trail.
  * Phase 99 (OB-04) — Migration: move each documented opening balance out of an
  * unexplained `SaldoSnapshot.carryOver` jump and into its own `OpeningBalance` row.
+ * Related phase: 99-openingbalance-modell (see
+ * .planning/phases/99-openingbalance-modell/99-07-PLAN.md). Operator runbook:
+ * docs/runbooks/opening-balance-migration.md.
  *
  * DRY-RUN IS THE DEFAULT. `--apply` is an explicit opt-in write.
  *

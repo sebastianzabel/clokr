@@ -5,21 +5,22 @@ classified by lifecycle.
 
 ## Classification
 
-| Script                                         | Date       | Purpose                                                                                                              | Classification                        |
-| ---------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| diagnose-saldo.ts                              | 2026-06-08 | Read-only diagnostic of updateOvertimeAccount inputs for one employee                                                | Migration artifact (Phase 76.5)       |
-| fix-bogus-reset-snapshots.ts                   | 2026-06-08 | One-off cleanup of pre-tracking-reset SaldoSnapshot rows leaking carryOver                                           | Migration artifact (Phase 76.5)       |
-| backfill-mai-shifts.ts                         | 2026-06-08 | Backfill past-dated Shift rows for one employee from a JSON spec                                                     | Migration artifact (Phase 76.5)       |
-| set-opening-balance.ts                         | 2026-06-08 | Set opening saldo carryOver on a pre-cutoff SaldoSnapshot                                                            | Migration artifact (Phase 76.5)       |
-| cleanup-tz-duplicate-snapshots.ts              | 2026-06-08 | Soft-supersede TZ-duplicate SaldoSnapshot rows; AuditLog trail + idempotent re-run                                   | Migration artifact (Phase 76.6)       |
-| set-time-tracking-exempt.ts                    | 2026-06-08 | Toggle Employee.isTimeTrackingExempt + AuditLog (§ 18 ArbZG)                                                         | Migration artifact (Phase 76.7)       |
-| recalculate-snapshots-after-shift-netto-fix.ts | 2026-06-11 | Recompute SHIFT_BASED SaldoSnapshots after v1.8.9 brutto→netto fix; locked-month-safe; idempotent                    | Migration artifact (quick-260611-gap) |
-| anonymize-dump.ts                              | 2026-04    | Batch DSGVO anonymization across all employees in a connected DB (CronJob entry)                                     | Operator tool                         |
-| validate-anonymization.ts                      | 2026-04    | Companion verifier for anonymize-dump.ts — asserts the post-condition holds                                          | Operator tool                         |
-| audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                                                | Audit tool                            |
-| audit-workschedule-non-month1.ts               | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                                   | Audit tool                            |
-| backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                                                | Migration artifact (Phase 67.2)       |
-| audit-saldo-chain-integrity.ts                 | 2026-08-17 | Walk every active MONTHLY SaldoSnapshot chain; report unexplained carry-over deltas (read-only, exits 2 on findings) | Audit tool                            |
+| Script                                         | Date       | Purpose                                                                                                                                                                                  | Classification                        |
+| ---------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| diagnose-saldo.ts                              | 2026-06-08 | Read-only diagnostic of updateOvertimeAccount inputs for one employee                                                                                                                    | Migration artifact (Phase 76.5)       |
+| fix-bogus-reset-snapshots.ts                   | 2026-06-08 | One-off cleanup of pre-tracking-reset SaldoSnapshot rows leaking carryOver                                                                                                               | Migration artifact (Phase 76.5)       |
+| backfill-mai-shifts.ts                         | 2026-06-08 | Backfill past-dated Shift rows for one employee from a JSON spec                                                                                                                         | Migration artifact (Phase 76.5)       |
+| set-opening-balance.ts                         | 2026-06-08 | Set opening saldo carryOver on a pre-cutoff SaldoSnapshot                                                                                                                                | Migration artifact (Phase 76.5)       |
+| cleanup-tz-duplicate-snapshots.ts              | 2026-06-08 | Soft-supersede TZ-duplicate SaldoSnapshot rows; AuditLog trail + idempotent re-run                                                                                                       | Migration artifact (Phase 76.6)       |
+| set-time-tracking-exempt.ts                    | 2026-06-08 | Toggle Employee.isTimeTrackingExempt + AuditLog (§ 18 ArbZG)                                                                                                                             | Migration artifact (Phase 76.7)       |
+| recalculate-snapshots-after-shift-netto-fix.ts | 2026-06-11 | Recompute SHIFT_BASED SaldoSnapshots after v1.8.9 brutto→netto fix; locked-month-safe; idempotent                                                                                        | Migration artifact (quick-260611-gap) |
+| anonymize-dump.ts                              | 2026-04    | Batch DSGVO anonymization across all employees in a connected DB (CronJob entry)                                                                                                         | Operator tool                         |
+| validate-anonymization.ts                      | 2026-04    | Companion verifier for anonymize-dump.ts — asserts the post-condition holds                                                                                                              | Operator tool                         |
+| audit-workdays-vs-day-hours.ts                 | 2026-05    | Surface WorkSchedule rows whose workDays mismatches the per-day hours                                                                                                                    | Audit tool                            |
+| audit-workschedule-non-month1.ts               | 2026-05    | Surface WorkSchedule rows whose validFrom is not the 1st of a month (pre-Phase-60)                                                                                                       | Audit tool                            |
+| backfill-auto-revalidate.ts                    | 2026-05    | Re-revalidate TimeEntries marked isInvalid after a leave cancellation                                                                                                                    | Migration artifact (Phase 67.2)       |
+| audit-saldo-chain-integrity.ts                 | 2026-08-17 | Walk every active MONTHLY SaldoSnapshot chain; report unexplained carry-over deltas (read-only, exits 2 on findings)                                                                     | Audit tool                            |
+| migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure | Migration artifact (Phase 99)         |
 
 ## Migration artifacts
 
@@ -39,6 +40,11 @@ All migration artifacts:
   prints the proposed changes.
 - write AuditLog rows (via `--actor-id <uuid>`) for every mutation so the
   migration step is reconstructible by retention auditors.
+
+`migrate-opening-balances.ts` (Phase 99) follows this convention like every other migration
+artifact — `--apply` is opt-in, dry-run is the default — but adds one extra guarantee on top:
+it never mutates `SaldoSnapshot` at all, only `OpeningBalance` and `AuditLog`. See
+`docs/runbooks/opening-balance-migration.md` for the full operator procedure.
 
 ## Operator tools
 
