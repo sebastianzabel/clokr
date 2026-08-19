@@ -272,6 +272,24 @@ describe("SaldoAnzeige — split mode (Phase 97-01)", () => {
     expect(screen.queryByTestId("saldo-forecast-label")).toBeNull();
   });
 
+  // Browser UAT 2026-08-19: the rendered compact split read "Saldo +2:15 (+0:40)" — which of the
+  // two numbers was confirmed and which was the forecast rested ENTIRELY on the parentheses.
+  // Class names and data-testid are invisible to users, so a screen reader announced both numbers
+  // undifferentiated. 97-UI-SPEC forbids the meaning resting on a visual convention alone.
+  // These sr-only prefixes carry the same vocabulary the expanded variant shows on screen.
+  it("compact split labels each value for screen readers (not by parentheses alone)", () => {
+    renderWithTheme(SaldoAnzeige, {
+      variant: "compact",
+      confirmedMinutes: 135,
+      openMonthMinutes: 40,
+      hasClosedMonth: true,
+    });
+    expect(screen.getByTestId("saldo-confirmed-value")).toHaveTextContent("Bestätigt:");
+    expect(screen.getByTestId("saldo-forecast-value")).toHaveTextContent(
+      "Laufender Monat (Prognose):",
+    );
+  });
+
   it("compact A3 ('noch kein Monatsabschluss') is the ONE caption UI-SPEC keeps even in compact", () => {
     renderWithTheme(SaldoAnzeige, {
       variant: "compact",

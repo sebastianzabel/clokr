@@ -269,14 +269,23 @@
            state-C dot. Captions/combined line collapse away, EXCEPT the "noch kein
            Monatsabschluss" caption (state A3), which is kept even here. -->
       <div class="saldo__split saldo__split--compact">
+        <!-- Browser UAT (2026-08-19): in compact mode the ONLY thing distinguishing the
+             confirmed figure from the forecast was the parentheses around the second one.
+             Class names and data-testid are invisible to users, so a screen reader
+             announced "Saldo −15248:00 −96:00" with no way to tell which is which — the
+             97-UI-SPEC accessibility rule forbids the meaning resting on a visual
+             convention alone. The visible compact layout is unchanged; these sr-only
+             prefixes carry the same vocabulary the expanded variant shows on screen. -->
         <span
           class="saldo__confirmed-value saldo__confirmed-value--{confirmedTone}"
           data-testid="saldo-confirmed-value"
         >
-          {fmt(confirmedMinutes ?? 0)}
+          <span class="sr-only">Bestätigt: </span>{fmt(confirmedMinutes ?? 0)}
         </span>
         <span class="saldo__forecast-value" data-testid="saldo-forecast-value">
-          ({forecastAvailable ? fmt(openMonthMinutes ?? 0) : "—"})
+          <span class="sr-only">Laufender Monat (Prognose): </span>({forecastAvailable
+            ? fmt(openMonthMinutes ?? 0)
+            : "—"})
         </span>
         {@render infoTrigger(14)}
         {#if rosterIncomplete}
