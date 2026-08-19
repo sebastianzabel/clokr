@@ -44,7 +44,9 @@ import type { ChainLinkKind } from "./saldo-chain-integrity";
  * recompute or a one-off migration script. Known-mechanical reasons that MUST
  * NOT be added (they all changed carryOver values on prod):
  *   - "retroactive recalculation"                              (recalculate-snapshots.ts)
- *   - "v1.8.4 Ø-Methode migration (BAG 9 AZR 406/17)"           (recalculate-snapshots-after-soll-fix.ts)
+ *   - "v1.8.4 Ø-Methode migration (BAG 9 AZR 406/17)"           (originating script removed in
+ *     Phase 99 — see apps/api/scripts/README.md "Removed scripts"; the rows it wrote remain in
+ *     AuditLog)
  *   - "v1.8.9 SHIFT_BASED netto migration (...)"                (recalculate-snapshots-after-shift-netto-fix.ts)
  *   - "v1.8.16 SHIFT_BASED Model B Soll (...)"                  (recalculate-snapshots-after-shift-soll-fix.ts)
  *   - "v1.8.27 Azubi Berufsschultag Monats-Soll double-count fix (single-count)"
