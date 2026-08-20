@@ -1,10 +1,20 @@
 <script lang="ts">
   // Quick task 260820-cy5 (D-01) — the month-independent lifetime overtime balance
   // ("Gesamt-Saldo"), deliberately rendered OUTSIDE the month bar and placed next to
-  // the page heading instead. Root cause this fixes: the month bar's `.mstat` tiles are
-  // single-line (label above value), while this figure needs its own stacked block
-  // (value, then a forecast line with an info toggletip) — cramming that into a
-  // one-line tile row is what produced the "merkwürdige Anordnung" the owner flagged.
+  // the page heading instead.
+  //
+  // Variant history (kept here because the reasoning is worth keeping): the plan
+  // originally specified `variant="expanded"`, following an ASCII preview that showed
+  // the value stacked above a "Prognose ⓘ" line. A follow-up visual measurement on the
+  // running stack found that `expanded` renders EIGHT text nodes including a
+  // `saldo__combined-value` ("Voraussichtlich gesamt") — a THIRD on-screen copy of the
+  // open-month figure (forecast-value + combined-value + the Monat-Saldo tile in the
+  // month bar below), worsening the exact duplication the owner originally flagged.
+  // Reverted to `variant="compact"` — the same variant `team/time-entries` already used
+  // for this tile before this task, a proven Phase-97-compliant single-line rendering
+  // (confirmed value, forecast in parentheses, info trigger — no combined line, no
+  // 38px display figure) that brings the duplicate count back down to two (forecast +
+  // month-bar tile), matching pre-task behaviour.
   //
   // Shared between /time-entries and /team/time-entries (SALDO-DISP-04 — a manager
   // must see the same presentation of the same numbers as the employee). Lives under
@@ -39,7 +49,7 @@
 <div class="gesamt-saldo-head" data-testid="gesamt-saldo-head">
   {#if confirmedMinutes !== undefined}
     <SaldoAnzeige
-      variant="expanded"
+      variant="compact"
       label="Gesamt-Saldo"
       {confirmedMinutes}
       openMonthMinutes={openMonthMinutes ?? null}
@@ -49,7 +59,7 @@
     />
   {:else}
     <SaldoAnzeige
-      variant="expanded"
+      variant="compact"
       label="Gesamt-Saldo"
       saldoMinutes={totalHours !== null ? Math.round(totalHours * 60) : null}
       {loading}
@@ -59,7 +69,7 @@
 
 <style>
   /* Layout/spacing only — no token overrides. Sits in PageHead's `actions` slot,
-     which is `align-items: center`; the stacked SaldoAnzeige block wants to align
+     which is `align-items: center`; the compact SaldoAnzeige row wants to align
      with the H1's baseline instead, hence flex-end here (PageHead itself stays
      untouched). */
   .gesamt-saldo-head {
