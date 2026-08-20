@@ -2,7 +2,7 @@
 // fmtMin/fmtSigned (routes/(app)/time-entries/+page.svelte:779-812) verbatim.
 
 import { describe, it, expect } from "vitest";
-import { fmtMin, fmtSigned } from "../format-minutes";
+import { fmtMin, fmtSigned, fmtBalance } from "../format-minutes";
 
 describe("fmtMin", () => {
   it('formats 0 as "0:00"', () => {
@@ -29,6 +29,22 @@ describe("fmtSigned", () => {
 
   it("formats -90 with U+2212 MINUS SIGN, not ASCII hyphen", () => {
     const result = fmtSigned(-90);
+    expect(result).toBe("−1:30");
+    expect(result).not.toContain("-1:30"); // ASCII hyphen must not appear
+  });
+});
+
+describe("fmtBalance", () => {
+  it('formats 0 as "±0:00" — ALWAYS shows a sign, unlike fmtSigned', () => {
+    expect(fmtBalance(0)).toBe("±0:00");
+  });
+
+  it('formats 90 as "+1:30"', () => {
+    expect(fmtBalance(90)).toBe("+1:30");
+  });
+
+  it("formats -90 with U+2212 MINUS SIGN, not ASCII hyphen", () => {
+    const result = fmtBalance(-90);
     expect(result).toBe("−1:30");
     expect(result).not.toContain("-1:30"); // ASCII hyphen must not appear
   });

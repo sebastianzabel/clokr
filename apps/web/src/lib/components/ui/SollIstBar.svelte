@@ -46,6 +46,14 @@
     return behind ? `fehlen ${fmtMin(diffMin)} h` : `+${fmtMin(diffMin)} h mehr`;
   });
 
+  // 260820-elk follow-up (coordinator-measured deviation #1) — the mid label names the
+  // deficit/overhang the hatch/overhang segment depicts; it must not read as quieter than
+  // the plain Ist/Soll labels flanking it. "ausgeglichen" (exact match) stays neutral.
+  const midTone = $derived.by(() => {
+    if (exact) return "neutral";
+    return behind ? "bad" : "good";
+  });
+
   const ariaLabel = $derived.by(() => {
     const base = `${fmtMin(istMin)} von ${fmtMin(sollToDateMin)} Stunden erfüllt`;
     if (exact) return `${base}, ausgeglichen`;
@@ -68,7 +76,7 @@
   </div>
   <div class="sib-labels">
     <span>Ist {fmtMin(istMin)} h</span>
-    <span class="sib-label--mid">{midLabel}</span>
+    <span class="sib-label--mid sib-label--mid--{midTone}">{midLabel}</span>
     <span>Soll {fmtMin(sollToDateMin)} h</span>
   </div>
 {/if}
@@ -126,6 +134,19 @@
 
   .sib-label--mid {
     color: var(--text);
+  }
+
+  /* 260820-elk follow-up — the mid label IS the whole point of the bar (it names the
+     deficit/overhang the hatch/overhang segment depicts), so it must read heavier than
+     the plain Ist/Soll labels flanking it, not quieter. */
+  .sib-label--mid--bad {
+    color: var(--bad);
+    font-weight: 600;
+  }
+
+  .sib-label--mid--good {
+    color: var(--good);
+    font-weight: 600;
   }
 
   .sib-nosoll {

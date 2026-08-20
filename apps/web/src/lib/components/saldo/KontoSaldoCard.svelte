@@ -22,7 +22,7 @@
   // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
   import Card from "$components/ui/Card.svelte";
-  import { fmtSigned } from "$lib/utils/format-minutes";
+  import { fmtSigned, fmtBalance } from "$lib/utils/format-minutes";
 
   interface Props {
     totalHours: number | null;
@@ -48,21 +48,36 @@
   const figureMin = $derived(
     isSplit ? (confirmedMinutes ?? 0) : totalHours !== null ? Math.round(totalHours * 60) : null,
   );
-  const figureText = $derived(figureMin === null ? "—" : fmtSigned(figureMin));
+  // 260820-elk follow-up (coordinator-measured deviation #3) — this headline figure ALWAYS
+  // carries a sign character per the design handoff README's Formatierung/Accessibility
+  // rules ("Vorzeichen immer als Zeichen ausschreiben (− / + / ±), nicht nur farblich"), so
+  // exact zero renders "±0:00" here — a DELIBERATELY different zero convention from
+  // MonatSaldoCard's month figure (which stays locked to bare "0:00", see format-minutes.ts).
+  const figureText = $derived(figureMin === null ? "—" : fmtBalance(figureMin));
 
-  // Faint tone for a brand-new hire whose first month hasn't closed yet (mirrors
-  // SaldoAnzeige's own isNewHireZero convention) — the number is real but not yet meaningful.
+  // Still used for the CAPTION distinction only ("noch kein Monatsabschluss" vs "Bestätigt")
+  // — a brand-new hire whose first month hasn't closed yet gets a different caption, but (per
+  // the coordinator's fix) NOT a different colour tone any more; --text-faint is reserved for
+  // day numbers without values, not for a real, just-not-yet-meaningful saldo figure.
   const isNewHireZero = $derived(isSplit && figureMin === 0 && !hasClosedMonth);
   const tone = $derived.by(() => {
     if (figureMin === null) return "neutral";
-    if (isNewHireZero) return "faint";
+    if (figureMin === 0) return "muted";
     if (figureMin > 0) return "good";
-    if (figureMin < 0) return "bad";
-    return "neutral";
+    return "bad";
   });
 
   const openMonthAvailable = $derived(openMonthMinutes !== undefined && openMonthMinutes !== null);
   const openMonthText = $derived(openMonthAvailable ? fmtSigned(openMonthMinutes ?? 0) : "—");
+  // 260820-elk follow-up (coordinator-measured deviation #2) — the row VALUE must read as a
+  // figure (size + sign colour), not as quiet as its own label.
+  const openMonthTone = $derived.by(() => {
+    if (!openMonthAvailable) return "muted";
+    const v = openMonthMinutes ?? 0;
+    if (v > 0) return "good";
+    if (v < 0) return "bad";
+    return "muted";
+  });
 </script>
 
 <Card class="ksc-card" style="background: var(--bg-subtle)">
@@ -88,7 +103,7 @@
             >inkl. laufendem Monat{#if rosterIncomplete}
               &nbsp;· Restmonat unverplant{/if}</span
           >
-          <span class="ksc-row-value">{openMonthText}</span>
+          <span class="ksc-row-value ksc-row-value--{openMonthTone}">{openMonthText}</span>
         </div>
       {/if}
     {/if}
@@ -132,8 +147,8 @@
   .ksc-figure--neutral {
     color: var(--text);
   }
-  .ksc-figure--faint {
-    color: var(--text-faint);
+  .ksc-figure--muted {
+    color: var(--text-muted);
   }
 
   .ksc-caption {
@@ -159,10 +174,22 @@
     color: var(--text-muted);
   }
 
+  /* 260820-elk follow-up (coordinator-measured deviation #2) — was 13px/uncoloured (same
+     size as its own label, so it didn't read as a figure at all). Now sized/coloured like
+     an actual figure: 17px, sign-toned. */
   .ksc-row-value {
     font-variant-numeric: tabular-nums;
     font-weight: 600;
-    color: var(--text);
+    font-size: 17px;
+  }
+  .ksc-row-value--good {
+    color: var(--good);
+  }
+  .ksc-row-value--bad {
+    color: var(--bad);
+  }
+  .ksc-row-value--muted {
+    color: var(--text-muted);
   }
 
   .ksc-skel-label {

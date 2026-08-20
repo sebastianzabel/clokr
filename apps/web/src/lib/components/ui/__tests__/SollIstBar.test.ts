@@ -25,6 +25,12 @@ describe("SollIstBar — behind (negative saldo)", () => {
     expect(label).toContain("8:00 Stunden fehlen");
   });
 
+  it("emphasises the 'fehlen' mid label (--bad, weight 600) — coordinator deviation #1", () => {
+    renderWithTheme(SollIstBar, { sollToDateMin: 3360, istMin: 2880 });
+    const mid = screen.getByText("fehlen 8:00 h");
+    expect(mid).toHaveClass("sib-label--mid--bad");
+  });
+
   it("shows Ist and Soll also as visible text (never colour-only)", () => {
     renderWithTheme(SollIstBar, { sollToDateMin: 3360, istMin: 2880 });
     expect(screen.getByText("Ist 48:00 h")).toBeInTheDocument();
@@ -44,6 +50,12 @@ describe("SollIstBar — ahead (positive saldo)", () => {
     const label = screen.getByTestId("soll-ist-bar").getAttribute("aria-label") ?? "";
     expect(label).toContain("56:00 von 48:00 Stunden erfüllt");
     expect(label).toContain("8:00 Stunden mehr");
+  });
+
+  it("emphasises the '+…mehr' mid label (--good, weight 600) — coordinator deviation #1", () => {
+    renderWithTheme(SollIstBar, { sollToDateMin: 2880, istMin: 3360 });
+    const mid = screen.getByText("+8:00 h mehr");
+    expect(mid).toHaveClass("sib-label--mid--good");
   });
 });
 
