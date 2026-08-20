@@ -21,8 +21,13 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 
 describe("KontoSaldoCard — headline figure sign (deviation #3)", () => {
   it('renders "±0:00" at exact zero (NOT bare "0:00")', () => {
-    renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: 0 }));
-    expect(screen.getByText("±0:00")).toBeInTheDocument();
+    // Addressed via .ksc-figure rather than getByText: since the sign convention was
+    // unified, the "inkl. laufendem Monat" row also renders "±0:00" when it is zero,
+    // so the bare text is no longer unique in this card. Same assertion, unambiguous target.
+    const { container } = renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: 0 }));
+    const figure = container.querySelector(".ksc-figure");
+    expect(figure).not.toBeNull();
+    expect(figure!.textContent).toContain("±0:00");
   });
 
   it("renders a muted (not faint) tone at exact zero", () => {

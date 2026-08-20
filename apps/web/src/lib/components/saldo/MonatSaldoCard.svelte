@@ -17,7 +17,7 @@
   import type { Snippet } from "svelte";
   import Card from "$components/ui/Card.svelte";
   import SollIstBar from "$components/ui/SollIstBar.svelte";
-  import { fmtMin, fmtSigned } from "$lib/utils/format-minutes";
+  import { fmtMin, fmtBalance } from "$lib/utils/format-minutes";
 
   interface Props {
     /** The month navigation row — the page passes <MonthBar> here (see D-NAV). */
@@ -66,7 +66,7 @@
     return "neutral";
   });
 
-  const figureText = $derived(saldoMin === null ? "—" : fmtSigned(saldoMin));
+  const figureText = $derived(saldoMin === null ? "—" : fmtBalance(saldoMin));
 </script>
 
 <Card class="msc-card">

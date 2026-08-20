@@ -23,7 +23,7 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe("MonatSaldoCard — month start, no booking", () => {
-  it("renders the no-Soll branch, figure 0:00, and does not crash", () => {
+  it("renders the no-Soll branch, figure ±0:00, and does not crash", () => {
     renderWithTheme(MonatSaldoCard, baseProps());
     expect(screen.getByTestId("soll-ist-bar-nosoll")).toBeInTheDocument();
     expect(screen.queryByTestId("soll-ist-bar")).not.toBeInTheDocument();
@@ -58,11 +58,11 @@ describe("MonatSaldoCard — positive saldo", () => {
 });
 
 describe("MonatSaldoCard — saldo exactly 0", () => {
-  it('shows "0:00" (not "±0:00") with a neutral tone', () => {
+  it('shows "±0:00" with a neutral tone', () => {
     renderWithTheme(MonatSaldoCard, baseProps({ sollToDateMin: 2880, istMin: 2880, saldoMin: 0 }));
     const figure = screen.getByTestId("monat-saldo-figure");
     expect(figure).toHaveTextContent("0:00");
-    expect(figure.textContent).not.toContain("±");
+    expect(figure.textContent).toContain("±");
     expect(figure).toHaveClass("msc-figure--neutral");
   });
 });

@@ -24,7 +24,7 @@
   // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
   import Card from "$components/ui/Card.svelte";
-  import { fmtSigned, fmtBalance } from "$lib/utils/format-minutes";
+  import { fmtBalance } from "$lib/utils/format-minutes";
 
   interface Props {
     totalHours: number | null;
@@ -70,7 +70,7 @@
   });
 
   const openMonthAvailable = $derived(openMonthMinutes !== undefined && openMonthMinutes !== null);
-  const openMonthText = $derived(openMonthAvailable ? fmtSigned(openMonthMinutes ?? 0) : "—");
+  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthMinutes ?? 0) : "—");
   // 260820-elk follow-up (coordinator-measured deviation #2) — the row VALUE must read as a
   // figure (size + sign colour), not as quiet as its own label.
   const openMonthTone = $derived.by(() => {
