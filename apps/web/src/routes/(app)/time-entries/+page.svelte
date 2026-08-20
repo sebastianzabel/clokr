@@ -9,6 +9,7 @@
   import MonthBar from "$components/ui/MonthBar.svelte";
   import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-01
+  import GesamtSaldoHeader from "$components/saldo/GesamtSaldoHeader.svelte"; // quick 260820-cy5
   import Modal from "$components/ui/Modal.svelte";
   import {
     format,
@@ -1445,24 +1446,10 @@
       }
     }
 
-    // Gesamt-Saldo: the LIVE lifetime overtime balance (through windowEnd = yesterday when today is
-    // incomplete), sourced from GET /overtime/:id (now recomputed live via computeOvertimeBalanceHours).
-    // MONTH-INDEPENDENT — NOT bound to the viewed booking month, so navigating months does not change
-    // it. For the CURRENT month it still equals the last visible §615 cell (same lifetime computation).
-    // For MONTHLY_HOURS(null/0) TRACK_ONLY the endpoint returns 0.
-    if (overtimeTotalHours !== null) {
-      const totalMin = Math.round(overtimeTotalHours * 60);
-      stats.push({
-        label: "Gesamt-Saldo",
-        // Phase 97-05 — retire fmtBalance here too: 97-01 migrated the actual rendering to
-        // SaldoAnzeige via statRenders below (registered unconditionally), leaving this
-        // fallback string on the old "±0:00" convention. Never actually shown, but kept
-        // accurate as MonthBar's structural fallback.
-        value: fmtSigned(totalMin),
-        unit: "h",
-        tone: balTone(totalMin),
-      });
-    }
+    // quick 260820-cy5 (D-01) — Gesamt-Saldo (the LIVE lifetime overtime balance) no longer
+    // lives in monthBarStats at all: it moved out of the month bar entirely, into
+    // GesamtSaldoHeader next to the page heading. It was already month-INDEPENDENT (see the
+    // removed comment history in git blame) — this just relocates where that fact is expressed.
     return stats;
   });
   // ArbZG live check for the modal: existing entries for formDate + current form values
@@ -1576,6 +1563,17 @@
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
          exempt users to click a disabled control. -->
+    <!-- quick 260820-cy5 (D-01) — Gesamt-Saldo moved OUT of the month bar, next to the
+         heading; rendered unconditionally (also for isExempt users — SaldoAnzeige itself
+         handles the exempt "—" collapse), before the CTA. -->
+    <GesamtSaldoHeader
+      totalHours={overtimeTotalHours}
+      confirmedMinutes={overtimeConfirmedMinutes}
+      openMonthMinutes={overtimeOpenMonthMinutes}
+      hasClosedMonth={overtimeHasClosedMonth}
+      rosterIncomplete={overtimeRosterIncomplete}
+      {loading}
+    />
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
@@ -1612,34 +1610,6 @@
   {/if}
 
   <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
-  <!-- Phase 97-01 (TRACER) — Gesamt-Saldo tile render override: split (Bestätigt +
-       Prognose) when the endpoint returned it, else the pre-existing single value. A
-       snippet declared in markup is not reachable from <script>, so it's declared here
-       and fed to MonthBar's statRenders seam at the call site below. -->
-  {#snippet gesamtSaldoStat()}
-    <!-- IN-01 (code review) — `loading` (declared above, gates loadAll()) now reaches the
-         primitive instead of being wired nowhere: without it, the tile briefly rendered
-         "Kein Stundenplan" on first paint (before overtimeTotalHours/overtimeConfirmedMinutes
-         arrive) and stale data during a month-navigation reload — loading short-circuits both. -->
-    {#if overtimeConfirmedMinutes !== undefined}
-      <SaldoAnzeige
-        variant="compact"
-        label="Gesamt-Saldo"
-        confirmedMinutes={overtimeConfirmedMinutes}
-        openMonthMinutes={overtimeOpenMonthMinutes ?? null}
-        hasClosedMonth={overtimeHasClosedMonth ?? false}
-        rosterIncomplete={overtimeRosterIncomplete}
-        {loading}
-      />
-    {:else}
-      <SaldoAnzeige
-        variant="compact"
-        label="Gesamt-Saldo"
-        saldoMinutes={overtimeTotalHours !== null ? Math.round(overtimeTotalHours * 60) : null}
-        {loading}
-      />
-    {/if}
-  {/snippet}
   <!-- Phase 97-05 — Monat-Saldo tile render override: a compact single-value SaldoAnzeige
        labelled "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)" depending on monthSaldo.closed,
        registered in statRenders ONLY when monthSaldo is loaded (SHIFT_BASED). For every other
@@ -1672,10 +1642,7 @@
         onToday={gotoToday}
         onSelectMonth={gotoMonthYear}
         testIdPrefix="calendar-month-header"
-        statRenders={{
-          "Gesamt-Saldo": gesamtSaldoStat,
-          ...(monthSaldo ? { "Monat-Saldo": monatSaldoStat } : {}),
-        }}
+        statRenders={monthSaldo ? { "Monat-Saldo": monatSaldoStat } : {}}
       >
         {#snippet extraActions()}
           {#if monthIsLocked}
