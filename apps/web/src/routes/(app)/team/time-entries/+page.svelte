@@ -943,11 +943,6 @@
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
 
-  // D-07: Set of date strings (yyyy-MM-dd) that have a locked entry — for calendar cell icons
-  let lockedDateSet = $derived(
-    new Set(entries.filter((e) => e.isLocked === true).map((e) => e.date.slice(0, 10))),
-  );
-
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
     const warnings: ArbZGWarning[] = [];
@@ -1414,7 +1409,6 @@
               class:cal-holiday={day.isHoliday && day.isCurrentMonth}
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
               disabled={day.isBeforeHire || !day.isCurrentMonth}
               title={day.isBeforeHire
                 ? "Vor Eintrittsdatum"
@@ -1428,6 +1422,15 @@
               onclick={() => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
+              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                <span
+                  class="cal-arbzg-mark"
+                  title={arbzgWarnings.map((w) => w.message).join("\n")}
+                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                  >⚠&#xFE0E;</span
+                >
+              {/if}
               {#if day.isHoliday && day.isCurrentMonth}
                 <span class="cal-holiday-label">{day.holidayName}</span>
               {:else if day.absenceType}
@@ -1440,23 +1443,6 @@
               {#if day.isBeforeHire}
                 <span class="day-before-hire">—</span>
               {:else if day.isCurrentMonth && day.hasEntries}
-                {#if lockedDateSet.has(day.dateStr)}
-                  <span class="cal-lock-icon" aria-label="Gesperrt">
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      style:color="var(--text-muted)"
-                      aria-hidden="true"
-                    >
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                    </svg>
-                  </span>
-                {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
                 {#if isShiftBased}
                   <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
@@ -1809,13 +1795,6 @@
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
-  /* D-07: Lock icon overlay in calendar cells */
-  .cal-lock-icon {
-    display: block;
-    line-height: 1;
-    margin-bottom: 1px;
-  }
-
   /* ── View Tabs ───────────────────────────────────────── */
   /* view-tabs, view-tab → global in app.css */
 
@@ -1856,8 +1835,8 @@
   }
 
   /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
-     Status modifiers (--ok, --partial, --missing, --arbzg-warn) and cell
-     content typography (.day-worked, .day-bal) also live in app.css.
+     Status modifiers (--ok, --partial, --missing), cell content typography
+     (.day-worked, .day-bal) and the ArbZG mark recipe also live in app.css.
      See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
 
   .day-before-hire {
