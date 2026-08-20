@@ -5,8 +5,9 @@
   // stays the page's one and only month navigation), the big month-saldo figure, the
   // SollIstBar progress bar that explains it, and a purely informative status line.
   //
-  // Lives in `saldo/` beside GesamtSaldoHeader.svelte, following the precedent recorded
-  // there ("no second saldo-variant tree in `ui/`" — SALDO-DISP-05). NOTE: unlike
+  // Lives in `saldo/` alongside the other saldo cards (KontoSaldoCard, SaldoAnzeige),
+  // following the precedent this quick task itself established ("no second saldo-variant
+  // tree in `ui/`" — SALDO-DISP-05). NOTE: unlike
   // `lib/components/ui/`, `lib/components/saldo/` is NOT scanned by `lint:ui-classes` — class
   // hygiene in this file is maintained by review, not by a gate.
   //

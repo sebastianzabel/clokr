@@ -1,7 +1,9 @@
 <script lang="ts">
   // Quick task 260820-elk — quiet right-hand "Konto" card for /time-entries (design variant
   // 1c "Fortschritt"). Carries the lifetime overtime balance that used to sit next to the H1
-  // (GesamtSaldoHeader — quick 260820-cy5), now relocated here per CONTEXT.
+  // (added by quick 260820-cy5 as GesamtSaldoHeader, a component deleted by quick 260820-fkz
+  // once this card replaced it on both /time-entries and /team/time-entries), now relocated
+  // here per CONTEXT.
   //
   // ROUTE TAKEN (see the plan's "one_correction_to_the_plan" — this deliberately deviates
   // from the original 2b draft, which wrapped `<SaldoAnzeige variant="expanded">`):
@@ -10,9 +12,9 @@
   // "Voraussichtlich gesamt" row, since `combinedMinutes` is derived purely from those two
   // props with no way to suppress it via a prop). Reaching for `combinedLabel` to rename that
   // third row does not remove it; the card would show the open-month figure TWICE within one
-  // card. That is the exact defect this task exists to fix (see GesamtSaldoHeader.svelte's own
-  // header comment, and commit 94ded43d, for the identical failure mode already hit once on
-  // this page today). Hiding the row with `:global()` was explicitly ruled out (suppresses
+  // card. That is the exact defect this task exists to fix (a failure mode already hit once
+  // on this page today and reverted in commit 94ded43d). Hiding the row with `:global()` was
+  // explicitly ruled out (suppresses
   // information to fake a mock). `variant="compact"` avoids the extra row but never shows a
   // VISIBLE label for the forecast figure (only an sr-only prefix) — the exact "unnamed
   // (−8:00)" defect CONTEXT names as the reason this task exists.
