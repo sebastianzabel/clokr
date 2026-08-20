@@ -371,4 +371,49 @@
     font-weight: 500;
     color: var(--text-muted);
   }
+
+  /* quick 260820-cy5 (D-03) — homogenise a stat tile that a consumer renders through
+     SaldoAnzeige (statRenders seam, e.g. the SHIFT_BASED "Monat-Saldo" tile): put it on
+     the SAME label-over-value axis and label/value typography as the default .mstat
+     tiles above, so all tiles in the row share one recipe and one baseline. Scoped
+     under .mstat, which only exists when `stats` is non-empty (line 202 `{#if
+     stats.length}`) — /teamcal passes no stats and is therefore structurally
+     unreachable by these rules; /shifts doesn't import MonthBar at all. Measured
+     divergence (before this fix): SaldoAnzeige's own .saldo root is
+     `inline-flex; align-items: baseline` (label BESIDE value) with `.saldo__label`
+     at 12px/600/normal-case/--text-muted and `.saldo--compact .saldo__value` at
+     14px/600 sans — visibly different from .mstat-label/.mstat-value below. Values
+     copied verbatim from the .mstat-label / .mstat-value rules above, not reinvented.
+     Deliberately NOT touched: sign/tone colouring (.saldo has none today — no
+     .saldo--positive/.saldo--negative rule exists anywhere in the app, so this is not
+     a regression), the forecast/roster/lock badges' own styling (D-03 is axis +
+     label typography only, not colour or badge treatment). */
+  .mstat :global(.saldo) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .mstat :global(.saldo__label) {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+
+  .mstat :global(.saldo__value),
+  .mstat :global(.saldo--compact .saldo__value) {
+    font-family: var(--font-serif);
+    font-variant-numeric: tabular-nums;
+    font-size: 19px;
+    font-weight: 400;
+    color: var(--text);
+    line-height: 1;
+    white-space: nowrap;
+  }
 </style>
