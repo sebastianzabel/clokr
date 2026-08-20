@@ -1600,19 +1600,21 @@ textarea.form-input {
 .cal-cell--today-partial {
   border-left: 3px solid var(--warn);
 }
-/* ArbZG over: border + warn glyph top-right via ::after */
-.cal-cell.cal-cell--arbzg-warn {
-  border-color: var(--warn);
-}
-.cal-cell.cal-cell--arbzg-warn::after {
-  content: "⚠";
+/* ArbZG hint — a MARK, not a colour state (quick task 260820-1i7).
+   Deliberately achromatic: --good/--warn/--bad are spoken for by the Soll-status
+   channel (left edge), so any hue here would read as a fourth Soll state. Legibility
+   on every absence fill (incl. the brand-tinted vocational_school surface) is
+   inherited from --text, which .cal-day-num and .day-worked already render in on
+   those same surfaces. The mark carries its meaning through form, not hue. */
+.cal-cell .cal-arbzg-mark {
   position: absolute;
-  top: 6px;
-  right: 6px;
-  font-size: 12px;
+  top: 4px;
+  right: 5px;
+  font-size: 11px;
   line-height: 1;
-  color: var(--warn);
-  pointer-events: none;
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.8;
 }
 /* Canonical cell-content typography */
 .cal-cell .day-worked {
@@ -1622,9 +1624,6 @@ textarea.form-input {
   font-weight: 400;
   color: var(--text);
   line-height: 1;
-}
-.cal-cell.cal-cell--arbzg-warn .day-worked {
-  color: var(--bad);
 }
 .cal-cell .day-bal {
   font-size: 0.6875rem;
@@ -1688,7 +1687,8 @@ textarea.form-input {
 .cal-cell.cal-selected:not(.cal-other) .day-bal,
 .cal-cell.cal-selected:not(.cal-other) .day-missing,
 .cal-cell.cal-selected:not(.cal-other) .cal-abs-type,
-.cal-cell.cal-selected:not(.cal-other) .cal-holiday-label {
+.cal-cell.cal-selected:not(.cal-other) .cal-holiday-label,
+.cal-cell.cal-selected:not(.cal-other) .cal-arbzg-mark {
   color: white !important;
 }
 /* today+selected: ring + bg-subtle; text reverts so day-worked/bal stay readable */
@@ -1700,7 +1700,8 @@ textarea.form-input {
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-bal,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .day-missing,
 .cal-cell.cal-selected.cal-today:not(.cal-other) .cal-abs-type,
-.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-holiday-label {
+.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-holiday-label,
+.cal-cell.cal-selected.cal-today:not(.cal-other) .cal-arbzg-mark {
   color: var(--text-muted) !important;
 }
 /* .cal-day-num: white on brand circle (handled by .cal-today .cal-day-num below) */

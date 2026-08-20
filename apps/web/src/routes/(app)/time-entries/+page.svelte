@@ -2551,21 +2551,6 @@
   .cal-cell--today-partial {
     border-left: 3px solid var(--warn);
   }
-  /* ArbZG over: border + warn glyph top-right via ::after */
-  :global(.cal-cell.cal-cell--arbzg-warn) {
-    border-color: var(--warn);
-  }
-  :global(.cal-cell.cal-cell--arbzg-warn::after) {
-    content: "⚠";
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    font-size: 12px;
-    line-height: 1;
-    color: var(--warn);
-    pointer-events: none;
-  }
-
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
   /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
 
@@ -2591,10 +2576,6 @@
     font-weight: 400;
     color: var(--text);
     line-height: 1;
-  }
-  /* When the cell is ArbZG-over, the hour total turns red */
-  :global(.cal-cell--arbzg-warn .day-worked) {
-    color: var(--bad);
   }
   .day-bal {
     font-size: 0.6875rem;
