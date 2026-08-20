@@ -113,6 +113,12 @@ html[data-mode="dark"] {
   --bad-soft: rgba(180, 35, 24, 0.1);
   --star: #f59e0b;
 
+  /* quick 260820-elk — Soll/Ist bar deficit hatch. The ONLY two colours in variant 1c
+     with no existing token equivalent. Derived from --bad (#b42318) rather than a new
+     hue so the deficit reads as the same "you are behind" signal as .mstat-value.neg. */
+  --bar-hatch-line: rgba(180, 35, 24, 0.42);
+  --bar-hatch-bg: rgba(180, 35, 24, 0.1);
+
   --shadow-sm: 0 1px 2px rgba(40, 25, 45, 0.05);
   --shadow-md: 0 4px 14px rgba(40, 25, 45, 0.08);
   --shadow-lg: 0 18px 40px rgba(40, 25, 45, 0.1);
@@ -189,6 +195,12 @@ html[data-mode="dark"] {
   --good-soft: rgba(82, 183, 136, 0.16);
   --warn-soft: rgba(245, 158, 11, 0.16);
   --bad-soft: rgba(248, 113, 113, 0.14);
+
+  /* quick 260820-elk — dark-mode hatch override. --bad itself is NOT re-declared in
+     dark mode, so the light-mode hatch would be near-invisible on --bg-card: #1f1827.
+     Base colour (#f87171) matches the existing --bad-soft dark override above. */
+  --bar-hatch-line: rgba(248, 113, 113, 0.55);
+  --bar-hatch-bg: rgba(248, 113, 113, 0.16);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
