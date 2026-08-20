@@ -1496,6 +1496,46 @@
     return map;
   });
 
+  // Legend is derived from what the displayed month actually contains, and split by the
+  // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
+  // surface = Abwesenheit, mark = Hinweis.
+  const LEGEND_ABSENCE = [
+    { code: "VACATION", cls: "leg-abs-vacation", label: "Urlaub" },
+    { code: "SICK", cls: "leg-abs-sick", label: "Krank" },
+    { code: "SICK_CHILD", cls: "leg-abs-sick_child", label: "Kinderkrank" },
+    { code: "SPECIAL", cls: "leg-abs-special", label: "Sonderurlaub" },
+    { code: "OVERTIME_COMP", cls: "leg-abs-overtime_comp", label: "Freizeitausgl." },
+  ] as const;
+
+  let legendGroups = $derived.by(() => {
+    const days = calendarDays.filter((d) => d.isCurrentMonth);
+    const soll: { cls: string; label: string }[] = [];
+    if (days.some((d) => d.status === "ok" || d.status === "today-ok"))
+      soll.push({ cls: "leg-ok", label: "Soll erfüllt" });
+    if (days.some((d) => d.status === "partial" || d.status === "today-partial"))
+      soll.push({ cls: "leg-partial", label: "Teilweise" });
+    if (days.some((d) => d.status === "missing")) soll.push({ cls: "leg-missing", label: "Fehlt" });
+    if (days.some((d) => d.status === "noExpect" || d.status === "today-empty"))
+      soll.push({ cls: "leg-noexpect", label: "Kein Soll" });
+
+    const codes = new Set(days.map((d) => d.absenceType).filter(Boolean) as string[]);
+    const abwesenheit: { cls: string; label: string }[] = [];
+    for (const e of LEGEND_ABSENCE)
+      if (codes.has(e.code)) abwesenheit.push({ cls: e.cls, label: e.label });
+    // Absence codes outside the catalogue (e.g. EDUCATION, UNPAID) DO get a cell
+    // background from app.css's .cal-abs-* recipes, so they must not stay unexplained.
+    if ([...codes].some((c) => !LEGEND_ABSENCE.some((e) => e.code === c)))
+      abwesenheit.push({ cls: "leg-abs-other", label: "Sonstige Abwesenheit" });
+    if (days.some((d) => d.isVocationalSchool))
+      abwesenheit.push({ cls: "leg-abs-vocational_school", label: "Berufsschule" });
+
+    const hinweise: { cls: string; label: string }[] = [];
+    if (days.some((d) => arbzgDayMap.has(d.dateStr)))
+      hinweise.push({ cls: "leg-arbzg", label: "ArbZG-Hinweis" });
+
+    return { soll, abwesenheit, hinweise };
+  });
+
   // All entries for the current month, sorted by date descending then start time descending.
   // 260611-ly6 — merges TimeEntries (kind="TE") with own BS-Absences (kind="BS")
   // for the list view. BS rows are read-only synthetic rows; lifecycle stays on
@@ -1759,15 +1799,26 @@
 
       <!-- Legende -->
       <div class="cal-legend">
-        <span class="leg leg-ok">Soll erfüllt</span>
-        <span class="leg leg-partial">Teilweise</span>
-        <span class="leg leg-missing">Fehlt</span>
-        <span class="leg leg-noexpect">Kein Soll</span>
-        <span class="leg leg-abs-vacation">Urlaub</span>
-        <span class="leg leg-abs-sick">Krank</span>
-        <span class="leg leg-abs-special">Sonderurlaub</span>
-        <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
-        <span class="leg leg-abs-vocational_school">Berufsschule</span>
+        {#if legendGroups.soll.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Soll-Status</span>
+            {#each legendGroups.soll as e (e.cls)}<span class="leg {e.cls}">{e.label}</span>{/each}
+          </div>
+        {/if}
+        {#if legendGroups.abwesenheit.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Abwesenheit</span>
+            {#each legendGroups.abwesenheit as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
+        {#if legendGroups.hinweise.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Hinweise</span>
+            {#each legendGroups.hinweise as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -2577,9 +2628,23 @@
   /* Legende */
   .cal-legend {
     display: flex;
-    gap: 1rem;
+    gap: 0.75rem 1.75rem;
     padding: 0.875rem 1.25rem;
     flex-wrap: wrap;
+  }
+  .leg-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .leg-group-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    opacity: 0.7;
   }
   .leg {
     display: inline-flex;
@@ -2620,6 +2685,14 @@
     background: var(--leave-type-sick);
     border: none;
   }
+  .leg-abs-sick_child::before {
+    background: var(--leave-type-sick-child);
+    border: none;
+  }
+  .leg-abs-other::before {
+    background: var(--leave-type-default);
+    border: none;
+  }
   .leg-abs-special::before {
     background: var(--leave-type-special);
     border: none;
@@ -2634,6 +2707,21 @@
   .leg-abs-vocational_school::before {
     background: var(--brand);
     border: none;
+  }
+  /* The ArbZG entry shows the MARK itself, not a colour swatch — the legend must
+     depict the thing it explains (quick task 260820-1i7). */
+  .leg-arbzg::before {
+    content: "⚠\FE0E";
+    width: auto;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+    opacity: 0.8;
   }
 
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
