@@ -5,11 +5,9 @@
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
-  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-01
-  import GesamtSaldoHeader from "$components/saldo/GesamtSaldoHeader.svelte"; // quick 260820-cy5
+  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
+  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
   import {
     format,
@@ -793,25 +791,6 @@
     return "";
   }
 
-  function balTone(min: number): "pos" | "neg" | undefined {
-    if (min > 0) return "pos";
-    if (min < 0) return "neg";
-    return undefined;
-  }
-
-  // Phase 97-05 — sign-aware formatter matching SaldoAnzeige's own fmt() convention (bare
-  // "0:00" for exact zero, U+2212 minus for negative, no "±" prefix). Used only for the two
-  // MonthBar stat-fallback strings this plan/97-01 migrated onto SaldoAnzeige (the SHIFT_BASED
-  // "Monat-Saldo" branch, "Gesamt-Saldo"), so the fallback string never competes with the
-  // primitive's own zero convention — even though that fallback is never actually shown in
-  // practice (the statRenders snippet always wins when registered, exactly when this string
-  // would otherwise render). fmtBalance's "±0:00" stays in use for tiles this plan did NOT
-  // migrate (e.g. "Woche Saldo", the non-SHIFT_BASED "Monat-Saldo" branch).
-  function fmtSigned(min: number): string {
-    if (min === 0) return fmtMin(0);
-    return (min > 0 ? "+" : "−") + fmtMin(min);
-  }
-
   function absenceLabel(type: string): string {
     const labels: Record<string, string> = {
       VACATION: "Urlaub",
@@ -1386,72 +1365,91 @@
   });
   // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
   let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
-  // Stat tiles for the MonthBar primitive — empty until a schedule loads.
-  let monthBarStats: MonthBarStat[] = $derived.by(() => {
-    if (!schedule) return [];
-    const stats: MonthBarStat[] = [];
 
-    if (isShiftBased && monthSaldo) {
-      // §615 header — ALL three tiles from the SAME computeMonthSaldo to-date result so they always
-      // reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells:
-      //   Soll (bisher) = expectedMinutes (roster-prorated to-date C_net, NOT full-month roster)
-      //   Ist           = workedMinutes   (to-date worked, same cutoff as the cells)
-      //   Monat-Saldo   = balanceMinutes  (§615 to-date balance)
-      stats.push({
-        label: "Soll (bisher)",
-        value: fmtMin(monthSaldo.expectedMinutes),
-        unit: "h",
-      });
-      stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
-      stats.push({
-        label: "Monat-Saldo",
-        // Phase 97-05 — this tile now renders through SaldoAnzeige (statRenders below; the
-        // monatSaldoStat snippet is registered under the identical isShiftBased && monthSaldo
-        // condition, so this string is a structural fallback only, never actually displayed).
-        // fmtSigned retires fmtBalance's "±0:00" zero convention here per the plan's instruction.
-        value: fmtSigned(monthSaldo.balanceMinutes),
-        unit: "h",
-        tone: balTone(monthSaldo.balanceMinutes),
-      });
-    } else {
-      if (!isMonthlyHours || hasMonthlyTarget) {
-        stats.push({
-          // MONTHLY_HOURS(target) → flat full-month budget "Soll" (Item C, no working-day drift).
-          // FIXED_*/FLEXTIME → to-date "Soll (bisher)".
-          label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-          value: fmtMin(hasMonthlyTarget ? monthlyBudgetSoll : totalExpected),
-          unit: "h",
-        });
-      }
-      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
-      // Phase 49.1 — FLEXTIME: show this week's worked vs expected diff in the bar
-      if (schedule.type === "FLEXTIME" && weekExpectedMin > 0) {
-        const weekDiff = weekWorkedMin - weekExpectedMin;
-        stats.push({
-          label: "Woche Saldo",
-          value: fmtBalance(weekDiff),
-          unit: "h",
-          tone: balTone(weekDiff),
-        });
-      }
-      if (isMonthlyHours && !hasMonthlyTarget) {
-        stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
-      } else {
-        stats.push({
-          label: "Monat-Saldo",
-          value: fmtBalance(mBalance),
-          unit: "h",
-          tone: balTone(mBalance),
-        });
-      }
+  // Quick 260820-elk — replaces monthBarStats (formatted MonthBar tiles) with raw minutes for
+  // MonatSaldoCard/SollIstBar. Same branch structure and source expressions as the deleted
+  // monthBarStats derivation; only the output shape changes (minutes, not formatted strings —
+  // no saldo recomputation, just selecting among already-computed values).
+  type MonthMetrics = {
+    sollToDateMin: number;
+    istMin: number;
+    saldoMin: number | null; // null → no schedule / no Soll target
+    sollLabel: string;
+    closed: boolean;
+    rosterIncomplete: boolean;
+    extraNote?: string;
+  };
+  let monthMetrics: MonthMetrics = $derived.by(() => {
+    if (!schedule) {
+      return {
+        sollToDateMin: 0,
+        istMin: 0,
+        saldoMin: null,
+        sollLabel: "Soll (bisher)",
+        closed: false,
+        rosterIncomplete: false,
+      };
     }
 
-    // quick 260820-cy5 (D-01) — Gesamt-Saldo (the LIVE lifetime overtime balance) no longer
-    // lives in monthBarStats at all: it moved out of the month bar entirely, into
-    // GesamtSaldoHeader next to the page heading. It was already month-INDEPENDENT (see the
-    // removed comment history in git blame) — this just relocates where that fact is expressed.
-    return stats;
+    if (isShiftBased && monthSaldo) {
+      // §615 header — ALL figures from the SAME computeMonthSaldo to-date result so they
+      // always reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells.
+      return {
+        sollToDateMin: monthSaldo.expectedMinutes,
+        istMin: monthSaldo.workedMinutes,
+        saldoMin: monthSaldo.balanceMinutes,
+        sollLabel: "Soll (bisher)",
+        closed: monthSaldo.closed,
+        rosterIncomplete: monthSaldo.rosterIncomplete ?? false,
+      };
+    }
+
+    if (isMonthlyHours && !hasMonthlyTarget) {
+      // Genuinely no Soll to compare against — the real-world source of SollIstBar's
+      // sollToDateMin===0 branch.
+      return {
+        sollToDateMin: 0,
+        istMin: totalWorked,
+        saldoMin: null,
+        sollLabel: "Soll",
+        closed: false,
+        rosterIncomplete: false,
+      };
+    }
+
+    if (hasMonthlyTarget) {
+      return {
+        sollToDateMin: monthlyBudgetSoll,
+        istMin: totalWorked,
+        saldoMin: mBalance,
+        sollLabel: "Soll",
+        closed: false,
+        rosterIncomplete: false,
+      };
+    }
+
+    // FIXED_*/FLEXTIME
+    // Phase 49.1 (D-WOCHE) — FLEXTIME preserves the "Woche Saldo" tile as an extra context line.
+    const extraNote =
+      schedule.type === "FLEXTIME" && weekExpectedMin > 0
+        ? "Woche " + fmtBalance(weekWorkedMin - weekExpectedMin) + " h"
+        : undefined;
+    return {
+      sollToDateMin: totalExpected,
+      istMin: totalWorked,
+      saldoMin: mBalance,
+      sollLabel: "Soll (bisher)",
+      closed: false,
+      rosterIncomplete: false,
+      extraNote,
+    };
   });
+  // Counts over already-loaded day/entry data — CONTEXT explicitly permits this (not a saldo
+  // computation).
+  let workdaysSoFar = $derived(
+    calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
+  );
+  let runningCount = $derived(entries.filter((e) => !e.endTime).length);
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
     if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
@@ -1563,17 +1561,8 @@
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
          exempt users to click a disabled control. -->
-    <!-- quick 260820-cy5 (D-01) — Gesamt-Saldo moved OUT of the month bar, next to the
-         heading; rendered unconditionally (also for isExempt users — SaldoAnzeige itself
-         handles the exempt "—" collapse), before the CTA. -->
-    <GesamtSaldoHeader
-      totalHours={overtimeTotalHours}
-      confirmedMinutes={overtimeConfirmedMinutes}
-      openMonthMinutes={overtimeOpenMonthMinutes}
-      hasClosedMonth={overtimeHasClosedMonth}
-      rosterIncomplete={overtimeRosterIncomplete}
-      {loading}
-    />
+    <!-- quick 260820-elk — Gesamt-Saldo moved OUT of the page head entirely, into the
+         quiet Konto card in the metrics row below (see KontoSaldoCard). -->
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
@@ -1609,64 +1598,45 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
-  <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
-  <!-- Phase 97-05 — Monat-Saldo tile render override: a compact single-value SaldoAnzeige
-       labelled "Monat-Saldo (Bestätigt)"/"Monat-Saldo (Prognose)" depending on monthSaldo.closed,
-       registered in statRenders ONLY when monthSaldo is loaded (SHIFT_BASED). For every other
-       schedule type the key stays absent from statRenders below, so MonthBar falls back to the
-       plain label/value/tone tile already computed in monthBarStats — this tile is a RELABEL,
-       never a lifetime split (97-CONTEXT post-research decision 1: Monat-Saldo has no lifetime
-       counterpart to split against). -->
-  {#snippet monatSaldoStat()}
-    {#if monthSaldo}
-      {@const monatSaldoLabel = monthSaldo.closed
-        ? "Monat-Saldo (Bestätigt)"
-        : "Monat-Saldo (Prognose)"}
-      <SaldoAnzeige
-        variant="compact"
-        label={monatSaldoLabel}
-        saldoMinutes={monthSaldo.balanceMinutes}
-        isLocked={monthSaldo.closed}
-        rosterIncomplete={monthSaldo.rosterIncomplete}
-      />
-    {/if}
-  {/snippet}
-  <Card animate class="te-monthbar-card">
-    <div data-testid="time-entries-summary">
-      <MonthBar
-        eyebrow="Buchungsmonat"
-        date={calMonth}
-        stats={monthBarStats}
-        onPrev={() => gotoMonth(-1)}
-        onNext={() => gotoMonth(1)}
-        onToday={gotoToday}
-        onSelectMonth={gotoMonthYear}
-        testIdPrefix="calendar-month-header"
-        statRenders={monthSaldo ? { "Monat-Saldo": monatSaldoStat } : {}}
-      >
-        {#snippet extraActions()}
-          {#if monthIsLocked}
-            <span class="te-lock-chip" title="Monat ist abgeschlossen">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              Abgeschlossen
-            </span>
-          {/if}
-        {/snippet}
-      </MonthBar>
-    </div>
-    <!-- /data-testid="time-entries-summary" -->
-  </Card>
+  <!-- ── Metrics row (design variant 1c "Fortschritt", quick 260820-elk) ───────
+       Month card (nav + progress bar) + quiet Konto card. The metrics have left the
+       month bar entirely — MonthBar is called WITHOUT `stats`/`statRenders` below, so it
+       renders as pure navigation (D-NAV): this stays the page's ONE AND ONLY month nav. -->
+  <div class="te-metrics" data-testid="time-entries-summary">
+    <MonatSaldoCard
+      sollToDateMin={monthMetrics.sollToDateMin}
+      istMin={monthMetrics.istMin}
+      saldoMin={monthMetrics.saldoMin}
+      sollLabel={monthMetrics.sollLabel}
+      extraNote={monthMetrics.extraNote}
+      {workdaysSoFar}
+      {runningCount}
+      isLocked={monthIsLocked || monthMetrics.closed}
+      {loading}
+      error={!!error && !loading}
+      onRetry={loadAll}
+    >
+      {#snippet monthNav()}
+        <MonthBar
+          eyebrow="Buchungsmonat"
+          date={calMonth}
+          onPrev={() => gotoMonth(-1)}
+          onNext={() => gotoMonth(1)}
+          onToday={gotoToday}
+          onSelectMonth={gotoMonthYear}
+          testIdPrefix="calendar-month-header"
+        />
+      {/snippet}
+    </MonatSaldoCard>
+    <KontoSaldoCard
+      totalHours={overtimeTotalHours}
+      confirmedMinutes={overtimeConfirmedMinutes}
+      openMonthMinutes={overtimeOpenMonthMinutes}
+      hasClosedMonth={overtimeHasClosedMonth}
+      rosterIncomplete={overtimeRosterIncomplete}
+      {loading}
+    />
+  </div>
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
@@ -2433,17 +2403,33 @@
     gap: 8px;
   }
 
-  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
-       same as .cal-monthbar — so header height matches /leave et al.) ──── */
-  :global(.te-monthbar-card) {
-    padding: 0;
+  /* ── Metrics row (quick 260820-elk, D-NAV consequence 4) ───────────────
+       Month card (nav + progress bar) + quiet Konto card, side by side. */
+  .te-metrics {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: var(--s-4);
     margin-bottom: 18px;
-    /* Allow month-picker dropdown to escape .card overflow:clip and lift
-       above sibling .card stacking contexts (each .card creates its own via
-       backdrop-filter). Without these three lines the dropdown is invisible. */
+    /* Inherited verbatim from the deleted .te-monthbar-card rule: the month-picker
+       dropdown inside MonthBar (now rendered inside MonatSaldoCard's nav row) must
+       escape .card's overflow:clip and lift above the sibling calendar card's
+       stacking context (each .card creates one via backdrop-filter). Without these
+       three lines the picker is invisible. */
     overflow: visible;
     position: relative;
     z-index: 30;
+  }
+
+  @media (max-width: 1000px) {
+    .te-metrics {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* MonthBar owns its 18px 24px inner padding by default (matches .cal-monthbar); reset
+     it here since it now renders inside MonatSaldoCard's own padded card body. */
+  .te-metrics :global(.month-bar) {
+    padding: 0 0 var(--s-3);
   }
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
