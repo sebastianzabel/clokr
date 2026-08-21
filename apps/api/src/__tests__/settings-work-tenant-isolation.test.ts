@@ -17,6 +17,12 @@
  *     (`apps/web/.../admin/vacation/+page.svelte`), so the OVERTIME_COMP gate can
  *     never be configured into a silent no-op.
  *
+ * Code review CR-01 (2026-08-21) added a third guard pinned below:
+ *   - CR-01: `GET /api/v1/settings/work/:employeeId` had NO tenant check at all —
+ *     any ADMIN/MANAGER of any tenant could read a foreign employee's WorkSchedule,
+ *     including the now-live `maxNegativeBalanceMinutes`. Fixed to mirror the PUT
+ *     guard exactly (same 404 shape, same audit action, same self-access carve-out).
+ *
  * Every date in this file is computed from `new Date()` — no hardcoded calendar
  * literal anywhere — per this plan's own stricter self-check. This repo has a
  * documented hardcoded-date time-bomb hazard (`.planning/STATE.md`), and the
@@ -246,5 +252,127 @@ describe("PUT /api/v1/settings/work/:employeeId — tenant isolation + tolerance
       expect(zeroRes.statusCode).toBe(200);
       expect(JSON.parse(zeroRes.body).maxNegativeBalanceMinutes).toBe(0);
     });
+  });
+});
+
+// ── CR-01 (code review, 2026-08-21): GET /work/:employeeId had NO tenant check ──
+describe("GET /api/v1/settings/work/:employeeId — tenant isolation (Phase 100 CR-01 fix)", () => {
+  let app: FastifyInstance;
+  let tenantA: Awaited<ReturnType<typeof seedTestData>>;
+  let tenantB: Awaited<ReturnType<typeof seedTestData>>;
+  let victimScheduleId: string;
+
+  // Arbitrary, non-zero, non-boundary value so "the response carries the real row"
+  // is a meaningful assertion rather than an accidental null-equals-null match.
+  const KNOWN_VICTIM_TOLERANCE = 150;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    tenantA = await seedTestData(app, "swti-get-a");
+    tenantB = await seedTestData(app, "swti-get-b");
+
+    const victimSchedule = await app.prisma.workSchedule.update({
+      where: {
+        id: (
+          await app.prisma.workSchedule.findFirstOrThrow({
+            where: { employeeId: tenantB.employee.id },
+          })
+        ).id,
+      },
+      data: { maxNegativeBalanceMinutes: KNOWN_VICTIM_TOLERANCE },
+    });
+    victimScheduleId = victimSchedule.id;
+  });
+
+  afterAll(async () => {
+    // Sequential cleanup — never Promise.all (setup.ts Pitfall 3 / tenant-isolation.test.ts precedent)
+    try {
+      await cleanupTestData(app, tenantA.tenant.id);
+    } catch (err) {
+      console.error("Cleanup tenantA failed:", err);
+    }
+    try {
+      await cleanupTestData(app, tenantB.tenant.id);
+    } catch (err) {
+      console.error("Cleanup tenantB failed:", err);
+    }
+  });
+
+  it("tenantA ADMIN reading tenantB's employee → 404, no WorkSchedule leaked, CROSS_TENANT_ACCESS_DENIED audit", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(404);
+    const body = JSON.parse(res.body);
+    expect(body).toEqual({ error: "Kein Arbeitszeitmodell gefunden" });
+    // The 404 body must not leak any WorkSchedule field (e.g. maxNegativeBalanceMinutes).
+    expect(body.maxNegativeBalanceMinutes).toBeUndefined();
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "CROSS_TENANT_ACCESS_DENIED",
+        entity: "WorkSchedule",
+        entityId: tenantB.employee.id,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit?.userId).toBe(tenantA.adminUser.id);
+  });
+
+  it("the cross-tenant GET 404 is byte-identical to a genuine not-found 404 (no existence oracle, T-100-09)", async () => {
+    const crossTenantRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    const notFoundRes = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${GENUINELY_MISSING_EMPLOYEE_ID}`,
+      headers: { authorization: `Bearer ${tenantA.adminToken}` },
+    });
+
+    expect(crossTenantRes.statusCode).toBe(notFoundRes.statusCode);
+    expect(JSON.parse(crossTenantRes.body)).toEqual(JSON.parse(notFoundRes.body));
+  });
+
+  it("the same call by tenantB's OWN ADMIN still succeeds and returns the real schedule (no regression)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantB.adminToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.id).toBe(victimScheduleId);
+    expect(body.maxNegativeBalanceMinutes).toBe(KNOWN_VICTIM_TOLERANCE);
+  });
+
+  it("the employee reading their OWN schedule (self-access, non-manager) still succeeds (no regression)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${tenantB.employee.id}`,
+      headers: { authorization: `Bearer ${tenantB.empToken}` },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.id).toBe(victimScheduleId);
+  });
+
+  it("a non-manager employee reading a DIFFERENT employee's schedule still gets 403 (self-access carve-out preserved)", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/settings/work/${tenantB.adminEmployee.id}`,
+      headers: { authorization: `Bearer ${tenantB.empToken}` },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body)).toEqual({ error: "Kein Zugriff" });
   });
 });

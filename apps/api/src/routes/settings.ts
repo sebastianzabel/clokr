@@ -724,6 +724,30 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 100 (CR-01 fix, code review) — tenant isolation guard, mirroring the PUT
+      // handler below (T-100-02) verbatim in structure. This route returns
+      // maxNegativeBalanceMinutes, a real entitlement input since this phase — an
+      // ADMIN/MANAGER of one tenant must not be able to read another tenant's
+      // employee's WorkSchedule. The 404 body is IDENTICAL to the genuine
+      // not-found branch below so this endpoint cannot be used as a
+      // tenant-membership oracle (T-100-09).
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "WorkSchedule",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+      }
+
       const schedule = await app.prisma.workSchedule.findFirst({
         where: { employeeId },
         orderBy: { validFrom: "desc" },
