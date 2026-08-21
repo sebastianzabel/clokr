@@ -22,6 +22,7 @@ import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { recalculateSnapshots } from "../utils/recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
+import { resolveNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -156,11 +157,27 @@ export async function overtimeRoutes(app: FastifyInstance) {
       }
       const balanceMinutes = Math.round(balance * 60);
 
-      // Max negative hours: per-employee override > tenant default > null (unlimited)
-      const maxNegMinutes =
-        schedule?.maxNegativeBalanceMinutes ??
-        employee?.tenant?.config?.maxNegativeBalanceMinutes ??
-        null;
+      // Max negative hours: per-employee override > tenant default > null (Phase 100, D-00b/OTC-02).
+      // `null` here means NOT CONFIGURED — resolved through the SAME precedence chain the
+      // OVERTIME_COMP booking gate uses (`resolveNegativeBalanceTolerance`,
+      // `apps/api/src/utils/negative-balance-tolerance.ts` — read that module's header comment for
+      // the full rationale). Two DIFFERENT readings of that `null` coexist deliberately:
+      //   - ALERTING (this field, `isNegativeLimitExceeded` below): fires ONLY when a limit is
+      //     explicitly configured — an unconfigured tenant/employee never sees this warning, no
+      //     matter how negative the balance gets. This is the schema comment's „unbegrenzt" reading
+      //     (`packages/db/prisma/schema.prisma`, TenantConfig.maxNegativeBalanceMinutes), untouched
+      //     by this plan.
+      //   - BOOKING (`leave.ts`, `POST /leave/requests`, OVERTIME_COMP branch): the SAME `null`
+      //     resolves to a tolerance of ZERO instead — an unconfigured tenant must not be able to
+      //     book arbitrarily far into minus just because nobody set a value.
+      // Neither reading is "wrong" — they answer different questions ("should we warn?" vs "may
+      // this booking go through?"). `configuredMinutes` below is bound to the pre-existing local
+      // name `maxNegMinutes` so the two lines below stay byte-identical: this endpoint's own
+      // behaviour does not change at all (T-100-10).
+      const { configuredMinutes: maxNegMinutes } = resolveNegativeBalanceTolerance(
+        schedule?.maxNegativeBalanceMinutes,
+        employee?.tenant?.config?.maxNegativeBalanceMinutes,
+      );
 
       return {
         ...account,
