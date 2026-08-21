@@ -279,7 +279,18 @@ export const employeeScheduleSchema = z
     overtimeThreshold: z.number().min(0).max(500).default(60),
     allowOvertimePayout: z.boolean().default(false),
     overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
-    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+    // Phase 100 (T-100-01): upper-bounded at 999h (= 59_940 min), matching the max="999" the
+    // shipped admin form already advertises (apps/web .../admin/vacation/+page.svelte). Without
+    // this bound an ADMIN could set a figure large enough that the OVERTIME_COMP gate
+    // (leave.ts) can mathematically never reject — turning the control into a silent no-op
+    // while it still reads as "configured".
+    maxNegativeBalanceMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(999 * 60)
+      .nullable()
+      .optional(),
     // Phase 49.1 — FLEXTIME Kernarbeitszeit (all optional; UI metadata only)
     coreStart: z
       .string()
@@ -734,6 +745,24 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 100 (T-100-02): tenant isolation guard, mirroring overtime.ts:85-97 verbatim in
+      // structure. This route now writes maxNegativeBalanceMinutes, which was inert
+      // configuration until this phase and is now an input to the OVERTIME_COMP entitlement
+      // gate — an ADMIN/MANAGER of one tenant must not be able to alter another tenant's
+      // employee's booking limit (or any other WorkSchedule field). The 404 body is IDENTICAL
+      // to the not-found branch above so this endpoint cannot be used as a tenant-membership
+      // oracle (T-100-09).
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "WorkSchedule",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       // Phase 60 (#220) — when caller omits validFrom we default to the 1st of the
       // current UTC month, so the saldo engine sees an unambiguous month boundary.
       // (When caller PROVIDES validFrom, the Zod refinement above already enforced it.)
@@ -803,6 +832,12 @@ export async function settingsRoutes(app: FastifyInstance) {
               overtimeThreshold: body.overtimeThreshold,
               allowOvertimePayout: body.allowOvertimePayout,
               overtimeMode: body.overtimeMode,
+              // Phase 100 (Rule 1 fix) — this field was validated by the Zod schema and
+              // returned in the response type, but never written here: a caller's
+              // maxNegativeBalanceMinutes was silently discarded on every PUT through the
+              // cancelOrphanShifts branch. Now that this value is a real entitlement input
+              // (Plan 01), a silently-dropped write is a correctness bug, not a stub.
+              maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes ?? null,
               coreStart: body.coreStart ?? null,
               coreEnd: body.coreEnd ?? null,
               coreDays: body.coreDays ?? [],
@@ -900,6 +935,12 @@ export async function settingsRoutes(app: FastifyInstance) {
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
         overtimeMode: body.overtimeMode,
+        // Phase 100 (Rule 1 fix) — same fix as the cancelOrphanShifts branch above: this
+        // field was validated by the Zod schema and returned in the response type, but
+        // never written here, so a caller's maxNegativeBalanceMinutes was silently
+        // discarded on every normal-path PUT. Now that this value is a real entitlement
+        // input (Plan 01), a silently-dropped write is a correctness bug, not a stub.
+        maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes ?? null,
         coreStart: body.coreStart ?? null,
         coreEnd: body.coreEnd ?? null,
         coreDays: body.coreDays ?? [],
@@ -1189,7 +1230,16 @@ export async function settingsRoutes(app: FastifyInstance) {
           passwordRequireLower: z.boolean().optional(),
           passwordRequireDigit: z.boolean().optional(),
           passwordRequireSpecial: z.boolean().optional(),
-          maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+          // Phase 100 (T-100-01): same upper bound as employeeScheduleSchema above — the
+          // tenant-wide default must not be settable beyond what the admin form advertises
+          // either, or a tenant default alone could turn the OVERTIME_COMP gate into a no-op.
+          maxNegativeBalanceMinutes: z
+            .number()
+            .int()
+            .min(0)
+            .max(999 * 60)
+            .nullable()
+            .optional(),
           emailNotificationsEnabled: z.boolean().optional(),
           emailOnLeaveRequest: z.boolean().optional(),
           emailOnLeaveDecision: z.boolean().optional(),
