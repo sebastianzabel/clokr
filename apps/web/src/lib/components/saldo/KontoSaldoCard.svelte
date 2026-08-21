@@ -24,7 +24,7 @@
   // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
   import Card from "$components/ui/Card.svelte";
-  import { fmtBalance } from "$lib/utils/format-minutes";
+  import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
 
   interface Props {
     totalHours: number | null;
@@ -33,6 +33,11 @@
     hasClosedMonth?: boolean;
     rosterIncomplete?: boolean;
     loading?: boolean;
+    // Phase 100 (OTC-03) — optional tolerance-exceeded badge. Both default to `undefined`
+    // so every pre-Phase-100 call site (including team/time-entries, deliberately not
+    // wired this phase — see 100-05-SUMMARY.md) renders byte-identically to before.
+    isNegativeLimitExceeded?: boolean;
+    maxNegativeBalanceMinutes?: number | null;
   }
 
   let {
@@ -42,6 +47,8 @@
     hasClosedMonth = false,
     rosterIncomplete = false,
     loading = false,
+    isNegativeLimitExceeded = undefined,
+    maxNegativeBalanceMinutes = undefined,
   }: Props = $props();
 
   const isSplit = $derived(confirmedMinutes !== undefined);
@@ -95,6 +102,28 @@
     {:else}
       <div class="ksc-label">Gesamt-Saldo</div>
       <div class="ksc-figure ksc-figure--{tone}">{figureText}</div>
+      <!-- Phase 100 (OTC-03) — placement resolves a contradiction in the APPROVED
+           UI-SPEC: it says "directly after .ksc-figure/.ksc-caption, before
+           .ksc-divider" AND "outside the isSplit branch", but .ksc-caption/
+           .ksc-divider are themselves inside that branch. Resolved in favour of the
+           orthogonality requirement (the flag is independent of whether Phase-97
+           split data loaded): this block sits directly under the figure, before the
+           isSplit branch below. It therefore renders between the figure and the
+           "Bestätigt" caption in split mode, and directly under the figure in
+           legacy/non-split mode — pinned by the "legacy mode" test in
+           KontoSaldoCard.test.ts. No null-guard on maxNegativeBalanceMinutes: the
+           upstream formula (overtime.ts:173) can only set isNegativeLimitExceeded=
+           true when maxNegMinutes != null — a defensive `?? 0` here would hide a
+           contract break instead of surfacing it; the `!` below asserts that
+           invariant instead of silently working around it. -->
+      {#if isNegativeLimitExceeded}
+        <div class="ksc-tolerance-warn">
+          <span class="badge badge-yellow">Toleranzgrenze überschritten</span>
+          <span class="ksc-tolerance-warn-hint"
+            >erlaubt: {fmtMin(maxNegativeBalanceMinutes!)} Std. Minus</span
+          >
+        </div>
+      {/if}
       {#if isSplit}
         <div class="ksc-caption">
           {isNewHireZero ? "noch kein Monatsabschluss" : "Bestätigt"}
@@ -150,6 +179,23 @@
     color: var(--text);
   }
   .ksc-figure--muted {
+    color: var(--text-muted);
+  }
+
+  /* Phase 100 (OTC-03) — tolerance-exceeded badge. Holds only the global
+     .badge.badge-yellow pill and the caption span; no font declarations of its own. */
+  .ksc-tolerance-warn {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
+    flex-wrap: wrap;
+  }
+
+  /* UI-checker follow-up #1 — was previously unspecified; matches the established
+     hint-text idiom (.balance-hint-muted, .form-hint). */
+  .ksc-tolerance-warn-hint {
+    font-size: 0.8125rem;
     color: var(--text-muted);
   }
 
