@@ -129,6 +129,11 @@
 
   // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
   let hoursPreview: number | null = $state(null);
+  // Phase 100 (WR-03 code review fix) — exact integer minutes alongside the
+  // .toFixed(2)-rounded `hoursPreview`, so wouldBeRejected below can compare in the
+  // same unit the server gate uses instead of reconstructing it through two
+  // different rounding paths.
+  let minutesNeeded: number | null = $state(null);
   let serverDays: number | null = $state(null); // Feiertags-bereinigte Tage vom Server
   let hoursPreviewLoading = $state(false);
   let hoursPreviewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -533,6 +538,7 @@
     if (hoursPreviewTimer) clearTimeout(hoursPreviewTimer);
     if (!formStart || !formEnd || formStart > formEnd) {
       hoursPreview = null;
+      minutesNeeded = null;
       serverDays = null;
       return;
     }
@@ -543,13 +549,15 @@
     if (!formStart || !formEnd) return;
     hoursPreviewLoading = true;
     try {
-      const r = await api.get<{ hours: number; days: number }>(
+      const r = await api.get<{ hours: number; days: number; minutesNeeded: number }>(
         `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}`,
       );
       hoursPreview = r.hours;
+      minutesNeeded = r.minutesNeeded;
       serverDays = r.days;
     } catch {
       hoursPreview = null;
+      minutesNeeded = null;
       serverDays = null;
     } finally {
       hoursPreviewLoading = false;
@@ -631,6 +639,7 @@
     formSpecialRuleId = "";
     overlapEntries = [];
     hoursPreview = null;
+    minutesNeeded = null;
     serverDays = null;
   }
 
@@ -889,12 +898,30 @@
     confirmedMinutes !== undefined ? confirmedMinutes / 60 : (overtimeBalance ?? 0),
   );
   // Phase 100 (OTC-03) — resolved negative-balance tolerance in hours, for the
-  // Toleranz row and the tolerance-aware affordability predicate below.
+  // Toleranz row display below.
   let toleranceHours = $derived((maxNegativeBalanceMinutes ?? 0) / 60);
-  // Phase 100 (OTC-05) — mirrors the server gate in leave.ts: available =
-  // confirmed + tolerance. A single shared predicate so the client and server
-  // can never disagree on the same inputs.
-  let wouldBeRejected = $derived(confirmedHours + toleranceHours - hoursNeeded < 0);
+  // Phase 100 (OTC-05, WR-03 code-review fix) — mirrors the server gate in leave.ts
+  // (`neededMinutes > availableMinutes`). Compares in MINUTES — the server's own unit —
+  // whenever both exact-minute values have loaded: `minutesNeeded` from GET
+  // /leave/hours-preview and `confirmedMinutes` from GET /leave/overtime-balance are both
+  // exact integers, so this branch can never disagree with the server.
+  //
+  // Previously this compared in HOURS: `hoursNeeded` (derived from the preview's
+  // .toFixed(2)-rounded `hours` field) against unrounded confirmedHours/toleranceHours.
+  // At a boundary whose true value isn't a whole number of minutes (e.g. needed =
+  // available = 241 minutes), the asymmetric rounding could disagree with the server's
+  // exact-minute gate and show a spurious warning/no-warning.
+  //
+  // Falls back to the (approximate, rounded-hours) comparison only in the brief
+  // (300ms-debounced) window before minutesNeeded/confirmedMinutes have loaded. This is
+  // display-only in both branches — the "⚠ Nicht genug Überstunden" hint never blocks
+  // the Antrag-Button (only `formSaving` does), and the server remains authoritative on
+  // submit regardless of which branch was active.
+  let wouldBeRejected = $derived(
+    minutesNeeded !== null && confirmedMinutes !== undefined
+      ? confirmedMinutes + (maxNegativeBalanceMinutes ?? 0) < minutesNeeded
+      : confirmedHours + toleranceHours - hoursNeeded < 0,
+  );
   let vacRemaining = $derived(
     vacationBalance
       ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used

@@ -352,11 +352,15 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     }
   });
 
-  it("GET /leave/hours-preview returns the SAME 6.00h for the identical range — gate and preview agree (OTC-05)", async () => {
+  it("GET /leave/hours-preview returns the SAME 6.00h for the identical range — gate and preview agree (OTC-05); minutesNeeded is the exact-minute counterpart (WR-03)", async () => {
     const res = await hoursPreview(shiftEmpToken, MONDAY_1, MONDAY_1);
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.hours).toBe(6);
+    // WR-03 (code review) — minutesNeeded is Math.round(hours * 60), the SAME formula
+    // the POST /requests OVERTIME_COMP gate uses for neededMinutes. The client compares
+    // against this exact integer instead of reconstructing it from the rounded `hours`.
+    expect(body.minutesNeeded).toBe(360);
   });
 
   it("D-06: a soft-deleted shift contributes 0h and the request is NOT rejected for insufficient hours", async () => {
@@ -383,9 +387,11 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     expect(res.statusCode).toBe(201);
   });
 
-  it("D-07: halfDay over the same 2-day range costs half the FIRST rostered shift's netto — 3.00h, not half of 13.50h", async () => {
+  it("D-07: halfDay over the same 2-day range costs half the FIRST rostered shift's netto — 3.00h (WR-03: minutesNeeded 180), not half of 13.50h", async () => {
     const preview = await hoursPreview(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE, true);
-    expect(JSON.parse(preview.body).hours).toBe(3);
+    const body = JSON.parse(preview.body);
+    expect(body.hours).toBe(3);
+    expect(body.minutesNeeded).toBe(180);
   });
 
   it("WR-02: same-day split shift picks the EARLY-time shift deterministically (2.00h), never the LATE-time one (3.25h), regardless of insertion order", async () => {
@@ -395,7 +401,9 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
     // be expected to surface the LATE shift first, giving the WRONG halfDay result (3.25h).
     const preview = await hoursPreview(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
     expect(preview.statusCode).toBe(200);
-    expect(JSON.parse(preview.body).hours).toBe(2);
+    const previewBody = JSON.parse(preview.body);
+    expect(previewBody.hours).toBe(2);
+    expect(previewBody.minutesNeeded).toBe(120); // WR-03: exact-minute counterpart
 
     const res = await postOvertimeComp(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
     expect(res.statusCode).toBe(201);

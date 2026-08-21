@@ -1799,7 +1799,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         Promise.resolve(calculateWorkDays(start, end, isHalf, workDays, holidays)),
       ]);
 
-      return { hours: +hours.toFixed(2), days };
+      // WR-03 (code review) — exact integer minutes, computed with the SAME
+      // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
+      // uses for `neededMinutes` above. `hours` is rounded to 2 decimal PLACES for
+      // display; `minutesNeeded` lets the client compare against confirmedMinutes /
+      // maxNegativeBalanceMinutes (already exact integer minutes from GET
+      // /leave/overtime-balance) without reconstructing the server's exact-minute
+      // gate through two different rounding paths.
+      return { hours: +hours.toFixed(2), days, minutesNeeded: Math.round(hours * 60) };
     },
   });
 
