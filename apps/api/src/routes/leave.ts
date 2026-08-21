@@ -17,6 +17,8 @@ import {
   type OvertimeBalanceBreakdown,
 } from "./time-entries";
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
+import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
+import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -411,6 +413,19 @@ export async function leaveRoutes(app: FastifyInstance) {
       // path touching entitlement, so the fail-safe branch intentionally falls back to the
       // PRE-EXISTING stored-balance check (never 500, never silently permits an unbounded
       // request) rather than inventing a new default.
+      //
+      // Phase 100 (OTC-01/OTC-02, D-00a/D-00b) — availability now also includes the
+      // configured `maxNegativeBalanceMinutes` TOLERANCE, resolved through the SAME
+      // precedence chain overtime.ts uses (loadNegativeBalanceTolerance,
+      // negative-balance-tolerance.ts): per-employee WorkSchedule override > tenant
+      // default > null. D-00b: for THIS booking gate, an unconfigured (`null`) value
+      // means a tolerance of ZERO — the opposite of the schema comment's "unbegrenzt"
+      // ALERTING reading that `isNegativeLimitExceeded` uses elsewhere — so with
+      // nothing configured this gate stays byte-identical to pre-Phase-100. D-02: the
+      // catch branch below applies ZERO tolerance regardless of what is configured — a
+      // read failure must never be MORE generous than the normal path. D-04: the
+      // comparison itself happens in MINUTES; hours only appear in the response body
+      // and the rejection copy.
       if (body.type === "OVERTIME_COMP") {
         const hoursNeeded = await getScheduledHours(
           app.prisma,
@@ -420,25 +435,48 @@ export async function leaveRoutes(app: FastifyInstance) {
           body.halfDay,
           holidays,
         );
+        const neededMinutes = Math.round(hoursNeeded * 60);
 
-        let balance: number;
+        const { toleranceMinutes } = await loadNegativeBalanceTolerance(
+          app.prisma,
+          employeeId,
+          tenantId,
+        );
+
+        let availableMinutes: number;
+        let appliedToleranceMinutes: number;
         try {
           const confirmed = await getConfirmedCarryOver(app, employeeId);
-          balance = confirmed.minutes / 60;
+          appliedToleranceMinutes = toleranceMinutes;
+          availableMinutes = confirmed.minutes + appliedToleranceMinutes;
         } catch (err) {
           app.log.warn(
             { err, employeeId },
             "POST /leave/requests: getConfirmedCarryOver failed for OVERTIME_COMP check, falling back to stored OvertimeAccount.balanceHours",
           );
+          // D-02: fail-safe applies ZERO tolerance — a broken read path must never
+          // be more permissive than the normal path.
+          appliedToleranceMinutes = 0;
           const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
-          balance = account ? Number(account.balanceHours) : 0;
+          availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
         }
 
-        if (hoursNeeded > balance) {
+        if (neededMinutes > availableMinutes) {
+          // OTC-06 / D-14: names the applied tolerance when one was applied; the
+          // "(inkl. … erlaubtem Minus)" clause is omitted entirely at tolerance 0 so
+          // an unconfigured tenant sees the plain pre-Phase-100 message (100-UI-SPEC.md
+          // "Rejection copy").
+          const toleranceClause =
+            appliedToleranceMinutes > 0
+              ? ` (inkl. ${formatMinutesHM(appliedToleranceMinutes)} Std. erlaubtem Minus)`
+              : "";
           return reply.code(400).send({
-            error: "Nicht genug Überstunden",
-            available: +balance.toFixed(2),
-            requested: +hoursNeeded.toFixed(2),
+            error:
+              `Nicht genug Überstunden: verfügbar ${formatMinutesHM(availableMinutes)} Std.` +
+              `${toleranceClause}, benötigt ${formatMinutesHM(neededMinutes)} Std.`,
+            available: +(availableMinutes / 60).toFixed(2),
+            requested: +(neededMinutes / 60).toFixed(2),
+            tolerance: +(appliedToleranceMinutes / 60).toFixed(2),
           });
         }
       }
