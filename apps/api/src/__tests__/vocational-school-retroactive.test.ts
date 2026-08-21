@@ -20,6 +20,11 @@ import {
   resolveRetroactiveWindow,
 } from "../utils/vocational-school-generator";
 
+// Route paths under test (Task 2). Referenced as a template fragment rather than
+// repeated literals so there is exactly one place that would need updating if the
+// prefix ever changes.
+const BASE = "/api/v1/vocational-school";
+
 // ── Date helpers — mirror-image of nextDow() in vocational-school.test.ts ──────────
 
 /** UTC midnight for "today". */
@@ -90,17 +95,26 @@ async function createExtraEmployee(
 describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)", () => {
   let app: FastifyInstance;
   let data: Awaited<ReturnType<typeof seedTestData>>;
+  // Task 2 — second tenant for the T-103-IDOR cross-tenant test, mirroring the
+  // otherTenantData convention in vocational-school-endpoints.test.ts.
+  let otherTenantData: Awaited<ReturnType<typeof seedTestData>>;
 
   beforeAll(async () => {
     app = await getTestApp();
     data = await seedTestData(app, "vsretro");
+    otherTenantData = await seedTestData(app, "vsretro-other");
   });
 
   afterAll(async () => {
     try {
       await cleanupTestData(app, data.tenant.id);
     } catch (err) {
-      console.error("Test cleanup failed:", err);
+      console.error("Test cleanup failed (data):", err);
+    }
+    try {
+      await cleanupTestData(app, otherTenantData.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed (otherTenantData):", err);
     }
     await closeTestApp();
   });
@@ -508,5 +522,255 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     expect(window).not.toBeNull();
     expect(window!.windowStart.getTime()).toBe(older.getTime());
     expect(window!.windowEnd.getTime()).toBe(todayUtc().getTime());
+  });
+
+  // ── Task 2 — GET retroactive-preview / POST retroactive-apply routes ───────
+
+  // ── Test 9 — T-103-AUTHZ ────────────────────────────────────────────────────
+
+  it("Test 9 — T-103-AUTHZ: EMPLOYEE role gets 403 from both new routes", async () => {
+    const previewRes = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(previewRes.statusCode).toBe(403);
+
+    const applyRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { employeeId: data.employee.id },
+    });
+    expect(applyRes.statusCode).toBe(403);
+  });
+
+  // ── Test 10 — T-103-IDOR ────────────────────────────────────────────────────
+
+  it("Test 10 — T-103-IDOR: an ADMIN of tenant A passing an employeeId from tenant B gets 404, never 403 or a partial result", async () => {
+    const previewRes = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${otherTenantData.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(previewRes.statusCode).toBe(404);
+    expect(JSON.parse(previewRes.body)).toEqual({ error: "Mitarbeiter nicht gefunden" });
+
+    const applyRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: otherTenantData.employee.id },
+    });
+    expect(applyRes.statusCode).toBe(404);
+    expect(JSON.parse(applyRes.body)).toEqual({ error: "Mitarbeiter nicht gefunden" });
+  });
+
+  // ── Test 11 — T-103-WINDOW ──────────────────────────────────────────────────
+
+  it("Test 11 — T-103-WINDOW: extra windowStart/windowEnd/weeks query keys do not change the computed window", async () => {
+    const past = daysAgoUtc(6 * 7);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: past,
+        isActive: true,
+      },
+    });
+
+    // Nonsense bounds, computed (not hardcoded) — their only job is to prove the
+    // server ignores them entirely, not to represent a plausible window.
+    const bogusWindowStart = toIso(daysAgoUtc(3650));
+    const bogusWindowEnd = toIso(daysAgoUtc(3649));
+
+    const withoutExtra = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const withExtra = await app.inject({
+      method: "GET",
+      url:
+        `${BASE}/retroactive-preview?employeeId=${data.employee.id}` +
+        `&windowStart=${bogusWindowStart}&windowEnd=${bogusWindowEnd}&weeks=1`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+
+    expect(withoutExtra.statusCode).toBe(200);
+    expect(withExtra.statusCode).toBe(200);
+    const bodyWithout = JSON.parse(withoutExtra.body);
+    const bodyWith = JSON.parse(withExtra.body);
+
+    expect(bodyWith.windowStart).toBe(bodyWithout.windowStart);
+    expect(bodyWith.windowEnd).toBe(bodyWithout.windowEnd);
+    expect(bodyWith.created).toBe(bodyWithout.created);
+    const extractCreatedDates = (body: { details: Array<{ action: string; date: string }> }) =>
+      body.details
+        .filter((entry) => entry.action === "created")
+        .map((entry) => entry.date)
+        .sort();
+    expect(extractCreatedDates(bodyWith)).toEqual(extractCreatedDates(bodyWithout));
+  });
+
+  // ── Test 12 — future-only patterns ──────────────────────────────────────────
+
+  it("Test 12 — an employee with only future-dated active patterns gets created: 0 and empty details[] from preview, and apply writes nothing", async () => {
+    const future = new Date(todayUtc().getTime() + 14 * 86_400_000);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: future,
+        isActive: true,
+      },
+    });
+
+    const previewRes = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(previewRes.statusCode).toBe(200);
+    const previewBody = JSON.parse(previewRes.body);
+    expect(previewBody.created).toBe(0);
+    expect(previewBody.details).toEqual([]);
+
+    const applyRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id },
+    });
+    expect(applyRes.statusCode).toBe(200);
+
+    const absenceCount = await app.prisma.absence.count({
+      where: { employeeId: data.employee.id },
+    });
+    expect(absenceCount).toBe(0);
+  });
+
+  // ── Test 13 — D-01 end to end ───────────────────────────────────────────────
+
+  it("Test 13 — D-01 end to end: preview reports N>0 and writes nothing; apply creates exactly N Absences with N triggerSource=RETROACTIVE AuditLog rows", async () => {
+    const past = daysAgoUtc(6 * 7);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 3,
+        daysOfWeek: [3],
+        blockWeeks: [],
+        validFrom: past,
+        isActive: true,
+      },
+    });
+
+    const previewRes = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const previewBody = JSON.parse(previewRes.body);
+    expect(previewBody.created).toBeGreaterThan(0);
+    const n = previewBody.created;
+
+    const absenceCountBeforeApply = await app.prisma.absence.count({
+      where: { employeeId: data.employee.id },
+    });
+    expect(absenceCountBeforeApply).toBe(0); // preview really did write nothing
+
+    const applyRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id },
+    });
+    expect(applyRes.statusCode).toBe(200);
+    const applyBody = JSON.parse(applyRes.body);
+    expect(applyBody.created).toBe(n);
+
+    const absences = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", deletedAt: null },
+    });
+    expect(absences).toHaveLength(n);
+
+    const auditRows = await app.prisma.auditLog.findMany({
+      where: {
+        entity: "Absence",
+        action: "VOCATIONAL_SCHOOL_AUTO_GENERATED",
+        entityId: { in: absences.map((a) => a.id) },
+      },
+    });
+    expect(auditRows).toHaveLength(n);
+    for (const row of auditRows) {
+      const nv = row.newValue as { triggerSource?: string } | null;
+      expect(nv?.triggerSource).toBe("RETROACTIVE");
+    }
+  });
+
+  // ── Test 14 — T-103-REPLAY ──────────────────────────────────────────────────
+
+  it("Test 14 — T-103-REPLAY: calling apply twice leaves the same Absence count; the second call reports created: 0 and skipped.existing > 0", async () => {
+    const past = daysAgoUtc(5 * 7);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 4,
+        daysOfWeek: [4],
+        blockWeeks: [],
+        validFrom: past,
+        isActive: true,
+      },
+    });
+
+    const firstRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id },
+    });
+    const firstBody = JSON.parse(firstRes.body);
+    expect(firstBody.created).toBeGreaterThan(0);
+    const countAfterFirst = await app.prisma.absence.count({
+      where: { employeeId: data.employee.id, deletedAt: null },
+    });
+
+    const secondRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id },
+    });
+    const secondBody = JSON.parse(secondRes.body);
+    expect(secondBody.created).toBe(0);
+    expect(secondBody.skipped.existing).toBeGreaterThan(0);
+
+    const countAfterSecond = await app.prisma.absence.count({
+      where: { employeeId: data.employee.id, deletedAt: null },
+    });
+    expect(countAfterSecond).toBe(countAfterFirst);
+  });
+
+  // ── Test 15 — malformed input ───────────────────────────────────────────────
+
+  it("Test 15 — malformed employeeId (non-UUID) is rejected by Zod with 400 before any DB lookup", async () => {
+    const previewRes = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=not-a-uuid`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(previewRes.statusCode).toBe(400);
+
+    const applyRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: "not-a-uuid" },
+    });
+    expect(applyRes.statusCode).toBe(400);
   });
 });

@@ -21,6 +21,8 @@ import {
   runVocationalSchoolGeneration,
   previewVocationalSchoolGeneration,
   dispatchShiftCleanupForCreatedAbsences,
+  resolveRetroactiveWindow,
+  type GeneratorResult,
 } from "../utils/vocational-school-generator";
 
 const previewQuerySchema = z.object({
@@ -54,9 +56,47 @@ const deleteParamsSchema = z.object({
   absenceId: z.string().uuid("absenceId muss eine UUID sein"),
 });
 
+// Phase 103 — retroactive preview + apply query/body shapes. Neither schema declares
+// a window field: resolveRetroactiveWindow() in the generator is the ONLY place the
+// window is derived, and it reads exclusively persisted server state
+// (EmployeeVocationalSchoolPattern.validFrom). This omission is the enforcement point
+// for D-03 ("validFrom wird nicht verschoben") as a security property (T-103-WINDOW),
+// not just a UX one — a client-supplied windowStart/windowEnd is silently ignored by
+// these handlers regardless of what extra keys a request sends (Test 11).
+const retroactivePreviewQuerySchema = z.object({
+  employeeId: z.string().uuid("employeeId muss eine UUID sein"),
+});
+const retroactiveApplySchema = z.object({
+  employeeId: z.string().uuid("employeeId muss eine UUID sein"),
+});
+
 // First-of-month UTC midnight — matches SaldoSnapshot.periodStart semantics.
 function monthStartUtc(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
+// Phase 103 — the response shape used by both new retroactive endpoints when
+// resolveRetroactiveWindow() finds nothing to do (no active pattern with a past
+// validFrom). Zero-valued GeneratorResult plus a null window so the frontend has one
+// response shape to handle regardless of whether there was anything retroactive.
+function emptyRetroactiveResult(): GeneratorResult & {
+  windowStart: string | null;
+  windowEnd: string | null;
+} {
+  return {
+    created: 0,
+    skipped: {
+      schoolHoliday: 0,
+      existing: 0,
+      locked: 0,
+      preHire: 0,
+      postExit: 0,
+      outOfWindow: 0,
+    },
+    details: [],
+    windowStart: null,
+    windowEnd: null,
+  };
 }
 
 export async function vocationalSchoolRoutes(app: FastifyInstance) {
@@ -402,6 +442,104 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
       });
 
       return reply.code(204).send();
+    },
+  });
+
+  // ── Phase 103 — retroactive preview + apply (Tracer slice) ────────────────
+  // Both handlers share the same three steps (parse → cross-tenant employee lookup →
+  // resolveRetroactiveWindow) and differ ONLY in which generator function they call
+  // (dry run vs. real write) — that identity is what makes D-01's "preview and apply
+  // cannot diverge" guarantee hold structurally, not just by convention. The window
+  // is NEVER read from the request — resolveRetroactiveWindow() derives it exclusively
+  // from persisted EmployeeVocationalSchoolPattern rows (T-103-WINDOW).
+  //
+  // No advisory lock (RESEARCH Open Q4, rated reversible): the generator is idempotent
+  // by construction (BERSCH-08 existingSet + P2002 restore branch; pinned by a
+  // repeat-apply test). Double-submit is additionally guarded client-side by a
+  // pending-disable button on the confirm dialog.
+  //
+  // Neither handler adds a per-day app.audit() call — the generator's create-loop and
+  // orphan-sweep already emit one AuditLog row per created/removed Absence
+  // (T-103-AUDIT). A route-level summary row would destroy that per-day traceability.
+
+  // Dry run only (ADMIN/MANAGER) — mutates nothing.
+  app.get("/retroactive-preview", {
+    schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const q = retroactivePreviewQuerySchema.parse(req.query);
+
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: q.employeeId, tenantId },
+        select: { id: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const window = await resolveRetroactiveWindow(app.prisma, {
+        tenantId,
+        employeeId: employee.id,
+      });
+      if (!window) {
+        return reply.code(200).send(emptyRetroactiveResult());
+      }
+
+      const result = await previewVocationalSchoolGeneration(app.prisma, {
+        tenantId,
+        employeeId: employee.id,
+        windowStart: window.windowStart,
+        windowEnd: window.windowEnd,
+      });
+
+      return reply.code(200).send({
+        ...result,
+        windowStart: window.windowStart.toISOString().slice(0, 10),
+        windowEnd: window.windowEnd.toISOString().slice(0, 10),
+      });
+    },
+  });
+
+  // Real write (ADMIN/MANAGER). Returns the REAL generator result, never a
+  // synthesised success payload — if a month closes in the gap between preview and
+  // confirm, the write-time locked check inside the generator skips those days and
+  // the client must be able to see it (RESEARCH § Locked-Months Mechanism, race note).
+  app.post("/retroactive-apply", {
+    schema: { tags: ["Berufsschule"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const tenantId = req.user.tenantId;
+      const body = retroactiveApplySchema.parse(req.body);
+
+      const employee = await app.prisma.employee.findFirst({
+        where: { id: body.employeeId, tenantId },
+        select: { id: true },
+      });
+      if (!employee) {
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const window = await resolveRetroactiveWindow(app.prisma, {
+        tenantId,
+        employeeId: employee.id,
+      });
+      if (!window) {
+        return reply.code(200).send(emptyRetroactiveResult());
+      }
+
+      const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+        tenantId,
+        employeeId: employee.id,
+        windowStart: window.windowStart,
+        windowEnd: window.windowEnd,
+      });
+
+      return reply.code(200).send({
+        ...result,
+        windowStart: window.windowStart.toISOString().slice(0, 10),
+        windowEnd: window.windowEnd.toISOString().slice(0, 10),
+      });
     },
   });
 }
