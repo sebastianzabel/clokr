@@ -12,7 +12,7 @@
  *
  * Layer 2 — `assertTestDatabaseMarker`: opens exactly one connection and requires POSSESSION of the
  * `COMMENT ON DATABASE` marker `ensure-test-database.ts` stamps. A name check alone can be satisfied
- * by any database someone happens to call `clokr_test` on any Postgres instance; this layer cannot —
+ * by any database someone happens to name identically, on any Postgres instance; this layer cannot —
  * it is the mechanism, not a name convention, that makes the guard un-fakeable.
  *
  * Neither function returns a boolean, logs a warning, or accepts an opt-out flag or environment
@@ -20,8 +20,8 @@
  * deliberate: there is no way to proceed past either check short of pointing at a database this
  * project's own tooling actually provisioned.
  *
- * Imports every constant from `../src/utils/test-database` — never redeclares `clokr_test` or the
- * marker string. This file lives under `apps/api/scripts/`, not `apps/api/src/`, so it can import
+ * Imports every constant from `../src/utils/test-database` — never redeclares the target database
+ * name or the marker string. This file lives under `apps/api/scripts/`, not `apps/api/src/`, so it can import
  * inward from `src/` freely (see that module's own header comment for why the reverse direction
  * cannot happen, and `apps/api/scripts/README.md`'s "Test infrastructure" section).
  */
@@ -86,7 +86,7 @@ export function assertTestDatabaseUrlShape(raw: string | undefined, source: stri
  * once, by `ensure-test-database.ts`, as `COMMENT ON DATABASE`; `prisma db push`/`migrate deploy`
  * reconcile objects inside a schema and never touch `pg_shdescription`, so the marker's presence
  * proves this exact provisioning script ran against this exact database — a name match alone cannot
- * be forged by any other database that merely happens to be called `clokr_test`.
+ * be forged by any other database that merely happens to share the same name.
  *
  * Closes its connection on every path (success, mismatch, or connection failure) via `finally`. A
  * connection error is treated as a rejection, not swallowed — the guard fails closed, never open.
