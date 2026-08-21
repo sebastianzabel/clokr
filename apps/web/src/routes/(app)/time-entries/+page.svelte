@@ -177,6 +177,11 @@
   let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
   let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
   let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
+  // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
+  // Phase-97-01 split fields above: undefined on fetch failure / older cached response
+  // (via rawOvertime?.field below), which KontoSaldoCard renders as "unconfigured".
+  let overtimeNegativeLimitExceeded: boolean | undefined = $state(undefined);
+  let overtimeMaxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -329,6 +334,10 @@
                 openMonthMinutes?: number | null;
                 hasClosedMonth?: boolean;
                 rosterIncomplete?: boolean;
+                // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
+                // endpoint (overtime.ts:172-173); only the client-side type was missing them.
+                maxNegativeBalanceMinutes?: number | null;
+                isNegativeLimitExceeded?: boolean;
               }>(`/overtime/${activeEmpId}`)
               .catch(() => null)
           : Promise.resolve(null),
@@ -380,6 +389,9 @@
       overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
       overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
       overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
+      overtimeNegativeLimitExceeded = rawOvertime?.isNegativeLimitExceeded;
+      overtimeMaxNegativeBalanceMinutes = rawOvertime?.maxNegativeBalanceMinutes;
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -1634,6 +1646,8 @@
       openMonthMinutes={overtimeOpenMonthMinutes}
       hasClosedMonth={overtimeHasClosedMonth}
       rosterIncomplete={overtimeRosterIncomplete}
+      isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
+      maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
       {loading}
     />
   </div>
