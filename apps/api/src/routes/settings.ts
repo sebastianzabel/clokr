@@ -856,12 +856,22 @@ export async function settingsRoutes(app: FastifyInstance) {
               overtimeThreshold: body.overtimeThreshold,
               allowOvertimePayout: body.allowOvertimePayout,
               overtimeMode: body.overtimeMode,
-              // Phase 100 (Rule 1 fix) — this field was validated by the Zod schema and
-              // returned in the response type, but never written here: a caller's
-              // maxNegativeBalanceMinutes was silently discarded on every PUT through the
-              // cancelOrphanShifts branch. Now that this value is a real entitlement input
-              // (Plan 01), a silently-dropped write is a correctness bug, not a stub.
-              maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes ?? null,
+              // Phase 100 (Rule 1 fix; WR-01 code-review follow-up) — this field was
+              // validated by the Zod schema and returned in the response type, but never
+              // written here: a caller's maxNegativeBalanceMinutes was silently discarded
+              // on every PUT through the cancelOrphanShifts branch. Now that this value is
+              // a real entitlement input (Plan 01), a silently-dropped write is a
+              // correctness bug, not a stub. PARTIAL-UPDATE semantics: only include the key
+              // when the caller actually sent it (`!== undefined`), so an omitted field
+              // preserves whatever is already stored instead of wiping it to null — an
+              // explicit `null` still clears it. Mirrors PUT /settings/security's `update:
+              // body` pattern, which lets Prisma skip undefined keys. Without this, the one
+              // web caller of this route (admin/employees/[id]/+page.svelte, which has no
+              // form control for this field yet) would silently null out any per-employee
+              // override the next time it saved an unrelated schedule change.
+              ...(body.maxNegativeBalanceMinutes !== undefined
+                ? { maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes }
+                : {}),
               coreStart: body.coreStart ?? null,
               coreEnd: body.coreEnd ?? null,
               coreDays: body.coreDays ?? [],
@@ -959,12 +969,17 @@ export async function settingsRoutes(app: FastifyInstance) {
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
         overtimeMode: body.overtimeMode,
-        // Phase 100 (Rule 1 fix) — same fix as the cancelOrphanShifts branch above: this
-        // field was validated by the Zod schema and returned in the response type, but
-        // never written here, so a caller's maxNegativeBalanceMinutes was silently
-        // discarded on every normal-path PUT. Now that this value is a real entitlement
-        // input (Plan 01), a silently-dropped write is a correctness bug, not a stub.
-        maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes ?? null,
+        // Phase 100 (Rule 1 fix; WR-01 code-review follow-up) — same fix as the
+        // cancelOrphanShifts branch above: this field was validated by the Zod schema and
+        // returned in the response type, but never written here, so a caller's
+        // maxNegativeBalanceMinutes was silently discarded on every normal-path PUT. Now
+        // that this value is a real entitlement input (Plan 01), a silently-dropped write
+        // is a correctness bug, not a stub. PARTIAL-UPDATE semantics: only include the key
+        // when the caller actually sent it — see the cancelOrphanShifts branch above for
+        // the full rationale.
+        ...(body.maxNegativeBalanceMinutes !== undefined
+          ? { maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes }
+          : {}),
         coreStart: body.coreStart ?? null,
         coreEnd: body.coreEnd ?? null,
         coreDays: body.coreDays ?? [],
