@@ -1825,8 +1825,23 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: 0,
           openMonthMinutes: null,
           hasClosedMonth: false,
+          maxNegativeBalanceMinutes: null,
+          isNegativeLimitExceeded: false,
         };
       }
+
+      // Phase 100 (OTC-05, D-15/D-16) — resolved ONCE per request through the SAME shared
+      // helper the OVERTIME_COMP gate uses (loadNegativeBalanceTolerance), so this box and the
+      // gate can never disagree on the same employee's tolerance. `isNegativeLimitExceeded`
+      // below uses the `configuredMinutes != null` guard — the "unbegrenzt"/ALERTING reading,
+      // D-00b — NOT a bare "confirmed balance is negative" check, which would fire for every
+      // employee with a merely negative confirmed balance and blur D-00b's two readings into a
+      // third (100-UI-SPEC.md "API contract feeding surfaces 1 and 4").
+      const { configuredMinutes } = await loadNegativeBalanceTolerance(
+        app.prisma,
+        employeeId,
+        req.user.tenantId,
+      );
 
       let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
@@ -1847,6 +1862,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: breakdown.confirmedMinutes,
           openMonthMinutes: breakdown.openMonthMinutes,
           hasClosedMonth: breakdown.hasClosedMonth,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded:
+            configuredMinutes != null && breakdown.confirmedMinutes < -configuredMinutes,
           ...(breakdown.rosterIncomplete !== undefined
             ? { rosterIncomplete: breakdown.rosterIncomplete }
             : {}),
@@ -1863,13 +1881,23 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: confirmed.minutes,
           openMonthMinutes: null,
           hasClosedMonth: confirmed.hasClosedMonth,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded:
+            configuredMinutes != null && confirmed.minutes < -configuredMinutes,
         };
       } catch (fallbackErr) {
         app.log.warn(
           { err: fallbackErr, employeeId },
           "GET /leave/overtime-balance: confirmed carry-over fallback failed",
         );
-        return { balanceHours, confirmedMinutes: 0, openMonthMinutes: null, hasClosedMonth: false };
+        return {
+          balanceHours,
+          confirmedMinutes: 0,
+          openMonthMinutes: null,
+          hasClosedMonth: false,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded: configuredMinutes != null && 0 < -configuredMinutes,
+        };
       }
     },
   });
