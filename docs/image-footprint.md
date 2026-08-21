@@ -486,3 +486,74 @@ asserting "NO backport" as settled fact — an unqualified "no backport exists" 
 now be the kind of stale, unverified assertion this phase exists to correct. Flagged as a fast,
 concrete follow-up in `deferred-items.md`: confirm directly (changelog diff or reproduction)
 whether pnpm 10.34.2+ actually contains this fix, independent of this phase.
+
+---
+
+## IMG-04 / IMG-05 — Final Disposition and Complete Before/After Ledger (Plan 04, Task 2)
+
+### `.trivyignore` disposition applied
+
+Of the 13 CVE ids evaluated in Task 1's table:
+
+| Verdict                                                                                                                                                                                           | Count | CVE ids                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RETIRE (version-patched — package name persists where it must, e.g. npm's own bundling or a genuine runtime dependency, but the vulnerable version range is confirmed gone everywhere it appears) | 6     | `CVE-2026-33671`, `CVE-2026-35039`, `CVE-2026-35042`, `CVE-2026-48815`, `CVE-2026-59873`, `CVE-2026-59874`                                                                                                                                                                         |
+| KEEP, JUSTIFICATION CORRECTED (still genuinely exposed in at least one location on at least one image; text rewritten to state the true, currently-verified reason)                               | 7     | `CVE-2025-69262`, `CVE-2025-69263`, `CVE-2026-55697`, `CVE-2026-14257`, `CVE-2026-13149`, `CVE-2026-69152`, `CVE-2026-69192`                                                                                                                                                       |
+| KEEP, UNCHANGED                                                                                                                                                                                   | 0     | — every surviving entry needed at least a text correction; none held up verbatim                                                                                                                                                                                                   |
+| NO LONGER IGNORED, NOW FIXED (flagged as a follow-up, not bumped in this phase)                                                                                                                   | 0     | — the two candidates that fit this shape in spirit (`fast-jwt`, `CVE-2026-35039`/`-35042`) were already fixed by an existing `pnpm.overrides` pin with no further action possible, so they were classified RETIRE (version-patched) instead — see Task 1's table for the reasoning |
+
+`trivy image --severity CRITICAL,HIGH --scanners vuln --ignorefile .trivyignore --exit-code 1`
+against both `clokr-web:102-after` and `clokr-api:102-after`: **exit 0 on both** — the CI gate
+passes with the corrected file, verified before this commit, not discovered in CI.
+
+No `.trivyignore` entry contains the phrase "not used at runtime" (`command grep -i "not used at
+runtime" .trivyignore` → no match). The two entries that are closest to that shape — the pnpm
+class-1 CVEs and `CVE-2026-55697` — now state the specific, currently-true mechanism instead
+(`pnpm install` never runs at runtime; the only invocation is `pnpm tsx`), not a blanket
+"build tool" claim.
+
+### Complete before/after summary — both images, all four numbers, plus the exception count
+
+| Metric                                                   | `clokr-web` before | `clokr-web` after | Δ web       | `clokr-api` before | `clokr-api` after | Δ api       |
+| -------------------------------------------------------- | ------------------ | ----------------- | ----------- | ------------------ | ----------------- | ----------- |
+| Image size (inspect bytes)                               | 243,178,829        | 82,791,759        | **-65.96%** | 258,507,058        | 217,750,175       | **-15.76%** |
+| Image size (human, `docker images`)                      | 1.13 GB            | 359 MB            | **-68.5%**  | 1.18 GB            | 1.01 GB           | **-14.4%**  |
+| `node_modules` size                                      | 625.1 M            | 38.5 M            | **-93.84%** | 593.3 M            | 439.4 M           | **-25.94%** |
+| Trivy CRITICAL+HIGH, gated (`--ignorefile .trivyignore`) | 0                  | 0                 | no change   | 0                  | 0                 | no change   |
+| Trivy CRITICAL+HIGH, ungated (no ignorefile)             | 0                  | 0                 | no change   | 0                  | 0                 | no change   |
+
+| Metric                                                                                                                                        | Before (start of Phase 102)                                                                                                                                                                                                                      | After (this commit) | Δ                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- | --------------------------------------------------------------------------------------------------- |
+| `.trivyignore` CVE ids                                                                                                                        | 13                                                                                                                                                                                                                                               | 7                   | **-46.15%** (6 retired)                                                                             |
+| `.trivyignore` comment blocks                                                                                                                 | 9                                                                                                                                                                                                                                                | 4                   | **-55.56%** (4 blocks removed entirely: tinyglobby/picomatch, both fast-jwt entries, tar, sigstore) |
+| `.trivyignore` entries resting on a runtime-exposure or fix-availability claim that was actually false or unverifiable when this plan started | 3 (pnpm class-1 "not used at runtime" — false for the API image since Plan 02/03; `ip-address`'s "app tree resolves 10.4.0" — stale post-prune; `CVE-2026-55697`'s "NO backport to the 10.x line" — asserted as settled fact, actually disputed) | 0                   | all 3 corrected                                                                                     |
+
+### Which was the larger win: size, or exceptions?
+
+**The CRITICAL+HIGH count itself shows zero measured improvement, on both images, gated and
+ungated, before and after — because it was already 0/0/0/0 before any Dockerfile in this phase was
+touched** (recorded in the before-measurement section above, and reconfirmed here). There was no
+CRITICAL/HIGH finding for pruning, or for `.trivyignore` correction, to remove. Anyone reading only
+the CRITICAL+HIGH row would see no phase benefit at all — that would be a wrong reading of what
+this phase actually did.
+
+The two real, measured wins are asymmetric between the two axes CONTEXT's `<specifics>` names:
+
+- **Size**: dramatic for `apps/web` (-93.84% `node_modules`, -65.96% image bytes — D-01's "clean
+  case" paid off in full) but modest for `apps/api` (-25.94% `node_modules`, -15.76% image bytes —
+  exactly as D-02 predicted: this image legitimately retains the Prisma CLI closure and the `tsx`
+  toolchain, so there was less to remove).
+- **Exceptions**: 6 of 13 CVE ids (46%) and 4 of 9 comment blocks (56%) retired outright — genuine
+  removals, each backed by an installed-version-vs-fix-threshold comparison against a
+  GitHub-reviewed advisory, not a guess. Independent of the count: **every one of the 7 surviving
+  entries had its justification re-verified against the pruned images, and 3 of the 7 contained a
+  claim that was flatly false or dangerously unverified** (detailed above) — those are now
+  either removed (the false "not used at runtime" framing) or explicitly marked disputed with a
+  concrete follow-up (the `CVE-2026-55697` backport claim), instead of silently carried forward.
+
+Per CONTEXT `<specifics>` — _"der Gewinn ist nicht primär die Größe, sondern dass dokumentierte
+Ausnahmen verschwinden"_ — **the exception-set improvement is the phase's real, measured win here,
+not the size reduction.** The size numbers are real and worth recording (especially `apps/web`'s),
+but on the metric this phase's own stated goal cares about most, it is the `.trivyignore` file that
+changed the most, and changed most honestly: not just shorter, but no longer resting on a claim
+that quietly stopped being true.
