@@ -9,6 +9,12 @@
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import Modal from "$components/ui/Modal.svelte";
+  import {
+    shouldOfferRetroactiveRun,
+    formatIsoDateDe,
+    type RetroactivePreview,
+  } from "$lib/components/vocational-school/retroactive";
   import {
     type EmployeeClassification,
     CLASSIFICATION_OPTIONS,
@@ -230,6 +236,15 @@
   let bsPatternsSaved = $state(false);
   // Monotonically-increasing counter for synthetic keys on unsaved rows
   let bsNewKeyCounter = $state(0);
+
+  // Phase 103 — retroactive confirm dialog (Tracer slice, deliberately single-step).
+  // Plan 04 replaces the dialog body with the 3-step wizard and reuses these same
+  // state names + testids.
+  let retroPreview = $state<RetroactivePreview | null>(null);
+  let retroOpen = $state(false);
+  let retroPending = $state(false);
+  let retroResult = $state<RetroactivePreview | null>(null);
+  let retroError = $state("");
 
   const employeeId = $derived($page.params.id);
 
@@ -1166,6 +1181,32 @@
       bsPatternsSaved = true;
       toasts.success("Berufsschultage gespeichert", 2000);
       setTimeout(() => (bsPatternsSaved = false), 2000);
+
+      // Phase 103 (D-01) — post-save retroactive check. Non-blocking follow-up: the
+      // pattern save above already succeeded and is reported as such regardless of
+      // what happens here. Only probes the backend when at least one just-hydrated
+      // row's validFrom is strictly before today — a purely-forward pattern change
+      // must not open any dialog.
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const hasRetroactiveRow = bsPatterns.some((p) => p.validFrom < todayIso);
+      if (hasRetroactiveRow) {
+        try {
+          const preview = await api.get<RetroactivePreview>(
+            `/vocational-school/retroactive-preview?employeeId=${employee.id}`,
+          );
+          retroPreview = preview;
+          if (shouldOfferRetroactiveRun(preview)) {
+            retroResult = null;
+            retroError = "";
+            retroOpen = true;
+          }
+        } catch (e: unknown) {
+          // A failing preview call must NEVER surface as a save failure.
+          retroError =
+            e instanceof Error ? e.message : "Rückwirkende Prüfung konnte nicht geladen werden.";
+          toasts.error(retroError, 4000);
+        }
+      }
     } catch (e: unknown) {
       // Verbatim API error (Zod refine message or domain message)
       bsPatternsSaveError =
@@ -1174,6 +1215,32 @@
     } finally {
       bsPatternsSaving = false;
     }
+  }
+
+  // Phase 103 — confirm handler for the retroactive dialog. Copies ConfirmDialog's
+  // pending guard verbatim (T-103-REPLAY double-submit mitigation).
+  async function handleRetroConfirm() {
+    if (retroPending || !employee) return;
+    retroPending = true;
+    try {
+      const result = await api.post<RetroactivePreview>("/vocational-school/retroactive-apply", {
+        employeeId: employee.id,
+      });
+      // REAL response, never a synthesised success message — a late-breaking month
+      // close between preview and confirm must be visible here.
+      retroResult = result;
+    } catch (e: unknown) {
+      retroError =
+        e instanceof Error ? e.message : "Rückwirkende Anpassung konnte nicht angewendet werden.";
+      toasts.error(retroError, 4000);
+    } finally {
+      retroPending = false;
+    }
+  }
+
+  function handleRetroCancel() {
+    if (retroPending) return;
+    retroOpen = false;
   }
 
   // ── Arbeitszeit state ──────────────────────────────────────────────────────
@@ -3042,6 +3109,50 @@
       onCancel={cancelExemptToggle}
     />
   {/if}
+
+  <!-- Phase 103 — retroactive BS-pattern confirm dialog (Tracer slice, single-step) -->
+  <Modal bind:open={retroOpen} title="Berufsschultage rückwirkend anpassen">
+    <div data-testid="bs-retro-dialog">
+      {#if retroResult}
+        <p data-testid="bs-retro-result">
+          Fertig: {retroResult.created} angelegt, {retroResult.skipped.locked} unverändert.
+        </p>
+      {:else if retroPreview}
+        <p data-testid="bs-retro-summary">
+          Ab {formatIsoDateDe(retroPreview.windowStart ?? "")}: {retroPreview.created}
+          {retroPreview.created === 1 ? "Tag kommt hinzu" : "Tage kommen hinzu"}.
+        </p>
+        {#if retroPreview.skipped.locked > 0}
+          <p data-testid="bs-retro-locked-note">
+            {retroPreview.skipped.locked} Tage in abgeschlossenen Monaten bleiben unverändert.
+          </p>
+        {/if}
+      {/if}
+      {#if retroError}
+        <p class="callout error">{retroError}</p>
+      {/if}
+    </div>
+    {#snippet footer()}
+      <button
+        class="btn btn-ghost"
+        type="button"
+        data-testid="bs-retro-cancel"
+        onclick={handleRetroCancel}
+        disabled={retroPending}
+      >
+        Abbrechen
+      </button>
+      <button
+        class="btn btn-primary"
+        type="button"
+        data-testid="bs-retro-confirm"
+        onclick={handleRetroConfirm}
+        disabled={retroPending || !!retroResult}
+      >
+        {retroPending ? "Wird angewendet…" : "Jetzt anwenden"}
+      </button>
+    {/snippet}
+  </Modal>
 {/if}
 
 <style>
