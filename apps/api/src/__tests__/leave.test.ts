@@ -922,7 +922,13 @@ describe("Leave / Absence API", () => {
       // Before the fix Sunday=0h → request would pass (0 <= 4). Now 6h > 4h balance → rejected.
       expect(res.statusCode).toBe(400);
       const body = JSON.parse(res.body);
-      expect(body.error).toBe("Nicht genug Überstunden");
+      // Phase 100: the exact-match assertion here (originally `.toBe("Nicht genug Überstunden")`)
+      // was updated to `.toContain` for the same planned, copy-driven reason documented in
+      // leave-overtime-comp-confirmed-check.test.ts — the rejection copy now names the applied
+      // tolerance (0 here, since this employee has neither a closed month nor a configured
+      // tolerance).
+      expect(body.error).toContain("Nicht genug Überstunden");
+      expect(body.tolerance).toBe(0);
       expect(body.requested).toBeCloseTo(6, 1);
     });
   });
