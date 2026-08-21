@@ -199,6 +199,23 @@
     color: var(--text-muted);
   }
 
+  /* Phase 100 Plan 06 (Q1, owner checkpoint 2026-08-21) — dark-mode contrast fallback.
+     Measured against the running app (data-mode="dark", theme pflaume): --warn (#b45309)
+     text on the composited dark-mode --warn-soft background is 2.73:1 — fails WCAG AA
+     (4.5:1 normal text, 3:1 even at large text). Root cause: --warn-soft IS overridden
+     for dark mode (see [data-mode="dark"] in tokens.css) but --warn itself is NOT, so
+     dark mode pairs a dark orange-brown with a near-black tinted background. Fallback
+     mirrors SaldoAnzeige.svelte's .saldo__roster-badge treatment — color: var(--text) on
+     the same --warn-soft background — measured at 11.64:1. Scoped to THIS badge only via
+     the .ksc-tolerance-warn ancestor (established codebase idiom, see
+     teamcal/+page.svelte's `:global([data-mode="dark"]) .row-avatar`); deliberately does
+     NOT override the --warn token itself, which the owner rejected as too wide a blast
+     radius (would repaint every --warn consumer app-wide). Light mode is unaffected —
+     .badge-yellow's global color: var(--warn) (app.css) still applies there unchanged. */
+  :global([data-mode="dark"]) .ksc-tolerance-warn .badge-yellow {
+    color: var(--text);
+  }
+
   .ksc-caption {
     font-size: 12px;
     color: var(--text-muted);

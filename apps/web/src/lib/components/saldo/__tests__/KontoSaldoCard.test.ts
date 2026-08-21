@@ -5,9 +5,26 @@
 //   3. the headline (Gesamt-Saldo) figure must ALWAYS carry a sign, incl. "±0:00" at zero
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { screen } from "@testing-library/svelte";
 import { renderWithTheme } from "$tests/test-utils";
 import KontoSaldoCard from "../KontoSaldoCard.svelte";
+
+// Phase 100 Plan 06 (Q1) — the dark-mode contrast fallback below is pinned by reading the
+// component's own source rather than via `getComputedStyle()`. Confirmed empirically (not
+// assumed) that this test environment does not inject component-scoped <style> tags into
+// jsdom's `document.head` at all — `getComputedStyle()` on the badge returns the browser
+// default `canvastext` regardless of `data-mode`, and `document.head.querySelectorAll("style")`
+// is empty. This matches this codebase's own documented precedent in SaldoAnzeige.svelte:
+// "Tests assert class + text content only; no visual regression is expected from missing
+// global rules." A source-text pin is the one thing this suite CAN actually verify against
+// silent regression (e.g. someone reverting the fallback or widening it to `--warn` itself).
+const COMPONENT_SOURCE = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../KontoSaldoCard.svelte"),
+  "utf-8",
+);
 
 function baseProps(overrides: Record<string, unknown> = {}) {
   return {
@@ -140,5 +157,38 @@ describe("KontoSaldoCard — Toleranzgrenze badge (Phase 100 / OTC-03)", () => {
       }),
     );
     expect(container.querySelector(".ksc-tolerance-warn")).not.toBeNull();
+  });
+});
+
+// Phase 100 Plan 06 (Q1, owner checkpoint 2026-08-21) — dark-mode contrast fallback.
+// Measured live: --warn text on the composited dark-mode --warn-soft background is 2.73:1,
+// failing WCAG AA (4.5:1 normal / 3:1 large). Owner-approved fix: color: var(--text) on the
+// same --warn-soft background (11.64:1), scoped to this one badge, dark mode only — see
+// SOURCE comment above the CSS rule in KontoSaldoCard.svelte for the full measurement trail.
+describe("KontoSaldoCard — Toleranzgrenze badge dark-mode contrast fallback (Phase 100 Plan 06, Q1)", () => {
+  it('scopes color: var(--text) to the badge under [data-mode="dark"] via the .ksc-tolerance-warn ancestor', () => {
+    const rule =
+      /:global\(\[data-mode="dark"\]\)\s*\.ksc-tolerance-warn\s+\.badge-yellow\s*\{[^}]*color:\s*var\(--text\)[^}]*\}/;
+    expect(COMPONENT_SOURCE).toMatch(rule);
+  });
+
+  it("does not override the --warn token itself (owner rejected the app-wide blast radius)", () => {
+    // The fix must live as a scoped descendant-selector override (above), never as a local
+    // redeclaration of the --warn custom property, which would repaint every --warn consumer
+    // in the app (dashboard's cell-badge--requested, SaldoAnzeige's roster dot, etc.).
+    expect(COMPONENT_SOURCE).not.toMatch(/--warn\s*:/);
+  });
+
+  it("leaves the global light-mode .badge-yellow color untouched (app.css)", () => {
+    // Q1's fallback must not require any change to the shared global class — light mode
+    // keeps reading color: var(--warn) from app.css exactly as every other .badge-yellow
+    // consumer does. This guards the "light mode visually unchanged" acceptance criterion
+    // against a future edit to the wrong file.
+    const appCssPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../../app.css",
+    );
+    const appCss = readFileSync(appCssPath, "utf-8");
+    expect(appCss).toMatch(/\.badge-yellow\s*\{[^}]*color:\s*var\(--warn\)[^}]*\}/);
   });
 });
