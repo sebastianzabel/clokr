@@ -930,6 +930,10 @@
             <input type="checkbox" bind:checked={maxNegEnabled} />
             Limit für negatives Überstundensaldo
           </label>
+          <p class="form-hint">
+            Ohne aktivierten Wert gilt beim Überstundenausgleich-Antrag eine Toleranz von 0 Std. —
+            der Antrag darf das bestätigte Guthaben nicht ins Minus ziehen.
+          </p>
           {#if maxNegEnabled}
             <div class="inline-settings spaced-top-sm">
               <div class="form-group">
