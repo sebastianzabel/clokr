@@ -19,6 +19,7 @@ import {
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
+import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -2441,22 +2442,18 @@ async function resolveWorkDays(
  * globalen Tenant-Defaults falls kein individueller Plan vorhanden).
  * Halbe Tage = halbe Stunden des ersten Arbeitstages.
  *
- * KNOWN GAP — SHIFT_BASED schedules (deferred from Phase 49.5):
- * For SHIFT_BASED employees this returns the wrong number because it reads
- * the per-Tag-Soll fields (mondayHours…sundayHours) on the WorkSchedule,
- * which are not authoritative for SHIFT_BASED — their real hours live in
- * the `Shift` table. OVERTIME_COMP saldo deductions are therefore inaccurate
- * for shift-based users.
- *
- * The correct fix is to detect `schedule.scheduleType === "SHIFT_BASED"` and
- * branch to `prisma.shift.findMany({ where: { employeeId, date: { gte: start, lte: end } } })`,
- * summing each shift's `(endTime - startTime - breakMinutes)` in hours.
- *
- * Acceptance trigger: only implement once UAT reports a concrete OVERTIME_COMP
- * saldo mismatch for a SHIFT_BASED employee. See the v1.6 milestone audit
- * (`.planning/milestones/v1.6-MILESTONE-AUDIT.md`) tech_debt entry for
- * `49.5-arbeitstage-woche-config` and the phase SUMMARY's "Known Stubs"
- * section for the original deferral rationale.
+ * SHIFT_BASED (Phase 100 / OTC-04, D-05..D-08): the per-Tag-Soll fields
+ * (mondayHours…sundayHours) on WorkSchedule are NOT authoritative for this schedule type —
+ * the real hours live in the `Shift` table. This function branches on `ws.type ===
+ * "SHIFT_BASED"` before the per-weekday path below and instead sums each rostered shift's
+ * netto minutes: brutto (endTime − startTime, midnight-crossing corrected) minus the
+ * tenant/employee auto-break for that duration (`shift-netto.ts`). `Shift` carries no
+ * `breakMinutes` column, so the original Phase-49.5 formula `(endTime - startTime -
+ * breakMinutes)` named a field that does not exist — this replaces it. Soft-deleted shifts
+ * (`deletedAt != null`) are excluded (D-06) — an employer-cancelled shift is not time the
+ * employee has to buy back. Half-day uses the netto of the FIRST rostered shift in the
+ * range, halved (D-07). An employee with no shifts in the range costs 0 hours and the
+ * request is not rejected for that reason (D-08).
  */
 async function getScheduledHours(
   prisma: DbClient,
@@ -2480,6 +2477,39 @@ async function getScheduledHours(
 
   const ws = employee?.workSchedules[0] ?? null;
   const cfg = employee?.tenant?.config;
+
+  // SHIFT_BASED: netto summed from the Shift table (Phase 100 / OTC-04, D-05..D-08) — see the
+  // docblock above. Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday
+  // path below, which stays byte-for-byte unchanged for every other schedule type.
+  if (ws?.type === "SHIFT_BASED") {
+    const shifts = await prisma.shift.findMany({
+      where: { employeeId, date: { gte: start, lte: end }, deletedAt: null },
+      select: { startTime: true, endTime: true },
+      orderBy: { date: "asc" }, // D-07: "first rostered shift" must be deterministic
+    });
+
+    const employeeBreakShape = {
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+    };
+    const tenantBreakShape = {
+      defaultBreakOver6h: cfg?.defaultBreakOver6h ?? 30,
+      defaultBreakOver9h: cfg?.defaultBreakOver9h ?? 45,
+    };
+
+    // The `holidays` set is deliberately NOT applied on this path. For SHIFT_BASED the roster
+    // is authoritative — if nobody rostered the employee on a public holiday there is no shift
+    // and the day costs nothing on its own; if somebody DID roster them, those hours are real
+    // planned work and taking the day off genuinely consumes them. Filtering by holiday here
+    // would double-count the exclusion.
+    if (halfDay) {
+      // D-07: half day = half the netto of the FIRST rostered shift; D-08: empty roster -> 0.
+      if (shifts.length === 0) return 0;
+      return shiftNettoMinutes(shifts[0], employeeBreakShape, tenantBreakShape) / 2 / 60;
+    }
+    // D-05: sum of every non-deleted rostered shift's netto; naturally 0 for an empty roster (D-08).
+    return sumShiftNettoMinutes(shifts, employeeBreakShape, tenantBreakShape) / 60;
+  }
 
   // Stunden pro Wochentag (0=So, 1=Mo … 6=Sa)
   const h: Record<number, number> = {
