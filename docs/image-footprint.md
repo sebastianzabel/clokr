@@ -249,10 +249,109 @@ mapping (`/dashboard` → manifest leaf 28 → `_page.svelte-Cd5Vdtws.js`; `/rep
 
 ---
 
-## After: `apps/api` (Plan 03/04)
+## After: `apps/api` (Plan 03)
 
-Not yet measured. `apps/api`'s runtime dependency set has NOT been established empirically yet —
-that is Plan 02's job (IMG-02). Do not prune `apps/api/Dockerfile` before Plan 02 completes; see
-`102-CONTEXT.md` D-02.
+Filled in Plan 03 Task 2 after the pruned `apps/api/Dockerfile` builds and passes its smoke test.
+Measured on `clokr-api:102-after`, built from the Dockerfile committed in Plan 03 Task 1
+(`ead996b7`) — restructured onto `pnpm --filter @clokr/api deploy --prod --legacy` plus a
+second, separately-scoped `pnpm --filter @clokr/db deploy --config.inject-workspace-packages=true`
+for the retained tooling (prisma CLI + schema-engine, tsx). Full mechanism and rationale:
+`apps/api/Dockerfile` comments above the `prod-deps`/`tooling-deps` stages;
+`102-03-SUMMARY.md`.
+
+**Tag-consistency note:** the image measured here (`clokr-api:102-after`) and the image booted
+for the smoke test below (built via `docker compose up -d --build api`, tagged `clokr-api:latest`
+by the compose project) are two separate `docker build` invocations of the identical Dockerfile
+and context. Verified equivalent by construction, not merely asserted: `docker image inspect
+--format '{{json .RootFS.Layers}}'` on both returned byte-identical layer-digest lists (every
+layer showed `CACHED` on the second build). `clokr-api:latest` was then explicitly re-tagged as
+`clokr-api:102-after` (`docker tag`) so the exact artifact that was smoke-tested carries the tag
+Plan 04 will re-scan with Trivy.
+
+### Smoke test (IMG-03) — proofs required by D-03, all passed
+
+Brought up against a CLEAN postgres volume (`docker compose down -v` first — this also removed
+the local dev `redis`/`minio` volumes, restored afterward per project convention), with
+`NODE_ENV=production` (docker-compose.yml's default for the `api` service), so the entrypoint
+took the `migrate deploy` branch, not `db push` and not the retry-fallback path.
+
+1. **Migration actually ran, verified against the database, not just the log.** Container log
+   shows `Using prisma: /app/node_modules/.bin/prisma`, `19 migrations found in
+prisma/migrations`, all 19 applied by name, `All migrations have been successfully applied.`,
+   `✅ Database schema synced`. Independently confirmed against Postgres itself:
+   `select count(*) from _prisma_migrations where finished_at is not null` → **19**, and
+   `select migration_name from _prisma_migrations order by started_at` lists the same 19 names in
+   the same order as `packages/db/prisma/migrations`'s 19 directories (`migration_lock.toml` is a
+   file, not a migration — the directory-only count is 19, not the 20 a raw `ls | wc -l` would
+   include).
+2. **A Prisma-backed endpoint returns data derived from a real DB read.** `POST
+/api/v1/auth/login` with the seed script's own demo admin credentials
+   (`admin@clokr.de` / `admin1234` — public demo-only constants already in
+   `packages/db/src/seed.ts`, not a secret) → `HTTP 200`, JWT issued. `GET /api/v1/employees` with
+   that token → `HTTP 200`, body is an array of exactly the 2 seeded employees
+   (`firstName: "Admin"`/`"Max"`, `employeeNumber: "001"`/`"002"`) — a shape only a genuine
+   Prisma round trip against freshly-seeded data produces, not derivable from config.
+   `SEED_DEMO_DATA` is `true` by default in `docker-compose.yml` for the `api` service; no
+   override needed.
+3. **`sharp` loads its native binding, executed not just located.** `docker compose exec api
+node -e "..."` generated an 8×8 PNG buffer and read its metadata back inside the running
+   container → printed `SHARP_OK width=8 format=png`.
+
+Full `docker compose logs api` scanned for `ERR_MODULE_NOT_FOUND`, `Cannot find module`,
+`Cannot find package`, `ERR_DLOPEN_FAILED`, `Error: Could not load` — **zero matches**. The only
+warning in the log is a pre-existing, expected one: `MinIO: Could not verify/create bucket (will
+retry on first use)` / `getaddrinfo ENOTFOUND minio` — this smoke test intentionally brought up
+only `postgres`+`api` (`redis` came along as a declared dependency); MinIO was not started, so its
+hostname doesn't resolve. Unrelated to the prune; the code retries on first use as designed.
+
+### Size
+
+| Command                                                                  | Before            | After             | Delta                                                                                   |
+| ------------------------------------------------------------------------ | ----------------- | ----------------- | --------------------------------------------------------------------------------------- |
+| `docker image inspect --format '{{.Size}}' clokr-api:102-{before,after}` | `258507058` bytes | `217750175` bytes | **-40756883 bytes (-15.76%)**                                                           |
+| `docker images --format '...{{.Size}}' clokr-api:102-{before,after}`     | `1.18GB`          | `1.01GB`          | **-14.4%** (human-rounded; compare like-for-like with the byte figure, not across rows) |
+
+Smaller than `apps/web`'s reduction (93.84% on `node_modules`, 65.96% on image bytes) by design —
+D-02/D-03: `apps/api` is genuinely constrained and legitimately retains the Prisma CLI closure
+(incl. `mysql2`/`postgres` driver stubs Prisma CLI itself depends on, `@prisma/dev`'s embedded
+local-Postgres tooling) and the full `tsx` transpilation toolchain. The win here is the workspace
+ROOT's own devDependencies (turbo, vitest, husky, eslint, playwright) and `typescript` — not a
+wholesale strip of every dev-tier package, several of which are the retained tools themselves.
+
+### Trivy CRITICAL+HIGH — gated and ungated
+
+|                                     | Before | After | Delta                                                     |
+| ----------------------------------- | ------ | ----- | --------------------------------------------------------- |
+| Gated (`--ignorefile .trivyignore`) | 0      | 0     | no change                                                 |
+| Ungated (no ignorefile)             | 0      | 0     | no change — passes the hard-stop rule (must not increase) |
+
+Sanity check (all-severity, not part of the gate, same method as the before-ledger and web's
+after-ledger): `clokr-api:102-after` has 16 MEDIUM / 2 LOW findings across 8 packages
+(`@hono/node-server`, `esbuild`, `fast-xml-parser`, `hono`, `ip-address`, `tar`, `undici`,
+`valibot`) — a small reduction from the before-image's 17 MEDIUM / 2 LOW across 9 packages. The
+remaining packages are transitive dependencies of the retained Prisma CLI (`@prisma/dev`'s
+embedded local-Postgres feature pulls in `hono`/`@hono/node-server`/`valibot`), not leftover
+build tooling — consistent with D-02's framing that this image's win is narrower than web's.
+
+### `node_modules` size and build-tooling inventory
+
+|                                           | Before  | After       | Delta                                                                                                          |
+| ----------------------------------------- | ------- | ----------- | -------------------------------------------------------------------------------------------------------------- |
+| `/app/node_modules` size                  | 593.3 M | **439.4 M** | **-153.9 M (-25.94%)**                                                                                         |
+| `prisma` present                          | YES     | **YES**     | retained (KEEP — `docker-entrypoint.sh:19-23,30`)                                                              |
+| `tsx` present                             | YES     | **YES**     | retained (KEEP — `cronjob-anonymizer.yaml:51`, operator scripts)                                               |
+| `typescript` present                      | YES     | **NO**      | closed (no runtime consumer — `102-API-RUNTIME-SET.md` Part C.4)                                               |
+| `vite` present                            | YES     | **NO**      | closed (was only ever a workspace-root `vitest` transitive)                                                    |
+| `pnpm` binary on PATH (`command -v pnpm`) | FOUND   | FOUND       | unchanged — `corepack prepare pnpm@10.34.5 --activate` still runs in the runtime stage (needed for `pnpm tsx`) |
+| Real corepack pnpm cache                  | FOUND   | FOUND       | unchanged, same reason                                                                                         |
+
+**IMG-02 closed for `apps/api` with evidence:** the runtime image contains the empirically
+established KEEP set (`102-API-RUNTIME-SET.md`) and nothing from the DROP set — `typescript` and
+`vite` confirmed absent from `/app/node_modules/.pnpm`, no `apps/web` tree, no workspace-root
+devDependencies (`turbo`/`vitest`/`husky`/`eslint` all confirmed absent by name, not just by
+category). Every retained dev-tier package (`prisma`, `tsx`) has a named consumer and an
+assertion gate in `apps/api/Dockerfile` that fails the build if it goes missing — one of which
+(the pnpm@10 hoisting-symlink `test -e` gate) was demonstrated firing on a deliberately dangling
+symlink during Task 1, confirming the gate genuinely discriminates broken from healthy.
 
 <!-- API_AFTER_SECTION -->
