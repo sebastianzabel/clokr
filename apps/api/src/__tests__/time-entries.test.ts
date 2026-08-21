@@ -227,7 +227,7 @@ describe("Time Entries API", () => {
     // ── Plan 76.19-06 Task 2: DB partial-unique index → P2002 → 409 ────────────
     // The partial-unique index (WHERE deletedAt IS NULL) catches a concurrent
     // same-day create that raced past the app-level one-per-day check. The DB
-    // constraint cannot be reproduced against the `db push` test schema (Prisma
+    // constraint cannot be reproduced against the `db push` test database (Prisma
     // cannot express partial unique indexes), so we simulate the driver-level
     // P2002 the index raises and assert the handler maps it to 409, not 500.
     it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {

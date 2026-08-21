@@ -24,6 +24,15 @@
 - `$stores` → `src/lib/stores/`
 - `$api` → `src/lib/api/`
 
+## Testing & Test Database Isolation
+
+- The `apps/api` integration suite runs against the separate database `clokr_test` — never the dev database `clokr`.
+- Provision it with `pnpm --filter @clokr/api run test:setup` (the `pretest`/`pretest:coverage`/`pretest:watch` hooks do this automatically).
+- Run the full suite with `pnpm --filter @clokr/api test`. For a single file: run `test:setup` first, then `pnpm --filter @clokr/api exec vitest run <path>` (`exec vitest run` skips `pretest`; `pnpm test -- <file>` does not work).
+- A startup guard aborts the run before any test executes if the target isn't the marked test database, naming the actual host/port/database found — fix the target, never work around the guard.
+- `?schema=` is a Prisma-only connection-string parameter that the `pg` driver silently ignores — it must never reappear in `TEST_DATABASE_URL`.
+- Full details, provisioning rationale, and the clean-slate procedure: `docs/testing.md`.
+
 ## Language
 
 - UI labels and user-facing text: **German**
@@ -373,7 +382,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Section separators: `// ── Section Name ──────────────────` used throughout route files and app.ts to visually separate logical blocks
 - JSDoc-style comments for utility functions that have non-obvious behavior — see `apps/api/src/utils/timezone.ts`
 - German domain context comments where business rules apply: `// Einladung nur erstellen wenn kein Passwort gesetzt`
-- TODO comments for known future work: `// TODO: separate test DB for CI`
+- TODO comments for known future work: `// TODO(owner-gate): construct once the Phorest web-calendar URL format is pinned.`
 - Used sparingly — mainly on exported utility functions and plugin interfaces
 - Declare module augmentation blocks use JSDoc for plugin-decorated properties:
 

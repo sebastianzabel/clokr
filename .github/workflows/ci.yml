@@ -87,7 +87,7 @@ jobs:
         # `migrate diff --from-migrations` replays the migrations into a shadow
         # database, so it needs the postgres service above (Prisma 7 reads the
         # shadow URL from prisma.config.ts — there is NO CLI flag; it is env-gated
-        # via SHADOW_DATABASE_URL so it never affects the app/test schema).
+        # via SHADOW_DATABASE_URL so it never affects the app or test databases).
         # Exit code: 0 = no drift, 2 = drift (fail).
         env:
           SHADOW_DATABASE_URL: postgresql://clokr:password@localhost:5432/prisma_migrate_shadow

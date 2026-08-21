@@ -241,7 +241,7 @@ ${empNo};08.06.2026;08:00;12:00;0`;
     // A DB-level duplicate (partial-unique index, WHERE deletedAt IS NULL) raises
     // P2002 during the per-row create. The import loop must report that row as an
     // error with the German 409-equivalent message and keep going — never abort.
-    // The partial index cannot exist in the `db push` test schema, so we simulate
+    // The partial index cannot exist in the `db push` test database, so we simulate
     // the driver-level P2002 on the first row's create.
     it("DATA-V1814-04: a P2002 on a row → per-row error, loop continues", async () => {
       const empNo = data.employee.employeeNumber;

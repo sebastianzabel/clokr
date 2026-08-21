@@ -1,8 +1,10 @@
 /**
  * Test setup: creates a fresh Fastify app instance for integration tests.
  *
- * Uses the same database as dev (TODO: separate test DB for CI).
- * Each test suite should clean up its own data.
+ * Connects to the separate `clokr_test` database, provisioned by
+ * `pnpm --filter @clokr/api run test:setup` (see docs/testing.md) — never the dev
+ * database. Suites still share that one database within a run, so each test suite must
+ * clean up its own data.
  */
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
