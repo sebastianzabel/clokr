@@ -116,6 +116,10 @@
   let openMonthMinutes: number | null | undefined = $state(undefined);
   let hasClosedMonth = $state(false);
   let rosterIncomplete: boolean | undefined = $state(undefined);
+  // Phase 100 (OTC-03) — resolved negative-balance tolerance, same
+  // `undefined`-default convention as the Phase-97 fields above.
+  let maxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
+  let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
   let vacationBalance = $state<{
     total: number;
     used: number;
@@ -473,6 +477,11 @@
     openMonthMinutes?: number | null;
     hasClosedMonth?: boolean;
     rosterIncomplete?: boolean;
+    // Phase 100 (OTC-03/OTC-05) — resolved negative-balance tolerance, alongside
+    // the Phase-97 split fields above. Optional so an older cached response
+    // degrades to "unconfigured" (no Toleranz row, no warn hint).
+    maxNegativeBalanceMinutes?: number | null;
+    isNegativeLimitExceeded?: boolean;
   }
 
   async function loadOvertimeBalance() {
@@ -483,12 +492,16 @@
       openMonthMinutes = r.openMonthMinutes;
       hasClosedMonth = r.hasClosedMonth ?? false;
       rosterIncomplete = r.rosterIncomplete;
+      maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
+      isNegativeLimitExceeded = r.isNegativeLimitExceeded;
     } catch {
       overtimeBalance = null;
       confirmedMinutes = undefined;
       openMonthMinutes = undefined;
       hasClosedMonth = false;
       rosterIncomplete = undefined;
+      maxNegativeBalanceMinutes = undefined;
+      isNegativeLimitExceeded = undefined;
     }
   }
 
@@ -552,12 +565,16 @@
         openMonthMinutes = r.openMonthMinutes;
         hasClosedMonth = r.hasClosedMonth ?? false;
         rosterIncomplete = r.rosterIncomplete;
+        maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
+        isNegativeLimitExceeded = r.isNegativeLimitExceeded;
       } catch {
         overtimeBalance = null;
         confirmedMinutes = undefined;
         openMonthMinutes = undefined;
         hasClosedMonth = false;
         rosterIncomplete = undefined;
+        maxNegativeBalanceMinutes = undefined;
+        isNegativeLimitExceeded = undefined;
       }
     } else if (type === "VACATION") {
       try {
@@ -871,6 +888,13 @@
   let confirmedHours = $derived(
     confirmedMinutes !== undefined ? confirmedMinutes / 60 : (overtimeBalance ?? 0),
   );
+  // Phase 100 (OTC-03) — resolved negative-balance tolerance in hours, for the
+  // Toleranz row and the tolerance-aware affordability predicate below.
+  let toleranceHours = $derived((maxNegativeBalanceMinutes ?? 0) / 60);
+  // Phase 100 (OTC-05) — mirrors the server gate in leave.ts: available =
+  // confirmed + tolerance. A single shared predicate so the client and server
+  // can never disagree on the same inputs.
+  let wouldBeRejected = $derived(confirmedHours + toleranceHours - hoursNeeded < 0);
   let vacRemaining = $derived(
     vacationBalance
       ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used
@@ -1282,6 +1306,21 @@
                   <span class="balance-value">{fmtH(confirmedHours)}</span>
                 {/if}
               </div>
+              {#if toleranceHours > 0}
+                <div class="balance-row">
+                  <span class="balance-label">Toleranz</span>
+                  <span class="balance-value">+ {fmtH(toleranceHours)}</span>
+                </div>
+              {/if}
+              {#if isNegativeLimitExceeded === true}
+                <!-- Phase 100 (D-10) — warn tone, not the red hint below: this is
+                     a standing account-state signal, independent of any draft
+                     request. The red hint stays reserved for "this specific
+                     request would be rejected". -->
+                <p class="balance-hint-notice">
+                  ⚠ Guthaben übersteigt bereits die Toleranzgrenze ({fmtH(toleranceHours)})
+                </p>
+              {/if}
               {#if typeof openMonthMinutes === "number"}
                 <!-- Muted, non-arithmetic — the forecast is shown for context but
                      never enters the Verbleibend/warning arithmetic below, and is
@@ -1314,9 +1353,7 @@
                 <div class="balance-divider"></div>
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
-                  <span
-                    class="balance-value {confirmedHours - hoursNeeded < 0 ? 'balance-warn' : ''}"
-                  >
+                  <span class="balance-value {wouldBeRejected ? 'balance-warn' : ''}">
                     {#if hoursPreviewLoading}
                       <span class="text-muted">…</span>
                     {:else}
@@ -1324,8 +1361,12 @@
                     {/if}
                   </span>
                 </div>
-                {#if !hoursPreviewLoading && confirmedHours - hoursNeeded < 0}
-                  <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
+                {#if !hoursPreviewLoading && wouldBeRejected}
+                  <p class="balance-hint-warn">
+                    ⚠ Nicht genug Überstunden vorhanden{toleranceHours > 0
+                      ? " (auch mit Toleranz)"
+                      : ""}
+                  </p>
                 {/if}
               {/if}
             </div>
@@ -2294,6 +2335,15 @@
   .balance-hint-warn {
     font-size: 0.8125rem;
     color: var(--bad);
+    margin: 0.25rem 0 0;
+  }
+  /* Phase 100 (D-10) — warn tone: a standing account-state signal ("your
+     confirmed balance already exceeds the configured tolerance"), distinct
+     from the --bad hint above ("this specific request would be rejected").
+     Do not merge these two or retone one into the other. */
+  .balance-hint-notice {
+    font-size: 0.8125rem;
+    color: var(--warn);
     margin: 0.25rem 0 0;
   }
   /* Phase 97-06 (SALDO-DISP-04) — the "Laufender Monat (Prognose)" row: muted like
