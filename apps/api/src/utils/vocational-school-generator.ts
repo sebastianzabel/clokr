@@ -44,12 +44,29 @@ export interface RunOpts {
   weeksAhead?: number;
   now?: Date;
   dryRun?: boolean;
+  // Phase 103 — restrict the run to one employee's patterns. Undefined = tenant-wide
+  // (unchanged default behavior). Tenant scoping (`employee: { tenantId }`) is never
+  // replaced by this — both apply together (T-103-IDOR defense in depth).
+  employeeId?: string;
+  // Phase 103 — explicit window start. Default (undefined) preserves current behavior:
+  // `dateOnlyUtc(now)`. Passing this is what makes a run reach backward in time; it is
+  // NEVER derived from client input (see resolveRetroactiveWindow — T-103-WINDOW).
+  windowStart?: Date;
+  // Phase 103 — explicit window end. Default (undefined) preserves current behavior:
+  // windowStart plus the weeksAhead-derived forward span (see runOrPreview).
+  windowEnd?: Date;
 }
 
 export interface PreviewOpts {
   tenantId: string;
   weeksAhead?: number;
   now?: Date;
+  // Phase 103 — see RunOpts.employeeId. Same default (tenant-wide).
+  employeeId?: string;
+  // Phase 103 — see RunOpts.windowStart. Same default (dateOnlyUtc(now)).
+  windowStart?: Date;
+  // Phase 103 — see RunOpts.windowEnd. Same default (windowStart + weeksAhead weeks).
+  windowEnd?: Date;
 }
 
 // app.audit signature copy (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
@@ -126,8 +143,16 @@ async function runOrPreview(
   // until the daily cron caught up. 13 weeks covers a full quarter forward.
   const weeksAhead = opts.weeksAhead ?? 13;
 
-  const windowStart = dateOnlyUtc(now);
-  const windowEnd = addDaysUtc(windowStart, weeksAhead * 7);
+  // Phase 103 — explicit window support (103-BEFUND.md root cause). Default (no
+  // windowStart/windowEnd passed) is byte-identical to before: windowStart = today,
+  // windowEnd = today + weeksAhead weeks. Once an explicit windowStart is passed
+  // (retroactive runs), the window is NEVER re-derived from `now` — `now` keeps its
+  // separate meaning as the operation timestamp used below for the shift-cleanup
+  // dispatch and the orphan-sweep's `deletedAt: now`.
+  const windowStart = opts.windowStart ? dateOnlyUtc(opts.windowStart) : dateOnlyUtc(now);
+  const windowEnd = opts.windowEnd
+    ? dateOnlyUtc(opts.windowEnd)
+    : addDaysUtc(windowStart, weeksAhead * 7);
 
   const result: GeneratorResult = {
     created: 0,
@@ -141,6 +166,20 @@ async function runOrPreview(
     },
     details: opts.dryRun ? [] : undefined,
   };
+
+  // Phase 103 Task 1 (Test 8) — degenerate window guard. A window end before its
+  // start (e.g. a caller-computed windowEnd from a stale/inconsistent window) performs
+  // no queries and no writes, returning the zero-initialised result as-is.
+  //
+  // Phase 103 Task 1 — windowDayCount replaces the old forward-only weeks-ahead-based
+  // multiplier as the day-iteration bound in BOTH loops below (the create loop and
+  // the orphan-sweep's intendedSet builder). This is the second half of the original
+  // defect: binding the loops to that forward-only multiplier instead of the actual
+  // window silently capped every retroactive run at the forward distance, even after
+  // windowStart/windowEnd were set correctly above. With no explicit window this
+  // still evaluates to the identical day count as before (Test 1 backward-compat pin).
+  const windowDayCount = Math.round((windowEnd.getTime() - windowStart.getTime()) / 86_400_000);
+  if (windowDayCount < 0) return result;
 
   // Phase 67.2 Plan 04 — Track newly-created Absence dates per employee so we can
   // invoke the Shift-Auto-Cleanup hook ONCE per employee at the end of the run
@@ -156,6 +195,9 @@ async function runOrPreview(
       employee: { tenantId: opts.tenantId },
       validFrom: { lte: windowEnd },
       OR: [{ validUntil: null }, { validUntil: { gte: windowStart } }],
+      // Phase 103 — optional single-employee scoping. `employee: { tenantId }` above is
+      // NEVER replaced by this — both filters apply together (T-103-IDOR defense in depth).
+      ...(opts.employeeId ? { employeeId: opts.employeeId } : {}),
     },
     include: {
       employee: { select: { id: true, hireDate: true, exitDate: true } },
@@ -271,8 +313,11 @@ async function runOrPreview(
     const hasWeekday = weekdaySet.size > 0;
     const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
 
-    // Iterate every day in the rolling window.
-    for (let i = 0; i <= weeksAhead * 7; i++) {
+    // Iterate every day in the rolling window. Phase 103 — bound is windowDayCount
+    // (see the guard above), not the old forward-only weeks-ahead multiplier; this is
+    // what lets a retroactive run actually reach backward instead of silently capping
+    // at the forward distance.
+    for (let i = 0; i <= windowDayCount; i++) {
       const date = addDaysUtc(windowStart, i);
 
       // (a) Pre-hire / post-exit guards — keyed on employee lifecycle.
@@ -491,6 +536,11 @@ async function runOrPreview(
             date: toIsoDate(date),
             type: "VOCATIONAL_SCHOOL",
             patternId: pattern.id,
+            // Phase 103 — marks rows created by an explicit retroactive run, mirroring
+            // the triggerSource: "PATTERN" | "MANUAL" precedent in shift-cleanup.ts.
+            // Byte-identical to before when no explicit windowStart was passed
+            // (T-103-AUDIT / backward-compat).
+            ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
           },
         });
         // Add to existingSet so a second pattern hitting the same day won't double-create
@@ -550,7 +600,11 @@ async function runOrPreview(
       // orphaned in Ferien and continue to render in the Schichtplan.
       const patEffectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
       const patSkipHolidayCheck = pattern.respectSchoolHolidays === false;
-      for (let i = 0; i <= weeksAhead * 7; i++) {
+      // Phase 103 — same windowDayCount bound as the create loop above. Without this,
+      // the orphan-sweep's intendedSet would still only reason about the old
+      // forward-only weeks-ahead range, wrongly treating every retroactively created
+      // day as "orphaned" and immediately soft-deleting it again.
+      for (let i = 0; i <= windowDayCount; i++) {
         const date = addDaysUtc(windowStart, i);
         // Respect the pattern's own validity window — outside it, the pattern
         // has no claim on this date and the existing-Absence is not its child.
@@ -688,6 +742,48 @@ export async function dispatchShiftCleanupForCreatedAbsences(
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Phase 103 — Resolve the server-derived retroactive window for one employee.
+ *
+ * THIS IS THE ONLY PLACE THE RETROACTIVE WINDOW IS DERIVED. It reads exclusively
+ * persisted server state (EmployeeVocationalSchoolPattern.validFrom) — no request
+ * field feeds it (threat T-103-WINDOW). Route handlers MUST call this rather than
+ * accept a client-supplied windowStart/windowEnd, or D-03's "validFrom is never
+ * silently shifted" guarantee would be a client-side promise only.
+ *
+ * windowEnd is always "today" (dateOnlyUtc(now)). windowStart is the earliest
+ * dateOnlyUtc(validFrom) across the employee's currently-active patterns that is
+ * strictly before windowEnd. Returns null when no active pattern has a past
+ * validFrom — i.e. there is nothing retroactive to do for this employee right now.
+ */
+export async function resolveRetroactiveWindow(
+  prisma: PrismaClient,
+  opts: { tenantId: string; employeeId: string; now?: Date },
+): Promise<{ windowStart: Date; windowEnd: Date } | null> {
+  const now = opts.now ?? new Date();
+  const windowEnd = dateOnlyUtc(now);
+
+  const patterns = await prisma.employeeVocationalSchoolPattern.findMany({
+    where: {
+      employeeId: opts.employeeId,
+      isActive: true,
+      employee: { tenantId: opts.tenantId },
+    },
+    select: { validFrom: true },
+  });
+
+  let windowStart: Date | null = null;
+  for (const p of patterns) {
+    const vf = dateOnlyUtc(p.validFrom);
+    if (vf < windowEnd && (windowStart === null || vf < windowStart)) {
+      windowStart = vf;
+    }
+  }
+
+  if (windowStart === null) return null;
+  return { windowStart, windowEnd };
+}
 
 export async function runVocationalSchoolGeneration(
   prisma: PrismaClient,
