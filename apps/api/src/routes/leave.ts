@@ -2485,7 +2485,11 @@ async function getScheduledHours(
     const shifts = await prisma.shift.findMany({
       where: { employeeId, date: { gte: start, lte: end }, deletedAt: null },
       select: { startTime: true, endTime: true },
-      orderBy: { date: "asc" }, // D-07: "first rostered shift" must be deterministic
+      // D-07 / WR-02 (code review): "first rostered shift" must be deterministic. `date` alone
+      // is NOT sufficient — Shift has no unique constraint on (employeeId, date), so same-day
+      // split shifts (e.g. a morning + evening shift) tie under `date` ordering, and
+      // Postgres/Prisma give no guarantee on row order among ties. `startTime` breaks that tie.
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
     });
 
     const employeeBreakShape = {

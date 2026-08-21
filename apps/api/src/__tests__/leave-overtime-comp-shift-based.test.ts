@@ -70,6 +70,10 @@ const MONDAY_2 = nextNonHolidayMonday(42); // shift created THEN soft-deleted ->
 const MONDAY_3 = nextNonHolidayMonday(70); // no shift at all -> 0h (D-08)
 const RANGE_4_MON = nextNonHolidayMonday(98); // two shifts Mon+Tue -> 13.50h (D-05); halfDay -> 3.00h (D-07)
 const RANGE_4_TUE = addDaysIso(RANGE_4_MON, 1);
+// WR-02 (code review, 2026-08-21): SAME-DAY split shift, inserted LATE-time-first /
+// EARLY-time-second — the reverse of `startTime asc` order — so a correct pick can only come
+// from the ORDER BY tie-break, never from insertion/physical row order.
+const SPLIT_SHIFT_DAY = nextNonHolidayMonday(126);
 
 const GENEROUS_CONFIRMED_MINUTES = 6000; // 100:00 -- comfortably covers every accepted case below
 // Deliberately generous legacy value (mirrors the sibling tolerance suite's STALE_BALANCE_HOURS):
@@ -93,7 +97,7 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
 
     // Self-verifying invariant: the four anchors must be strictly increasing, or a downstream
     // range collision would silently corrupt the D-05/D-06/D-08 assertions below.
-    const anchors = [MONDAY_1, MONDAY_2, MONDAY_3, RANGE_4_MON];
+    const anchors = [MONDAY_1, MONDAY_2, MONDAY_3, RANGE_4_MON, SPLIT_SHIFT_DAY];
     for (let i = 1; i < anchors.length; i++) {
       if (anchors[i] <= anchors[i - 1]) {
         throw new Error(`fixture anchors not strictly increasing: ${anchors.join(", ")}`);
@@ -210,6 +214,29 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
         date: new Date(RANGE_4_TUE + "T00:00:00Z"),
         startTime: "06:00",
         endTime: "14:00",
+      },
+    });
+
+    // SPLIT_SHIFT_DAY (WR-02): two shifts on the SAME calendar day, inserted with the LATE-time
+    // shift FIRST and the EARLY-time shift SECOND — deliberately the reverse of `startTime asc` —
+    // so the "first rostered shift" test below can only pass if the query's ORDER BY (not
+    // insertion order) determines the pick. LATE: 14:00-21:00 = 420min brutto, >6h -> 30min break
+    // -> 390min (6.50h) netto. EARLY: 06:00-10:00 = 240min brutto, <=6h -> no break -> 240min
+    // (4.00h) netto. The two netto values are deliberately far apart so a wrong pick is unmissable.
+    await prisma.shift.create({
+      data: {
+        employeeId: shiftEmp.id,
+        date: new Date(SPLIT_SHIFT_DAY + "T00:00:00Z"),
+        startTime: "14:00",
+        endTime: "21:00",
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        employeeId: shiftEmp.id,
+        date: new Date(SPLIT_SHIFT_DAY + "T00:00:00Z"),
+        startTime: "06:00",
+        endTime: "10:00",
       },
     });
 
@@ -359,6 +386,19 @@ describe("POST /leave/requests + GET /leave/hours-preview — SHIFT_BASED getSch
   it("D-07: halfDay over the same 2-day range costs half the FIRST rostered shift's netto — 3.00h, not half of 13.50h", async () => {
     const preview = await hoursPreview(shiftEmpToken, RANGE_4_MON, RANGE_4_TUE, true);
     expect(JSON.parse(preview.body).hours).toBe(3);
+  });
+
+  it("WR-02: same-day split shift picks the EARLY-time shift deterministically (2.00h), never the LATE-time one (3.25h), regardless of insertion order", async () => {
+    // Both shifts share the same `date`; only `startTime asc` (the WR-02 fix) can break the tie.
+    // The LATE shift (14:00-21:00, 6.50h netto) was inserted BEFORE the EARLY shift
+    // (06:00-10:00, 4.00h netto) in beforeAll — a query relying on insertion/physical order would
+    // be expected to surface the LATE shift first, giving the WRONG halfDay result (3.25h).
+    const preview = await hoursPreview(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
+    expect(preview.statusCode).toBe(200);
+    expect(JSON.parse(preview.body).hours).toBe(2);
+
+    const res = await postOvertimeComp(shiftEmpToken, SPLIT_SHIFT_DAY, SPLIT_SHIFT_DAY, true);
+    expect(res.statusCode).toBe(201);
   });
 
   it("FIXED_SCHEDULE employee with an identical shift row present is unaffected — the per-day Soll (8h) still applies, the shift is ignored", async () => {
