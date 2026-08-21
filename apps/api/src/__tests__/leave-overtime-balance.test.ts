@@ -267,5 +267,41 @@ describe("GET /api/v1/leave/overtime-balance (Phase 97-06)", () => {
         vi.restoreAllMocks();
       }
     });
+
+    it("IN-01 (code review): isNegativeLimitExceeded is false — never a stale tautology — on the DEEPEST fail-safe branch, when the confirmed-carry-over fallback ALSO fails", async () => {
+      await setTolerance(600); // +10:00 tolerance — configuredMinutes is non-null here. The OLD
+      // expression (`configuredMinutes != null && 0 < -configuredMinutes`) and the fixed explicit
+      // `false` evaluate identically in every case (the old one was provably always false, per
+      // Zod's `.min(0)` on configuredMinutes) — this test pins the CORRECT value on the branch the
+      // old code never expressed the real intent for, it is not a behavior change.
+      //
+      // Reject EVERY saldoSnapshot.findFirst call (never "Once", unlike the test above) so BOTH
+      // computeOvertimeBalanceBreakdown's internal call AND the fallback's OWN getConfirmedCarryOver
+      // call fail — forcing the route past its outer catch (breakdown stays null) AND into the
+      // inner `catch (fallbackErr)` block (leave.ts, the deepest fail-safe branch).
+      vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValue(
+        new Error("simulated DB failure — both compute and fallback"),
+      );
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        // hasClosedMonth: false + confirmedMinutes: 0 confirm we actually reached the deepest
+        // branch (leave.ts's `catch (fallbackErr)`), not the shallower fail-safe return above it.
+        expect(body.confirmedMinutes).toBe(0);
+        expect(body.hasClosedMonth).toBe(false);
+        expect(body.maxNegativeBalanceMinutes).toBe(600);
+        expect(body.isNegativeLimitExceeded).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

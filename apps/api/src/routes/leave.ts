@@ -1897,7 +1897,14 @@ export async function leaveRoutes(app: FastifyInstance) {
           openMonthMinutes: null,
           hasClosedMonth: false,
           maxNegativeBalanceMinutes: configuredMinutes,
-          isNegativeLimitExceeded: configuredMinutes != null && 0 < -configuredMinutes,
+          // IN-01 (code review) — this was `configuredMinutes != null && 0 < -configuredMinutes`,
+          // which reads like a real comparison against the (unknown) balance but is tautologically
+          // false: configuredMinutes is Zod-bounded to >= 0 (employeeScheduleSchema / the
+          // /settings/security schema both enforce `.min(0)`), so `-configuredMinutes` is always
+          // <= 0. The balance is genuinely unknown in this deepest fail-safe branch (both the live
+          // compute AND the confirmed-carry-over fallback threw) — never claim the limit is
+          // exceeded against a value we don't have.
+          isNegativeLimitExceeded: false,
         };
       }
     },
