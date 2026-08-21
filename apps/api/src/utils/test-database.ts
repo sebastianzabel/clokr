@@ -10,6 +10,12 @@
  * Plain module: no side effects, no CLI behaviour. Every error message emitted anywhere in the
  * Phase 101 test-DB code path MUST go through `describeTarget` or `redactDatabaseUrl` below —
  * never print a raw connection string (it carries a password, even if only a local placeholder one).
+ *
+ * Lives under `src/utils/` (not `apps/api/scripts/`, where `ensure-test-database.ts` lives)
+ * because `apps/api/tsconfig.json` pins `rootDir` to `./src` — a file under `src` (the TI-01 proof
+ * test) cannot import a sibling outside that root (TS6059), while files under `scripts` are
+ * outside the tsc-compiled program entirely (tsconfig.json's `include` covers only `src`) and can
+ * freely import inward. This is the one canonical copy; nothing restates these constants.
  */
 
 /** The one and only name the integration suite is allowed to connect to. */

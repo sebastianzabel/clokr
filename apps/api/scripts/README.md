@@ -75,10 +75,16 @@ does contain them (`apps/api/Dockerfile` copies the whole `apps/api/` directory)
 
 `ensure-test-database.ts` is idempotent: it creates `clokr_test` only if `pg_database` doesn't
 already list it, and unconditionally re-stamps the `COMMENT ON DATABASE` marker
-(`apps/api/scripts/test-database.ts`'s `TEST_DATABASE_MARKER`) so a re-run repairs a missing
-comment. It never issues DROP / TRUNCATE / DELETE. `apps/api/scripts/test-database.ts` itself is a
-plain, side-effect-free module (constants + credential-safe target description) shared by every
-test-DB code path — it is not independently invoked and has no CLI behaviour.
+(`apps/api/src/utils/test-database.ts`'s `TEST_DATABASE_MARKER`) so a re-run repairs a missing
+comment. It never issues DROP / TRUNCATE / DELETE.
+
+The shared constants + credential-safe target description module (`TEST_DATABASE_NAME`,
+`TEST_DATABASE_MARKER`, `parseDatabaseUrl`, `databaseNameOf`, `describeTarget`,
+`redactDatabaseUrl`) lives at `apps/api/src/utils/test-database.ts` — under `src/`, not here —
+because `apps/api/tsconfig.json` pins `rootDir` to `./src`, so a `src/**` test file cannot import a
+`scripts/**` sibling (TS6059) while a `scripts/**` file can freely import inward (it is outside the
+tsc-compiled program; see `include: ["src/**/*"]`). It is a plain, side-effect-free module — not
+independently invoked and has no CLI behaviour.
 
 ## Invocation
 

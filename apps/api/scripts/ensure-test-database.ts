@@ -21,6 +21,13 @@
  * repairs a missing comment. It issues NO DROP / TRUNCATE / DELETE under any input, ever.
  *
  * See apps/api/scripts/README.md for the inventory entry (classified: test infrastructure).
+ *
+ * test-database.ts lives under `src/utils/`, not alongside this file, because `apps/api/tsconfig.json`
+ * pins `rootDir` to `./src` — a file under `src/` (e.g. the TI-01 proof test) cannot import a sibling
+ * outside that root (TS6059), while a `scripts/` file (never part of the tsc-compiled program — its
+ * `include` covers only `src`) can freely import inward either way. Keeping ONE canonical copy
+ * inside `src/` and importing it from both directions was the only option that avoids restating
+ * the constants.
  */
 import pg from "pg";
 import {
@@ -29,7 +36,7 @@ import {
   parseDatabaseUrl,
   databaseNameOf,
   describeTarget,
-} from "./test-database";
+} from "../src/utils/test-database";
 
 function refuse(reason: string, target: string): never {
   console.error(`ensure-test-database: REFUSED — ${reason}`);
@@ -106,7 +113,9 @@ async function main(): Promise<void> {
     await testClient.end();
   }
 
-  console.log(
+  // console.error, not console.log, per this repo's ESLint config (console.log warns) and the
+  // convention already used by sibling scripts (e.g. audit-saldo-chain-integrity.ts) for CLI output.
+  console.error(
     `ensure-test-database: ${target} — ${created ? "created" : "already present"} (marker stamped).`,
   );
   process.exit(0);
