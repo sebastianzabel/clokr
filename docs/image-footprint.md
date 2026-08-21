@@ -355,3 +355,134 @@ assertion gate in `apps/api/Dockerfile` that fails the build if it goes missing 
 symlink during Task 1, confirming the gate genuinely discriminates broken from healthy.
 
 <!-- API_AFTER_SECTION -->
+
+---
+
+## IMG-04 — Per-CVE `.trivyignore` Disposition (Plan 04, Task 1)
+
+Scanned images: `clokr-web:102-after` and `clokr-api:102-after` — the exact tags Plan 01/03
+smoke-tested and content-identity-verified (`102-03-SUMMARY.md`: `RootFS.Layers` byte-identical to
+the booted `clokr-api:latest`/`clokr-web:latest` compose containers). Trivy 0.74.0, vulnerability
+DB version 2, updated 2026-08-21T13:05:54Z (same DB generation used for the before/after size
+scans above).
+
+### Method (read before the table)
+
+1. **Ungated scan, CRITICAL+HIGH only** (the CI gate's own severity filter, no ignorefile):
+   `trivy image --severity CRITICAL,HIGH --scanners vuln --format json -q <image>`. Result for
+   BOTH images: **0 findings** — every `.trivyignore` CVE id, and everything else, is silent at
+   this severity.
+2. Because (1) alone cannot distinguish "genuinely fixed" from "Trivy's DB has a coverage gap for
+   this exact package/version," a second **ungated, all-severity scan** was run (no
+   `--severity` flag at all): `trivy image --scanners vuln --format json -q <image>`. Every one of
+   the 13 CVE ids currently in `.trivyignore` was grepped against both JSON outputs — **zero hits,
+   at any severity, on either image, for all 13 ids** (command and per-id result table below).
+3. Trivy-silence alone is still not proof of absence (T-102-23's own point). For every id, the
+   package's **physical presence and installed version** was independently established with
+   `find`/`grep` inside a running container from each image, and cross-checked against the
+   **authoritative fixed-version threshold** for that exact CVE id, queried directly from GitHub's
+   own reviewed Security Advisory database (`api.github.com/advisories`) — not re-derived from the
+   `.trivyignore` comment text itself, to avoid circular reasoning. `github_reviewed_at` was
+   checked for every id to screen out unreviewed/candidate-stage advisories before trusting a
+   fix-version claim (this caught one real case — see `CVE-2026-55697` below).
+4. **A verdict class the plan's RETIRE/KEEP taxonomy does not name directly, but the evidence
+   forced:** for six ids (`CVE-2026-33671`, `-35039`, `-35042`, `-48815`, `-59873`, `-59874`) the
+   _package name_ is still physically present in one or both images (npm always bundles some
+   `tar`/`sigstore`/`tinyglobby`; `fast-jwt` is a genuine, load-bearing runtime dependency of
+   `@fastify/jwt`) but the _specific vulnerable version range_ is not — the installed version
+   already exceeds the CVE's own documented fix threshold. This is recorded as **RETIRE
+   (version-patched)** to keep it honestly distinct from the plan's literal "package absent from
+   both images" RETIRE criterion: the table below shows the exact installed version next to the
+   exact fix threshold and its source, in place of a `find`-absence proof, for every such row.
+   Root cause, confirmed by the before-ledger's own prior observation and now verified concretely:
+   `npm install -g npm@latest` (both Dockerfiles, unrelated to this phase) resolves to a newer npm
+   release over time, which bundles newer transitive copies of `tar`/`sigstore`/`tinyglobby`
+   (→ `picomatch`) than existed when these `.trivyignore` entries were written; `fast-jwt`'s fix
+   was independently already pulled in by the existing root `pnpm.overrides: "fast-jwt": ">=6.2.4"`
+   pin. Neither mechanism is caused by this phase's pruning.
+
+### Full-severity Trivy silence, all 13 ids (both images)
+
+```bash
+trivy image --scanners vuln --format json -q clokr-web:102-after > web-after-allsev.json
+trivy image --scanners vuln --format json -q clokr-api:102-after > api-after-allsev.json
+for cve in CVE-2025-69262 CVE-2025-69263 CVE-2026-13149 CVE-2026-14257 CVE-2026-33671 \
+           CVE-2026-35039 CVE-2026-35042 CVE-2026-48815 CVE-2026-55697 CVE-2026-59873 \
+           CVE-2026-59874 CVE-2026-69152 CVE-2026-69192; do
+  echo "$cve web=$(grep -c "$cve" web-after-allsev.json) api=$(grep -c "$cve" api-after-allsev.json)"
+done
+```
+
+Result: **every id, 0 hits, both images, at every severity** — not just at the CRITICAL,HIGH gate
+threshold. (Both images' own genuine, non-`.trivyignore` findings at MEDIUM/LOW are listed in the
+before/after tables above — `undici`, `ip-address` at different CVE ids, `tar` at a different GHSA
+id, `hono`/`@hono/node-server`/`valibot`/`fast-xml-parser`/`esbuild` on the API image — proving
+both scans genuinely executed and are not silently broken.)
+
+### Disposition table — all 13 `.trivyignore` CVE ids
+
+| CVE              | Package                                                             | Web (`clokr-web:102-after`)                                                                                                                                                                                         | API (`clokr-api:102-after`)                                                                                                                                                                                                                                                                                                                                                                                                                   | Fix threshold (source, reviewed)                                                                                                                                                                                  | Verdict                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `CVE-2025-69262` | pnpm                                                                | **Absent.** `command -v pnpm` → not found; no `/root/.cache/node/corepack/v1/pnpm/` dir.                                                                                                                            | **Present.** `/usr/local/bin/pnpm` → `10.34.5`.                                                                                                                                                                                                                                                                                                                                                                                               | `>= 10.27.0` — GHSA-2phv-j68v-wwqx, high, `github_reviewed_at` set, single clean range. Installed 10.34.5 exceeds it.                                                                                             | **KEEP, JUSTIFICATION CORRECTED**                                                                                       |
+| `CVE-2025-69263` | pnpm                                                                | Absent (same as above).                                                                                                                                                                                             | Present, 10.34.5.                                                                                                                                                                                                                                                                                                                                                                                                                             | `>= 10.26.0` — GHSA-7vhp-vf5g-r2fw, high, reviewed. Installed 10.34.5 exceeds it.                                                                                                                                 | **KEEP, JUSTIFICATION CORRECTED**                                                                                       |
+| `CVE-2026-55697` | pnpm                                                                | Absent.                                                                                                                                                                                                             | Present, 10.34.5.                                                                                                                                                                                                                                                                                                                                                                                                                             | Disputed — see note below.                                                                                                                                                                                        | **KEEP, JUSTIFICATION CORRECTED** (D-05: not retired)                                                                   |
+| `CVE-2026-33671` | picomatch (via tinyglobby, npm's own bundle + API's corepack cache) | npm bundle: `tinyglobby@0.2.17` → bundled `picomatch@4.0.5` at `/usr/local/lib/node_modules/npm/node_modules/tinyglobby/node_modules/picomatch/package.json`.                                                       | Same npm-bundle path, `4.0.5`; **also** corepack cache `/root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/picomatch/package.json` → `4.0.5`.                                                                                                                                                                                                                                                                                       | `>= 4.0.4` — GHSA-c2c7-rcm5-vvqj, high, reviewed. `4.0.5` exceeds it everywhere it appears.                                                                                                                       | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-35039` | fast-jwt                                                            | Absent — web has no `fast-jwt` anywhere (`find` — no hits).                                                                                                                                                         | `/app/node_modules/.pnpm/fast-jwt@6.2.4/node_modules/fast-jwt/package.json` → `6.2.4`, pinned by root `pnpm.overrides: "fast-jwt": ">=6.2.4"`.                                                                                                                                                                                                                                                                                                | `>= 6.1.0` — GHSA-rp9m-7r4c-75qg, **critical**, reviewed. `6.2.4` exceeds it.                                                                                                                                     | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-35042` | fast-jwt                                                            | Absent (same).                                                                                                                                                                                                      | `6.2.4` (same).                                                                                                                                                                                                                                                                                                                                                                                                                               | `>= 6.2.0` — GHSA-hm7r-c7qw-ghp6, high, reviewed. `6.2.4` exceeds it.                                                                                                                                             | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-59873` | tar                                                                 | npm bundle `/usr/local/lib/node_modules/npm/node_modules/tar/package.json` → `7.5.19`.                                                                                                                              | Same npm-bundle path, `7.5.19`; **also** corepack cache `/root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/tar/package.json` → `7.5.19`.                                                                                                                                                                                                                                                                                           | `>= 7.5.19` — GHSA-23hp-3jrh-7fpw, **critical**, reviewed. `7.5.19` meets it exactly, both locations, both images.                                                                                                | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-59874` | tar                                                                 | `7.5.19` (same path).                                                                                                                                                                                               | `7.5.19` (both locations).                                                                                                                                                                                                                                                                                                                                                                                                                    | `>= 7.5.18` — GHSA-8x88-c5mf-7j5w, high, reviewed. Exceeds it.                                                                                                                                                    | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-48815` | sigstore                                                            | npm bundle `/usr/local/lib/node_modules/npm/node_modules/sigstore/package.json` → `5.0.0`. No corepack-cache copy of `sigstore` exists on either image (it is an npm-audit/provenance tool, not a pnpm dependency). | Same npm-bundle path, `5.0.0`.                                                                                                                                                                                                                                                                                                                                                                                                                | `>= 4.1.1` — GHSA-52v5-jr5w-gjxr, high, reviewed. `5.0.0` exceeds it.                                                                                                                                             | **RETIRE (version-patched)**                                                                                            |
+| `CVE-2026-14257` | brace-expansion                                                     | npm bundle `5.0.7` — fixed.                                                                                                                                                                                         | npm bundle `5.0.7` — fixed; **but** corepack cache `/root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/brace-expansion/package.json` → `2.1.2`.                                                                                                                                                                                                                                                                                     | `>= 5.0.7` — GHSA-mh99-v99m-4gvg, high, reviewed. GHSA's `extracted_events` give a single global range (`0 → 5.0.7`), no per-major-line backport data — `2.1.2` falls inside the vulnerable range on this record. | **KEEP, JUSTIFICATION CORRECTED** — API corepack-cache copy still exposed                                               |
+| `CVE-2026-13149` | brace-expansion                                                     | npm bundle `5.0.7` — fixed.                                                                                                                                                                                         | npm bundle fixed; corepack cache `2.1.2` — same single-global-range reasoning as above, vulnerable.                                                                                                                                                                                                                                                                                                                                           | `>= 5.0.6` — GHSA-3jxr-9vmj-r5cp, high, reviewed.                                                                                                                                                                 | **KEEP, JUSTIFICATION CORRECTED**                                                                                       |
+| `CVE-2026-69152` | brace-expansion (bypasses the -14257 mitigation)                    | npm bundle `5.0.7` — **still vulnerable**, threshold is higher than the other two.                                                                                                                                  | npm bundle `5.0.7` vulnerable; corepack cache `2.1.2` vulnerable (per-major-line data for this specific CVE gives a 2.x-line fix at `2.1.4`; `2.1.2 < 2.1.4`).                                                                                                                                                                                                                                                                                | `>= 5.0.9` (top line) / `>= 2.1.4` (2.x line) — GHSA-rgw5-rvv9-x895, high, reviewed, multi-range record. Neither threshold is met anywhere.                                                                       | **KEEP, JUSTIFICATION CORRECTED** — genuinely still exploitable in the npm bundle on both images                        |
+| `CVE-2026-69192` | ip-address                                                          | npm bundle `/usr/local/lib/node_modules/npm/node_modules/ip-address/package.json` → `10.2.0` — vulnerable.                                                                                                          | Same npm-bundle path `10.2.0` vulnerable; **also** corepack cache `10.2.0` vulnerable. Workspace app tree (`/app/node_modules`) has **no `ip-address` copy at all** post-prune — `find /app -path "*ip-address*/package.json"` returns nothing (the old `.trivyignore` claim "our app tree resolves ip-address@10.4.0" is now stale — the `--prod` prune dropped the devDependency chain, e.g. `socks-proxy-agent`, that used to pull it in). | `>= 10.3.1` — GHSA-mwp4-54f8-5fhr, high, reviewed. `10.2.0` does not meet it anywhere.                                                                                                                            | **KEEP, JUSTIFICATION CORRECTED** — stale "app tree" claim removed; genuinely still vulnerable in both bundle locations |
+
+`git diff .trivyignore` after this task: empty (evidence-only, per the task's own instruction).
+
+### `CVE-2026-55697` — the disputed "10.x backport" (why it stays KEEP despite matching evidence for the other two pnpm CVEs)
+
+GitHub's own advisory record (`GHSA-gj8w-mvpf-x27x`, fetched directly via
+`api.github.com/advisories/GHSA-gj8w-mvpf-x27x`) lists `vulnerable_version_range: "< 10.34.2"` /
+`first_patched_version: "10.34.2"` for the `npm:pnpm` package on the 10.x line — which, taken at
+face value, contradicts this entry's own text ("NO backport to the 10.x line") and would put our
+installed `10.34.5` past the fix. This was investigated further rather than accepted, because
+three things about the record itself are atypical for a normal reviewed GHSA advisory:
+
+- The `description` field is templated internal tooling output ("Maintainer Action Plan",
+  `Advisory: CAND-PNPM-097`), not prose — `CAND-` is a candidate/staging identifier, and the text
+  explicitly says the next action is to _"review the shared patch branch..., **set the final
+  affected version range**, merge and release the fix, then publish or close the advisory"_ — i.e.
+  the version range this record reports may not be the final, released one.
+- The "shared patch PR" it cites lives in a separate, non-canonical repository
+  (`pnpm/pnpm-ghsa-j2hc-m6cf-6jm8`), not `pnpm/pnpm` itself.
+- pnpm's own GitHub release notes for `v10.34.2` (`api.github.com/repos/pnpm/pnpm/releases/tags/v10.34.2`,
+  fetched and searched for `configDependenc|pacquet|install engine|GHSA-gj8w`) contain **zero**
+  mention of this fix — the only security fix documented in that release is a different,
+  unrelated advisory (`GHSA-3qhv-2rgh-x77r`, `.npmrc` environment-variable expansion).
+
+Given the advisory's own text says the affected-version range is not yet finalized, and the
+claimed fix release doesn't corroborate it in its own public changelog, the "10.x backport exists"
+claim is **not** treated as established fact. `withdrawn_at` is `null` (not retracted) and
+`github_reviewed_at` is populated (`2026-06-26`), so this is not simply thrown out either — it is
+recorded as **disputed/unconfirmed** and the entry is kept on its existing, independently-solid
+runtime-exploitability grounds (below), not on a version-fix claim.
+
+**The runtime clauses the plan requires re-checking, verified against the pruned API image:**
+
+- Does the runtime still never run `pnpm install`? — The only `pnpm install` in the entire
+  Dockerfile is `apps/api/Dockerfile:16`, inside the `deps` **build** stage (`RUN pnpm install
+--frozen-lockfile`), which does not exist in the final runtime image. `docker-entrypoint.sh` —
+  the actual runtime-stage code — contains **zero** `pnpm` invocations of any kind (`grep -n pnpm
+apps/api/docker-entrypoint.sh` matches only a comment, "pnpm@10 hoists to root").
+- Is `pnpm tsx` still the only pnpm invocation? — Confirmed: the sole pnpm invocation anywhere in
+  the chart templates is `cronjob-anonymizer.yaml:51`, `command: ["pnpm", "tsx",
+"scripts/anonymize-dump.ts"]`.
+- Is the pnpm major line still unchanged? — Yes, `10.34.5` (`packageManager: "pnpm@10.34.5"` in
+  root `package.json`), untouched by this phase, per D-05.
+
+**This changes nothing about D-05's outcome** (entry stays, pnpm major line untouched) but the
+justification text is rewritten below to state the disputed-advisory finding honestly instead of
+asserting "NO backport" as settled fact — an unqualified "no backport exists" claim would itself
+now be the kind of stale, unverified assertion this phase exists to correct. Flagged as a fast,
+concrete follow-up in `deferred-items.md`: confirm directly (changelog diff or reproduction)
+whether pnpm 10.34.2+ actually contains this fix, independent of this phase.
