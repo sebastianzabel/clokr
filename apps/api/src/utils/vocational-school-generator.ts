@@ -39,6 +39,10 @@ export interface GeneratorResult {
     // no details[] entry; kept as its own counter (not folded into `locked`, which is
     // create-side) so both sides of the operation stay separately debuggable.
     removalLocked: number;
+    // Phase 103 Task 2 — D-05/D-07: a non-deleted TimeEntry already exists for
+    // (employeeId, date). Skipped by default; overridable per-date via
+    // RunOpts.overrideDates (D-06).
+    timeEntryConflict: number;
   };
   details?: Array<{
     employeeId: string;
@@ -64,6 +68,11 @@ export interface RunOpts {
   // Phase 103 — explicit window end. Default (undefined) preserves current behavior:
   // windowStart plus the weeksAhead-derived forward span (see runOrPreview).
   windowEnd?: Date;
+  // Phase 103 Task 2 — D-06: dates (YYYY-MM-DD) where a TimeEntry conflict is
+  // deliberately overridden ("übernehmen"). Has no effect on any other skip reason —
+  // it can never force a write into a closed month, outside the window, or on a date
+  // no active pattern claims (T-103-OVERRIDE).
+  overrideDates?: string[];
 }
 
 export interface PreviewOpts {
@@ -76,6 +85,10 @@ export interface PreviewOpts {
   windowStart?: Date;
   // Phase 103 — see RunOpts.windowEnd. Same default (windowStart + weeksAhead weeks).
   windowEnd?: Date;
+  // Phase 103 Task 2 — see RunOpts.overrideDates. A dry run computed WITH an override
+  // list reports what apply would do with that same list (D-01 parity) — the wizard
+  // never needs a second preview round trip after the user toggles an override.
+  overrideDates?: string[];
 }
 
 // app.audit signature copy (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
@@ -174,6 +187,7 @@ async function runOrPreview(
       postExit: 0,
       outOfWindow: 0,
       removalLocked: 0,
+      timeEntryConflict: 0,
     },
     details: opts.dryRun ? [] : undefined,
   };
@@ -253,6 +267,38 @@ async function runOrPreview(
   const lockedSet = new Set<string>(
     lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
   );
+
+  // 3.5. Phase 103 Task 2 (D-05/D-06/D-07) — Bulk-fetch non-deleted TimeEntry rows in
+  //      the window. A day already carrying recorded working time is reported as a
+  //      conflict and skipped by default (D-07); `overrideDates` bypasses ONLY this
+  //      check (D-06). `deletedAt: null` is mandatory (CLAUDE.md soft-delete rule).
+  //      Deliberately NOT filtered on `isInvalid`: an isInvalid row still occupies the
+  //      day's only slot (TimeEntry's unique constraint is per employeeId+date among
+  //      non-deleted rows) and still represents someone's claim of presence that day —
+  //      missing clock-out, pending Nachtrag, or leave-cancellation-pending. Treating
+  //      it as a non-conflict would risk stacking a §15 credit on top of recorded
+  //      minutes silently; the conservative (conflict) reading is also the reversible
+  //      one — a wrongly-flagged conflict is one click away from being overridden.
+  //      Skipped entirely when the window is forward-only (no explicit windowStart):
+  //      a TimeEntry for a future date does not occur, so the cron/on-demand/preview
+  //      paths take no extra query and stay behaviourally + performance-identical.
+  const conflictSet = new Set<string>();
+  if (opts.windowStart !== undefined) {
+    const conflictingEntries = await prisma.timeEntry.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        deletedAt: null,
+        date: { gte: windowStart, lte: windowEnd },
+      },
+      select: { employeeId: true, date: true },
+    });
+    for (const e of conflictingEntries) {
+      conflictSet.add(`${e.employeeId}::${toIsoDate(e.date)}`);
+    }
+  }
+  // Phase 103 Task 2 — dates where a TimeEntry conflict is deliberately overridden
+  // (D-06). Built once, outside the loops.
+  const overrideSet = new Set<string>(opts.overrideDates ?? []);
 
   // 4. Phase 67.2 — Bulk-fetch SchoolHolidayPeriods for every federal state we will
   //    consult (tenant.federalState + every distinct Pattern.federalStateOverride).
@@ -450,6 +496,28 @@ async function runOrPreview(
             date: toIsoDate(date),
             action: "skipped",
             reason: "locked",
+          });
+        }
+        continue;
+      }
+
+      // Phase 103 Task 2 (D-05/D-06/D-07) — TimeEntry conflict. Order is load-bearing
+      // (T-103-OVERRIDE, pinned by dedicated tests): this branch sits AFTER `existing`
+      // and `locked` above, so `overrideDates` can only ever bypass THIS check — a
+      // locked month or a day outside any pattern's claim still creates nothing
+      // regardless of being listed in `overrideDates`. Read-only in both directions:
+      // the recorded working time is the thing being protected (D-07), never
+      // reconciled — this code path must never mutate, invalidate, or soft-delete a
+      // TimeEntry.
+      const dateIso = toIsoDate(date);
+      if (conflictSet.has(existKey) && !overrideSet.has(dateIso)) {
+        result.skipped.timeEntryConflict++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: employee.id,
+            date: dateIso,
+            action: "skipped",
+            reason: "timeEntryConflict",
           });
         }
         continue;

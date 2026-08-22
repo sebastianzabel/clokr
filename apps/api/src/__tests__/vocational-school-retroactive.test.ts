@@ -459,6 +459,7 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
       postExit: 0,
       outOfWindow: 0,
       removalLocked: 0,
+      timeEntryConflict: 0,
     });
 
     const after = await app.prisma.absence.count({ where: { employeeId: data.employee.id } });
@@ -674,6 +675,281 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     });
     expect(preview.removed).toBe(0);
     expect(preview.skipped.removalLocked).toBe(0);
+  });
+
+  // ── Task 2 — TimeEntry conflict detection + overrideDates (D-05/D-06/D-07) ─
+  // Branch order under test throughout this section: existing → locked →
+  // timeEntryConflict → create (T-103-OVERRIDE). `overrideDates` bypasses ONLY the
+  // timeEntryConflict check.
+
+  /** Create a non-deleted WORK TimeEntry for `date` that will conflict with a BS day. */
+  async function createConflictingTimeEntry(
+    date: Date,
+    opts: { isInvalid?: boolean; deletedAt?: Date } = {},
+  ) {
+    return app.prisma.timeEntry.create({
+      data: {
+        employeeId: data.employee.id,
+        date,
+        startTime: new Date(date.getTime() + 8 * 3_600_000),
+        endTime: new Date(date.getTime() + 16 * 3_600_000),
+        breakMinutes: 0,
+        source: "MANUAL",
+        type: "WORK",
+        isInvalid: opts.isInvalid ?? false,
+        deletedAt: opts.deletedAt ?? null,
+      },
+    });
+  }
+
+  /** A single-day pattern: claims exactly `date` (validFrom === validUntil === date). */
+  async function createSingleDayPattern(date: Date) {
+    return app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: mondayBasedDow(date),
+        daysOfWeek: [mondayBasedDow(date)],
+        blockWeeks: [],
+        validFrom: date,
+        validUntil: date,
+        isActive: true,
+      },
+    });
+  }
+
+  it("Test 19 — D-05: a TimeEntry conflict is reported as skipped and produces no Absence, in both preview and apply", async () => {
+    const anchor = daysAgoUtc(15);
+    const windowStart = daysAgoUtc(20);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    await createConflictingTimeEntry(anchor);
+
+    const preview = await previewVocationalSchoolGeneration(app.prisma, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(preview.created).toBe(0);
+    expect(preview.skipped.timeEntryConflict).toBe(1);
+    // Note: the pattern's weekday recurs weekly across the window (validFrom ===
+    // validUntil only bounds which occurrence is CLAIMED, not which are ITERATED —
+    // the other same-weekday dates in-window surface as `outOfWindow` skips), so
+    // filter for the specific conflict entry rather than asserting the whole array.
+    const conflictEntries = (preview.details ?? []).filter((e) => e.reason === "timeEntryConflict");
+    expect(conflictEntries).toEqual([
+      {
+        employeeId: data.employee.id,
+        date: toIso(anchor),
+        action: "skipped",
+        reason: "timeEntryConflict",
+      },
+    ]);
+
+    const apply = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(apply.created).toBe(0);
+    expect(apply.skipped.timeEntryConflict).toBe(1);
+
+    const absence = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: anchor },
+    });
+    expect(absence).toBeNull();
+  });
+
+  it("Test 20 — D-07 default: apply with no overrideDates creates nothing for the conflict day and leaves the TimeEntry completely unmodified", async () => {
+    const anchor = daysAgoUtc(12);
+    const windowStart = daysAgoUtc(16);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    const entry = await createConflictingTimeEntry(anchor);
+
+    await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+
+    const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after).toEqual(entry);
+  });
+
+  it("Test 21 — D-06 override: overrideDates creates the BS day despite the conflict; the TimeEntry stays unmodified; timeEntryConflict is 0 for that date", async () => {
+    const anchor = daysAgoUtc(11);
+    const windowStart = daysAgoUtc(16);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    const entry = await createConflictingTimeEntry(anchor);
+
+    const apply = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+      overrideDates: [toIso(anchor)],
+    });
+    expect(apply.created).toBe(1);
+    expect(apply.skipped.timeEntryConflict).toBe(0);
+
+    const absence = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: anchor },
+    });
+    expect(absence).not.toBeNull();
+    expect(absence!.type).toBe("VOCATIONAL_SCHOOL");
+
+    const after = await app.prisma.timeEntry.findUniqueOrThrow({ where: { id: entry.id } });
+    expect(after).toEqual(entry);
+  });
+
+  it("Test 22 — an isInvalid TimeEntry is treated as a conflict exactly like a valid one", async () => {
+    const anchor = daysAgoUtc(9);
+    const windowStart = daysAgoUtc(14);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    await createConflictingTimeEntry(anchor, { isInvalid: true });
+
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(result.skipped.timeEntryConflict).toBe(1);
+    expect(result.created).toBe(0);
+  });
+
+  it("Test 23 — a soft-deleted TimeEntry is NOT a conflict — the day is created normally", async () => {
+    const anchor = daysAgoUtc(8);
+    const windowStart = daysAgoUtc(13);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    await createConflictingTimeEntry(anchor, { deletedAt: new Date() });
+
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(result.skipped.timeEntryConflict).toBe(0);
+    expect(result.created).toBe(1);
+  });
+
+  it("Test 24 — T-103-OVERRIDE: a locked-month date listed in overrideDates is still skipped as locked and creates nothing", async () => {
+    const anchor = daysAgoUtc(45);
+    const windowStart = daysAgoUtc(50);
+    const today = todayUtc();
+
+    await createSingleDayPattern(anchor);
+    await createConflictingTimeEntry(anchor);
+
+    const lockMonthStart = monthStartUtc(anchor);
+    const lockMonthEnd = monthEndUtc(anchor);
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: data.employee.id,
+        periodType: "MONTHLY",
+        periodStart: lockMonthStart,
+        periodEnd: lockMonthEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+      overrideDates: [toIso(anchor)],
+    });
+    expect(result.skipped.locked).toBe(1);
+    expect(result.skipped.timeEntryConflict).toBe(0); // locked wins first — never reached
+    expect(result.created).toBe(0);
+
+    const absence = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: anchor },
+    });
+    expect(absence).toBeNull();
+  });
+
+  it("Test 25 — T-103-OVERRIDE: overrideDates for a date outside the window or unclaimed by any pattern creates nothing", async () => {
+    const today = todayUtc();
+    const windowStart = daysAgoUtc(5);
+    const outsideWindowDate = daysAgoUtc(7); // strictly before windowStart
+    const unclaimedDate = daysAgoUtc(3); // inside the window, but no pattern targets it
+
+    // At least one active pattern is required for the sweep to run at all. Its target
+    // weekday is offset +3 from today's own weekday, which is guaranteed to differ
+    // from BOTH outsideWindowDate's weekday (offset 0, same as today) AND
+    // unclaimedDate's weekday (offset -3 ≡ +4 mod 7) — so this filler pattern never
+    // itself creates anything inside this window.
+    const fillerDow = (mondayBasedDow(today) + 3) % 7;
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: fillerDow,
+        daysOfWeek: [fillerDow],
+        blockWeeks: [],
+        validFrom: today,
+        isActive: true,
+      },
+    });
+
+    const result = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+      overrideDates: [toIso(outsideWindowDate), toIso(unclaimedDate)],
+    });
+    expect(result.created).toBe(0);
+
+    const absences = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL" },
+    });
+    expect(absences).toHaveLength(0);
+  });
+
+  it("Test 26 — D-01 parity: preview and apply report the same skipped.timeEntryConflict for the same state and the same overrideDates", async () => {
+    const conflictDate = daysAgoUtc(6);
+    const overriddenDate = daysAgoUtc(5);
+    const windowStart = daysAgoUtc(10);
+    const today = todayUtc();
+
+    for (const d of [conflictDate, overriddenDate]) {
+      await createSingleDayPattern(d);
+      await createConflictingTimeEntry(d);
+    }
+
+    const opts = {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+      overrideDates: [toIso(overriddenDate)],
+    };
+
+    const preview = await previewVocationalSchoolGeneration(app.prisma, opts);
+    const apply = await runVocationalSchoolGeneration(app.prisma, app.audit, opts);
+
+    expect(preview.skipped.timeEntryConflict).toBe(1);
+    expect(apply.skipped.timeEntryConflict).toBe(1);
+    expect(preview.created).toBe(apply.created);
+    expect(apply.created).toBe(1); // only the overridden date gets created
   });
 
   // ── resolveRetroactiveWindow — direct coverage ──────────────────────────────

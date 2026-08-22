@@ -94,6 +94,7 @@ function emptyRetroactiveResult(): GeneratorResult & {
       postExit: 0,
       outOfWindow: 0,
       removalLocked: 0,
+      timeEntryConflict: 0,
     },
     details: [],
     windowStart: null,
