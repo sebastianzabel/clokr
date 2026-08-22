@@ -715,6 +715,98 @@ describe("Berufsschule (Phase 62)", () => {
     expect(body.skipped.locked).toBe(0);
   });
 
+  // ── Phase 103 Task 1 — D-04 removal side (forward-only cron/on-demand path) ─
+  // The orphan-sweep's locked-month skip was previously a silent `continue` with no
+  // counter. This regression-guards the fix on the SAME forward-only path BERSCH-09
+  // above already exercises (not the retroactive window) — dedicated retroactive
+  // coverage lives in vocational-school-retroactive.test.ts.
+
+  it("D-04 (forward path) — an orphaned PATTERN Absence inside a locked month is skipped as removalLocked and stays non-deleted; the same pattern-change orphan outside a locked month IS soft-deleted", async () => {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const nextMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1));
+    while (nextMonth.getUTCDay() !== 2) {
+      // 2=Tuesday in JS-native
+      nextMonth.setUTCDate(nextMonth.getUTCDate() + 1);
+    }
+    const targetTuesday = nextMonth;
+    const lockMonthStart = monthStartUtc(targetTuesday);
+    const lockMonthEnd = monthEndUtc(targetTuesday);
+
+    const pattern = await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1, // Tuesday
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: new Date("2020-01-01"),
+        isActive: true,
+      },
+    });
+
+    const { runVocationalSchoolGeneration } = await import("../utils/vocational-school-generator");
+    const firstRun = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 8,
+    });
+    expect(firstRun.created).toBeGreaterThan(0);
+
+    // Capture the Tuesday rows this run created BEFORE switching the pattern, so the
+    // later assertions target exactly these (pre-existing) rows — not the brand new
+    // Wednesday rows the second run below will legitimately create.
+    const originalTuesdayRows = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL", source: "PATTERN" },
+      select: { id: true, startDate: true },
+    });
+
+    // Lock the month AFTER the Absences already exist in it (mirrors the real
+    // sequence: days were generated optimistically, the month later closed).
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: data.employee.id,
+        periodType: "MONTHLY",
+        periodStart: lockMonthStart,
+        periodEnd: lockMonthEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    // Orphan every previously-generated Tuesday by switching the pattern to
+    // Wednesdays — no active pattern claims Tuesday anymore.
+    await app.prisma.employeeVocationalSchoolPattern.update({
+      where: { id: pattern.id },
+      data: { dayOfWeek: 2, daysOfWeek: [2] },
+    });
+
+    const secondRun = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      weeksAhead: 8,
+    });
+    expect(secondRun.skipped.removalLocked).toBeGreaterThan(0);
+    expect(secondRun.removed).toBeGreaterThan(0);
+
+    // Re-fetch exactly the ORIGINAL Tuesday rows (by id) — never the new Wednesday
+    // rows the second run also created, which are legitimately non-deleted.
+    const afterRows = await app.prisma.absence.findMany({
+      where: { id: { in: originalTuesdayRows.map((a) => a.id) } },
+      select: { id: true, startDate: true, deletedAt: true },
+    });
+    const inLockedMonth = afterRows.filter(
+      (a) => a.startDate >= lockMonthStart && a.startDate <= lockMonthEnd,
+    );
+    const outsideLockedMonth = afterRows.filter(
+      (a) => !(a.startDate >= lockMonthStart && a.startDate <= lockMonthEnd),
+    );
+    expect(inLockedMonth.length).toBeGreaterThan(0);
+    expect(inLockedMonth.every((a) => a.deletedAt === null)).toBe(true);
+    expect(outsideLockedMonth.length).toBeGreaterThan(0);
+    expect(outsideLockedMonth.every((a) => a.deletedAt !== null)).toBe(true);
+  });
+
   // ── Phase 67.2 (Plan 03): School-Holiday skip + federalStateOverride + opt-out ──
   //
   // Skip-priority order verified in code: schoolHoliday MUST run BEFORE existingSet

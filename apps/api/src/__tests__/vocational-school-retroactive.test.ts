@@ -450,6 +450,7 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     });
 
     expect(result.created).toBe(0);
+    expect(result.removed).toBe(0);
     expect(result.skipped).toEqual({
       schoolHoliday: 0,
       existing: 0,
@@ -457,10 +458,222 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
       preHire: 0,
       postExit: 0,
       outOfWindow: 0,
+      removalLocked: 0,
     });
 
     const after = await app.prisma.absence.count({ where: { employeeId: data.employee.id } });
     expect(after).toBe(before);
+  });
+
+  // ── Task 1 — orphan-sweep removal reporting (D-02/D-04) ────────────────────
+  // A preview must be a true dry run of BOTH directions of the diff, not just the
+  // create side, and a locked-month removal skip must be counted/reported instead of
+  // silently dropped.
+
+  /** Map JS-native getUTCDay onto the schema's Mo-based convention (0=Mo..6=So). */
+  function mondayBasedDow(d: Date): number {
+    const native = d.getUTCDay();
+    return native === 0 ? 6 : native - 1;
+  }
+
+  it("Test 16 — D-02/D-04 removal split: preview reports removed + removalLocked without writing; apply soft-deletes the open-month orphan, leaves the locked-month orphan untouched", async () => {
+    const anchorLocked = daysAgoUtc(40); // will be locked below
+    const anchorOpen = daysAgoUtc(10); // stays open
+    const windowStart = daysAgoUtc(45);
+    const today = todayUtc();
+
+    // Two tightly-scoped patterns, each producing exactly ONE Absence at its own
+    // anchor date (validFrom === validUntil === anchor, daysOfWeek derived from the
+    // anchor's own weekday so no weekday-rounding is needed).
+    const patternLocked = await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: mondayBasedDow(anchorLocked),
+        daysOfWeek: [mondayBasedDow(anchorLocked)],
+        blockWeeks: [],
+        validFrom: anchorLocked,
+        validUntil: anchorLocked,
+        isActive: true,
+      },
+    });
+    const patternOpen = await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: mondayBasedDow(anchorOpen),
+        daysOfWeek: [mondayBasedDow(anchorOpen)],
+        blockWeeks: [],
+        validFrom: anchorOpen,
+        validUntil: anchorOpen,
+        isActive: true,
+      },
+    });
+
+    const firstRun = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(firstRun.created).toBe(2);
+
+    // Lock the month containing anchorLocked — AFTER the row already exists in it,
+    // mirroring the real sequence (generated optimistically, month closes later).
+    const lockMonthStart = monthStartUtc(anchorLocked);
+    const lockMonthEnd = monthEndUtc(anchorLocked);
+    await app.prisma.saldoSnapshot.create({
+      data: {
+        employeeId: data.employee.id,
+        periodType: "MONTHLY",
+        periodStart: lockMonthStart,
+        periodEnd: lockMonthEnd,
+        workedMinutes: 0,
+        expectedMinutes: 0,
+        balanceMinutes: 0,
+        carryOver: 0,
+        closedAt: new Date(),
+      },
+    });
+
+    // Orphan BOTH rows by flipping each pattern's weekday away from its own anchor's
+    // weekday — validFrom/validUntil stay untouched so the pattern remains inside the
+    // top-level query window (moving it out of the window entirely would drop
+    // patterns.length to 0 and short-circuit the whole function before the orphan
+    // sweep ever runs). With validFrom === validUntil === anchor, this is the only
+    // date either pattern could ever have claimed — flipping the weekday means it no
+    // longer claims it, without claiming any other date either.
+    await app.prisma.employeeVocationalSchoolPattern.update({
+      where: { id: patternLocked.id },
+      data: {
+        dayOfWeek: (mondayBasedDow(anchorLocked) + 1) % 7,
+        daysOfWeek: [(mondayBasedDow(anchorLocked) + 1) % 7],
+      },
+    });
+    await app.prisma.employeeVocationalSchoolPattern.update({
+      where: { id: patternOpen.id },
+      data: {
+        dayOfWeek: (mondayBasedDow(anchorOpen) + 1) % 7,
+        daysOfWeek: [(mondayBasedDow(anchorOpen) + 1) % 7],
+      },
+    });
+
+    // Preview: reports the split, writes nothing.
+    const preview = await previewVocationalSchoolGeneration(app.prisma, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(preview.removed).toBe(1);
+    expect(preview.skipped.removalLocked).toBe(1);
+    const removedDetails = (preview.details ?? []).filter((e) => e.action === "removed");
+    expect(removedDetails.map((e) => e.date)).toEqual([toIso(anchorOpen)]);
+    const lockedSkipDetails = (preview.details ?? []).filter(
+      (e) => e.action === "skipped" && e.reason === "removalLocked",
+    );
+    expect(lockedSkipDetails.map((e) => e.date)).toEqual([toIso(anchorLocked)]);
+
+    const afterPreview = await app.prisma.absence.findMany({
+      where: { employeeId: data.employee.id, type: "VOCATIONAL_SCHOOL" },
+      select: { deletedAt: true },
+    });
+    expect(afterPreview.every((a) => a.deletedAt === null)).toBe(true);
+
+    // Apply: identical split (D-01 parity), this time a real write.
+    const apply = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(apply.removed).toBe(preview.removed);
+    expect(apply.skipped.removalLocked).toBe(preview.skipped.removalLocked);
+
+    const lockedRow = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: anchorLocked },
+    });
+    expect(lockedRow).not.toBeNull();
+    expect(lockedRow!.deletedAt).toBeNull(); // no write into a closed month, ever
+
+    const openRow = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: anchorOpen },
+    });
+    expect(openRow).not.toBeNull();
+    expect(openRow!.deletedAt).not.toBeNull(); // soft-deleted — row still EXISTS (no hard delete)
+  });
+
+  it("Test 17 — MANUAL BS absences are never treated as orphans: not counted in removed, never soft-deleted, in either mode", async () => {
+    const manualAnchor = daysAgoUtc(20);
+    const windowStart = daysAgoUtc(25);
+    const today = todayUtc();
+
+    await app.prisma.absence.create({
+      data: {
+        employeeId: data.employee.id,
+        type: "VOCATIONAL_SCHOOL",
+        source: "MANUAL",
+        startDate: manualAnchor,
+        endDate: manualAnchor,
+        days: 1.0,
+        createdBy: "test",
+      },
+    });
+
+    // At least one active pattern is required for the orphan sweep to run at all
+    // (patterns.length === 0 short-circuits the whole function) — give it a window
+    // that never touches manualAnchor.
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: mondayBasedDow(today),
+        daysOfWeek: [mondayBasedDow(today)],
+        blockWeeks: [],
+        validFrom: today,
+        isActive: true,
+      },
+    });
+
+    const preview = await previewVocationalSchoolGeneration(app.prisma, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(preview.removed).toBe(0);
+    expect((preview.details ?? []).some((e) => e.date === toIso(manualAnchor))).toBe(false);
+
+    const apply = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+      windowStart,
+      windowEnd: today,
+    });
+    expect(apply.removed).toBe(0);
+
+    const manualRow = await app.prisma.absence.findFirst({
+      where: { employeeId: data.employee.id, startDate: manualAnchor },
+    });
+    expect(manualRow).not.toBeNull();
+    expect(manualRow!.deletedAt).toBeNull();
+  });
+
+  it("Test 18 — backward compat: a forward-only preview (no explicit window) reports removed: 0 for a pattern set with no orphans", async () => {
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: daysAgoUtc(365 * 5),
+        isActive: true,
+      },
+    });
+
+    const preview = await previewVocationalSchoolGeneration(app.prisma, {
+      tenantId: data.tenant.id,
+      employeeId: data.employee.id,
+    });
+    expect(preview.removed).toBe(0);
+    expect(preview.skipped.removalLocked).toBe(0);
   });
 
   // ── resolveRetroactiveWindow — direct coverage ──────────────────────────────

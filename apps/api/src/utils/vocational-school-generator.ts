@@ -23,6 +23,10 @@ import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
 
 export interface GeneratorResult {
   created: number;
+  // Phase 103 Task 1 — orphan-sweep removals. Computed in BOTH modes now (mirrors
+  // `created`): a preview is a true dry run of both directions of the diff, not just
+  // the create side.
+  removed: number;
   skipped: {
     schoolHoliday: number; // Phase 67.2: date falls in SchoolHolidayPeriod for resolved BL
     existing: number; // BERSCH-08: an Absence already exists for (employeeId, date)
@@ -30,11 +34,16 @@ export interface GeneratorResult {
     preHire: number;
     postExit: number;
     outOfWindow: number; // beyond pattern.validFrom/validUntil
+    // Phase 103 Task 1 — orphan-sweep skip because the row's month is closed
+    // (SaldoSnapshot present). Was previously a silent `continue` with no counter and
+    // no details[] entry; kept as its own counter (not folded into `locked`, which is
+    // create-side) so both sides of the operation stay separately debuggable.
+    removalLocked: number;
   };
   details?: Array<{
     employeeId: string;
     date: string;
-    action: "created" | "skipped";
+    action: "created" | "removed" | "skipped";
     reason?: string;
   }>;
 }
@@ -156,6 +165,7 @@ async function runOrPreview(
 
   const result: GeneratorResult = {
     created: 0,
+    removed: 0,
     skipped: {
       schoolHoliday: 0,
       existing: 0,
@@ -163,6 +173,7 @@ async function runOrPreview(
       preHire: 0,
       postExit: 0,
       outOfWindow: 0,
+      removalLocked: 0,
     },
     details: opts.dryRun ? [] : undefined,
   };
@@ -582,7 +593,13 @@ async function runOrPreview(
   // active pattern's daysOfWeek / blockWeeks intent and soft-deletes them.
   // Source=MANUAL rows are NEVER touched (user-curated, audit-proof). Locked
   // months are skipped (Revisionssicherheit / Phase 47.2 immutability).
-  if (!opts.dryRun) {
+  //
+  // Phase 103 Task 1 — this whole block now runs UNCONDITIONALLY (mirrors the
+  // create-loop's own dryRun shape above: compute unconditionally, gate only the
+  // terminal write). A preview is a true dry run of BOTH directions of the diff now,
+  // not just the create side — this is what makes D-02's "2 Tage entfallen, 1 Tag
+  // kommt hinzu" computable from a single preview response.
+  {
     const intendedSet = new Set<string>();
     for (const pattern of patterns) {
       const weekdaySet = new Set<number>(pattern.daysOfWeek);
@@ -649,9 +666,36 @@ async function runOrPreview(
     for (const a of orphanCandidates) {
       const key = `${a.employeeId}::${toIsoDate(a.startDate)}`;
       if (intendedSet.has(key)) continue;
-      // Skip locked-month rows (audit-proof).
+      // Skip locked-month rows (audit-proof). Phase 103 Task 1 — this branch was
+      // previously a bare `continue` with no counter and no details[] entry, which
+      // is what made D-04's "Juli ist abgeschlossen — 2 Tage bleiben unverändert"
+      // uncomputable. Kept as its own counter (removalLocked), not folded into the
+      // create-side `locked` counter — the wizard sums them client-side.
       const lockKey = `${a.employeeId}::${toIsoDate(monthStartUtc(a.startDate))}`;
-      if (lockedSet.has(lockKey)) continue;
+      if (lockedSet.has(lockKey)) {
+        result.skipped.removalLocked++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: a.employeeId,
+            date: toIsoDate(a.startDate),
+            action: "skipped",
+            reason: "removalLocked",
+          });
+        }
+        continue;
+      }
+
+      // Phase 103 Task 1 — mirrors the create-loop's own dryRun branch: report and
+      // stop, no write, in preview mode.
+      if (opts.dryRun) {
+        result.removed++;
+        result.details!.push({
+          employeeId: a.employeeId,
+          date: toIsoDate(a.startDate),
+          action: "removed",
+        });
+        continue;
+      }
 
       await prisma.absence.update({
         where: { id: a.id },
@@ -672,9 +716,14 @@ async function runOrPreview(
           origin: "SYSTEM",
           deletedAt: now.toISOString(),
           reason: "orphaned_after_pattern_change",
+          // Phase 103 — marks removals performed by an explicit retroactive run,
+          // mirroring the create-loop's own triggerSource marker above. Byte-identical
+          // to before when no explicit windowStart was passed (backward-compat).
+          ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
         },
         request: undefined,
       });
+      result.removed++;
     }
   }
 
@@ -793,6 +842,14 @@ export async function runVocationalSchoolGeneration(
   return runOrPreview(prisma, audit, { ...opts, dryRun: opts.dryRun ?? false });
 }
 
+/**
+ * Phase 103 Task 1 — a full dry run of BOTH directions of the diff: `created` /
+ * `details[].action === "created"` for what would be newly created, AND
+ * `removed` / `details[].action === "removed"` for orphaned PATTERN Absences that
+ * would be soft-deleted. Locked-month skips are reported on both sides
+ * (`skipped.locked` for the create side, `skipped.removalLocked` for the removal
+ * side). Nothing is ever written or audited in this mode.
+ */
 export async function previewVocationalSchoolGeneration(
   prisma: PrismaClient,
   opts: PreviewOpts,

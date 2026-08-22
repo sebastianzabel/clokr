@@ -85,6 +85,7 @@ function emptyRetroactiveResult(): GeneratorResult & {
 } {
   return {
     created: 0,
+    removed: 0,
     skipped: {
       schoolHoliday: 0,
       existing: 0,
@@ -92,6 +93,7 @@ function emptyRetroactiveResult(): GeneratorResult & {
       preHire: 0,
       postExit: 0,
       outOfWindow: 0,
+      removalLocked: 0,
     },
     details: [],
     windowStart: null,
