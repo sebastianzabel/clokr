@@ -1262,4 +1262,124 @@ describe("Berufsschule — rückwirkende Musteränderungen (Phase 103, Tracer)",
     });
     expect(applyRes.statusCode).toBe(400);
   });
+
+  // ── Task 3 — overrideDates on the apply endpoint + full-diff preview ───────
+
+  it("Test 27 — overrideDates: null in the body is accepted (200) and behaves as no overrides", async () => {
+    const past = daysAgoUtc(6 * 7);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 3,
+        daysOfWeek: [3],
+        blockWeeks: [],
+        validFrom: past,
+        isActive: true,
+      },
+    });
+
+    const res = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id, overrideDates: null },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.created).toBeGreaterThan(0);
+  });
+
+  it("Test 28 — overrideDates with a malformed date string is rejected 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: data.employee.id, overrideDates: ["not-a-date"] },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it("Test 29 — an override posted through the endpoint produces the same outcome as calling the generator directly with the same list", async () => {
+    const past = daysAgoUtc(6 * 7);
+    const { employee: employeeDirect } = await createExtraEmployee(app, data.tenant.id);
+    const { employee: employeeHttp } = await createExtraEmployee(app, data.tenant.id);
+
+    for (const emp of [employeeDirect, employeeHttp]) {
+      await app.prisma.employeeVocationalSchoolPattern.create({
+        data: {
+          employeeId: emp.id,
+          dayOfWeek: mondayBasedDow(past),
+          daysOfWeek: [mondayBasedDow(past)],
+          blockWeeks: [],
+          validFrom: past,
+          isActive: true,
+        },
+      });
+      await app.prisma.timeEntry.create({
+        data: {
+          employeeId: emp.id,
+          date: past,
+          startTime: new Date(past.getTime() + 8 * 3_600_000),
+          endTime: new Date(past.getTime() + 16 * 3_600_000),
+          breakMinutes: 0,
+          source: "MANUAL",
+          type: "WORK",
+        },
+      });
+    }
+
+    const direct = await runVocationalSchoolGeneration(app.prisma, app.audit, {
+      tenantId: data.tenant.id,
+      employeeId: employeeDirect.id,
+      windowStart: past,
+      windowEnd: todayUtc(),
+      overrideDates: [toIso(past)],
+    });
+
+    const httpRes = await app.inject({
+      method: "POST",
+      url: `${BASE}/retroactive-apply`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { employeeId: employeeHttp.id, overrideDates: [toIso(past)] },
+    });
+    expect(httpRes.statusCode).toBe(200);
+    const httpBody = JSON.parse(httpRes.body);
+
+    expect(httpBody.created).toBe(direct.created);
+    expect(httpBody.skipped.timeEntryConflict).toBe(direct.skipped.timeEntryConflict);
+
+    const directAbsence = await app.prisma.absence.findFirst({
+      where: { employeeId: employeeDirect.id, startDate: past },
+    });
+    const httpAbsence = await app.prisma.absence.findFirst({
+      where: { employeeId: employeeHttp.id, startDate: past },
+    });
+    expect(directAbsence).not.toBeNull();
+    expect(httpAbsence).not.toBeNull();
+  });
+
+  it("Test 30 — the preview response body carries removed, skipped.removalLocked and skipped.timeEntryConflict keys", async () => {
+    const past = daysAgoUtc(4 * 7);
+    await app.prisma.employeeVocationalSchoolPattern.create({
+      data: {
+        employeeId: data.employee.id,
+        dayOfWeek: 1,
+        daysOfWeek: [1],
+        blockWeeks: [],
+        validFrom: past,
+        isActive: true,
+      },
+    });
+
+    const res = await app.inject({
+      method: "GET",
+      url: `${BASE}/retroactive-preview?employeeId=${data.employee.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body).toHaveProperty("removed");
+    expect(body.skipped).toHaveProperty("removalLocked");
+    expect(body.skipped).toHaveProperty("timeEntryConflict");
+  });
 });

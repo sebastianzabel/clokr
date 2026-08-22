@@ -66,8 +66,22 @@ const deleteParamsSchema = z.object({
 const retroactivePreviewQuerySchema = z.object({
   employeeId: z.string().uuid("employeeId muss eine UUID sein"),
 });
+// Phase 103 Task 3 (D-06) — overrideDates is the ONLY client-supplied input to the
+// write path (threat T-103-WINDOW: no window field here, ever). `.optional().nullable()`
+// and not bare `.optional()` is a hard project rule: this app's UIs send
+// `field: x ? x : null`, and a bare `.optional()` rejects an explicit `null` with a
+// generic "Validierungsfehler" (a defect class this project has already shipped once —
+// v1.9.11 hotfix). The preview schema intentionally does NOT get this field — a dry run
+// answers "what happens by default" (D-07's default is skip), and the wizard recomputes
+// the consequences of an override client-side from the conflict list without a second
+// preview round trip.
 const retroactiveApplySchema = z.object({
   employeeId: z.string().uuid("employeeId muss eine UUID sein"),
+  overrideDates: z
+    .array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Datum muss im Format YYYY-MM-DD sein"))
+    .max(500, "overrideDates darf höchstens 500 Einträge enthalten")
+    .optional()
+    .nullable(),
 });
 
 // First-of-month UTC midnight — matches SaldoSnapshot.periodStart semantics.
@@ -536,6 +550,7 @@ export async function vocationalSchoolRoutes(app: FastifyInstance) {
         employeeId: employee.id,
         windowStart: window.windowStart,
         windowEnd: window.windowEnd,
+        overrideDates: body.overrideDates ?? undefined,
       });
 
       return reply.code(200).send({
