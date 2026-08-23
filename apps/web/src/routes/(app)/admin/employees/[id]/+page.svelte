@@ -9,10 +9,9 @@
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
-  import Modal from "$components/ui/Modal.svelte";
+  import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
   import {
     shouldOfferRetroactiveRun,
-    formatIsoDateDe,
     type RetroactivePreview,
   } from "$lib/components/vocational-school/retroactive";
   import {
@@ -237,14 +236,11 @@
   // Monotonically-increasing counter for synthetic keys on unsaved rows
   let bsNewKeyCounter = $state(0);
 
-  // Phase 103 — retroactive confirm dialog (Tracer slice, deliberately single-step).
-  // Plan 04 replaces the dialog body with the 3-step wizard and reuses these same
-  // state names + testids.
+  // Phase 103 plan 04 — retroactive wizard state. RetroactiveBSWizard.svelte owns
+  // pending/result/error internally; the page only tracks what preview to show and
+  // whether the wizard is open.
   let retroPreview = $state<RetroactivePreview | null>(null);
   let retroOpen = $state(false);
-  let retroPending = $state(false);
-  let retroResult = $state<RetroactivePreview | null>(null);
-  let retroError = $state("");
 
   const employeeId = $derived($page.params.id);
 
@@ -1196,15 +1192,13 @@
           );
           retroPreview = preview;
           if (shouldOfferRetroactiveRun(preview)) {
-            retroResult = null;
-            retroError = "";
             retroOpen = true;
           }
         } catch (e: unknown) {
           // A failing preview call must NEVER surface as a save failure.
-          retroError =
+          const message =
             e instanceof Error ? e.message : "Rückwirkende Prüfung konnte nicht geladen werden.";
-          toasts.error(retroError, 4000);
+          toasts.error(message, 4000);
         }
       }
     } catch (e: unknown) {
@@ -1217,30 +1211,27 @@
     }
   }
 
-  // Phase 103 — confirm handler for the retroactive dialog. Copies ConfirmDialog's
-  // pending guard verbatim (T-103-REPLAY double-submit mitigation).
-  async function handleRetroConfirm() {
-    if (retroPending || !employee) return;
-    retroPending = true;
-    try {
-      const result = await api.post<RetroactivePreview>("/vocational-school/retroactive-apply", {
-        employeeId: employee.id,
-      });
-      // REAL response, never a synthesised success message — a late-breaking month
-      // close between preview and confirm must be visible here.
-      retroResult = result;
-    } catch (e: unknown) {
-      retroError =
-        e instanceof Error ? e.message : "Rückwirkende Anpassung konnte nicht angewendet werden.";
-      toasts.error(retroError, 4000);
-    } finally {
-      retroPending = false;
-    }
+  // Phase 103 plan 04 — onConfirm callback passed to RetroactiveBSWizard. The wizard
+  // owns the pending guard (T-103-REPLAY) and its own error display; this function
+  // only does the POST and either returns the REAL server result (D-01 — never a
+  // synthesised success message) or rethrows for the wizard to show inline.
+  async function handleRetroConfirm(overrideDates: string[]): Promise<RetroactivePreview> {
+    if (!employee) throw new Error("Kein Mitarbeiter geladen.");
+    return api.post<RetroactivePreview>("/vocational-school/retroactive-apply", {
+      employeeId: employee.id,
+      overrideDates,
+    });
   }
 
-  function handleRetroCancel() {
-    if (retroPending) return;
+  // Phase 103 plan 04 — fired by the wizard on every close path (Abbrechen, ESC,
+  // backdrop, the post-apply "Schließen"). The wizard itself guards against closing
+  // while a confirm is in flight, so no pending check is needed here. This page holds
+  // no BS-day/Absence list to refresh — only the pattern editor — so there is nothing
+  // else to re-fetch after a write (per plan 04 Task 3: skip the refresh rather than
+  // inventing one).
+  function handleRetroClose() {
     retroOpen = false;
+    retroPreview = null;
   }
 
   // ── Arbeitszeit state ──────────────────────────────────────────────────────
@@ -3110,49 +3101,17 @@
     />
   {/if}
 
-  <!-- Phase 103 — retroactive BS-pattern confirm dialog (Tracer slice, single-step) -->
-  <Modal bind:open={retroOpen} title="Berufsschultage rückwirkend anpassen">
-    <div data-testid="bs-retro-dialog">
-      {#if retroResult}
-        <p data-testid="bs-retro-result">
-          Fertig: {retroResult.created} angelegt, {retroResult.skipped.locked} unverändert.
-        </p>
-      {:else if retroPreview}
-        <p data-testid="bs-retro-summary">
-          Ab {formatIsoDateDe(retroPreview.windowStart ?? "")}: {retroPreview.created}
-          {retroPreview.created === 1 ? "Tag kommt hinzu" : "Tage kommen hinzu"}.
-        </p>
-        {#if retroPreview.skipped.locked > 0}
-          <p data-testid="bs-retro-locked-note">
-            {retroPreview.skipped.locked} Tage in abgeschlossenen Monaten bleiben unverändert.
-          </p>
-        {/if}
-      {/if}
-      {#if retroError}
-        <p class="callout error">{retroError}</p>
-      {/if}
-    </div>
-    {#snippet footer()}
-      <button
-        class="btn btn-ghost"
-        type="button"
-        data-testid="bs-retro-cancel"
-        onclick={handleRetroCancel}
-        disabled={retroPending}
-      >
-        Abbrechen
-      </button>
-      <button
-        class="btn btn-primary"
-        type="button"
-        data-testid="bs-retro-confirm"
-        onclick={handleRetroConfirm}
-        disabled={retroPending || !!retroResult}
-      >
-        {retroPending ? "Wird angewendet…" : "Jetzt anwenden"}
-      </button>
-    {/snippet}
-  </Modal>
+  <!-- Phase 103 plan 04 — 3-step retroactive BS-pattern wizard, replacing the plan-01
+       tracer's single-step confirm dialog. Mounted only once a preview is loaded, so
+       the wizard never renders against an empty/placeholder preview object. -->
+  {#if retroPreview}
+    <RetroactiveBSWizard
+      bind:open={retroOpen}
+      preview={retroPreview}
+      onConfirm={handleRetroConfirm}
+      onClose={handleRetroClose}
+    />
+  {/if}
 {/if}
 
 <style>
