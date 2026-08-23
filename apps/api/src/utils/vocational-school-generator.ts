@@ -18,6 +18,7 @@ import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
+import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -50,6 +51,13 @@ export interface GeneratorResult {
     action: "created" | "removed" | "skipped";
     reason?: string;
   }>;
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — dates where two or more active
+  // patterns both structurally claim the same day, within the run's window. Only
+  // populated for retroactive runs (opts.windowStart !== undefined); undefined for
+  // the forward cron / on-demand PATTERN save, which take no extra work and keep a
+  // byte-identical result shape. Reported, never auto-resolved — see the union-site
+  // comment below for why collapsing to a single winner would be wrong.
+  ambiguousDates?: string[];
 }
 
 export interface RunOpts {
@@ -224,12 +232,25 @@ async function runOrPreview(
       // NEVER replaced by this — both filters apply together (T-103-IDOR defense in depth).
       ...(opts.employeeId ? { employeeId: opts.employeeId } : {}),
     },
+    // Phase 103 Plan 05 — ordering only (no tie to break here: every row in this set
+    // participates in the additive union below, none is picked as a single winner).
+    // A stable order still matters so a double-claimed day's audit trail (details[])
+    // is reproducible across runs instead of depending on Postgres's incidental order.
+    orderBy: BS_PATTERN_ORDER_BY,
     include: {
       employee: { select: { id: true, hireDate: true, exitDate: true } },
     },
   });
 
   if (patterns.length === 0) return result;
+
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — surface overlapping active-pattern
+  // claims for a retroactive run. Only computed when an explicit windowStart was
+  // passed (retroactive runs); the forward cron and on-demand PATTERN save take no
+  // extra work and keep a byte-identical result shape.
+  if (opts.windowStart !== undefined) {
+    result.ambiguousDates = findAmbiguousClaimDates(patterns, windowStart, windowEnd);
+  }
 
   // Phase 67.2 — Load tenant federalState as default for school-holiday resolution
   // (overridable per-pattern via federalStateOverride).
@@ -346,6 +367,19 @@ async function runOrPreview(
   }
 
   // 5. Iterate patterns × candidate dates, applying skip-conditions in order.
+  //
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — this loop is DELIBERATELY additive
+  // across patterns: every active pattern that claims a date contributes its own
+  // create/skip decision, and two patterns claiming the SAME day both run (the second
+  // one hits the `existing` skip once the first has created the row). Do NOT "fix"
+  // this into a single-winner pick. Two active patterns claiming the same day can mean
+  // two different things the data cannot distinguish: a legitimate weekday + block-week
+  // combination (union IS correct — both must create) or a superseded pattern that was
+  // never closed (union is wrong, but silently picking a winner would be worse — it
+  // would break the legitimate case for every tenant that uses it). The correct
+  // non-mutating move is to make the ambiguity VISIBLE (`ambiguousDates` above, shown
+  // by the wizard) and fix the root cause where intent actually exists — the PUT save
+  // that supersedes an old pattern (option B, see Task 2 of this plan).
   for (const pattern of patterns) {
     const employee = pattern.employee;
     const patternValidUntil = pattern.validUntil;

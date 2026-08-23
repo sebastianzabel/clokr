@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { isAvailabilityEnabled } from "../utils/tenant-availability";
 import { getVocationalSchoolMinutesForDate } from "../utils/vocational-school-saldo";
+import { BS_PATTERN_ORDER_BY } from "../utils/vocational-school-pattern-order";
 import { getEffectiveBreakDuration } from "../utils/break-effective";
 import {
   getTenantTimezone,
@@ -890,6 +891,11 @@ export async function shiftRoutes(app: FastifyInstance) {
             validFrom: { lte: sunday },
             OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
           },
+          // Phase 103 — the merge below is genuinely first-wins
+          // (`if (empFederalState.has(...)) continue`); without a shared order "first"
+          // was whatever Postgres happened to return. BS_PATTERN_ORDER_BY makes the
+          // comment's documented `findFirst`-semantics claim actually true.
+          orderBy: BS_PATTERN_ORDER_BY,
           select: {
             employeeId: true,
             federalStateOverride: true,
