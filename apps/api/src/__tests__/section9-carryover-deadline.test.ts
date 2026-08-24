@@ -17,9 +17,27 @@
  * divergent copy of the predicate can creep in undetected.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
+
+// Recursively collects every .ts file path under `dir`, skipping node_modules/__tests__/dotfiles.
+function walkTsFiles(dir: string, skipTests = true): string[] {
+  const out: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    if (skipTests && entry.name === "__tests__") continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      out.push(...walkTsFiles(full, skipTests));
+    } else if (entry.name.endsWith(".ts")) {
+      out.push(full);
+    }
+  }
+  return out;
+}
 
 describe("recalculateCarryOver / autoCarryOver — ILLNESS deadline protection (Phase 104 Plan 04, Task 2)", () => {
   let app: FastifyInstance;
@@ -678,5 +696,41 @@ describe("PUT /settings/vacation — ILLNESS deadline protection", () => {
       where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId: vacationTypeId, year } },
     });
     expect(Number(db!.totalDays)).toBe(27);
+  });
+});
+
+describe("structural guard against a divergent copy (Phase 104 Plan 04, Task 4)", () => {
+  it("every carryOverDeadline writer goes through preserveIllnessDeadline (guards against a divergent copy)", () => {
+    const apiSrc = join(__dirname, "..");
+    const leaveTs = readFileSync(join(apiSrc, "routes", "leave.ts"), "utf-8");
+    const settingsTs = readFileSync(join(apiSrc, "routes", "settings.ts"), "utf-8");
+
+    const leaveMatches = leaveTs.match(/preserveIllnessDeadline/g) ?? [];
+    expect(
+      leaveMatches.length,
+      "leave.ts must reference preserveIllnessDeadline at least twice (both writers)",
+    ).toBeGreaterThanOrEqual(2);
+
+    const settingsMatches = settingsTs.match(/preserveIllnessDeadline/g) ?? [];
+    expect(
+      settingsMatches.length,
+      "settings.ts must reference preserveIllnessDeadline at least once",
+    ).toBeGreaterThanOrEqual(1);
+
+    // No file under apps/api/src outside utils/illness-carryover-guard.ts and __tests__/
+    // may contain a divergent inline copy of the predicate.
+    const allFiles = walkTsFiles(apiSrc, true);
+    const offenders: string[] = [];
+    for (const file of allFiles) {
+      if (file.endsWith(join("utils", "illness-carryover-guard.ts"))) continue;
+      const content = readFileSync(file, "utf-8");
+      if (content.includes('=== "ILLNESS"')) {
+        offenders.push(file);
+      }
+    }
+    expect(
+      offenders,
+      `no production file may re-inline the ILLNESS predicate: ${offenders.join(", ")}`,
+    ).toEqual([]);
   });
 });
