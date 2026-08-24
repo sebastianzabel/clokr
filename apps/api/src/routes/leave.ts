@@ -188,6 +188,14 @@ const section9ConfirmSchema = z.object({
   reason: z.string().trim().min(1, "Begründung ist erforderlich"),
 });
 
+// Phase 104-06 — POST /section9/:id/reject and /reopen. Pflichtbegründung (D-11).
+// Bewusst NICHT .optional() — der Zod-Gotcha aus CLAUDE.md verlangt, dass ein explizit
+// gesendetes null als 400 mit klarer Meldung endet, nicht als nacktes "Validierungsfehler".
+// min(1) auf einem non-nullable string liefert genau das.
+const section9ReasonSchema = z.object({
+  reason: z.string().trim().min(1, "Begründung ist erforderlich"),
+});
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -2617,6 +2625,179 @@ export async function leaveRoutes(app: FastifyInstance) {
         creditedEnd: credited.end.toISOString().split("T")[0],
         creditedDays,
       });
+    },
+  });
+
+  // ── POST /section9/:id/reject — AU-Nachweis abgelehnt (Phase 104-06, D-11) ───
+  app.post("/section9/:id/reject", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = section9ReasonSchema.parse(req.body);
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: { employee: { select: { id: true, tenantId: true, userId: true } } },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      // D-11: eine bereits gebuchte Gutschrift kann nicht abgelehnt werden — eine
+      // Korrektur wäre ein anderer Vorgang, außerhalb des Umfangs dieser Phase.
+      if (credit.status === "CONFIRMED") {
+        return reply
+          .code(409)
+          .send({ error: "Ein bereits gutgeschriebener Vorgang kann nicht abgelehnt werden." });
+      }
+
+      await app.prisma.$transaction(async (tx) => {
+        await tx.section9Credit.update({
+          where: { id: credit.id },
+          data: {
+            status: "REJECTED",
+            reason: body.reason,
+            reviewedBy: req.user.sub,
+            reviewedAt: new Date(),
+          },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "SECTION9_CREDIT_REJECTED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+          oldValue: { status: credit.status },
+          newValue: { status: "REJECTED", reason: body.reason },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+
+      // D-11: die Tage bleiben VORERST angerechnet — eine endgültige Ablehnung würde
+      // einen Anspruch verwehren, den § 9 kraft Gesetzes gewährt. Der Vorgang kann
+      // wieder eröffnet werden, sobald eine gültige AU vorliegt.
+      if (credit.employee.userId) {
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_CREDIT_REJECTED",
+          title: "AU abgelehnt — Urlaubstage bleiben angerechnet",
+          message:
+            `Die eingereichte AU wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
+            `vorerst angerechnet. Sobald eine gültige AU vorliegt, kann der Vorgang erneut ` +
+            `geöffnet werden.`,
+          link: "/leave",
+          tenantId: req.user.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({ id: credit.id, status: "REJECTED" });
+    },
+  });
+
+  // ── POST /section9/:id/reopen — abgelehnten Vorgang wieder eröffnen (D-11) ───
+  app.post("/section9/:id/reopen", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: { employee: { select: { id: true, tenantId: true, userId: true } } },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      if (credit.status !== "REJECTED") {
+        return reply
+          .code(400)
+          .send({ error: "Nur abgelehnte Vorgänge können wieder eröffnet werden." });
+      }
+
+      await app.prisma.$transaction(async (tx) => {
+        // `reason` bleibt bewusst erhalten (Revisionssicherheit) — die Begründung der
+        // früheren Ablehnung bleibt auf dem Datensatz nachvollziehbar, statt überschrieben
+        // zu werden.
+        await tx.section9Credit.update({
+          where: { id: credit.id },
+          data: { status: "AU_PENDING", reviewedBy: null, reviewedAt: null },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "SECTION9_CREDIT_REOPENED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+          oldValue: { status: credit.status },
+          newValue: { status: "AU_PENDING" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+
+      // Re-emit the same D-14 notifications the original detection sent — reusing the
+      // exact copy from Phase 104-05, not a second wording.
+      const rangeLabel = `${credit.overlapStart.toISOString().split("T")[0]} – ${credit.overlapEnd.toISOString().split("T")[0]}`;
+      if (credit.employee.userId) {
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_AU_PENDING_EMPLOYEE",
+          title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
+          message:
+            `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+            `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
+          link: "/leave",
+          tenantId: credit.employee.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+      const section9Managers = await app.prisma.employee.findMany({
+        where: {
+          tenantId: credit.employee.tenantId,
+          user: {
+            role: { in: ["ADMIN", "MANAGER"] },
+            isActive: true,
+            id: { not: req.user.sub },
+          },
+        },
+        select: { userId: true },
+      });
+      for (const mgr of section9Managers) {
+        await app.notify({
+          userId: mgr.userId,
+          type: "SECTION9_AU_PENDING_MANAGER",
+          title: "§ 9 BUrlG — AU-Nachweis ausstehend",
+          message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
+          link: `/team/leave?section9=${credit.id}`,
+          tenantId: credit.employee.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({ id: credit.id, status: "AU_PENDING" });
     },
   });
 }

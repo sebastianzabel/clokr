@@ -945,3 +945,199 @@ describe("confirm — Phase 104-06 Task 1", () => {
     expect(stillPending.status).toBe("AU_PENDING");
   });
 });
+
+describe("reject and reopen — Phase 104-06 Task 2", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "s9rr");
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: data.employee.id } });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function createRequest(payload: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload,
+    });
+  }
+
+  async function approve(id: string) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+  }
+
+  async function getEntitlement(year: number) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${data.employee.id}?year=${year}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const rows = JSON.parse(res.body) as Array<{ leaveType?: { name: string }; usedDays?: number }>;
+    return rows.find((r) => r.leaveType?.name === "Urlaub");
+  }
+
+  async function reject(id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/reject`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: body,
+    });
+  }
+
+  async function reopen(id: string) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/reopen`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: {},
+    });
+  }
+
+  async function confirmCredit(id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/confirm`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: body,
+    });
+  }
+
+  async function vacAndSick(dateStr: string) {
+    const vac = await createRequest({ type: "VACATION", startDate: dateStr, endDate: dateStr });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({ type: "SICK", startDate: dateStr, endDate: dateStr });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    const credit = await app.prisma.section9Credit.findFirstOrThrow({
+      where: { sickRequestId: sickId },
+    });
+    return { vacId, sickId, creditId: credit.id };
+  }
+
+  it("Test 1: rejecting sets status REJECTED, stores the reason, sets reviewedBy/reviewedAt, leaves usedDays unchanged", async () => {
+    const { creditId } = await vacAndSick("2026-04-13");
+    const before = await getEntitlement(2026);
+    const usedBefore = Number(before?.usedDays ?? 0);
+
+    const res = await reject(creditId, { reason: "Keine AU eingereicht" });
+    expect(res.statusCode).toBe(200);
+
+    const row = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
+    expect(row.status).toBe("REJECTED");
+    expect(row.reason).toBe("Keine AU eingereicht");
+    expect(row.reviewedBy).toBe(data.adminUser.id);
+    expect(row.reviewedAt).not.toBeNull();
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(usedBefore);
+  });
+
+  it("Test 2: rejecting without a reason, or with reason: null, returns 400", async () => {
+    const { creditId } = await vacAndSick("2026-04-20");
+
+    const missing = await reject(creditId, {});
+    expect(missing.statusCode).toBe(400);
+
+    // The Zod gotcha (CLAUDE.md): the frontend sends an explicit `null` for an omitted field.
+    const nullReason = await reject(creditId, { reason: null });
+    expect(nullReason.statusCode).toBe(400);
+
+    const row = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
+    expect(row.status).toBe("AU_PENDING");
+  });
+
+  it("Test 3 + 4: a REJECTED credit can be re-opened and confirmed, applying in full, with a reconstructible audit sequence", async () => {
+    const { creditId } = await vacAndSick("2026-04-27");
+    const before = await getEntitlement(2026);
+    const usedBefore = Number(before?.usedDays ?? 0);
+
+    expect((await reject(creditId, { reason: "AU fehlt noch" })).statusCode).toBe(200);
+
+    const reopenRes = await reopen(creditId);
+    expect(reopenRes.statusCode).toBe(200);
+    const reopened = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
+    expect(reopened.status).toBe("AU_PENDING");
+    // Reason stays on the row (Revisionssicherheit) — the earlier rejection's justification
+    // is not overwritten by the reopen.
+    expect(reopened.reason).toBe("AU fehlt noch");
+    expect(reopened.reviewedBy).toBeNull();
+    expect(reopened.reviewedAt).toBeNull();
+
+    const confirmRes = await confirmCredit(creditId, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-04-27",
+      attestValidTo: "2026-04-27",
+      reason: "AU jetzt nachgereicht",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+    expect(JSON.parse(confirmRes.body).creditedDays).toBe(1);
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(usedBefore - 1);
+
+    // Test 4: the full detected → rejected → reopened → confirmed sequence is reconstructible.
+    const audits = await app.prisma.auditLog.findMany({
+      where: { entity: "Section9Credit", entityId: creditId },
+      orderBy: { createdAt: "asc" },
+    });
+    expect(audits.map((a) => a.action)).toEqual([
+      "SECTION9_CREDIT_DETECTED",
+      "SECTION9_CREDIT_REJECTED",
+      "SECTION9_CREDIT_REOPENED",
+      "SECTION9_CREDIT_CONFIRMED",
+    ]);
+  });
+
+  it("Test 5 (D-11): rejecting a CONFIRMED credit returns 409 — a booked credit cannot be rejected away", async () => {
+    const { creditId } = await vacAndSick("2026-05-04");
+    expect(
+      (
+        await confirmCredit(creditId, {
+          attestSource: "EAU",
+          attestValidFrom: "2026-05-04",
+          attestValidTo: "2026-05-04",
+          reason: "AU liegt vor",
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const res = await reject(creditId, { reason: "zu spät" });
+    expect(res.statusCode).toBe(409);
+
+    const row = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
+    expect(row.status).toBe("CONFIRMED");
+  });
+
+  it("Test 6 (D-10): no scheduled job anywhere closes, expires or auto-rejects an AU_PENDING credit", async () => {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const pluginsDir = path.resolve(__dirname, "../plugins");
+    const files = fs.readdirSync(pluginsDir).filter((f) => f.endsWith(".ts"));
+    for (const file of files) {
+      const content = fs.readFileSync(path.join(pluginsDir, file), "utf-8");
+      expect(content).not.toContain("section9Credit");
+    }
+  });
+});
