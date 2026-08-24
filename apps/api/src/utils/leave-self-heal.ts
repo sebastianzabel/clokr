@@ -19,6 +19,8 @@
  *     aggregate only their own leaveTypeId.
  *   - Idempotent: rows already in sync are NOT updated.
  *   - Mutates rows in place so callers can render the healed value directly.
+ *   - § 9 BUrlG credits (Section9Credit, status CONFIRMED) are subtracted from the raw sum;
+ *     AU_PENDING and REJECTED credits are ignored.
  *
  * Out of scope (preserve parity with the pre-refactor implementation):
  *   - app.audit() for the heal mutation (pre-existing gap, separate ticket).
@@ -27,6 +29,7 @@
  *     not do this and we keep parity.
  */
 import type { FastifyInstance } from "fastify";
+import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
 
 /**
  * Minimal row shape the helper needs. Matches against either of:
@@ -100,7 +103,18 @@ export async function selfHealUsedDays(
         endDate: { lte: yearEnd },
       },
     });
-    const actualUsed = approved.reduce((s, r) => s + Number(r.days), 0);
+    // Phase 104 (Pitfall 2): subtract confirmed § 9 BUrlG credits. D-05 never touches
+    // LeaveRequest.days, so the raw sum below is the PRE-credit figure — writing it back
+    // would silently erase the credit on the next page load (leave.ts:2103) or report
+    // load (reports.ts:708). Attaching the subtraction to the SAME request set that was
+    // just summed keeps the existing year-bounds semantics intact (including the
+    // documented cross-year out-of-scope note above) — no separate year attribution.
+    const rawUsed = approved.reduce((s, r) => s + Number(r.days), 0);
+    const section9Credited = await sumConfirmedSection9DaysByRequest(
+      prisma,
+      approved.map((r) => r.id),
+    );
+    const actualUsed = Math.max(0, rawUsed - section9Credited);
 
     if (Number(row.usedDays) !== actualUsed) {
       await prisma.leaveEntitlement.update({
