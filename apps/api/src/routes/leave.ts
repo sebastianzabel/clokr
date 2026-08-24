@@ -21,6 +21,7 @@ import { loadNegativeBalanceTolerance } from "../utils/negative-balance-toleranc
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
+import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -2176,9 +2177,13 @@ async function autoCarryOver(
   const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
 
   if (cur) {
+    // Phase 104 (D-19): see recalculateCarryOver — same ILLNESS deadline protection.
+    const illnessProtected = preserveIllnessDeadline(cur);
     await prisma.leaveEntitlement.update({
       where: { id: cur.id },
-      data: { carriedOverDays: remaining, carryOverDeadline: deadline },
+      data: illnessProtected
+        ? { carriedOverDays: remaining }
+        : { carriedOverDays: remaining, carryOverDeadline: deadline },
     });
   } else {
     await prisma.leaveEntitlement.create({
@@ -2227,9 +2232,19 @@ async function recalculateCarryOver(
   });
 
   if (cur) {
+    // Phase 104 (D-19 / R9): an ILLNESS carry-over carries the extended EuGH KHS C-214/10
+    // deadline (15 months after the end of the accrual year), not the tenant's standard
+    // Stichtag. This function runs after EVERY booking and cancellation, so an unconditional
+    // deadline write would silently revert that extension on the next unrelated leave
+    // request — the days would then appear to lapse on a date the ECJ forbids. Only the
+    // DEADLINE is protected: carriedOverDays is still recomputed, because D-20 relies on the
+    // existing expiry-warning mechanism reading an accurate, raised remaining entitlement.
+    const illnessProtected = preserveIllnessDeadline(cur);
     await prisma.leaveEntitlement.update({
       where: { id: cur.id },
-      data: { carriedOverDays: remaining, carryOverDeadline: deadline },
+      data: illnessProtected
+        ? { carriedOverDays: remaining }
+        : { carriedOverDays: remaining, carryOverDeadline: deadline },
     });
   } else {
     await prisma.leaveEntitlement.create({
