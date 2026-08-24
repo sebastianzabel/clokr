@@ -25,7 +25,71 @@ function buildMultipartBody(filename: string, contentType: string, data: Buffer)
 }
 
 const PDF_BYTES = Buffer.from("%PDF-1.4\n%mock-au-document%%EOF");
-const JPEG_BYTES = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+// A genuine, decodable 2x2 JPEG (not just magic bytes) — the § 9-document route never parses
+// its input (Test 1 proves that with a fake-but-allowlisted PDF), but Test 6 below round-trips
+// this same constant through the AVATAR route too, which DOES run it through sharp().
+const JPEG_BYTES = Buffer.from(
+  "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAf/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABgj/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABykX//Z",
+  "base64",
+);
+
+/**
+ * Creates one AU_PENDING Section9Credit via the real create + approve flow (shared between the
+ * upload/retrieve describe block and the DSGVO deletion describe block below).
+ */
+async function createSection9Credit(
+  app: FastifyInstance,
+  empToken: string,
+  adminToken: string,
+  vacStart: string,
+  vacEnd: string,
+  sickStart: string,
+  sickEnd: string,
+) {
+  const vac = await app.inject({
+    method: "POST",
+    url: "/api/v1/leave/requests",
+    headers: { authorization: `Bearer ${empToken}` },
+    payload: { type: "VACATION", startDate: vacStart, endDate: vacEnd },
+  });
+  expect(vac.statusCode).toBe(201);
+  const vacId = JSON.parse(vac.body).id as string;
+  expect(
+    (
+      await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${vacId}/review`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { status: "APPROVED" },
+      })
+    ).statusCode,
+  ).toBe(200);
+
+  const sick = await app.inject({
+    method: "POST",
+    url: "/api/v1/leave/requests",
+    headers: { authorization: `Bearer ${empToken}` },
+    payload: { type: "SICK", startDate: sickStart, endDate: sickEnd },
+  });
+  expect(sick.statusCode).toBe(201);
+  const sickId = JSON.parse(sick.body).id as string;
+  expect(
+    (
+      await app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${sickId}/review`,
+        headers: { authorization: `Bearer ${adminToken}` },
+        payload: { status: "APPROVED" },
+      })
+    ).statusCode,
+  ).toBe(200);
+
+  const credit = await app.prisma.section9Credit.findFirst({
+    where: { sickRequestId: sickId, vacationRequestId: vacId },
+  });
+  expect(credit).toBeTruthy();
+  return credit!;
+}
 
 describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
   let app: FastifyInstance;
@@ -116,50 +180,16 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
   });
 
   /** Creates one AU_PENDING Section9Credit for `data.employee` via the real approve flow. */
-  async function makeCredit(vacStart: string, vacEnd: string, sickStart: string, sickEnd: string) {
-    const vac = await app.inject({
-      method: "POST",
-      url: "/api/v1/leave/requests",
-      headers: { authorization: `Bearer ${data.empToken}` },
-      payload: { type: "VACATION", startDate: vacStart, endDate: vacEnd },
-    });
-    expect(vac.statusCode).toBe(201);
-    const vacId = JSON.parse(vac.body).id as string;
-    expect(
-      (
-        await app.inject({
-          method: "PATCH",
-          url: `/api/v1/leave/requests/${vacId}/review`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { status: "APPROVED" },
-        })
-      ).statusCode,
-    ).toBe(200);
-
-    const sick = await app.inject({
-      method: "POST",
-      url: "/api/v1/leave/requests",
-      headers: { authorization: `Bearer ${data.empToken}` },
-      payload: { type: "SICK", startDate: sickStart, endDate: sickEnd },
-    });
-    expect(sick.statusCode).toBe(201);
-    const sickId = JSON.parse(sick.body).id as string;
-    expect(
-      (
-        await app.inject({
-          method: "PATCH",
-          url: `/api/v1/leave/requests/${sickId}/review`,
-          headers: { authorization: `Bearer ${data.adminToken}` },
-          payload: { status: "APPROVED" },
-        })
-      ).statusCode,
-    ).toBe(200);
-
-    const credit = await app.prisma.section9Credit.findFirst({
-      where: { sickRequestId: sickId, vacationRequestId: vacId },
-    });
-    expect(credit).toBeTruthy();
-    return credit!;
+  function makeCredit(vacStart: string, vacEnd: string, sickStart: string, sickEnd: string) {
+    return createSection9Credit(
+      app,
+      data.empToken,
+      data.adminToken,
+      vacStart,
+      vacEnd,
+      sickStart,
+      sickEnd,
+    );
   }
 
   it("Test 1: a MANAGER uploads a small PDF — 200, documentPath set, bytes round-trip", async () => {
@@ -363,5 +393,167 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
     await expect(app.storage.getBuffer(firstPath)).rejects.toBeTruthy();
     const newBytes = await app.storage.getBuffer(secondPath);
     expect(Buffer.compare(newBytes, JPEG_BYTES)).toBe(0);
+  });
+});
+
+describe("DSGVO Art. 17 deletion — Phase 104-07 Task 2", () => {
+  let app: FastifyInstance;
+  let d1: Awaited<ReturnType<typeof seedTestData>>;
+  let d2: Awaited<ReturnType<typeof seedTestData>>;
+  let d3: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d1 = await seedTestData(app, "s9del1");
+    d2 = await seedTestData(app, "s9del2");
+    d3 = await seedTestData(app, "s9del3");
+    for (const d of [d1, d2, d3]) {
+      await app.prisma.leaveEntitlement.updateMany({
+        where: { employeeId: d.employee.id },
+        data: { totalDays: 200 },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    try {
+      for (const d of [d1, d2, d3]) {
+        await app.prisma.section9Credit.deleteMany({ where: { employeeId: d.employee.id } });
+        await cleanupTestData(app, d.tenant.id);
+      }
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("Test 1+2+3+4: documentPath and reason are erased, the object is gone, the row survives", async () => {
+    const credit = await createSection9Credit(
+      app,
+      d1.empToken,
+      d1.adminToken,
+      "2028-03-06",
+      "2028-03-10",
+      "2028-03-07",
+      "2028-03-08",
+    );
+    // A manager-typed free-text reason — the field D-17 requires and Art. 9 minimisation
+    // requires erasing on deletion, same as documentPath.
+    await app.prisma.section9Credit.update({
+      where: { id: credit.id },
+      data: { reason: "AU per Post nachgereicht" },
+    });
+
+    const { body, contentType } = buildMultipartBody("au.pdf", "application/pdf", PDF_BYTES);
+    const uploadRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/section9-documents/${credit.id}`,
+      headers: { authorization: `Bearer ${d1.adminToken}`, "content-type": contentType },
+      payload: body,
+    });
+    expect(uploadRes.statusCode).toBe(200);
+    const path = JSON.parse(uploadRes.body).documentPath as string;
+
+    const delRes = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${d1.employee.id}`,
+      headers: { authorization: `Bearer ${d1.adminToken}` },
+    });
+    expect(delRes.statusCode).toBe(204);
+
+    // Test 3: the Section9Credit ROW survives (Restrict FKs + R7 retention) — only its
+    // health-data pointer and free-text reason are erased.
+    const row = await app.prisma.section9Credit.findUnique({ where: { id: credit.id } });
+    expect(row).toBeTruthy();
+    // Test 1
+    expect(row?.documentPath).toBeNull();
+    // Test 4
+    expect(row?.reason).toBeNull();
+    // Test 2: the MinIO object at the pre-anonymisation path no longer exists.
+    await expect(app.storage.getBuffer(path)).rejects.toBeTruthy();
+  });
+
+  it("Test 5: a failing MinIO delete during anonymization is non-fatal", async () => {
+    const credit = await createSection9Credit(
+      app,
+      d2.empToken,
+      d2.adminToken,
+      "2028-03-13",
+      "2028-03-17",
+      "2028-03-14",
+      "2028-03-15",
+    );
+    const { body, contentType } = buildMultipartBody("au.pdf", "application/pdf", PDF_BYTES);
+    const uploadRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/section9-documents/${credit.id}`,
+      headers: { authorization: `Bearer ${d2.adminToken}`, "content-type": contentType },
+      payload: body,
+    });
+    expect(uploadRes.statusCode).toBe(200);
+
+    const originalDelete = app.storage.delete;
+    app.storage.delete = () => Promise.reject(new Error("simulated MinIO outage"));
+    let delRes;
+    try {
+      delRes = await app.inject({
+        method: "DELETE",
+        url: `/api/v1/employees/${d2.employee.id}`,
+        headers: { authorization: `Bearer ${d2.adminToken}` },
+      });
+    } finally {
+      app.storage.delete = originalDelete;
+    }
+    // The legally-required Postgres anonymisation still commits and the endpoint still
+    // returns success — parity with the existing avatar/absence handling.
+    expect(delRes.statusCode).toBe(204);
+
+    const row = await app.prisma.section9Credit.findUnique({ where: { id: credit.id } });
+    expect(row?.documentPath).toBeNull();
+  });
+
+  it("Test 6: the existing avatar and Absence.documentPath deletions still work unchanged", async () => {
+    const avatarBody = buildMultipartBody("avatar.jpg", "image/jpeg", JPEG_BYTES);
+    const avatarRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/avatars/${d3.employee.id}`,
+      headers: { authorization: `Bearer ${d3.empToken}`, "content-type": avatarBody.contentType },
+      payload: avatarBody.body,
+    });
+    expect(avatarRes.statusCode).toBe(200);
+    const avatarPath = JSON.parse(avatarRes.body).avatarPath as string;
+
+    // No upload ROUTE exists for Absence.documentPath (R8/D-03: confirmed dead code by
+    // 104-01) — place a real object directly, mirroring what a legacy import would have
+    // produced, so the deletion loop has a real MinIO object to erase.
+    const absenceDocPath = `absences/${d3.tenant.id}/${d3.employee.id}/legacy-au.pdf`;
+    await app.storage.upload(absenceDocPath, PDF_BYTES, "application/pdf");
+    await app.prisma.absence.create({
+      data: {
+        employeeId: d3.employee.id,
+        type: "SICK",
+        startDate: new Date("2028-03-20"),
+        endDate: new Date("2028-03-20"),
+        days: 1,
+        documentPath: absenceDocPath,
+        createdBy: d3.adminUser.id,
+      },
+    });
+
+    const delRes = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/employees/${d3.employee.id}`,
+      headers: { authorization: `Bearer ${d3.adminToken}` },
+    });
+    expect(delRes.statusCode).toBe(204);
+
+    // Note: anonymizeEmployeeData does NOT null Employee.avatarPath in Postgres (pre-existing,
+    // out of scope for this plan — see deferred-items.md). The MinIO OBJECT deletion is the
+    // guarantee this test pins; it is unaffected by this plan's changes either way.
+    await expect(app.storage.getBuffer(avatarPath)).rejects.toBeTruthy();
+
+    const absence = await app.prisma.absence.findFirst({ where: { employeeId: d3.employee.id } });
+    expect(absence?.documentPath).toBeNull();
+    await expect(app.storage.getBuffer(absenceDocPath)).rejects.toBeTruthy();
   });
 });

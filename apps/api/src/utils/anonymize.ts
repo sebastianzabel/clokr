@@ -19,6 +19,8 @@
  *   - TimeEntry.note           → null (for that employee)
  *   - LeaveRequest.note        → null (for that employee)
  *   - Absence.note             → null AND Absence.documentPath → null
+ *   - Section9Credit.documentPath → null AND Section9Credit.reason → null (Phase 104,
+ *     D-26 — Art. 9 DSGVO health datum + free text; rows preserved, see below)
  *   - Invitation, OtpToken, RefreshToken: hard-deleted (not retention-relevant)
  *   - AuditLog.userId          → null (for rows owned by that user)
  *   - AuditLog.oldValue/newValue → redacted for Employee + User audit rows
@@ -130,6 +132,17 @@ export async function anonymizeEmployeeData(opts: AnonymizeEmployeeOptions): Pro
   await tx.absence.updateMany({
     where: { employeeId },
     data: { note: null, documentPath: null },
+  });
+
+  // Phase 104 (D-26): Papier-AU zu § 9-BUrlG-Vorgängen ist ein Gesundheitsdatum nach Art. 9
+  // DSGVO. Der Zeiger darauf wird gelöscht; das MinIO-Objekt selbst löscht der Aufrufer NACH
+  // dem Commit (MinIO ist nicht transaktional mit Postgres — routes/employees.ts).
+  // Die Section9Credit-ZEILEN bleiben erhalten: sie sind der Korrektureintrag, mit dem die
+  // Urlaubsgutschrift rekonstruierbar bleibt (Revisionssicherheit, R7). Gelöscht wird nur,
+  // was personenbezogen bzw. gesundheitsbezogen ist — documentPath und die Freitext-Begründung.
+  await tx.section9Credit.updateMany({
+    where: { employeeId },
+    data: { documentPath: null, reason: null },
   });
 
   // AuditLog JSON-Felder (oldValue/newValue) für Employee- und User-Einträge redigieren.

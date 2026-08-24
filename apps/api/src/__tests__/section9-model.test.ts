@@ -142,16 +142,33 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
       expect(b).not.toMatch(/type:\s*"SICK/);
     }
 
-    // documentPath is only ever nulled in a Prisma `data:` write payload. Scoped to
-    // `data: { ... }` blocks specifically (not `[^}]*` across the whole file) so
-    // legitimate reads like `select: { documentPath: true }` or
+    // documentPath is only ever nulled in a Prisma `data:` write payload — EXCEPT for
+    // Phase 104-07's own `section9-documents.ts`, the sanctioned upload route this test's
+    // own phase introduces (D-26: a paper-AU document IS meant to set a non-null
+    // Section9Credit.documentPath). Excluded by name, not by weakening the pattern, so a
+    // non-null write appearing anywhere ELSE (e.g. a future accidental Absence.documentPath
+    // write) is still caught. Scoped to `data: { ... }` blocks specifically (not `[^}]*`
+    // across the whole file) so legitimate reads like `select: { documentPath: true }` or
     // `where: { documentPath: { not: null } }` — both present in employees.ts's DSGVO
     // deletion flow — do not trip this check; only an actual write payload counts.
-    const dataWriteBlocks = src.match(/data:\s*\{[^}]*documentPath:[^}]*\}/g) ?? [];
+    const filesExceptSection9Upload = files.filter((f) => !f.endsWith("section9-documents.ts"));
+    const srcExceptSection9Upload = filesExceptSection9Upload
+      .map((f) => readFileSync(f, "utf8"))
+      .join("\n");
+    const dataWriteBlocks =
+      srcExceptSection9Upload.match(/data:\s*\{[^}]*documentPath:[^}]*\}/g) ?? [];
     expect(dataWriteBlocks.length).toBeGreaterThan(0);
     for (const b of dataWriteBlocks) {
       expect(b).toMatch(/documentPath:\s*null\b/);
     }
+
+    // Positive pin: the ONE excluded file writes a non-null documentPath to Section9Credit
+    // specifically (not Absence) — so the exclusion above is narrowly scoped to the actual
+    // sanctioned write, not a blanket carve-out.
+    const section9UploadFile = files.find((f) => f.endsWith("section9-documents.ts"));
+    expect(section9UploadFile).toBeTruthy();
+    const section9UploadSrc = readFileSync(section9UploadFile!, "utf8");
+    expect(section9UploadSrc).toMatch(/section9Credit\.update\(\{[\s\S]*?documentPath:\s*path/);
   });
 
   it("Test 4: Section9Credit has no deletedAt column (D-11 is a status transition, not a soft delete)", async () => {

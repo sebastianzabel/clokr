@@ -61,6 +61,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
 - **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null
 - **Documents**: Absence documentPath → null
+- **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
 - **AuditLog**: userId → null (anonymized, not deleted)
