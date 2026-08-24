@@ -22,7 +22,7 @@ import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { isSickTypeName } from "../utils/section9-detect"; // Phase 104-05
+import { isSickTypeName, findSection9Overlaps } from "../utils/section9-detect"; // Phase 104-05
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -972,6 +972,58 @@ export async function leaveRoutes(app: FastifyInstance) {
                 type: "REDUCTION",
                 description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
               },
+            });
+          }
+        }
+
+        // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
+        // Der Datensatz entsteht SOFORT bei Genehmigung der Krankmeldung, im wirkungslosen
+        // Zustand AU_PENDING — die Urlaubstage bleiben angerechnet, bis ein Manager die AU
+        // bestätigt (Plan 104-06). Nie gutschreiben und später zurückdrehen.
+        // D-13: genau deshalb hängt die Erkennung am Approve-Pfad und nicht an POST /requests —
+        // eine noch nicht genehmigte Krankmeldung darf keinen Vorgang erzeugen.
+        if (typeCode === "SICK" || typeCode === "SICK_CHILD") {
+          const candidates = await app.prisma.leaveRequest.findMany({
+            where: {
+              employeeId: existing.employeeId,
+              deletedAt: null,
+              status: "APPROVED",
+              id: { not: existing.id },
+              startDate: { lte: existing.endDate },
+              endDate: { gte: existing.startDate },
+            },
+            include: { leaveType: true },
+          });
+          const overlaps = findSection9Overlaps(existing.startDate, existing.endDate, candidates);
+          for (const ov of overlaps) {
+            // Idempotent: re-running approve must not fan out duplicate Vorgänge.
+            const dupe = await app.prisma.section9Credit.findFirst({
+              where: { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
+            });
+            if (dupe) continue;
+            const credit = await app.prisma.section9Credit.create({
+              data: {
+                employeeId: existing.employeeId,
+                sickRequestId: existing.id,
+                vacationRequestId: ov.vacationRequestId,
+                overlapStart: ov.overlapStart,
+                overlapEnd: ov.overlapEnd,
+                // status defaults to AU_PENDING
+              },
+            });
+            await app.audit({
+              userId: req.user.sub,
+              action: "SECTION9_CREDIT_DETECTED",
+              entity: "Section9Credit",
+              entityId: credit.id,
+              newValue: {
+                sickRequestId: existing.id,
+                vacationRequestId: ov.vacationRequestId,
+                overlapStart: ov.overlapStart.toISOString().split("T")[0],
+                overlapEnd: ov.overlapEnd.toISOString().split("T")[0],
+                note: "§ 9 BUrlG — Vorgang erkannt, AU ausstehend",
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
           }
         }
