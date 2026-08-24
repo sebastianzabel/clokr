@@ -47,6 +47,7 @@ import { importRoutes } from "./routes/imports";
 import { terminalRoutes } from "./routes/terminals";
 import { specialLeaveRoutes } from "./routes/special-leave";
 import { avatarRoutes } from "./routes/avatars";
+import { section9DocumentRoutes } from "./routes/section9-documents";
 import { apiKeyRoutes } from "./routes/api-keys";
 import { presenceRoutes } from "./routes/presence";
 import { adminPresenceSourcesRoutes } from "./routes/admin-presence-sources";
@@ -297,6 +298,7 @@ export async function buildApp() {
   // (POST /api/v1/vocational-school/generate, GET /api/v1/vocational-school/preview)
   await app.register(vocationalSchoolRoutes, { prefix: "/api/v1/vocational-school" });
   await app.register(avatarRoutes, { prefix: "/api/v1/avatars" });
+  await app.register(section9DocumentRoutes, { prefix: "/api/v1/section9-documents" });
   await app.register(apiKeyRoutes, { prefix: "/api/v1/api-keys" });
   await app.register(presenceRoutes, { prefix: "/api/v1/presence" });
   await app.register(adminPresenceSourcesRoutes, { prefix: "/api/v1/admin/presence-sources" });

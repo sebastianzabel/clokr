@@ -20,6 +20,13 @@ export async function setup(): Promise<void> {
   // guard below instead of being silently discarded the way override: true discarded it before.
   config({ path: resolve(__dirname, ".env.test"), override: false });
 
+  // Phase 104-07: mirror TEST_DATABASE_URL's own "host-exposed docker port" pattern for MinIO.
+  // apps/api/src/plugins/storage.ts falls back to the docker-network hostname "minio" when
+  // MINIO_ENDPOINT is unset — correct for the api container, unreachable from a vitest run on the
+  // host. docker-compose.yml exposes MinIO on localhost:9000, same as postgres on localhost:5432.
+  // Only a default (no override of an already-set value), so CI or a real .env.test entry wins.
+  process.env.MINIO_ENDPOINT ??= "localhost";
+
   await assertTestDatabaseMarker(process.env.TEST_DATABASE_URL ?? "");
 
   process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
