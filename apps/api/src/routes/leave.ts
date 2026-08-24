@@ -20,6 +20,7 @@ import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
 import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
 import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
+import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -150,11 +151,15 @@ const correctSchema = z
     halfDay: z.boolean().default(false),
     note: z.string().optional().nullable(),
     type: z.enum(TYPE_CODES).optional(),
+    reason: auditReasonSchema, // Quick 260824-cjd — mandatory Korrektur-Begründung
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
     path: ["endDate"],
   });
+
+// Quick 260824-cjd — mandatory Storno-Begründung for withdraw/cancellation-request.
+const stornoSchema = z.object({ reason: auditReasonSchema });
 
 const attestSchema = z.object({
   attestPresent: z.boolean(),
@@ -1533,13 +1538,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       // Revisionssicherheit (EDIT-02): jede Korrektur wird LEAVE_CORRECTED-auditiert.
+      // Quick 260824-cjd: the mandatory Begründung is persisted verbatim into newValue.
       await app.audit({
         userId: req.user.sub,
         action: "LEAVE_CORRECTED",
         entity: "LeaveRequest",
         entityId: id,
         oldValue: existing,
-        newValue: updated,
+        newValue: { ...updated, auditReason: body.reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -1599,6 +1605,10 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr zurückgezogen werden" });
       }
 
+      // Quick 260824-cjd: parsed AFTER the 404/403/409 guards so a bad-reason 400 never
+      // leaks the existence of a foreign-tenant or wrong-status request.
+      const { reason } = stornoSchema.parse(req.body);
+
       if (existing.status === "APPROVED") {
         // Approved leave → request cancellation (needs another manager's approval)
         // Until approved, the leave remains active (blocks time tracking, shown in calendar)
@@ -1612,7 +1622,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           entity: "LeaveRequest",
           entityId: id,
           oldValue: { status: existing.status },
-          newValue: { status: "CANCELLATION_REQUESTED" },
+          newValue: { status: "CANCELLATION_REQUESTED", auditReason: reason },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(200).send({ status: "CANCELLATION_REQUESTED" });
@@ -1626,7 +1636,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         entity: "LeaveRequest",
         entityId: id,
         oldValue: { status: existing.status },
-        newValue: { status: "CANCELLED" },
+        newValue: { status: "CANCELLED", auditReason: reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
       return reply.code(204).send();
