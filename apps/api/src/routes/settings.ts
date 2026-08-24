@@ -11,6 +11,7 @@ import {
   snapToMonthFirstUtc,
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
+import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -1092,10 +1093,43 @@ export async function settingsRoutes(app: FastifyInstance) {
       });
       if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
 
+      // Phase 104 (D-19 / R9): this endpoint is the THIRD writer of carryOverDeadline. An omitted
+      // or null field previously became `null` unconditionally, which silently discards the
+      // extended EuGH KHS C-214/10 deadline that a § 9 BUrlG credit sets on this exact row
+      // (104-06 marks the originYear+1 row, and this form always posts the current year).
+      // The admin form round-trips the loaded value, so the UI does not trigger it today — but a
+      // direct API call, a bulk-setup script or a future UI change does, and nothing in the audit
+      // trail would distinguish that from a routine update.
+      const existing = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId,
+            leaveTypeId: vacationType.id,
+            year: body.year,
+          },
+        },
+      });
+      const illnessProtected = preserveIllnessDeadline(existing);
+      const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
+
+      // An EXPLICIT non-null deadline is still allowed on a protected row — an admin must be able
+      // to correct a wrong date, and a hard block would be the kind of dead end this phase exists
+      // to avoid. It is audited separately (below) so the override is reconstructible.
+      const deadlineOverride = illnessProtected && requestedDeadline !== null;
+      const nextDeadline = illnessProtected
+        ? (requestedDeadline ?? existing?.carryOverDeadline ?? null)
+        : requestedDeadline;
+
+      // Same silent-zeroing shape on the adjacent line: `?? 0` wipes a carry-over the admin never
+      // mentioned. Protected rows preserve it; every other row keeps today's `?? 0` behaviour
+      // byte-for-byte, because clearing that input plausibly does mean "zero" for a normal row.
+      const nextCarriedOver =
+        body.carriedOverDays ?? (illnessProtected ? Number(existing?.carriedOverDays ?? 0) : 0);
+
       const data = {
         totalDays: body.totalDays,
-        carriedOverDays: body.carriedOverDays ?? 0,
-        carryOverDeadline: body.carryOverDeadline ? new Date(body.carryOverDeadline) : null,
+        carriedOverDays: nextCarriedOver,
+        carryOverDeadline: nextDeadline,
       };
 
       const entitlement = await app.prisma.leaveEntitlement.upsert({
@@ -1115,8 +1149,30 @@ export async function settingsRoutes(app: FastifyInstance) {
         action: "UPDATE",
         entity: "LeaveEntitlement",
         entityId: entitlement.id,
+        oldValue: existing
+          ? {
+              totalDays: Number(existing.totalDays),
+              carriedOverDays: Number(existing.carriedOverDays),
+              carryOverDeadline: existing.carryOverDeadline,
+              carryOverReason: existing.carryOverReason,
+            }
+          : null,
         newValue: body,
       });
+
+      if (deadlineOverride) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "LEAVE_ENTITLEMENT_ILLNESS_DEADLINE_OVERRIDDEN",
+          entity: "LeaveEntitlement",
+          entityId: entitlement.id,
+          oldValue: {
+            carryOverDeadline: existing?.carryOverDeadline,
+            carryOverReason: existing?.carryOverReason,
+          },
+          newValue: { carryOverDeadline: nextDeadline },
+        });
+      }
 
       return {
         year: body.year,
