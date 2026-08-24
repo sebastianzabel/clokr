@@ -22,7 +22,7 @@ import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
-import { isSickTypeName, findSection9Overlaps } from "../utils/section9-detect"; // Phase 104-05
+import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -177,6 +177,15 @@ const attestSchema = z.object({
     .refine((s) => !isNaN(new Date(s).getTime()), "Ungültiges Datum")
     .nullable()
     .optional(),
+});
+
+// Phase 104-06 — POST /section9/:id/confirm ("AU liegt vor").
+// D-27: Gültigkeit + Herkunft + Pflichtbegründung. KEINE Arzt-/Diagnoseangaben (Art. 9 DSGVO).
+const section9ConfirmSchema = z.object({
+  attestSource: z.enum(["EAU", "PAPIER"]),
+  attestValidFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  attestValidTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: z.string().trim().min(1, "Begründung ist erforderlich"),
 });
 
 export async function leaveRoutes(app: FastifyInstance) {
@@ -2391,6 +2400,223 @@ export async function leaveRoutes(app: FastifyInstance) {
           typeName: row.vacationRequest.leaveType.name,
         },
       };
+    },
+  });
+
+  // § 9 BUrlG (Phase 104). D-10: Es gibt BEWUSST keinen automatischen Verfall eines
+  // AU_PENDING-Vorgangs — § 9 kennt keine Vorlagefrist, und nichts wird still geschlossen.
+  // Der Vorgang bleibt offen, bis ein Mensch entscheidet. Wer hier später einen Cron-Job
+  // ergänzen möchte: das wäre eine Entscheidung gegen eine gesperrte Owner-Vorgabe.
+
+  // ── POST /section9/:id/confirm — „AU liegt vor" (Phase 104-06) ──────────────
+  // R3/D-07/D-08/D-13/D-17/D-18/D-19: gutschreiben, ausschließlich der attestierten
+  // Schnittmenge, rein entitlement-seitig (D-16 — kein SaldoSnapshot, kein Aufbrechen
+  // gesperrter Monate), mit ILLNESS-Übertragsfrist wo der Stichtag bereits verstrichen ist.
+  app.post("/section9/:id/confirm", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = section9ConfirmSchema.parse(req.body);
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: {
+          employee: { select: { id: true, tenantId: true, userId: true } },
+          sickRequest: { include: { leaveType: true } },
+          vacationRequest: { include: { leaveType: true } },
+        },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      // Tenant isolation BEFORE any state check (T-104-06-TENANT idiom, leave.ts:1659) — a
+      // cross-tenant probe must not be able to learn the row's status from the response.
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      if (credit.status === "CONFIRMED") {
+        return reply.code(409).send({ error: "Vorgang wurde bereits bestätigt" });
+      }
+
+      // D-13: die Krankmeldung muss genehmigt sein, bevor die AU bestätigt werden kann —
+      // sonst könnte auf eine später abgelehnte Krankmeldung gutgeschrieben werden.
+      if (credit.sickRequest.status !== "APPROVED") {
+        return reply.code(409).send({ error: "Die Krankmeldung muss zuerst genehmigt werden." });
+      }
+
+      // D-12: deliberately NO four-eyes check — bei 1-2 Managern würde das exakt die
+      // Storno-Sackgasse reproduzieren, die § 9 umgeht. Derselbe Manager, der die
+      // Krankmeldung genehmigt hat, darf auch die AU bestätigen.
+
+      const attestFrom = new Date(body.attestValidFrom);
+      const attestTo = new Date(body.attestValidTo);
+      if (attestFrom > attestTo) {
+        return reply.code(400).send({ error: "AU-Gültigkeit: Von-Datum liegt nach Bis-Datum" });
+      }
+
+      // D-07: gutgeschrieben wird ausschließlich die attestierte Schnittmenge mit der
+      // Überlappung. Ein Attest kann keine Tage zurückgeben, die nie Urlaub waren.
+      const credited = intersectRanges(
+        attestFrom,
+        attestTo,
+        credit.overlapStart,
+        credit.overlapEnd,
+      );
+      if (!credited) {
+        return reply.code(400).send({
+          error:
+            "Die AU deckt keinen Tag des betroffenen Urlaubszeitraums ab — keine Gutschrift nach § 9 BUrlG.",
+        });
+      }
+
+      const tenantId = req.user.tenantId;
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, credited.start, credited.end);
+      const holidays = new Set(holidayMap.keys());
+      const workDays = await resolveWorkDays(app.prisma, credit.employeeId, tenantId);
+      // D-08: Halber Urlaubstag + ganztägige Krankheit → Gutschrift 0,5. Zurückgegeben wird
+      // ausschließlich, was angerechnet war — der halfDay-Flag stammt daher vom URLAUBSantrag,
+      // nicht von der Krankmeldung (halbe Kranktage sind systemweit verboten, leave.ts:239).
+      const creditedDays = calculateWorkDays(
+        credited.start,
+        credited.end,
+        credit.vacationRequest.halfDay,
+        workDays,
+        holidays,
+      );
+      if (creditedDays <= 0) {
+        return reply
+          .code(400)
+          .send({ error: "Kein anrechenbarer Arbeitstag im attestierten Zeitraum." });
+      }
+
+      // reverseVacationDays IGNORES totalDays in its cross-year branch and recomputes it with
+      // halfDay=false. A half-day request whose credited range crosses a year boundary would
+      // therefore be over-booked. Refuse loudly instead of mis-booking silently.
+      if (
+        credit.vacationRequest.halfDay &&
+        credited.start.getFullYear() !== credited.end.getFullYear()
+      ) {
+        return reply.code(400).send({
+          error:
+            "Halbtags-Urlaub über einen Jahreswechsel kann nicht automatisch gutgeschrieben werden — bitte manuell korrigieren.",
+        });
+      }
+
+      await app.prisma.$transaction(async (tx) => {
+        // D-18: Gutschrift ins URSPRUNGSJAHR des Urlaubstags — § 9 stellt den ursprünglichen
+        // Anspruch wieder her, er schafft keinen neuen. reverseVacationDays ist der
+        // symmetrische Gegenpart zu deductVacationDays und kann cross-year splitten.
+        await reverseVacationDays(
+          tx,
+          credit.employeeId,
+          credit.vacationRequest.leaveTypeId,
+          credited.start,
+          credited.end,
+          creditedDays,
+          holidays,
+          tenantId,
+        );
+
+        await tx.section9Credit.update({
+          where: { id: credit.id },
+          data: {
+            status: "CONFIRMED",
+            attestSource: body.attestSource,
+            attestValidFrom: attestFrom,
+            attestValidTo: attestTo,
+            creditedStart: credited.start,
+            creditedEnd: credited.end,
+            creditedDays,
+            reason: body.reason,
+            reviewedBy: req.user.sub,
+            reviewedAt: new Date(),
+          },
+        });
+
+        // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
+        // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
+        // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
+        // diese Frist bei späteren Buchungen vor stillem Überschreiben.
+        const originYear = credited.start.getFullYear();
+        const carryRow = await tx.leaveEntitlement.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: credit.employeeId,
+              leaveTypeId: credit.vacationRequest.leaveTypeId,
+              year: originYear + 1,
+            },
+          },
+        });
+        const now = new Date();
+        if (carryRow?.carryOverDeadline && carryRow.carryOverDeadline < now) {
+          await tx.leaveEntitlement.update({
+            where: { id: carryRow.id },
+            data: {
+              carryOverReason: "ILLNESS",
+              // 15 Monate nach Ende des Ursprungsjahres = 31.03. des Jahres originYear + 2
+              carryOverDeadline: new Date(originYear + 2, 2, 31, 23, 59, 59),
+              carryOverNote:
+                `§ 9 BUrlG: ${creditedDays} Tag(e) wegen Krankheit im Urlaub gutgeschrieben ` +
+                `(${credited.start.toISOString().split("T")[0]}–${credited.end.toISOString().split("T")[0]}). ` +
+                `Verlängerte Übertragsfrist nach EuGH KHS C-214/10.`,
+            },
+          });
+        }
+
+        await app.audit({
+          userId: req.user.sub,
+          action: "SECTION9_CREDIT_CONFIRMED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+          oldValue: { status: credit.status },
+          newValue: {
+            status: "CONFIRMED",
+            sickRequestId: credit.sickRequestId,
+            vacationRequestId: credit.vacationRequestId,
+            creditedStart: credited.start.toISOString().split("T")[0],
+            creditedEnd: credited.end.toISOString().split("T")[0],
+            creditedDays,
+            attestSource: body.attestSource,
+            reason: body.reason,
+            note: "§ 9 BUrlG, nicht angerechnet",
+          },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+
+      // Outside the transaction: clear "AU nachreichen" nudges, notify the employee.
+      await app.dismissByRelated("Section9Credit", credit.id);
+
+      if (credit.employee.userId) {
+        const rangeLabel = `${credited.start.toISOString().split("T")[0]} – ${credited.end.toISOString().split("T")[0]}`;
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_CREDIT_CONFIRMED",
+          title: "Urlaubstage gutgeschrieben (§ 9 BUrlG)",
+          message: `+${creditedDays} Tage gutgeschrieben (§ 9 BUrlG, Krankheit ${rangeLabel}).`,
+          link: "/leave",
+          tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({
+        id: credit.id,
+        status: "CONFIRMED",
+        creditedStart: credited.start.toISOString().split("T")[0],
+        creditedEnd: credited.end.toISOString().split("T")[0],
+        creditedDays,
+      });
     },
   });
 }

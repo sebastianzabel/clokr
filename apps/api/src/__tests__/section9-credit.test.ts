@@ -489,3 +489,459 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
     expect(audit).not.toBeNull();
   });
 });
+
+describe("confirm — Phase 104-06 Task 1", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "s9cf");
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: data.employee.id } });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function createRequest(payload: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload,
+    });
+  }
+
+  async function approve(id: string) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+  }
+
+  async function getEntitlement(year: number) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${data.employee.id}?year=${year}`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const rows = JSON.parse(res.body) as Array<{ leaveType?: { name: string }; usedDays?: number }>;
+    return rows.find((r) => r.leaveType?.name === "Urlaub");
+  }
+
+  async function confirmCredit(id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/confirm`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: body,
+    });
+  }
+
+  async function creditFor(sickId: string) {
+    return app.prisma.section9Credit.findFirstOrThrow({ where: { sickRequestId: sickId } });
+  }
+
+  async function vacAndSick(vacRange: [string, string], sickRange: [string, string]) {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: vacRange[0],
+      endDate: vacRange[1],
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: sickRange[0],
+      endDate: sickRange[1],
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    return { vacId, sickId };
+  }
+
+  let test1CreditId: string;
+
+  it("Test 1: full overlap — creditedDays 5, usedDays decreases by 5, vacation stays APPROVED unchanged", async () => {
+    const { vacId, sickId } = await vacAndSick(
+      ["2026-02-02", "2026-02-06"],
+      ["2026-02-02", "2026-02-06"],
+    );
+    // usedDays AFTER the vacation approval (i.e. right before confirming the credit) — the
+    // confirm's effect is relative to this booked state, not to the state before the
+    // vacation request existed at all.
+    const before = await getEntitlement(2026);
+    const usedBefore = Number(before?.usedDays ?? 0);
+
+    const credit = await creditFor(sickId);
+    test1CreditId = credit.id;
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-02-02",
+      attestValidTo: "2026-02-06",
+      reason: "AU vollständig für die gesamte Woche eingereicht",
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { creditedDays: number; status: string };
+    expect(body.creditedDays).toBe(5);
+    expect(body.status).toBe("CONFIRMED");
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(usedBefore - 5);
+
+    const vacationRow = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: vacId } });
+    expect(vacationRow.status).toBe("APPROVED");
+    expect(Number(vacationRow.days)).toBe(5);
+  });
+
+  it("Test 2 (D-07 partial AU): AU valid only Wed–Thu of a Mon–Fri overlap credits exactly 2", async () => {
+    const { sickId } = await vacAndSick(["2026-02-09", "2026-02-13"], ["2026-02-09", "2026-02-13"]);
+    const before = await getEntitlement(2026);
+    const usedBefore = Number(before?.usedDays ?? 0);
+
+    const credit = await creditFor(sickId);
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "PAPIER",
+      attestValidFrom: "2026-02-11",
+      attestValidTo: "2026-02-12",
+      reason: "AU deckt nur Mittwoch/Donnerstag ab",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).creditedDays).toBe(2);
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(usedBefore - 2);
+  });
+
+  it("Test 3: an AU wider than the overlap is clamped to the overlap, not the wider AU range", async () => {
+    const { sickId } = await vacAndSick(["2026-02-18", "2026-02-19"], ["2026-02-18", "2026-02-19"]);
+    const before = await getEntitlement(2026);
+    const usedBefore = Number(before?.usedDays ?? 0);
+
+    const credit = await creditFor(sickId);
+
+    // AU valid the whole preceding week too — a certificate cannot return days that were
+    // never vacation.
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-02-09",
+      attestValidTo: "2026-02-19",
+      reason: "AU deckt auch die Vorwoche ab, aber nur Mi/Do waren Urlaub",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).creditedDays).toBe(2);
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(usedBefore - 2);
+  });
+
+  it("Test 4 (D-08): half-day vacation overlapped by full-day sickness credits exactly 0.5", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2026-02-25",
+      endDate: "2026-02-25",
+      halfDay: true,
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2026-02-25",
+      endDate: "2026-02-26",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    const credit = await creditFor(sickId);
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-02-25",
+      attestValidTo: "2026-02-26",
+      reason: "AU für den halben Urlaubstag und den Folgetag",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).creditedDays).toBe(0.5);
+  });
+
+  it("Test 5 (D-13 ordering): confirming while the sick request is still PENDING returns 409, no entitlement change", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2026-03-23",
+      endDate: "2026-03-23",
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2026-03-23",
+      endDate: "2026-03-23",
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    // deliberately NOT approved — no auto-detected credit exists yet (D-13). Manually create
+    // one, mirroring 104-05 Test 5's technique, to exercise the confirm-time D-13 guard directly.
+    const credit = await app.prisma.section9Credit.create({
+      data: {
+        employeeId: data.employee.id,
+        sickRequestId: sickId,
+        vacationRequestId: vacId,
+        overlapStart: new Date("2026-03-23"),
+        overlapEnd: new Date("2026-03-23"),
+      },
+    });
+
+    const before = await getEntitlement(2026);
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-03-23",
+      attestValidTo: "2026-03-23",
+      reason: "sollte abgelehnt werden, da Krankmeldung noch PENDING ist",
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toContain("genehmigt");
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(Number(before?.usedDays ?? 0));
+  });
+
+  it("Test 6 (D-12 no four-eyes): the same manager who approved the sick request can confirm — no 403", async () => {
+    const { sickId } = await vacAndSick(["2026-03-02", "2026-03-02"], ["2026-03-02", "2026-03-02"]);
+    const credit = await creditFor(sickId);
+
+    // data.adminToken approved BOTH the vacation and the sick request above, and confirms here too.
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-03-02",
+      attestValidTo: "2026-03-02",
+      reason: "gleicher Manager bestätigt die AU — kein Vier-Augen-Prinzip",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).not.toBe(403);
+  });
+
+  it("Test 7 (D-27): attestSource accepts only EAU/PAPIER; reason is mandatory (missing OR null)", async () => {
+    const { sickId } = await vacAndSick(["2026-03-09", "2026-03-09"], ["2026-03-09", "2026-03-09"]);
+    const credit = await creditFor(sickId);
+
+    const badSource = await confirmCredit(credit.id, {
+      attestSource: "SONSTIGES",
+      attestValidFrom: "2026-03-09",
+      attestValidTo: "2026-03-09",
+      reason: "gültiger Grund",
+    });
+    expect(badSource.statusCode).toBe(400);
+
+    const missingReason = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-03-09",
+      attestValidTo: "2026-03-09",
+    });
+    expect(missingReason.statusCode).toBe(400);
+
+    // The Zod gotcha (CLAUDE.md): the frontend sends an explicit `null` for an omitted field.
+    const nullReason = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-03-09",
+      attestValidTo: "2026-03-09",
+      reason: null,
+    });
+    expect(nullReason.statusCode).toBe(400);
+
+    // None of the invalid attempts confirmed the credit.
+    const stillPending = await app.prisma.section9Credit.findUniqueOrThrow({
+      where: { id: credit.id },
+    });
+    expect(stillPending.status).toBe("AU_PENDING");
+  });
+
+  it("Test 8 (R9 / D-19): confirming into an origin year whose Stichtag has passed sets carryOverReason=ILLNESS with the extended deadline", async () => {
+    // 2024: seed a real LeaveEntitlement row so recalculateCarryOver's `prev` lookup (it
+    // reads year-1 to compute year's carriedOverDays/deadline) has something to find — without
+    // it, recalculateCarryOver(..., 2025) silently no-ops and no row 2025 is ever created.
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2024,
+        totalDays: 30,
+        usedDays: 0,
+      },
+    });
+    const { sickId } = await vacAndSick(["2024-09-02", "2024-09-06"], ["2024-09-02", "2024-09-06"]);
+    const credit = await creditFor(sickId);
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2024-09-02",
+      attestValidTo: "2024-09-06",
+      reason: "AU für die gesamte Woche 2024, Übertragsfrist längst abgelaufen",
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).creditedDays).toBe(5);
+
+    // originYear (2024) + 1 = 2025 — the row recalculateCarryOver just wrote/recomputed for
+    // year 2025 has carryOverDeadline = 2025-03-31 (tenant default), which by "now" (this
+    // test suite runs no earlier than 2026) has already passed — the R9 branch must fire.
+    const carryRow = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2025,
+        },
+      },
+    });
+    expect(carryRow.carryOverReason).toBe("ILLNESS");
+    expect(carryRow.carryOverDeadline?.toISOString()).toBe(
+      new Date(2026, 2, 31, 23, 59, 59).toISOString(),
+    );
+    expect(carryRow.carryOverNote).toContain("§ 9 BUrlG");
+    expect(carryRow.carryOverNote).toContain("C-214/10");
+  });
+
+  it("Test 9 (R9 negative): confirming into an origin year whose Stichtag has NOT passed leaves carryOverReason null at the tenant default", async () => {
+    const { sickId } = await vacAndSick(["2026-03-16", "2026-03-16"], ["2026-03-16", "2026-03-16"]);
+    const credit = await creditFor(sickId);
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-03-16",
+      attestValidTo: "2026-03-16",
+      reason: "AU für 2026, Übertragsfrist für 2027 noch nicht abgelaufen",
+    });
+    expect(res.statusCode).toBe(200);
+
+    // originYear (2026) + 1 = 2027 — its Stichtag (2027-03-31) has NOT passed relative to
+    // any realistic test-execution date, so the ILLNESS override must not fire.
+    const carryRow = await app.prisma.leaveEntitlement.findUniqueOrThrow({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2027,
+        },
+      },
+    });
+    expect(carryRow.carryOverReason).toBeNull();
+    expect(carryRow.carryOverDeadline?.toISOString()).toBe(
+      new Date(2027, 2, 31, 23, 59, 59).toISOString(),
+    );
+  });
+
+  it("Test 10 (D-17): the SECTION9_CREDIT_CONFIRMED audit row carries both request ids, the credited range, creditedDays, attestSource and the reason", async () => {
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SECTION9_CREDIT_CONFIRMED",
+        entity: "Section9Credit",
+        entityId: test1CreditId,
+      },
+    });
+    expect(audit).not.toBeNull();
+    const newValue = audit!.newValue as {
+      sickRequestId: string;
+      vacationRequestId: string;
+      creditedStart: string;
+      creditedEnd: string;
+      creditedDays: number;
+      attestSource: string;
+      reason: string;
+      note: string;
+    };
+    const credit = await app.prisma.section9Credit.findUniqueOrThrow({
+      where: { id: test1CreditId },
+    });
+    expect(newValue.sickRequestId).toBe(credit.sickRequestId);
+    expect(newValue.vacationRequestId).toBe(credit.vacationRequestId);
+    expect(newValue.creditedStart).toBe("2026-02-02");
+    expect(newValue.creditedEnd).toBe("2026-02-06");
+    expect(newValue.creditedDays).toBe(5);
+    expect(newValue.attestSource).toBe("EAU");
+    expect(newValue.reason).toBe("AU vollständig für die gesamte Woche eingereicht");
+    expect(newValue.note).toBe("§ 9 BUrlG, nicht angerechnet");
+  });
+
+  it("Test 11 (idempotence): confirming an already-CONFIRMED credit returns 409 and does not credit twice", async () => {
+    const before = await getEntitlement(2026);
+
+    const res = await confirmCredit(test1CreditId, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-02-02",
+      attestValidTo: "2026-02-06",
+      reason: "erneuter Versuch, sollte 409 liefern",
+    });
+    expect(res.statusCode).toBe(409);
+
+    const after = await getEntitlement(2026);
+    expect(Number(after?.usedDays ?? 0)).toBe(Number(before?.usedDays ?? 0));
+  });
+
+  it("Test 12 (cross-year half-day refusal): a half-day vacation whose credited range crosses a year boundary is refused with 400", async () => {
+    const sickType = await app.prisma.leaveType.findFirstOrThrow({
+      where: { tenantId: data.tenant.id, name: "Krankmeldung" },
+    });
+
+    const vac = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date("2026-12-28"),
+        endDate: new Date("2027-01-02"),
+        days: 0.5,
+        halfDay: true,
+        status: "APPROVED",
+      },
+    });
+    const sick = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: sickType.id,
+        startDate: new Date("2026-12-30"),
+        endDate: new Date("2027-01-01"),
+        days: 3,
+        status: "APPROVED",
+      },
+    });
+    const credit = await app.prisma.section9Credit.create({
+      data: {
+        employeeId: data.employee.id,
+        sickRequestId: sick.id,
+        vacationRequestId: vac.id,
+        overlapStart: new Date("2026-12-30"),
+        overlapEnd: new Date("2027-01-01"),
+      },
+    });
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-12-30",
+      attestValidTo: "2027-01-01",
+      reason: "sollte wegen Jahreswechsel bei Halbtags-Urlaub abgelehnt werden",
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toContain("Jahreswechsel");
+
+    const stillPending = await app.prisma.section9Credit.findUniqueOrThrow({
+      where: { id: credit.id },
+    });
+    expect(stillPending.status).toBe("AU_PENDING");
+  });
+});
