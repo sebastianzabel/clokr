@@ -6,6 +6,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-ef6
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
   import {
     checkAppointmentCollisions,
@@ -14,6 +15,12 @@
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
+  import {
+    resolveStornoAction,
+    stornoDialogCopy,
+    stornoSuccessToast,
+    type StornoKind,
+  } from "$lib/leave/storno"; // Quick 260824-ef6
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -115,6 +122,38 @@
   let correctReason = $state("");
   let correctSaving = $state(false);
   let correctError = $state("");
+
+  // Quick 260824-ef6: Storno-Button (Zurückziehen / Stornierung beantragen) in der
+  // Anträge-Tabelle. `resolveStornoAction` gates which button (if any) a row gets;
+  // see apps/web/src/lib/leave/storno.ts for the full decision matrix and reasoning.
+  let stornoRequest: LeaveRequest | null = $state(null);
+  let stornoOpen = $state(false);
+  let stornoKind: StornoKind | null = $derived(
+    stornoRequest
+      ? resolveStornoAction(
+          stornoRequest.status,
+          stornoRequest.employeeId === $authStore.user?.employeeId,
+        )
+      : null,
+  );
+  let stornoCopy = $derived(stornoKind ? stornoDialogCopy(stornoKind) : null);
+
+  function openStorno(req: LeaveRequest) {
+    stornoRequest = req;
+    stornoOpen = true;
+  }
+
+  async function confirmStorno(reason: string) {
+    if (!stornoRequest || !stornoKind) return;
+    const kind = stornoKind;
+    // Both API shapes are safe here: 204 (PENDING -> CANCELLED) yields undefined from
+    // the client, 200 (APPROVED -> CANCELLATION_REQUESTED) yields a body. We read
+    // neither. Do NOT wrap this in a try/catch that swallows: ReasonDialog needs the
+    // throw to keep itself open and surface the server message inline.
+    await api.delete(`/leave/requests/${stornoRequest.id}`, { reason });
+    await Promise.all([loadData(), loadCalendar()]);
+    toasts.success(stornoSuccessToast(kind));
+  }
 
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
@@ -1291,6 +1330,20 @@
                       Korrigieren
                     </button>
                   {/if}
+                  {#if resolveStornoAction(req.status, req.employeeId === $authStore.user?.employeeId)}
+                    {@const kind = resolveStornoAction(
+                      req.status,
+                      req.employeeId === $authStore.user?.employeeId,
+                    )!}
+                    <button
+                      data-testid={`leave-team-row-${req.id}-storno`}
+                      data-storno-kind={kind}
+                      class="btn btn-sm btn-ghost text-red"
+                      onclick={() => openStorno(req)}
+                    >
+                      {stornoDialogCopy(kind).buttonLabel}
+                    </button>
+                  {/if}
                 </td>
               </tr>
             {/each}
@@ -1744,6 +1797,19 @@
       <CollisionWarnBody summary={createCollisionSummary} variant="range" />
     {/snippet}
   </ConfirmDialog>
+{/if}
+
+<!-- ── Quick 260824-ef6: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
+{#if stornoCopy}
+  <ReasonDialog
+    bind:open={stornoOpen}
+    title={stornoCopy.title}
+    description={stornoCopy.description}
+    confirmLabel={stornoCopy.confirmLabel}
+    danger
+    onConfirm={confirmStorno}
+    onCancel={() => (stornoRequest = null)}
+  />
 {/if}
 
 <style>
