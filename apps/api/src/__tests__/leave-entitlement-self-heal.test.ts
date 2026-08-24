@@ -373,11 +373,17 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
 
   afterAll(async () => {
     try {
+      // Section9Credit's two LeaveRequest FKs are onDelete: Restrict — must be removed
+      // before cleanupTestData's leaveRequest.deleteMany, or that delete (and everything
+      // it gates) silently fails and leaks fixture rows into the next run.
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
       await cleanupTestData(app, tenantId);
     } catch (err) {
       console.error("S9 self-heal test cleanup failed:", err);
     }
   });
+
+  const employeeIds: string[] = [];
 
   // Shared fixture builder — creates one employee with a vacation LeaveRequest of
   // `vacationDays` days, an initial LeaveEntitlement.usedDays of `storedUsedDays`, and
@@ -389,9 +395,10 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
     credits: Array<{ status: "AU_PENDING" | "CONFIRMED" | "REJECTED"; creditedDays: number }>,
   ) => {
     const prisma = app.prisma;
+    const unique = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     const u = await prisma.user.create({
       data: {
-        email: `${slug}@test.de`,
+        email: `${slug}-${unique}@test.de`,
         passwordHash: await bcrypt.hash("test1234", 10),
         role: "EMPLOYEE",
         isActive: true,
@@ -401,12 +408,13 @@ describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () =
       data: {
         tenantId,
         userId: u.id,
-        employeeNumber: slug.toUpperCase(),
+        employeeNumber: `${slug.toUpperCase()}-${unique}`,
         firstName: slug,
         lastName: "S9SelfHeal",
         hireDate: new Date(`${currentYear}-01-01T00:00:00Z`),
       },
     });
+    employeeIds.push(emp.id);
     await prisma.workSchedule.create({
       data: {
         employeeId: emp.id,
