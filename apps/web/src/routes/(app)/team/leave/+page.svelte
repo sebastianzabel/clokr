@@ -110,6 +110,9 @@
   let correctType: TypeCode = $state("VACATION");
   let correctHalfDay = $state(false);
   let correctNote = $state("");
+  // Quick 260824-cjd: mandatory Begründung — separate from the optional Antragsnotiz
+  // above, which stays as-is (correctNote is never sent as `reason`).
+  let correctReason = $state("");
   let correctSaving = $state(false);
   let correctError = $state("");
 
@@ -413,6 +416,7 @@
     // Halbe Kranktage gibt es nicht — bei Krank-Typen halbtags erzwungen aus.
     correctHalfDay = SICK_CODES.includes(req.typeCode) ? false : req.halfDay;
     correctNote = req.note ?? "";
+    correctReason = "";
     correctError = "";
     correctOpen = true;
   }
@@ -434,6 +438,12 @@
       correctError = "Enddatum muss nach Startdatum liegen";
       return;
     }
+    // Quick 260824-cjd: Begründung ist Pflicht (server-seitig Zod-level erzwungen) —
+    // client-seitig vorab geblockt, mit derselben Fehlermeldung wie die API.
+    if (!correctReason.trim()) {
+      correctError = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
+      return;
+    }
     correctSaving = true;
     correctError = "";
     try {
@@ -443,6 +453,7 @@
         halfDay: SICK_CODES.includes(correctType) ? false : correctHalfDay,
         type: correctType,
         note: correctNote || null,
+        reason: correctReason.trim(),
       });
       closeCorrect();
       await Promise.all([loadData(), loadCalendar()]);
@@ -1580,6 +1591,17 @@
       <div class="form-group">
         <label class="form-label" for="correct-note">Notiz (optional)</label>
         <textarea id="correct-note" class="form-input" rows="3" bind:value={correctNote}></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="correct-reason">Begründung (Pflichtfeld) *</label>
+        <textarea
+          id="correct-reason"
+          class="form-input"
+          rows="3"
+          data-testid="leave-correct-modal-reason"
+          bind:value={correctReason}
+          placeholder="Bitte begründe die Korrektur."
+        ></textarea>
       </div>
       {#if correctError}
         <div

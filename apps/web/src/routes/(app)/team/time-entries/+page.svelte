@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
+  import { authStore } from "$stores/auth";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
@@ -9,6 +10,7 @@
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-fkz
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -148,6 +150,9 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Quick 260824-cjd: Storno now requires a Begründung — confirm UI moved from an
+  // inline Ja/Nein span to a ReasonDialog; deleteConfirmId still tracks the target.
+  let deleteDialogOpen = $state(false);
   let absences: Absence[] = $state([]);
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   let bsAbsences: BsAbsence[] = $state([]);
@@ -215,6 +220,9 @@
     return Math.max(0, gross - formBreakTotal);
   });
   let formNote = $state("");
+  // Quick 260824-cjd: mandatory Begründung — required only when this is a
+  // Korrektur (editEntry set AND the manager is not the entry's own employee).
+  let formReason = $state("");
   let defaultBreakStart: string | null = $state(null);
 
   // ── Employee selector state ────────────────────────────────────────────────
@@ -825,6 +833,7 @@
       formBreaks = [];
     }
     formNote = entry.note ?? "";
+    formReason = "";
     saveError = "";
     modalOpen = true;
   }
@@ -834,6 +843,13 @@
     editEntry = null;
     deleteConfirmId = "";
   }
+
+  // Quick 260824-cjd: a manager editing ANOTHER employee's entry is a Korrektur
+  // and must supply a Begründung; editing their own entry is not (server parity —
+  // putIsCorrectionByManager in apps/api/src/routes/time-entries.ts).
+  let isCorrectionEdit = $derived(
+    !!editEntry && selectedEmployeeId !== ($authStore.user?.employeeId ?? null),
+  );
 
   // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
   // false directly via bind:open. Mirror closeModal's state reset so those
@@ -846,6 +862,12 @@
   });
 
   async function saveEntry() {
+    // Quick 260824-cjd: Begründung ist Pflicht bei einer echten Korrektur —
+    // client-seitig vorab geblockt, mit derselben Fehlermeldung wie die API.
+    if (isCorrectionEdit && !formReason.trim()) {
+      saveError = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
+      return;
+    }
     saving = true;
     saveError = "";
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
@@ -867,6 +889,7 @@
           breaks: breaksPayload,
           note: formNote || null,
           source: "CORRECTION",
+          ...(isCorrectionEdit ? { reason: formReason.trim() } : {}),
         });
       } else {
         await api.post("/time-entries", {
@@ -893,9 +916,19 @@
     }
   }
 
-  async function deleteEntry(id: string) {
+  function openDeleteDialog(id: string) {
+    deleteConfirmId = id;
+    deleteDialogOpen = true;
+  }
+
+  async function confirmDeleteDialog(reason: string) {
+    if (!deleteConfirmId) return;
+    await deleteEntry(deleteConfirmId, reason);
+  }
+
+  async function deleteEntry(id: string, reason: string) {
     try {
-      await api.delete(`/time-entries/${id}`);
+      await api.delete(`/time-entries/${id}`, { reason });
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
@@ -1542,16 +1575,6 @@
                   <td class="action-cell">
                     {#if slot.isLocked}
                       <!-- locked entries are read-only; no actions shown (D-08) -->
-                    {:else if deleteConfirmId === slot.id}
-                      <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                        <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                          >Ja</button
-                        >
-                        <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                          >Nein</button
-                        >
-                      </span>
                     {:else}
                       <span class="row-actions row-actions--visible">
                         <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
@@ -1559,7 +1582,7 @@
                         >
                         <button
                           class="btn-icon btn-icon-danger"
-                          onclick={() => (deleteConfirmId = slot.id)}
+                          onclick={() => openDeleteDialog(slot.id)}
                           title="Löschen">🗑</button
                         >
                       </span>
@@ -1745,6 +1768,18 @@
       maxlength="200"
     />
   </div>
+  {#if isCorrectionEdit}
+    <div class="form-group">
+      <label class="form-label" for="f-reason">Begründung (Pflichtfeld) *</label>
+      <textarea
+        id="f-reason"
+        class="form-input"
+        rows="3"
+        bind:value={formReason}
+        placeholder="Bitte begründe die Korrektur."
+      ></textarea>
+    </div>
+  {/if}
   {#if formNetMin !== null}
     <div class="net-display">
       <span class="net-label">Netto</span>
@@ -1770,6 +1805,16 @@
     </button>
   {/snippet}
 </Modal>
+
+<!-- ── Quick 260824-cjd: Storno-Begründung (Zeiteintrag löschen) ────────────── -->
+<ReasonDialog
+  bind:open={deleteDialogOpen}
+  title="Eintrag löschen?"
+  confirmLabel="Löschen"
+  danger
+  onConfirm={confirmDeleteDialog}
+  onCancel={() => (deleteConfirmId = "")}
+/>
 
 <style>
   /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
@@ -2108,11 +2153,6 @@
   tr:hover .row-actions {
     opacity: 1;
   }
-  .del-confirm {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
   .row-del td {
     background: var(--bad-soft);
   }
@@ -2166,10 +2206,6 @@
     color: var(--bad);
   }
 
-  /* Ensure delete confirmation button has white text on red background */
-  .del-confirm :global(.btn-danger) {
-    color: #fff !important;
-  }
   .btn-danger-sm {
     color: white;
     background: var(--bad);

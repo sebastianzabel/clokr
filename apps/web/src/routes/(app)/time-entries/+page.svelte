@@ -9,6 +9,7 @@
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
     format,
     startOfMonth,
@@ -161,6 +162,10 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Quick 260824-cjd: Storno now requires a Begründung — deleteConfirmId still
+  // tracks the target row id, but the confirm UI moved from an inline Ja/Nein
+  // span to a ReasonDialog.
+  let deleteDialogOpen = $state(false);
   // Phase 96 (RETRO-17) — confirm-step id for the "Zurückziehen" (withdraw)
   // action on an own pending Nachtrag row, mirrors deleteConfirmId's pattern.
   let withdrawConfirmId = $state("");
@@ -1117,9 +1122,19 @@
     breakActionPending = false;
   }
 
-  async function deleteEntry(id: string) {
+  function openDeleteDialog(id: string) {
+    deleteConfirmId = id;
+    deleteDialogOpen = true;
+  }
+
+  async function confirmDeleteDialog(reason: string) {
+    if (!deleteConfirmId) return;
+    await deleteEntry(deleteConfirmId, reason);
+  }
+
+  async function deleteEntry(id: string, reason: string) {
     try {
-      await api.delete(`/time-entries/${id}`);
+      await api.delete(`/time-entries/${id}`, { reason });
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
@@ -1865,20 +1880,6 @@
                           data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                         >
                       </span>
-                    {:else if deleteConfirmId === slot.id}
-                      <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                        <button
-                          class="btn btn-sm btn-danger"
-                          onclick={() => deleteEntry(slot.id)}
-                          data-testid={`time-entry-row-${slot.id}-confirm-delete`}>Ja</button
-                        >
-                        <button
-                          class="btn btn-sm btn-ghost"
-                          onclick={() => (deleteConfirmId = "")}
-                          data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
-                        >
-                      </span>
                     {:else if withdrawConfirmId === slot.id}
                       <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
                            delete-confirm pattern above with its own label/testids. -->
@@ -1918,7 +1919,7 @@
                         {:else}
                           <button
                             class="btn-icon btn-icon-danger"
-                            onclick={() => (deleteConfirmId = slot.id)}
+                            onclick={() => openDeleteDialog(slot.id)}
                             title="Löschen"
                             data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                           >
@@ -2316,6 +2317,16 @@
       {/if}
     {/snippet}
   </Modal>
+
+  <!-- ── Quick 260824-cjd: Storno-Begründung (Zeiteintrag löschen) ────────────── -->
+  <ReasonDialog
+    bind:open={deleteDialogOpen}
+    title="Eintrag löschen?"
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDeleteDialog}
+    onCancel={() => (deleteConfirmId = "")}
+  />
 </div>
 
 <!-- /data-testid="time-entries-page" -->

@@ -12,6 +12,7 @@
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
   import {
     checkAppointmentCollisions,
@@ -772,12 +773,31 @@
   }
 
   // ── Antrag zurückziehen / Stornierung beantragen ──────────────────────────
-  async function cancelRequest(id: string) {
+  // Quick 260824-cjd: Storno now requires a Begründung — routed through a
+  // ReasonDialog rather than fired directly from the row buttons.
+  let cancelDialogOpen = $state(false);
+  let cancelDialogRequest: LeaveRequest | null = $state(null);
+  let cancelDialogTitle = $derived(
+    cancelDialogRequest?.status === "APPROVED" ? "Stornierung beantragen?" : "Antrag zurückziehen?",
+  );
+
+  function openCancelDialog(req: LeaveRequest) {
+    cancelDialogRequest = req;
+    cancelDialogOpen = true;
+  }
+
+  async function cancelRequest(id: string, reason: string) {
+    await api.delete(`/leave/requests/${id}`, { reason });
+    await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+  }
+
+  async function confirmCancelDialog(reason: string) {
+    if (!cancelDialogRequest) return;
     try {
-      await api.delete(`/leave/requests/${id}`);
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+      await cancelRequest(cancelDialogRequest.id, reason);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler";
+      throw e;
     }
   }
 
@@ -1992,14 +2012,14 @@
                       <button
                         data-testid={`leave-mine-row-${req.id}-withdraw`}
                         class="btn btn-sm btn-ghost text-red"
-                        onclick={() => cancelRequest(req.id)}>Zurückziehen</button
+                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
                       >
                     {/if}
                     {#if isOwn && req.status === "APPROVED"}
                       <button
                         data-testid={`leave-mine-row-${req.id}-cancel`}
                         class="btn btn-sm btn-ghost text-red"
-                        onclick={() => cancelRequest(req.id)}>Stornieren</button
+                        onclick={() => openCancelDialog(req)}>Stornieren</button
                       >
                     {/if}
                   </td>
@@ -2091,6 +2111,15 @@
       {/snippet}
     </ConfirmDialog>
   {/if}
+
+  <!-- ── Quick 260824-cjd: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
+  <ReasonDialog
+    bind:open={cancelDialogOpen}
+    title={cancelDialogTitle}
+    confirmLabel="Bestätigen"
+    danger
+    onConfirm={confirmCancelDialog}
+  />
 </div>
 
 <!-- /leave-page -->
