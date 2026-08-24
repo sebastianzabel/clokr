@@ -227,6 +227,11 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 104-05: Section9Credit's two LeaveRequest FKs (sickRequest/vacationRequest) are
+  // onDelete: Restrict — must be deleted before leaveRequest.deleteMany, or the delete below
+  // fails silently (afterAll only console.error's cleanup failures) and leaks fixture rows
+  // into clokr_test, breaking the next run's unique-constraint assumptions (see 104-04-SUMMARY.md).
+  await prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });

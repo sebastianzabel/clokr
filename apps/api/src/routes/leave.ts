@@ -22,6 +22,7 @@ import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
 import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
+import { isSickTypeName } from "../utils/section9-detect"; // Phase 104-05
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -217,8 +218,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
       const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
 
-      // Überschneidung mit eigenem Antrag prüfen
-      const overlap = await app.prisma.leaveRequest.findFirst({
+      // Überschneidung mit eigenem Antrag prüfen.
+      //
+      // Phase 104 / R1: § 9 BUrlG — wird ein Mitarbeiter während genehmigten Urlaubs krank,
+      // dürfen die attestierten Tage nicht auf den Jahresurlaub angerechnet werden. Bis
+      // Phase 104 blockte dieser Guard genau diesen Fall mit 409, weshalb Manager ersatzweise
+      // stornierten und in der Vier-Augen-Sackgasse landeten.
+      //
+      // Die Ausnahme ist BEWUSST eng und gerichtet (Pitfall 4): erlaubt ist ausschließlich
+      // eine SICK/SICK_CHILD-Meldung über einem bereits GENEHMIGTEN Nicht-Krank-Antrag.
+      // Gleichartige Überschneidungen (Urlaub/Urlaub, Krank/Krank) und Überschneidungen mit
+      // noch PENDING-Anträgen bleiben unverändert gesperrt — ein Blanko-Entfernen des Guards
+      // würde die Doppelbuchung wieder öffnen, gegen die er existiert.
+      const isSickRequest = body.type === "SICK" || body.type === "SICK_CHILD";
+      const overlaps = await app.prisma.leaveRequest.findMany({
         where: {
           employeeId,
           deletedAt: null,
@@ -226,8 +239,16 @@ export async function leaveRoutes(app: FastifyInstance) {
           startDate: { lte: end },
           endDate: { gte: start },
         },
+        include: { leaveType: true },
       });
-      if (overlap) return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+      const blockingOverlap = overlaps.find((o) => {
+        if (!isSickRequest) return true; // non-sick: unchanged behaviour
+        if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
+        if (isSickTypeName(o.leaveType.name)) return true; // sick vs sick: still blocked
+        return false; // § 9 case — permitted
+      });
+      if (blockingOverlap)
+        return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
 
       // Load tenant config for leave rules
       const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });

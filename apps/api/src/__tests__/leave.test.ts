@@ -152,6 +152,135 @@ describe("Leave / Absence API", () => {
     });
   });
 
+  describe("§ 9 BUrlG overlap guard (R1, Phase 104-05)", () => {
+    // 2028 date range, unused anywhere else in this suite — deliberately outside the
+    // employee's seeded LeaveEntitlement year (2026), so no entitlement-limit check can
+    // interfere with these overlap-shape assertions.
+    async function createRequest(payload: Record<string, unknown>) {
+      return app.inject({
+        method: "POST",
+        url: "/api/v1/leave/requests",
+        headers: { authorization: `Bearer ${data.empToken}` },
+        payload,
+      });
+    }
+
+    async function approve(id: string) {
+      return app.inject({
+        method: "PATCH",
+        url: `/api/v1/leave/requests/${id}/review`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { status: "APPROVED" },
+      });
+    }
+
+    it("Test 1 (R1 target case): SICK inside an APPROVED VACATION → 201, not 409", async () => {
+      const vac = await createRequest({
+        type: "VACATION",
+        startDate: "2028-06-05",
+        endDate: "2028-06-09",
+      });
+      expect(vac.statusCode).toBe(201);
+      const vacId = JSON.parse(vac.body).id;
+      expect((await approve(vacId)).statusCode).toBe(200);
+
+      const sick = await createRequest({
+        type: "SICK",
+        startDate: "2028-06-07",
+        endDate: "2028-06-08",
+      });
+      expect(sick.statusCode).toBe(201);
+    });
+
+    it("Test 2 (Pitfall 4): VACATION overlapping an existing VACATION still → 409", async () => {
+      const first = await createRequest({
+        type: "VACATION",
+        startDate: "2028-06-19",
+        endDate: "2028-06-23",
+      });
+      expect(first.statusCode).toBe(201);
+
+      const second = await createRequest({
+        type: "VACATION",
+        startDate: "2028-06-22",
+        endDate: "2028-06-26",
+      });
+      expect(second.statusCode).toBe(409);
+      expect(JSON.parse(second.body).error).toBe("Überschneidung mit bestehendem Antrag");
+    });
+
+    it("Test 3 (Pitfall 4): SICK overlapping an existing SICK still → 409", async () => {
+      const first = await createRequest({
+        type: "SICK",
+        startDate: "2028-07-03",
+        endDate: "2028-07-07",
+      });
+      expect(first.statusCode).toBe(201);
+
+      const second = await createRequest({
+        type: "SICK",
+        startDate: "2028-07-05",
+        endDate: "2028-07-09",
+      });
+      expect(second.statusCode).toBe(409);
+      expect(JSON.parse(second.body).error).toBe("Überschneidung mit bestehendem Antrag");
+    });
+
+    it("Test 4: SICK overlapping a still-PENDING (not approved) vacation → 409", async () => {
+      const vac = await createRequest({
+        type: "VACATION",
+        startDate: "2028-07-17",
+        endDate: "2028-07-21",
+      });
+      expect(vac.statusCode).toBe(201);
+      // deliberately not approved — stays PENDING
+
+      const sick = await createRequest({
+        type: "SICK",
+        startDate: "2028-07-19",
+        endDate: "2028-07-20",
+      });
+      expect(sick.statusCode).toBe(409);
+      expect(JSON.parse(sick.body).error).toBe("Überschneidung mit bestehendem Antrag");
+    });
+
+    it("Test 5: SICK_CHILD behaves identically to SICK for the exception → 201", async () => {
+      const vac = await createRequest({
+        type: "VACATION",
+        startDate: "2028-08-07",
+        endDate: "2028-08-11",
+      });
+      expect(vac.statusCode).toBe(201);
+      const vacId = JSON.parse(vac.body).id;
+      expect((await approve(vacId)).statusCode).toBe(200);
+
+      const sickChild = await createRequest({
+        type: "SICK_CHILD",
+        startDate: "2028-08-09",
+        endDate: "2028-08-10",
+      });
+      expect(sickChild.statusCode).toBe(201);
+    });
+
+    it("Test 6: SICK overlapping an APPROVED non-VACATION (PARENTAL) request also → 201", async () => {
+      const parental = await createRequest({
+        type: "PARENTAL",
+        startDate: "2028-08-21",
+        endDate: "2028-08-25",
+      });
+      expect(parental.statusCode).toBe(201);
+      const parentalId = JSON.parse(parental.body).id;
+      expect((await approve(parentalId)).statusCode).toBe(200);
+
+      const sick = await createRequest({
+        type: "SICK",
+        startDate: "2028-08-23",
+        endDate: "2028-08-24",
+      });
+      expect(sick.statusCode).toBe(201);
+    });
+  });
+
   describe("PATCH /api/v1/leave/requests/:id/review", () => {
     it("admin can approve a vacation request", async () => {
       // Create a request as employee
