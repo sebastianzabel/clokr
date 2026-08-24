@@ -1025,6 +1025,51 @@ export async function leaveRoutes(app: FastifyInstance) {
               },
               request: { ip: req.ip, headers: req.headers as Record<string, string> },
             });
+
+            // ── D-14: beide Seiten benachrichtigen, über die bestehende Bell-Mechanik ──
+            const employeeUser = await app.prisma.employee.findUnique({
+              where: { id: existing.employeeId },
+              select: { userId: true, tenantId: true },
+            });
+            const rangeLabel = `${ov.overlapStart.toISOString().split("T")[0]} – ${ov.overlapEnd.toISOString().split("T")[0]}`;
+            if (employeeUser?.userId) {
+              await app.notify({
+                userId: employeeUser.userId,
+                type: "SECTION9_AU_PENDING_EMPLOYEE",
+                title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
+                message:
+                  `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+                  `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
+                link: "/leave",
+                tenantId: employeeUser.tenantId,
+                relatedType: "Section9Credit",
+                relatedId: credit.id,
+              });
+            }
+            // User has no tenantId column — tenant scoping goes through Employee.
+            const section9Managers = await app.prisma.employee.findMany({
+              where: {
+                tenantId: employeeUser?.tenantId,
+                user: {
+                  role: { in: ["ADMIN", "MANAGER"] },
+                  isActive: true,
+                  id: { not: req.user.sub }, // Phase-91 idiom: never notify the actor
+                },
+              },
+              select: { userId: true },
+            });
+            for (const mgr of section9Managers) {
+              await app.notify({
+                userId: mgr.userId,
+                type: "SECTION9_AU_PENDING_MANAGER",
+                title: "§ 9 BUrlG — AU-Nachweis ausstehend",
+                message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
+                link: `/team/leave?section9=${credit.id}`,
+                tenantId: employeeUser?.tenantId,
+                relatedType: "Section9Credit",
+                relatedId: credit.id,
+              });
+            }
           }
         }
       }
@@ -2210,6 +2255,142 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveEntitlementDays,
         };
       });
+    },
+  });
+
+  // ── GET /section9 — § 9-BUrlG-Vorgänge (eigene, oder alle des Tenants für Manager) ──
+  app.get("/section9", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const { status } = req.query as { status?: string };
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      const rows = await app.prisma.section9Credit.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId },
+          ...(isManager ? {} : { employeeId: req.user.employeeId ?? "__none__" }),
+          ...(status ? { status: status as never } : {}),
+        },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true } },
+          sickRequest: { select: { id: true, startDate: true, endDate: true, status: true } },
+          vacationRequest: {
+            select: {
+              id: true,
+              startDate: true,
+              endDate: true,
+              halfDay: true,
+              days: true,
+              leaveType: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: [{ status: "asc" }, { overlapStart: "desc" }],
+      });
+      return rows.map((r) => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+        status: r.status,
+        overlapStart: r.overlapStart.toISOString().split("T")[0],
+        overlapEnd: r.overlapEnd.toISOString().split("T")[0],
+        creditedStart: r.creditedStart?.toISOString().split("T")[0] ?? null,
+        creditedEnd: r.creditedEnd?.toISOString().split("T")[0] ?? null,
+        creditedDays: r.creditedDays !== null ? Number(r.creditedDays) : null,
+        attestSource: r.attestSource,
+        attestValidFrom: r.attestValidFrom?.toISOString().split("T")[0] ?? null,
+        attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
+        reason: r.reason,
+        sickRequest: {
+          id: r.sickRequest.id,
+          startDate: r.sickRequest.startDate.toISOString().split("T")[0],
+          endDate: r.sickRequest.endDate.toISOString().split("T")[0],
+          status: r.sickRequest.status,
+        },
+        vacationRequest: {
+          id: r.vacationRequest.id,
+          startDate: r.vacationRequest.startDate.toISOString().split("T")[0],
+          endDate: r.vacationRequest.endDate.toISOString().split("T")[0],
+          halfDay: r.vacationRequest.halfDay,
+          days: Number(r.vacationRequest.days),
+          typeName: r.vacationRequest.leaveType.name,
+        },
+      }));
+    },
+  });
+
+  // ── GET /section9/:id — einzelner § 9-Vorgang (Tenant-isoliert) ─────────────
+  app.get("/section9/:id", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+
+      const row = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, tenantId: true } },
+          sickRequest: { select: { id: true, startDate: true, endDate: true, status: true } },
+          vacationRequest: {
+            select: {
+              id: true,
+              startDate: true,
+              endDate: true,
+              halfDay: true,
+              days: true,
+              leaveType: { select: { name: true } },
+            },
+          },
+        },
+      });
+      if (!row) return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+
+      // Tenant isolation check (D-02 idiom): fetch-then-compare via employee.tenantId
+      if (row.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+      }
+
+      if (!isManager && row.employeeId !== req.user.employeeId) {
+        return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+      }
+
+      return {
+        id: row.id,
+        employeeId: row.employeeId,
+        employeeName: `${row.employee.firstName} ${row.employee.lastName}`,
+        status: row.status,
+        overlapStart: row.overlapStart.toISOString().split("T")[0],
+        overlapEnd: row.overlapEnd.toISOString().split("T")[0],
+        creditedStart: row.creditedStart?.toISOString().split("T")[0] ?? null,
+        creditedEnd: row.creditedEnd?.toISOString().split("T")[0] ?? null,
+        creditedDays: row.creditedDays !== null ? Number(row.creditedDays) : null,
+        attestSource: row.attestSource,
+        attestValidFrom: row.attestValidFrom?.toISOString().split("T")[0] ?? null,
+        attestValidTo: row.attestValidTo?.toISOString().split("T")[0] ?? null,
+        reason: row.reason,
+        sickRequest: {
+          id: row.sickRequest.id,
+          startDate: row.sickRequest.startDate.toISOString().split("T")[0],
+          endDate: row.sickRequest.endDate.toISOString().split("T")[0],
+          status: row.sickRequest.status,
+        },
+        vacationRequest: {
+          id: row.vacationRequest.id,
+          startDate: row.vacationRequest.startDate.toISOString().split("T")[0],
+          endDate: row.vacationRequest.endDate.toISOString().split("T")[0],
+          halfDay: row.vacationRequest.halfDay,
+          days: Number(row.vacationRequest.days),
+          typeName: row.vacationRequest.leaveType.name,
+        },
+      };
     },
   });
 }

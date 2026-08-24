@@ -7,6 +7,7 @@
  * without re-reading this file's fixtures.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 
@@ -302,5 +303,189 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     expect(newValue.vacationRequestId).toBe(vacId);
     expect(newValue.overlapStart).toBe("2030-01-09");
     expect(newValue.overlapEnd).toBe("2030-01-10");
+  });
+});
+
+describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let other: Awaited<ReturnType<typeof seedTestData>>;
+  let managerToken: string;
+  let creditId: string;
+  let vacId: string;
+  let sickId: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "s9cn");
+    other = await seedTestData(app, "s9cn2");
+
+    // A MANAGER user in `data`'s tenant — seedTestData only provisions ADMIN + EMPLOYEE.
+    const s = "s9cn-mgr-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const managerUser = await app.prisma.user.create({
+      data: {
+        email: `mgr-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "MANAGER",
+        isActive: true,
+      },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: managerUser.id,
+        employeeNumber: `MGR-${s}`,
+        firstName: "Manager",
+        lastName: "Test",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `mgr-${s}@test.de`, password: "test1234" },
+    });
+    managerToken = JSON.parse(loginRes.body).accessToken as string;
+
+    // One § 9 credit, created by the admin approving the SICK request — the admin is
+    // therefore the "actor" the manager-notification fan-out must exclude (Test 2).
+    const vac = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { type: "VACATION", startDate: "2031-02-03", endDate: "2031-02-07" },
+    });
+    expect(vac.statusCode).toBe(201);
+    vacId = JSON.parse(vac.body).id as string;
+    const vacApprove = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${vacId}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+    expect(vacApprove.statusCode).toBe(200);
+
+    const sick = await app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload: { type: "SICK", startDate: "2031-02-05", endDate: "2031-02-06" },
+    });
+    expect(sick.statusCode).toBe(201);
+    sickId = JSON.parse(sick.body).id as string;
+    const sickApprove = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${sickId}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+    expect(sickApprove.statusCode).toBe(200);
+
+    const credit = await app.prisma.section9Credit.findFirstOrThrow({
+      where: { sickRequestId: sickId },
+    });
+    creditId = credit.id;
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: data.employee.id } });
+      await cleanupTestData(app, data.tenant.id);
+      await cleanupTestData(app, other.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  it("Test 1: creates one in-app notification to the employee, type SECTION9_AU_PENDING_EMPLOYEE", async () => {
+    const notes = await app.prisma.notification.findMany({
+      where: {
+        userId: data.empUser.id,
+        type: "SECTION9_AU_PENDING_EMPLOYEE",
+        relatedType: "Section9Credit",
+        relatedId: creditId,
+      },
+    });
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).toContain("AU nachreichen");
+    expect(notes[0].message).toContain("Urlaubstage");
+  });
+
+  it("Test 2: notifies every MANAGER/ADMIN in the tenant except the acting approver", async () => {
+    const managerNotes = await app.prisma.notification.findMany({
+      where: {
+        type: "SECTION9_AU_PENDING_MANAGER",
+        relatedType: "Section9Credit",
+        relatedId: creditId,
+      },
+    });
+    // Only the newly created MANAGER — the admin approved the request and must be excluded.
+    expect(managerNotes.map((n) => n.userId)).toEqual([expect.any(String)]);
+    expect(managerNotes.some((n) => n.userId === data.adminUser.id)).toBe(false);
+  });
+
+  it("Test 3: GET /section9?status=AU_PENDING returns the tenant's open cases for a MANAGER", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/section9?status=AU_PENDING",
+      headers: { authorization: `Bearer ${managerToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<{
+      id: string;
+      employeeName: string;
+      overlapStart: string;
+      overlapEnd: string;
+      sickRequest: { id: string };
+      vacationRequest: { id: string };
+    }>;
+    const row = rows.find((r) => r.id === creditId);
+    expect(row).toBeDefined();
+    expect(row!.employeeName).toBe(`${data.employee.firstName} ${data.employee.lastName}`);
+    expect(row!.sickRequest.id).toBe(sickId);
+    expect(row!.vacationRequest.id).toBe(vacId);
+    expect(row!.overlapStart).toBe("2031-02-05");
+    expect(row!.overlapEnd).toBe("2031-02-06");
+  });
+
+  it("Test 4: an EMPLOYEE calling GET /section9 receives only their own cases", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/section9",
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<{ employeeId: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.employeeId === data.employee.id)).toBe(true);
+  });
+
+  it("Test 5: a MANAGER from another tenant receives an empty list — never another tenant's rows", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/section9",
+      headers: { authorization: `Bearer ${other.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<unknown>;
+    expect(rows).toEqual([]);
+  });
+
+  it("Test 6: requesting a single case by id from another tenant returns 404 + CROSS_TENANT_ACCESS_DENIED audit", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/section9/${creditId}`,
+      headers: { authorization: `Bearer ${other.adminToken}` },
+    });
+    expect(res.statusCode).toBe(404);
+
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "CROSS_TENANT_ACCESS_DENIED",
+        entity: "Section9Credit",
+        entityId: creditId,
+      },
+    });
+    expect(audit).not.toBeNull();
   });
 });

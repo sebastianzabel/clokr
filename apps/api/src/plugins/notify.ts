@@ -57,6 +57,13 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   // one is about missing entries, the other about vacation). The in-app
   // notification still fires unconditionally for all four; a future phase can
   // add a dedicated toggle (e.g. emailOnRetroEntry) if email is desired.
+  //
+  // Phase 104-05: SECTION9_AU_PENDING_EMPLOYEE / SECTION9_AU_PENDING_MANAGER
+  // (routes/leave.ts, § 9 BUrlG Krank-im-Urlaub) are the same judgement, made
+  // deliberately: no existing emailOn* toggle fits "§ 9 BUrlG credit outstanding",
+  // and — unlike Zeitnachtrag — this payload names a sickness period, so staying
+  // in-app-only also avoids sending health-adjacent data by email. The in-app
+  // notification fires unconditionally for both types.
 };
 
 declare module "fastify" {
