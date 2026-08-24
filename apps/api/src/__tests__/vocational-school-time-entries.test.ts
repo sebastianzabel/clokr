@@ -270,6 +270,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         startTime: `${WORK_DATE_STR}T04:00:00.000Z`,
         endTime: `${WORK_DATE_STR}T10:00:00.000Z`, // 6h
         breakMinutes: 0,
+        reason: "Korrektur nach Rückfrage",
       },
     });
     expect(res.statusCode).toBe(400);
@@ -347,6 +348,7 @@ describe("PUT /api/v1/time-entries/:id — JArbSchG pre-check (Phase 63 Plan 03)
         startTime: `${WORK_DATE_STR}T04:00:00.000Z`,
         endTime: `${WORK_DATE_STR}T10:00:00.000Z`,
         breakMinutes: 0,
+        reason: "Korrektur nach Rückfrage",
       },
     });
     expect(res.statusCode).toBe(200);

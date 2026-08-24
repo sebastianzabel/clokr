@@ -304,6 +304,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${requestId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       // 200 or 204 depending on implementation
@@ -340,6 +341,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${requestId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect(deleteRes.statusCode).toBe(200);
@@ -399,6 +401,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${requestId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect(deleteRes.statusCode).toBe(200);
@@ -541,6 +544,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${cancellationRequestId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect(res.statusCode).toBe(200);
@@ -1107,6 +1111,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leave.id}`,
         headers: { authorization: `Bearer ${managerAToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(cancelRes.statusCode).toBe(200);
       expect(JSON.parse(cancelRes.body).status).toBe("CANCELLATION_REQUESTED");
@@ -1144,6 +1149,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leave.id}`,
         headers: { authorization: `Bearer ${managerBToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(cancelRes.statusCode).toBe(200);
 
@@ -1180,6 +1186,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leave.id}`,
         headers: { authorization: `Bearer ${managerBToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(cancelRes.statusCode).toBe(200);
 
@@ -1360,6 +1367,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leaveId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(cancelRes.statusCode).toBe(200);
       expect(JSON.parse(cancelRes.body).status).toBe("CANCELLATION_REQUESTED");
@@ -1385,6 +1393,7 @@ describe("Leave / Absence API", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leaveId}`,
         headers: { authorization: `Bearer ${data.empToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(reCancel.statusCode).toBe(200);
       expect(JSON.parse(reCancel.body).status).toBe("CANCELLATION_REQUESTED");

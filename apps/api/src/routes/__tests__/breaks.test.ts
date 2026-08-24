@@ -91,6 +91,7 @@ describe("Break Slots", () => {
               endTime: `${date}T12:45:00.000Z`,
             },
           ],
+          reason: "Korrektur nach Rückfrage",
         },
       });
 
