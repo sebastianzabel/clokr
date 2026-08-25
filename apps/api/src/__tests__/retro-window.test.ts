@@ -716,6 +716,7 @@ describe("Retro-window boundary + exemption tests (76.29-00 RED)", () => {
             startTime: `${dateStr}T08:00:00.000Z`,
             endTime: `${dateStr}T16:30:00.000Z`, // changed
             breakMinutes: 30,
+            reason: "Korrektur nach Rückfrage",
           },
         });
         // RED: Plan 02 implements manager-on-behalf exemption with source=CORRECTION

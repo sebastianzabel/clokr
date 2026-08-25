@@ -60,6 +60,47 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/**
+ * Multipart upload with the SAME 401-refresh-and-retry behaviour as `request()`.
+ *
+ * Phase 104 code review (IN-06): the § 9 AU upload and the avatar upload each used a raw
+ * `fetch` with a hand-attached `Authorization` header, so an expired access token surfaced as
+ * "Upload fehlgeschlagen (401)" instead of a transparent retry. For the § 9 upload that was
+ * worse than cosmetic: it runs BEFORE the confirm call, so a 401 aborted the whole
+ * "AU liegt vor" flow.
+ *
+ * Deliberately NOT routed through `request()`: that helper sets
+ * `Content-Type: application/json` whenever a body is present, which would destroy the
+ * multipart boundary. FormData instances are re-sendable, so the retry can reuse the body.
+ */
+async function upload<T>(path: string, formData: FormData): Promise<T> {
+  const auth = get(authStore);
+  const headers: Record<string, string> = {};
+  if (auth.accessToken) headers["Authorization"] = `Bearer ${auth.accessToken}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, { method: "POST", body: formData, headers });
+
+  if (res.status === 204) return undefined as T;
+
+  const data = res.headers.get("content-type")?.includes("application/json")
+    ? await res.json()
+    : await res.text();
+
+  if (res.status === 401) {
+    const refreshed = await tryRefresh();
+    if (refreshed) return upload<T>(path, formData); // Retry with the fresh token
+    authStore.logout();
+    window.location.href = "/login";
+    throw new ApiError(401, (data as { error?: string })?.error ?? "Unauthorized", data);
+  }
+
+  if (!res.ok) {
+    throw new ApiError(res.status, (data as { error?: string })?.error ?? "Fehler", data);
+  }
+
+  return data as T;
+}
+
 async function tryRefresh(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
   refreshPromise = doRefresh();
@@ -92,6 +133,8 @@ async function doRefresh(): Promise<boolean> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  /** Multipart POST (file upload) with the same 401-refresh-and-retry as every other verb. */
+  upload: <T>(path: string, formData: FormData) => upload<T>(path, formData),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
   put: <T>(path: string, body: unknown) =>

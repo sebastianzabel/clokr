@@ -16,6 +16,14 @@ export const OVERTIME_FORECAST_FOOTNOTE =
 export const COMPANY_PROVISIONAL_LEGEND =
   "* Monat noch nicht abgeschlossen — Saldo ist eine Prognose und kann sich bis zum Monatsabschluss noch ändern.";
 
+// ── § 9 BUrlG legend (Phase 104, D-30) ───────────────────────────────────────
+// Single source of the wording, shared by the JSON Monatsbericht (routes/reports.ts), the
+// single-employee PDF and the company PDF — the same drift argument as the OVERTIME_* labels
+// above. The string is asserted character-for-character by reports-sick-days.test.ts; changing
+// it is a deliberate act, not a refactor.
+export const SECTION9_LEGEND =
+  "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).";
+
 interface MonthlyReportData {
   tenantName: string;
   employeeName: string;
@@ -32,6 +40,8 @@ interface MonthlyReportData {
   sickDaysWithAttest: number;
   vacationDays: number;
   otherAbsenceDays: number;
+  /** Phase 104 (D-30): credited § 9 BUrlG days inside this month. > 0 renders the legend. */
+  section9Days: number;
   entries: Array<{
     date: string;
     start: string;
@@ -61,6 +71,8 @@ export interface CompanyMonthlyReportData {
     sickDaysWithoutAttest: number;
     vacationDays: number;
     totalAbsenceDays: number;
+    /** Phase 104 (D-30): credited § 9 BUrlG days for this employee in this month. */
+    section9DaysThisMonth: number;
     entries: Array<{
       date: string;
       start: string;
@@ -126,6 +138,21 @@ function drawSmallFooter(doc: PDFKit.PDFDocument): void {
   doc.fillColor("#111827");
   // Restore y so footer drawing doesn't advance the content cursor
   doc.y = savedY;
+}
+
+/**
+ * Phase 104 (D-30): writes the § 9 legend at the current cursor when the report actually contains
+ * credited days, and advances `doc.y` past it. Writes nothing at 0 — a report without § 9 days must
+ * be unchanged from before this feature existed.
+ */
+export function drawSection9Legend(doc: PDFKit.PDFDocument, section9Days: number): void {
+  if (!section9Days || section9Days <= 0) return;
+  doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+  const width = doc.page.width - 100;
+  const height = doc.heightOfString(SECTION9_LEGEND, { width });
+  doc.text(SECTION9_LEGEND, 50, doc.y, { width });
+  doc.y += height;
+  doc.fillColor("#111827");
 }
 
 // ── generateMonthlyReportPdf (PDF-04: improved layout, same signature) ────────
@@ -197,6 +224,8 @@ export function generateMonthlyReportPdf(data: MonthlyReportData): Promise<Buffe
       doc.y += footnoteHeight;
       doc.fillColor("#111827");
     }
+    // § 9-Legende (D-30) — erklärt, warum Tage von Urlaub nach "Krank mit Attest" gewandert sind.
+    drawSection9Legend(doc, data.section9Days);
     doc.moveDown(1);
 
     // Time entries table
@@ -380,6 +409,21 @@ export function streamCompanyMonthlyReportPdf(
     doc.text(COMPANY_PROVISIONAL_LEGEND, tableMargin, rowY, {
       width: doc.page.width - 2 * tableMargin,
     });
+    rowY += ROW_H;
+    doc.fillColor("#111827");
+  }
+
+  // § 9-Legende (D-30) — nur wenn mindestens eine Zeile tatsächlich § 9-Tage trägt.
+  const anySection9 = data.rows.some((r) => (r.section9DaysThisMonth ?? 0) > 0);
+  if (anySection9) {
+    if (rowY + ROW_H > doc.page.height - FOOTER_MARGIN) {
+      rowY = nextPage();
+    }
+    doc.fontSize(8).font("Helvetica").fillColor("#6b7280");
+    doc.text(SECTION9_LEGEND, tableMargin, rowY, {
+      width: doc.page.width - 2 * tableMargin,
+    });
+    rowY += ROW_H;
     doc.fillColor("#111827");
   }
 

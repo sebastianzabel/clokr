@@ -86,7 +86,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
         authorization: `Bearer ${data.adminToken}`,
         "user-agent": "vitest-agent/1.0",
       },
-      payload: { startDate: "2027-06-07", endDate: "2027-06-11" },
+      payload: {
+        startDate: "2027-06-07",
+        endDate: "2027-06-11",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(200);
@@ -133,7 +137,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2027-08-02", endDate: "2027-08-06" },
+      payload: {
+        startDate: "2027-08-02",
+        endDate: "2027-08-06",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(404);
@@ -153,7 +161,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2027-09-06", endDate: "2027-09-10" },
+      payload: {
+        startDate: "2027-09-06",
+        endDate: "2027-09-10",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
     expect(res.statusCode).toBe(409);
     expect(JSON.parse(res.body).error).toContain("Nur genehmigte Anträge");
@@ -165,7 +177,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2027-10-15", endDate: "2027-10-04" },
+      payload: {
+        startDate: "2027-10-15",
+        endDate: "2027-10-04",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -199,7 +215,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2025-01-01", endDate: "2026-07-31" },
+      payload: {
+        startDate: "2025-01-01",
+        endDate: "2026-07-31",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(200);
@@ -214,7 +234,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2025-05-01", endDate: "2025-05-20" },
+      payload: {
+        startDate: "2025-05-01",
+        endDate: "2025-05-20",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(409);
@@ -229,7 +253,12 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2025-06-02", endDate: "2025-06-13", halfDay: true },
+      payload: {
+        startDate: "2025-06-02",
+        endDate: "2025-06-13",
+        halfDay: true,
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(409);
@@ -244,7 +273,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2025-11-03", endDate: "2025-11-14" },
+      payload: {
+        startDate: "2025-11-03",
+        endDate: "2025-11-14",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(200);
@@ -261,7 +294,12 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2028-02-07", endDate: "2028-02-11", note: "Korrektur-Notiz" },
+      payload: {
+        startDate: "2028-02-07",
+        endDate: "2028-02-11",
+        note: "Korrektur-Notiz",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(409);
@@ -289,7 +327,11 @@ describe("Leave correction (PATCH /requests/:id/correct)", () => {
       method: "PATCH",
       url: `/api/v1/leave/requests/${req.id}/correct`,
       headers: { authorization: `Bearer ${data.adminToken}` },
-      payload: { startDate: "2028-03-06", endDate: "2028-03-09" },
+      payload: {
+        startDate: "2028-03-06",
+        endDate: "2028-03-09",
+        reason: "Korrektur nach Rückfrage",
+      },
     });
 
     expect(res.statusCode).toBe(400);
@@ -445,7 +487,9 @@ describe("Leave correction — reverse-OLD/apply-NEW saldo (94-02)", () => {
         authorization: `Bearer ${data.adminToken}`,
         "user-agent": "vitest-agent/1.0",
       },
-      payload,
+      // Quick 260824-cjd: reason is now mandatory Zod-level; every call site in this
+      // describe block gets a default, individual tests may still override it.
+      payload: { reason: "Korrektur nach Rückfrage", ...payload },
     });
   }
 

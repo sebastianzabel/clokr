@@ -442,6 +442,10 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                 }
               }
 
+              // Phase 104 (D-21): a Karenztage-Überschreitung has NO analogue here — see
+              // overtime.ts's GET /close-month/status wiring for the (hint-only) equivalent.
+              // No `break`, nothing pushed to `missing` — the month closes regardless.
+
               // ── BREAK-05: unconfirmed-break defer (mirrors the gap-defer above) ──
               // Only runs when the tenant explicitly opted into the hard block. The
               // master gate (enforceBreakConfirmation) is inherited from

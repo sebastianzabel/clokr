@@ -27,6 +27,7 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "../utils/retro-config"; // Phase 76.29 — RETRO-01 window guard
+import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../utils/audit-reason"; // Quick 260824-cjd
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -89,6 +90,9 @@ const updateEntrySchema = z.object({
   type: z.string().optional(),
   breaks: z.array(breakSlotSchema).optional(),
   grantId: z.string().uuid().optional(), // Phase 76.29.1 Plan 02: pre-approved RetroEntryRequest id (PUT retro-correction)
+  // Quick 260824-cjd: optional at the Zod layer on purpose — required ONLY when the
+  // handler determines putIsCorrectionByManager, which cannot be decided pre-fetch.
+  reason: z.string().optional().nullable(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -1599,6 +1603,19 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
 
+      // Quick 260824-cjd — a manager correcting ANOTHER employee's entry must supply a
+      // Begründung. Conditional (cannot be a plain Zod field, see updateEntrySchema
+      // comment) — enforced here, right after putIsCorrectionByManager is known and
+      // after the isLocked gate above, before any other guard runs.
+      let putAuditReason: string | undefined;
+      if (putIsCorrectionByManager) {
+        const putReasonCheck = auditReasonSchema.safeParse(body.reason ?? "");
+        if (!putReasonCheck.success) {
+          return reply.code(400).send({ error: AUDIT_REASON_REQUIRED });
+        }
+        putAuditReason = putReasonCheck.data;
+      }
+
       // Phase 96 (RETRO-16/D-10) — employee editing their OWN still-pending coupled
       // Nachtrag entry must not be re-blocked by the retro-window guard (Pitfall 2).
       // Scoped tightly: retroRequestId set + isInvalid=true + the coupled request is
@@ -1853,7 +1870,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
-        newValue: updated,
+        // Quick 260824-cjd: auditReason only on the MANAGER_CORRECTION branch — the
+        // plain self-edit UPDATE path never carries one.
+        newValue: putIsCorrectionByManager ? { ...updated, auditReason: putAuditReason } : updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -2070,6 +2089,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Quick 260824-cjd: parsed AFTER 404/403/isLocked/retro-window guards so a bad-
+      // reason 400 never leaks the existence of a foreign/locked/out-of-window entry.
+      const { reason } = z.object({ reason: auditReasonSchema }).parse(req.body);
+
       // Soft delete instead of hard delete
       await app.prisma.timeEntry.update({
         where: { id },
@@ -2083,6 +2106,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
+        newValue: { auditReason: reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -2208,7 +2232,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // 0-ing the break changes net worked time — every other break-mutating path recomputes.
       await updateOvertimeAccount(app, entry.employeeId);
 
-      // In-app manager alert (Phase 91: in-app only; EMAIL_TYPE_MAP entry deferred to Phase 92).
+      // Manager alert: also emails via the toggle field emailOnMissingEntries — see the
+      // explicit BREAK_COMPLIANCE_ALERT policy entry in
+      // apps/api/src/utils/notification-email-policy.ts (quick-260825-k3g).
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,

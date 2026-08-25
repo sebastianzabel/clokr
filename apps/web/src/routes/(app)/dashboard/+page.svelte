@@ -30,6 +30,14 @@
   import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
   import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import {
+    summarizeKarenzOverrun,
+    karenzNudgeHref,
+    hasNoOpenItems,
+    KARENZ_NUDGE_EMPTY,
+    type KarenzOverrunResponse,
+    type KarenzNudgeSummary,
+  } from "$lib/leave/karenz-nudge";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -205,6 +213,20 @@
   // used to deep-link the nudge straight to the most overdue day. null when
   // there are no unconfirmed days.
   let earliestUnconfirmedBreakDate = $state<string | null>(null);
+
+  // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
+  // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
+  // Reiner Hinweis, keine Blockade — und ausdrücklich NICHT der § 9-BUrlG-Pfad
+  // (Urlaubsgutschrift gibt es ausschließlich gegen ärztliches Zeugnis, R5/D-23).
+  let karenzNudge = $state<KarenzNudgeSummary>(KARENZ_NUDGE_EMPTY);
+
+  // "Keine offenen Vorgänge" must only render when there is genuinely nothing to show —
+  // openItems.total (server-computed) has no knowledge of either client-side nudge rendered
+  // below it in the same list (this Karenz nudge, and the Phase-92 break-confirmation nudge).
+  // See hasNoOpenItems() in $lib/leave/karenz-nudge.ts for the rationale and its unit tests.
+  let showEmptyOpenItems = $derived(
+    hasNoOpenItems(openItems?.total ?? 0, karenzNudge.count, unconfirmedBreakDays),
+  );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   interface TodayEntry {
@@ -427,6 +449,16 @@
         enforceBreakConfirmation = false;
         unconfirmedBreakDays = 0;
         earliestUnconfirmedBreakDate = null;
+      }
+
+      // Karenztage-Hinweis (D-21) — self-scoped, fail-safe: any error renders nothing.
+      try {
+        const karenzRes = await api
+          .get<KarenzOverrunResponse>("/leave/karenz-overrun")
+          .catch(() => null);
+        karenzNudge = summarizeKarenzOverrun(karenzRes);
+      } catch {
+        karenzNudge = KARENZ_NUDGE_EMPTY;
       }
 
       // Today's entry breakdown (row 2 / col-7)
@@ -1418,7 +1450,7 @@
             {/snippet}
           </CardHeader>
           <div class="open-items-list">
-            {#if openItems.total === 0}
+            {#if showEmptyOpenItems}
               <p class="oi-empty">Keine offenen Vorgänge</p>
             {:else}
               {#if openItems.missingDays.length > 0}
@@ -1474,6 +1506,18 @@
                       ? "1 Tag: Pause bestätigen"
                       : `${unconfirmedBreakDays} Tage: Pause bestätigen`}</span
                   >
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if karenzNudge.count > 0}
+                <a
+                  href={karenzNudgeHref(karenzNudge)}
+                  class="oi-row"
+                  data-testid="dashboard-karenz-nudge"
+                  title="Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG)"
+                >
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span>{karenzNudge.label}</span>
                   <span class="oi-link">→</span>
                 </a>
               {/if}

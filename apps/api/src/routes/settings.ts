@@ -11,6 +11,7 @@ import {
   snapToMonthFirstUtc,
 } from "../utils/month-first-date";
 import { normalizeWorkDays, type PerDayHours } from "../utils/calculate-work-days";
+import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import {
   ARBZG_FLOOR_OVER_6H,
   ARBZG_FLOOR_OVER_9H,
@@ -69,7 +70,17 @@ const tenantConfigSchema = z
     vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
     halfDayAllowed: z.boolean().optional(),
     sickSelfReport: z.boolean().optional(),
-    sickNoteRequiredAfterDays: z.number().int().min(1).max(30).optional(),
+    // Phase 104 (D-22 / R4): § 5 Abs. 1 EFZG spricht wörtlich von "länger als drei
+    // Kalendertage" — mehr als 3 ist kein zulässiger Schwellwert. Bereich daher 0-3
+    // (vorher 1-30). 0 = jeder Krankheitstag ist nachweispflichtig.
+    // Bestandszeilen mit Altwerten > 3 werden NICHT migriert (Revisionssicherheit) —
+    // sie werden beim Lesen von normalizeKarenzDays() auf 3 geklammert.
+    // Phase 104 review (WR-08): .nullable() as well as .optional(). Clokr frontends send
+    // `field: x ? x : null`, and a cleared number input yields null via Svelte's bind:value —
+    // with .optional() alone that null was a bare "Validierungsfehler" for the WHOLE page
+    // (CLAUDE.md's Zod gotcha). null is normalized to the default 3 in the handler below —
+    // the column is NOT NULL, so it must never reach Prisma as null.
+    sickNoteRequiredAfterDays: z.number().int().min(0).max(3).nullable().optional(),
     // Part-time vacation
     autoCalcPartTimeVacation: z.boolean().optional(),
     fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
@@ -279,7 +290,18 @@ export const employeeScheduleSchema = z
     overtimeThreshold: z.number().min(0).max(500).default(60),
     allowOvertimePayout: z.boolean().default(false),
     overtimeMode: z.enum(["CARRY_FORWARD", "TRACK_ONLY"]).default("CARRY_FORWARD"),
-    maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+    // Phase 100 (T-100-01): upper-bounded at 999h (= 59_940 min), matching the max="999" the
+    // shipped admin form already advertises (apps/web .../admin/vacation/+page.svelte). Without
+    // this bound an ADMIN could set a figure large enough that the OVERTIME_COMP gate
+    // (leave.ts) can mathematically never reject — turning the control into a silent no-op
+    // while it still reads as "configured".
+    maxNegativeBalanceMinutes: z
+      .number()
+      .int()
+      .min(0)
+      .max(999 * 60)
+      .nullable()
+      .optional(),
     // Phase 49.1 — FLEXTIME Kernarbeitszeit (all optional; UI metadata only)
     coreStart: z
       .string()
@@ -483,7 +505,26 @@ export async function settingsRoutes(app: FastifyInstance) {
       });
 
       // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
-      const { federalState, tenantName, applyToExisting, ...configBody } = body;
+      const {
+        federalState,
+        tenantName,
+        applyToExisting,
+        sickNoteRequiredAfterDays,
+        ...configBody
+      } = body;
+
+      // Phase 104 review (WR-08): the Zod field now accepts an explicit null (Clokr frontends
+      // send `x ? x : null`, and clearing the number input yields null via Svelte's
+      // bind:value), but the column is `Int @default(3)` NOT NULL — passing the null straight
+      // through to Prisma would trade the bare 400 for a 500. null means "cleared" and resets
+      // to the documented default, which is what the form's hint ("Standard: 3") promises.
+      // An OMITTED key stays omitted, so an unrelated PUT never touches the value.
+      const configData = {
+        ...configBody,
+        ...(sickNoteRequiredAfterDays !== undefined
+          ? { sickNoteRequiredAfterDays: sickNoteRequiredAfterDays ?? 3 }
+          : {}),
+      };
 
       // Build tenant update data (name + federalState live on Tenant model)
       const tenantUpdate: Record<string, unknown> = {};
@@ -493,8 +534,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       const [config] = await Promise.all([
         app.prisma.tenantConfig.upsert({
           where: { tenantId },
-          update: configBody,
-          create: { tenantId, ...configBody },
+          update: configData,
+          create: { tenantId, ...configData },
         }),
         Object.keys(tenantUpdate).length > 0
           ? app.prisma.tenant.update({
@@ -713,6 +754,30 @@ export async function settingsRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Kein Zugriff" });
       }
 
+      // Phase 100 (CR-01 fix, code review) — tenant isolation guard, mirroring the PUT
+      // handler below (T-100-02) verbatim in structure. This route returns
+      // maxNegativeBalanceMinutes, a real entitlement input since this phase — an
+      // ADMIN/MANAGER of one tenant must not be able to read another tenant's
+      // employee's WorkSchedule. The 404 body is IDENTICAL to the genuine
+      // not-found branch below so this endpoint cannot be used as a
+      // tenant-membership oracle (T-100-09).
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true },
+      });
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        if (employee) {
+          await app.audit({
+            userId: req.user.sub,
+            action: "CROSS_TENANT_ACCESS_DENIED",
+            entity: "WorkSchedule",
+            entityId: employeeId,
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          });
+        }
+        return reply.code(404).send({ error: "Kein Arbeitszeitmodell gefunden" });
+      }
+
       const schedule = await app.prisma.workSchedule.findFirst({
         where: { employeeId },
         orderBy: { validFrom: "desc" },
@@ -733,6 +798,24 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 100 (T-100-02): tenant isolation guard, mirroring overtime.ts:85-97 verbatim in
+      // structure. This route now writes maxNegativeBalanceMinutes, which was inert
+      // configuration until this phase and is now an input to the OVERTIME_COMP entitlement
+      // gate — an ADMIN/MANAGER of one tenant must not be able to alter another tenant's
+      // employee's booking limit (or any other WorkSchedule field). The 404 body is IDENTICAL
+      // to the not-found branch above so this endpoint cannot be used as a tenant-membership
+      // oracle (T-100-09).
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "WorkSchedule",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       // Phase 60 (#220) — when caller omits validFrom we default to the 1st of the
       // current UTC month, so the saldo engine sees an unambiguous month boundary.
@@ -803,6 +886,22 @@ export async function settingsRoutes(app: FastifyInstance) {
               overtimeThreshold: body.overtimeThreshold,
               allowOvertimePayout: body.allowOvertimePayout,
               overtimeMode: body.overtimeMode,
+              // Phase 100 (Rule 1 fix; WR-01 code-review follow-up) — this field was
+              // validated by the Zod schema and returned in the response type, but never
+              // written here: a caller's maxNegativeBalanceMinutes was silently discarded
+              // on every PUT through the cancelOrphanShifts branch. Now that this value is
+              // a real entitlement input (Plan 01), a silently-dropped write is a
+              // correctness bug, not a stub. PARTIAL-UPDATE semantics: only include the key
+              // when the caller actually sent it (`!== undefined`), so an omitted field
+              // preserves whatever is already stored instead of wiping it to null — an
+              // explicit `null` still clears it. Mirrors PUT /settings/security's `update:
+              // body` pattern, which lets Prisma skip undefined keys. Without this, the one
+              // web caller of this route (admin/employees/[id]/+page.svelte, which has no
+              // form control for this field yet) would silently null out any per-employee
+              // override the next time it saved an unrelated schedule change.
+              ...(body.maxNegativeBalanceMinutes !== undefined
+                ? { maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes }
+                : {}),
               coreStart: body.coreStart ?? null,
               coreEnd: body.coreEnd ?? null,
               coreDays: body.coreDays ?? [],
@@ -900,6 +999,17 @@ export async function settingsRoutes(app: FastifyInstance) {
         overtimeThreshold: body.overtimeThreshold,
         allowOvertimePayout: body.allowOvertimePayout,
         overtimeMode: body.overtimeMode,
+        // Phase 100 (Rule 1 fix; WR-01 code-review follow-up) — same fix as the
+        // cancelOrphanShifts branch above: this field was validated by the Zod schema and
+        // returned in the response type, but never written here, so a caller's
+        // maxNegativeBalanceMinutes was silently discarded on every normal-path PUT. Now
+        // that this value is a real entitlement input (Plan 01), a silently-dropped write
+        // is a correctness bug, not a stub. PARTIAL-UPDATE semantics: only include the key
+        // when the caller actually sent it — see the cancelOrphanShifts branch above for
+        // the full rationale.
+        ...(body.maxNegativeBalanceMinutes !== undefined
+          ? { maxNegativeBalanceMinutes: body.maxNegativeBalanceMinutes }
+          : {}),
         coreStart: body.coreStart ?? null,
         coreEnd: body.coreEnd ?? null,
         coreDays: body.coreDays ?? [],
@@ -975,6 +1085,21 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 104 review (CR-01): tenant isolation guard, mirroring settings.ts work/:employeeId.
+      // Without it an ADMIN/MANAGER of tenant A could read another tenant's Urlaubsanspruch by
+      // UUID, because tenantId was derived from the FETCHED row instead of req.user. The 404 body
+      // is IDENTICAL to the not-found branch above so this cannot be used as a membership oracle.
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveEntitlement",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       // Urlaub-LeaveType finden
       const vacationType = await app.prisma.leaveType.findFirst({
         where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
@@ -1007,15 +1132,63 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 104 review (CR-01): tenant isolation guard. This handler is the THIRD writer of
+      // carryOverDeadline (see the D-19/R9 note below) — the row a § 9 BUrlG credit extends under
+      // EuGH KHS C-214/10. A cross-tenant write here silently destroyed a legally protected
+      // deadline in a foreign tenant and attributed the audit row to the foreign actor.
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveEntitlement",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       const vacationType = await app.prisma.leaveType.findFirst({
         where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
       });
       if (!vacationType) return reply.code(404).send({ error: "Urlaubstyp nicht konfiguriert" });
 
+      // Phase 104 (D-19 / R9): this endpoint is the THIRD writer of carryOverDeadline. An omitted
+      // or null field previously became `null` unconditionally, which silently discards the
+      // extended EuGH KHS C-214/10 deadline that a § 9 BUrlG credit sets on this exact row
+      // (104-06 marks the originYear+1 row, and this form always posts the current year).
+      // The admin form round-trips the loaded value, so the UI does not trigger it today — but a
+      // direct API call, a bulk-setup script or a future UI change does, and nothing in the audit
+      // trail would distinguish that from a routine update.
+      const existing = await app.prisma.leaveEntitlement.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId,
+            leaveTypeId: vacationType.id,
+            year: body.year,
+          },
+        },
+      });
+      const illnessProtected = preserveIllnessDeadline(existing);
+      const requestedDeadline = body.carryOverDeadline ? new Date(body.carryOverDeadline) : null;
+
+      // An EXPLICIT non-null deadline is still allowed on a protected row — an admin must be able
+      // to correct a wrong date, and a hard block would be the kind of dead end this phase exists
+      // to avoid. It is audited separately (below) so the override is reconstructible.
+      const deadlineOverride = illnessProtected && requestedDeadline !== null;
+      const nextDeadline = illnessProtected
+        ? (requestedDeadline ?? existing?.carryOverDeadline ?? null)
+        : requestedDeadline;
+
+      // Same silent-zeroing shape on the adjacent line: `?? 0` wipes a carry-over the admin never
+      // mentioned. Protected rows preserve it; every other row keeps today's `?? 0` behaviour
+      // byte-for-byte, because clearing that input plausibly does mean "zero" for a normal row.
+      const nextCarriedOver =
+        body.carriedOverDays ?? (illnessProtected ? Number(existing?.carriedOverDays ?? 0) : 0);
+
       const data = {
         totalDays: body.totalDays,
-        carriedOverDays: body.carriedOverDays ?? 0,
-        carryOverDeadline: body.carryOverDeadline ? new Date(body.carryOverDeadline) : null,
+        carriedOverDays: nextCarriedOver,
+        carryOverDeadline: nextDeadline,
       };
 
       const entitlement = await app.prisma.leaveEntitlement.upsert({
@@ -1035,8 +1208,30 @@ export async function settingsRoutes(app: FastifyInstance) {
         action: "UPDATE",
         entity: "LeaveEntitlement",
         entityId: entitlement.id,
+        oldValue: existing
+          ? {
+              totalDays: Number(existing.totalDays),
+              carriedOverDays: Number(existing.carriedOverDays),
+              carryOverDeadline: existing.carryOverDeadline,
+              carryOverReason: existing.carryOverReason,
+            }
+          : null,
         newValue: body,
       });
+
+      if (deadlineOverride) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "LEAVE_ENTITLEMENT_ILLNESS_DEADLINE_OVERRIDDEN",
+          entity: "LeaveEntitlement",
+          entityId: entitlement.id,
+          oldValue: {
+            carryOverDeadline: existing?.carryOverDeadline,
+            carryOverReason: existing?.carryOverReason,
+          },
+          newValue: { carryOverDeadline: nextDeadline },
+        });
+      }
 
       return {
         year: body.year,
@@ -1165,6 +1360,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         emailOnMissingEntries: cfg?.emailOnMissingEntries ?? false,
         emailOnClockOutReminder: cfg?.emailOnClockOutReminder ?? false,
         emailOnMonthClose: cfg?.emailOnMonthClose ?? true,
+        emailOnRetroEntry: cfg?.emailOnRetroEntry ?? true,
         sessionTimeoutMinutes: cfg?.sessionTimeoutMinutes ?? 60,
         refreshTokenDays: cfg?.refreshTokenDays ?? 7,
         rememberMeEnabled: cfg?.rememberMeEnabled ?? true,
@@ -1189,7 +1385,16 @@ export async function settingsRoutes(app: FastifyInstance) {
           passwordRequireLower: z.boolean().optional(),
           passwordRequireDigit: z.boolean().optional(),
           passwordRequireSpecial: z.boolean().optional(),
-          maxNegativeBalanceMinutes: z.number().int().min(0).nullable().optional(),
+          // Phase 100 (T-100-01): same upper bound as employeeScheduleSchema above — the
+          // tenant-wide default must not be settable beyond what the admin form advertises
+          // either, or a tenant default alone could turn the OVERTIME_COMP gate into a no-op.
+          maxNegativeBalanceMinutes: z
+            .number()
+            .int()
+            .min(0)
+            .max(999 * 60)
+            .nullable()
+            .optional(),
           emailNotificationsEnabled: z.boolean().optional(),
           emailOnLeaveRequest: z.boolean().optional(),
           emailOnLeaveDecision: z.boolean().optional(),
@@ -1197,6 +1402,7 @@ export async function settingsRoutes(app: FastifyInstance) {
           emailOnMissingEntries: z.boolean().optional(),
           emailOnClockOutReminder: z.boolean().optional(),
           emailOnMonthClose: z.boolean().optional(),
+          emailOnRetroEntry: z.boolean().optional(),
           sessionTimeoutMinutes: z.number().int().min(0).max(480).optional(),
           refreshTokenDays: z.number().int().min(1).max(90).optional(),
           rememberMeEnabled: z.boolean().optional(),
@@ -1241,6 +1447,7 @@ export async function settingsRoutes(app: FastifyInstance) {
         emailOnMissingEntries: config.emailOnMissingEntries,
         emailOnClockOutReminder: config.emailOnClockOutReminder,
         emailOnMonthClose: config.emailOnMonthClose,
+        emailOnRetroEntry: config.emailOnRetroEntry,
         sessionTimeoutMinutes: config.sessionTimeoutMinutes,
         refreshTokenDays: config.refreshTokenDays,
         rememberMeEnabled: config.rememberMeEnabled,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { EMAIL_TYPE_MAP } from "../plugins/notify";
+import { NOTIFICATION_EMAIL_POLICY } from "../utils/notification-email-policy";
 
 describe("Notifications API", () => {
   let app: FastifyInstance;
@@ -282,28 +282,26 @@ describe("Notifications API", () => {
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // Phase 92 — Plan 01 (Wave 0 RED scaffold): BREAK-06 email routing.
-  //
-  // Both new notification types must ride the existing emailOnMissingEntries
-  // toggle (no new TenantConfig field / migration — CONTEXT explicitly rejects a
-  // dedicated emailOnBreak* toggle). EMAIL_TYPE_MAP is exported from notify.ts
-  // (Phase 92 Rule-3 deviation) purely so this can be asserted directly instead of
-  // racing the fire-and-forget email dispatch inside app.notify().
+  // Phase 92 (BREAK-06) email routing, migrated onto the exhaustive registry by
+  // quick-260825-k3g. Both break-related notification types ride the existing
+  // emailOnMissingEntries toggle (no dedicated emailOnBreak* toggle). The old
+  // per-type-toggle map export from notify.ts is gone — asserted directly against
+  // NOTIFICATION_EMAIL_POLICY instead, same intent.
   // ────────────────────────────────────────────────────────────────────────────
 
-  describe("EMAIL_TYPE_MAP — BREAK-06 email routing (RED, Phase 92 Wave 0)", () => {
-    it("(RED) BREAK_UNCONFIRMED maps to emailOnMissingEntries", () => {
-      expect(
-        EMAIL_TYPE_MAP.BREAK_UNCONFIRMED,
-        "RED: BREAK_UNCONFIRMED is not yet in EMAIL_TYPE_MAP",
-      ).toBe("emailOnMissingEntries");
+  describe("NOTIFICATION_EMAIL_POLICY — BREAK-06 email routing", () => {
+    it("BREAK_UNCONFIRMED maps to emailOnMissingEntries", () => {
+      expect(NOTIFICATION_EMAIL_POLICY.BREAK_UNCONFIRMED).toEqual({
+        email: "toggle",
+        field: "emailOnMissingEntries",
+      });
     });
 
-    it("(RED) BREAK_COMPLIANCE_ALERT maps to emailOnMissingEntries", () => {
-      expect(
-        EMAIL_TYPE_MAP.BREAK_COMPLIANCE_ALERT,
-        "RED: BREAK_COMPLIANCE_ALERT is not yet in EMAIL_TYPE_MAP",
-      ).toBe("emailOnMissingEntries");
+    it("BREAK_COMPLIANCE_ALERT maps to emailOnMissingEntries", () => {
+      expect(NOTIFICATION_EMAIL_POLICY.BREAK_COMPLIANCE_ALERT).toEqual({
+        email: "toggle",
+        field: "emailOnMissingEntries",
+      });
     });
   });
 });

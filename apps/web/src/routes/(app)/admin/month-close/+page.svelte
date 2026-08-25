@@ -33,6 +33,10 @@
     employeeNumber: string;
     status: "ready" | "missing" | "closed";
     missingDates?: string[];
+    /** Phase 104 (D-21): § 5 EFZG — Krankheitstage ohne Attest über die Karenzzeit hinaus.
+     *  Reiner Hinweis, KEIN Gate: der Abschluss bleibt in jedem Fall möglich. Für
+     *  abgeschlossene Monate und flexible Verträge liefert der Server bewusst []. */
+    karenzOverrunDays?: string[];
   }
 
   interface MonthDetailResponse {
@@ -713,6 +717,17 @@
                                             Fehlend
                                           </span>
                                         {/if}
+                                        {#if emp.karenzOverrunDays && emp.karenzOverrunDays.length > 0}
+                                          <span
+                                            class="chip chip-warn karenz-chip"
+                                            data-testid="karenz-overrun-hint"
+                                            title="Krankheitstage ohne Attest über die Karenzzeit hinaus (§ 5 EFZG): {formatMissingShort(
+                                              emp.karenzOverrunDays,
+                                            )}"
+                                          >
+                                            Attest fehlt ({emp.karenzOverrunDays.length})
+                                          </span>
+                                        {/if}
                                       </td>
                                       <td class="missing-dates">
                                         {#if emp.missingDates && emp.missingDates.length > 0}
@@ -1128,6 +1143,11 @@
     font-size: 0.75rem;
     color: var(--text-muted);
     margin-left: 0.25rem;
+  }
+
+  /* Phase 104 (D-21) — second chip in the Status cell must not collide with the status chip. */
+  .karenz-chip {
+    margin-left: 0.375rem;
   }
 
   /* ─── Buttons ──────────────────────────────────────── */

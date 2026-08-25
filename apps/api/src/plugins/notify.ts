@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import type { TenantConfig } from "@clokr/db";
+import { resolveEmailPolicy } from "../utils/notification-email-policy";
 
 interface NotifyParams {
   userId: string;
@@ -13,51 +13,26 @@ interface NotifyParams {
 }
 
 /**
- * Map notification types to TenantConfig email toggle field names.
+ * Escape HTML-significant characters before interpolating a value into the notification
+ * email body.
  *
- * Exported (Phase 92, Rule 3 deviation — see 92-01-SUMMARY.md) so the RED scaffold
- * in notifications.test.ts can assert on the map directly instead of racing the
- * fire-and-forget email dispatch inside notify(). Export-only change, no behavior
- * change: the map's contents are unchanged by this edit.
+ * Phase 104 code review WR-07: the body is built with raw template interpolation
+ * (`<p>${message}</p>`), and Phase 104 introduced the first USER-SUPPLIED free text into a
+ * message — the manager's § 9 rejection reason (`z.string().trim().min(1)`, no character
+ * restriction). A reason containing `<a href="https://evil.example">…</a>` or
+ * `<img src=x onerror=…>` was delivered as live HTML inside a Clokr-branded message: a
+ * manager→employee phishing primitive. The in-app bell was never affected (Svelte escapes),
+ * so this is an email-only exposure — but every interpolated value is escaped here now,
+ * including title/firstName/link, so no future emit site has to remember.
  */
-export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
-  LEAVE_REQUEST: "emailOnLeaveRequest",
-  LEAVE_APPROVED: "emailOnLeaveDecision",
-  LEAVE_REJECTED: "emailOnLeaveDecision",
-  LEAVE_CANCELLED: "emailOnLeaveDecision",
-  // NOTE: keys MUST match the exact `type` string passed to app.notify() at the
-  // emit site — a mismatched key makes the per-type toggle silently ineffective
-  // (the gate below is skipped, so the email sends regardless of the toggle).
-  MISSING_ENTRIES: "emailOnMissingEntries", // emitted by attendance-checker.ts (plural)
-  CLOCK_OUT_REMINDER: "emailOnClockOutReminder",
-  MONTH_CLOSE_BLOCKED: "emailOnMonthClose", // emitted by auto-close-month.ts
-  GAP_WARNING_EMPLOYEE: "emailOnMissingEntries",
-  GAP_WARNING_MANAGER: "emailOnMissingEntries",
-  BREAK_UNCONFIRMED: "emailOnMissingEntries", // Phase 92 (BREAK-06)
-  BREAK_COMPLIANCE_ALERT: "emailOnMissingEntries", // Phase 92 (BREAK-06)
-  // NOTE: emailOnOvertimeWarning has no matching notification type — no code path
-  // emits an "overtime warning" via app.notify(), so there is nothing to gate here.
-  // Intentionally omitted rather than mapping a type that is never emitted.
-  //
-  // SALDO-DISP-08 (verified 2026-08-18, Phase 97-02): confirms the note above is not an
-  // oversight. All 34 notification types passed to app.notify() were enumerated and none
-  // compares a saldo between two points in time; all ten cron registrations in
-  // attendance-checker.ts were read and their notify call sites are unrelated;
-  // CARRYOVER_EXPIRING (carryover-warning.ts) is the BUrlG vacation-day warning, not an
-  // overtime signal. Nothing is suppressed here because nothing exists to suppress — see
-  // docs/saldo-anzeige.md for the full decision record and evidence. Forward-looking rule:
-  // if a day-over-day saldo notification is ever added, it must compare the confirmed
-  // figure only and must exclude the open-month (Prognose) delta.
-  //
-  // Phase 96 (RETRO-16): RETRO_ENTRY_REQUESTED / RETRO_ENTRY_UPDATED /
-  // RETRO_ENTRY_DECIDED / RETRO_ENTRY_WITHDRAWN (retro-entry-requests.ts,
-  // time-entries.ts) are intentionally left OUT of this map — no existing
-  // emailOn* toggle semantically fits "Zeitnachtrag" (the closest candidates,
-  // emailOnMissingEntries and emailOnLeaveDecision, are both domain-mismatched:
-  // one is about missing entries, the other about vacation). The in-app
-  // notification still fires unconditionally for all four; a future phase can
-  // add a dedicated toggle (e.g. emailOnRetroEntry) if email is desired.
-};
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -114,6 +89,25 @@ export const notifyPlugin = fp(async (app) => {
   }: Required<Pick<NotifyParams, "userId" | "type" | "title" | "message" | "tenantId">> & {
     link?: string;
   }) {
+    // Fail-closed gate (quick-260825-k3g) — checked FIRST, ahead of the tenant master
+    // switch, so a missing registration surfaces even for tenants that have email
+    // switched off (that is where a new type is most likely to be added and least
+    // likely to be noticed). See apps/api/src/utils/notification-email-policy.ts —
+    // the single source of truth this resolves against.
+    const policy = resolveEmailPolicy(type);
+    if (!policy) {
+      app.log.warn(
+        { tenantId, type },
+        "Notification email suppressed: type has no entry in the email policy registry " +
+          "(fail-closed) — add one in apps/api/src/utils/notification-email-policy.ts",
+      );
+      return;
+    }
+    if (policy.email === "never") {
+      app.log.debug({ tenantId, type }, "Notification email skipped: policy is 'never'");
+      return;
+    }
+
     // Check tenant master switch
     const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
     if (!config?.emailNotificationsEnabled) {
@@ -127,8 +121,7 @@ export const notifyPlugin = fp(async (app) => {
     }
 
     // Check per-type toggle
-    const toggleField = EMAIL_TYPE_MAP[type];
-    if (toggleField && !config[toggleField]) return;
+    if (policy.email === "toggle" && !config[policy.field]) return;
 
     // Check user opt-in
     const user = await app.prisma.user.findUnique({ where: { id: userId } });
@@ -168,10 +161,10 @@ export const notifyPlugin = fp(async (app) => {
       subject: `${title} – Clokr`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#2563eb">${title}</h2>
-          <p>Hallo ${firstName},</p>
-          <p>${message}</p>
-          ${fullLink ? `<a href="${fullLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
+          <h2 style="color:#2563eb">${escapeHtml(title)}</h2>
+          <p>Hallo ${escapeHtml(firstName)},</p>
+          <p>${escapeHtml(message)}</p>
+          ${fullLink ? `<a href="${escapeHtml(fullLink)}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
           <p style="color:#9ca3af;font-size:12px">Diese E-Mail wurde automatisch von Clokr gesendet.</p>
         </div>`,

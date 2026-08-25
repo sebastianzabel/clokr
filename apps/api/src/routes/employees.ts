@@ -981,6 +981,13 @@ export async function employeeRoutes(app: FastifyInstance) {
         where: { employeeId: id, documentPath: { not: null } },
         select: { documentPath: true },
       });
+      // Phase 104-07 (D-26): same pre-fetch-before-tx reasoning as absenceDocs above — a
+      // paper-AU document is an Art. 9 DSGVO health datum and must be erased on Art. 17
+      // deletion just as reliably as an avatar or absence document.
+      const section9Docs = await app.prisma.section9Credit.findMany({
+        where: { employeeId: id, documentPath: { not: null } },
+        select: { documentPath: true },
+      });
 
       await app.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await anonymizeEmployeeData({ tx, employeeId: id });
@@ -1010,6 +1017,15 @@ export async function employeeRoutes(app: FastifyInstance) {
             .delete(d.documentPath)
             .catch((err: unknown) =>
               app.log.warn({ err }, "Anonymize: absence document delete failed (non-fatal)"),
+            );
+        }
+      }
+      for (const d of section9Docs) {
+        if (d.documentPath) {
+          await app.storage
+            .delete(d.documentPath)
+            .catch((err: unknown) =>
+              app.log.warn({ err }, "Anonymize: § 9 AU document delete failed (non-fatal)"),
             );
         }
       }

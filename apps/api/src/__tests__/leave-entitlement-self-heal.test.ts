@@ -303,6 +303,272 @@ describe("LeaveEntitlement.usedDays self-heal in /reports/leave-overview (Phase 
   });
 });
 
+// ── Phase 104 Plan 04, Task 1 (Pitfall 2): Section9Credit-aware self-heal ──────────────────
+// selfHealUsedDays() must subtract only CONFIRMED Section9Credit.creditedDays from the raw
+// Σ approved LeaveRequest.days sum — AU_PENDING and REJECTED credits must have zero effect,
+// and entitlements with no credit at all must heal exactly as before (parity).
+describe("selfHealUsedDays is Section9Credit-aware (Phase 104, Pitfall 2)", () => {
+  let app: FastifyInstance;
+  let tenantId: string;
+  let adminToken: string;
+  let currentYear: number;
+  let vacationTypeId: string;
+  let sickTypeId: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    const prisma = app.prisma;
+    currentYear = new Date().getFullYear();
+    const s = "s9sh-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+    const tenant = await prisma.tenant.create({
+      data: { name: `S9 SelfHeal ${s}`, slug: `s9sh-${s}`, federalState: "NIEDERSACHSEN" },
+    });
+    tenantId = tenant.id;
+    await prisma.tenantConfig.create({
+      data: { tenantId: tenant.id, defaultVacationDays: 20, timezone: "Europe/Berlin" },
+    });
+
+    const adminPasswordHash = await bcrypt.hash("test1234", 10);
+    const adminUser = await prisma.user.create({
+      data: {
+        email: `admin-${s}@test.de`,
+        passwordHash: adminPasswordHash,
+        role: "ADMIN",
+        isActive: true,
+      },
+    });
+    await prisma.employee.create({
+      data: {
+        tenantId: tenant.id,
+        userId: adminUser.id,
+        employeeNumber: `ADM-${s}`,
+        firstName: "Admin",
+        lastName: "S9SelfHeal",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `admin-${s}@test.de`, password: "test1234" },
+    });
+    adminToken = JSON.parse(loginRes.body).accessToken as string;
+
+    const vacationType = await prisma.leaveType.create({
+      data: {
+        tenantId: tenant.id,
+        name: "Urlaub",
+        isPaid: true,
+        requiresApproval: true,
+        color: "#3B82F6",
+      },
+    });
+    vacationTypeId = vacationType.id;
+    const sickType = await prisma.leaveType.create({
+      data: { tenantId: tenant.id, name: "Krankmeldung", isPaid: true, requiresApproval: false },
+    });
+    sickTypeId = sickType.id;
+  });
+
+  afterAll(async () => {
+    try {
+      // Section9Credit's two LeaveRequest FKs are onDelete: Restrict — must be removed
+      // before cleanupTestData's leaveRequest.deleteMany, or that delete (and everything
+      // it gates) silently fails and leaks fixture rows into the next run.
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
+      await cleanupTestData(app, tenantId);
+    } catch (err) {
+      console.error("S9 self-heal test cleanup failed:", err);
+    }
+  });
+
+  const employeeIds: string[] = [];
+
+  // Shared fixture builder — creates one employee with a vacation LeaveRequest of
+  // `vacationDays` days, an initial LeaveEntitlement.usedDays of `storedUsedDays`, and
+  // zero or more Section9Credit rows against that vacation request.
+  const mkFixture = async (
+    slug: string,
+    vacationDays: number,
+    storedUsedDays: number,
+    credits: Array<{ status: "AU_PENDING" | "CONFIRMED" | "REJECTED"; creditedDays: number }>,
+  ) => {
+    const prisma = app.prisma;
+    const unique = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const u = await prisma.user.create({
+      data: {
+        email: `${slug}-${unique}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    const emp = await prisma.employee.create({
+      data: {
+        tenantId,
+        userId: u.id,
+        employeeNumber: `${slug.toUpperCase()}-${unique}`,
+        firstName: slug,
+        lastName: "S9SelfHeal",
+        hireDate: new Date(`${currentYear}-01-01T00:00:00Z`),
+      },
+    });
+    employeeIds.push(emp.id);
+    await prisma.workSchedule.create({
+      data: {
+        employeeId: emp.id,
+        type: "FIXED_SCHEDULE",
+        weeklyHours: 40,
+        mondayHours: 8,
+        tuesdayHours: 8,
+        wednesdayHours: 8,
+        thursdayHours: 8,
+        fridayHours: 8,
+        saturdayHours: 0,
+        sundayHours: 0,
+        validFrom: new Date(`${currentYear}-01-01T00:00:00Z`),
+      },
+    });
+    await prisma.overtimeAccount.create({ data: { employeeId: emp.id, balanceHours: 0 } });
+
+    const ent = await prisma.leaveEntitlement.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: vacationTypeId,
+        year: currentYear,
+        totalDays: 20,
+        usedDays: storedUsedDays,
+        carriedOverDays: 0,
+      },
+    });
+
+    const vacationRequest = await prisma.leaveRequest.create({
+      data: {
+        employeeId: emp.id,
+        leaveTypeId: vacationTypeId,
+        status: "APPROVED",
+        startDate: new Date(`${currentYear}-06-01T00:00:00Z`),
+        endDate: new Date(`${currentYear}-06-19T00:00:00Z`),
+        days: vacationDays,
+      },
+    });
+
+    for (const c of credits) {
+      const sickRequest = await prisma.leaveRequest.create({
+        data: {
+          employeeId: emp.id,
+          leaveTypeId: sickTypeId,
+          status: "APPROVED",
+          startDate: new Date(`${currentYear}-06-05T00:00:00Z`),
+          endDate: new Date(`${currentYear}-06-06T00:00:00Z`),
+          days: 2,
+        },
+      });
+      await prisma.section9Credit.create({
+        data: {
+          employeeId: emp.id,
+          sickRequestId: sickRequest.id,
+          vacationRequestId: vacationRequest.id,
+          overlapStart: new Date(`${currentYear}-06-05T00:00:00Z`),
+          overlapEnd: new Date(`${currentYear}-06-06T00:00:00Z`),
+          status: c.status,
+          creditedDays: c.creditedDays,
+        },
+      });
+    }
+
+    return { employeeId: emp.id, entitlementId: ent.id, vacationRequestId: vacationRequest.id };
+  };
+
+  it("Test 1: a CONFIRMED § 9 credit is NOT written back up by selfHealUsedDays", async () => {
+    // raw sum = 13, one CONFIRMED credit of 5 -> actual = 8. Stored already correct at 8.
+    const fx = await mkFixture("s9sh-t1", 13, 8, [{ status: "CONFIRMED", creditedDays: 5 }]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${fx.employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === fx.entitlementId);
+    expect(row, "entitlement row must be present").toBeDefined();
+    // MUST stay 8 — a naive Σ LeaveRequest.days heal would write it back up to 13.
+    expect(Number(row!.usedDays)).toBe(8);
+
+    const db = await app.prisma.leaveEntitlement.findUnique({ where: { id: fx.entitlementId } });
+    expect(Number(db!.usedDays)).toBe(8);
+  });
+
+  it("Test 2: an AU_PENDING credit has NO effect — self-heal still heals to the raw request sum", async () => {
+    // raw sum = 13, one AU_PENDING credit of 5 (deliberately effect-free, D-09). Stored
+    // stale at 10 -> must heal UP to the full 13, ignoring the pending credit.
+    const fx = await mkFixture("s9sh-t2", 13, 10, [{ status: "AU_PENDING", creditedDays: 5 }]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${fx.employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === fx.entitlementId);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(13);
+  });
+
+  it("Test 3: a REJECTED credit has no effect either", async () => {
+    const fx = await mkFixture("s9sh-t3", 13, 10, [{ status: "REJECTED", creditedDays: 5 }]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${fx.employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === fx.entitlementId);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(13);
+  });
+
+  it("Test 4 (parity): genuine drift with no credit at all is still healed to Σ LeaveRequest.days, byte-identical to today", async () => {
+    const fx = await mkFixture("s9sh-t4", 13, 20, []);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${fx.employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === fx.entitlementId);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(13);
+  });
+
+  it("Test 5: two CONFIRMED credits against the same vacation request sum correctly", async () => {
+    // raw sum = 13, two CONFIRMED credits of 3 + 2 = 5 -> actual = 8. No double subtraction,
+    // no missed one.
+    const fx = await mkFixture("s9sh-t5", 13, 25, [
+      { status: "CONFIRMED", creditedDays: 3 },
+      { status: "CONFIRMED", creditedDays: 2 },
+    ]);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${fx.employeeId}?year=${currentYear}`,
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as Array<{ id: string; usedDays: number }>;
+    const row = body.find((r) => r.id === fx.entitlementId);
+    expect(row, "entitlement row must be present").toBeDefined();
+    expect(Number(row!.usedDays)).toBe(8);
+  });
+});
+
 // ── COMP-V1814-03: EuGH C-684/16 carry-over expiry gate ─────────────────────
 // Carry-over days do NOT expire on the deadline unless a CARRYOVER_WARNED
 // AuditLog entry was recorded for that entitlement. Without a documented

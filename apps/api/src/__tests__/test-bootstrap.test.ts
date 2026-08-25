@@ -78,7 +78,7 @@ describe("Phase 73-01: test-only tenant bootstrap", () => {
 
   afterAll(async () => {
     // Drain any tenants that escaped scenario teardown — belt-and-braces so a
-    // mid-test failure doesn't leak test-…-tagged rows into the test schema.
+    // mid-test failure doesn't leak test-…-tagged rows into the test database.
     for (const tenantId of createdTenantIds) {
       try {
         await appOn.inject({

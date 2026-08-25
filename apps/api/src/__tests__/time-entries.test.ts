@@ -152,6 +152,7 @@ describe("Time Entries API", () => {
         payload: {
           startTime: "2026-02-05T08:00:00.000Z",
           endTime: "2026-02-05T16:00:00.000Z",
+          reason: "Korrektur nach Rückfrage",
         },
       });
 
@@ -227,7 +228,7 @@ describe("Time Entries API", () => {
     // ── Plan 76.19-06 Task 2: DB partial-unique index → P2002 → 409 ────────────
     // The partial-unique index (WHERE deletedAt IS NULL) catches a concurrent
     // same-day create that raced past the app-level one-per-day check. The DB
-    // constraint cannot be reproduced against the `db push` test schema (Prisma
+    // constraint cannot be reproduced against the `db push` test database (Prisma
     // cannot express partial unique indexes), so we simulate the driver-level
     // P2002 the index raises and assert the handler maps it to 409, not 500.
     it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {
@@ -422,7 +423,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${created.entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { breakMinutes: 45 },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
       });
 
       expect(updateRes.statusCode).toBe(200);
@@ -451,6 +452,7 @@ describe("Time Entries API", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${created.entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect([200, 204]).toContain(deleteRes.statusCode);
@@ -559,6 +561,7 @@ describe("Time Entries API", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
           breaks: [{ startTime: "2025-05-25T11:00:00Z", endTime: "2025-05-25T11:30:00Z" }],
+          reason: "Korrektur nach Rückfrage",
         },
       });
 
@@ -574,7 +577,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { breakMinutes: 45 },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
       });
 
       expect(res.statusCode).toBe(200);
@@ -589,7 +592,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { note: "nur eine Notiz" },
+        payload: { note: "nur eine Notiz", reason: "Korrektur nach Rückfrage" },
       });
 
       expect(res.statusCode).toBe(200);
@@ -648,6 +651,7 @@ describe("Time Entries API", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${entryId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect([200, 204]).toContain(deleteRes.statusCode);
 
@@ -850,7 +854,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { date: "2026-02-16" },
+        payload: { date: "2026-02-16", reason: "Korrektur nach Rückfrage" },
       });
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.body).error).toContain("abgeschlossen");
@@ -891,7 +895,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { breakMinutes: 45 },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
       });
       expect(res.statusCode).toBe(200);
     });

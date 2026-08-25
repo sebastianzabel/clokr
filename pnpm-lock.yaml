@@ -136,6 +136,9 @@ importers:
       fastify:
         specifier: ^5.8.5
         version: 5.8.5
+      fastify-plugin:
+        specifier: ^5.1.0
+        version: 5.1.0
       iconv-lite:
         specifier: ^0.7.3
         version: 0.7.3
@@ -182,9 +185,6 @@ importers:
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
-      fastify-plugin:
-        specifier: ^5.1.0
-        version: 5.1.0
       tsx:
         specifier: ^4.23.1
         version: 4.23.1

@@ -19,7 +19,7 @@
  * window other suites are flagged for
  * (.planning/phases/98-saldo-ketten-integritaetspruefung/deferred-items.md).
  */
-import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
+import { vi, describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { monthRangeUtc, monthDayBounds } from "../utils/timezone";
@@ -153,5 +153,155 @@ describe("GET /api/v1/leave/overtime-balance (Phase 97-06)", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ── Phase 100 (OTC-03) — maxNegativeBalanceMinutes / isNegativeLimitExceeded ──
+  // Each case mutates the shared employee's SaldoSnapshot.carryOver (to control
+  // confirmedMinutes precisely) and/or the shared tenant's TenantConfig, then resets both in
+  // a finally block — mirrors the set/reset idiom already used by
+  // leave-overtime-comp-confirmed-check.test.ts.
+  describe("maxNegativeBalanceMinutes / isNegativeLimitExceeded (Phase 100)", () => {
+    async function setConfirmedMinutes(minutes: number) {
+      await app.prisma.saldoSnapshot.updateMany({
+        where: { employeeId: data.employee.id },
+        data: { carryOver: minutes },
+      });
+    }
+    async function setTolerance(minutes: number | null) {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: data.tenant.id },
+        data: { maxNegativeBalanceMinutes: minutes },
+      });
+    }
+
+    afterEach(async () => {
+      // Reset to the outer beforeAll's fixture values so later tests in this file are unaffected.
+      await setConfirmedMinutes(SEEDED_CARRY_OVER);
+      await setTolerance(null);
+    });
+
+    it("isNegativeLimitExceeded is true when the confirmed balance is more negative than the configured tolerance", async () => {
+      await setTolerance(600); // +10:00 tolerance
+      await setConfirmedMinutes(-900); // -15:00 confirmed, past the tolerance
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.maxNegativeBalanceMinutes).toBe(600);
+        expect(body.isNegativeLimitExceeded).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("isNegativeLimitExceeded is false when the confirmed balance stays within the configured tolerance", async () => {
+      await setTolerance(600); // +10:00 tolerance
+      await setConfirmedMinutes(-300); // -5:00 confirmed, still within the tolerance
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.maxNegativeBalanceMinutes).toBe(600);
+        expect(body.isNegativeLimitExceeded).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("isNegativeLimitExceeded is always false with no tolerance configured, even for a deeply negative confirmed balance", async () => {
+      await setTolerance(null);
+      await setConfirmedMinutes(-900); // -15:00 confirmed — still no warning without a limit (D-00b)
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.maxNegativeBalanceMinutes).toBeNull();
+        expect(body.isNegativeLimitExceeded).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("both new fields are present (never absent/undefined) on the fail-safe branch", async () => {
+      await setTolerance(600);
+      // Forces computeOvertimeBalanceBreakdown's OWN internal saldoSnapshot.findFirst call to
+      // reject exactly once — the route's outer catch then takes the fail-safe branch. The
+      // fallback's own getConfirmedCarryOver call is a SEPARATE, un-mocked saldoSnapshot.findFirst
+      // invocation, so it succeeds normally (same idiom as
+      // leave-overtime-comp-confirmed-check.test.ts's compute-failure cases).
+      vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValueOnce(
+        new Error("simulated DB failure"),
+      );
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.maxNegativeBalanceMinutes).toBe(600);
+        expect(typeof body.isNegativeLimitExceeded).toBe("boolean");
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    });
+
+    it("IN-01 (code review): isNegativeLimitExceeded is false — never a stale tautology — on the DEEPEST fail-safe branch, when the confirmed-carry-over fallback ALSO fails", async () => {
+      await setTolerance(600); // +10:00 tolerance — configuredMinutes is non-null here. The OLD
+      // expression (`configuredMinutes != null && 0 < -configuredMinutes`) and the fixed explicit
+      // `false` evaluate identically in every case (the old one was provably always false, per
+      // Zod's `.min(0)` on configuredMinutes) — this test pins the CORRECT value on the branch the
+      // old code never expressed the real intent for, it is not a behavior change.
+      //
+      // Reject EVERY saldoSnapshot.findFirst call (never "Once", unlike the test above) so BOTH
+      // computeOvertimeBalanceBreakdown's internal call AND the fallback's OWN getConfirmedCarryOver
+      // call fail — forcing the route past its outer catch (breakdown stays null) AND into the
+      // inner `catch (fallbackErr)` block (leave.ts, the deepest fail-safe branch).
+      vi.spyOn(app.prisma.saldoSnapshot, "findFirst").mockRejectedValue(
+        new Error("simulated DB failure — both compute and fallback"),
+      );
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const res = await app.inject({
+          method: "GET",
+          url: "/api/v1/leave/overtime-balance",
+          headers: { authorization: `Bearer ${data.empToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const body = JSON.parse(res.body);
+        // hasClosedMonth: false + confirmedMinutes: 0 confirm we actually reached the deepest
+        // branch (leave.ts's `catch (fallbackErr)`), not the shallower fail-safe return above it.
+        expect(body.confirmedMinutes).toBe(0);
+        expect(body.hasClosedMonth).toBe(false);
+        expect(body.maxNegativeBalanceMinutes).toBe(600);
+        expect(body.isNegativeLimitExceeded).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
+    });
   });
 });

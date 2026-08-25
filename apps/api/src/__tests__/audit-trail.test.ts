@@ -90,7 +90,7 @@ describe("Audit Trail Completeness", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${createdTimeEntryId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { note: "Updated note for audit trail" },
+        payload: { note: "Updated note for audit trail", reason: "Korrektur nach Rückfrage" },
       });
 
       expect([200]).toContain(res.statusCode);
@@ -124,6 +124,7 @@ describe("Audit Trail Completeness", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${createdTimeEntryId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect([200, 204]).toContain(res.statusCode);

@@ -6,28 +6,22 @@
  * `findFirst({ superseded: false })` unambiguous (a later plan in this phase) — if it
  * does not hold at the database level, that helper is unsound.
  *
- * Infra finding (discovered while writing this test; documented, NOT fixed here — Rule 4
- * territory, out of this plan's scope, recorded in
+ * Infra finding (discovered while writing this test, originally recorded in
  * .planning/phases/99-openingbalance-modell/deferred-items.md): `apps/api/src/plugins/
- * prisma.ts` constructs its `pg.Pool` with `connectionString: process.env.DATABASE_URL`.
- * node-postgres does NOT interpret the Prisma-specific `?schema=` query parameter —
- * that convention is only understood by Prisma's own query compiler for TYPED queries
- * when NOT using driver adapters. With `@prisma/adapter-pg` (driver adapters, as used
- * here), BOTH typed model queries AND raw SQL land wherever the pg connection's default
- * `search_path` resolves — verified empirically to be `public`, i.e. the SAME schema as
- * local dev, regardless of `TEST_DATABASE_URL`'s `?schema=test`. So despite `pretest`
- * provisioning a separate "test" schema via `db push`, the running test suite never
- * actually reads or writes it — integration tests currently execute against the local
- * dev database. This is pre-existing and suite-wide, not caused by this plan; fixing it
- * (passing `options: "-c search_path=..."` to the pg.Pool, or equivalent) is out of
- * scope here given the blast radius across the whole existing suite.
+ * prisma.ts` built its `pg.Pool` with no `schema` option, so the Prisma-specific
+ * `?schema=` parameter `.env.test` used to carry was silently ignored by `pg` — every
+ * integration test was actually reading and writing the local dev database, not an
+ * isolated one. RESOLVED by Phase 101 (D-01): the suite now connects to a genuinely
+ * separate `clokr_test` database instead of relying on a schema parameter — see
+ * docs/testing.md for the full arrangement.
  *
- * Consequence for THIS test: the partial unique index must exist in `public` (the schema
- * every query — typed or raw — actually resolves to). Task 1's migration already created
- * it there via the real `migrate dev` + hand-edited SQL. `beforeAll` below re-asserts it
- * with `IF NOT EXISTS`, byte-identical to the migration, as cheap defensive idempotency —
- * not a workaround for a Prisma DSL gap (that's the schema.prisma comment's job), but for
- * the case where a local dev DB reset happens outside the documented migration flow.
+ * Consequence for THIS test, unchanged by that fix: `public` is still the schema every
+ * query — typed or raw — resolves to inside whichever database is connected. The
+ * partial unique index must exist there; Task 1's migration created it via the real
+ * `migrate dev` + hand-edited SQL. `beforeAll` below re-asserts it with `IF NOT EXISTS`,
+ * byte-identical to the migration, as cheap defensive idempotency — not a workaround for
+ * a Prisma DSL gap (that's the schema.prisma comment's job), but for the case where a
+ * local DB reset happens outside the documented migration flow.
  *
  * No PII — initials only (memory feedback_no_pii_in_github).
  */

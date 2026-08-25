@@ -24,7 +24,7 @@
   // Monat"). `SaldoAnzeige.svelte` is NOT imported and NOT modified — no new props, no
   // `:global()` overrides, no row-hiding CSS.
   import Card from "$components/ui/Card.svelte";
-  import { fmtBalance } from "$lib/utils/format-minutes";
+  import { fmtBalance, fmtMin } from "$lib/utils/format-minutes";
 
   interface Props {
     totalHours: number | null;
@@ -33,6 +33,11 @@
     hasClosedMonth?: boolean;
     rosterIncomplete?: boolean;
     loading?: boolean;
+    // Phase 100 (OTC-03) — optional tolerance-exceeded badge. Both default to `undefined`
+    // so every pre-Phase-100 call site (including team/time-entries, deliberately not
+    // wired this phase — see 100-05-SUMMARY.md) renders byte-identically to before.
+    isNegativeLimitExceeded?: boolean;
+    maxNegativeBalanceMinutes?: number | null;
   }
 
   let {
@@ -42,6 +47,8 @@
     hasClosedMonth = false,
     rosterIncomplete = false,
     loading = false,
+    isNegativeLimitExceeded = undefined,
+    maxNegativeBalanceMinutes = undefined,
   }: Props = $props();
 
   const isSplit = $derived(confirmedMinutes !== undefined);
@@ -70,12 +77,20 @@
   });
 
   const openMonthAvailable = $derived(openMonthMinutes !== undefined && openMonthMinutes !== null);
-  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthMinutes ?? 0) : "—");
+  // quick 20260825-konto-saldo-gesamt — the row labelled "inkl. laufendem Monat" now shows the
+  // TOTAL (Bestätigt + laufender Monat), not the open month's own contribution. Owner override of
+  // 97-CONTEXT's split-only presentation, decided on user feedback: showing the open month alone
+  // under an "inkl." label read as a wrong grand total, and contradicted the calendar's last cell
+  // (which already renders the cumulative lifetime figure — e.g. +14:35 while this card said +8:06).
+  // The headline stays "Bestätigt" and keeps its visual primacy, so 97-CONTEXT's core intent —
+  // the confirmed figure leads, the forecast never looks claimable on its own — is preserved.
+  const openMonthTotalMin = $derived((figureMin ?? 0) + (openMonthMinutes ?? 0));
+  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthTotalMin) : "—");
   // 260820-elk follow-up (coordinator-measured deviation #2) — the row VALUE must read as a
   // figure (size + sign colour), not as quiet as its own label.
   const openMonthTone = $derived.by(() => {
     if (!openMonthAvailable) return "muted";
-    const v = openMonthMinutes ?? 0;
+    const v = openMonthTotalMin;
     if (v > 0) return "good";
     if (v < 0) return "bad";
     return "muted";
@@ -95,6 +110,28 @@
     {:else}
       <div class="ksc-label">Gesamt-Saldo</div>
       <div class="ksc-figure ksc-figure--{tone}">{figureText}</div>
+      <!-- Phase 100 (OTC-03) — placement resolves a contradiction in the APPROVED
+           UI-SPEC: it says "directly after .ksc-figure/.ksc-caption, before
+           .ksc-divider" AND "outside the isSplit branch", but .ksc-caption/
+           .ksc-divider are themselves inside that branch. Resolved in favour of the
+           orthogonality requirement (the flag is independent of whether Phase-97
+           split data loaded): this block sits directly under the figure, before the
+           isSplit branch below. It therefore renders between the figure and the
+           "Bestätigt" caption in split mode, and directly under the figure in
+           legacy/non-split mode — pinned by the "legacy mode" test in
+           KontoSaldoCard.test.ts. No null-guard on maxNegativeBalanceMinutes: the
+           upstream formula (overtime.ts:173) can only set isNegativeLimitExceeded=
+           true when maxNegMinutes != null — a defensive `?? 0` here would hide a
+           contract break instead of surfacing it; the `!` below asserts that
+           invariant instead of silently working around it. -->
+      {#if isNegativeLimitExceeded}
+        <div class="ksc-tolerance-warn">
+          <span class="badge badge-yellow">Toleranzgrenze überschritten</span>
+          <span class="ksc-tolerance-warn-hint"
+            >erlaubt: {fmtMin(maxNegativeBalanceMinutes!)} Std. Minus</span
+          >
+        </div>
+      {/if}
       {#if isSplit}
         <div class="ksc-caption">
           {isNewHireZero ? "noch kein Monatsabschluss" : "Bestätigt"}
@@ -151,6 +188,40 @@
   }
   .ksc-figure--muted {
     color: var(--text-muted);
+  }
+
+  /* Phase 100 (OTC-03) — tolerance-exceeded badge. Holds only the global
+     .badge.badge-yellow pill and the caption span; no font declarations of its own. */
+  .ksc-tolerance-warn {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-top: var(--s-2);
+    flex-wrap: wrap;
+  }
+
+  /* UI-checker follow-up #1 — was previously unspecified; matches the established
+     hint-text idiom (.balance-hint-muted, .form-hint). */
+  .ksc-tolerance-warn-hint {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+  }
+
+  /* Phase 100 Plan 06 (Q1, owner checkpoint 2026-08-21) — dark-mode contrast fallback.
+     Measured against the running app (data-mode="dark", theme pflaume): --warn (#b45309)
+     text on the composited dark-mode --warn-soft background is 2.73:1 — fails WCAG AA
+     (4.5:1 normal text, 3:1 even at large text). Root cause: --warn-soft IS overridden
+     for dark mode (see [data-mode="dark"] in tokens.css) but --warn itself is NOT, so
+     dark mode pairs a dark orange-brown with a near-black tinted background. Fallback
+     mirrors SaldoAnzeige.svelte's .saldo__roster-badge treatment — color: var(--text) on
+     the same --warn-soft background — measured at 11.64:1. Scoped to THIS badge only via
+     the .ksc-tolerance-warn ancestor (established codebase idiom, see
+     teamcal/+page.svelte's `:global([data-mode="dark"]) .row-avatar`); deliberately does
+     NOT override the --warn token itself, which the owner rejected as too wide a blast
+     radius (would repaint every --warn consumer app-wide). Light mode is unaffected —
+     .badge-yellow's global color: var(--warn) (app.css) still applies there unchanged. */
+  :global([data-mode="dark"]) .ksc-tolerance-warn .badge-yellow {
+    color: var(--text);
   }
 
   .ksc-caption {

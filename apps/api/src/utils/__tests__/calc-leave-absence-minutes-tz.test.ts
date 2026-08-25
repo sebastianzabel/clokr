@@ -263,4 +263,40 @@ describe("calcLeaveAbsenceMinutesTz", () => {
     );
     expect(result).toBe(285);
   });
+
+  // ── D-15 dedup hook: excludeHolidays as a day-exclusion set (Phase 104-02) ──
+  //
+  // Pins that the mechanism close-employee-month.ts's day-based Soll dedup reuses
+  // (Phase 104, D-15) already exists and needs NO signature change: excludeHolidays
+  // already means "skip these YYYY-MM-DD dates" regardless of WHY a date is being
+  // excluded (a public holiday, or — after 104-02 Task 2 — a day already claimed by
+  // another overlapping APPROVED leave/absence row). Both branches (FIXED_SCHEDULE's
+  // per-day sum and SHIFT_BASED's avgWorkMinutesCore) already honour the hook, so
+  // these two units PASS immediately against unmodified code — they are the pin
+  // that the mechanism this plan leans on is real, not the RED part of Task 1.
+
+  it("D-15: excludeHolidays skips exactly the given date on a FIXED_SCHEDULE range", () => {
+    const result = calcLeaveAbsenceMinutesTz(
+      fixedMoFr8h,
+      tzStart("2026-06-01"), // Mo
+      tzEnd("2026-06-05"), // Fr
+      TZ,
+      { excludeHolidays: new Set(["2026-06-03"]) }, // Mi excluded
+    );
+    // 4 workdays × 480 (Mo, Di, Do, Fr) instead of the un-excluded 5 × 480 = 2400.
+    expect(result).toBe(1920);
+  });
+
+  it("D-15: excludeHolidays skips exactly the given date on a SHIFT_BASED range (avgWorkMinutesCore)", () => {
+    const result = calcLeaveAbsenceMinutesTz(
+      asSchedule,
+      tzStart("2026-06-01"), // Mo (A.S. non-workday, 0h either way)
+      tzEnd("2026-06-05"), // Fr
+      TZ,
+      { excludeHolidays: new Set(["2026-06-03"]) }, // Mi excluded
+    );
+    // workDaysPerWeek = 4 (Di-Fr). workdaysInRange without exclusion = Di,Mi,Do,Fr = 4.
+    // With Mi excluded = 3 → round(38h × 60 × 3 / 4) = round(2280 × 3 / 4) = 1710.
+    expect(result).toBe(1710);
+  });
 });

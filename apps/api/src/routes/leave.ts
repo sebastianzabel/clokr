@@ -17,6 +17,35 @@ import {
   type OvertimeBalanceBreakdown,
 } from "./time-entries";
 import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-06
+import { loadNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100
+import { formatMinutesHM } from "../utils/format-hm"; // Phase 100
+import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; // Phase 100 (OTC-04)
+import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
+import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
+import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
+
+// Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
+
+/** Inclusive list of ISO YYYY-MM-DD day strings between two Date-only values (UTC). */
+function daysBetweenInclusiveIso(start: Date, end: Date): string[] {
+  const days: string[] = [];
+  const cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+  while (cur.getTime() <= last.getTime()) {
+    days.push(cur.toISOString().split("T")[0]);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return days;
+}
+
+/** Renders a Date as German "DD.MM." — used only in the § 9 entitlement movement label (D-31). */
+function formatDayMonth(d: Date | null | undefined): string {
+  if (!d) return "";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}.${mm}.`;
+}
 
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
@@ -147,11 +176,15 @@ const correctSchema = z
     halfDay: z.boolean().default(false),
     note: z.string().optional().nullable(),
     type: z.enum(TYPE_CODES).optional(),
+    reason: auditReasonSchema, // Quick 260824-cjd — mandatory Korrektur-Begründung
   })
   .refine((data) => new Date(data.startDate) <= new Date(data.endDate), {
     message: "Enddatum muss nach Startdatum liegen",
     path: ["endDate"],
   });
+
+// Quick 260824-cjd — mandatory Storno-Begründung for withdraw/cancellation-request.
+const stornoSchema = z.object({ reason: auditReasonSchema });
 
 const attestSchema = z.object({
   attestPresent: z.boolean(),
@@ -168,6 +201,62 @@ const attestSchema = z.object({
     .nullable()
     .optional(),
 });
+
+/**
+ * Pflichtbegründung für jeden § 9-Schritt (D-11) — bleibt bewusst NICHT optional und NICHT
+ * nullable, die Begründung ist revisionssicherheitspflichtig.
+ *
+ * Phase 104 follow-up (owner-reported, not in REVIEW.md): `min(1)` alone only covers the
+ * EMPTY-string case. Clokr frontends send `x ? x : null` (CLAUDE.md's Zod gotcha), and an
+ * explicit null produced Zod's ENGLISH default invalid_type text
+ * ("reason: Invalid input: expected string, received null") in the 400 body, while an empty
+ * string produced the German message — the same mistake reported two different ways. The
+ * type-level `error` makes null, a missing key and an empty/whitespace string all answer with
+ * the identical German sentence.
+ */
+const SECTION9_MANDATORY_REASON = z
+  .string({ error: "Begründung ist erforderlich" })
+  .trim()
+  .min(1, "Begründung ist erforderlich");
+
+// Phase 104-06 — POST /section9/:id/confirm ("AU liegt vor").
+// D-27: Gültigkeit + Herkunft + Pflichtbegründung. KEINE Arzt-/Diagnoseangaben (Art. 9 DSGVO).
+const section9ConfirmSchema = z.object({
+  attestSource: z.enum(["EAU", "PAPIER"]),
+  attestValidFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  attestValidTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  reason: SECTION9_MANDATORY_REASON,
+});
+
+// Phase 104-06 — POST /section9/:id/reject and /reopen. Pflichtbegründung (D-11).
+// Bewusst NICHT .optional() und NICHT .nullable() — die Begründung bleibt Pflicht.
+const section9ReasonSchema = z.object({
+  reason: SECTION9_MANDATORY_REASON,
+});
+
+// Phase 104 review (WR-04) — GET /section9?status=
+// The value was cast straight into the Prisma where clause (`status as never`). Any value
+// outside the enum made Prisma throw a PrismaClientValidationError, which the global handler
+// turns into a 500 echoing the full Prisma text (model name, field list, expected enum
+// members) back to the caller. Every other route in this file validates its query with Zod.
+const section9StatusQuerySchema = z.object({
+  status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED"]).optional(),
+});
+
+/**
+ * German date label for USER-FACING § 9 notification texts: "16.09.2026".
+ *
+ * Phase 104 follow-up (not in REVIEW.md, owner-reported): the § 9 notification bodies rendered
+ * dates ISO-style ("2026-09-16 – 2026-09-17") while everything else user-facing in this app
+ * uses DD.MM.YYYY. UTC accessors on purpose — every date fed in here is a @db.Date column
+ * (UTC midnight), so a local-time formatter would shift the label by a day on any host with a
+ * negative UTC offset (the same class of bug as WR-09). API payloads and AuditLog values keep
+ * their ISO form; only the human-readable message text changes.
+ */
+function formatDateDe(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+}
 
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
@@ -208,8 +297,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
       const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
 
-      // Überschneidung mit eigenem Antrag prüfen
-      const overlap = await app.prisma.leaveRequest.findFirst({
+      // Überschneidung mit eigenem Antrag prüfen.
+      //
+      // Phase 104 / R1: § 9 BUrlG — wird ein Mitarbeiter während genehmigten Urlaubs krank,
+      // dürfen die attestierten Tage nicht auf den Jahresurlaub angerechnet werden. Bis
+      // Phase 104 blockte dieser Guard genau diesen Fall mit 409, weshalb Manager ersatzweise
+      // stornierten und in der Vier-Augen-Sackgasse landeten.
+      //
+      // Die Ausnahme ist BEWUSST eng und gerichtet (Pitfall 4): erlaubt ist ausschließlich
+      // eine SICK/SICK_CHILD-Meldung über einem bereits GENEHMIGTEN Nicht-Krank-Antrag.
+      // Gleichartige Überschneidungen (Urlaub/Urlaub, Krank/Krank) und Überschneidungen mit
+      // noch PENDING-Anträgen bleiben unverändert gesperrt — ein Blanko-Entfernen des Guards
+      // würde die Doppelbuchung wieder öffnen, gegen die er existiert.
+      const isSickRequest = body.type === "SICK" || body.type === "SICK_CHILD";
+      const overlaps = await app.prisma.leaveRequest.findMany({
         where: {
           employeeId,
           deletedAt: null,
@@ -217,8 +318,16 @@ export async function leaveRoutes(app: FastifyInstance) {
           startDate: { lte: end },
           endDate: { gte: start },
         },
+        include: { leaveType: true },
       });
-      if (overlap) return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
+      const blockingOverlap = overlaps.find((o) => {
+        if (!isSickRequest) return true; // non-sick: unchanged behaviour
+        if (o.status !== "APPROVED") return true; // sick vs PENDING: still blocked
+        if (isSickTypeName(o.leaveType.name)) return true; // sick vs sick: still blocked
+        return false; // § 9 case — permitted
+      });
+      if (blockingOverlap)
+        return reply.code(409).send({ error: "Überschneidung mit bestehendem Antrag" });
 
       // Load tenant config for leave rules
       const tenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
@@ -411,6 +520,19 @@ export async function leaveRoutes(app: FastifyInstance) {
       // path touching entitlement, so the fail-safe branch intentionally falls back to the
       // PRE-EXISTING stored-balance check (never 500, never silently permits an unbounded
       // request) rather than inventing a new default.
+      //
+      // Phase 100 (OTC-01/OTC-02, D-00a/D-00b) — availability now also includes the
+      // configured `maxNegativeBalanceMinutes` TOLERANCE, resolved through the SAME
+      // precedence chain overtime.ts uses (loadNegativeBalanceTolerance,
+      // negative-balance-tolerance.ts): per-employee WorkSchedule override > tenant
+      // default > null. D-00b: for THIS booking gate, an unconfigured (`null`) value
+      // means a tolerance of ZERO — the opposite of the schema comment's "unbegrenzt"
+      // ALERTING reading that `isNegativeLimitExceeded` uses elsewhere — so with
+      // nothing configured this gate stays byte-identical to pre-Phase-100. D-02: the
+      // catch branch below applies ZERO tolerance regardless of what is configured — a
+      // read failure must never be MORE generous than the normal path. D-04: the
+      // comparison itself happens in MINUTES; hours only appear in the response body
+      // and the rejection copy.
       if (body.type === "OVERTIME_COMP") {
         const hoursNeeded = await getScheduledHours(
           app.prisma,
@@ -420,25 +542,48 @@ export async function leaveRoutes(app: FastifyInstance) {
           body.halfDay,
           holidays,
         );
+        const neededMinutes = Math.round(hoursNeeded * 60);
 
-        let balance: number;
+        const { toleranceMinutes } = await loadNegativeBalanceTolerance(
+          app.prisma,
+          employeeId,
+          tenantId,
+        );
+
+        let availableMinutes: number;
+        let appliedToleranceMinutes: number;
         try {
           const confirmed = await getConfirmedCarryOver(app, employeeId);
-          balance = confirmed.minutes / 60;
+          appliedToleranceMinutes = toleranceMinutes;
+          availableMinutes = confirmed.minutes + appliedToleranceMinutes;
         } catch (err) {
           app.log.warn(
             { err, employeeId },
             "POST /leave/requests: getConfirmedCarryOver failed for OVERTIME_COMP check, falling back to stored OvertimeAccount.balanceHours",
           );
+          // D-02: fail-safe applies ZERO tolerance — a broken read path must never
+          // be more permissive than the normal path.
+          appliedToleranceMinutes = 0;
           const account = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
-          balance = account ? Number(account.balanceHours) : 0;
+          availableMinutes = account ? Math.round(Number(account.balanceHours) * 60) : 0;
         }
 
-        if (hoursNeeded > balance) {
+        if (neededMinutes > availableMinutes) {
+          // OTC-06 / D-14: names the applied tolerance when one was applied; the
+          // "(inkl. … erlaubtem Minus)" clause is omitted entirely at tolerance 0 so
+          // an unconfigured tenant sees the plain pre-Phase-100 message (100-UI-SPEC.md
+          // "Rejection copy").
+          const toleranceClause =
+            appliedToleranceMinutes > 0
+              ? ` (inkl. ${formatMinutesHM(appliedToleranceMinutes)} Std. erlaubtem Minus)`
+              : "";
           return reply.code(400).send({
-            error: "Nicht genug Überstunden",
-            available: +balance.toFixed(2),
-            requested: +hoursNeeded.toFixed(2),
+            error:
+              `Nicht genug Überstunden: verfügbar ${formatMinutesHM(availableMinutes)} Std.` +
+              `${toleranceClause}, benötigt ${formatMinutesHM(neededMinutes)} Std.`,
+            available: +(availableMinutes / 60).toFixed(2),
+            requested: +(neededMinutes / 60).toFixed(2),
+            tolerance: +(appliedToleranceMinutes / 60).toFixed(2),
           });
         }
       }
@@ -582,6 +727,32 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: upcoming === "true" ? { startDate: "asc" } : { createdAt: "desc" },
       });
 
+      // Phase 104-10 (D-29): bulk-load § 9 status for the returned requests — ONE query,
+      // matching on BOTH FKs so a vacation row can also show that a § 9 case touches it.
+      const requestIds = rows.map((r) => r.id);
+      const section9Credits = requestIds.length
+        ? await app.prisma.section9Credit.findMany({
+            where: {
+              OR: [
+                { sickRequestId: { in: requestIds } },
+                { vacationRequestId: { in: requestIds } },
+              ],
+            },
+            select: { id: true, sickRequestId: true, vacationRequestId: true, status: true },
+          })
+        : [];
+      const rankSection9Status = (s: string) =>
+        s === "CONFIRMED" ? 2 : s === "AU_PENDING" ? 1 : 0;
+      const section9StatusByRequestId = new Map<string, { status: string; creditId: string }>();
+      for (const c of section9Credits) {
+        for (const reqId of [c.sickRequestId, c.vacationRequestId]) {
+          const existing = section9StatusByRequestId.get(reqId);
+          if (!existing || rankSection9Status(c.status) > rankSection9Status(existing.status)) {
+            section9StatusByRequestId.set(reqId, { status: c.status, creditId: c.id });
+          }
+        }
+      }
+
       return rows.map((r) => ({
         ...r,
         typeCode:
@@ -590,6 +761,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         endDate: r.endDate.toISOString().split("T")[0],
         attestValidFrom: r.attestValidFrom?.toISOString().split("T")[0] ?? null,
         attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
+        section9Status: section9StatusByRequestId.get(r.id)?.status ?? null,
+        section9CreditId: section9StatusByRequestId.get(r.id)?.creditId ?? null,
       }));
     },
   });
@@ -907,6 +1080,144 @@ export async function leaveRoutes(app: FastifyInstance) {
                 description: `Überstundenausgleich ${existing.startDate.toISOString().split("T")[0]} – ${existing.endDate.toISOString().split("T")[0]}`,
               },
             });
+          }
+        }
+
+        // ── § 9 BUrlG (Phase 104, D-09): Krank-im-Urlaub-Vorgang anlegen ──────────
+        // Der Datensatz entsteht SOFORT bei Genehmigung der Krankmeldung, im wirkungslosen
+        // Zustand AU_PENDING — die Urlaubstage bleiben angerechnet, bis ein Manager die AU
+        // bestätigt (Plan 104-06). Nie gutschreiben und später zurückdrehen.
+        // D-13: genau deshalb hängt die Erkennung am Approve-Pfad und nicht an POST /requests —
+        // eine noch nicht genehmigte Krankmeldung darf keinen Vorgang erzeugen.
+        if (typeCode === "SICK" || typeCode === "SICK_CHILD") {
+          const candidates = await app.prisma.leaveRequest.findMany({
+            where: {
+              employeeId: existing.employeeId,
+              deletedAt: null,
+              status: "APPROVED",
+              id: { not: existing.id },
+              startDate: { lte: existing.endDate },
+              endDate: { gte: existing.startDate },
+            },
+            include: { leaveType: true },
+          });
+          const overlaps = findSection9Overlaps(existing.startDate, existing.endDate, candidates);
+          for (const ov of overlaps) {
+            // Idempotent: re-running approve must not fan out duplicate Vorgänge.
+            const dupe = await app.prisma.section9Credit.findFirst({
+              where: { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
+            });
+            if (dupe) continue;
+            // Phase 104 review (WR-03): the findFirst/create pair above is NOT in a
+            // transaction, so it is a check-then-create race — two concurrent approvals
+            // (double click, retry, a manager racing a cron path) both pass the guard.
+            // @@unique([sickRequestId, vacationRequestId]) now closes it in the DB; the
+            // loser of the race lands here as P2002 and is treated exactly like `dupe`:
+            // the Vorgang already exists, so skip it silently rather than 500 the whole
+            // approve. Without the constraint a second CONFIRMED row would double-credit
+            // the vacation, and the double credit SURVIVES selfHealUsedDays() because the
+            // self-heal trusts the credit sum.
+            let credit;
+            try {
+              credit = await app.prisma.section9Credit.create({
+                data: {
+                  employeeId: existing.employeeId,
+                  sickRequestId: existing.id,
+                  vacationRequestId: ov.vacationRequestId,
+                  overlapStart: ov.overlapStart,
+                  overlapEnd: ov.overlapEnd,
+                  // status defaults to AU_PENDING
+                },
+              });
+            } catch (err: unknown) {
+              if (
+                err &&
+                typeof err === "object" &&
+                "code" in err &&
+                (err as { code: unknown }).code === "P2002"
+              ) {
+                app.log.info(
+                  { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
+                  "§ 9: concurrent detection lost the race, Vorgang already exists",
+                );
+                continue;
+              }
+              throw err;
+            }
+            await app.audit({
+              userId: req.user.sub,
+              action: "SECTION9_CREDIT_DETECTED",
+              entity: "Section9Credit",
+              entityId: credit.id,
+              newValue: {
+                sickRequestId: existing.id,
+                vacationRequestId: ov.vacationRequestId,
+                overlapStart: ov.overlapStart.toISOString().split("T")[0],
+                overlapEnd: ov.overlapEnd.toISOString().split("T")[0],
+                note: "§ 9 BUrlG — Vorgang erkannt, AU ausstehend",
+              },
+              request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            });
+
+            // ── D-14: beide Seiten benachrichtigen, über die bestehende Bell-Mechanik ──
+            const employeeUser = await app.prisma.employee.findUnique({
+              where: { id: existing.employeeId },
+              select: { userId: true, tenantId: true },
+            });
+            // Phase 104 review (WR-05): in Prisma an `undefined` filter value means "omit
+            // this filter", not "match nothing". Passing employeeUser?.tenantId into the
+            // manager fan-out below would, if the row were ever missing, return EVERY
+            // ADMIN/MANAGER across ALL tenants and notify each of them about a foreign
+            // tenant's sickness period (plus a deep link into it). The FK is Restrict so
+            // this should be unreachable — but the failure mode is a silent cross-tenant
+            // broadcast, so it must not depend on that. The Vorgang itself is already
+            // created and audited; only the notification fan-out is skipped.
+            if (!employeeUser) {
+              app.log.error(
+                { employeeId: existing.employeeId, creditId: credit.id },
+                "§ 9: employee row missing, skipping notification fan-out",
+              );
+              continue;
+            }
+            const rangeLabel = `${formatDateDe(ov.overlapStart)} – ${formatDateDe(ov.overlapEnd)}`;
+            if (employeeUser.userId) {
+              await app.notify({
+                userId: employeeUser.userId,
+                type: "SECTION9_AU_PENDING_EMPLOYEE",
+                title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
+                message:
+                  `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+                  `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
+                link: "/leave",
+                tenantId: employeeUser.tenantId,
+                relatedType: "Section9Credit",
+                relatedId: credit.id,
+              });
+            }
+            // User has no tenantId column — tenant scoping goes through Employee.
+            const section9Managers = await app.prisma.employee.findMany({
+              where: {
+                tenantId: employeeUser.tenantId,
+                user: {
+                  role: { in: ["ADMIN", "MANAGER"] },
+                  isActive: true,
+                  id: { not: req.user.sub }, // Phase-91 idiom: never notify the actor
+                },
+              },
+              select: { userId: true },
+            });
+            for (const mgr of section9Managers) {
+              await app.notify({
+                userId: mgr.userId,
+                type: "SECTION9_AU_PENDING_MANAGER",
+                title: "§ 9 BUrlG — AU-Nachweis ausstehend",
+                message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
+                link: `/team/leave?section9=${credit.id}`,
+                tenantId: employeeUser.tenantId,
+                relatedType: "Section9Credit",
+                relatedId: credit.id,
+              });
+            }
           }
         }
       }
@@ -1494,13 +1805,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       // Revisionssicherheit (EDIT-02): jede Korrektur wird LEAVE_CORRECTED-auditiert.
+      // Quick 260824-cjd: the mandatory Begründung is persisted verbatim into newValue.
       await app.audit({
         userId: req.user.sub,
         action: "LEAVE_CORRECTED",
         entity: "LeaveRequest",
         entityId: id,
         oldValue: existing,
-        newValue: updated,
+        newValue: { ...updated, auditReason: body.reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -1560,6 +1872,10 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Antrag kann nicht mehr zurückgezogen werden" });
       }
 
+      // Quick 260824-cjd: parsed AFTER the 404/403/409 guards so a bad-reason 400 never
+      // leaks the existence of a foreign-tenant or wrong-status request.
+      const { reason } = stornoSchema.parse(req.body);
+
       if (existing.status === "APPROVED") {
         // Approved leave → request cancellation (needs another manager's approval)
         // Until approved, the leave remains active (blocks time tracking, shown in calendar)
@@ -1573,7 +1889,7 @@ export async function leaveRoutes(app: FastifyInstance) {
           entity: "LeaveRequest",
           entityId: id,
           oldValue: { status: existing.status },
-          newValue: { status: "CANCELLATION_REQUESTED" },
+          newValue: { status: "CANCELLATION_REQUESTED", auditReason: reason },
           request: { ip: req.ip, headers: req.headers as Record<string, string> },
         });
         return reply.code(200).send({ status: "CANCELLATION_REQUESTED" });
@@ -1587,7 +1903,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         entity: "LeaveRequest",
         entityId: id,
         oldValue: { status: existing.status },
-        newValue: { status: "CANCELLED" },
+        newValue: { status: "CANCELLED", auditReason: reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
       return reply.code(204).send();
@@ -1690,6 +2006,58 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
 
+      // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
+      // query, scoped to the tenant, so the per-row masking below never needs a query inside
+      // `.map()`.
+      const section9Credits = await app.prisma.section9Credit.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId },
+          overlapStart: { lte: end },
+          overlapEnd: { gte: start },
+        },
+        select: {
+          sickRequestId: true,
+          vacationRequestId: true,
+          status: true,
+          overlapStart: true,
+          overlapEnd: true,
+          creditedStart: true,
+          creditedEnd: true,
+        },
+      });
+
+      // Per-REQUEST marker: the server decides which entry "wins" on a shared day so the
+      // client never re-derives the CONFIRMED > AU_PENDING > null ranking itself.
+      //   "AU_PENDING"  → Krankmeldung liegt vor, AU fehlt noch; Urlaubstage stehen auf dem Spiel
+      //   "CONFIRMED"   → Gutschrift erfolgt; an diesem Tag gewinnt Krank
+      //   "SUPERSEDED"  → dieser Urlaubseintrag ist an diesem Tag durch eine bestätigte
+      //                   Krankmeldung überlagert (der Antrag selbst bleibt unverändert, D-05)
+      const section9ByEntry = new Map<string, { marker: string; days: Set<string> }>();
+      const rankSection9Marker = (m: string) =>
+        m === "CONFIRMED" ? 2 : m === "AU_PENDING" ? 1 : 0;
+      const addSection9Marker = (id: string, marker: string, days: string[]) => {
+        const existing = section9ByEntry.get(id);
+        if (!existing) {
+          section9ByEntry.set(id, { marker, days: new Set(days) });
+          return;
+        }
+        days.forEach((d) => existing.days.add(d));
+        if (rankSection9Marker(marker) > rankSection9Marker(existing.marker)) {
+          existing.marker = marker;
+        }
+      };
+      for (const c of section9Credits) {
+        if (c.status === "CONFIRMED" && c.creditedStart && c.creditedEnd) {
+          const days = daysBetweenInclusiveIso(c.creditedStart, c.creditedEnd);
+          addSection9Marker(c.sickRequestId, "CONFIRMED", days);
+          addSection9Marker(c.vacationRequestId, "SUPERSEDED", days);
+        } else if (c.status === "AU_PENDING") {
+          // Vacation entry deliberately left unmarked — the days are still charged.
+          const days = daysBetweenInclusiveIso(c.overlapStart, c.overlapEnd);
+          addSection9Marker(c.sickRequestId, "AU_PENDING", days);
+        }
+      }
+
       const leaveEntries = rows.map((r) => {
         const isOwn = r.employee.userId === req.user.sub;
         const showDetails = isOwn || isManager;
@@ -1708,6 +2076,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           halfDay: r.halfDay,
           status: r.status,
           isHoliday: false,
+          // Sichtbarkeit folgt exakt showDetails — wer typeCode nicht sehen darf, sieht auch
+          // keine § 9-Markierung (sonst wäre die Krankheit indirekt ablesbar).
+          section9: showDetails ? (section9ByEntry.get(r.id)?.marker ?? null) : null,
+          section9Days: showDetails ? Array.from(section9ByEntry.get(r.id)?.days ?? []).sort() : [],
         };
       });
 
@@ -1760,7 +2132,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         Promise.resolve(calculateWorkDays(start, end, isHalf, workDays, holidays)),
       ]);
 
-      return { hours: +hours.toFixed(2), days };
+      // WR-03 (code review) — exact integer minutes, computed with the SAME
+      // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
+      // uses for `neededMinutes` above. `hours` is rounded to 2 decimal PLACES for
+      // display; `minutesNeeded` lets the client compare against confirmedMinutes /
+      // maxNegativeBalanceMinutes (already exact integer minutes from GET
+      // /leave/overtime-balance) without reconstructing the server's exact-minute
+      // gate through two different rounding paths.
+      return { hours: +hours.toFixed(2), days, minutesNeeded: Math.round(hours * 60) };
     },
   });
 
@@ -1787,8 +2166,23 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: 0,
           openMonthMinutes: null,
           hasClosedMonth: false,
+          maxNegativeBalanceMinutes: null,
+          isNegativeLimitExceeded: false,
         };
       }
+
+      // Phase 100 (OTC-05, D-15/D-16) — resolved ONCE per request through the SAME shared
+      // helper the OVERTIME_COMP gate uses (loadNegativeBalanceTolerance), so this box and the
+      // gate can never disagree on the same employee's tolerance. `isNegativeLimitExceeded`
+      // below uses the `configuredMinutes != null` guard — the "unbegrenzt"/ALERTING reading,
+      // D-00b — NOT a bare "confirmed balance is negative" check, which would fire for every
+      // employee with a merely negative confirmed balance and blur D-00b's two readings into a
+      // third (100-UI-SPEC.md "API contract feeding surfaces 1 and 4").
+      const { configuredMinutes } = await loadNegativeBalanceTolerance(
+        app.prisma,
+        employeeId,
+        req.user.tenantId,
+      );
 
       let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
@@ -1809,6 +2203,9 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: breakdown.confirmedMinutes,
           openMonthMinutes: breakdown.openMonthMinutes,
           hasClosedMonth: breakdown.hasClosedMonth,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded:
+            configuredMinutes != null && breakdown.confirmedMinutes < -configuredMinutes,
           ...(breakdown.rosterIncomplete !== undefined
             ? { rosterIncomplete: breakdown.rosterIncomplete }
             : {}),
@@ -1825,13 +2222,30 @@ export async function leaveRoutes(app: FastifyInstance) {
           confirmedMinutes: confirmed.minutes,
           openMonthMinutes: null,
           hasClosedMonth: confirmed.hasClosedMonth,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          isNegativeLimitExceeded:
+            configuredMinutes != null && confirmed.minutes < -configuredMinutes,
         };
       } catch (fallbackErr) {
         app.log.warn(
           { err: fallbackErr, employeeId },
           "GET /leave/overtime-balance: confirmed carry-over fallback failed",
         );
-        return { balanceHours, confirmedMinutes: 0, openMonthMinutes: null, hasClosedMonth: false };
+        return {
+          balanceHours,
+          confirmedMinutes: 0,
+          openMonthMinutes: null,
+          hasClosedMonth: false,
+          maxNegativeBalanceMinutes: configuredMinutes,
+          // IN-01 (code review) — this was `configuredMinutes != null && 0 < -configuredMinutes`,
+          // which reads like a real comparison against the (unknown) balance but is tautologically
+          // false: configuredMinutes is Zod-bounded to >= 0 (employeeScheduleSchema / the
+          // /settings/security schema both enforce `.min(0)`), so `-configuredMinutes` is always
+          // <= 0. The balance is genuinely unknown in this deepest fail-safe branch (both the live
+          // compute AND the confirmed-carry-over fallback threw) — never claim the limit is
+          // exceeded against a value we don't have.
+          isNegativeLimitExceeded: false,
+        };
       }
     },
   });
@@ -2011,6 +2425,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Same logic the report endpoint now uses — see apps/api/src/utils/leave-self-heal.ts.
       await selfHealUsedDays(app.prisma, rows, vacMeta);
 
+      // Phase 104-10 (D-31): the credit appears as its own explained movement line in the
+      // leave account. ONE bulk query for the whole employee — independent of how many
+      // entitlement years are in `rows` — so no query is needed inside the rows.map() below.
+      const confirmedSection9Credits = await app.prisma.section9Credit.findMany({
+        where: { employeeId, status: "CONFIRMED" },
+        select: { id: true, creditedDays: true, creditedStart: true, creditedEnd: true },
+      });
+
       // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
       // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
       // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
@@ -2035,6 +2457,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
             : Number(r.totalDays);
+        // D-31: only the vacation-account row carries movements — a credit only ever
+        // touches the VACATION LeaveEntitlement (reverseVacationDays' target), so a
+        // same-year non-vacation row (e.g. Sonderurlaub) must not repeat it.
+        const creditsForYear = isVacationRow
+          ? confirmedSection9Credits.filter((c) => c.creditedStart?.getUTCFullYear() === r.year)
+          : [];
         return {
           ...r,
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
@@ -2043,8 +2471,649 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // D-31: die Gutschrift erscheint als eigene, erklärte Bewegungszeile — ein
+          // stillschweigend höherer Restanspruch wirkt wie ein Fehler und erzeugt Rückfragen.
+          section9Movements: creditsForYear.map((c) => ({
+            creditId: c.id,
+            days: Number(c.creditedDays ?? 0),
+            from: c.creditedStart?.toISOString().split("T")[0] ?? null,
+            to: c.creditedEnd?.toISOString().split("T")[0] ?? null,
+            label:
+              `+${Number(c.creditedDays ?? 0)} Tage gutgeschrieben (§ 9 BUrlG, Krankheit ` +
+              `${formatDayMonth(c.creditedStart)}–${formatDayMonth(c.creditedEnd)})`,
+          })),
         };
       });
+    },
+  });
+
+  // ── GET /karenz-overrun — § 5 EFZG: Krankheitstage über die Karenzzeit ohne Attest ──────
+  // Phase 104 gap closure (D-21, Mitarbeiter-Seite). Das Gegenstück zum Manager-Hinweis in
+  // GET /overtime/close-month/status (dort: karenzOverrunDays[]), der ADMIN/MANAGER-only ist —
+  // ein Mitarbeiter hat sonst KEINEN Weg, den Befund zu sehen.
+  //
+  // STRENG selbstbezogen: kein employeeId-Query-Parameter, keine Manager-Sonderbehandlung.
+  // Krankheitstage sind Gesundheitsdaten (Art. 9 DSGVO) — die Manager-Sicht existiert bereits
+  // an ihrer eigenen, rollengeschützten Stelle und wird hier nicht dupliziert.
+  //
+  // D-21: reiner HINWEIS. Dieser Endpunkt blockiert nichts und wird von nichts als Gate gelesen.
+  // R5/D-23: die Regel wird NICHT hier neu implementiert, sondern aus find-karenz-overrun-days.ts
+  // importiert — dem einzigen Ort, an dem sie lebt.
+  app.get("/karenz-overrun", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const cfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { sickNoteRequiredAfterDays: true },
+      });
+      const graceDays = normalizeKarenzDays(cfg?.sickNoteRequiredAfterDays);
+
+      const employeeId = req.user.employeeId;
+      if (!employeeId) return { graceDays, overruns: [], totalDays: 0 };
+
+      // Serverseitig abgeleitetes Fenster — kein Request-Feld kann es verschieben.
+      // 12 Monate zurück, exakt wie der Phase-92-Pausen-Nudge (BREAK-07): ein abgeschlossener
+      // Monat schließt den Nachweis NICHT aus (R7 — die AU darf auch später eintreffen).
+      const now = new Date();
+      const windowStart = new Date(
+        Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1, 0, 0, 0),
+      );
+
+      const rows = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          employee: { tenantId: req.user.tenantId },
+          deletedAt: null,
+          status: "APPROVED",
+          endDate: { gte: windowStart },
+          startDate: { lte: now },
+        },
+        include: { leaveType: true },
+      });
+
+      const overruns = karenzOverrunFromRequests(rows, tz, graceDays).map((o) => ({
+        leaveRequestId: o.leaveRequestId,
+        days: [...o.days].sort(),
+      }));
+      const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
+      return { graceDays, overruns, totalDays };
+    },
+  });
+
+  // ── GET /section9 — § 9-BUrlG-Vorgänge (eigene, oder alle des Tenants für Manager) ──
+  app.get("/section9", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const { status } = section9StatusQuerySchema.parse(req.query);
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+      const rows = await app.prisma.section9Credit.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId },
+          ...(isManager ? {} : { employeeId: req.user.employeeId ?? "__none__" }),
+          ...(status ? { status } : {}),
+        },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true } },
+          sickRequest: { select: { id: true, startDate: true, endDate: true, status: true } },
+          vacationRequest: {
+            select: {
+              id: true,
+              startDate: true,
+              endDate: true,
+              halfDay: true,
+              days: true,
+              leaveType: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: [{ status: "asc" }, { overlapStart: "desc" }],
+      });
+      return rows.map((r) => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        employeeName: `${r.employee.firstName} ${r.employee.lastName}`,
+        status: r.status,
+        overlapStart: r.overlapStart.toISOString().split("T")[0],
+        overlapEnd: r.overlapEnd.toISOString().split("T")[0],
+        creditedStart: r.creditedStart?.toISOString().split("T")[0] ?? null,
+        creditedEnd: r.creditedEnd?.toISOString().split("T")[0] ?? null,
+        creditedDays: r.creditedDays !== null ? Number(r.creditedDays) : null,
+        attestSource: r.attestSource,
+        attestValidFrom: r.attestValidFrom?.toISOString().split("T")[0] ?? null,
+        attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
+        reason: r.reason,
+        sickRequest: {
+          id: r.sickRequest.id,
+          startDate: r.sickRequest.startDate.toISOString().split("T")[0],
+          endDate: r.sickRequest.endDate.toISOString().split("T")[0],
+          status: r.sickRequest.status,
+        },
+        vacationRequest: {
+          id: r.vacationRequest.id,
+          startDate: r.vacationRequest.startDate.toISOString().split("T")[0],
+          endDate: r.vacationRequest.endDate.toISOString().split("T")[0],
+          halfDay: r.vacationRequest.halfDay,
+          days: Number(r.vacationRequest.days),
+          typeName: r.vacationRequest.leaveType.name,
+        },
+      }));
+    },
+  });
+
+  // ── GET /section9/:id — einzelner § 9-Vorgang (Tenant-isoliert) ─────────────
+  app.get("/section9/:id", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
+
+      const row = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: {
+          employee: { select: { id: true, firstName: true, lastName: true, tenantId: true } },
+          sickRequest: { select: { id: true, startDate: true, endDate: true, status: true } },
+          vacationRequest: {
+            select: {
+              id: true,
+              startDate: true,
+              endDate: true,
+              halfDay: true,
+              days: true,
+              leaveType: { select: { name: true } },
+            },
+          },
+        },
+      });
+      if (!row) return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+
+      // Tenant isolation check (D-02 idiom): fetch-then-compare via employee.tenantId
+      if (row.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+      }
+
+      if (!isManager && row.employeeId !== req.user.employeeId) {
+        return reply.code(404).send({ error: "Vorgang nicht gefunden" });
+      }
+
+      return {
+        id: row.id,
+        employeeId: row.employeeId,
+        employeeName: `${row.employee.firstName} ${row.employee.lastName}`,
+        status: row.status,
+        overlapStart: row.overlapStart.toISOString().split("T")[0],
+        overlapEnd: row.overlapEnd.toISOString().split("T")[0],
+        creditedStart: row.creditedStart?.toISOString().split("T")[0] ?? null,
+        creditedEnd: row.creditedEnd?.toISOString().split("T")[0] ?? null,
+        creditedDays: row.creditedDays !== null ? Number(row.creditedDays) : null,
+        attestSource: row.attestSource,
+        attestValidFrom: row.attestValidFrom?.toISOString().split("T")[0] ?? null,
+        attestValidTo: row.attestValidTo?.toISOString().split("T")[0] ?? null,
+        reason: row.reason,
+        sickRequest: {
+          id: row.sickRequest.id,
+          startDate: row.sickRequest.startDate.toISOString().split("T")[0],
+          endDate: row.sickRequest.endDate.toISOString().split("T")[0],
+          status: row.sickRequest.status,
+        },
+        vacationRequest: {
+          id: row.vacationRequest.id,
+          startDate: row.vacationRequest.startDate.toISOString().split("T")[0],
+          endDate: row.vacationRequest.endDate.toISOString().split("T")[0],
+          halfDay: row.vacationRequest.halfDay,
+          days: Number(row.vacationRequest.days),
+          typeName: row.vacationRequest.leaveType.name,
+        },
+      };
+    },
+  });
+
+  // § 9 BUrlG (Phase 104). D-10: Es gibt BEWUSST keinen automatischen Verfall eines
+  // AU_PENDING-Vorgangs — § 9 kennt keine Vorlagefrist, und nichts wird still geschlossen.
+  // Der Vorgang bleibt offen, bis ein Mensch entscheidet. Wer hier später einen Cron-Job
+  // ergänzen möchte: das wäre eine Entscheidung gegen eine gesperrte Owner-Vorgabe.
+
+  // ── POST /section9/:id/confirm — „AU liegt vor" (Phase 104-06) ──────────────
+  // R3/D-07/D-08/D-13/D-17/D-18/D-19: gutschreiben, ausschließlich der attestierten
+  // Schnittmenge, rein entitlement-seitig (D-16 — kein SaldoSnapshot, kein Aufbrechen
+  // gesperrter Monate), mit ILLNESS-Übertragsfrist wo der Stichtag bereits verstrichen ist.
+  app.post("/section9/:id/confirm", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = section9ConfirmSchema.parse(req.body);
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: {
+          employee: { select: { id: true, tenantId: true, userId: true } },
+          sickRequest: { include: { leaveType: true } },
+          vacationRequest: { include: { leaveType: true } },
+        },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      // Tenant isolation BEFORE any state check (T-104-06-TENANT idiom, leave.ts:1659) — a
+      // cross-tenant probe must not be able to learn the row's status from the response.
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      if (credit.status === "CONFIRMED") {
+        return reply.code(409).send({ error: "Vorgang wurde bereits bestätigt" });
+      }
+
+      // D-13: die Krankmeldung muss genehmigt sein, bevor die AU bestätigt werden kann —
+      // sonst könnte auf eine später abgelehnte Krankmeldung gutgeschrieben werden.
+      if (credit.sickRequest.status !== "APPROVED") {
+        return reply.code(409).send({ error: "Die Krankmeldung muss zuerst genehmigt werden." });
+      }
+
+      // Phase 104 review (WR-01): the credit is detected at SICK-approval time, when the
+      // vacation was APPROVED. Between then and this confirm the vacation can move to
+      // CANCELLATION_REQUESTED or CANCELLED (leave.ts cancel path) — and the cancel path
+      // already decrements usedDays back. Confirming afterwards would run
+      // reverseVacationDays() a SECOND time for the same days (double credit), and would
+      // book a § 9 credit against a vacation that legally no longer exists: nothing was
+      // "angerechnet", so nothing can be "nicht angerechnet". selfHealUsedDays() masks the
+      // numeric symptom on the next load, but the CONFIRMED row itself stays wrong and
+      // feeds section9Movements, the monthly report and the DATEV Krank/Urlaub shift.
+      // CANCELLATION_REQUESTED is blocked too: the leave is still active today, but an
+      // approval of that cancellation later would decrement the same days again.
+      if (credit.vacationRequest.status !== "APPROVED") {
+        return reply.code(409).send({
+          error:
+            "Der betroffene Urlaubsantrag ist nicht mehr genehmigt — keine Gutschrift möglich.",
+        });
+      }
+
+      // D-12: deliberately NO four-eyes check — bei 1-2 Managern würde das exakt die
+      // Storno-Sackgasse reproduzieren, die § 9 umgeht. Derselbe Manager, der die
+      // Krankmeldung genehmigt hat, darf auch die AU bestätigen.
+
+      const attestFrom = new Date(body.attestValidFrom);
+      const attestTo = new Date(body.attestValidTo);
+      if (attestFrom > attestTo) {
+        return reply.code(400).send({ error: "AU-Gültigkeit: Von-Datum liegt nach Bis-Datum" });
+      }
+
+      // D-07: gutgeschrieben wird ausschließlich die attestierte Schnittmenge mit der
+      // Überlappung. Ein Attest kann keine Tage zurückgeben, die nie Urlaub waren.
+      const credited = intersectRanges(
+        attestFrom,
+        attestTo,
+        credit.overlapStart,
+        credit.overlapEnd,
+      );
+      if (!credited) {
+        return reply.code(400).send({
+          error:
+            "Die AU deckt keinen Tag des betroffenen Urlaubszeitraums ab — keine Gutschrift nach § 9 BUrlG.",
+        });
+      }
+
+      const tenantId = req.user.tenantId;
+      const holidayMap = await getHolidayMap(app.prisma, tenantId, credited.start, credited.end);
+      const holidays = new Set(holidayMap.keys());
+      const workDays = await resolveWorkDays(app.prisma, credit.employeeId, tenantId);
+      // D-08: Halber Urlaubstag + ganztägige Krankheit → Gutschrift 0,5. Zurückgegeben wird
+      // ausschließlich, was angerechnet war — der halfDay-Flag stammt daher vom URLAUBSantrag,
+      // nicht von der Krankmeldung (halbe Kranktage sind systemweit verboten, leave.ts:239).
+      const creditedDays = calculateWorkDays(
+        credited.start,
+        credited.end,
+        credit.vacationRequest.halfDay,
+        workDays,
+        holidays,
+      );
+      if (creditedDays <= 0) {
+        return reply
+          .code(400)
+          .send({ error: "Kein anrechenbarer Arbeitstag im attestierten Zeitraum." });
+      }
+
+      // reverseVacationDays IGNORES totalDays in its cross-year branch and recomputes it with
+      // halfDay=false. A half-day request whose credited range crosses a year boundary would
+      // therefore be over-booked. Refuse loudly instead of mis-booking silently.
+      // Phase 104 review (WR-09): UTC accessors throughout the § 9 path. Every
+      // Section9Credit date column is @db.Date (UTC midnight) and the entitlement endpoint
+      // attributes credits to a year with getUTCFullYear(); using the LOCAL accessors here
+      // meant a 1 January credit would be attributed to the PREVIOUS year on any host with a
+      // negative UTC offset — the movement line would vanish from the entitlement row it was
+      // booked against, and the ILLNESS deadline would land on the wrong year's row.
+      if (
+        credit.vacationRequest.halfDay &&
+        credited.start.getUTCFullYear() !== credited.end.getUTCFullYear()
+      ) {
+        return reply.code(400).send({
+          error:
+            "Halbtags-Urlaub über einen Jahreswechsel kann nicht automatisch gutgeschrieben werden — bitte manuell korrigieren.",
+        });
+      }
+
+      // Phase 104 review (IN-05): a credit whose origin year has no LeaveEntitlement row books
+      // NOTHING (updateMany affects 0 rows, and selfHealUsedDays does not create the row
+      // either) — yet the handler used to answer 200 { status: "CONFIRMED", creditedDays } and
+      // notify the employee "+N Tage gutgeschrieben". The transaction is aborted and answered
+      // with a 409 naming the year instead, so the Vorgang stays AU_PENDING and re-confirmable
+      // once the Urlaubsanspruch for that year exists.
+      let missingEntitlementYears: number[] = [];
+
+      await app.prisma
+        .$transaction(async (tx) => {
+          // D-18: Gutschrift ins URSPRUNGSJAHR des Urlaubstags — § 9 stellt den ursprünglichen
+          // Anspruch wieder her, er schafft keinen neuen. reverseVacationDays ist der
+          // symmetrische Gegenpart zu deductVacationDays und kann cross-year splitten.
+          const reversed = await reverseVacationDays(
+            tx,
+            credit.employeeId,
+            credit.vacationRequest.leaveTypeId,
+            credited.start,
+            credited.end,
+            creditedDays,
+            holidays,
+            tenantId,
+          );
+          if (reversed.missingYears.length > 0) {
+            missingEntitlementYears = reversed.missingYears;
+            throw new Section9MissingEntitlementError();
+          }
+
+          await tx.section9Credit.update({
+            where: { id: credit.id },
+            data: {
+              status: "CONFIRMED",
+              attestSource: body.attestSource,
+              attestValidFrom: attestFrom,
+              attestValidTo: attestTo,
+              creditedStart: credited.start,
+              creditedEnd: credited.end,
+              creditedDays,
+              reason: body.reason,
+              reviewedBy: req.user.sub,
+              reviewedAt: new Date(),
+            },
+          });
+
+          // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
+          // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
+          // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
+          // diese Frist bei späteren Buchungen vor stillem Überschreiben.
+          const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
+          const carryRow = await tx.leaveEntitlement.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: credit.employeeId,
+                leaveTypeId: credit.vacationRequest.leaveTypeId,
+                year: originYear + 1,
+              },
+            },
+          });
+          const now = new Date();
+          if (carryRow?.carryOverDeadline && carryRow.carryOverDeadline < now) {
+            await tx.leaveEntitlement.update({
+              where: { id: carryRow.id },
+              data: {
+                carryOverReason: "ILLNESS",
+                // 15 Monate nach Ende des Ursprungsjahres = 31.03. des Jahres originYear + 2
+                carryOverDeadline: new Date(Date.UTC(originYear + 2, 2, 31, 23, 59, 59)),
+                carryOverNote:
+                  `§ 9 BUrlG: ${creditedDays} Tag(e) wegen Krankheit im Urlaub gutgeschrieben ` +
+                  `(${credited.start.toISOString().split("T")[0]}–${credited.end.toISOString().split("T")[0]}). ` +
+                  `Verlängerte Übertragsfrist nach EuGH KHS C-214/10.`,
+              },
+            });
+          }
+
+          await app.audit({
+            userId: req.user.sub,
+            action: "SECTION9_CREDIT_CONFIRMED",
+            entity: "Section9Credit",
+            entityId: credit.id,
+            oldValue: { status: credit.status },
+            newValue: {
+              status: "CONFIRMED",
+              sickRequestId: credit.sickRequestId,
+              vacationRequestId: credit.vacationRequestId,
+              creditedStart: credited.start.toISOString().split("T")[0],
+              creditedEnd: credited.end.toISOString().split("T")[0],
+              creditedDays,
+              attestSource: body.attestSource,
+              reason: body.reason,
+              note: "§ 9 BUrlG, nicht angerechnet",
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Section9MissingEntitlementError) return "MISSING_ENTITLEMENT" as const;
+          throw err;
+        });
+
+      if (missingEntitlementYears.length > 0) {
+        return reply.code(409).send({
+          error:
+            `Für ${missingEntitlementYears.join(", ")} existiert kein Urlaubsanspruch — ` +
+            `die Gutschrift kann nicht gebucht werden. Bitte zuerst den Urlaubsanspruch anlegen.`,
+        });
+      }
+
+      // Outside the transaction: clear "AU nachreichen" nudges, notify the employee.
+      await app.dismissByRelated("Section9Credit", credit.id);
+
+      if (credit.employee.userId) {
+        const rangeLabel = `${formatDateDe(credited.start)} – ${formatDateDe(credited.end)}`;
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_CREDIT_CONFIRMED",
+          title: "Urlaubstage gutgeschrieben (§ 9 BUrlG)",
+          message: `+${creditedDays} Tage gutgeschrieben (§ 9 BUrlG, Krankheit ${rangeLabel}).`,
+          link: "/leave",
+          tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({
+        id: credit.id,
+        status: "CONFIRMED",
+        creditedStart: credited.start.toISOString().split("T")[0],
+        creditedEnd: credited.end.toISOString().split("T")[0],
+        creditedDays,
+      });
+    },
+  });
+
+  // ── POST /section9/:id/reject — AU-Nachweis abgelehnt (Phase 104-06, D-11) ───
+  app.post("/section9/:id/reject", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = section9ReasonSchema.parse(req.body);
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: { employee: { select: { id: true, tenantId: true, userId: true } } },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      // D-11: eine bereits gebuchte Gutschrift kann nicht abgelehnt werden — eine
+      // Korrektur wäre ein anderer Vorgang, außerhalb des Umfangs dieser Phase.
+      if (credit.status === "CONFIRMED") {
+        return reply
+          .code(409)
+          .send({ error: "Ein bereits gutgeschriebener Vorgang kann nicht abgelehnt werden." });
+      }
+
+      await app.prisma.$transaction(async (tx) => {
+        await tx.section9Credit.update({
+          where: { id: credit.id },
+          data: {
+            status: "REJECTED",
+            reason: body.reason,
+            reviewedBy: req.user.sub,
+            reviewedAt: new Date(),
+          },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "SECTION9_CREDIT_REJECTED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+          oldValue: { status: credit.status },
+          newValue: { status: "REJECTED", reason: body.reason },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+
+      // D-11: die Tage bleiben VORERST angerechnet — eine endgültige Ablehnung würde
+      // einen Anspruch verwehren, den § 9 kraft Gesetzes gewährt. Der Vorgang kann
+      // wieder eröffnet werden, sobald eine gültige AU vorliegt.
+      if (credit.employee.userId) {
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_CREDIT_REJECTED",
+          title: "AU abgelehnt — Urlaubstage bleiben angerechnet",
+          message:
+            `Die eingereichte AU wurde abgelehnt: ${body.reason}. Die Urlaubstage bleiben ` +
+            `vorerst angerechnet. Sobald eine gültige AU vorliegt, kann der Vorgang erneut ` +
+            `geöffnet werden.`,
+          link: "/leave",
+          tenantId: req.user.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({ id: credit.id, status: "REJECTED" });
+    },
+  });
+
+  // ── POST /section9/:id/reopen — abgelehnten Vorgang wieder eröffnen (D-11) ───
+  app.post("/section9/:id/reopen", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN", "MANAGER"),
+    handler: async (req, reply) => {
+      const { id } = req.params as { id: string };
+
+      const credit = await app.prisma.section9Credit.findFirst({
+        where: { id },
+        include: { employee: { select: { id: true, tenantId: true, userId: true } } },
+      });
+      if (!credit) return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+
+      if (credit.employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "Section9Credit",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "§-9-Vorgang nicht gefunden" });
+      }
+
+      if (credit.status !== "REJECTED") {
+        return reply
+          .code(400)
+          .send({ error: "Nur abgelehnte Vorgänge können wieder eröffnet werden." });
+      }
+
+      await app.prisma.$transaction(async (tx) => {
+        // `reason` bleibt bewusst erhalten (Revisionssicherheit) — die Begründung der
+        // früheren Ablehnung bleibt auf dem Datensatz nachvollziehbar, statt überschrieben
+        // zu werden.
+        await tx.section9Credit.update({
+          where: { id: credit.id },
+          data: { status: "AU_PENDING", reviewedBy: null, reviewedAt: null },
+        });
+        await app.audit({
+          userId: req.user.sub,
+          action: "SECTION9_CREDIT_REOPENED",
+          entity: "Section9Credit",
+          entityId: credit.id,
+          oldValue: { status: credit.status },
+          newValue: { status: "AU_PENDING" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+      });
+
+      // Re-emit the same D-14 notifications the original detection sent — reusing the
+      // exact copy from Phase 104-05, not a second wording.
+      const rangeLabel = `${formatDateDe(credit.overlapStart)} – ${formatDateDe(credit.overlapEnd)}`;
+      if (credit.employee.userId) {
+        await app.notify({
+          userId: credit.employee.userId,
+          type: "SECTION9_AU_PENDING_EMPLOYEE",
+          title: "AU nachreichen — Urlaubstage stehen auf dem Spiel",
+          message:
+            `Für ${rangeLabel} liegt eine Krankmeldung während Ihres genehmigten Urlaubs vor. ` +
+            `Ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet (§ 9 BUrlG).`,
+          link: "/leave",
+          tenantId: credit.employee.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+      const section9Managers = await app.prisma.employee.findMany({
+        where: {
+          tenantId: credit.employee.tenantId,
+          user: {
+            role: { in: ["ADMIN", "MANAGER"] },
+            isActive: true,
+            id: { not: req.user.sub },
+          },
+        },
+        select: { userId: true },
+      });
+      for (const mgr of section9Managers) {
+        await app.notify({
+          userId: mgr.userId,
+          type: "SECTION9_AU_PENDING_MANAGER",
+          title: "§ 9 BUrlG — AU-Nachweis ausstehend",
+          message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
+          link: `/team/leave?section9=${credit.id}`,
+          tenantId: credit.employee.tenantId,
+          relatedType: "Section9Credit",
+          relatedId: credit.id,
+        });
+      }
+
+      return reply.send({ id: credit.id, status: "AU_PENDING" });
     },
   });
 }
@@ -2085,9 +3154,13 @@ async function autoCarryOver(
   const deadline = new Date(year, deadlineMonth - 1, deadlineDay, 23, 59, 59);
 
   if (cur) {
+    // Phase 104 (D-19): see recalculateCarryOver — same ILLNESS deadline protection.
+    const illnessProtected = preserveIllnessDeadline(cur);
     await prisma.leaveEntitlement.update({
       where: { id: cur.id },
-      data: { carriedOverDays: remaining, carryOverDeadline: deadline },
+      data: illnessProtected
+        ? { carriedOverDays: remaining }
+        : { carriedOverDays: remaining, carryOverDeadline: deadline },
     });
   } else {
     await prisma.leaveEntitlement.create({
@@ -2136,9 +3209,19 @@ async function recalculateCarryOver(
   });
 
   if (cur) {
+    // Phase 104 (D-19 / R9): an ILLNESS carry-over carries the extended EuGH KHS C-214/10
+    // deadline (15 months after the end of the accrual year), not the tenant's standard
+    // Stichtag. This function runs after EVERY booking and cancellation, so an unconditional
+    // deadline write would silently revert that extension on the next unrelated leave
+    // request — the days would then appear to lapse on a date the ECJ forbids. Only the
+    // DEADLINE is protected: carriedOverDays is still recomputed, because D-20 relies on the
+    // existing expiry-warning mechanism reading an accurate, raised remaining entitlement.
+    const illnessProtected = preserveIllnessDeadline(cur);
     await prisma.leaveEntitlement.update({
       where: { id: cur.id },
-      data: { carriedOverDays: remaining, carryOverDeadline: deadline },
+      data: illnessProtected
+        ? { carriedOverDays: remaining }
+        : { carriedOverDays: remaining, carryOverDeadline: deadline },
     });
   } else {
     await prisma.leaveEntitlement.create({
@@ -2193,8 +3276,13 @@ async function deductVacationDays(
   holidays: Set<string>,
   tenantId: string,
 ): Promise<void> {
-  const year1 = startDate.getFullYear();
-  const year2 = endDate.getFullYear();
+  // Phase 104 review (WR-09): UTC year attribution. LeaveRequest.startDate/endDate are
+  // @db.Date (UTC midnight) and the entitlement endpoint reads years with getUTCFullYear();
+  // the local accessors put a 1 January booking on the previous year's entitlement row on any
+  // host with a negative UTC offset. Changed together with reverseVacationDays() below so the
+  // two stay exactly symmetric — booking and un-booking must never disagree on the year.
+  const year1 = startDate.getUTCFullYear();
+  const year2 = endDate.getUTCFullYear();
   const isCrossYear = year1 !== year2;
 
   if (isCrossYear) {
@@ -2240,6 +3328,23 @@ async function deductVacationDays(
  * Single-Year-Decrement, damit ein jahresübergreifender Urlaub korrekt zurückgebucht
  * wird (T-94-07).
  */
+/**
+ * Thrown inside the § 9 confirm transaction to roll it back when the credit would book
+ * nothing because the target year has no LeaveEntitlement row (IN-05). Never escapes the
+ * handler — it is translated into a 409 with the missing year named.
+ */
+class Section9MissingEntitlementError extends Error {
+  constructor() {
+    super("SECTION9_MISSING_ENTITLEMENT");
+    this.name = "Section9MissingEntitlementError";
+  }
+}
+
+type ReverseVacationResult = {
+  /** Years whose LeaveEntitlement row does not exist, so the decrement booked nothing (IN-05). */
+  missingYears: number[];
+};
+
 async function reverseVacationDays(
   prisma: DbClient,
   employeeId: string,
@@ -2249,39 +3354,51 @@ async function reverseVacationDays(
   totalDays: number,
   holidays: Set<string>,
   tenantId: string,
-): Promise<void> {
-  const year1 = startDate.getFullYear();
-  const year2 = endDate.getFullYear();
+): Promise<ReverseVacationResult> {
+  // WR-09: UTC year attribution, symmetric with deductVacationDays() above.
+  const year1 = startDate.getUTCFullYear();
+  const year2 = endDate.getUTCFullYear();
   const isCrossYear = year1 !== year2;
+  // Phase 104 review (IN-05): updateMany silently affects 0 rows when no entitlement exists
+  // for that year (e.g. a credit whose origin year predates the employee's first row), and
+  // selfHealUsedDays never creates a missing row either. Report the years that booked
+  // nothing so the caller can decide — the § 9 confirm path refuses rather than reporting
+  // "+N Tage gutgeschrieben" for a credit that landed nowhere.
+  const missingYears: number[] = [];
 
   if (isCrossYear) {
     const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
     const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
 
     if (split.year1Days > 0) {
-      await prisma.leaveEntitlement.updateMany({
+      const { count } = await prisma.leaveEntitlement.updateMany({
         where: { employeeId, leaveTypeId, year: year1 },
         data: { usedDays: { decrement: split.year1Days } },
       });
+      if (count === 0) missingYears.push(year1);
     }
     if (split.year2Days > 0) {
-      await prisma.leaveEntitlement.updateMany({
+      const { count } = await prisma.leaveEntitlement.updateMany({
         where: { employeeId, leaveTypeId, year: year2 },
         data: { usedDays: { decrement: split.year2Days } },
       });
+      if (count === 0) missingYears.push(year2);
     }
 
     // Year 1 remaining changed → recompute year 2 carry-over
     await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year2);
   } else {
-    await prisma.leaveEntitlement.updateMany({
+    const { count } = await prisma.leaveEntitlement.updateMany({
       where: { employeeId, leaveTypeId, year: year1 },
       data: { usedDays: { decrement: totalDays } },
     });
+    if (count === 0) missingYears.push(year1);
 
     // Current year usage changed → recompute next year's carry-over
     await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year1 + 1);
   }
+
+  return { missingYears };
 }
 
 /**
@@ -2375,22 +3492,18 @@ async function resolveWorkDays(
  * globalen Tenant-Defaults falls kein individueller Plan vorhanden).
  * Halbe Tage = halbe Stunden des ersten Arbeitstages.
  *
- * KNOWN GAP — SHIFT_BASED schedules (deferred from Phase 49.5):
- * For SHIFT_BASED employees this returns the wrong number because it reads
- * the per-Tag-Soll fields (mondayHours…sundayHours) on the WorkSchedule,
- * which are not authoritative for SHIFT_BASED — their real hours live in
- * the `Shift` table. OVERTIME_COMP saldo deductions are therefore inaccurate
- * for shift-based users.
- *
- * The correct fix is to detect `schedule.scheduleType === "SHIFT_BASED"` and
- * branch to `prisma.shift.findMany({ where: { employeeId, date: { gte: start, lte: end } } })`,
- * summing each shift's `(endTime - startTime - breakMinutes)` in hours.
- *
- * Acceptance trigger: only implement once UAT reports a concrete OVERTIME_COMP
- * saldo mismatch for a SHIFT_BASED employee. See the v1.6 milestone audit
- * (`.planning/milestones/v1.6-MILESTONE-AUDIT.md`) tech_debt entry for
- * `49.5-arbeitstage-woche-config` and the phase SUMMARY's "Known Stubs"
- * section for the original deferral rationale.
+ * SHIFT_BASED (Phase 100 / OTC-04, D-05..D-08): the per-Tag-Soll fields
+ * (mondayHours…sundayHours) on WorkSchedule are NOT authoritative for this schedule type —
+ * the real hours live in the `Shift` table. This function branches on `ws.type ===
+ * "SHIFT_BASED"` before the per-weekday path below and instead sums each rostered shift's
+ * netto minutes: brutto (endTime − startTime, midnight-crossing corrected) minus the
+ * tenant/employee auto-break for that duration (`shift-netto.ts`). `Shift` carries no
+ * `breakMinutes` column, so the original Phase-49.5 formula `(endTime - startTime -
+ * breakMinutes)` named a field that does not exist — this replaces it. Soft-deleted shifts
+ * (`deletedAt != null`) are excluded (D-06) — an employer-cancelled shift is not time the
+ * employee has to buy back. Half-day uses the netto of the FIRST rostered shift in the
+ * range, halved (D-07). An employee with no shifts in the range costs 0 hours and the
+ * request is not rejected for that reason (D-08).
  */
 async function getScheduledHours(
   prisma: DbClient,
@@ -2414,6 +3527,43 @@ async function getScheduledHours(
 
   const ws = employee?.workSchedules[0] ?? null;
   const cfg = employee?.tenant?.config;
+
+  // SHIFT_BASED: netto summed from the Shift table (Phase 100 / OTC-04, D-05..D-08) — see the
+  // docblock above. Returns BEFORE the FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS per-weekday
+  // path below, which stays byte-for-byte unchanged for every other schedule type.
+  if (ws?.type === "SHIFT_BASED") {
+    const shifts = await prisma.shift.findMany({
+      where: { employeeId, date: { gte: start, lte: end }, deletedAt: null },
+      select: { startTime: true, endTime: true },
+      // D-07 / WR-02 (code review): "first rostered shift" must be deterministic. `date` alone
+      // is NOT sufficient — Shift has no unique constraint on (employeeId, date), so same-day
+      // split shifts (e.g. a morning + evening shift) tie under `date` ordering, and
+      // Postgres/Prisma give no guarantee on row order among ties. `startTime` breaks that tie.
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
+    });
+
+    const employeeBreakShape = {
+      breakOver6hOverride: employee?.breakOver6hOverride ?? null,
+      breakOver9hOverride: employee?.breakOver9hOverride ?? null,
+    };
+    const tenantBreakShape = {
+      defaultBreakOver6h: cfg?.defaultBreakOver6h ?? 30,
+      defaultBreakOver9h: cfg?.defaultBreakOver9h ?? 45,
+    };
+
+    // The `holidays` set is deliberately NOT applied on this path. For SHIFT_BASED the roster
+    // is authoritative — if nobody rostered the employee on a public holiday there is no shift
+    // and the day costs nothing on its own; if somebody DID roster them, those hours are real
+    // planned work and taking the day off genuinely consumes them. Filtering by holiday here
+    // would double-count the exclusion.
+    if (halfDay) {
+      // D-07: half day = half the netto of the FIRST rostered shift; D-08: empty roster -> 0.
+      if (shifts.length === 0) return 0;
+      return shiftNettoMinutes(shifts[0], employeeBreakShape, tenantBreakShape) / 2 / 60;
+    }
+    // D-05: sum of every non-deleted rostered shift's netto; naturally 0 for an empty roster (D-08).
+    return sumShiftNettoMinutes(shifts, employeeBreakShape, tenantBreakShape) / 60;
+  }
 
   // Stunden pro Wochentag (0=So, 1=Mo … 6=Sa)
   const h: Record<number, number> = {

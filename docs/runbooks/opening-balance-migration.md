@@ -338,3 +338,56 @@ contain a name.
 
 Never commit a real `DATABASE_URL`, tenant id, or employee id into this file or into any issue
 referencing a run of this script.
+
+## Durchführungsprotokoll
+
+Record of every real-environment run of this runbook. One row per decision, append-only —
+never rewrite a past entry.
+
+| Date       | Environment | Outcome      | Recorded by                              | Detail                                         |
+| ---------- | ----------- | ------------ | ---------------------------------------- | ---------------------------------------------- |
+| 2026-08-20 | int + prod  | **DEFERRED** | Owner (via GSD Phase 99, Plan 08 Task 2) | Migration deliberately not yet run. See below. |
+
+### 2026-08-20 — Deferred
+
+**Decision:** `deferred` — Phase 99 closes with the OB-04 data migration deliberately not
+executed against int or prod.
+
+**Scope of the deferral.** Neither step of the real-environment sequence has been performed:
+
+- **Not run:** `prisma migrate deploy` on int or prod — the additive `OpeningBalance` migration
+  (`CREATE TYPE` + `CREATE TABLE` + partial `CREATE UNIQUE INDEX ... WHERE superseded = false`)
+  exists and is committed, but has been applied to the **local dev database only**.
+- **Not run:** `scripts/migrate-opening-balances.ts` in any mode against int or prod — no
+  dry-run, no `--apply`. The six existing seeded opening balances remain exactly where they
+  are today, inside `SaldoSnapshot.carryOver`.
+- **No baseline or after audit counts exist for int/prod**, because no migration window was
+  opened. The last known prod baseline remains the expected
+  `exit 0 — 95 snapshots / 89 delta-0 / 6 documented / 0 unexplained`.
+
+**Why deferring is safe (and why nothing is currently broken).** Without the migration, opening
+balances keep behaving exactly as they do today: the v1.9.14 delta-preservation guard in
+`recalculateSnapshots()` is untouched and still preserves the hand-injected carry-over values.
+The deferral changes no runtime behaviour — it only postpones moving those values onto the new
+first-class mechanism. This is the explicit "A — decide whether to proceed now" branch of the
+Task 2 checkpoint, not an unplanned omission.
+
+**What was completed and is not in doubt.** All of OB-01, OB-02, OB-03, OB-05, OB-06 and the
+local rehearsal (OB-04 Task 1) are done and verified locally, including an `--apply` rehearsal,
+the `needs_review` abort path, and a recalc-stability proof whose chain-integrity audit output
+was byte-identical before and after in every bracket tested. See § Rehearsal (local, 2026-08-19).
+
+**What remains outstanding.** Only the real-data migration itself: steps **B** through **H** of
+the Task 2 checkpoint (deploy → baseline audit → dry-run → review proposed rows → apply →
+re-audit unchanged → UI spot-check). The full sequence is preserved verbatim in
+`.planning/phases/99-openingbalance-modell/99-08-SUMMARY.md` § "How to verify / what to run".
+
+**Re-entry.** When the migration is scheduled, run this runbook from § 2 unchanged and append a
+new row to the table above with the before/after audit counts. Do not edit this entry.
+
+**Carried risk, stated plainly.** Until the migration runs, the six opening balances continue to
+depend on the v1.9.14 guard rather than on a documented, auditor-facing `OpeningBalance` row.
+That is the exact fragility Phase 99 exists to remove, so this deferral leaves the original
+motivation live. OB-07 (re-evaluating whether the v1.9.14 guard can retire) is consequently
+**blocked** and must not be actioned while this row reads DEFERRED — retiring the guard without
+the migration in place would re-open the erasure path.

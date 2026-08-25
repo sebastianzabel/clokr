@@ -288,6 +288,7 @@ describe("Saldo Snapshot & Monatsabschluss", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(res.statusCode).toBe(204);
 

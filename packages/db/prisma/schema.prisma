@@ -158,6 +158,7 @@ model TenantConfig {
   emailOnMissingEntries             Boolean  @default(false) // Fehlende Zeiteinträge
   emailOnClockOutReminder           Boolean  @default(false) // Vergessene Stempelung
   emailOnMonthClose                 Boolean  @default(true) // Monatsabschluss
+  emailOnRetroEntry                 Boolean  @default(true) // Zeitnachtrag (Neuer/geändert/genehmigt/abgelehnt/zurückgezogen)
   // Automatische Erinnerungen
   reminderPendingLeaveHours         Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
   reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
@@ -357,6 +358,8 @@ model Employee {
   phorestStaffMappings     PhorestStaffMapping[]
   // Phase 86 — DSGVO-minimal appointment busy-window cache (onDelete: Restrict — never cascade-delete)
   phorestAppointments      PhorestAppointment[]
+  // Phase 104 — § 9 BUrlG coupling rows (Restrict FK — never cascade-delete history)
+  section9Credits          Section9Credit[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -675,6 +678,8 @@ model LeaveRequest {
   employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   leaveType        LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
   specialLeaveRule SpecialLeaveRule? @relation(fields: [specialLeaveRuleId], references: [id])
+  section9AsSick     Section9Credit[] @relation("Section9SickRequest")
+  section9AsVacation Section9Credit[] @relation("Section9VacationRequest")
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -710,6 +715,71 @@ model RetroEntryRequest {
   @@index([employeeId])
   @@index([employeeId, targetDate])
   @@index([employeeId, status])
+}
+
+// ─────────────────────────────────────────────
+// § 9 BUrlG — KRANK IM URLAUB (Phase 104)
+// ─────────────────────────────────────────────
+//
+// Couples an APPROVED SICK/SICK_CHILD LeaveRequest to the APPROVED non-SICK
+// LeaveRequest whose date range it overlaps. D-05: NEITHER LeaveRequest is ever
+// physically altered by the § 9 flow — this row carries the non-crediting and the
+// correction to LeaveEntitlement.usedDays, so the approved vacation request stays
+// intact for the audit trail ("no silent overwrites", CLAUDE.md).
+//
+// R8 / D-03 (documentation-only, deliberately no schema change):
+//   Sickness exists in two models today — LeaveRequest (leaveType "Krankmeldung"/
+//   "Kinderkrank") and Absence (type SICK / SICK_CHILD). The Absence side is DEAD:
+//   no code path calls absence.create() with type SICK — the only absence.create()
+//   call sites are vocational-school-generator.ts and vocational-school.ts, both of
+//   which write VOCATIONAL_SCHOOL. Absence.documentPath likewise has no writer; its
+//   only readers are utils/anonymize.ts and routes/employees.ts (DSGVO deletion).
+//   LeaveRequest is therefore the sole source of truth for sickness, and § 9
+//   references LeaveRequest exclusively (both FKs below). The dead Absence.SICK /
+//   Absence.documentPath pair is left untouched because the Berufsschule logic hangs
+//   off the same model; cleaning it up is a separate, deferred phase.
+model Section9Credit {
+  id                String               @id @default(uuid())
+  employeeId        String               // denormalized so tenant-scoped queries need no join
+  sickRequestId     String               // SICK / SICK_CHILD LeaveRequest (D-13: must be APPROVED to confirm)
+  vacationRequestId String               // overlapping APPROVED non-SICK LeaveRequest (D-05: never mutated)
+  // Computed intersection of the two ranges at detection time (D-09).
+  overlapStart      DateTime             @db.Date
+  overlapEnd        DateTime             @db.Date
+  status            Section9CreditStatus @default(AU_PENDING)
+  // D-07: the attested subset actually credited — may be narrower than overlapStart/End.
+  creditedStart     DateTime?            @db.Date
+  creditedEnd       DateTime?            @db.Date
+  creditedDays      Decimal?             @db.Decimal(5, 2) // D-08: supports 0.5
+  // D-27 "AU liegt vor": validity + provenance only. DELIBERATELY NO doctor,
+  // diagnosis or free-text health field — Art. 9 DSGVO data minimisation.
+  attestSource      String?              // "EAU" | "PAPIER"
+  attestValidFrom   DateTime?            @db.Date
+  attestValidTo     DateTime?            @db.Date
+  documentPath      String?              // D-26: MinIO object path for a paper AU (eAU has none)
+  reason            String?              // mandatory on CONFIRMED/REJECTED — enforced in Zod, not in the DB
+  reviewedBy        String?
+  reviewedAt        DateTime?            @db.Timestamptz
+  createdAt         DateTime             @default(now()) @db.Timestamptz
+  updatedAt         DateTime             @updatedAt @db.Timestamptz
+
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  sickRequest     LeaveRequest @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
+  vacationRequest LeaveRequest @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
+
+  // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag)
+  // pair. The detection path guards with a findFirst/create pair that is NOT in a
+  // transaction, so two concurrent approvals of the same sick request (double click, retry,
+  // a manager racing a cron path) could create two AU_PENDING rows for the same overlap. If
+  // both were later confirmed, reverseVacationDays() would run twice and
+  // sumConfirmedSection9DaysByRequest() would sum both — a double credit that SURVIVES the
+  // self-heal, because self-heal trusts the credit sum. The DB is the only place this can
+  // be enforced.
+  @@unique([sickRequestId, vacationRequestId])
+  @@index([employeeId])
+  @@index([sickRequestId])
+  @@index([vacationRequestId])
+  @@index([status])
 }
 
 // ─────────────────────────────────────────────
@@ -972,6 +1042,16 @@ enum RetroEntryStatus {
   APPROVED
   REJECTED
   USED
+}
+
+// Phase 104 — § 9 BUrlG "Krank im Urlaub": status of one coupling record.
+// AU_PENDING is the created-immediately, no-effect state (D-09). REJECTED is
+// explicitly re-openable (D-11) — never a soft-delete, so the rejection reason
+// stays visible in the row's history.
+enum Section9CreditStatus {
+  AU_PENDING
+  CONFIRMED
+  REJECTED
 }
 
 enum AbsenceType {

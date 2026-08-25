@@ -51,7 +51,16 @@ export default [
     files: ["**/*.ts"],
     // Standalone scripts (not part of any app's tsconfig) opt out of
     // type-aware linting; they still get the non-type-aware rules below.
-    ignores: ["apps/web/scripts/**", "apps/api/scripts/**", "packages/db/src/seed-demo.ts"],
+    // apps/api/vitest.*.ts live at the workspace root, outside apps/api/tsconfig.json's
+    // `include: ["src/**/*"]`, so no tsconfig project covers them either (Phase 101 plan 02 —
+    // discovered pre-existing when eslint was pointed at vitest.setup.ts/vitest.config.ts
+    // directly for the first time; not introduced by that plan).
+    ignores: [
+      "apps/web/scripts/**",
+      "apps/api/scripts/**",
+      "packages/db/src/seed-demo.ts",
+      "apps/api/vitest.*.ts",
+    ],
     languageOptions: {
       parserOptions: {
         project: true,

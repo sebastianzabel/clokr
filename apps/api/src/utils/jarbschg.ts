@@ -34,6 +34,7 @@ import {
   computeDailySollMinutes,
   bsUnterrichtsMinutesByDateForIsoWeek,
 } from "./vocational-school-saldo.js";
+import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -306,7 +307,7 @@ async function classifyBsSlotFromAbsence(
         validFrom: { lte: dayStart },
         OR: [{ validUntil: null }, { validUntil: { gte: dayStart } }],
       },
-      orderBy: { validFrom: "desc" },
+      orderBy: BS_PATTERN_ORDER_BY,
       select: {
         bsSlotFirstLongDayMinutes: true,
         bsSlotSecondLongDayMinutes: true,

@@ -93,6 +93,7 @@
     emailOnMissingEntries?: boolean;
     emailOnClockOutReminder?: boolean;
     emailOnMonthClose?: boolean;
+    emailOnRetroEntry?: boolean;
     sessionTimeoutMinutes?: number;
     refreshTokenDays?: number;
     rememberMeEnabled?: boolean;
@@ -363,6 +364,7 @@
   let emailOnMissingEntries = $state(false);
   let emailOnClockOutReminder = $state(false);
   let emailOnMonthClose = $state(true);
+  let emailOnRetroEntry = $state(true);
   let emailSaving = $state(false);
   let emailSaved = $state(false);
   let emailError = $state("");
@@ -516,6 +518,7 @@
         emailOnMissingEntries = sec.emailOnMissingEntries ?? false;
         emailOnClockOutReminder = sec.emailOnClockOutReminder ?? false;
         emailOnMonthClose = sec.emailOnMonthClose ?? true;
+        emailOnRetroEntry = sec.emailOnRetroEntry ?? true;
         sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
         refreshTokenDays = sec.refreshTokenDays ?? 7;
         rememberMeEnabled = sec.rememberMeEnabled ?? true;
@@ -1061,6 +1064,7 @@
         emailOnMissingEntries,
         emailOnClockOutReminder,
         emailOnMonthClose,
+        emailOnRetroEntry,
       });
       emailSaved = true;
       setTimeout(() => (emailSaved = false), 3000);
@@ -2316,6 +2320,17 @@
                   type="checkbox"
                   aria-label="Benachrichtigung: Monatsabschluss"
                   bind:checked={emailOnMonthClose}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Zeitnachtrag</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Zeitnachtrag"
+                  bind:checked={emailOnRetroEntry}
                 />
                 <span class="switch-slider"></span>
               </label>

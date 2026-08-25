@@ -145,3 +145,73 @@ research conducted 2026-08-18 (Phase 97-02):
 ever added in the future, it MUST compare the **confirmed** figure only and MUST exclude the
 open-month (Prognose) delta — comparing the raw total, or the forecast, across two points in time
 would reintroduce exactly the false-alarm risk this decision avoids today.
+
+## Minusstunden-Toleranz (maxNegativeBalanceMinutes)
+
+Phase 100 (`berstundenabbau-minusstunden-toleranz-wirksam-machen-korrekt`, OTC-01/OTC-02) turned
+`maxNegativeBalanceMinutes` from stored-but-discarded configuration into a real, enforced booking
+limit. This section is the one place to answer "what does an empty Max.-Minusstunden field mean"
+without reading code — read it before changing anything that reads or writes this value.
+
+### Where the value lives
+
+Two places, resolved through a single shared precedence chain — never duplicated inline
+(`resolveNegativeBalanceTolerance` / `loadNegativeBalanceTolerance`,
+`apps/api/src/utils/negative-balance-tolerance.ts`):
+
+1. **`WorkSchedule.maxNegativeBalanceMinutes`** — a per-employee override, set via
+   `PUT /api/v1/settings/work/:employeeId` (Admin-Oberfläche → Mitarbeiter → Arbeitszeit → „Max.
+   Minusstunden").
+2. **`TenantConfig.maxNegativeBalanceMinutes`** — the tenant-wide default, set via
+   `PUT /api/v1/settings/security` (Admin-Oberfläche → Einstellungen → Sicherheit).
+
+The per-employee value wins whenever it is set — including an EXPLICIT `0` — because the chain uses
+nullish coalescing (`??`), not `||`: an employee whose contract deliberately allows zero tolerance is
+never silently overridden by a non-zero tenant default. Only the ABSENCE of a per-employee row (or a
+row whose field is `null`) falls through to the tenant default.
+
+### The two readings of `null`
+
+The SAME stored `null` — "nothing configured, at either level" — answers two different questions
+depending on which consumer reads it. Neither reading is "wrong"; both are correct for the question
+they answer:
+
+| Reading  | Question it answers                                 | Consumer                                                                               | What `null` means there                                                                                                                                                                                                                                            |
+| -------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ALERTING | "should we warn that this balance is too negative?" | `isNegativeLimitExceeded` (`GET /overtime/:employeeId`, `GET /leave/overtime-balance`) | „unbegrenzt" — no limit is configured, so the warning never fires, no matter how negative the balance gets. This is the schema comment's own wording (`packages/db/prisma/schema.prisma`, `TenantConfig.maxNegativeBalanceMinutes`) and is unchanged by Phase 100. |
+| BOOKING  | "may this OVERTIME_COMP request go through?"        | `POST /api/v1/leave/requests`, OVERTIME_COMP branch (`leave.ts:429`)                   | tolerance **0** — an unconfigured tenant grants no room beyond the confirmed carry-over.                                                                                                                                                                           |
+
+D-00b is the decision that these two readings are allowed to diverge. **An empty „Max.
+Minusstunden" field is therefore never "unlimited booking room"** — for the one write path that
+enforces it (below), it means exactly the tolerance the gate applied before Phase 100 existed: none.
+An unconfigured tenant sees byte-identical gate behaviour to pre-Phase-100.
+
+### Which write path enforces it today — and which do not
+
+**Enforced today:** `POST /api/v1/leave/requests`, OVERTIME_COMP branch only (`leave.ts:429`). A
+request whose needed hours exceed confirmed carry-over + resolved tolerance is rejected with a 400
+that names the applied tolerance in the German rejection copy. `GET /leave/overtime-balance`
+(`leave.ts:1817`) exposes the identical resolved figure the gate enforces, so the request form's own
+affordability display can never disagree with the server (D-15/D-16).
+
+**Deliberately NOT enforced** (`100-CONTEXT.md`, Deferred Ideas — a separate, later product decision,
+not an oversight of this phase):
+
+- **Time-entry creation** (clock-in/out, manual entries) — an employee can still clock a day that
+  pushes the balance past the configured tolerance; only an OVERTIME_COMP LEAVE request is gated.
+- **Monatsabschluss** (month close) — closing a month never rejects based on this value.
+- **Payout** — see the separate, unrelated floor below.
+
+### The payout floor is a different, unconfigurable limit (D-03)
+
+`overtime.ts:317` (`OVERDRAW_PREVENTED`) rejects any payout that would push the stored balance below
+`0`. This is a SEPARATE, deliberately unconfigurable limit, untouched by Phase 100. A tenant with a
+configured tolerance of, say, 10:00 Std. still cannot pay out into a negative balance — the tolerance
+only ever governs whether an OVERTIME_COMP leave request may be booked, never a cash payout.
+
+### The fail-safe branch applies zero tolerance (D-02)
+
+When the gate's confirmed-carry-over read fails and the OVERTIME_COMP branch falls back to the
+stored `OvertimeAccount.balanceHours` (`leave.ts:457`), the applied tolerance is forced to **0**
+regardless of what is configured anywhere. Reason: a fail-safe must never be MORE generous than the
+normal path — an error in the saldo read path must not silently widen the booking limit.

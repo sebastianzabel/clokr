@@ -27,6 +27,12 @@ export interface CreateAzubiOpts {
   lastName?: string;
   /** Informational at this layer — actual lookup happens at PUT time. */
   federalState?: string;
+  /**
+   * YYYY-MM-DD. Defaults to today. Retroactive BS-pattern scenarios need a
+   * hireDate that pre-dates the pattern's own `validFrom` — the generator's
+   * `preHire` skip otherwise swallows every backdated day (Phase 103 plan 06).
+   */
+  hireDate?: string;
 }
 export interface CreateAzubiResult {
   employeeId: string;
@@ -55,11 +61,22 @@ export interface SeedBSPatternResult {
 // ISO-3166-2 → Prisma FederalState. Mock fixture uses ISO codes; the
 // vocational-school-pattern endpoint accepts the Prisma enum.
 const ISO_TO_PRISMA: Record<string, string> = {
-  NW: "NORDRHEIN_WESTFALEN", BY: "BAYERN", NI: "NIEDERSACHSEN",
-  BE: "BERLIN", BB: "BRANDENBURG", HB: "BREMEN", HH: "HAMBURG",
-  HE: "HESSEN", MV: "MECKLENBURG_VORPOMMERN", RP: "RHEINLAND_PFALZ",
-  SL: "SAARLAND", SN: "SACHSEN", ST: "SACHSEN_ANHALT",
-  SH: "SCHLESWIG_HOLSTEIN", TH: "THUERINGEN", BW: "BADEN_WUERTTEMBERG",
+  NW: "NORDRHEIN_WESTFALEN",
+  BY: "BAYERN",
+  NI: "NIEDERSACHSEN",
+  BE: "BERLIN",
+  BB: "BRANDENBURG",
+  HB: "BREMEN",
+  HH: "HAMBURG",
+  HE: "HESSEN",
+  MV: "MECKLENBURG_VORPOMMERN",
+  RP: "RHEINLAND_PFALZ",
+  SL: "SAARLAND",
+  SN: "SACHSEN",
+  ST: "SACHSEN_ANHALT",
+  SH: "SCHLESWIG_HOLSTEIN",
+  TH: "THUERINGEN",
+  BW: "BADEN_WUERTTEMBERG",
 };
 
 function authHeaders(t: BSPatternTenant): Record<string, string> {
@@ -77,15 +94,23 @@ export async function createAzubiEmployee(
     lastName: opts.lastName ?? "Azubi",
     email: `azubi-${stamp}@${tenant.tenantId}.test`,
     employeeNumber: `AZB-${stamp}`,
-    hireDate: new Date().toISOString(),
+    hireDate: opts.hireDate ? new Date(opts.hireDate).toISOString() : new Date().toISOString(),
     role: "EMPLOYEE",
     classification: "AZUBI",
     scheduleType: "FIXED_SCHEDULE",
     weeklyHours: 40,
     workDays: [1, 2, 3, 4, 5],
+    // A directly-set password activates the user immediately (isActive: true) —
+    // apps/api/src/routes/employees.ts:372. Without it the employee stays inactive
+    // pending an invitation flow this fixture has no use for, and any manual
+    // TimeEntry creation against them 403s ("Mitarbeiter ist deaktiviert") — a real
+    // blocker for Phase 103 plan 06's TimeEntry-conflict scenarios.
+    password: "Test1234!Secure",
   };
   const res = await fetch(`${API_BASE}/api/v1/employees`, {
-    method: "POST", headers: authHeaders(tenant), body: JSON.stringify(body),
+    method: "POST",
+    headers: authHeaders(tenant),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => "<no body>");
@@ -104,29 +129,34 @@ export async function seedBSPattern(
   const override = opts.federalStateOverride
     ? (ISO_TO_PRISMA[opts.federalStateOverride] ?? opts.federalStateOverride)
     : null;
-  const item = opts.mode === "WEEKLY"
-    ? {
-        daysOfWeek: opts.weeklyDays ?? [1, 2, 3, 4, 5],
-        blockWeeks: [] as number[], blockYear: null as number | null,
-        validFrom: opts.validFrom,
-        respectSchoolHolidays: opts.respectSchoolHolidays ?? true,
-        federalStateOverride: override,
-      }
-    : {
-        daysOfWeek: [] as number[],
-        blockWeeks: opts.blockWeeks ?? [37, 38],
-        blockYear: opts.blockYear ?? new Date().getFullYear(),
-        validFrom: opts.validFrom,
-        respectSchoolHolidays: opts.respectSchoolHolidays ?? true,
-        federalStateOverride: override,
-      };
-  const res = await fetch(
-    `${API_BASE}/api/v1/employees/${employeeId}/vocational-school-pattern`,
-    { method: "PUT", headers: authHeaders(tenant), body: JSON.stringify({ patterns: [item] }) },
-  );
+  const item =
+    opts.mode === "WEEKLY"
+      ? {
+          daysOfWeek: opts.weeklyDays ?? [1, 2, 3, 4, 5],
+          blockWeeks: [] as number[],
+          blockYear: null as number | null,
+          validFrom: opts.validFrom,
+          respectSchoolHolidays: opts.respectSchoolHolidays ?? true,
+          federalStateOverride: override,
+        }
+      : {
+          daysOfWeek: [] as number[],
+          blockWeeks: opts.blockWeeks ?? [37, 38],
+          blockYear: opts.blockYear ?? new Date().getFullYear(),
+          validFrom: opts.validFrom,
+          respectSchoolHolidays: opts.respectSchoolHolidays ?? true,
+          federalStateOverride: override,
+        };
+  const res = await fetch(`${API_BASE}/api/v1/employees/${employeeId}/vocational-school-pattern`, {
+    method: "PUT",
+    headers: authHeaders(tenant),
+    body: JSON.stringify({ patterns: [item] }),
+  });
   if (!res.ok) {
     const detail = await res.text().catch(() => "<no body>");
-    throw new Error(`seedBSPattern: ${res.status} (employee=${employeeId}, mode=${opts.mode}) — ${detail}`);
+    throw new Error(
+      `seedBSPattern: ${res.status} (employee=${employeeId}, mode=${opts.mode}) — ${detail}`,
+    );
   }
   const body = (await res.json()) as { patterns: { id: string }[] };
   if (!body.patterns?.length) {

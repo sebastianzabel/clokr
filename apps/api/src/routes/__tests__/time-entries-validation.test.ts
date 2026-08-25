@@ -179,6 +179,7 @@ describe("Time Entry Validation Rules", () => {
         method: "DELETE",
         url: `/api/v1/leave/requests/${leaveRequestId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect(deleteRes.statusCode).toBeLessThan(300);
 

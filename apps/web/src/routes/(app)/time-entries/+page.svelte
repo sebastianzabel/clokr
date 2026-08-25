@@ -9,6 +9,7 @@
   import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
   import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
     format,
     startOfMonth,
@@ -161,6 +162,10 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Quick 260824-cjd: Storno now requires a Begründung — deleteConfirmId still
+  // tracks the target row id, but the confirm UI moved from an inline Ja/Nein
+  // span to a ReasonDialog.
+  let deleteDialogOpen = $state(false);
   // Phase 96 (RETRO-17) — confirm-step id for the "Zurückziehen" (withdraw)
   // action on an own pending Nachtrag row, mirrors deleteConfirmId's pattern.
   let withdrawConfirmId = $state("");
@@ -177,6 +182,11 @@
   let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
   let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
   let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
+  // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
+  // Phase-97-01 split fields above: undefined on fetch failure / older cached response
+  // (via rawOvertime?.field below), which KontoSaldoCard renders as "unconfigured".
+  let overtimeNegativeLimitExceeded: boolean | undefined = $state(undefined);
+  let overtimeMaxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -329,6 +339,10 @@
                 openMonthMinutes?: number | null;
                 hasClosedMonth?: boolean;
                 rosterIncomplete?: boolean;
+                // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
+                // endpoint (overtime.ts:172-173); only the client-side type was missing them.
+                maxNegativeBalanceMinutes?: number | null;
+                isNegativeLimitExceeded?: boolean;
               }>(`/overtime/${activeEmpId}`)
               .catch(() => null)
           : Promise.resolve(null),
@@ -380,6 +394,9 @@
       overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
       overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
       overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
+      overtimeNegativeLimitExceeded = rawOvertime?.isNegativeLimitExceeded;
+      overtimeMaxNegativeBalanceMinutes = rawOvertime?.maxNegativeBalanceMinutes;
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -1105,9 +1122,19 @@
     breakActionPending = false;
   }
 
-  async function deleteEntry(id: string) {
+  function openDeleteDialog(id: string) {
+    deleteConfirmId = id;
+    deleteDialogOpen = true;
+  }
+
+  async function confirmDeleteDialog(reason: string) {
+    if (!deleteConfirmId) return;
+    await deleteEntry(deleteConfirmId, reason);
+  }
+
+  async function deleteEntry(id: string, reason: string) {
     try {
-      await api.delete(`/time-entries/${id}`);
+      await api.delete(`/time-entries/${id}`, { reason });
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
@@ -1634,6 +1661,8 @@
       openMonthMinutes={overtimeOpenMonthMinutes}
       hasClosedMonth={overtimeHasClosedMonth}
       rosterIncomplete={overtimeRosterIncomplete}
+      isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
+      maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
       {loading}
     />
   </div>
@@ -1851,20 +1880,6 @@
                           data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                         >
                       </span>
-                    {:else if deleteConfirmId === slot.id}
-                      <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                        <button
-                          class="btn btn-sm btn-danger"
-                          onclick={() => deleteEntry(slot.id)}
-                          data-testid={`time-entry-row-${slot.id}-confirm-delete`}>Ja</button
-                        >
-                        <button
-                          class="btn btn-sm btn-ghost"
-                          onclick={() => (deleteConfirmId = "")}
-                          data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
-                        >
-                      </span>
                     {:else if withdrawConfirmId === slot.id}
                       <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
                            delete-confirm pattern above with its own label/testids. -->
@@ -1904,7 +1919,7 @@
                         {:else}
                           <button
                             class="btn-icon btn-icon-danger"
-                            onclick={() => (deleteConfirmId = slot.id)}
+                            onclick={() => openDeleteDialog(slot.id)}
                             title="Löschen"
                             data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                           >
@@ -2302,6 +2317,16 @@
       {/if}
     {/snippet}
   </Modal>
+
+  <!-- ── Quick 260824-cjd: Storno-Begründung (Zeiteintrag löschen) ────────────── -->
+  <ReasonDialog
+    bind:open={deleteDialogOpen}
+    title="Eintrag löschen?"
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDeleteDialog}
+    onCancel={() => (deleteConfirmId = "")}
+  />
 </div>
 
 <!-- /data-testid="time-entries-page" -->

@@ -1,71 +1,101 @@
-# pnpm: Present as build tool in Docker image (corepack), not used at runtime.
-# Image ships pnpm@10.34.5 (installed via corepack prepare in the Dockerfiles).
+# Trivy CRITICAL/HIGH exceptions. Every surviving entry below is backed by evidence recorded in
+# docs/image-footprint.md (IMG-04 disposition table) — per-image presence/absence, installed
+# version vs. the CVE's own documented fix threshold, and (where relevant) exactly why the
+# runtime never reaches the vulnerable code path. Before writing a new entry here, or before
+# trusting an existing one, verify it the same way: re-check the image and the upstream advisory
+# directly rather than assuming a runtime-exposure or fix-availability claim still holds (see
+# docs/cve-handling.md).
+
+# pnpm: present in the API runtime image (corepack-installed, /usr/local/bin/pnpm, 10.34.5);
+# absent from the web image entirely (no pnpm binary, no corepack cache — confirmed via
+# `command -v pnpm` and a corepack-cache `find`, both negative on clokr-web:102-after). Not
+# exploitable via the API's own runtime path: both CVEs require `pnpm install`/`pnpm add`
+# resolving an attacker-influenced registry response or environment variable at install time.
+# The API runtime never runs `pnpm install` — `docker-entrypoint.sh` has zero pnpm invocations of
+# any kind; the only `pnpm install` in the whole Dockerfile is the BUILD-stage `deps` step
+# (apps/api/Dockerfile:16), which does not exist in the shipped image. The sole runtime pnpm
+# invocation is `pnpm tsx` — a run command against our own baked, trusted workspace
+# (charts/clokr-app/templates/cronjob-anonymizer.yaml:51), not an install command.
+# Corroborating, but deliberately not the primary reason (see docs/image-footprint.md's note on
+# why a pnpm version-fix claim alone isn't trusted without independent confirmation): the
+# installed pnpm 10.34.5 already exceeds both CVEs' GitHub-reviewed fix thresholds (10.27.0 for
+# CVE-2025-69262, 10.26.0 for CVE-2025-69263 — GHSA-2phv-j68v-wwqx / GHSA-7vhp-vf5g-r2fw, both
+# `github_reviewed_at`-confirmed, single clean version range each).
+# Revisit: retire once policy allows relying on "Trivy silent + GHSA-confirmed fix version"
+# without an additional corepack-cache absence proof, or when pnpm is dropped from the API
+# image's retained toolchain entirely.
 CVE-2025-69262
 CVE-2025-69263
 
 # pnpm: Repository-controlled configDependencies can select a malicious native
 # install engine → arbitrary code execution (CVE-2026-55697 / GHSA-gj8w-mvpf-x27x).
-# Fixed only in the pnpm 11.x line (>=11.5.3); NO backport to the 10.x line, and
-# bumping the monorepo to pnpm 11 would disturb the pnpm@10-specific Prisma hoisting
-# in apps/api/Dockerfile (runtime stage). Not exploitable in our image: the exploit
-# requires `pnpm install` to process attacker-controlled configDependencies. The
-# production entrypoint never runs `pnpm install` — it uses the Prisma CLI + Node
-# directly, and the only pnpm invocation is `pnpm tsx` (a run command) against our
-# own baked, trusted workspace. Altering configDependencies would require write
-# access to the image filesystem (= full compromise already). The other 7 CVEs in
-# this pnpm cluster ARE fixed by the 10.33.0 → 10.34.5 bump. Revisit when a 10.x
-# backport lands or when the monorepo moves to pnpm 11.
+# Present in the API image (pnpm@10.34.5), absent from web (see the block above for the
+# per-image presence evidence). Not exploitable via the API's own runtime path: the exploit
+# requires `pnpm install` to process attacker-controlled configDependencies. The production
+# entrypoint never runs `pnpm install` (see above); the only pnpm invocation is `pnpm tsx`
+# (a run command) against our own baked, trusted workspace. Altering configDependencies would
+# require write access to the image filesystem (= full compromise already).
+# CORRECTED 2026-08-21 (Phase 102 Plan 04): this entry previously stated "Fixed only in the pnpm
+# 11.x line; NO backport to the 10.x line" as settled fact. GitHub's advisory record nominally
+# lists a 10.x fix at >=10.34.2 (our installed 10.34.5 would exceed it), but the advisory itself
+# carries unreviewed-candidate hallmarks — templated "CAND-PNPM-097" internal tooling text in its
+# description, a "shared patch PR" hosted in a non-canonical companion repo
+# (pnpm/pnpm-ghsa-j2hc-m6cf-6jm8, not pnpm/pnpm), and an explicit "set the final affected version
+# range" listed as a still-open action item — and pnpm's own v10.34.2 GitHub release notes do NOT
+# mention this fix (that release's only documented security fix is the unrelated
+# GHSA-3qhv-2rgh-x77r, `.npmrc` environment-variable expansion). Treated as disputed, not relied
+# upon; the entry stands on the runtime-exploitability argument above, independent of whether the
+# version claim is real. The pnpm 11.x fix (>=11.5.3) is not in question, but bumping the
+# monorepo to pnpm 11 would disturb the pnpm@10-specific Prisma hoisting in apps/api/Dockerfile
+# (runtime stage) and is out of scope regardless (D-05, Phase 102).
+# Revisit: confirm directly (a source diff against pnpm 10.34.2, or a reproduction attempt)
+# whether the disputed 10.x backport is real; retire if confirmed. Otherwise revisit when the
+# monorepo moves to pnpm 11.5.3+.
 CVE-2026-55697
 
-# picomatch ReDoS in npm's bundled tinyglobby (/usr/local/lib/node_modules/npm/...).
-# Not exploitable: npm is a build/dev tool in the image, never exposed to user input at runtime.
-# App code already uses picomatch@4.0.4 (pnpm lockfile). Revisit when npm bundles tinyglobby
-# with picomatch>=4.0.4 internally.
-CVE-2026-33671
-
-# fast-jwt: Cache Confusion via cacheKeyBuilder Collisions (CVE-2026-35039).
-# No fix available as of 2026-04-09. Risk is low: JWT tokens are short-lived access tokens
-# (not cache keys used across tenants). cacheKeyBuilder is used internally by fast-jwt for
-# algorithm validation; not exposed to user-controlled input. Revisit when fast-jwt >6.2.1
-# releases a fix.
-CVE-2026-35039
-
-# fast-jwt: Accepts unknown `crit` header extensions (RFC 7515 §4.1.11) (CVE-2026-35042).
-# No fix available — package marked as "affected". Risk is low in our setup: JWTs are
-# issued exclusively by our API with a fixed algorithm (HS256/RS256 via JWT_SECRET).
-# No external JWTs or untrusted issuers are accepted. Revisit when fast-jwt releases a fix.
-CVE-2026-35042
-
-# node-tar: DoS via crafted gzip bomb / malformed tar archive (CVE-2026-59873 CRIT / -59874).
-# Present ONLY in build tooling bundles, never in the runtime app dependency tree:
-#   /usr/local/lib/node_modules/npm/node_modules/tar (npm's own bundled tar) and
-#   corepack's pnpm cache (…/corepack/v1/pnpm/*/dist/node_modules/tar).
-# npm@latest (11.12.x) still bundles the vulnerable tar 7.5.11 — no fix flows via `npm i -g
-# npm@latest` yet. Not exploitable: npm/pnpm run at build time against our own trusted,
-# baked workspace; the production entrypoint (node + prisma CLI + `pnpm tsx`) never extracts
-# untrusted archives. Revisit when npm/corepack bundle tar>=7.5.19.
-CVE-2026-59873
-CVE-2026-59874
-
-# sigstore: Unauthorized certificates accepted (CVE-2026-48815). Present ONLY in npm's bundle
-# (/usr/local/lib/node_modules/npm/node_modules/sigstore), used by `npm audit signatures` /
-# provenance verification at build/dev time — never in the runtime app tree or entrypoint.
-# npm@latest still bundles the affected sigstore. Revisit when npm bundles sigstore>=4.1.1.
-CVE-2026-48815
-
-# brace-expansion: ReDoS (CVE-2026-14257 / -13149) + unbounded-intermediate-arrays DoS
-# (CVE-2026-69152). The vulnerable copies (2.1.2 / 5.0.4) live ONLY in npm's bundle and
-# corepack's pnpm cache (build tooling). Our app dependency tree resolves brace-expansion@5.0.9
-# (fixed for all three, via the pnpm.overrides pin bumped 5.0.8 -> 5.0.9 for CVE-2026-69152), so
-# no runtime code path is affected. Revisit when npm/corepack bundle brace-expansion>=5.0.9.
+# brace-expansion: two ReDoS/DoS variants (CVE-2026-14257 fixed >=5.0.7, CVE-2026-13149 fixed
+# >=5.0.6) plus a later bypass of the -14257 mitigation via unbounded intermediate arrays
+# (CVE-2026-69152, fixed >=5.0.9 on the current release line / >=2.1.4 on the legacy-maintained
+# 2.x line — confirmed against the npm registry's own "maintenance-v2" dist-tag, currently 2.1.4).
+# Present at TWO different versions across the two images:
+#   - npm's own bundle (/usr/local/lib/node_modules/npm/node_modules/brace-expansion, BOTH
+#     images): 5.0.7 — fixes -14257 and -13149, does NOT fix -69152 (needs 5.0.9).
+#   - the API image's corepack pnpm cache
+#     (/root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/brace-expansion): 2.1.2 —
+#     does NOT fix -69152 (needs 2.1.4 on this line, confirmed against the npm registry: 2.1.2 is
+#     two patch releases behind). GHSA's per-CVE data for -14257/-13149 gives only a single
+#     top-line threshold with no published 2.x-line backport info, so 2.1.2 is conservatively
+#     treated as still vulnerable to those two as well rather than assumed safe.
+# Our app dependency tree resolves brace-expansion@5.0.9 (fixed for all three, via the root
+# pnpm.overrides pin), so no application code path is affected — but this is a single global
+# ignorefile covering both images, and the vulnerable copies above are genuinely present in build
+# tooling that npm/corepack manage independently of app dependencies (`npm install -g npm@latest`
+# and `corepack prepare pnpm@10.34.5` are unrelated to the pnpm.overrides pin and this phase does
+# not touch either). Neither npm's nor pnpm's own install process is fed untrusted
+# archives/registries at runtime in this image (see the pnpm blocks above — install never runs).
+# Revisit: when npm bundles brace-expansion>=5.0.9 AND corepack's pnpm@10.34.5 dist bundle
+# updates its own vendored copy to >=2.1.4 (or a later 2.x release, once published).
 CVE-2026-14257
 CVE-2026-13149
 CVE-2026-69152
 
-# ip-address: SSRF/parsing DoS (CVE-2026-69192). The vulnerable copy (10.2.0) lives ONLY in
-# build tooling — npm's own bundle (/usr/local/lib/node_modules/npm/node_modules/ip-address,
-# pulled in via socks-proxy-agent) and corepack's pnpm cache (…/corepack/v1/pnpm/*/dist/
-# node_modules/ip-address). Our app dependency tree resolves ip-address@10.4.0 (fixed, via the
-# pnpm.overrides pin >=10.3.1), so no runtime code path is affected. Revisit when npm/corepack
-# bundle ip-address>=10.3.1.
+# ip-address: SSRF/parsing DoS via leading-zero octet decimal/octal confusion (CVE-2026-69192,
+# fixed >=10.3.1). The vulnerable copy (10.2.0) is present in npm's own bundle
+# (/usr/local/lib/node_modules/npm/node_modules/ip-address, pulled in via socks-proxy-agent) on
+# BOTH images, and additionally in the API image's corepack pnpm cache
+# (/root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/ip-address) — neither location is
+# fixed.
+# CORRECTED 2026-08-21 (Phase 102 Plan 04): this entry previously claimed "our app dependency
+# tree resolves ip-address@10.4.0" as the reason no runtime path is affected. Re-checked against
+# the pruned image: the app tree (/app/node_modules) now has NO ip-address copy at all — the
+# `--prod` prune dropped the devDependency chain (socks-proxy-agent and friends) that used to
+# pull the pnpm.overrides-pinned fixed version in. That override (`"ip-address": ">=10.3.1"`)
+# still exists in root package.json but is now moot for this specific package — nothing in the
+# production dependency closure needs ip-address anymore, so it has no effect on the shipped
+# image. The operative reason is instead that neither npm's socks-proxy-agent dependency nor
+# pnpm's own bundled copy is ever exercised: no HTTP_PROXY/HTTPS_PROXY/SOCKS proxy environment
+# variable is configured anywhere in either Dockerfile, docker-entrypoint.sh, or any chart
+# template (confirmed via a repo-wide search) — the vulnerable Address4 parsing path is only
+# reachable through that unconfigured proxy feature.
+# Revisit: when npm/corepack bundle ip-address>=10.3.1.
 CVE-2026-69192
