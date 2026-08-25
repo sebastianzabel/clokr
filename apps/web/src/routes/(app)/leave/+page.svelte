@@ -52,6 +52,9 @@
     attestPresent: boolean;
     attestValidFrom: string | null;
     attestValidTo: string | null;
+    // Phase 104-10 (D-29): the § 9 case touching this request, if any.
+    section9Status?: "AU_PENDING" | "CONFIRMED" | "REJECTED" | null;
+    section9CreditId?: string | null;
   }
 
   interface OverlapEntry {
@@ -121,11 +124,21 @@
   // `undefined`-default convention as the Phase-97 fields above.
   let maxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
+  // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
+  // rendered verbatim (server-authored label), never re-derived on the client.
+  interface Section9Movement {
+    creditId: string;
+    days: number;
+    from: string | null;
+    to: string | null;
+    label: string;
+  }
   let vacationBalance = $state<{
     total: number;
     used: number;
     carryOver: number;
     carryOverDeadline: string | null;
+    section9Movements: Section9Movement[];
   } | null>(null);
 
   // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
@@ -200,6 +213,10 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
+  // Phase 104-10 (D-28/D-29): the § 9 marker the server computes per request — masked
+  // exactly like typeCode/typeName (null for a colleague without detail visibility).
+  type Section9Marker = "AU_PENDING" | "CONFIRMED" | "SUPERSEDED" | null;
+
   interface CalEntry {
     id: string;
     isOwn: boolean;
@@ -213,6 +230,8 @@
     halfDay: boolean;
     status: Status;
     isHoliday: boolean;
+    section9?: Section9Marker;
+    section9Days?: string[];
   }
 
   type View = "calendar" | "list";
@@ -456,6 +475,7 @@
             carriedOverDays: number;
             effectiveCarryOverDays: number;
             carryOverDeadline: string | null;
+            section9Movements?: Section9Movement[];
           }>
         >(`/leave/entitlements/${userId}?year=${year}`),
         api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
@@ -467,6 +487,7 @@
             used: Number(vac.usedDays),
             carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
             carryOverDeadline: vac.carryOverDeadline,
+            section9Movements: vac.section9Movements ?? [],
           }
         : null;
       viewedExitDate = empData?.exitDate ?? null;
@@ -1466,6 +1487,16 @@
                 <span class="balance-label">Verfügbar</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
               </div>
+              {#if vacationBalance.section9Movements.length}
+                <!-- Phase 104-10 (D-31): rendered verbatim from the server — never
+                     re-derived on the client, so account line, notification and audit
+                     entry all say the same thing. -->
+                <ul class="section9-movements">
+                  {#each vacationBalance.section9Movements as m (m.creditId)}
+                    <li class="section9-movement" data-testid="section9-movement">{m.label}</li>
+                  {/each}
+                </ul>
+              {/if}
               {#if effectiveDays > 0 || formHalfDay}
                 <div class="balance-row">
                   <span class="balance-label">
@@ -1772,6 +1803,12 @@
                     {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                     {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                     {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                    <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
+                         days the server named in section9Days — a multi-day bar can be
+                         partially marked. -->
+                    {@const _section9OnDay = !!(
+                      e.section9 && e.section9Days?.includes(day.dateStr)
+                    )}
                     <div
                       class="cal-chip"
                       class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
@@ -1780,6 +1817,8 @@
                       class:cal-chip--pending={e.status === "PENDING" ||
                         e.status === "CANCELLATION_REQUESTED"}
                       class:cal-chip--own={e.isOwn}
+                      class:cal-chip--section9-superseded={_section9OnDay &&
+                        e.section9 === "SUPERSEDED"}
                       style:background={typeColor(e.typeCode, e.status, e.isOwn)}
                       title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
                         ? ' · ' + e.typeName
@@ -1792,6 +1831,23 @@
                         {:else}
                           <span class="cal-chip-type">abwesend</span>
                         {/if}
+                      {/if}
+                      {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
+                        {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
+                        <span
+                          class="section9-chip-badge"
+                          class:section9-chip-badge--pending={!_isConfirmedSection9}
+                          data-testid="section9-cell-badge"
+                          title={_isConfirmedSection9
+                            ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
+                            : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
+                        >
+                          <span class="sr-only"
+                            >{_isConfirmedSection9
+                              ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
+                              : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
+                          >{_isConfirmedSection9 ? "§ 9" : "AU"}
+                        </span>
                       {/if}
                     </div>
                   {:else}
@@ -1992,6 +2048,23 @@
                           : 'badge-gray'}"
                       >
                         {req.attestPresent ? "Attest" : "Kein Attest"}
+                      </span>
+                    {/if}
+                    <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
+                         also shown on the overlapping VACATION row so a manager can see the
+                         case from either side. Text label carries the meaning, not colour
+                         alone (Phase-97 UAT lesson). -->
+                    {#if req.section9Status === "AU_PENDING"}
+                      <span class="badge badge-yellow" data-testid="section9-list-badge">
+                        AU ausstehend
+                      </span>
+                    {:else if req.section9Status === "CONFIRMED"}
+                      <span class="badge badge-gray" data-testid="section9-list-badge">
+                        § 9 gutgeschrieben
+                      </span>
+                    {:else if req.section9Status === "REJECTED"}
+                      <span class="badge badge-gray" data-testid="section9-list-badge">
+                        AU abgelehnt
                       </span>
                     {/if}
                   </td>
@@ -2593,6 +2666,51 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Phase 104-10 (D-28): a confirmed § 9 credit overlays this vacation day — the entry
+     stays discoverable but visibly loses to the SICK entry (reduced emphasis, same
+     opacity idiom as .cal-chip--pending above, no new colour token). */
+  .cal-chip--section9-superseded {
+    opacity: 0.5;
+  }
+
+  /* Phase 104-10 (D-28/D-29): compact § 9 marker inside a calendar chip. Text label
+     ("§ 9" / "AU") carries the meaning — never colour/symbol alone (Phase-97 UAT lesson) —
+     the sr-only span above it spells out the full sentence for assistive tech. */
+  .section9-chip-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-left: auto;
+    padding: 0 3px;
+    border-radius: 3px;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    line-height: 1.3;
+    background: rgba(255, 255, 255, 0.35);
+  }
+  .section9-chip-badge--pending {
+    background: var(--warn-soft);
+    color: var(--warn);
+    outline: 1px dashed var(--warn);
+    outline-offset: -1px;
+  }
+
+  /* Phase 104-10 (D-31): the Urlaubskonto movement list — one line per CONFIRMED § 9
+     credit, rendered verbatim from the server. */
+  .section9-movements {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .section9-movement {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
   }
 
   /* Legende */
