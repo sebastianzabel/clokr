@@ -9,6 +9,7 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   iterateDaysInTz,
+  dateStrInTz,
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import {
@@ -47,6 +48,7 @@ type WorkSchedule = {
 };
 
 type LeaveRequestWithType = {
+  id: string;
   startDate: Date;
   endDate: Date;
   status: string;
@@ -57,6 +59,29 @@ type LeaveRequestWithType = {
   attestValidTo: Date | null;
   leaveType: { name: string };
 };
+
+// ── Phase 104 (D-15, Tier 2) — tagesbasierte Entdopplung ───────────────────────
+// reports.ts hat EIGENE Soll-/Tage-Berechnungen (calcAbsenceMinutes, daysForTypeName,
+// daysForName im DATEV-Export), die weder closeEmployeeMonth() (Tier 1, Plan 104-02)
+// noch calcLeaveAbsenceMinutesTz aufrufen. Der dortige Fix erreicht diese Stellen
+// deshalb NICHT — siehe RESEARCH.md "The D-15 Soll-Dedup Surface" (Tier 2). Seit R1
+// (§ 9 BUrlG) ist die Überlappung zweier genehmigter Anträge (SICK vs. VACATION) der
+// Normalfall, nicht die Ausnahme. Ohne diese Entdopplung würde der Monatsbericht ein
+// anderes Soll ausweisen als Dashboard und Monatsabschluss.
+//
+// Reihenfolge identisch zu close-employee-month.ts sortForDedup(): Ganztags vor
+// Halbtags, dann startDate, dann id. Nur so kommen beide Implementierungen bei einem
+// halben Urlaubstag unter ganztägiger Krankheit auf denselben Wert.
+function sortLeaveForDedup<
+  T extends { id: string; startDate: Date; endDate: Date; halfDay: boolean },
+>(rows: T[]): T[] {
+  return [...rows].sort(
+    (a, b) =>
+      (a.halfDay ? 1 : 0) - (b.halfDay ? 1 : 0) ||
+      a.startDate.getTime() - b.startDate.getTime() ||
+      a.id.localeCompare(b.id),
+  );
+}
 
 type AbsenceRecord = {
   startDate: Date;
@@ -200,21 +225,38 @@ function computeEmployeeSummary(
   }
 
   // ── Abwesenheitsminuten (Schnittmenge mit Monat, TZ-aware) ───────────────
-  function calcAbsenceMinutes(schedules: WorkSchedule[], absStart: Date, absEnd: Date): number {
+  // Phase 104 (D-15, Tier 2): `claimed` is a Set<string> of YYYY-MM-DD dates already
+  // credited by an earlier-processed (per sortLeaveForDedup) leave request THIS
+  // report is summing — shared across the whole absenceMin reduce below, so a
+  // calendar day covered by two overlapping APPROVED requests reduces Soll exactly
+  // once. Mirrors close-employee-month.ts's claimDays()/excludeHolidays reuse.
+  // `halfDay` moves INSIDE the function (previously multiplied at the call site) so
+  // the halving applies only to the days THIS request actually claimed.
+  function calcAbsenceMinutes(
+    schedules: WorkSchedule[],
+    absStart: Date,
+    absEnd: Date,
+    claimed: Set<string>,
+    halfDay: boolean,
+  ): number {
     if (schedules.length === 0) return 0;
     const rangeStart = absStart < start ? start : absStart;
     const rangeEnd = absEnd > end ? end : absEnd;
     let min = 0;
     const cur = new Date(rangeStart);
     while (cur <= rangeEnd) {
-      const schedule = getScheduleForDate(schedules, cur);
-      if (schedule) {
-        const dow = getDayOfWeekInTz(cur, tz);
-        min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+      const key = dateStrInTz(cur, tz);
+      if (!claimed.has(key)) {
+        const schedule = getScheduleForDate(schedules, cur);
+        if (schedule) {
+          const dow = getDayOfWeekInTz(cur, tz);
+          min += getDayHoursFromSchedule(schedule as Record<string, unknown>, dow) * 60;
+        }
+        claimed.add(key);
       }
       cur.setDate(cur.getDate() + 1);
     }
-    return min;
+    return halfDay ? Math.round(min / 2) : min;
   }
 
   // ── Days in range clamped to [start, end] ────────────────────────────────
@@ -224,10 +266,36 @@ function computeEmployeeSummary(
     return Math.max(0, Math.round((e2.getTime() - s.getTime()) / 86400000) + 1);
   }
 
+  // Phase 104 (D-15, Tier 2): day-iterating, dedup-aware day count. `dayClaimed` is
+  // a FRESH Set for each call (own claim set per aggregation), so a day claimed for
+  // one purpose (e.g. computing vacationDays) never silently zeroes out an unrelated
+  // aggregation (e.g. totalAbsenceDays) that also needs to see that same day. Within
+  // a single call, two overlapping rows in `rows` (same type, or the nonSickLeave
+  // union) claim a shared day exactly once, in sortLeaveForDedup order.
+  function countDedupedDays(rows: LeaveRequestWithType[]): number {
+    const dayClaimed = new Set<string>();
+    let total = 0;
+    for (const lr of sortLeaveForDedup(rows)) {
+      const s = lr.startDate < start ? start : lr.startDate;
+      const e2 = lr.endDate > end ? end : lr.endDate;
+      if (s > e2) continue;
+      let dayCount = 0;
+      const cur = new Date(s);
+      while (cur <= e2) {
+        const key = dateStrInTz(cur, tz);
+        if (!dayClaimed.has(key)) {
+          dayCount++;
+          dayClaimed.add(key);
+        }
+        cur.setDate(cur.getDate() + 1);
+      }
+      total += lr.halfDay ? dayCount / 2 : dayCount;
+    }
+    return total;
+  }
+
   function daysForTypeName(typeName: string): number {
-    return emp.leaveRequests
-      .filter((lr) => lr.leaveType.name === typeName)
-      .reduce((sum, lr) => sum + daysInRange(lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1), 0);
+    return countDedupedDays(emp.leaveRequests.filter((lr) => lr.leaveType.name === typeName));
   }
 
   // ── Worked hours ─────────────────────────────────────────────────────────
@@ -241,12 +309,22 @@ function computeEmployeeSummary(
   const latestSchedule = getScheduleForDate(emp.workSchedules, end);
   const isMonthlyHours = String(latestSchedule?.type ?? "") === "MONTHLY_HOURS";
   // Minijobber (MONTHLY_HOURS) arbeiten flexibel — Abwesenheiten reduzieren Soll nicht
+  // Phase 104 (D-15, Tier 2): sollClaimed accumulates the calendar days already
+  // credited by a processed leave request, shared across the whole reduce, so an
+  // overlapping day (SICK vs. VACATION, R1) is deducted exactly once.
+  const sollClaimed = new Set<string>();
   const absenceMin = isMonthlyHours
     ? 0
-    : emp.leaveRequests.reduce(
+    : sortLeaveForDedup(emp.leaveRequests).reduce(
         (sum, lr) =>
           sum +
-          calcAbsenceMinutes(emp.workSchedules, lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1),
+          calcAbsenceMinutes(
+            emp.workSchedules,
+            lr.startDate,
+            lr.endDate,
+            sollClaimed,
+            Boolean(lr.halfDay),
+          ),
         0,
       );
   const shouldMin = Math.max(0, rawShouldMin - absenceMin);
@@ -293,10 +371,14 @@ function computeEmployeeSummary(
   // ── Absence breakdown ────────────────────────────────────────────────────
   const SICK_NAMES = ["Krankmeldung", "Kinderkrank"];
   const nonSickLeave = emp.leaveRequests.filter((lr) => !SICK_NAMES.includes(lr.leaveType.name));
-  const totalAbsenceDays = nonSickLeave.reduce(
-    (sum, lr) => sum + daysInRange(lr.startDate, lr.endDate) * (lr.halfDay ? 0.5 : 1),
-    0,
-  );
+  // Phase 104 (D-15, Tier 2): countDedupedDays() gives totalAbsenceDays its OWN
+  // claim set (separate from every daysForTypeName() call below) so a day covered by
+  // two overlapping non-sick requests is counted once in the aggregate figure too —
+  // independent from, not shared with, the per-type calls (which must not lose a
+  // day just because an unrelated type's call already saw it).
+  // `let`, not `const`: Task 2 (D-30) subtracts confirmed § 9 workdays from this.
+  const totalAbsenceDays = countDedupedDays(nonSickLeave);
+  // `let`, not `const`: Task 2 (D-30) subtracts confirmed § 9 workdays from this.
   const vacationDays = daysForTypeName("Urlaub");
   const overtimeCompDays = daysForTypeName("Überstundenausgleich");
   const specialLeaveDays = daysForTypeName("Sonderurlaub");
