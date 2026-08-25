@@ -75,3 +75,6 @@ backups/
 .cache/
 tmp/
 apps/nfc-client/src-tauri/target/
+
+# Process setup — local board/node IDs, never committed
+.process-setup.local.json
