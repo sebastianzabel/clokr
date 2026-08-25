@@ -429,6 +429,20 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
     expect(managerNotes.some((n) => n.userId === other.adminUser.id)).toBe(false);
   });
 
+  // Phase 104 follow-up (owner-reported, not in REVIEW.md): both § 9 notification bodies
+  // rendered dates ISO-style ("2031-02-05 – 2031-02-06") while everything else user-facing in
+  // this app uses German DD.MM.YYYY. Verified live in the bell before the fix.
+  it("Test 2b: the notification texts render dates German (DD.MM.YYYY), never ISO", async () => {
+    const notes = await app.prisma.notification.findMany({
+      where: { relatedType: "Section9Credit", relatedId: creditId },
+    });
+    expect(notes.length).toBeGreaterThanOrEqual(2); // employee + at least one manager
+    for (const n of notes) {
+      expect(n.message).toContain("05.02.2031 – 06.02.2031");
+      expect(n.message).not.toContain("2031-02-05");
+    }
+  });
+
   it("Test 3: GET /section9?status=AU_PENDING returns the tenant's open cases for a MANAGER", async () => {
     const res = await app.inject({
       method: "GET",
@@ -1218,6 +1232,23 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
     // The Zod gotcha (CLAUDE.md): the frontend sends an explicit `null` for an omitted field.
     const nullReason = await reject(creditId, { reason: null });
     expect(nullReason.statusCode).toBe(400);
+
+    // Phase 104 follow-up (owner-reported): min(1) alone only covered the EMPTY-string case.
+    // An explicit null fell through to Zod's ENGLISH default invalid_type text
+    // ("reason: Invalid input: expected string, received null") — the same mistake was
+    // reported in two different languages depending on how the field was cleared. All three
+    // spellings must answer with the identical German sentence, and reason stays MANDATORY
+    // (D-11) — never .optional(), never .nullable().
+    const empty = await reject(creditId, { reason: "" });
+    expect(empty.statusCode).toBe(400);
+    const germanMessage = "reason: Begründung ist erforderlich";
+    for (const res of [missing, nullReason, empty]) {
+      const body = JSON.parse(res.body) as { error: string; message: string };
+      expect(body.error).toBe("Validierungsfehler");
+      expect(body.message).toBe(germanMessage);
+      expect(body.message).not.toContain("Invalid input");
+      expect(body.message).not.toContain("expected string");
+    }
 
     const row = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
     expect(row.status).toBe("AU_PENDING");

@@ -201,21 +201,36 @@ const attestSchema = z.object({
     .optional(),
 });
 
+/**
+ * Pflichtbegründung für jeden § 9-Schritt (D-11) — bleibt bewusst NICHT optional und NICHT
+ * nullable, die Begründung ist revisionssicherheitspflichtig.
+ *
+ * Phase 104 follow-up (owner-reported, not in REVIEW.md): `min(1)` alone only covers the
+ * EMPTY-string case. Clokr frontends send `x ? x : null` (CLAUDE.md's Zod gotcha), and an
+ * explicit null produced Zod's ENGLISH default invalid_type text
+ * ("reason: Invalid input: expected string, received null") in the 400 body, while an empty
+ * string produced the German message — the same mistake reported two different ways. The
+ * type-level `error` makes null, a missing key and an empty/whitespace string all answer with
+ * the identical German sentence.
+ */
+const SECTION9_MANDATORY_REASON = z
+  .string({ error: "Begründung ist erforderlich" })
+  .trim()
+  .min(1, "Begründung ist erforderlich");
+
 // Phase 104-06 — POST /section9/:id/confirm ("AU liegt vor").
 // D-27: Gültigkeit + Herkunft + Pflichtbegründung. KEINE Arzt-/Diagnoseangaben (Art. 9 DSGVO).
 const section9ConfirmSchema = z.object({
   attestSource: z.enum(["EAU", "PAPIER"]),
   attestValidFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   attestValidTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  reason: z.string().trim().min(1, "Begründung ist erforderlich"),
+  reason: SECTION9_MANDATORY_REASON,
 });
 
 // Phase 104-06 — POST /section9/:id/reject and /reopen. Pflichtbegründung (D-11).
-// Bewusst NICHT .optional() — der Zod-Gotcha aus CLAUDE.md verlangt, dass ein explizit
-// gesendetes null als 400 mit klarer Meldung endet, nicht als nacktes "Validierungsfehler".
-// min(1) auf einem non-nullable string liefert genau das.
+// Bewusst NICHT .optional() und NICHT .nullable() — die Begründung bleibt Pflicht.
 const section9ReasonSchema = z.object({
-  reason: z.string().trim().min(1, "Begründung ist erforderlich"),
+  reason: SECTION9_MANDATORY_REASON,
 });
 
 // Phase 104 review (WR-04) — GET /section9?status=
@@ -226,6 +241,21 @@ const section9ReasonSchema = z.object({
 const section9StatusQuerySchema = z.object({
   status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED"]).optional(),
 });
+
+/**
+ * German date label for USER-FACING § 9 notification texts: "16.09.2026".
+ *
+ * Phase 104 follow-up (not in REVIEW.md, owner-reported): the § 9 notification bodies rendered
+ * dates ISO-style ("2026-09-16 – 2026-09-17") while everything else user-facing in this app
+ * uses DD.MM.YYYY. UTC accessors on purpose — every date fed in here is a @db.Date column
+ * (UTC midnight), so a local-time formatter would shift the label by a day on any host with a
+ * negative UTC offset (the same class of bug as WR-09). API payloads and AuditLog values keep
+ * their ISO form; only the human-readable message text changes.
+ */
+function formatDateDe(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getUTCDate())}.${pad(d.getUTCMonth() + 1)}.${d.getUTCFullYear()}`;
+}
 
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
@@ -1148,7 +1178,7 @@ export async function leaveRoutes(app: FastifyInstance) {
               );
               continue;
             }
-            const rangeLabel = `${ov.overlapStart.toISOString().split("T")[0]} – ${ov.overlapEnd.toISOString().split("T")[0]}`;
+            const rangeLabel = `${formatDateDe(ov.overlapStart)} – ${formatDateDe(ov.overlapEnd)}`;
             if (employeeUser.userId) {
               await app.notify({
                 userId: employeeUser.userId,
@@ -2835,7 +2865,7 @@ export async function leaveRoutes(app: FastifyInstance) {
       await app.dismissByRelated("Section9Credit", credit.id);
 
       if (credit.employee.userId) {
-        const rangeLabel = `${credited.start.toISOString().split("T")[0]} – ${credited.end.toISOString().split("T")[0]}`;
+        const rangeLabel = `${formatDateDe(credited.start)} – ${formatDateDe(credited.end)}`;
         await app.notify({
           userId: credit.employee.userId,
           type: "SECTION9_CREDIT_CONFIRMED",
@@ -2988,7 +3018,7 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       // Re-emit the same D-14 notifications the original detection sent — reusing the
       // exact copy from Phase 104-05, not a second wording.
-      const rangeLabel = `${credit.overlapStart.toISOString().split("T")[0]} – ${credit.overlapEnd.toISOString().split("T")[0]}`;
+      const rangeLabel = `${formatDateDe(credit.overlapStart)} – ${formatDateDe(credit.overlapEnd)}`;
       if (credit.employee.userId) {
         await app.notify({
           userId: credit.employee.userId,
