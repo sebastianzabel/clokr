@@ -747,38 +747,13 @@ function buildEmployeeInclude(start: Date, end: Date) {
 // Kranktag — der Urlaubsantrag bleibt zwar unverändert bestehen (D-05), aber angerechnet
 // wird er nicht mehr. Ohne diese Zuordnung würde derselbe Tag zweimal auftauchen: einmal
 // unter Urlaub (aus dem unveränderten LeaveRequest) und einmal unter Krankheit.
+//
+// Phase 104 review (IN-01): the DATEV handlers used to call a byte-identical copy of this
+// function (fetchConfirmedSection9CreditsForDatev). The copy was justified by "a different
+// Employee shape at the call sites", but neither function ever touched the Employee shape —
+// both take (app, tenantId, start, end) and return the same Map. Two copies of a
+// payroll-relevant filter (status CONFIRMED + tenant scope) can drift, so there is one.
 async function fetchConfirmedSection9CreditsByEmp(
-  app: FastifyInstance,
-  tenantId: string,
-  start: Date,
-  end: Date,
-): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
-  const credits = await app.prisma.section9Credit.findMany({
-    where: {
-      status: "CONFIRMED",
-      employee: { tenantId },
-      creditedStart: { lte: end },
-      creditedEnd: { gte: start },
-    },
-    select: { employeeId: true, creditedStart: true, creditedEnd: true },
-  });
-  const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
-  for (const c of credits) {
-    if (c.creditedStart === null || c.creditedEnd === null) continue;
-    const arr = byEmp.get(c.employeeId) ?? [];
-    arr.push({ creditedStart: c.creditedStart, creditedEnd: c.creditedEnd });
-    byEmp.set(c.employeeId, arr);
-  }
-  return byEmp;
-}
-
-// Phase 104 (D-30): the same bulk-fetch shape as fetchConfirmedSection9CreditsByEmp above,
-// kept as its own function for the DATEV handlers (/datev, /datev/employee) — these two
-// handlers select a different Employee shape (no `leaveType`-scoped attest fields, DATEV
-// LODAS's own DatevEmployee type) than the Monatsbericht/PDF handlers, so they are treated
-// as their own call site rather than reused across shapes. Still ONE query per request
-// (T-104-09-N1), shared between both DATEV handlers.
-async function fetchConfirmedSection9CreditsForDatev(
   app: FastifyInstance,
   tenantId: string,
   start: Date,
@@ -1174,7 +1149,7 @@ export async function reportRoutes(app: FastifyInstance) {
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
 
-      const section9ByEmpDatev = await fetchConfirmedSection9CreditsForDatev(
+      const section9ByEmpDatev = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
         start,
@@ -1278,7 +1253,7 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsForDatev(
+      const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsByEmp(
         app,
         req.user.tenantId,
         start,
