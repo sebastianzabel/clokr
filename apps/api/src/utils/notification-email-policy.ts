@@ -2,20 +2,21 @@
  * Single source of truth for whether a notification type is emailed.
  *
  * **Invariant: absence from this registry means NOT emailed.** This is the deliberate
- * inversion of the pre-2026-08-25 behaviour, where `notify.ts` looked a type up in
- * `EMAIL_TYPE_MAP` and only suppressed the email when an entry existed AND its toggle
- * was off — an unregistered type silently fell through and was sent. That was a
+ * inversion of the pre-2026-08-25 behaviour, where `notify.ts` looked a type up in a
+ * per-type toggle map and only suppressed the email when an entry existed AND its
+ * toggle was off — an unregistered type silently fell through and was sent. That was a
  * fail-OPEN gate on health-adjacent (§ 9 BUrlG, Art. 9 DSGVO) and other sensitive
- * notification payloads. This module (quick-260825-k3g) replaces both `EMAIL_TYPE_MAP`
- * and `EMAIL_SUPPRESSED_TYPES` with one exhaustive, explicit-per-type registry.
+ * notification payloads. This module (quick-260825-k3g) replaces that toggle map and
+ * its side-car deny-list with one exhaustive, explicit-per-type registry — no tracked
+ * file references either of the two retired mechanisms by name any more.
  *
  * Enforcement: `apps/api/src/__tests__/notification-email-policy.test.ts` scans every
  * `app.notify()` call site under `apps/api/src` and asserts each resolved type has an
  * entry here. Adding a 27th notification type without a corresponding entry fails that
  * test — the trap this file exists to close cannot silently reopen.
  *
- * SALDO-DISP-08 (verified 2026-08-18, Phase 97-02, carried forward from the old
- * `EMAIL_TYPE_MAP` comment): `emailOnOvertimeWarning` has no emitting type — no code
+ * SALDO-DISP-08 (verified 2026-08-18, Phase 97-02, carried forward from the retired
+ * toggle map's own comment): `emailOnOvertimeWarning` has no emitting type — no code
  * path passes an "overtime warning" to `app.notify()`. `CARRYOVER_EXPIRING` is the
  * BUrlG vacation-day warning, not an overtime signal. Nothing is suppressed for this
  * reason because nothing exists to suppress — see `docs/saldo-anzeige.md`. Forward
@@ -30,14 +31,14 @@ export type EmailPolicy =
   | { email: Extract<EmailKind, "always">; reason: string }
   | { email: Extract<EmailKind, "never">; reason: string };
 
-// ── A. Existing toggles — unchanged from EMAIL_TYPE_MAP (11 entries, zero behaviour delta) ──
+// ── A. Existing toggles — unchanged from the old per-type toggle map (11 entries, zero behaviour delta) ──
 // prettier-ignore
 const TOGGLE_ENTRIES: Record<string, EmailPolicy> = {
   LEAVE_REQUEST:           { email: "toggle", field: "emailOnLeaveRequest" },
   LEAVE_APPROVED:          { email: "toggle", field: "emailOnLeaveDecision" },
   LEAVE_REJECTED:          { email: "toggle", field: "emailOnLeaveDecision" },
-  // LEAVE_CANCELLED has no emit site today — nothing calls
-  // app.notify({ type: "LEAVE_CANCELLED" }). Kept as the sole permitted
+  // LEAVE_CANCELLED has no emit site today — no call site anywhere passes this
+  // type to the notify function. Kept as the sole permitted
   // "registered but unemitted" entry: the decision is already made and documented
   // for the day the emit site returns (see the reverse-hygiene test in
   // notification-email-policy.test.ts, which pins this exact key as the one
@@ -114,7 +115,7 @@ const ALWAYS_ENTRIES: Record<string, EmailPolicy> = {
 // ── D. never — the four SECTION9_* types, reason mandatory ──
 // Art. 9 DSGVO health-adjacent payloads (§ 9 BUrlG Krank-im-Urlaub). Phase 104 CR-02's
 // decision is preserved verbatim, now expressed as a first-class policy instead of a
-// side-car deny-list (EMAIL_SUPPRESSED_TYPES, deleted by this change).
+// side-car deny-list (deleted by this change).
 const NEVER_REASON =
   "Art. 9 DSGVO health-adjacent payload (§ 9 BUrlG Krank-im-Urlaub). Phase 104 CR-02: must " +
   "never be emailed, regardless of tenant/user toggles.";
