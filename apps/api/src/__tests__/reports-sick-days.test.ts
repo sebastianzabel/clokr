@@ -437,6 +437,14 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
     return { body, row: body.rows.find((r) => r.employeeId === d.employee.id) };
   }
 
+  async function monthlyPdf(year: number, month: number) {
+    return app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly/pdf?employeeId=${d.employee.id}&year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+  }
+
   it("Test 1 (D-30): a confirmed § 9 day appears in sickDaysWithAttest and is removed from vacationDays — the day is reported as a Kranktag exactly once", async () => {
     const vac = await createRequest({
       type: "VACATION",
@@ -586,5 +594,30 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
     );
     const { body: juneBody } = await monthlyRow(2026, 6);
     expect(juneBody.section9Note).toBeUndefined();
+  });
+
+  it("Test 4 (D-30): the Monatsbericht PDF renders for a month WITH a confirmed § 9 credit", async () => {
+    const res = await monthlyPdf(2026, 5); // May — Test 1 left a CONFIRMED credit here
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/pdf");
+    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+  });
+
+  it("Test 5 (D-30): the Monatsbericht PDF also renders for a month WITHOUT any § 9 credit", async () => {
+    const res = await monthlyPdf(2026, 6); // June — Test 2's AU_PENDING month, no CONFIRMED credit
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/pdf");
+    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
+  });
+
+  it("Test 6 (D-30): the company-wide Monatsbericht PDF renders for a month with an affected employee", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/reports/monthly/pdf/all?year=2026&month=5",
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("application/pdf");
+    expect(res.rawPayload.subarray(0, 4).toString()).toBe("%PDF");
   });
 });

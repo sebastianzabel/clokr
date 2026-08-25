@@ -13,6 +13,7 @@ import {
 } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import {
+  SECTION9_LEGEND,
   generateMonthlyReportPdf,
   generateVacationOverviewPdf,
   streamCompanyMonthlyReportPdf,
@@ -869,8 +870,9 @@ export async function reportRoutes(app: FastifyInstance) {
 
       // D-30's "erklärender Hinweis in der Legende": emitted only when at least one
       // employee's figures were actually touched, so unaffected reports are unchanged.
+      // Wording lives in utils/pdf.ts so JSON and both PDFs cannot drift (Phase 104 gap closure).
       const section9Note = rows.some((r) => r.section9DaysThisMonth > 0)
-        ? "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG)."
+        ? SECTION9_LEGEND
         : undefined;
 
       return { month: parseInt(month), year: y, rows, ...(section9Note ? { section9Note } : {}) };
@@ -1380,6 +1382,8 @@ export async function reportRoutes(app: FastifyInstance) {
         sickDaysWithAttest: summary.sickDaysWithAttest,
         vacationDays: summary.vacationDays,
         otherAbsenceDays: summary.totalAbsenceDays - summary.vacationDays,
+        // D-30: drives the § 9 legend in the PDF. Same source as the JSON report's section9Note.
+        section9Days: summary.section9DaysThisMonth,
         entries: summary.entries,
       });
 
