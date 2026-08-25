@@ -1,0 +1,82 @@
+name: Fehler
+description: Etwas funktioniert nicht wie dokumentiert.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Sicherheitslücken bitte nicht hier melden.** Dieses Repository ist öffentlich —
+        ein Issue macht die Lücke sofort für alle sichtbar. Bitte den Maintainer direkt
+        kontaktieren.
+
+  - type: textarea
+    id: what-happens
+    attributes:
+      label: Was passiert
+      description: Das beobachtete Verhalten. Fehlermeldung wörtlich, falls vorhanden.
+      placeholder: |
+        Beim Speichern eines Zeiteintrags erscheint "Validierungsfehler",
+        ohne dass ein Feld markiert wird.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-should-happen
+    attributes:
+      label: Was passieren sollte
+      placeholder: Der Eintrag wird gespeichert, oder das fehlerhafte Feld wird benannt.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Schritte zum Reproduzieren
+      description: Nummeriert. Ohne verlässliche Schritte lässt sich der Fehler nicht eingrenzen.
+      placeholder: |
+        1. Als Mitarbeiter anmelden
+        2. Zeiterfassung → Eintrag für heute anlegen
+        3. Pause 12:00–12:30 eintragen
+        4. Speichern
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Steht in der Sidebar unter dem Logout-Button, oder unter `/api/v1/version`.
+      placeholder: v1.9.18
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Umgebung
+      options:
+        - dev (lokal, docker compose)
+        - int
+        - prod
+        - self-hosted (fremde Installation)
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser / Gerät
+      description: Nur bei Fehlern in der Oberfläche. Bei reinen API-Fehlern leer lassen.
+      placeholder: Safari 19, iPhone 15
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Sonstiges
+      description: |
+        Logs, Screenshots, betroffene Arbeitszeitmodelle.
+        **Keine echten Mitarbeiter- oder Kundennamen** — das Repository ist öffentlich.
+    validations:
+      required: false

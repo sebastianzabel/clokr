@@ -1,0 +1,45 @@
+name: Chore
+description: Wartung, Abhängigkeiten, Doku, Infrastruktur.
+labels: [chore]
+body:
+  - type: textarea
+    id: what-and-why
+    attributes:
+      label: Was und warum
+      description: |
+        Die Änderung und der Grund. Der Grund ist der wichtigere Teil — in sechs
+        Monaten ist nur noch nachvollziehbar, was jemand aufgeschrieben hat.
+      placeholder: |
+        `docs/int-environment.md` behauptet an sieben Stellen, ArgoCD tracke den
+        Branch `release/1.9.x`. Tatsächlich pinnt clokr-app.yaml einen Tag. Wer
+        sich darauf verlässt, sucht Deploy-Fehler an der falschen Stelle.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Akzeptanzkriterien
+      description: |
+        Woran ist erkennbar, dass es fertig ist? Auch bei Wartungsarbeit prüfbar
+        formulieren — ohne das erreicht das Issue nie `Ready`.
+      placeholder: |
+        - Alle sieben Stellen nennen das Tag-Pinning statt Branch-Tracking.
+        - Der Abschnitt "Deploy trigger" beschreibt den tatsächlichen Ablauf.
+        - Keine anderen Dokumente widersprechen danach noch.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Berührt produktive Daten oder Deployment?
+      description: |
+        Entscheidet, ob ein Backup, ein Migrationspfad oder ein Wartungsfenster
+        nötig ist.
+      options:
+        - "Nein — reine Doku- oder Werkzeugänderung"
+        - "Ja — Deployment/Infrastruktur"
+        - "Ja — Datenbank/Migration"
+    validations:
+      required: true

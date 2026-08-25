@@ -1,0 +1,69 @@
+name: Feature
+description: Neue Fähigkeit oder Erweiterung.
+labels: [feature]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem oder Bedarf
+      description: |
+        Was geht heute nicht oder nur umständlich? Bitte das Problem beschreiben,
+        nicht schon die Lösung — sonst ist die beste Lösung eventuell nicht mehr sichtbar.
+      placeholder: |
+        Beim Monatsabschluss ist nicht erkennbar, welche Mitarbeiter noch offene
+        Pausenbestätigungen haben. Man muss jeden einzeln durchklicken.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Vorgeschlagene Lösung
+      description: Wie es aussehen könnte. Grob genügt.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Akzeptanzkriterien
+      description: |
+        **Woran ist erkennbar, dass es fertig ist?** Prüfbar formulieren — jede Zeile
+        muss sich mit Ja oder Nein beantworten lassen.
+
+        Das ist das wichtigste Feld: Ein Issue ohne Akzeptanzkriterien erreicht nie
+        den Status `Ready` und wird von GSD nicht angefasst.
+      placeholder: |
+        - Gegeben ein Monat mit offenen Pausenbestätigungen,
+          wenn der Manager den Monatsabschluss öffnet,
+          dann wird pro betroffenem Mitarbeiter ein Chip mit der Anzahl angezeigt.
+        - Gegeben ein Monat ohne offene Bestätigungen,
+          wenn der Manager den Monatsabschluss öffnet,
+          dann erscheint kein Hinweis.
+        - Der Abschluss bleibt möglich, der Hinweis blockiert nicht.
+    validations:
+      required: true
+
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Nicht Teil davon
+      description: |
+        Was bewusst NICHT dazugehört. Verhindert, dass der Umfang während der
+        Umsetzung wächst.
+      placeholder: |
+        - Keine E-Mail-Benachrichtigung — separates Thema.
+        - Keine Änderung an der Pausenlogik selbst.
+    validations:
+      required: false
+
+  - type: textarea
+    id: legal
+    attributes:
+      label: Rechtlicher Bezug
+      description: |
+        Betrifft das ArbZG, BUrlG, DSGVO oder die Revisionssicherheit? Falls ja,
+        welchen Paragrafen — das entscheidet mit über die Umsetzung.
+      placeholder: § 4 ArbZG (Pausen), Revisionssicherheit (gesperrte Monate unveränderbar)
+    validations:
+      required: false

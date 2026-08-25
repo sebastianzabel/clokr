@@ -1,0 +1,12 @@
+# Blank issues are off so that everything entering the Inbox has the fields
+# triage needs. Add contact_links here only for destinations that actually
+# resolve — as of 2026-08-26 both obvious candidates are unavailable:
+#
+#   Discussions                     — disabled on this repo
+#   /security/advisories/new        — private vulnerability reporting disabled,
+#                                     and there is no SECURITY.md
+#
+# A dead link in the "New issue" chooser is worse than no link: it looks like
+# the supported path and silently isn't. Enable the feature first, then add
+# the link back.
+blank_issues_enabled: false
