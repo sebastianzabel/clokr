@@ -103,6 +103,24 @@ The Inbox view is filtered defensively for the same reason: rather than `status:
 excludes the five later statuses, so an item arriving without a Status still shows up instead
 of vanishing. If a sixth status is ever added, add it to that exclusion list.
 
+### The four views
+
+| View         | Filter                            | Shows                                                    |
+| ------------ | --------------------------------- | -------------------------------------------------------- |
+| **Inbox**    | five later statuses excluded      | untriaged, incl. anything that arrived without a Status  |
+| **Sprint**   | `iteration:@current,no:iteration` | the running sprint **plus** everything not yet scheduled |
+| **Backlog**  | `status:Backlog`                  | triaged, not scheduled                                   |
+| **Releases** | `-status:Done`                    | open work by milestone                                   |
+
+Sprint deliberately includes unscheduled items. Filtered strictly to `iteration:@current`, its
+Inbox and Backlog columns would be empty by construction — an Inbox item has no iteration —
+leaving two dead columns and forcing triage onto a second surface. Widening it makes Sprint the
+single working board: cards arrive in Inbox and are dragged to Ready. The five-issue cap is a
+rule applied at triage, not something the filter enforces.
+
+Note that until the first iteration begins (31.08.2026) there is no `@current` iteration at
+all, so the sprint half of that filter matches nothing.
+
 ### Also manual: view grouping and sorting
 
 Filters were set through the API; grouping and sorting cannot be. On each view, click the
