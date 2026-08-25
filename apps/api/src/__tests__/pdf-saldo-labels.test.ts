@@ -1,6 +1,7 @@
 /**
  * Phase 97 Plan 02 (SALDO-DISP-05) — DB-free regression cover for the exported monthly PDF's
- * Saldo column and Bestätigt/Prognose labelling.
+ * Saldo column and Bestätigt/Prognose labelling. Extended by Phase 104 Plan 12 (D-30) to also
+ * cover the § 9 BUrlG legend.
  *
  * No Fastify app, no Prisma, no fixtures — immune to the documented pre-existing
  * UTC-vs-tenant-timezone fixture window (00:00–02:00 CEST, see
@@ -24,9 +25,11 @@
 import { describe, it, expect } from "vitest";
 import {
   streamCompanyMonthlyReportPdf,
+  drawSection9Legend,
   OVERTIME_LABEL_CONFIRMED,
   OVERTIME_LABEL_FORECAST,
   COMPANY_PROVISIONAL_LEGEND,
+  SECTION9_LEGEND,
   type CompanyMonthlyReportData,
 } from "../utils/pdf";
 
@@ -55,6 +58,11 @@ function createRecordingDoc(): PDFKit.PDFDocument & RecordingDoc {
           return proxy;
         };
       }
+      // Phase 104 (D-30): drawSection9Legend calls heightOfString(...) and adds the result to
+      // doc.y, so unlike the other no-ops this one must return a number, not the chainable proxy.
+      if (prop === "heightOfString") {
+        return () => 12;
+      }
       if (prop in obj) return obj[prop];
       // Any other PDFKit method (fontSize, font, fillColor, moveTo, lineTo, stroke, addPage,
       // rect, fill, ...) — a chainable no-op, matching PDFKit's fluent API.
@@ -82,6 +90,7 @@ function makeRow(overrides: Partial<CompanyRow>): CompanyRow {
     sickDaysWithoutAttest: 0,
     vacationDays: 0,
     totalAbsenceDays: 0,
+    section9DaysThisMonth: 0,
     entries: [],
     ...overrides,
   };
@@ -177,5 +186,77 @@ describe("streamCompanyMonthlyReportPdf — Saldo column + Bestätigt/Prognose l
     expect(OVERTIME_LABEL_CONFIRMED).toContain("Überstunden");
     expect(OVERTIME_LABEL_FORECAST).toContain("Überstunden");
     expect(OVERTIME_LABEL_CONFIRMED).not.toBe(OVERTIME_LABEL_FORECAST);
+  });
+});
+
+describe("§ 9 BUrlG legend (Phase 104, D-30)", () => {
+  it("Test 1: streamCompanyMonthlyReportPdf writes SECTION9_LEGEND exactly once when at least one row has section9DaysThisMonth > 0", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        makeRow({ employeeName: "Alpha", section9DaysThisMonth: 0 }),
+        makeRow({ employeeName: "Beta", section9DaysThisMonth: 2 }),
+      ]),
+    );
+
+    expect(doc.texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
+  });
+
+  it("Test 2: with every row at section9DaysThisMonth 0, SECTION9_LEGEND is never written", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        makeRow({ employeeName: "Alpha", section9DaysThisMonth: 0 }),
+        makeRow({ employeeName: "Beta", section9DaysThisMonth: 0 }),
+      ]),
+    );
+
+    expect(doc.texts).not.toContain(SECTION9_LEGEND);
+  });
+
+  it("Test 3: the § 9 legend and the pre-existing COMPANY_PROVISIONAL_LEGEND can appear together, each exactly once, provisional legend first", () => {
+    const doc = createRecordingDoc();
+
+    streamCompanyMonthlyReportPdf(
+      doc,
+      makeData([
+        makeRow({
+          employeeName: "Alpha Forecast",
+          overtimeConfirmed: false,
+          section9DaysThisMonth: 0,
+        }),
+        makeRow({
+          employeeName: "Beta Section9",
+          overtimeConfirmed: true,
+          section9DaysThisMonth: 3,
+        }),
+      ]),
+    );
+
+    expect(doc.texts.filter((t) => t === COMPANY_PROVISIONAL_LEGEND)).toHaveLength(1);
+    expect(doc.texts.filter((t) => t === SECTION9_LEGEND)).toHaveLength(1);
+    const provisionalIdx = doc.texts.indexOf(COMPANY_PROVISIONAL_LEGEND);
+    const section9Idx = doc.texts.indexOf(SECTION9_LEGEND);
+    expect(provisionalIdx).toBeLessThan(section9Idx);
+  });
+
+  it("Test 4: drawSection9Legend(doc, 0) writes nothing; drawSection9Legend(doc, 2) writes exactly SECTION9_LEGEND", () => {
+    const docZero = createRecordingDoc();
+    drawSection9Legend(docZero, 0);
+    expect(docZero.texts).toHaveLength(0);
+
+    const docTwo = createRecordingDoc();
+    drawSection9Legend(docTwo, 2);
+    expect(docTwo.texts).toEqual([SECTION9_LEGEND]);
+  });
+
+  it("Test 5: SECTION9_LEGEND equals the literal string already asserted by reports-sick-days.test.ts", () => {
+    expect(SECTION9_LEGEND).toBe(
+      "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).",
+    );
   });
 });
