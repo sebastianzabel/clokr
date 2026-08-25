@@ -1133,8 +1133,23 @@ export async function leaveRoutes(app: FastifyInstance) {
               where: { id: existing.employeeId },
               select: { userId: true, tenantId: true },
             });
+            // Phase 104 review (WR-05): in Prisma an `undefined` filter value means "omit
+            // this filter", not "match nothing". Passing employeeUser?.tenantId into the
+            // manager fan-out below would, if the row were ever missing, return EVERY
+            // ADMIN/MANAGER across ALL tenants and notify each of them about a foreign
+            // tenant's sickness period (plus a deep link into it). The FK is Restrict so
+            // this should be unreachable — but the failure mode is a silent cross-tenant
+            // broadcast, so it must not depend on that. The Vorgang itself is already
+            // created and audited; only the notification fan-out is skipped.
+            if (!employeeUser) {
+              app.log.error(
+                { employeeId: existing.employeeId, creditId: credit.id },
+                "§ 9: employee row missing, skipping notification fan-out",
+              );
+              continue;
+            }
             const rangeLabel = `${ov.overlapStart.toISOString().split("T")[0]} – ${ov.overlapEnd.toISOString().split("T")[0]}`;
-            if (employeeUser?.userId) {
+            if (employeeUser.userId) {
               await app.notify({
                 userId: employeeUser.userId,
                 type: "SECTION9_AU_PENDING_EMPLOYEE",
@@ -1151,7 +1166,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             // User has no tenantId column — tenant scoping goes through Employee.
             const section9Managers = await app.prisma.employee.findMany({
               where: {
-                tenantId: employeeUser?.tenantId,
+                tenantId: employeeUser.tenantId,
                 user: {
                   role: { in: ["ADMIN", "MANAGER"] },
                   isActive: true,
@@ -1167,7 +1182,7 @@ export async function leaveRoutes(app: FastifyInstance) {
                 title: "§ 9 BUrlG — AU-Nachweis ausstehend",
                 message: `Krankmeldung während genehmigten Urlaubs (${rangeLabel}). Sobald die AU vorliegt, bitte bestätigen.`,
                 link: `/team/leave?section9=${credit.id}`,
-                tenantId: employeeUser?.tenantId,
+                tenantId: employeeUser.tenantId,
                 relatedType: "Section9Credit",
                 relatedId: credit.id,
               });

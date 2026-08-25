@@ -422,6 +422,11 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
     // Only the newly created MANAGER — the admin approved the request and must be excluded.
     expect(managerNotes.map((n) => n.userId)).toEqual([expect.any(String)]);
     expect(managerNotes.some((n) => n.userId === data.adminUser.id)).toBe(false);
+    // Phase 104 review WR-05: the fan-out filter used `tenantId: employeeUser?.tenantId`.
+    // In Prisma an undefined filter value means "omit this filter" — a missing employee row
+    // would have broadcast this sickness period (and a deep link) to EVERY ADMIN/MANAGER in
+    // EVERY tenant. Pin the tenant scope explicitly.
+    expect(managerNotes.some((n) => n.userId === other.adminUser.id)).toBe(false);
   });
 
   it("Test 3: GET /section9?status=AU_PENDING returns the tenant's open cases for a MANAGER", async () => {
