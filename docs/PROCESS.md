@@ -70,37 +70,41 @@ ties them together in the history.
 
 ## One-time manual steps
 
-Projects v2 built-in automations cannot be set through the API. These four have to be clicked
-once, and the board does not work as described until they are.
+Projects v2 built-in automations can be **read** through the API but not enabled — there is no
+`updateProjectV2Workflow` mutation, only `deleteProjectV2Workflow`. So these have to be
+switched on by hand once, and the board does not behave as described until they are.
 
-Open the board → **⋯** (top right) → **Settings** → **Workflows** in the left sidebar.
+Go straight to the workflows page — it avoids hunting through menus:
 
-**1 · Auto-add to project**
+**<https://github.com/users/sebastianzabel/projects/1/workflows>**
 
-- Click **Auto-add to project** → **Edit**
-- Filter: `is:issue is:open repo:sebastianzabel/clokr`
-- Set the item's **Status** to **Inbox**
-- **Save and turn on workflow**
+Each workflow is opened from the list, given its condition and its _Set value_, then saved with
+**Save and turn on workflow**.
 
-> Without this, capture.sh files issues that never reach the board.
+| Workflow                | Set value         | Why                                   |
+| ----------------------- | ----------------- | ------------------------------------- |
+| **Item closed**         | Status → **Done** | closing an issue should move the card |
+| **Pull request merged** | Status → **Done** | merging should move the card          |
 
-**2 · Item closed → Done**
+Both are confirmed present on this board and currently disabled (queried via
+`ProjectV2.workflows`; they are workflow numbers 1 and 2).
 
-- Click **Item closed** → **Edit**
-- Under _Set value_, choose **Status: Done**
-- **Save and turn on workflow**
+### Auto-add and auto-archive
 
-**3 · Pull request merged → Done**
+These two are **not** returned by the `workflows` API field and are not in the same list as the
+item-event workflows above:
 
-- Click **Pull request merged** → **Edit**
-- Under _Set value_, choose **Status: Done**
-- **Save and turn on workflow**
+| What                    | Intended setting                                                       |
+| ----------------------- | ---------------------------------------------------------------------- |
+| **Auto-add to project** | filter `is:issue is:open repo:sebastianzabel/clokr` → Status **Inbox** |
+| **Auto-archive items**  | filter `is:closed updated:<@today-30d`                                 |
 
-**4 · Auto-archive items**
+**Auto-add is the one that matters most** — without it, `capture.sh` files issues that never
+reach the board, and the Inbox stays empty while work piles up in the issue list.
 
-- Click **Auto-archive items** → **Edit**
-- Filter: `is:closed updated:<@today-30d`
-- **Save and turn on workflow**
+> Their exact location in the UI is **unverified**. The four item-event workflows were confirmed
+> via the API; these two were not, and the GitHub UI moves. Correct this section the first time
+> you actually click through it rather than trusting the description.
 
 ### Also manual: view grouping and sorting
 
