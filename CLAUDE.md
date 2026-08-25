@@ -13,10 +13,42 @@
 - `pnpm dev` — start all dev servers
 - `pnpm --filter @clokr/api dev` — API only
 - `pnpm --filter @clokr/web dev` — Web only
-- `pnpm --filter @clokr/db exec prisma migrate dev --name <desc>` — create + apply a migration (dev)
 - `pnpm --filter @clokr/db exec prisma migrate deploy` — apply pending migrations (every env)
-- `pnpm --filter @clokr/db exec prisma generate` — regenerate Prisma client
-- Schema changes go through **versioned migrations**, not `db push`. Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
+- `pnpm --filter @clokr/db exec prisma generate` — regenerate Prisma client (`migrate deploy` does NOT do this, unlike `migrate dev`)
+- Schema changes go through **versioned migrations**, never `db push`.
+
+### Creating a migration — do NOT use `prisma migrate dev`
+
+**`migrate dev` is not the workflow on this project.** When it finds drift it resets the target
+database — drops it, recreates it, replays every migration — and in a non-interactive shell (i.e.
+any agent run) that happens **without a confirmation prompt**. It did exactly that on 2026-08-19 and
+destroyed all local fixture/demo data. This dev database has long-standing pre-existing index drift,
+so it is reset-prone on repeat, not just that once.
+
+Create migrations the way phases 85-01, 91-01, 96-01 and 104's quick tasks did — generate the SQL
+against a throwaway shadow DB, read it, then apply it:
+
+```bash
+# 1. throwaway shadow DB
+psql ... -c 'DROP DATABASE IF EXISTS clokr_shadow;' -c 'CREATE DATABASE clokr_shadow;'
+# 2. hand-create packages/db/prisma/migrations/$(date +%Y%m%d%H%M%S)_<snake_name>/
+# 3. generate the SQL — Prisma 7 takes the shadow URL from the ENV VAR, there is no CLI flag
+#    (see packages/db/prisma.config.ts and the drift check in .github/workflows/ci.yml)
+SHADOW_DATABASE_URL="postgresql://.../clokr_shadow" pnpm --filter @clokr/db exec prisma migrate diff \
+  --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --script \
+  > packages/db/prisma/migrations/<dir>/migration.sql
+# 4. READ migration.sql. Anything beyond your intended change is drift leaking in — stop, don't hand-edit.
+# 5. apply to dev AND clokr_test, then verify
+pnpm --filter @clokr/db exec prisma migrate deploy
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/db exec prisma migrate status   # must report no drift
+# 6. drop clokr_shadow, run prisma generate
+```
+
+Flags that older Prisma docs use and that **fail** here: `--to-schema-datamodel` (removed, use
+`--to-schema`), `--shadow-database-url` (never a CLI flag in Prisma 7 — use `SHADOW_DATABASE_URL`).
+
+Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
 - `docker compose up --build -d` — rebuild and restart all containers
 
 ## Path Aliases (SvelteKit)
