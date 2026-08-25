@@ -102,6 +102,28 @@ export const EMAIL_SUPPRESSED_TYPES: ReadonlySet<string> = new Set([
   "SECTION9_CREDIT_REJECTED",
 ]);
 
+/**
+ * Escape HTML-significant characters before interpolating a value into the notification
+ * email body.
+ *
+ * Phase 104 code review WR-07: the body is built with raw template interpolation
+ * (`<p>${message}</p>`), and Phase 104 introduced the first USER-SUPPLIED free text into a
+ * message — the manager's § 9 rejection reason (`z.string().trim().min(1)`, no character
+ * restriction). A reason containing `<a href="https://evil.example">…</a>` or
+ * `<img src=x onerror=…>` was delivered as live HTML inside a Clokr-branded message: a
+ * manager→employee phishing primitive. The in-app bell was never affected (Svelte escapes),
+ * so this is an email-only exposure — but every interpolated value is escaped here now,
+ * including title/firstName/link, so no future emit site has to remember.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 declare module "fastify" {
   interface FastifyInstance {
     notify: (params: NotifyParams) => Promise<void>;
@@ -222,10 +244,10 @@ export const notifyPlugin = fp(async (app) => {
       subject: `${title} – Clokr`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#2563eb">${title}</h2>
-          <p>Hallo ${firstName},</p>
-          <p>${message}</p>
-          ${fullLink ? `<a href="${fullLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
+          <h2 style="color:#2563eb">${escapeHtml(title)}</h2>
+          <p>Hallo ${escapeHtml(firstName)},</p>
+          <p>${escapeHtml(message)}</p>
+          ${fullLink ? `<a href="${escapeHtml(fullLink)}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
           <p style="color:#9ca3af;font-size:12px">Diese E-Mail wurde automatisch von Clokr gesendet.</p>
         </div>`,

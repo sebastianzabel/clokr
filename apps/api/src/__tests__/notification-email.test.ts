@@ -193,6 +193,44 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
     }
   });
 
+  // ── Phase 104 code review WR-07 — free text is escaped in the email body ───
+  //
+  // Phase 104 introduced the first USER-SUPPLIED free text into a notification message:
+  // the manager's § 9 rejection reason. The body is raw template interpolation, so a
+  // reason containing markup was delivered as live HTML inside a Clokr-branded email.
+  it("(f) HTML in title/message/link is escaped, never delivered as live markup", async () => {
+    await setConfig({
+      ...SMTP_CONFIGURED,
+      emailNotificationsEnabled: true,
+      emailOnLeaveRequest: true,
+    });
+
+    await app.notify({
+      userId: data.adminUser.id,
+      type: "LEAVE_REQUEST",
+      title: '<img src=x onerror="alert(1)">',
+      message:
+        'Die eingereichte AU wurde abgelehnt: <a href="https://evil.example">Jetzt handeln</a>.',
+      link: '/leave?x="evil"',
+      tenantId: data.tenant.id,
+    });
+
+    await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(1));
+    const html = sendMailMock.mock.calls[0][0].html as string;
+
+    // No attacker-controlled tag survives as markup...
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain('<a href="https://evil.example"');
+    // The escaped text still reads "onerror=&quot;..." — what must NOT survive is the
+    // unescaped attribute form that a mail client would parse.
+    expect(html).not.toContain('onerror="');
+    // ...and the text is still readable, just escaped.
+    expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+    expect(html).toContain("Die eingereichte AU wurde abgelehnt:");
+    // The legitimate Clokr CTA link is still a real anchor.
+    expect(html).toContain('style="display:inline-block');
+  });
+
   // ── Phase 104 code review CR-02 — § 9 BUrlG types are in-app only ──────────
   //
   // Before the fix, absence from EMAIL_TYPE_MAP short-circuited the per-type gate
