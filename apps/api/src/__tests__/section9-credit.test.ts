@@ -738,6 +738,62 @@ describe("confirm — Phase 104-06 Task 1", () => {
     expect(res.statusCode).not.toBe(403);
   });
 
+  // Phase 104 code review WR-01: the confirm handler guarded credit.status and
+  // sickRequest.status but never vacationRequest.status. The credit is detected at
+  // SICK-approval time, when the vacation was APPROVED; between then and the confirm the
+  // vacation can be cancelled — and the cancel path already gives the days back. Confirming
+  // afterwards ran reverseVacationDays() a SECOND time (double credit) and booked a § 9
+  // credit against a vacation that legally no longer exists.
+  it("Test 6b (WR-01): confirming a credit whose vacation is no longer APPROVED returns 409 and books nothing", async () => {
+    const { vacId, sickId } = await vacAndSick(
+      ["2026-05-11", "2026-05-13"],
+      ["2026-05-11", "2026-05-13"],
+    );
+    const credit = await creditFor(sickId);
+
+    const confirmBody = {
+      attestSource: "EAU" as const,
+      attestValidFrom: "2026-05-11",
+      attestValidTo: "2026-05-13",
+      reason: "AU liegt vor, der Urlaub ist aber zwischenzeitlich storniert worden",
+    };
+
+    // CANCELLATION_REQUESTED: the leave is still active today, but approving that
+    // cancellation later would decrement the same days a second time.
+    // CANCELLED: the days are already back — a second reverseVacationDays() would
+    // over-credit outright.
+    for (const blockedStatus of ["CANCELLATION_REQUESTED", "CANCELLED"] as const) {
+      await app.prisma.leaveRequest.update({
+        where: { id: vacId },
+        data: { status: blockedStatus },
+      });
+
+      // Read the baseline WITH the vacation already in the blocked state — selfHealUsedDays
+      // recomputes usedDays on every entitlement read, so a baseline taken while the request
+      // was still APPROVED would measure the cancellation, not the confirm attempt.
+      const before = await getEntitlement(2026);
+
+      const res = await confirmCredit(credit.id, confirmBody);
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.body).error).toContain("nicht mehr genehmigt");
+
+      // Nothing booked, and the credit itself stays AU_PENDING.
+      const after = await getEntitlement(2026);
+      expect(Number(after?.usedDays ?? 0)).toBe(Number(before?.usedDays ?? 0));
+      const row = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: credit.id } });
+      expect(row.status).toBe("AU_PENDING");
+    }
+
+    // Restored to APPROVED, the very same call succeeds — the guard blocks exactly the
+    // cancelled states and nothing else.
+    await app.prisma.leaveRequest.update({ where: { id: vacId }, data: { status: "APPROVED" } });
+    const usedBefore = Number((await getEntitlement(2026))?.usedDays ?? 0);
+    const ok = await confirmCredit(credit.id, confirmBody);
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body).creditedDays).toBe(3);
+    expect(Number((await getEntitlement(2026))?.usedDays ?? 0)).toBe(usedBefore - 3);
+  });
+
   it("Test 7 (D-27): attestSource accepts only EAU/PAPIER; reason is mandatory (missing OR null)", async () => {
     const { sickId } = await vacAndSick(["2026-03-09", "2026-03-09"], ["2026-03-09", "2026-03-09"]);
     const credit = await creditFor(sickId);

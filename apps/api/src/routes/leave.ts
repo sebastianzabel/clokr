@@ -2591,6 +2591,24 @@ export async function leaveRoutes(app: FastifyInstance) {
         return reply.code(409).send({ error: "Die Krankmeldung muss zuerst genehmigt werden." });
       }
 
+      // Phase 104 review (WR-01): the credit is detected at SICK-approval time, when the
+      // vacation was APPROVED. Between then and this confirm the vacation can move to
+      // CANCELLATION_REQUESTED or CANCELLED (leave.ts cancel path) — and the cancel path
+      // already decrements usedDays back. Confirming afterwards would run
+      // reverseVacationDays() a SECOND time for the same days (double credit), and would
+      // book a § 9 credit against a vacation that legally no longer exists: nothing was
+      // "angerechnet", so nothing can be "nicht angerechnet". selfHealUsedDays() masks the
+      // numeric symptom on the next load, but the CONFIRMED row itself stays wrong and
+      // feeds section9Movements, the monthly report and the DATEV Krank/Urlaub shift.
+      // CANCELLATION_REQUESTED is blocked too: the leave is still active today, but an
+      // approval of that cancellation later would decrement the same days again.
+      if (credit.vacationRequest.status !== "APPROVED") {
+        return reply.code(409).send({
+          error:
+            "Der betroffene Urlaubsantrag ist nicht mehr genehmigt — keine Gutschrift möglich.",
+        });
+      }
+
       // D-12: deliberately NO four-eyes check — bei 1-2 Managern würde das exakt die
       // Storno-Sackgasse reproduzieren, die § 9 umgeht. Derselbe Manager, der die
       // Krankmeldung genehmigt hat, darf auch die AU bestätigen.
