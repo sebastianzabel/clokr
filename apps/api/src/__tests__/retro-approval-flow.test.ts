@@ -24,6 +24,7 @@ import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
 import { dateStrInTz } from "../utils/timezone";
+import { computeEntryAgeInDays } from "../utils/retro-config";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,47 @@ async function seedApprovalTenant(app: FastifyInstance, suffix: string) {
   };
 }
 
+/** Phase 96 (96-03) — directly seed a coupled pending TimeEntry + RetroEntryRequest
+ * pair (entry-first flow), bypassing POST /time-entries, so the RETRO-13/RETRO-18
+ * entry-first regression cases below exercise ONLY the PATCH /:id/review guard
+ * ordering (4-eyes self-approval + locked-month), independent of the create branch.
+ * Mirrors retro-entry-first.test.ts's seedCoupledPending. */
+async function seedEntryFirstCoupled(
+  app: FastifyInstance,
+  employeeId: string,
+  targetDate: string,
+  opts: { isLocked?: boolean } = {},
+) {
+  const prisma = app.prisma;
+  const request = await prisma.retroEntryRequest.create({
+    data: {
+      employeeId,
+      targetDate: new Date(targetDate),
+      reason: "RETRO-13/18 entry-first regression fixture",
+      startTime: "08:00",
+      endTime: "16:00",
+      breakMinutes: 30,
+      status: "PENDING",
+    },
+  });
+  const entry = await prisma.timeEntry.create({
+    data: {
+      employeeId,
+      date: new Date(targetDate),
+      startTime: new Date(`${targetDate}T08:00:00.000Z`),
+      endTime: new Date(`${targetDate}T16:00:00.000Z`),
+      breakMinutes: 30,
+      source: "MANUAL",
+      createdBy: employeeId,
+      isInvalid: true,
+      invalidReason: "Nachtrag – Genehmigung ausstehend",
+      retroRequestId: request.id,
+      isLocked: opts.isLocked ?? false,
+    },
+  });
+  return { request, entry };
+}
+
 // ── Test suite ────────────────────────────────────────────────────────────────
 
 describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () => {
@@ -159,6 +201,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             employeeId,
             targetDate,
             reason: "Vergessen einzutragen wegen Dienstreise",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
           },
         });
         // RED: route not yet implemented (Plan 03)
@@ -167,6 +212,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         expect(body.status, "new request must be PENDING").toBe("PENDING");
         expect(body.targetDate, "targetDate must match").toBe(targetDate);
         expect(body.reason).toBeTruthy();
+        expect(body.startTime, "proposed startTime must persist").toBe("08:00");
+        expect(body.endTime, "proposed endTime must persist").toBe("17:00");
+        expect(body.breakMinutes, "proposed breakMinutes must persist").toBe(30);
       } finally {
         vi.useRealTimers();
       }
@@ -222,7 +270,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Test self-approval block" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Test self-approval block",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return; // route not yet exists; RED expected
         const requestId = JSON.parse(createRes.body).id;
@@ -257,7 +312,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${manager1Token}` },
-          payload: { employeeId: manager1EmpId, targetDate, reason: "Manager own entry test" },
+          payload: {
+            employeeId: manager1EmpId,
+            targetDate,
+            reason: "Manager own entry test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
@@ -287,7 +349,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Eintrag vergessen" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Eintrag vergessen",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
@@ -311,7 +380,7 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
   // ── RETRO-03 audit trail ───────────────────────────────────────────────────────
 
   describe("RETRO-03 audit: RETRO_ENTRY_APPROVED action with mandatory fields", () => {
-    it("RETRO-03: reviewNote absent on PATCH review → 400 (mandatory, Revisionssicherheit)", async () => {
+    it("RETRO-03: reviewNote OPTIONAL on APPROVE → 200 (note not legally required to grant)", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
@@ -321,20 +390,182 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Nachträgliche Erfassung" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Nachträgliche Erfassung",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestId = JSON.parse(createRes.body).id;
 
-        // Attempt approval without reviewNote
+        // Approve WITHOUT reviewNote → must succeed
         const res = await app.inject({
           method: "PATCH",
           url: `/api/v1/retro-entry-requests/${requestId}/review`,
           headers: { authorization: `Bearer ${manager2Token}` },
           payload: { status: "APPROVED" }, // reviewNote omitted
         });
-        // RED: reviewNote is mandatory
-        expect(res.statusCode).toBe(400);
+        expect(res.statusCode, "approve without note must succeed").toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("APPROVED");
+        expect(body.reviewNote, "absent note is stored as null").toBeNull();
+
+        // Audit newValue.reviewNote must be null (true absence recorded)
+        const auditLog = await app.prisma.auditLog.findFirst({
+          where: { action: "RETRO_ENTRY_APPROVED", entityId: requestId },
+          orderBy: { createdAt: "desc" },
+        });
+        const newValue = auditLog?.newValue as Record<string, unknown> | null;
+        expect(newValue?.reviewNote, "audit reviewNote null when not given").toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-03: reviewNote explicit null on APPROVE → 200 (regression: matches real frontend payload)", async () => {
+      // Regression test for retro-approve-requires-comment-validation-error:
+      // the inbox review modal (submitRetroReview in
+      // apps/web/src/routes/(app)/inbox/+page.svelte) sends an explicit
+      // `reviewNote: null` — NOT an omitted key — when the comment textarea is
+      // empty. The schema must accept `null`, not just `undefined`.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 15);
+
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Nachträgliche Erfassung",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const requestId = JSON.parse(createRes.body).id;
+
+        // Approve with reviewNote EXPLICITLY null (real frontend payload shape)
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${requestId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "APPROVED", reviewNote: null },
+        });
+        expect(res.statusCode, "approve with explicit null note must succeed").toBe(200);
+        const body = JSON.parse(res.body);
+        expect(body.status).toBe("APPROVED");
+        expect(body.reviewNote, "explicit null note is stored as null").toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-03: reviewNote REQUIRED on REJECT → 400 when omitted (Revisionssicherheit)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 15);
+
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Reject-ohne-Begründung Test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const requestId = JSON.parse(createRes.body).id;
+
+        // Reject WITHOUT reviewNote → must fail with 400
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${requestId}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED" }, // reviewNote omitted
+        });
+        expect(res.statusCode, "reject without note must be 400").toBe(400);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-02 create: missing startTime/endTime → 400 (proposed times mandatory for reviewability)", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 19);
+        const res = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { employeeId, targetDate, reason: "Zeiten fehlen" }, // no start/end
+        });
+        expect(res.statusCode, "missing proposed times must be 400").toBe(400);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("RETRO-02/03 GET: list returns entryAgeInDays (number) + proposed times per row", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 21);
+        const createRes = await app.inject({
+          method: "POST",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "GET-Shape Test",
+            startTime: "09:00",
+            endTime: "16:30",
+            breakMinutes: 45,
+          },
+        });
+        if (createRes.statusCode !== 201) return;
+        const createdId = JSON.parse(createRes.body).id;
+
+        const listRes = await app.inject({
+          method: "GET",
+          url: "/api/v1/retro-entry-requests",
+          headers: { authorization: `Bearer ${manager2Token}` },
+        });
+        expect(listRes.statusCode).toBe(200);
+        const rows = JSON.parse(listRes.body) as Array<{
+          id: string;
+          entryAgeInDays: number;
+          startTime: string | null;
+          endTime: string | null;
+          breakMinutes: number | null;
+        }>;
+        const row = rows.find((r) => r.id === createdId);
+        expect(row, "created row must be in list").toBeTruthy();
+        expect(typeof row?.entryAgeInDays, "entryAgeInDays must be a number").toBe("number");
+        // DST-correct expectation: derive age the same way the route does
+        // (tenant-TZ day diff), never assume 21×24h == 21 calendar days.
+        const expectedAge = computeEntryAgeInDays(dateStrInTz(new Date(), TZ), targetDate);
+        expect(row?.entryAgeInDays, "age of backdated day").toBe(expectedAge);
+        expect(expectedAge, "sanity: age is a positive backdated span").toBeGreaterThan(0);
+        expect(row?.startTime).toBe("09:00");
+        expect(row?.endTime).toBe("16:30");
+        expect(row?.breakMinutes).toBe(45);
       } finally {
         vi.useRealTimers();
       }
@@ -350,7 +581,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Dienstreise — Eintrag vergessen" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Dienstreise — Eintrag vergessen",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const requestBody = JSON.parse(createRes.body);
@@ -407,7 +645,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Eintrag fehlt" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Eintrag fehlt",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const grantId = JSON.parse(createRes.body).id;
@@ -482,7 +727,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "Race condition test" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "Race condition test",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) return;
         const grantId = JSON.parse(createRes.body).id;
@@ -574,7 +826,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate, reason: "SC-2 PUT test: entry needs correction" },
+          payload: {
+            employeeId,
+            targetDate,
+            reason: "SC-2 PUT test: entry needs correction",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
           201,
@@ -683,6 +942,9 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
             employeeId,
             targetDate: lockedDate,
             reason: "SC-2 lock-first test: should never bypass lock",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
           },
         });
         expect(createRes.statusCode, "retro-entry-request creation must succeed with 201").toBe(
@@ -769,7 +1031,14 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
           method: "POST",
           url: "/api/v1/retro-entry-requests",
           headers: { authorization: `Bearer ${empToken}` },
-          payload: { employeeId, targetDate: lockedDate, reason: "Locked month entry" },
+          payload: {
+            employeeId,
+            targetDate: lockedDate,
+            reason: "Locked month entry",
+            startTime: "08:00",
+            endTime: "17:00",
+            breakMinutes: 30,
+          },
         });
         if (createRes.statusCode !== 201) {
           // Route not yet implemented — test is RED as expected
@@ -871,6 +1140,132 @@ describe("Retro approval-flow + lock-ordering + grant-race (76.29-00 RED)", () =
         await app.prisma.saldoSnapshot.deleteMany({
           where: { employeeId, periodStart: janStart, superseded: false },
         });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-13 self-approval (entry-first) ────────────────────────────────────
+  // Regression coverage (96-03): proves the 4-eyes/self-approval block (C3-a/C3-b,
+  // unchanged since 76.29) still holds on the entry-first coupled path, for BOTH
+  // decision directions, and that a blocked decision mutates nothing.
+
+  describe("RETRO-13 self-approval (entry-first): both distinctness checks block approve + reject", () => {
+    it("entry-first C3-a approve: requester attempting PATCH review (APPROVED) of own request -> 403; coupled entry stays isInvalid=true", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 22);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { status: "APPROVED", reviewNote: "Ich genehmige mich selbst" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.isInvalid, "coupled entry must stay pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING, unmutated").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("entry-first C3-b approve: MANAGER who IS the target employee cannot approve their own request -> 403; coupled entry stays isInvalid=true", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 23);
+        const { request, entry } = await seedEntryFirstCoupled(app, manager1EmpId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager1Token}` },
+          payload: { status: "APPROVED", reviewNote: "Manager approves their own request" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.isInvalid, "coupled entry must stay pending, unmutated").toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("entry-first C3-a reject: requester attempting PATCH review (REJECTED) of own request -> 403; coupled entry NOT soft-deleted", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 24);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate);
+
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${empToken}` },
+          payload: { status: "REJECTED", reviewNote: "Ich lehne mich selbst ab" },
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eigene Anträge können nicht selbst genehmigt werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "coupled entry must NOT be soft-deleted").toBeNull();
+        expect(unchangedEntry?.isInvalid, "coupled entry stays pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request must stay PENDING, unmutated").toBe("PENDING");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  // ── RETRO-18 lock-first (entry-first reject) ────────────────────────────────
+  // The approve lock-first case already lives in retro-entry-first.test.ts (96-02
+  // RETRO-11 "locked month -> 403") — not duplicated here.
+
+  describe("RETRO-18 lock-first (entry-first): reject on a locked coupled entry", () => {
+    it("entry-first pending in a locked month -> REJECTED attempt 403; entry deletedAt still null", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(FROZEN_NOW);
+      try {
+        const targetDate = daysAgoInTz(new Date(), 25);
+        const { request, entry } = await seedEntryFirstCoupled(app, employeeId, targetDate, {
+          isLocked: true,
+        });
+
+        // DIFFERENT manager (passes 4-eyes) attempts to reject into the locked month.
+        const res = await app.inject({
+          method: "PATCH",
+          url: `/api/v1/retro-entry-requests/${request.id}/review`,
+          headers: { authorization: `Bearer ${manager2Token}` },
+          payload: { status: "REJECTED", reviewNote: "Abgelehnt" },
+        });
+        expect(res.statusCode, "reject into a locked month must be rejected").toBe(403);
+        const body = JSON.parse(res.body);
+        expect(body.error).toBe("Eintrag ist gesperrt und kann nicht bearbeitet werden");
+
+        const unchangedEntry = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+        expect(unchangedEntry?.deletedAt, "entry must stay non-deleted").toBeNull();
+        expect(unchangedEntry?.isInvalid, "entry stays pending, unmutated").toBe(true);
+        const unchangedRequest = await app.prisma.retroEntryRequest.findUnique({
+          where: { id: request.id },
+        });
+        expect(unchangedRequest?.status, "request stays PENDING, unmutated").toBe("PENDING");
       } finally {
         vi.useRealTimers();
       }

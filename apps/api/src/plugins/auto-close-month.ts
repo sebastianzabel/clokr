@@ -8,6 +8,8 @@ import { withAdvisoryLock, ADVISORY_LOCK_KEYS } from "../utils/with-advisory-loc
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared pure saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — schedule-model-aware gap detector
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
+import { findUnconfirmedBreakDays } from "../utils/find-unconfirmed-break-days"; // Phase 92 Plan 04 — BREAK-05 single source of truth
+import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -252,8 +254,16 @@ export const autoCloseMonthPlugin = fp(async (app) => {
 
             // Thread carryOver through the loop: seeded from the lastSnap before the loop starts.
             // Will be updated as each month is closed or idempotency-skipped.
-            let carryOverIn = lastSnap?.carryOver ?? 0;
+            //
+            // Phase 99 (OB-02) — TRUE head-of-chain seed. `lastSnap === null` means this employee
+            // has never had any snapshot at all, which is exactly where an OpeningBalance applies.
+            let carryOverIn = await getCarryOverBase(app.prisma, emp.id, lastSnap);
 
+            // ⚠️ The three later `carryOverIn = ...` reassignments in this loop are mid-chain
+            // thread-forwards of already-resolved stored values. They MUST NOT route through
+            // the shared chain-head-seed helper above — doing so would re-apply the opening
+            // balance mid-chain. (Structural guard: auto-close-month.test.ts asserts the helper
+            // call appears exactly once in this file.)
             for (const monthKey of monthsToClose) {
               const { start: monthStart, end: monthEnd } = monthRangeUtc(
                 monthKey.year,
@@ -429,6 +439,41 @@ export const autoCloseMonthPlugin = fp(async (app) => {
                     }
                     // pastWindow && closeAllowed → fall through to force-close (gaps=0h)
                   }
+                }
+              }
+
+              // Phase 104 (D-21): a Karenztage-Überschreitung has NO analogue here — see
+              // overtime.ts's GET /close-month/status wiring for the (hint-only) equivalent.
+              // No `break`, nothing pushed to `missing` — the month closes regardless.
+
+              // ── BREAK-05: unconfirmed-break defer (mirrors the gap-defer above) ──
+              // Only runs when the tenant explicitly opted into the hard block. The
+              // master gate (enforceBreakConfirmation) is inherited from
+              // findUnconfirmedBreakDays — it returns [] for an un-opted tenant, so no
+              // silent behavior change ever occurs (BREAK-05 Gesamt-Opt-in, CLAUDE.md).
+              if (tenant.config?.blockMonthCloseOnUnconfirmedBreak) {
+                const breakScheduleType = scheduleForMonth ? String(scheduleForMonth.type) : "";
+                const unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+                  employeeId: emp.id,
+                  monthFirstDay,
+                  monthLastDay,
+                  tz,
+                  scheduleType: breakScheduleType,
+                  enforceBreakConfirmation: tenant.config?.enforceBreakConfirmation ?? false,
+                });
+
+                if (unconfirmedBreakDays.length > 0) {
+                  app.log.warn(
+                    { employeeId: emp.id, month: monthKey.month, year: monthKey.year },
+                    "Auto-Monatsabschluss: unbestätigte Pflichtpausen — verschoben (manuell)",
+                  );
+                  missing.push({
+                    employee: emp,
+                    missingDates: unconfirmedBreakDays,
+                    month: monthKey.month,
+                    year: monthKey.year,
+                  });
+                  break; // defer — never auto-finalize over unconfirmed breaks (F-02/B2 parity)
                 }
               }
 

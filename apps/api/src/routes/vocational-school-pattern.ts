@@ -4,6 +4,7 @@ import { FederalState } from "@clokr/db";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { syncSchoolHolidaysForTenant } from "../plugins/school-holidays-sync";
 import { runVocationalSchoolGeneration } from "../utils/vocational-school-generator";
+import { BS_PATTERN_ORDER_BY } from "../utils/vocational-school-pattern-order";
 import {
   BS_DAILY_MIN_BOUND,
   BS_DAILY_MAX_BOUND,
@@ -138,7 +139,7 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
 
       const patterns = await app.prisma.employeeVocationalSchoolPattern.findMany({
         where: { employeeId: id, isActive: true },
-        orderBy: [{ validFrom: "desc" }],
+        orderBy: BS_PATTERN_ORDER_BY,
       });
 
       // Phase 67.1: Response includes BOTH `daysOfWeek` (new canonical) AND `dayOfWeek`
@@ -198,6 +199,43 @@ export async function vocationalSchoolPatternRoutes(app: FastifyInstance) {
           where: { employeeId: id, isActive: true },
           data: { isActive: false },
         });
+
+        // Phase 103 Plan 05 Task 2 — option B (owner-authorised 2026-08-22, see
+        // 103-HISTORISATION-DIAGNOSTIC.md `## Owner Decision`). Close `validUntil`
+        // ONLY on the row(s) this SAME transaction is already deactivating above —
+        // completing a write already in progress, not editing settled history. Scope
+        // is hard-bounded per the owner decision: a row is closed only when its
+        // `validUntil` is still null (never previously closed) AND its `validFrom` is
+        // strictly earlier than the earliest incoming pattern's `validFrom` (it
+        // genuinely applied before the new pattern takes over). A row whose own
+        // `validFrom` is on or after the incoming date never applied, so it has no
+        // meaningful end date; a row that already carries a `validUntil` is the
+        // admin's own prior explicit statement and is left untouched. This is NOT a
+        // sweep or backfill of unrelated rows — that would be option C, which the
+        // owner explicitly declined (see deferred-items.md § 7).
+        //
+        // `oldPatterns` (fetched BEFORE this transaction, see above) already carries
+        // this employee's full pre-PUT row set including `isActive` at that snapshot
+        // time — filtering on `isActive: true` there identifies exactly the rows this
+        // updateMany just deactivated, with no extra query needed inside the tx.
+        if (body.patterns.length > 0) {
+          const earliestIncomingValidFrom = new Date(
+            Math.min(...body.patterns.map((p) => new Date(p.validFrom).getTime())),
+          );
+          const rowsToClose = oldPatterns.filter(
+            (p) =>
+              p.isActive &&
+              p.validUntil === null &&
+              p.validFrom.getTime() < earliestIncomingValidFrom.getTime(),
+          );
+          if (rowsToClose.length > 0) {
+            const closeDate = new Date(earliestIncomingValidFrom.getTime() - 24 * 60 * 60 * 1000);
+            await tx.employeeVocationalSchoolPattern.updateMany({
+              where: { id: { in: rowsToClose.map((r) => r.id) } },
+              data: { validUntil: closeDate },
+            });
+          }
+        }
 
         const out = [];
         for (const p of body.patterns) {

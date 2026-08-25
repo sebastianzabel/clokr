@@ -43,6 +43,9 @@
     // Phase 64/65 — Konfigurierbare Pausendauer (ArbZG §4 Floor: 30/45 Min)
     defaultBreakOver6h?: number;
     defaultBreakOver9h?: number;
+    // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01)
+    enforceBreakConfirmation?: boolean;
+    blockMonthCloseOnUnconfirmedBreak?: boolean;
     // Phase 49.2 — FLEXTIME Kernarbeitszeit-Defaults
     defaultCoreStart?: string | null;
     defaultCoreEnd?: string | null;
@@ -90,6 +93,7 @@
     emailOnMissingEntries?: boolean;
     emailOnClockOutReminder?: boolean;
     emailOnMonthClose?: boolean;
+    emailOnRetroEntry?: boolean;
     sessionTimeoutMinutes?: number;
     refreshTokenDays?: number;
     rememberMeEnabled?: boolean;
@@ -201,6 +205,13 @@
   let breakDefaultsSaving = $state(false);
   let breakDefaultsSaved = $state(false);
   let breakDefaultsError = $state("");
+
+  // Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01)
+  let enforceBreakConfirmation = $state(false);
+  let blockMonthCloseOnUnconfirmedBreak = $state(false);
+  let breakConfirmSaving = $state(false);
+  let breakConfirmSaved = $state(false);
+  let breakConfirmError = $state("");
 
   // Phase 47.3 / 49.4 — Verfügbarkeits-System Feature-Toggle
   let availabilityEnabled = $state(true);
@@ -353,6 +364,7 @@
   let emailOnMissingEntries = $state(false);
   let emailOnClockOutReminder = $state(false);
   let emailOnMonthClose = $state(true);
+  let emailOnRetroEntry = $state(true);
   let emailSaving = $state(false);
   let emailSaved = $state(false);
   let emailError = $state("");
@@ -438,6 +450,9 @@
       // Phase 65 — Hydrate tenant break defaults (defaults match Phase 64 BREAK-08 = ArbZG floor)
       defaultBreakOver6h = cfg.defaultBreakOver6h ?? 30;
       defaultBreakOver9h = cfg.defaultBreakOver9h ?? 45;
+      // Phase 93.06 — v1.9.3 Pausen-Bestätigung flags (default off)
+      enforceBreakConfirmation = cfg.enforceBreakConfirmation ?? false;
+      blockMonthCloseOnUnconfirmedBreak = cfg.blockMonthCloseOnUnconfirmedBreak ?? false;
       // Phase 47.3 — Verfügbarkeits-System Feature-Toggle (default on)
       availabilityEnabled = cfg.availabilityEnabled ?? true;
 
@@ -503,6 +518,7 @@
         emailOnMissingEntries = sec.emailOnMissingEntries ?? false;
         emailOnClockOutReminder = sec.emailOnClockOutReminder ?? false;
         emailOnMonthClose = sec.emailOnMonthClose ?? true;
+        emailOnRetroEntry = sec.emailOnRetroEntry ?? true;
         sessionTimeoutMinutes = sec.sessionTimeoutMinutes ?? 60;
         refreshTokenDays = sec.refreshTokenDays ?? 7;
         rememberMeEnabled = sec.rememberMeEnabled ?? true;
@@ -669,6 +685,59 @@
       breakDefaultsError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
     } finally {
       breakDefaultsSaving = false;
+    }
+  }
+
+  // Phase 93.06 — v1.9.3 Pausen-Bestätigung toggles (BREAK-05 / BREAK-01).
+  // Both flags are sent on every write (mirrors toggleAutoBreak) so toggling
+  // one never clobbers the other. blockMonthCloseOnUnconfirmedBreak is only
+  // meaningful while enforceBreakConfirmation is on (UI disables toggle #2).
+  async function toggleEnforceBreakConfirmation() {
+    if (!_gOtherFields) return;
+    breakConfirmSaving = true;
+    breakConfirmError = "";
+    breakConfirmSaved = false;
+    const newValue = !enforceBreakConfirmation;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        enforceBreakConfirmation: newValue,
+        blockMonthCloseOnUnconfirmedBreak,
+      });
+      enforceBreakConfirmation = newValue;
+      breakConfirmSaved = true;
+      setTimeout(() => (breakConfirmSaved = false), 2500);
+    } catch (e: unknown) {
+      breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      breakConfirmSaving = false;
+    }
+  }
+
+  async function toggleBlockMonthCloseOnUnconfirmedBreak() {
+    if (!_gOtherFields) return;
+    if (!enforceBreakConfirmation) return; // No-op: only meaningful when enforcement is on.
+    breakConfirmSaving = true;
+    breakConfirmError = "";
+    breakConfirmSaved = false;
+    const newValue = !blockMonthCloseOnUnconfirmedBreak;
+    try {
+      await api.put("/settings/work", {
+        ..._gOtherFields,
+        federalState: gFederalState,
+        timezone: gTimezone,
+        enforceBreakConfirmation,
+        blockMonthCloseOnUnconfirmedBreak: newValue,
+      });
+      blockMonthCloseOnUnconfirmedBreak = newValue;
+      breakConfirmSaved = true;
+      setTimeout(() => (breakConfirmSaved = false), 2500);
+    } catch (e: unknown) {
+      breakConfirmError = e instanceof Error ? e.message : "Speichern fehlgeschlagen.";
+    } finally {
+      breakConfirmSaving = false;
     }
   }
 
@@ -995,6 +1064,7 @@
         emailOnMissingEntries,
         emailOnClockOutReminder,
         emailOnMonthClose,
+        emailOnRetroEntry,
       });
       emailSaved = true;
       setTimeout(() => (emailSaved = false), 3000);
@@ -1498,6 +1568,54 @@
           {/if}
           {#if breakDefaultsSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
           {#if autoBreakSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
+
+          <!-- Phase 93.06 — v1.9.3 Pausen-Bestätigung (BREAK-05 / BREAK-01) -->
+          <h4 class="sys-subtitle" style="margin-top: 1.5rem;">Pausen-Bestätigung (ArbZG §4)</h4>
+          {#if breakConfirmError}
+            <div class="alert alert-error" role="alert" style="margin-bottom: 1rem;">
+              <span>⚠</span><span>{breakConfirmError}</span>
+            </div>
+          {/if}
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label">Pausen-Bestätigung erforderlich</span>
+              <p class="form-hint text-muted">
+                Mitarbeiter müssen automatisch eingetragene Pflichtpausen bestätigen, anpassen oder
+                als „durchgearbeitet“ kennzeichnen. (Standard: aus)
+              </p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="Pausen-Bestätigung erforderlich"
+                checked={enforceBreakConfirmation}
+                onchange={toggleEnforceBreakConfirmation}
+                disabled={breakConfirmSaving}
+                data-testid="admin-system-pausen-enforceBreakConfirmation"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-row-label"
+                >Monatsabschluss bei unbestätigten Pausen blockieren</span
+              >
+              <p class="form-hint text-muted">Sonst nur Warnung.</p>
+            </div>
+            <label class="switch">
+              <input
+                type="checkbox"
+                aria-label="Monatsabschluss bei unbestätigten Pausen blockieren"
+                checked={blockMonthCloseOnUnconfirmedBreak}
+                onchange={toggleBlockMonthCloseOnUnconfirmedBreak}
+                disabled={breakConfirmSaving || !enforceBreakConfirmation}
+                data-testid="admin-system-pausen-blockMonthCloseOnUnconfirmedBreak"
+              />
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+          {#if breakConfirmSaved}<span class="saved-hint">✓ Gespeichert</span>{/if}
         </Section>
 
         <!-- ── Kernarbeitszeit-Defaults (Gleitzeit) ─────────────────────────── -->
@@ -2202,6 +2320,17 @@
                   type="checkbox"
                   aria-label="Benachrichtigung: Monatsabschluss"
                   bind:checked={emailOnMonthClose}
+                />
+                <span class="switch-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <span class="toggle-row-label">Zeitnachtrag</span>
+              <label class="switch">
+                <input
+                  type="checkbox"
+                  aria-label="Benachrichtigung: Zeitnachtrag"
+                  bind:checked={emailOnRetroEntry}
                 />
                 <span class="switch-slider"></span>
               </label>

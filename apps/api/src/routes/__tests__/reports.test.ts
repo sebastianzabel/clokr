@@ -1199,6 +1199,255 @@ describe("Reports API", () => {
     });
   });
 
+  // ── GET /api/v1/reports/monthly — day-based Soll dedup (Phase 104, D-15 Tier 2) ──
+  // measured against HEAD 799429c2 on 2026-08-25.
+  //
+  // Overlapping SICK-vs-VACATION LeaveRequest rows are written directly via Prisma,
+  // bypassing the leave.ts overlap guard (which plan 104-05 already opens for real
+  // § 9 traffic) — mirrors apps/api/src/__tests__/section9-soll-dedup.test.ts's
+  // approach for the Tier-1 (closeEmployeeMonth) fix this plan mirrors.
+  //
+  // Fixed test month: August 2026. Mon 3 – Fri 7 is a normal full workweek for a
+  // NIEDERSACHSEN tenant with no public holiday in range. Employee schedule (from
+  // seedTestData): 40h/week, 8h Mon-Fri. August 2026 has 21 contracted workdays
+  // (3-7, 10-14, 17-21, 24-28, 31 = 5+5+5+5+1), so rawShouldMin = 21*480 = 10080min
+  // = 168h.
+  describe("GET /api/v1/reports/monthly — day-based Soll dedup (Phase 104, D-15 Tier 2)", () => {
+    const YEAR = 2026;
+    const MONTH = 8;
+
+    async function createSickType(tenantId: string) {
+      return app.prisma.leaveType.create({
+        data: {
+          tenantId,
+          name: "Krankmeldung",
+          isPaid: true,
+          requiresApproval: false,
+          color: "#EF4444",
+        },
+      });
+    }
+
+    async function approvedLeave(
+      employeeId: string,
+      leaveTypeId: string,
+      startDateStr: string,
+      endDateStr: string,
+      opts?: { halfDay?: boolean },
+    ) {
+      return app.prisma.leaveRequest.create({
+        data: {
+          employeeId,
+          leaveTypeId,
+          startDate: new Date(startDateStr + "T00:00:00Z"),
+          endDate: new Date(endDateStr + "T00:00:00Z"),
+          days: 1,
+          halfDay: Boolean(opts?.halfDay),
+          status: "APPROVED",
+        },
+      });
+    }
+
+    it("Test 1: overlapping VACATION Mo-Fr + SICK Mi-Do reduces shouldHours by 5 workdays, not 7", async () => {
+      const t1 = await seedTestData(app, "d15-t1");
+      try {
+        const sickType = await createSickType(t1.tenant.id);
+        await approvedLeave(t1.employee.id, t1.vacationType.id, "2026-08-03", "2026-08-07"); // Mo-Fr
+        await approvedLeave(t1.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Mi-Do overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t1.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t1.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t1.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: shouldHours = 168 - 7*8 = 112 (Mi/Do deducted twice).
+        // With the fix:    shouldHours = 168 - 5*8 = 128 (each day counted once).
+        expect(row.shouldHours).toBe(128);
+      } finally {
+        await cleanupTestData(app, t1.tenant.id);
+      }
+    });
+
+    it("Test 2: totalAbsenceDays counts a day covered by two overlapping non-sick requests once", async () => {
+      const t2 = await seedTestData(app, "d15-t2");
+      try {
+        const sonderurlaub = await app.prisma.leaveType.create({
+          data: {
+            tenantId: t2.tenant.id,
+            name: "Sonderurlaub",
+            isPaid: true,
+            requiresApproval: false,
+            color: "#F59E0B",
+          },
+        });
+        // Full-day Urlaub Mo-Fr (5 days) + half-day Sonderurlaub on Wed (already
+        // inside the Urlaub range) — a cross-type overlap the leave.ts guard would
+        // normally reject for two non-sick types; written directly to exercise the
+        // aggregate dedup in isolation from R1's SICK-specific exception.
+        await approvedLeave(t2.employee.id, t2.vacationType.id, "2026-08-03", "2026-08-07");
+        await approvedLeave(t2.employee.id, sonderurlaub.id, "2026-08-05", "2026-08-05", {
+          halfDay: true,
+        });
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t2.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t2.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t2.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: totalAbsenceDays = 5 (Urlaub) + 0.5 (Sonderurlaub) = 5.5.
+        // With the fix: Wednesday is claimed once (full-day Urlaub wins per
+        // sortLeaveForDedup ordering) -> totalAbsenceDays = 5.
+        expect(row.totalAbsenceDays).toBe(5);
+        // Per-type counts are unaffected — daysForTypeName gets its OWN claim set.
+        expect(row.vacationDays).toBe(5);
+        expect(row.specialLeaveDays).toBe(0.5);
+      } finally {
+        await cleanupTestData(app, t2.tenant.id);
+      }
+    });
+
+    it("Test 3 (OPEN-01): half-day VACATION Wed overlapped by full-day SICK Wed-Thu reduces the FULL day", async () => {
+      const t3 = await seedTestData(app, "d15-t3");
+      try {
+        const sickType = await createSickType(t3.tenant.id);
+        await approvedLeave(t3.employee.id, t3.vacationType.id, "2026-08-05", "2026-08-05", {
+          halfDay: true,
+        }); // Vacation Wed half-day
+        await approvedLeave(t3.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Sick Wed-Thu full-day
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t3.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t3.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t3.employee.id,
+        );
+        expect(row).toBeDefined();
+        // Without the fix: deduction = 4h (half Wed) + 16h (full Wed+Thu) = 20h -> 148h.
+        // With the fix: full-day SICK claims Wed+Thu first (sortLeaveForDedup: full-day
+        // before half-day) -> deduction = 16h -> shouldHours = 168 - 16 = 152.
+        expect(row.shouldHours).toBe(152);
+      } finally {
+        await cleanupTestData(app, t3.tenant.id);
+      }
+    });
+
+    it("Test 4 (parity): a month with no overlaps produces the identical shouldHours/vacationDays/totalAbsenceDays as before the fix", async () => {
+      const t4 = await seedTestData(app, "d15-t4");
+      try {
+        const sickType = await createSickType(t4.tenant.id);
+        await approvedLeave(t4.employee.id, t4.vacationType.id, "2026-08-03", "2026-08-03"); // Mon, no overlap
+        await approvedLeave(t4.employee.id, sickType.id, "2026-08-11", "2026-08-11"); // Tue, no overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t4.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t4.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t4.employee.id,
+        );
+        expect(row).toBeDefined();
+        // measured against HEAD 799429c2 on 2026-08-25 (unmodified reports.ts):
+        // rawShouldMin 10080min (168h) - 2*480min (2 non-overlapping full days) = 9120min = 152h.
+        // No two rows share a day, so the dedup mechanism is a structural no-op here —
+        // this MUST stay byte-identical to the pre-Phase-104 figure.
+        expect(row.shouldHours).toBe(152);
+        expect(row.vacationDays).toBe(1);
+        expect(row.totalAbsenceDays).toBe(1);
+        expect(row.sickDaysWithoutAttest).toBe(1);
+      } finally {
+        await cleanupTestData(app, t4.tenant.id);
+      }
+    });
+
+    it("Test 5 (agreement): the Monatsbericht's shouldHours matches closeEmployeeMonth()'s expectedMinutes for the same overlap", async () => {
+      const t5 = await seedTestData(app, "d15-t5");
+      try {
+        const sickType = await createSickType(t5.tenant.id);
+        await approvedLeave(t5.employee.id, t5.vacationType.id, "2026-08-03", "2026-08-07"); // Mo-Fr
+        await approvedLeave(t5.employee.id, sickType.id, "2026-08-05", "2026-08-06"); // Mi-Do overlap
+
+        const res = await app.inject({
+          method: "GET",
+          url: `/api/v1/reports/monthly?employeeId=${t5.employee.id}&year=${YEAR}&month=${MONTH}`,
+          headers: { authorization: `Bearer ${t5.adminToken}` },
+        });
+        expect(res.statusCode).toBe(200);
+        const row = JSON.parse(res.body).rows.find(
+          (r: { employeeId: string }) => r.employeeId === t5.employee.id,
+        );
+        expect(row).toBeDefined();
+
+        const { closeEmployeeMonth } = await import("../../utils/close-employee-month");
+        const { monthRangeUtc, monthDayBounds } = await import("../../utils/timezone");
+        const { start, end } = monthRangeUtc(YEAR, MONTH, "Europe/Berlin");
+        const { firstDay, lastDay } = monthDayBounds(start, end, "Europe/Berlin");
+        const approvedLeaveRows = await app.prisma.leaveRequest.findMany({
+          where: { employeeId: t5.employee.id, status: "APPROVED", deletedAt: null },
+          select: { startDate: true, endDate: true, halfDay: true },
+        });
+        const schedule = {
+          type: "FIXED_SCHEDULE",
+          weeklyHours: 40,
+          monthlyHours: null,
+          sundayHours: 0,
+          mondayHours: 8,
+          tuesdayHours: 8,
+          wednesdayHours: 8,
+          thursdayHours: 8,
+          fridayHours: 8,
+          saturdayHours: 0,
+        };
+        const result = closeEmployeeMonth({
+          employeeId: t5.employee.id,
+          monthStart: start,
+          monthEnd: end,
+          monthFirstDay: firstDay,
+          monthLastDay: lastDay,
+          tz: "Europe/Berlin",
+          carryOverIn: 0,
+          schedule,
+          hireDate: new Date("2024-01-01T00:00:00Z"),
+          exitDate: null,
+          isTimeTrackingExempt: false,
+          breakOver6hOverride: null,
+          breakOver9hOverride: null,
+          entries: [],
+          shifts: [],
+          approvedLeave: approvedLeaveRows as never,
+          absences: [],
+          holidayDateStrings: new Set<string>(),
+          tenantConfig: null,
+          employeeSlots: null,
+          patternSlots: null,
+          patternUnterrichtsMinutenByDow: null,
+        } as never);
+
+        // Both the Monatsbericht (reports.ts's own Soll) and the shared saldo core
+        // (closeEmployeeMonth) must resolve the same SICK-vs-VACATION overlap to the
+        // identical Soll figure — 7680min = 128h (5 days, not 7).
+        expect(result.expectedMinutes).toBe(7680);
+        expect(row.shouldHours).toBe(128);
+      } finally {
+        await cleanupTestData(app, t5.tenant.id);
+      }
+    });
+  });
+
   // ── GET /api/v1/reports/leave-overview — pendingDays (RPT-02) ────────────
   describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
     let pendingData: Awaited<ReturnType<typeof seedTestData>>;

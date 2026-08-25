@@ -8,6 +8,7 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-07
   import {
     Chart,
     LineController,
@@ -60,6 +61,13 @@
     balanceHours: number;
     status: "NORMAL" | "ELEVATED" | "CRITICAL";
     snapshots: Array<{ periodStart: string; balanceMinutes: number; carryOver: number }>;
+    // Phase 97-04 — additive split fields from GET /dashboard/overtime-overview. Optional:
+    // an older cached response may omit them, in which case the row falls back to a
+    // single-value SaldoAnzeige derived from balanceHours (Phase 97-07).
+    confirmedMinutes?: number;
+    openMonthMinutes?: number | null;
+    hasClosedMonth?: boolean;
+    rosterIncomplete?: boolean;
   };
 
   type OvertimeOverview = { employees: OvertimeEmployee[] };
@@ -122,6 +130,11 @@
   let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
   let companyPdfLoading = $state(false);
   let companyPdfError = $state("");
+  // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
+  // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
+  // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
+  // bestätigte § 9-Tage trägt.
+  let companyPdfSection9Note = $state<string | null>(null);
 
   const months = [
     "Januar",
@@ -174,6 +187,15 @@
   let sortColumn: "name" | "balance" = $state("name");
   let sortDir: "asc" | "desc" = $state("asc");
 
+  // Phase 97-07 — sort by the CONFIRMED figure (the entitlement), not the forecast-inclusive
+  // balanceHours: a team's Saldo ordering should reflect what's actually owed, not a number
+  // that moves during the open month. Falls back to balanceHours (converted to minutes, so
+  // the two branches never mix units within one comparison) for a row lacking the split —
+  // an older cached response, per the same fallback shape as the Saldo cell itself.
+  function overtimeSortBalance(r: OvertimeEmployee): number {
+    return r.confirmedMinutes !== undefined ? r.confirmedMinutes : r.balanceHours * 60;
+  }
+
   let sortedOvertime = $derived.by(() => {
     const rows = overtimeOverview?.employees ?? [];
     const copy = rows.slice();
@@ -181,7 +203,7 @@
       const cmp =
         sortColumn === "name"
           ? a.name.localeCompare(b.name, "de")
-          : a.balanceHours - b.balanceHours;
+          : overtimeSortBalance(a) - overtimeSortBalance(b);
       return sortDir === "asc" ? cmp : -cmp;
     });
     return copy;
@@ -382,6 +404,14 @@
   $effect(() => {
     const _h = carryoverHorizon;
     if (isManager) void loadCarryoverAtRisk();
+  });
+
+  // Der Monatsbericht-Hinweis hängt an der EIGENEN Periodenauswahl der Karte,
+  // nicht an selectedMonth/selectedYear der Team-Übersicht.
+  $effect(() => {
+    const _m = companyPdfMonth;
+    const _y = companyPdfYear;
+    if (isManager) void loadCompanyMonthlySection9Note();
   });
 
   // ── onMount ────────────────────────────────────────────────────────────────
@@ -641,6 +671,19 @@
       leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
     } finally {
       leaveLoading = false;
+    }
+  }
+
+  async function loadCompanyMonthlySection9Note() {
+    try {
+      const res = await api.get<{ section9Note?: string }>(
+        `/reports/monthly?year=${companyPdfYear}&month=${companyPdfMonth}`,
+      );
+      companyPdfSection9Note = res.section9Note ?? null;
+    } catch {
+      // Fail-safe: der Hinweis ist erklärend, nie blockierend — bei einem Fehler zeigen wir
+      // nichts an, statt eine Fehlermeldung in eine reine Downloadkarte zu schreiben.
+      companyPdfSection9Note = null;
     }
   }
 
@@ -1009,6 +1052,13 @@
         {/if}
       </button>
 
+      {#if companyPdfSection9Note}
+        <div class="alert alert-info" data-testid="report-section9-note">
+          <span aria-hidden="true">§</span>
+          <span>{companyPdfSection9Note}</span>
+        </div>
+      {/if}
+
       {#if companyPdfError}
         <div class="alert alert-error" role="alert">
           <span>⚠</span>
@@ -1035,7 +1085,7 @@
               <th>Monat</th>
               <th class="num">Soll</th>
               <th class="num">Ist</th>
-              <th class="num">Diff</th>
+              <th class="num">Saldo (Bestätigt)</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -1051,13 +1101,17 @@
                   <td><b class="emp-month-label">{row.label}</b></td>
                   <td class="num">{fmtMinutesAsHrs(row.expectedMinutes)}</td>
                   <td class="num">{fmtMinutesAsHrs(row.workedMinutes)}</td>
-                  <td
-                    class="num"
-                    class:diff-good={row.balanceMinutes > 0}
-                    class:diff-bad={row.balanceMinutes < 0}
-                    class:diff-zero={row.balanceMinutes === 0}
-                  >
-                    {row.balanceMinutes > 0 ? "+" : ""}{fmtMinutesAsHrs(row.balanceMinutes)}
+                  <td class="num">
+                    <!-- Phase 97-07 — every row here is a non-superseded MONTHLY snapshot
+                         (a closed month by definition), so this figure is final, never a
+                         forecast: label it Bestätigt (header) and render it through the
+                         shared primitive in single-value mode so the U+2212 minus and the
+                         sign colouring match every other saldo on the page. -->
+                    <SaldoAnzeige
+                      variant="compact"
+                      saldoMinutes={row.balanceMinutes}
+                      isLocked={row.isLocked}
+                    />
                   </td>
                   <td>
                     {#if row.isLocked}
@@ -1334,7 +1388,25 @@
                 <tr>
                   <td>{row.name}</td>
                   <td>{row.employeeNumber}</td>
-                  <td class="numeric">{formatBalance(row.balanceHours)}</td>
+                  <td class="numeric">
+                    {#if row.confirmedMinutes !== undefined}
+                      <SaldoAnzeige
+                        variant="compact"
+                        confirmedMinutes={row.confirmedMinutes}
+                        openMonthMinutes={row.openMonthMinutes ?? null}
+                        hasClosedMonth={row.hasClosedMonth ?? false}
+                        rosterIncomplete={row.rosterIncomplete}
+                      />
+                    {:else}
+                      <!-- Fallback: an older cached overview response without the split
+                           fields — degrade to the primitive's single-value rendering
+                           rather than an empty cell (matches the dashboard/97-04 shape). -->
+                      <SaldoAnzeige
+                        variant="compact"
+                        saldoMinutes={Math.round(row.balanceHours * 60)}
+                      />
+                    {/if}
+                  </td>
                   <td
                     ><span class={statusBadgeClass(row.status)}>{statusBadgeLabel(row.status)}</span
                     ></td
@@ -2005,13 +2077,19 @@
   .emp-month-label {
     font-weight: 600;
   }
-  .diff-good {
+  /* Phase 97-07 — the Saldo (Bestätigt) cell now renders through SaldoAnzeige in
+     single-value mode; its own scoped <style> intentionally leaves the legacy
+     .saldo__value unpainted (colour is only wired for split mode). Reapply the same
+     good/bad/muted mapping the old page-local .diff-good/.diff-bad/.diff-zero classes
+     provided, keyed off the primitive's own semantic sign class, scoped to this table's
+     Saldo column only. :global() is required to reach past the child component boundary. */
+  .emp-closes-table .num :global(.saldo--positive .saldo__value) {
     color: var(--good);
   }
-  .diff-bad {
+  .emp-closes-table .num :global(.saldo--negative .saldo__value) {
     color: var(--bad);
   }
-  .diff-zero {
+  .emp-closes-table .num :global(.saldo--zero .saldo__value) {
     color: var(--text-muted);
   }
   .emp-pdf-cell {

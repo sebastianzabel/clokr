@@ -9,6 +9,11 @@
   import Section from "$lib/components/admin/Section.svelte";
   import DangerZone from "$lib/components/admin/DangerZone.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import RetroactiveBSWizard from "$lib/components/vocational-school/RetroactiveBSWizard.svelte";
+  import {
+    shouldOfferRetroactiveRun,
+    type RetroactivePreview,
+  } from "$lib/components/vocational-school/retroactive";
   import {
     type EmployeeClassification,
     CLASSIFICATION_OPTIONS,
@@ -230,6 +235,12 @@
   let bsPatternsSaved = $state(false);
   // Monotonically-increasing counter for synthetic keys on unsaved rows
   let bsNewKeyCounter = $state(0);
+
+  // Phase 103 plan 04 — retroactive wizard state. RetroactiveBSWizard.svelte owns
+  // pending/result/error internally; the page only tracks what preview to show and
+  // whether the wizard is open.
+  let retroPreview = $state<RetroactivePreview | null>(null);
+  let retroOpen = $state(false);
 
   const employeeId = $derived($page.params.id);
 
@@ -1166,6 +1177,30 @@
       bsPatternsSaved = true;
       toasts.success("Berufsschultage gespeichert", 2000);
       setTimeout(() => (bsPatternsSaved = false), 2000);
+
+      // Phase 103 (D-01) — post-save retroactive check. Non-blocking follow-up: the
+      // pattern save above already succeeded and is reported as such regardless of
+      // what happens here. Only probes the backend when at least one just-hydrated
+      // row's validFrom is strictly before today — a purely-forward pattern change
+      // must not open any dialog.
+      const todayIso = new Date().toISOString().slice(0, 10);
+      const hasRetroactiveRow = bsPatterns.some((p) => p.validFrom < todayIso);
+      if (hasRetroactiveRow) {
+        try {
+          const preview = await api.get<RetroactivePreview>(
+            `/vocational-school/retroactive-preview?employeeId=${employee.id}`,
+          );
+          retroPreview = preview;
+          if (shouldOfferRetroactiveRun(preview)) {
+            retroOpen = true;
+          }
+        } catch (e: unknown) {
+          // A failing preview call must NEVER surface as a save failure.
+          const message =
+            e instanceof Error ? e.message : "Rückwirkende Prüfung konnte nicht geladen werden.";
+          toasts.error(message, 4000);
+        }
+      }
     } catch (e: unknown) {
       // Verbatim API error (Zod refine message or domain message)
       bsPatternsSaveError =
@@ -1174,6 +1209,29 @@
     } finally {
       bsPatternsSaving = false;
     }
+  }
+
+  // Phase 103 plan 04 — onConfirm callback passed to RetroactiveBSWizard. The wizard
+  // owns the pending guard (T-103-REPLAY) and its own error display; this function
+  // only does the POST and either returns the REAL server result (D-01 — never a
+  // synthesised success message) or rethrows for the wizard to show inline.
+  async function handleRetroConfirm(overrideDates: string[]): Promise<RetroactivePreview> {
+    if (!employee) throw new Error("Kein Mitarbeiter geladen.");
+    return api.post<RetroactivePreview>("/vocational-school/retroactive-apply", {
+      employeeId: employee.id,
+      overrideDates,
+    });
+  }
+
+  // Phase 103 plan 04 — fired by the wizard on every close path (Abbrechen, ESC,
+  // backdrop, the post-apply "Schließen"). The wizard itself guards against closing
+  // while a confirm is in flight, so no pending check is needed here. This page holds
+  // no BS-day/Absence list to refresh — only the pattern editor — so there is nothing
+  // else to re-fetch after a write (per plan 04 Task 3: skip the refresh rather than
+  // inventing one).
+  function handleRetroClose() {
+    retroOpen = false;
+    retroPreview = null;
   }
 
   // ── Arbeitszeit state ──────────────────────────────────────────────────────
@@ -3040,6 +3098,18 @@
       confirmLabel="Bestätigen"
       onConfirm={confirmExemptToggle}
       onCancel={cancelExemptToggle}
+    />
+  {/if}
+
+  <!-- Phase 103 plan 04 — 3-step retroactive BS-pattern wizard, replacing the plan-01
+       tracer's single-step confirm dialog. Mounted only once a preview is loaded, so
+       the wizard never renders against an empty/placeholder preview object. -->
+  {#if retroPreview}
+    <RetroactiveBSWizard
+      bind:open={retroOpen}
+      preview={retroPreview}
+      onConfirm={handleRetroConfirm}
+      onClose={handleRetroClose}
     />
   {/if}
 {/if}

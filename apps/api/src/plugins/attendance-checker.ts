@@ -5,6 +5,7 @@ import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from ".
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data";
 import { findMissingWorkdays } from "../utils/find-missing-workdays";
+import { findUnconfirmedBreakEntries } from "../utils/find-unconfirmed-break-days";
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -17,6 +18,9 @@ declare module "fastify" {
     /** Phase 76.28-03 (UX-03): exposed for integration tests — invokes the
      *  beginning-of-month manager gap reminder scan (Feature 8) without cron/advisory-lock. */
     tryBeginningOfMonthGapReminder: () => Promise<void>;
+    /** Phase 92-05 (BREAK-06): exposed for integration tests — invokes the
+     *  unconfirmed-break employee nudge scan without cron/advisory-lock. */
+    tryBreakUnconfirmedNudge: () => Promise<void>;
   }
 }
 
@@ -396,7 +400,7 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 where: {
                   userId: mgr.id,
                   type: "PENDING_LEAVE_REMINDER",
-                  link: `/leave?request=${req.id}`,
+                  link: `/team/leave?request=${req.id}`,
                 },
               });
               if (existing) continue;
@@ -406,7 +410,8 @@ export const attendanceCheckerPlugin = fp(async (app) => {
                 type: "PENDING_LEAVE_REMINDER",
                 title: "Offener Urlaubsantrag",
                 message: `${req.employee.firstName} ${req.employee.lastName}: ${req.leaveType.name} wartet seit über ${thresholdHours}h auf Genehmigung.`,
-                link: `/leave?request=${req.id}`,
+                // Manager-facing: link to the approval surface (/team/leave honors ?request=).
+                link: `/team/leave?request=${req.id}`,
                 tenantId: tenant.id,
               });
             }
@@ -904,6 +909,124 @@ export const attendanceCheckerPlugin = fp(async (app) => {
     }
   }
 
+  /**
+   * Feature 9 (Phase 92-05, BREAK-06): Unconfirmed-break employee nudge — runs daily
+   * at 09:00, NOT window-gated (unlike Feature 7/8) — an open AUTO Pflichtpause should
+   * be nudged continuously until the employee confirms/waives it, not just near month-end.
+   *
+   * Consumes the shared findUnconfirmedBreakEntries detector (plan 02) as the SINGLE
+   * source of truth for "unconfirmed" — this function never re-queries TimeEntry
+   * breakStatus inline, so the enforceBreakConfirmation master gate + isLocked +
+   * flexible-schedule exclusions are inherited for free (no drift, no silent
+   * activation for un-opted tenants, CLAUDE.md no-silent-behavior-change).
+   *
+   * Emits ONE BREAK_UNCONFIRMED per open AUTO entry, to that entry's OWN employee,
+   * with relatedType/relatedId wired so Phase 91's confirm/waive endpoint
+   * auto-dismisses it via app.dismissByRelated. Per-entry dedup on undismissed rows
+   * keeps re-runs idempotent (T-92-43).
+   */
+  async function checkUnconfirmedBreaks() {
+    app.log.info("Attendance-Checker: Prüfe unbestätigte Pflichtpausen (Feature 9)");
+    try {
+      const now = new Date();
+      const tenants = await app.prisma.tenant.findMany({ select: { id: true } });
+
+      for (const tenant of tenants) {
+        try {
+          const tz = await getTenantTimezone(app.prisma, tenant.id);
+          const tenantConfig = await app.prisma.tenantConfig.findUnique({
+            where: { tenantId: tenant.id },
+          });
+          const enforceBreakConfirmation = tenantConfig?.enforceBreakConfirmation ?? false;
+
+          const todayStr = dateStrInTz(now, tz);
+          const [todayYear, todayMonth] = todayStr.split("-").map(Number);
+          const { start: monthStart, end: monthEnd } = monthRangeUtc(todayYear, todayMonth, tz);
+          const { firstDay: monthFirstDay, lastDay: monthLastDay } = monthDayBounds(
+            monthStart,
+            monthEnd,
+            tz,
+          );
+
+          // Load active, non-exempt employees for this tenant (mirrors Feature 7/8).
+          const employees = await app.prisma.employee.findMany({
+            where: {
+              tenantId: tenant.id,
+              isTimeTrackingExempt: false,
+              user: { isActive: true },
+              exitDate: null,
+            },
+            include: {
+              user: { select: { id: true } },
+              workSchedules: { orderBy: { validFrom: "desc" } },
+            },
+          });
+
+          for (const emp of employees) {
+            const schedule = emp.workSchedules[0];
+            if (!schedule) continue;
+            const scheduleType = String(schedule.type ?? "");
+
+            // Single source of truth — master gate + isLocked + flexible exclusions
+            // are inherited from the util, never re-implemented here.
+            const entries = await findUnconfirmedBreakEntries(app.prisma, {
+              employeeId: emp.id,
+              monthFirstDay,
+              monthLastDay,
+              tz,
+              scheduleType,
+              enforceBreakConfirmation,
+            });
+
+            for (const entry of entries) {
+              // Per-entry dedup: skip if an open (undismissed) nudge already exists
+              // for this exact entry — keeps repeated cron runs idempotent.
+              const existing = await app.prisma.notification.findFirst({
+                where: {
+                  userId: emp.user.id,
+                  type: "BREAK_UNCONFIRMED",
+                  relatedId: entry.id,
+                  dismissedAt: null,
+                },
+              });
+              if (existing) continue;
+
+              const dateDe = new Date(entry.date + "T00:00:00Z").toLocaleDateString("de-DE", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              });
+
+              await app.notify({
+                userId: emp.user.id,
+                type: "BREAK_UNCONFIRMED",
+                title: "Pause bestätigen",
+                message: `Deine Pflichtpause am ${dateDe} wurde automatisch eingetragen. Bitte bestätigen oder „durchgearbeitet" erklären.`,
+                link: `/time-entries?highlight=${entry.id}`,
+                tenantId: tenant.id,
+                relatedType: "TimeEntry",
+                relatedId: entry.id,
+              });
+
+              app.log.info(
+                { userId: emp.user.id, employeeId: emp.id, entryId: entry.id },
+                "Pausen-Bestätigung Nudge gesendet (BREAK_UNCONFIRMED, Feature 9)",
+              );
+            }
+          }
+        } catch (err) {
+          app.log.error(
+            { err, tenant: tenant.id },
+            "Pausen-Bestätigung Nudge: Tenant fehlgeschlagen, fahre fort",
+          );
+          continue;
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, "Attendance-Checker: Fehler bei Pausen-Bestätigung Nudge");
+    }
+  }
+
   // Phase 76.21-08: expose autoInvalidateOpenEntries as a Fastify decorator so
   // integration tests can invoke the scan directly without cron/advisory-lock overhead.
   // Pattern mirrors tryAutoCloseMonth in auto-close-month.ts.
@@ -913,6 +1036,10 @@ export const attendanceCheckerPlugin = fp(async (app) => {
   // Pattern mirrors tryAutoInvalidate above.
   app.decorate("tryEndOfMonthGapReminder", checkEndOfMonthGaps);
   app.decorate("tryBeginningOfMonthGapReminder", checkBeginningOfMonthGaps);
+
+  // Phase 92-05 (BREAK-06): expose the unconfirmed-break nudge scan for test invocability.
+  // Pattern mirrors tryEndOfMonthGapReminder above.
+  app.decorate("tryBreakUnconfirmedNudge", checkUnconfirmedBreaks);
 
   app.addHook("onReady", async () => {
     try {
@@ -1053,6 +1180,25 @@ export const attendanceCheckerPlugin = fp(async (app) => {
       );
       tasks.push(beginningOfMonthGapTask);
       app.log.info("Reminder: Monatsanfang-Lückenerinnerung geplant (täglich 09:00, erste 3 Tage)");
+
+      // Feature 9 (Phase 92-05, BREAK-06): Unconfirmed-break employee nudge — daily
+      // at 09:00, NOT window-gated (continuous until confirmed/waived).
+      const breakUnconfirmedTask = cron.schedule(
+        "0 9 * * *",
+        () => {
+          withAdvisoryLock(
+            app.prisma,
+            ADVISORY_LOCK_KEYS.ATTENDANCE_BREAK_UNCONFIRMED,
+            () => checkUnconfirmedBreaks(),
+            app.log,
+          ).catch((err) =>
+            app.log.error({ err }, "Reminder: Pausen-Bestätigung Nudge Job fehlgeschlagen"),
+          );
+        },
+        { timezone: "Europe/Berlin", noOverlap: true },
+      );
+      tasks.push(breakUnconfirmedTask);
+      app.log.info("Reminder: Pausen-Bestätigung Nudge geplant (täglich 09:00, kontinuierlich)");
     } catch (err) {
       app.log.error({ err }, "Attendance-Checker konnte nicht gestartet werden");
     }

@@ -65,6 +65,9 @@
     reason: string;
     status: RetroStatus;
     reviewNote: string | null;
+    startTime: string | null; // "HH:MM" — proposed work start
+    endTime: string | null; // "HH:MM" — proposed work end
+    breakMinutes: number | null; // proposed break minutes
     windowDays?: number;
     entryAgeInDays?: number;
     createdAt: string;
@@ -115,6 +118,16 @@
   let retroReviewNote = $state("");
   let retroReviewSaving = $state(false);
   let retroReviewError = $state("");
+
+  // Phase 96 (RETRO-16/D-10) — manager edit-on-approve: editable copies of the
+  // request's proposed times, prefilled on open. Only fields that actually
+  // DIFFER from the original proposal are sent in the approve PATCH body (see
+  // retroCorrectedFields()), so an untouched approval stays byte-identical to
+  // the plain release (96-02) — the backend only stamps a MANAGER_CORRECTION
+  // audit when at least one of these keys is present in the request body.
+  let retroEditStartTime = $state("");
+  let retroEditEndTime = $state("");
+  let retroEditBreakMinutes = $state(0);
 
   // ── Role gate ────────────────────────────────────────────────────────────
   onMount(() => {
@@ -266,6 +279,14 @@
     retroDetailOpen = true;
     retroReviewNote = "";
     retroReviewError = "";
+    // Phase 96 (RETRO-16/D-10) — prefill the editable time fields from the
+    // request's own proposed times (works for both the entry-first and the
+    // legacy grant-first shape — both carry startTime/endTime/breakMinutes on
+    // the RetroEntryRequest row itself; a legacy/uncoupled approval silently
+    // ignores these fields server-side, see retroCorrectedFields()).
+    retroEditStartTime = req.startTime ?? "";
+    retroEditEndTime = req.endTime ?? "";
+    retroEditBreakMinutes = req.breakMinutes ?? 0;
   }
 
   function closeRetroDetail() {
@@ -275,10 +296,47 @@
     retroReviewError = "";
   }
 
+  // Phase 96 (RETRO-16/D-10) — only report fields the manager actually
+  // changed from the original proposal. Sending an untouched field would
+  // still make the backend treat the approval as a manager correction (its
+  // discriminator is "key present in the body", not "value differs") — so an
+  // approval where nothing was edited must omit all three keys to stay
+  // byte-identical to the plain release (96-02's regression contract).
+  function retroCorrectedFields(): {
+    startTime?: string;
+    endTime?: string;
+    breakMinutes?: number;
+  } {
+    if (!retroDetail) return {};
+    const fields: { startTime?: string; endTime?: string; breakMinutes?: number } = {};
+    if (retroEditStartTime && retroEditStartTime !== (retroDetail.startTime ?? "")) {
+      fields.startTime = retroEditStartTime;
+    }
+    if (retroEditEndTime && retroEditEndTime !== (retroDetail.endTime ?? "")) {
+      fields.endTime = retroEditEndTime;
+    }
+    if (retroEditBreakMinutes !== (retroDetail.breakMinutes ?? 0)) {
+      fields.breakMinutes = retroEditBreakMinutes;
+    }
+    return fields;
+  }
+
   async function submitRetroReview(status: "APPROVED" | "REJECTED") {
     if (!retroDetail) return;
-    if (!retroReviewNote.trim()) {
+    // Note is mandatory only when rejecting (Revisionssicherheit); optional on approve.
+    if (status === "REJECTED" && !retroReviewNote.trim()) {
       retroReviewError = "Bitte gib eine Begründung an (revisionssicherheitspflichtig).";
+      return;
+    }
+    // Manager edit-on-approve: mirror the backend's HH:MM ordering check
+    // client-side so a bad edit surfaces immediately, not after a round trip.
+    if (
+      status === "APPROVED" &&
+      retroEditStartTime &&
+      retroEditEndTime &&
+      retroEditEndTime <= retroEditStartTime
+    ) {
+      retroReviewError = "Ende muss nach dem Beginn liegen.";
       return;
     }
     retroReviewSaving = true;
@@ -286,7 +344,8 @@
     try {
       await api.patch(`/retro-entry-requests/${retroDetail.id}/review`, {
         status,
-        reviewNote: retroReviewNote,
+        reviewNote: retroReviewNote.trim() ? retroReviewNote : null,
+        ...(status === "APPROVED" ? retroCorrectedFields() : {}),
       });
       retroDetailOpen = false;
       retroDetail = null;
@@ -583,7 +642,7 @@
       <ApprovalRow
         avatar={initials(req.employee.firstName, req.employee.lastName)}
         name={`${req.employee.firstName} ${req.employee.lastName}`}
-        dates={`Eintrag vom ${fmtDate(req.targetDate)} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
+        dates={`Eintrag vom ${fmtDate(req.targetDate)}${req.startTime && req.endTime ? ` · ${req.startTime}–${req.endTime}` : ""} · Alter: ${req.entryAgeInDays ?? "?"} Tage`}
         onclick={() => openRetroDetail(req)}
       >
         {#snippet metaContent()}
@@ -653,6 +712,48 @@
       </div>
     </div>
 
+    <!-- Vorgeschlagene Zeiten (RETRO-16/D-10: editable on approve — manager can
+         correct the employee's proposal before it is written to the entry). -->
+    {#if retroDetail.startTime && retroDetail.endTime}
+      <div class="note-block">
+        <div class="note-label">Vorgeschlagene Zeiten</div>
+        <div class="retro-times-row">
+          <div class="review-note-field">
+            <label class="review-note-label" for="retro-edit-start">Von</label>
+            <input
+              id="retro-edit-start"
+              type="time"
+              class="review-note-input"
+              bind:value={retroEditStartTime}
+              disabled={retroReviewSaving}
+            />
+          </div>
+          <div class="review-note-field">
+            <label class="review-note-label" for="retro-edit-end">Bis</label>
+            <input
+              id="retro-edit-end"
+              type="time"
+              class="review-note-input"
+              bind:value={retroEditEndTime}
+              disabled={retroReviewSaving}
+            />
+          </div>
+          <div class="review-note-field">
+            <label class="review-note-label" for="retro-edit-break">Pause (Min.)</label>
+            <input
+              id="retro-edit-break"
+              type="number"
+              min="0"
+              step="1"
+              class="review-note-input"
+              bind:value={retroEditBreakMinutes}
+              disabled={retroReviewSaving}
+            />
+          </div>
+        </div>
+      </div>
+    {/if}
+
     <!-- Begründung Mitarbeiter -->
     <div class="note-block">
       <div class="note-label">Begründung Mitarbeiter</div>
@@ -676,9 +777,12 @@
       <p>Rückwirkende Korrekturen müssen revisionssicher begründet sein (ArbZG § 16 Abs. 2).</p>
     </div>
 
-    <!-- Review note — MANDATORY for both approve and reject -->
+    <!-- Review note — optional on approve, mandatory on reject (Revisionssicherheit) -->
     <div class="review-note-field">
-      <label class="review-note-label" for="retro-review-note">Anmerkung (Pflichtfeld) *</label>
+      <label class="review-note-label" for="retro-review-note"
+        >Kommentar <span class="text-muted">(optional bei Genehmigung, Pflicht bei Ablehnung)</span
+        ></label
+      >
       <input
         id="retro-review-note"
         type="text"
@@ -714,7 +818,7 @@
         <button
           class="btn btn-primary"
           onclick={() => submitRetroReview("APPROVED")}
-          disabled={retroReviewSaving || !retroReviewNote.trim()}
+          disabled={retroReviewSaving}
         >
           {retroReviewSaving ? "…" : "Genehmigen"}
         </button>
@@ -924,6 +1028,20 @@
     font-size: 13.5px;
     color: var(--text);
     font-style: italic;
+  }
+
+  /* ── Retro editable proposed-times row (RETRO-16/D-10) ──────────────────
+     Layout-only wrapper around 3 existing .review-note-field/-input pairs —
+     no new color/radius/spacing tokens, reuses the review-note-input look. */
+  .retro-times-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .retro-times-row .review-note-field {
+    flex: 1;
+    min-width: 100px;
   }
 
   /* ── Overlap section ──────────────────────────────────────────────────── */

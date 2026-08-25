@@ -47,6 +47,60 @@ crane copy ghcr.io/{owner}/clokr-web:X.Y.W ghcr.io/{owner}/clokr-web:latest
 # Then reload prod-host / restart containers so they pull the new :latest digest.
 ```
 
+## Getting the release onto int and prod
+
+Steps 1-9 above produce and publish the image. They do **not** deploy it. Two manual pins follow:
+
+- **int** — `image.tag` in `k8s-homelab/argocd-apps/clokr-app.yaml`, then commit + push. ArgoCD syncs.
+- **prod** — the image tag variables in `/opt/awh-infra/.env` on `dmz-proxy`, then recreate the containers.
+
+**Do not use `kubectl set image` on int.** The ArgoCD Application has `syncPolicy.automated` with
+`selfHeal: true`; an imperative image change is reverted within seconds and the rollout silently
+goes back to the pinned tag. The homelab repo is the only durable path.
+
+## Ordering rule: bump before tag
+
+The version is baked into the image at build time from `package.json`
+(`apps/api/src/app.ts:59-65`) and served by `GET /api/v1/version`. Promotion is a digest-preserving
+re-tag — **no rebuild** — so an image built _before_ the version bump keeps reporting the old
+version under the new tag, and the smoke test fails correctly.
+
+On the patch line this is easy to get wrong, because there is no PR/merge step to force the order:
+push the `chore(release): bump version to X.Y.Z` commit, wait for **Build & Push** to go green on
+_that_ commit, and only then tag it.
+
+## Known behaviours that look like failures
+
+- **The `smoke-test` job is red on a first pass, by construction.** It probes int's
+  `/api/v1/version` right after promote, but int is only repointed in the manual step above. Re-run
+  it after bumping int if you want it green.
+- **Trivy gates on CRITICAL/HIGH.** Per `docs/cve-handling.md` the order is: update the direct
+  dependency → override the transitive one (`pnpm.overrides`) → only then justify an exception in
+  `.trivyignore`. Never lower the severity threshold. Note that both runtime images currently ship
+  the full workspace `node_modules`, so build-only tooling shows up in scans (see ROADMAP Phase 102).
+- **Prod writes are often refused for an assistant session.** Reads over ssh to `dmz-proxy` work;
+  in-place edits and `compose up -d` usually do not. Hand the operator a `!`-prefixed one-liner.
+- **Keep the previous image.** Never `docker image prune -a` on the prod host — the previous tag is
+  the rollback path.
+- **A rollback does not undo a migration.** If the release carried one, the old image runs against
+  the new schema. Additive migrations tolerate that; anything else does not. Take a `pg_dump` first.
+
+## Refreshing int with production data
+
+`pg_dump` prod → restore into a **local** staging database → `apps/api/scripts/pseudonymize-dump.ts`
+→ verify 0 real emails / 0 NFC ids / 0 usable password hashes → dump → restore to int.
+
+**Never** restore a raw prod dump to int: int is internet-reachable and the dump carries employee
+names, emails and NFC card ids. The pseudonymizer replaces those while preserving ids, employee
+numbers and all time/leave/saldo data, so reports stay meaningful.
+
+After a refresh **nobody can log in to int** — every `passwordHash` becomes `ANONYMIZED`. Create one
+fresh admin; do not resurrect an existing account.
+
+`validate-anonymization.ts` belongs to `anonymize-dump.ts` (full erasure), **not** to the
+pseudonymizer — it asserts `firstName === "Gelöscht"` and will fail against pseudonymized data. The
+pseudonymizer runs its own inline verification.
+
 ## References
 
 - Workflow: `.github/workflows/release.yml`

@@ -100,6 +100,11 @@
       d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
     />
     <path d="M12 9v4M12 17h.01" />
+  {:else if name === "info"}
+    <!-- Phase 97-03 (97-UI-SPEC.md → Component Contract) — SaldoAnzeige toggletip trigger. -->
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 16v-5" />
+    <circle cx="12" cy="8" r="0.6" fill="currentColor" stroke="none" />
   {:else if name === "circle-fill"}
     <circle cx="12" cy="12" r="5" fill="currentColor" stroke="none" />
   {:else if name === "medical"}

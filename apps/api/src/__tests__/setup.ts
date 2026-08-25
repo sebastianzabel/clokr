@@ -1,8 +1,10 @@
 /**
  * Test setup: creates a fresh Fastify app instance for integration tests.
  *
- * Uses the same database as dev (TODO: separate test DB for CI).
- * Each test suite should clean up its own data.
+ * Connects to the separate `clokr_test` database, provisioned by
+ * `pnpm --filter @clokr/api run test:setup` (see docs/testing.md) — never the dev
+ * database. Suites still share that one database within a run, so each test suite must
+ * clean up its own data.
  */
 import { buildApp } from "../app";
 import type { FastifyInstance } from "fastify";
@@ -225,6 +227,11 @@ export async function cleanupTestData(testApp: FastifyInstance, tenantId: string
   });
   await prisma.shift.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.absence.deleteMany({ where: { employeeId: { in: employeeIds } } });
+  // Phase 104-05: Section9Credit's two LeaveRequest FKs (sickRequest/vacationRequest) are
+  // onDelete: Restrict — must be deleted before leaveRequest.deleteMany, or the delete below
+  // fails silently (afterAll only console.error's cleanup failures) and leaks fixture rows
+  // into clokr_test, breaking the next run's unique-constraint assumptions (see 104-04-SUMMARY.md).
+  await prisma.section9Credit.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveRequest.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.leaveEntitlement.deleteMany({ where: { employeeId: { in: employeeIds } } });
   await prisma.saldoSnapshot.deleteMany({ where: { employeeId: { in: employeeIds } } });

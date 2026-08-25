@@ -10,6 +10,10 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 30000,
     globalSetup: ["./vitest.setup.ts"],
+    // TI-03 layer 2 (Phase 101 plan 02): re-asserts inside every worker, once per test file, that
+    // the target globalSetup verified actually propagated there — a propagation check, not an
+    // authorisation control. See vitest.worker-setup.ts's own header comment.
+    setupFiles: ["./vitest.worker-setup.ts"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],

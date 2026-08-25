@@ -15,6 +15,7 @@
  */
 
 import type { PrismaClient } from "@clokr/db";
+import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
 
 export type BsSlotOverride = {
   bsSlotFirstLongDayMinutes: number | null;
@@ -36,8 +37,12 @@ export type BsSlotOverrides = {
  * Load the Employee + active-Pattern bsSlot* override rows for a given employee
  * and reference date (typically the month being closed — pass the month's first
  * day). The active pattern is the isActive row whose validFrom/validUntil window
- * covers `referenceDate`; if several qualify the most recent validFrom wins
- * (mirrors the amount-site resolver in vocational-school-saldo.ts).
+ * covers `referenceDate`; if several qualify, resolution follows the shared total
+ * order in `vocational-school-pattern-order.ts` (`BS_PATTERN_ORDER_BY`) — the same
+ * order every other single-winner BS-pattern lookup uses, so this loader (the most-
+ * called of the group — the monthly-close cron, snapshot recompute, month-saldo, and
+ * time-entries/overtime all go through it) agrees with the amount-site resolver in
+ * vocational-school-saldo.ts on which row is "current" for the same date.
  */
 export async function loadBsSlotOverrides(
   prisma: Pick<PrismaClient, "employee" | "employeeVocationalSchoolPattern">,
@@ -61,7 +66,7 @@ export async function loadBsSlotOverrides(
         validFrom: { lte: referenceDate },
         OR: [{ validUntil: null }, { validUntil: { gte: referenceDate } }],
       },
-      orderBy: { validFrom: "desc" },
+      orderBy: BS_PATTERN_ORDER_BY,
       select: {
         bsSlotFirstLongDayMinutes: true,
         bsSlotSecondLongDayMinutes: true,

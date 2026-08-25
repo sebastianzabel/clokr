@@ -19,6 +19,7 @@ const cancellationRequestedLeave = {
   status: "CANCELLATION_REQUESTED" as const,
   leaveTypeName: "Urlaub",
 };
+const pendingLeave = { status: "PENDING" as const, leaveTypeName: "Urlaub" };
 const sickAbsence = { type: "SICK" };
 
 describe("resolvePresenceState", () => {
@@ -125,6 +126,63 @@ describe("resolvePresenceState", () => {
       ...noHoliday,
     });
     expect(result).toEqual({ status: "present", reason: null });
+  });
+
+  // Phase 95 SHIFT-01 — a not-yet-APPROVED (PENDING) leave must surface a distinct
+  // "requested" status (rendered as the German "beantragt" badge) instead of falling
+  // through to "none"/"missing". The leave is not yet legally active, so it is NOT
+  // "absent" — the day is "requested".
+  it("PENDING leave → requested with 'Antrag: {leaveType}' reason (LO-02)", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: pendingLeave,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    // LO-02: team-week tooltip now mirrors my-week ("Antrag: {leaveType}").
+    expect(result).toEqual({ status: "requested", reason: "Antrag: Urlaub" });
+  });
+
+  it("PENDING leave without a leave type → requested with 'Antrag offen' fallback (LO-02)", () => {
+    const result = resolvePresenceState({
+      entries: [],
+      leave: { status: "PENDING" as const, leaveTypeName: "" },
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    expect(result).toEqual({ status: "requested", reason: "Antrag offen" });
+  });
+
+  it("valid present entry beats PENDING leave (presence priority)", () => {
+    const result = resolvePresenceState({
+      entries: [validClosed],
+      leave: pendingLeave,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    expect(result).toEqual({ status: "present", reason: null });
+  });
+
+  it("clocked_in entry beats PENDING leave (presence priority)", () => {
+    const result = resolvePresenceState({
+      entries: [validOpen],
+      leave: pendingLeave,
+      absence: null,
+      isWorkday: workday,
+      isFuture: past,
+      hasShift: noShift,
+      ...noHoliday,
+    });
+    expect(result).toEqual({ status: "clocked_in", reason: null });
   });
 
   it("absence → absent with German label", () => {

@@ -1,6 +1,10 @@
 import { FastifyInstance } from "fastify";
 import { requireAuth, requireRole } from "../middleware/auth";
-import { getEffectiveSchedule, computeOvertimeBalanceHours } from "./time-entries";
+import {
+  getEffectiveSchedule,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
+} from "./time-entries";
 import {
   getTenantTimezone,
   todayInTz,
@@ -11,10 +15,12 @@ import {
   getDayOfWeekInTz,
   getDayHoursFromSchedule,
   iterateDaysInTz,
+  timeStrInTz,
 } from "../utils/timezone";
-import { resolvePresenceState } from "../utils/presence";
+import { resolvePresenceState, isObligatedWorkday, isDayDue } from "../utils/presence";
 import type { PresenceEntry, PresenceLeave, PresenceAbsence } from "../utils/presence";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
+import { getConfirmedCarryOver, getConfirmedCarryOverBulk } from "../utils/confirmed-saldo"; // Phase 97-04
 
 export async function dashboardRoutes(app: FastifyInstance) {
   // GET /api/v1/dashboard — persönliche Stats
@@ -202,22 +208,55 @@ export async function dashboardRoutes(app: FastifyInstance) {
       // LIVE lifetime saldo through windowEnd (today only if today has completed entries, else
       // yesterday), from the SAME source of truth updateOvertimeAccount persists — so the KPI
       // reflects "as of yesterday" while the current day is incomplete, instead of the stale
-      // event-driven OvertimeAccount.balanceHours. computeOvertimeBalanceHours returns null for
-      // §18-exempt employees → display 0 (matches the prior `?? 0` fallback). Fail-safe: on any
-      // error, fall back to the stored value so the dashboard never 500s on the saldo tile.
+      // event-driven OvertimeAccount.balanceHours. computeOvertimeBalanceBreakdown returns null
+      // for §18-exempt employees. Fail-safe: on any error, fall back to the stored value so the
+      // dashboard never 500s on the saldo tile.
+      //
+      // Phase 97-04 (SALDO-DISP-01/02/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete, mirroring the fail-safe shape
+      // 97-01 established on GET /overtime/:employeeId. Both non-happy branches (exempt →
+      // breakdown null, or the catch) fall back identically: read confirmedMinutes/hasClosedMonth
+      // from the independent getConfirmedCarryOver query and report openMonthMinutes: null so the
+      // forecast renders as unavailable — a fabricated 0 there would be indistinguishable from a
+      // genuine zero forecast. That fallback query is itself never-500 (own try/catch): a failure
+      // of getConfirmedCarryOver still yields the stored balanceHours.
       let overtimeBalance: number;
+      let confirmedMinutes: number;
+      let openMonthMinutes: number | null;
+      let hasClosedMonth: boolean;
+      let rosterIncomplete: boolean | undefined;
+
+      let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
-        const live = await computeOvertimeBalanceHours(app, employeeId);
-        if (live !== null) {
-          overtimeBalance = live;
-        } else {
-          const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
-          overtimeBalance = Number(acct?.balanceHours ?? 0);
-        }
+        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
       } catch (err) {
         app.log.warn({ err, employeeId }, "dashboard: live overtime saldo failed, using stored");
+        // breakdown stays null (its declared initial value) — never reassigned here.
+      }
+
+      if (breakdown !== null) {
+        overtimeBalance = breakdown.totalHours;
+        confirmedMinutes = breakdown.confirmedMinutes;
+        openMonthMinutes = breakdown.openMonthMinutes;
+        hasClosedMonth = breakdown.hasClosedMonth;
+        rosterIncomplete = breakdown.rosterIncomplete;
+      } else {
         const acct = await app.prisma.overtimeAccount.findUnique({ where: { employeeId } });
         overtimeBalance = Number(acct?.balanceHours ?? 0);
+        try {
+          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          confirmedMinutes = confirmed.minutes;
+          hasClosedMonth = confirmed.hasClosedMonth;
+        } catch (fallbackErr) {
+          app.log.warn(
+            { err: fallbackErr, employeeId },
+            "dashboard: confirmed carry-over fallback failed",
+          );
+          confirmedMinutes = 0;
+          hasClosedMonth = false;
+        }
+        openMonthMinutes = null;
+        rosterIncomplete = undefined;
       }
 
       // ── Resturlaub ────────────────────────────────────────────────────
@@ -252,7 +291,15 @@ export async function dashboardRoutes(app: FastifyInstance) {
               targetHours: round(monthSollMinutes / 60),
             }
           : undefined,
-        overtime: { balanceHours: round(overtimeBalance) },
+        overtime: {
+          balanceHours: round(overtimeBalance),
+          // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields. rosterIncomplete only
+          // present when defined (SHIFT_BASED open partial month) — never a fabricated `false`.
+          confirmedMinutes,
+          openMonthMinutes,
+          hasClosedMonth,
+          ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
+        },
         vacation: {
           remaining: totalVacation - usedVacation,
           total: totalVacation,
@@ -312,12 +359,13 @@ export async function dashboardRoutes(app: FastifyInstance) {
         },
       });
 
-      // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen)
+      // Genehmigte Abwesenheiten (inkl. Urlaubsstornierungen) + offene Anträge (PENDING).
+      // Phase 95 SHIFT-01: PENDING leave surfaces as "beantragt" instead of "–".
       const leaveRequests = await app.prisma.leaveRequest.findMany({
         where: {
           employee: { tenantId },
           deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
           startDate: { lte: weekEnd },
           endDate: { gte: weekStart },
         },
@@ -375,12 +423,16 @@ export async function dashboardRoutes(app: FastifyInstance) {
             }
           }
 
-          const leave = leaveRequests.find(
-            (lr) =>
-              lr.employeeId === emp.id &&
-              dateStrInTz(lr.startDate, tz) <= dayStr &&
-              dateStrInTz(lr.endDate, tz) >= dayStr,
-          );
+          // Phase 95 SHIFT-01 (Pitfall 2): an employee can have both an APPROVED and a
+          // PENDING leave overlapping one day (rare, via corrections). Prefer the
+          // non-PENDING (real) leave so APPROVED "Urlaub" wins over "beantragt".
+          const leaveMatches = (lr: (typeof leaveRequests)[number]) =>
+            lr.employeeId === emp.id &&
+            dateStrInTz(lr.startDate, tz) <= dayStr &&
+            dateStrInTz(lr.endDate, tz) >= dayStr;
+          const leave =
+            leaveRequests.find((lr) => leaveMatches(lr) && lr.status !== "PENDING") ??
+            leaveRequests.find(leaveMatches);
 
           const absence = absences.find(
             (a) =>
@@ -423,17 +475,31 @@ export async function dashboardRoutes(app: FastifyInstance) {
               ? ((empSchedule as { workDays: number[] }).workDays ?? [])
               : []
           ) as number[];
-          // SHIFT_BASED: only the planned shift defines a workday.
-          // Otherwise: workDays array is the explicit source of truth.
-          const isWorkday =
-            schedType === "SHIFT_BASED"
-              ? shift !== null
-              : scheduleWorkDays.length > 0
-                ? scheduleWorkDays.includes(dow)
-                : expectedHours > 0;
+          // Schedule-type-aware obligation: SHIFT_BASED → only a planned shift
+          // makes the day a workday; FLEXTIME/MONTHLY_HOURS → never per-day
+          // (free daily distribution → no "Fehlt"); FIXED/unknown → workDays
+          // array or expectedHours fallback.
+          const isWorkday = isObligatedWorkday({
+            scheduleType: schedType,
+            workDays: scheduleWorkDays,
+            dow,
+            expectedHours,
+            hasShift: shift !== null,
+          });
 
           const todayStr = dateStrInTz(new Date(), tz);
-          const isFuture = dayStr > todayStr;
+          const nowHHMM = timeStrInTz(new Date(), tz);
+          // "Due" = late enough that an absence counts as "Fehlt": past days
+          // always; today only after the shift start time has passed (or never
+          // for schedules without a known start time). A not-yet-due obligated
+          // day must render "scheduled", not "missing" → pass isFuture: !isDue.
+          const isDue = isDayDue({
+            dayStr,
+            todayStr,
+            nowHHMM,
+            shiftStartTime: shift?.startTime ?? null,
+          });
+          const isFuture = !isDue;
 
           // Build typed inputs for the presence resolver
           const presenceEntries: PresenceEntry[] = dayEntries.map((e) => ({
@@ -443,7 +509,7 @@ export async function dashboardRoutes(app: FastifyInstance) {
 
           const presenceLeave: PresenceLeave | null = leave
             ? {
-                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED",
+                status: leave.status as "APPROVED" | "CANCELLATION_REQUESTED" | "PENDING",
                 leaveTypeName: leave.leaveType.name,
               }
             : null;
@@ -605,14 +671,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
             ? ((empSchedule as { workDays: number[] }).workDays ?? [])
             : []
         ) as number[];
-        // SHIFT_BASED: no shift fetched here → treat as never-workday (avoids false "Fehlt").
-        // Otherwise: workDays array is the explicit source of truth.
-        const isWorkday =
-          schedType === "SHIFT_BASED"
-            ? false
-            : scheduleWorkDays.length > 0
-              ? scheduleWorkDays.includes(dow)
-              : expectedHours > 0;
+        // No shift data fetched here → hasShift:false, so SHIFT_BASED resolves
+        // to "not a workday" (avoids false "Fehlt"). FLEXTIME/MONTHLY_HOURS also
+        // resolve to false (free daily distribution) so they no longer inflate
+        // the "missing" count. FIXED/unknown → workDays or expectedHours.
+        const isWorkday = isObligatedWorkday({
+          scheduleType: schedType,
+          workDays: scheduleWorkDays,
+          dow,
+          expectedHours,
+          hasShift: false,
+        });
 
         const rawEntries = entriesByEmp.get(emp.id) ?? [];
         const presenceEntries: PresenceEntry[] = rawEntries.map((e) => ({
@@ -718,33 +787,79 @@ export async function dashboardRoutes(app: FastifyInstance) {
         snapshotsByEmp.set(snap.employeeId, list);
       }
 
+      // Phase 97-04 (SALDO-DISP-01/02) — ONE bulk lookup for the "Bestätigt" carry-over,
+      // placed BEFORE the per-employee Promise.all below (never a per-employee query inside
+      // it — the whole point of getConfirmedCarryOverBulk, see confirmed-saldo.ts and
+      // 97-CONTEXT's "Known N+1 risk" note). Deliberately NOT the six-month-bounded
+      // `snapshots` query above: an employee whose last close predates that window would
+      // falsely read as having no closed month at all if reused for this purpose.
+      const confirmedByEmp = await getConfirmedCarryOverBulk(app, employeeIds);
+
       // Per-employee LIVE lifetime saldo through windowEnd (today only if today has completed
       // entries, else yesterday) — SAME source of truth as the dashboard KPI + calendar header
-      // (computeOvertimeBalanceHours), replacing the stale event-driven OvertimeAccount.balanceHours.
-      // One compute per employee per request (no redundant recompute). computeOvertimeBalanceHours
-      // returns null for §18-exempt → fall back to the stored value. TRACK_ONLY → 0 (handled inside).
-      // Closed months are read from snapshots (not recomputed) inside the shared helper.
-      // Fail-safe: any per-employee error falls back to the stored value so one employee never
-      // 500s the whole team overview.
+      // (computeOvertimeBalanceBreakdown), replacing the stale event-driven
+      // OvertimeAccount.balanceHours. One compute per employee per request (no redundant
+      // recompute) — this pre-existing per-employee fan-out (one saldoSnapshot.findFirst per
+      // employee, inside the shared helper) is NOT changed by this phase; see
+      // dashboard-overtime-overview-n1.test.ts's header for the scope note. TRACK_ONLY → 0
+      // (handled inside). Fail-safe: any per-employee error falls back to the stored value so
+      // one employee never 500s the whole team overview.
+      //
+      // Phase 97-04 (SALDO-DISP-01/02/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete for the happy path (no extra
+      // query — the value it decomposes was already being computed). The per-employee
+      // fail-safe branch and the exempt branch (breakdown null) read confirmedMinutes/
+      // hasClosedMonth from the pre-fetched bulk Map above instead (defaulting to zero/false
+      // for an employee absent from it) and report openMonthMinutes: null.
       const employees = await Promise.all(
         accounts.map(async (a) => {
           let balanceHours: number;
+          let confirmedMinutes: number;
+          let openMonthMinutes: number | null;
+          let hasClosedMonth: boolean;
+          let rosterIncomplete: boolean | undefined;
+
+          let breakdown: OvertimeBalanceBreakdown | null = null;
           try {
-            const live = await computeOvertimeBalanceHours(app, a.employeeId);
-            balanceHours = live !== null ? round(live) : Number(a.balanceHours);
+            breakdown = await computeOvertimeBalanceBreakdown(app, a.employeeId);
           } catch (err) {
             app.log.warn(
               { err, employeeId: a.employeeId },
               "overtime-overview: live saldo failed, using stored",
             );
-            balanceHours = Number(a.balanceHours);
+            // breakdown stays null (its declared initial value) — never reassigned here.
           }
+
+          if (breakdown !== null) {
+            balanceHours = round(breakdown.totalHours);
+            confirmedMinutes = breakdown.confirmedMinutes;
+            openMonthMinutes = breakdown.openMonthMinutes;
+            hasClosedMonth = breakdown.hasClosedMonth;
+            rosterIncomplete = breakdown.rosterIncomplete;
+          } else {
+            balanceHours = Number(a.balanceHours);
+            const confirmed = confirmedByEmp.get(a.employeeId) ?? {
+              minutes: 0,
+              hasClosedMonth: false,
+            };
+            confirmedMinutes = confirmed.minutes;
+            hasClosedMonth = confirmed.hasClosedMonth;
+            openMonthMinutes = null;
+            rosterIncomplete = undefined;
+          }
+
           return {
             id: a.employeeId,
             name: `${a.employee.firstName} ${a.employee.lastName}`,
             employeeNumber: a.employee.employeeNumber,
             balanceHours,
             status: classifyOvertimeBalance(balanceHours),
+            // Phase 97-04 (SALDO-DISP-01/02/04) — additive split fields, same shape as
+            // GET /dashboard and GET /overtime/:employeeId.
+            confirmedMinutes,
+            openMonthMinutes,
+            hasClosedMonth,
+            ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
             snapshots: (snapshotsByEmp.get(a.employeeId) ?? []).map((s) => ({
               periodStart: s.periodStart.toISOString().slice(0, 10),
               balanceMinutes: s.balanceMinutes,
@@ -795,11 +910,18 @@ export async function dashboardRoutes(app: FastifyInstance) {
         where: {
           employeeId,
           deletedAt: null, // D-09: exclude soft-deleted leave from calendar/dashboard reads
-          status: { in: ["APPROVED", "CANCELLATION_REQUESTED"] },
+          // Phase 95 SHIFT-01: include PENDING so an open request shows "beantragt".
+          status: { in: ["APPROVED", "CANCELLATION_REQUESTED", "PENDING"] },
           startDate: { lte: end },
           endDate: { gte: start },
         },
-        select: { startDate: true, endDate: true, leaveType: { select: { name: true } } },
+        // `status` is required for the inline "requested" vs "leave" branch below.
+        select: {
+          startDate: true,
+          endDate: true,
+          status: true,
+          leaveType: { select: { name: true } },
+        },
       });
       const myWeekAbsences = await app.prisma.absence.findMany({
         where: {
@@ -838,16 +960,17 @@ export async function dashboardRoutes(app: FastifyInstance) {
         // Feiertage reduzieren das Soll auf 0
         const expectedMin =
           schedule && !holidayName ? getDayHoursFromSchedule(schedule, dow) * 60 : 0;
-        const isWorkday = expectedMin > 0;
         const hasEntry = dayEntries.length > 0;
         const isClockedIn = dayEntries.some((e) => !e.endTime);
-        const isPast = new Date(dateStr) < todayInTz(tz);
         const isWeekend = dow === 0 || dow === 6;
 
-        const leave = myWeekLeaves.find(
-          (lr) =>
-            dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr,
-        );
+        // Phase 95 SHIFT-01 (Pitfall 2): prefer a non-PENDING leave so a real
+        // APPROVED "Urlaub" wins over a coincident PENDING "beantragt" on the same day.
+        const myLeaveMatches = (lr: (typeof myWeekLeaves)[number]) =>
+          dateStrInTz(lr.startDate, tz) <= dateStr && dateStrInTz(lr.endDate, tz) >= dateStr;
+        const leave =
+          myWeekLeaves.find((lr) => myLeaveMatches(lr) && lr.status !== "PENDING") ??
+          myWeekLeaves.find(myLeaveMatches);
         const absence = myWeekAbsences.find(
           (a) => dateStrInTz(a.startDate, tz) <= dateStr && dateStrInTz(a.endDate, tz) >= dateStr,
         );
@@ -863,15 +986,37 @@ export async function dashboardRoutes(app: FastifyInstance) {
             : null;
         const hasShift = shift !== null;
 
+        // Schedule-type-aware obligation (fixes flexible schedules never being
+        // "Fehlt" and SHIFT_BASED-without-shift no longer being "Fehlt").
+        const isWorkday = isObligatedWorkday({
+          scheduleType,
+          workDays: (schedule as { workDays?: number[] } | null)?.workDays ?? [],
+          dow,
+          expectedHours: expectedMin / 60,
+          hasShift,
+        });
+        // Due-aware timing: past days always due; today only after the shift
+        // start time has passed (or never for a schedule without a start time).
+        // Replaces the isPast-only branch so a today shift whose start has passed
+        // renders "missing", while flexible/before-shift days render "scheduled".
+        const isDue = isDayDue({
+          dayStr: dateStr,
+          todayStr: dateStrInTz(new Date(), tz),
+          nowHHMM: timeStrInTz(new Date(), tz),
+          shiftStartTime: shift?.startTime ?? null,
+        });
+
         let status = "none";
         if (isClockedIn) status = "clocked_in";
         else if (hasEntry) status = workedMin >= expectedMin ? "complete" : "partial";
-        else if (leave) status = "leave";
+        // Phase 95 SHIFT-01: a PENDING leave surfaces as "requested" ("beantragt"),
+        // an APPROVED/CANCELLATION_REQUESTED one stays green "leave".
+        else if (leave) status = leave.status === "PENDING" ? "requested" : "leave";
         else if (absence) {
           status = absence.type === "SICK" || absence.type === "SICK_CHILD" ? "sick" : "absent";
         } else if (holidayName) status = "holiday";
         else if (isWeekend && !hasShift) status = "weekend";
-        else if (isPast && (isWorkday || hasShift)) status = "missing";
+        else if (isDue && (isWorkday || hasShift)) status = "missing";
         else if (isWorkday || hasShift) status = "scheduled";
 
         return {

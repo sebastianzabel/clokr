@@ -151,70 +151,74 @@ model TenantConfig {
   carryoverWarningThresholds          Int[]   @default([60, 30, 14, 7]) // Days before deadline at which to issue a warning
 
   // E-Mail-Benachrichtigungen
-  emailNotificationsEnabled      Boolean  @default(false) // Master switch
-  emailOnLeaveRequest            Boolean  @default(true) // Neuer Urlaubsantrag
-  emailOnLeaveDecision           Boolean  @default(true) // Urlaub genehmigt/abgelehnt
-  emailOnOvertimeWarning         Boolean  @default(false) // Überstunden-Schwellwert
-  emailOnMissingEntries          Boolean  @default(false) // Fehlende Zeiteinträge
-  emailOnClockOutReminder        Boolean  @default(false) // Vergessene Stempelung
-  emailOnMonthClose              Boolean  @default(true) // Monatsabschluss
+  emailNotificationsEnabled         Boolean  @default(false) // Master switch
+  emailOnLeaveRequest               Boolean  @default(true) // Neuer Urlaubsantrag
+  emailOnLeaveDecision              Boolean  @default(true) // Urlaub genehmigt/abgelehnt
+  emailOnOvertimeWarning            Boolean  @default(false) // Überstunden-Schwellwert
+  emailOnMissingEntries             Boolean  @default(false) // Fehlende Zeiteinträge
+  emailOnClockOutReminder           Boolean  @default(false) // Vergessene Stempelung
+  emailOnMonthClose                 Boolean  @default(true) // Monatsabschluss
+  emailOnRetroEntry                 Boolean  @default(true) // Zeitnachtrag (Neuer/geändert/genehmigt/abgelehnt/zurückgezogen)
   // Automatische Erinnerungen
-  reminderPendingLeaveHours      Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
-  reminderUpcomingAbsenceDays    Int      @default(3) // MA erinnern X Tage vor Abwesenheit
-  reminderPendingLeaveEnabled    Boolean  @default(true)
-  reminderUpcomingAbsenceEnabled Boolean  @default(true)
+  reminderPendingLeaveHours         Int      @default(48) // Manager erinnern nach X Stunden ohne Reaktion
+  reminderUpcomingAbsenceDays       Int      @default(3) // MA erinnern X Tage vor Abwesenheit
+  reminderPendingLeaveEnabled       Boolean  @default(true)
+  reminderUpcomingAbsenceEnabled    Boolean  @default(true)
   // Benachrichtigungen
-  clockOutReminderHours          Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
-  missingEntriesDays             Int      @default(7) // Tage ohne Einträge bevor erinnert wird
-  autoDeleteOpenHours            Int      @default(14) // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
+  clockOutReminderHours             Int      @default(10) // Stunden nach denen an offene Stempelung erinnert wird
+  missingEntriesDays                Int      @default(7) // Tage ohne Einträge bevor erinnert wird
+  autoDeleteOpenHours               Int      @default(14) // LEGACY NAME: Stunden nach denen offene Einträge auto-INVALIDIERT werden (nicht gelöscht!), 0 = deaktiviert
   // Pausen-Slots
-  autoBreakEnabled               Boolean  @default(false)
-  defaultBreakStart              String?  @db.VarChar(5) // e.g. "12:00"
+  autoBreakEnabled                  Boolean  @default(false)
+  defaultBreakStart                 String?  @db.VarChar(5) // e.g. "12:00"
   // Phase 64 — Pausendauer (D-01, BREAK-01, BREAK-08): per-tenant default break durations.
   // Defaults 30/45 match the previously hard-coded auto-break behavior — Migration neutral.
   // ArbZG-Floor is HARD-CODED in apps/api/src/utils/break-constants.ts (NOT here) — these are defaults, not the legal minimum.
-  defaultBreakOver6h             Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
-  defaultBreakOver9h             Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
+  defaultBreakOver6h                Int      @default(30) // Pausen-Minuten ab > 6h Arbeitszeit (ArbZG §4 Minimum 30, vertraglich erhöhbar)
+  defaultBreakOver9h                Int      @default(45) // Pausen-Minuten ab > 9h Arbeitszeit (ArbZG §4 Minimum 45, vertraglich erhöhbar)
+  // Phase 91/92 (BREAK-05) — Break-Confirmation enforcement (consumed from Phase 92).
+  enforceBreakConfirmation          Boolean  @default(false)
+  blockMonthCloseOnUnconfirmedBreak Boolean  @default(false)
   // Phase 76.2 (ARCH-V19-01, D-04) — Cross-source same-day consolidation gap (NFC/MOBILE/WIFI). Default 4h widens 76.1's NFC-only 2h to all sources.
-  consolidationGapHours          Int      @default(4)
+  consolidationGapHours             Int      @default(4)
   // Überstunden-Jahresübertrag
-  overtimeCarryOverMode          String   @default("FULL") // FULL | CAPPED | RESET
-  overtimeCarryOverCap           Int? // Max. Übertrag in Minuten (nur bei CAPPED)
+  overtimeCarryOverMode             String   @default("FULL") // FULL | CAPPED | RESET
+  overtimeCarryOverCap              Int? // Max. Übertrag in Minuten (nur bei CAPPED)
   // Max. Minusstunden (null = unbegrenzt, Wert in Minuten)
-  maxNegativeBalanceMinutes      Int?
+  maxNegativeBalanceMinutes         Int?
   // Account-Lockout
-  loginMaxAttempts               Int      @default(5) // Fehlversuche bis Sperre
-  loginLockoutMinutes            Int      @default(15) // Sperrzeit in Minuten
+  loginMaxAttempts                  Int      @default(5) // Fehlversuche bis Sperre
+  loginLockoutMinutes               Int      @default(15) // Sperrzeit in Minuten
   // Aufbewahrungsfrist in Jahren (Minimum 2, Default 10)
-  dataRetentionYears             Int      @default(10)
+  dataRetentionYears                Int      @default(10)
   // MONTHLY_HOURS: Feiertage reduzieren Monatsstunden-Soll
-  monthlyHoursHolidayDeduction   Boolean  @default(false)
+  monthlyHoursHolidayDeduction      Boolean  @default(false)
   // DATEV Lohnartennummern (konfigurierbar pro Mandant, Phase 4)
-  datevNormalstundenNr           Int      @default(100)
-  datevUrlaubNr                  Int      @default(300)
-  datevKrankNr                   Int      @default(200)
-  datevSonderurlaubNr            Int      @default(302)
+  datevNormalstundenNr              Int      @default(100)
+  datevUrlaubNr                     Int      @default(300)
+  datevKrankNr                      Int      @default(200)
+  datevSonderurlaubNr               Int      @default(302)
   // FLEXTIME Kernarbeitszeit-Defaults (Phase 49.2) — pre-fill suggestion for new FLEXTIME employees
-  defaultCoreStart               String?  @db.VarChar(5) // HH:MM, optional tenant default
-  defaultCoreEnd                 String?  @db.VarChar(5) // HH:MM, optional tenant default
-  defaultCoreDays                Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
+  defaultCoreStart                  String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreEnd                    String?  @db.VarChar(5) // HH:MM, optional tenant default
+  defaultCoreDays                   Int[]    @default([]) // 0=Sun..6=Sat day-of-week (same encoding as WorkSchedule.coreDays)
   // WiFi-Presence
-  wifiPresenceWindowMinutes      Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
+  wifiPresenceWindowMinutes         Int      @default(15) // Shift-window gate: ±N minutes around shift start/end
   // Ladenöffnungszeiten (Phase 42) — JSON array, one entry per weekday.
   // Shape: Array<{ day: 0..6 (Mo..So), open: "HH:MM", close: "HH:MM", closed?: boolean }>
   // Default: Mo-Sa 08:00-20:00, So closed
-  storeHours                     Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
+  storeHours                        Json     @default("[{\"day\":0,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":1,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":2,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":3,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":4,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":5,\"open\":\"08:00\",\"close\":\"20:00\"},{\"day\":6,\"open\":\"08:00\",\"close\":\"20:00\",\"closed\":true}]")
   // Phase 47.5 — How tightly to bind shifts to store hours.
   //   DAY_ONLY (default): block only on closed days (lets MAs prep before / clean after)
   //   STRICT:             shift time must be within [open, close]
   //   OFF:                no store-hours check
-  shiftStoreHoursMode            String   @default("DAY_ONLY")
+  shiftStoreHoursMode               String   @default("DAY_ONLY")
   // Phase 76.29 CFG-01 — retro self-service window (days back from today an employee may submit a retro request)
-  retroEntryWindowDays           Int      @default(10)
+  retroEntryWindowDays              Int      @default(10)
   // Phase 76.29 CFG-01 — allows cron/manual month-close to proceed when open gaps exist (gap-warning only, not blocking)
-  closeMonthWithGapsAllowed      Boolean  @default(true)
-  createdAt                      DateTime @default(now()) @db.Timestamptz
-  updatedAt                      DateTime @updatedAt @db.Timestamptz
+  closeMonthWithGapsAllowed         Boolean  @default(true)
+  createdAt                         DateTime @default(now()) @db.Timestamptz
+  updatedAt                         DateTime @updatedAt @db.Timestamptz
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
@@ -288,53 +292,55 @@ model Invitation {
 // ─────────────────────────────────────────────
 
 model Employee {
-  id                         String                 @id @default(uuid())
-  tenantId                   String
-  userId                     String                 @unique
-  employeeNumber             String
-  firstName                  String
-  lastName                   String
-  nfcCardId                  String?                @unique // NFC Karten-ID
-  wifiMacs                   String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
-  wifiPresenceEnabled        Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
-  wifiOptInAt                DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
-  avatarPath                 String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
+  id                           String                 @id @default(uuid())
+  tenantId                     String
+  userId                       String                 @unique
+  employeeNumber               String
+  firstName                    String
+  lastName                     String
+  nfcCardId                    String?                @unique // NFC Karten-ID
+  wifiMacs                     String[]               @default([]) // normalized "aa:bb:cc:dd:ee:ff", multiple devices per employee
+  wifiPresenceEnabled          Boolean                @default(false) // GDPR opt-in required — false until employee explicitly opts in
+  wifiOptInAt                  DateTime?              @db.Timestamptz // timestamp when employee opted in (null = not opted in)
+  avatarPath                   String? // Path in MinIO (e.g. avatars/{tenantId}/{id}.webp)
   // Personalstruktur (Phase 41): classification + Coverage-Gewicht + Aufsichtspflicht
-  classification             EmployeeClassification @default(VOLLZEIT)
-  coverageWeight             Decimal                @default(1.00) @db.Decimal(3, 2)
-  requiresSupervision        Boolean                @default(false)
-  hireDate                   DateTime               @db.Timestamptz
-  exitDate                   DateTime?              @db.Timestamptz
+  classification               EmployeeClassification @default(VOLLZEIT)
+  coverageWeight               Decimal                @default(1.00) @db.Decimal(3, 2)
+  requiresSupervision          Boolean                @default(false)
+  hireDate                     DateTime               @db.Timestamptz
+  exitDate                     DateTime?              @db.Timestamptz
   // Phase 63 (D-10): Geburtsdatum für JArbSchG §9 Altersprüfung (AZUBI < 18).
   // Nullable: fail-open — wenn nicht gesetzt, wird der Hard-Block NICHT ausgelöst (siehe checkJArbSchG).
-  birthDate                  DateTime?              @db.Date
+  birthDate                    DateTime?              @db.Date
   // Phase 64 — Pausendauer Override (D-02, BREAK-02): nullable = fall back to TenantConfig defaults.
   // Server-side validation rejects values below ArbZG-Floor (30/45) — see apps/api/src/routes/employees.ts Zod schema.
-  breakOver6hOverride        Int? // null = TenantConfig.defaultBreakOver6h verwenden
-  breakOver9hOverride        Int? // null = TenantConfig.defaultBreakOver9h verwenden
+  breakOver6hOverride          Int? // null = TenantConfig.defaultBreakOver6h verwenden
+  breakOver9hOverride          Int? // null = TenantConfig.defaultBreakOver9h verwenden
   // Phase 85.1.1 (D-01) — per-employee Phorest Vor-/Nachbereitungszeit override.
   // null = fall back to TenantConfig.phorestPrepMinutes/phorestWrapupMinutes; 0 = explicit "no puffer".
   phorestPrepMinutesOverride   Int? // null = TenantConfig.phorestPrepMinutes verwenden (0-30 wenn gesetzt)
   phorestWrapupMinutesOverride Int? // null = TenantConfig.phorestWrapupMinutes verwenden (0-30 wenn gesetzt)
   // Phase 76.31 — BVaDiG-2024 slot-aware BS crediting (D-06 per-employee override layer).
   // NULL = delegate to EmployeeVocationalSchoolPattern.
-  bsSlotFirstLongDayMinutes  Int?
-  bsSlotSecondLongDayMinutes Int?
-  bsSlotShortDayMinutes      Int?
-  bsSlotBlockWeekMinutes     Int?
+  bsSlotFirstLongDayMinutes    Int?
+  bsSlotSecondLongDayMinutes   Int?
+  bsSlotShortDayMinutes        Int?
+  bsSlotBlockWeekMinutes       Int?
   // Phase 76.7 (D-01, EMP-V19-01) — § 18 ArbZG-Befreiung für Inhaber/Geschäftsführer/leitende
   // Angestellte. Wenn true: SKIP updateOvertimeAccount + checkArbZG + recalculateSnapshots
   // + close-month* + open-items missing-dates. BUrlG (Urlaub) bleibt aktiv. Toggle nur
   // durch ADMIN; AuditLog action SET_TIME_TRACKING_EXEMPT (siehe Plan 02).
-  isTimeTrackingExempt       Boolean                @default(false)
-  createdAt                  DateTime               @default(now()) @db.Timestamptz
-  updatedAt                  DateTime               @updatedAt @db.Timestamptz
+  isTimeTrackingExempt         Boolean                @default(false)
+  createdAt                    DateTime               @default(now()) @db.Timestamptz
+  updatedAt                    DateTime               @updatedAt @db.Timestamptz
 
   tenant                   Tenant                            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   user                     User                              @relation(fields: [userId], references: [id], onDelete: Cascade)
   workSchedules            WorkSchedule[]
   overtimeAccount          OvertimeAccount?
   saldoSnapshots           SaldoSnapshot[]
+  // Phase 99 — onDelete: Restrict, mirrors saldoSnapshots (never cascade-delete saldo history)
+  openingBalances          OpeningBalance[]
   timeEntries              TimeEntry[]
   leaveEntitlements        LeaveEntitlement[]
   leaveRequests            LeaveRequest[]
@@ -352,6 +358,8 @@ model Employee {
   phorestStaffMappings     PhorestStaffMapping[]
   // Phase 86 — DSGVO-minimal appointment busy-window cache (onDelete: Restrict — never cascade-delete)
   phorestAppointments      PhorestAppointment[]
+  // Phase 104 — § 9 BUrlG coupling rows (Restrict FK — never cascade-delete history)
+  section9Credits          Section9Credit[]
 
   @@unique([tenantId, employeeNumber])
   @@index([tenantId])
@@ -423,8 +431,14 @@ model TimeEntry {
   updatedAt     DateTime        @updatedAt @db.Timestamptz
   createdBy     String? // userId wer es angelegt hat
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  breaks   Break[]
+  breakStatus       BreakStatus @default(CONFIRMED) // Phase 91 (BREAK-01)
+  breakWaivedReason String? // Phase 91 (BREAK-03)
+
+  retroRequestId String? @unique // Phase 96 (RETRO-18) — 1:1 coupling to the Nachtrag request
+
+  employee     Employee           @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  breaks       Break[]
+  retroRequest RetroEntryRequest? @relation(fields: [retroRequestId], references: [id], onDelete: Restrict)
 
   @@unique([employeeId, date], map: "TimeEntry_employeeId_date_unique_not_deleted")
   @@index([date])
@@ -480,6 +494,52 @@ model SaldoSnapshot {
 enum SaldoPeriodType {
   MONTHLY
   YEARLY
+}
+
+// ─────────────────────────────────────────────
+// ERÖFFNUNGSSALDO (übernommene Alt-Überstunden)
+// ─────────────────────────────────────────────
+
+// Phase 99 (OB-01). Provenance of the value, for a Betriebsprüfer:
+//   MIGRATED_FROM_SNAPSHOT — moved off an existing SaldoSnapshot.carryOver injection,
+//                            provenance recovered from AuditLog.
+//   RECONSTRUCTED          — the value is real but its original justification could not be
+//                            recovered from AuditLog; the row is honestly marked incomplete.
+//   ADMIN_ENTRY            — entered through the ADMIN endpoint (POST /overtime/opening-balance).
+enum OpeningBalanceSource {
+  MIGRATED_FROM_SNAPSHOT
+  RECONSTRUCTED
+  ADMIN_ENTRY
+}
+
+model OpeningBalance {
+  id            String               @id @default(uuid())
+  employeeId    String
+  minutes       Int // signed: positive = übernommenes Guthaben, negativ = übernommene Minusstunden
+  effectiveFrom DateTime             @db.Date // Stichtag, ab dem der Wert gilt (i. d. R. Tracking-Beginn)
+  reason        String // Freitext-Begründung (Revisionssicherheit — Pflichtfeld)
+  evidenceRef   String? // Beleg-Referenz (Ticket, Dokument, Altsystem-Export)
+  source        OpeningBalanceSource
+  createdBy     String // userId (SYSTEM-Migrationen setzen die Actor-Id des Operators)
+  approvedBy    String? // Phase 99: befüllt, aber NICHT erzwungen (Ein-Admin-Deployment)
+  approvedAt    DateTime?            @db.Timestamptz
+  createdAt     DateTime             @default(now()) @db.Timestamptz
+
+  // Korrekturen superseden + neu anlegen, niemals in-place editieren (Revisionssicherheit).
+  superseded       Boolean @default(false)
+  supersededReason String?
+  supersededBy     String? // id der Nachfolge-Zeile
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  // Uniqueness enforced by a PARTIAL unique index in the migration (Prisma's DSL cannot
+  // express a WHERE clause — same asymmetry as SaldoSnapshot above, deliberately):
+  //   CREATE UNIQUE INDEX "OpeningBalance_active_unique"
+  //     ON "OpeningBalance" ("employeeId")
+  //     WHERE "superseded" = false;
+  // At most ONE active (superseded=false) row per employee. Superseded rows are preserved
+  // forever (Revisionssicherheit, retention §147 AO — see anonymize.ts preserve-list).
+  @@index([employeeId])
 }
 
 // ─────────────────────────────────────────────
@@ -618,6 +678,8 @@ model LeaveRequest {
   employee         Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
   leaveType        LeaveType         @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
   specialLeaveRule SpecialLeaveRule? @relation(fields: [specialLeaveRuleId], references: [id])
+  section9AsSick     Section9Credit[] @relation("Section9SickRequest")
+  section9AsVacation Section9Credit[] @relation("Section9VacationRequest")
 
   @@index([employeeId])
   @@index([employeeId, status])
@@ -634,6 +696,11 @@ model RetroEntryRequest {
   employeeId String
   targetDate DateTime         @db.Date // the entry date the grant covers
   reason     String // mandatory (Revisionssicherheit)
+  // Proposed worked times so the approver can review them before granting.
+  // Nullable/additive: pre-existing rows backfill to null (no data migration).
+  startTime    String? // "HH:MM" — proposed work start (mirrors TimeEntry.startTime style)
+  endTime      String? // "HH:MM" — proposed work end
+  breakMinutes Int? // proposed total break minutes (optional)
   status     RetroEntryStatus @default(PENDING)
   reviewedBy String? // approver userId
   reviewedAt DateTime?        @db.Timestamptz
@@ -642,11 +709,77 @@ model RetroEntryRequest {
   createdAt  DateTime         @default(now()) @db.Timestamptz
   updatedAt  DateTime         @updatedAt @db.Timestamptz
 
-  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  employee  Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  timeEntry TimeEntry? // Phase 96 (RETRO-18) — back-relation, no column here; TimeEntry owns the FK
 
   @@index([employeeId])
   @@index([employeeId, targetDate])
   @@index([employeeId, status])
+}
+
+// ─────────────────────────────────────────────
+// § 9 BUrlG — KRANK IM URLAUB (Phase 104)
+// ─────────────────────────────────────────────
+//
+// Couples an APPROVED SICK/SICK_CHILD LeaveRequest to the APPROVED non-SICK
+// LeaveRequest whose date range it overlaps. D-05: NEITHER LeaveRequest is ever
+// physically altered by the § 9 flow — this row carries the non-crediting and the
+// correction to LeaveEntitlement.usedDays, so the approved vacation request stays
+// intact for the audit trail ("no silent overwrites", CLAUDE.md).
+//
+// R8 / D-03 (documentation-only, deliberately no schema change):
+//   Sickness exists in two models today — LeaveRequest (leaveType "Krankmeldung"/
+//   "Kinderkrank") and Absence (type SICK / SICK_CHILD). The Absence side is DEAD:
+//   no code path calls absence.create() with type SICK — the only absence.create()
+//   call sites are vocational-school-generator.ts and vocational-school.ts, both of
+//   which write VOCATIONAL_SCHOOL. Absence.documentPath likewise has no writer; its
+//   only readers are utils/anonymize.ts and routes/employees.ts (DSGVO deletion).
+//   LeaveRequest is therefore the sole source of truth for sickness, and § 9
+//   references LeaveRequest exclusively (both FKs below). The dead Absence.SICK /
+//   Absence.documentPath pair is left untouched because the Berufsschule logic hangs
+//   off the same model; cleaning it up is a separate, deferred phase.
+model Section9Credit {
+  id                String               @id @default(uuid())
+  employeeId        String               // denormalized so tenant-scoped queries need no join
+  sickRequestId     String               // SICK / SICK_CHILD LeaveRequest (D-13: must be APPROVED to confirm)
+  vacationRequestId String               // overlapping APPROVED non-SICK LeaveRequest (D-05: never mutated)
+  // Computed intersection of the two ranges at detection time (D-09).
+  overlapStart      DateTime             @db.Date
+  overlapEnd        DateTime             @db.Date
+  status            Section9CreditStatus @default(AU_PENDING)
+  // D-07: the attested subset actually credited — may be narrower than overlapStart/End.
+  creditedStart     DateTime?            @db.Date
+  creditedEnd       DateTime?            @db.Date
+  creditedDays      Decimal?             @db.Decimal(5, 2) // D-08: supports 0.5
+  // D-27 "AU liegt vor": validity + provenance only. DELIBERATELY NO doctor,
+  // diagnosis or free-text health field — Art. 9 DSGVO data minimisation.
+  attestSource      String?              // "EAU" | "PAPIER"
+  attestValidFrom   DateTime?            @db.Date
+  attestValidTo     DateTime?            @db.Date
+  documentPath      String?              // D-26: MinIO object path for a paper AU (eAU has none)
+  reason            String?              // mandatory on CONFIRMED/REJECTED — enforced in Zod, not in the DB
+  reviewedBy        String?
+  reviewedAt        DateTime?            @db.Timestamptz
+  createdAt         DateTime             @default(now()) @db.Timestamptz
+  updatedAt         DateTime             @updatedAt @db.Timestamptz
+
+  employee        Employee     @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  sickRequest     LeaveRequest @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
+  vacationRequest LeaveRequest @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
+
+  // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag)
+  // pair. The detection path guards with a findFirst/create pair that is NOT in a
+  // transaction, so two concurrent approvals of the same sick request (double click, retry,
+  // a manager racing a cron path) could create two AU_PENDING rows for the same overlap. If
+  // both were later confirmed, reverseVacationDays() would run twice and
+  // sumConfirmedSection9DaysByRequest() would sum both — a double credit that SURVIVES the
+  // self-heal, because self-heal trusts the credit sum. The DB is the only place this can
+  // be enforced.
+  @@unique([sickRequestId, vacationRequestId])
+  @@index([employeeId])
+  @@index([sickRequestId])
+  @@index([vacationRequestId])
+  @@index([status])
 }
 
 // ─────────────────────────────────────────────
@@ -874,6 +1007,14 @@ enum TimeEntrySource {
   WIFI
 }
 
+// Phase 91 (BREAK-01) — proves the auto-inserted break was actually taken.
+// Legal: BAG 12.02.2025, 5 AZR 51/24; ArbZG §4 employer duty.
+enum BreakStatus {
+  AUTO
+  CONFIRMED
+  WAIVED
+}
+
 enum OvertimeTransactionType {
   ACCRUAL // Überstunden angesammelt (Monatsabschluss)
   REDUCTION // Abbau (Freizeit genommen)
@@ -901,6 +1042,16 @@ enum RetroEntryStatus {
   APPROVED
   REJECTED
   USED
+}
+
+// Phase 104 — § 9 BUrlG "Krank im Urlaub": status of one coupling record.
+// AU_PENDING is the created-immediately, no-effect state (D-09). REJECTED is
+// explicitly re-openable (D-11) — never a soft-delete, so the rejection reason
+// stays visible in the row's history.
+enum Section9CreditStatus {
+  AU_PENDING
+  CONFIRMED
+  REJECTED
 }
 
 enum AbsenceType {

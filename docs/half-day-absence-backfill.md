@@ -124,12 +124,19 @@ For each affected employee:
 2. **Recompute from that month forward** using `recalculate-snapshots.ts` (the existing
    audited retroactive recalc):
 
+   > **Historical note (Phase 99, 2026-08):** `scripts/recalculate-snapshots-after-soll-fix.ts` — removed in Phase 99, invoked below —
+   > was removed together with its stale-mirror dependency `src/utils/recompute-snapshot.ts` — also removed in Phase 99 —
+   > (see `apps/api/scripts/README.md` "Removed scripts"). It must not be re-run — it no longer exists in this tree.
+   > Anyone re-threading a saldo chain today should use `recalculateSnapshots()` via the normal application paths
+   > (e.g. the admin API endpoint for retroactive recalculation), and can first check whether re-threading is even
+   > needed with the read-only `scripts/audit-saldo-chain-integrity.ts`. The command is kept below verbatim for the
+   > audit-trail-of-record of what this procedure originally documented.
+
    ```bash
    # This is the owner-run --apply step.
    # Executor MUST NOT run this without owner sign-off from Step 4.
-   DATABASE_URL=<prod-connection-string> \
-     pnpm --filter @clokr/api exec tsx scripts/recalculate-snapshots-after-soll-fix.ts \
-     --employeeId <id> --fromMonth YYYY-MM --apply
+   # HISTORICAL ONLY — removed in Phase 99, do not run (see note above).
+   DATABASE_URL=<prod-connection-string> pnpm --filter @clokr/api exec tsx scripts/recalculate-snapshots-after-soll-fix.ts --employeeId <id> --fromMonth YYYY-MM --apply  # removed in Phase 99
    ```
 
    Or via the admin API endpoint for retroactive recalculation if available.

@@ -4,16 +4,26 @@ import { requireAuth, requireRole } from "../middleware/auth";
 import {
   getEffectiveSchedule,
   updateOvertimeAccount,
-  computeOvertimeBalanceHours,
+  computeOvertimeBalanceBreakdown,
+  type OvertimeBalanceBreakdown,
 } from "./time-entries";
+import { getConfirmedCarryOver } from "../utils/confirmed-saldo"; // Phase 97-01
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "../utils/timezone";
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { fetchCloseMonthData } from "../utils/close-month-data"; // PERF-V1814-01
 import { periodStartWindow, isPeriodStartInMonth } from "../utils/snapshot-period";
 import { closeEmployeeMonth } from "../utils/close-employee-month"; // Phase 76.26 — shared saldo core
 import { findMissingWorkdays } from "../utils/find-missing-workdays"; // Phase 76.26 — gap detector
+import {
+  unconfirmedDaysFromEntries,
+  findUnconfirmedBreakDays,
+} from "../utils/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
+import { karenzOverrunFromRequests } from "../utils/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
+import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
+import { recalculateSnapshots } from "../utils/recalculate-snapshots"; // Phase 99 (OB-03) — full-history re-thread
+import { resolveNegativeBalanceTolerance } from "../utils/negative-balance-tolerance"; // Phase 100 (OTC-01) — the one shared precedence chain
 
 const createPlanSchema = z.object({
   employeeId: z.string().uuid(),
@@ -26,6 +36,20 @@ const payoutSchema = z.object({
   employeeId: z.string().uuid(),
   hours: z.number().positive(),
   note: z.string().optional(),
+});
+
+// Phase 99 (OB-03) — an opening balance is an assertion about time before tracking began.
+// `.optional().nullable()` on every optional field, not bare `.optional()`: the Clokr web
+// clients send `field: x ? x : null`, and a bare `.optional()` rejects an explicit `null`
+// with a naked "Validierungsfehler" — this has shipped as a production bug once (v1.9.11).
+const openingBalanceSchema = z.object({
+  employeeId: z.string().uuid(),
+  minutes: z.number().int(), // signed; negative = übernommene Minusstunden
+  effectiveFrom: z.string().date(), // YYYY-MM-DD, @db.Date
+  reason: z.string().min(10).max(500), // Pflichtfeld — Revisionssicherheit
+  evidenceRef: z.string().max(200).optional().nullable(),
+  approvedBy: z.string().uuid().optional().nullable(),
+  supersededReason: z.string().max(500).optional().nullable(), // required when replacing an existing row
 });
 
 // Phase 76.7 (D-07) — § 18 ArbZG exempt employees never appear in close-month*
@@ -81,26 +105,80 @@ export async function overtimeRoutes(app: FastifyInstance) {
 
       // v1.8.24 — return the LIVE lifetime overtime balance (through windowEnd: today only if today
       // has completed entries, else yesterday) instead of the stale event-driven
-      // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceHours, the same
-      // value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This makes
-      // the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the viewed
-      // booking month) and correct. TRACK_ONLY → 0 (handled inside). Fail-safe: null (§18-exempt) or
-      // any error → stored value, so this read never 500s.
+      // OvertimeAccount.balanceHours. Single source of truth = computeOvertimeBalanceBreakdown, the
+      // same value updateOvertimeAccount persists (and that the §615 calendar/dashboard use). This
+      // makes the Team-Zeiten GESAMT-SALDO tile month-INDEPENDENT (it no longer changes with the
+      // viewed booking month) and correct. TRACK_ONLY → 0 (handled inside). Fail-safe: null
+      // (§18-exempt) or any error → stored value, so this read never 500s.
+      //
+      // Phase 97-01 (SALDO-DISP-01/03/04) — the SAME call additively yields confirmedMinutes /
+      // openMonthMinutes / hasClosedMonth / rosterIncomplete. Both non-happy branches (exempt →
+      // breakdown null, or the catch) fall back identically, per 97-CONTEXT's post-research decision
+      // 4: read confirmedMinutes/hasClosedMonth from the independent getConfirmedCarryOver query and
+      // report openMonthMinutes: null so the forecast renders as unavailable — a fabricated 0 there
+      // would be indistinguishable from a genuine zero forecast. That fallback query is itself
+      // never-500 (own try/catch): a failure of getConfirmedCarryOver still yields the stored
+      // balanceHours, just with confirmedMinutes/hasClosedMonth degraded to 0/false.
       let balance: number;
+      let confirmedMinutes: number;
+      let openMonthMinutes: number | null;
+      let hasClosedMonth: boolean;
+      let rosterIncomplete: boolean | undefined;
+
+      let breakdown: OvertimeBalanceBreakdown | null = null;
       try {
-        const live = await computeOvertimeBalanceHours(app, employeeId);
-        balance = live !== null ? live : Number(account.balanceHours);
+        breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
       } catch (err) {
         app.log.warn({ err, employeeId }, "GET /overtime: live saldo failed, using stored");
+        // breakdown stays null (its declared initial value) — never reassigned here.
+      }
+
+      if (breakdown !== null) {
+        balance = breakdown.totalHours;
+        confirmedMinutes = breakdown.confirmedMinutes;
+        openMonthMinutes = breakdown.openMonthMinutes;
+        hasClosedMonth = breakdown.hasClosedMonth;
+        rosterIncomplete = breakdown.rosterIncomplete;
+      } else {
         balance = Number(account.balanceHours);
+        try {
+          const confirmed = await getConfirmedCarryOver(app, employeeId);
+          confirmedMinutes = confirmed.minutes;
+          hasClosedMonth = confirmed.hasClosedMonth;
+        } catch (fallbackErr) {
+          app.log.warn(
+            { err: fallbackErr, employeeId },
+            "GET /overtime: confirmed carry-over fallback failed",
+          );
+          confirmedMinutes = 0;
+          hasClosedMonth = false;
+        }
+        openMonthMinutes = null;
+        rosterIncomplete = undefined;
       }
       const balanceMinutes = Math.round(balance * 60);
 
-      // Max negative hours: per-employee override > tenant default > null (unlimited)
-      const maxNegMinutes =
-        schedule?.maxNegativeBalanceMinutes ??
-        employee?.tenant?.config?.maxNegativeBalanceMinutes ??
-        null;
+      // Max negative hours: per-employee override > tenant default > null (Phase 100, D-00b/OTC-02).
+      // `null` here means NOT CONFIGURED — resolved through the SAME precedence chain the
+      // OVERTIME_COMP booking gate uses (`resolveNegativeBalanceTolerance`,
+      // `apps/api/src/utils/negative-balance-tolerance.ts` — read that module's header comment for
+      // the full rationale). Two DIFFERENT readings of that `null` coexist deliberately:
+      //   - ALERTING (this field, `isNegativeLimitExceeded` below): fires ONLY when a limit is
+      //     explicitly configured — an unconfigured tenant/employee never sees this warning, no
+      //     matter how negative the balance gets. This is the schema comment's „unbegrenzt" reading
+      //     (`packages/db/prisma/schema.prisma`, TenantConfig.maxNegativeBalanceMinutes), untouched
+      //     by this plan.
+      //   - BOOKING (`leave.ts`, `POST /leave/requests`, OVERTIME_COMP branch): the SAME `null`
+      //     resolves to a tolerance of ZERO instead — an unconfigured tenant must not be able to
+      //     book arbitrarily far into minus just because nobody set a value.
+      // Neither reading is "wrong" — they answer different questions ("should we warn?" vs "may
+      // this booking go through?"). `configuredMinutes` below is bound to the pre-existing local
+      // name `maxNegMinutes` so the two lines below stay byte-identical: this endpoint's own
+      // behaviour does not change at all (T-100-10).
+      const { configuredMinutes: maxNegMinutes } = resolveNegativeBalanceTolerance(
+        schedule?.maxNegativeBalanceMinutes,
+        employee?.tenant?.config?.maxNegativeBalanceMinutes,
+      );
 
       return {
         ...account,
@@ -111,6 +189,12 @@ export async function overtimeRoutes(app: FastifyInstance) {
         threshold,
         maxNegativeBalanceMinutes: maxNegMinutes,
         isNegativeLimitExceeded: maxNegMinutes != null && balanceMinutes < -maxNegMinutes,
+        // Phase 97-01 (SALDO-DISP-01/03) — additive split fields. rosterIncomplete only present
+        // when defined (SHIFT_BASED open partial month) — never a fabricated `false` key.
+        confirmedMinutes,
+        openMonthMinutes,
+        hasClosedMonth,
+        ...(rosterIncomplete !== undefined ? { rosterIncomplete } : {}),
       };
     },
   });
@@ -308,6 +392,11 @@ export async function overtimeRoutes(app: FastifyInstance) {
         orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
       });
 
+      // Phase 92 (BREAK-05): master gate — single tenant-config read outside the
+      // per-employee loop (N+1-safe, PERF-V1814-01 preserved).
+      const statusTenantConfig = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
+      const enforceBreakConfirmation = statusTenantConfig?.enforceBreakConfirmation ?? false;
+
       // PERF-V1814-01: bulk-fetch all per-employee data in 5 parallel queries (replaces N+1)
       const stateCode = STATE_MAP[employees[0]?.tenant?.federalState ?? "NIEDERSACHSEN"] ?? "NI";
       const holidayDateStrings = new Set<string>(getHolidays(year, stateCode).map((h) => h.date));
@@ -324,6 +413,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         holidayDateStrings.add(dateStrInTz(h.date, tz));
       }
 
+      // Phase 104 (R4 / D-21): the Karenz detector reuses leaveByEmp (Q3, fetchCloseMonthData)
+      // — that query was extended with `include: { leaveType: true }` specifically so this
+      // does NOT need its own leaveRequest.findMany call (a second call would double-count
+      // against overtime-perf-n1.test.ts's per-model ≤1 assertion — PERF-V1814-01 discipline).
+      const monthFirstStr = dateStrInTz(monthFirstDay, tz);
+      const monthLastStr = dateStrInTz(monthLastDay, tz);
+
       const result: {
         employeeId: string;
         employeeName: string;
@@ -331,6 +427,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
         status: "ready" | "missing" | "closed";
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
+        unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
+        karenzOverrunDays?: string[]; // Phase 104 (R4/D-21) — Hinweis, kein Gate
       }[] = [];
 
       for (const emp of employees) {
@@ -340,7 +438,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
         }
 
         // Check if snapshot already exists (= closed) — PERF-V1814-01: Map lookup, no DB call
-        const existingSnapshot = (snapshotsByEmp.get(emp.id) ?? [])[0] ?? null;
+        // isPeriodStartInMonth is REQUIRED here, not optional: fetchCloseMonthData's Q1 range
+        // pre-fetch (periodStart gte start / lte end) is one day too wide at the upper bound
+        // for the TZ-converted convention — month N+1's snapshot has periodStart equal to the
+        // last UTC day of month N (e.g. July's snapshot carries periodStart=2026-06-30 for
+        // Europe/Berlin), so it lands inside June's query range too. Taking `[0]` unfiltered
+        // would attribute July's snapshot to June and report June as closed when it is not
+        // (see debug session month-detail-shows-next-month-snapshot). year-status below already
+        // guards against this the same way — keep both in sync.
+        const existingSnapshot =
+          (snapshotsByEmp.get(emp.id) ?? []).find((s) =>
+            isPeriodStartInMonth(s.periodStart, monthStart),
+          ) ?? null;
 
         if (existingSnapshot) {
           result.push({
@@ -357,6 +466,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
               closedAt: existingSnapshot.closedAt,
               closedBy: existingSnapshot.closedBy,
             },
+            unconfirmedBreakDays: [], // Pitfall 1 — closed months are done, never actionable
+            karenzOverrunDays: [], // Phase 104 (D-21) — Pitfall 1: closed months are un-actionable
           });
           continue;
         }
@@ -372,6 +483,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
             status: "ready",
+            unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
+            karenzOverrunDays: [], // Phase 104 (D-21) — Karenz is a documentation rule, not a
+            // daily-target rule; surfacing it for a Minijobber/flexible schedule would be noise.
           });
           continue;
         }
@@ -426,6 +540,32 @@ export async function overtimeRoutes(app: FastifyInstance) {
         // Build missingDates from gaps (partial:true gaps also surfaced — 76.28 will style them)
         const missingDates = gapResultSt.gaps.map((g) => g.date);
 
+        // Phase 92 (BREAK-05): derive unconfirmedBreakDays from the SAME bulk-fetched
+        // `entries` (now carrying breakStatus+isLocked, close-month-data.ts Q2) — no
+        // new DB call in the loop. Gated by enforceBreakConfirmation (master gate).
+        // Additive/parallel to `status` — an employee can be gap-`ready` yet still
+        // have unconfirmed AUTO breaks when the tenant is opted in.
+        const unconfirmedBreakDays = unconfirmedDaysFromEntries(
+          entries,
+          tz,
+          scheduleTypeSt,
+          enforceBreakConfirmation,
+        );
+
+        // Phase 104 (R4 / D-21): Karenztage-Überschreitung ohne Attest als HINWEIS im
+        // Vollständigkeits-Check. Bewusst KEIN Gate: die eAU ist oft erst nach Tagen
+        // abrufbar, eine Blockade würde legitime Fälle verhindern und Umgehungen erzwingen.
+        // Additiv zu `status` — ein Mitarbeiter kann gap-`ready` sein und trotzdem einen
+        // offenen Attest-Nachweis haben.
+        const karenzOverrunDays = karenzOverrunFromRequests(
+          approvedLeave,
+          tz,
+          statusTenantConfig?.sickNoteRequiredAfterDays,
+        )
+          .flatMap((o) => o.days)
+          .filter((d) => d >= monthFirstStr && d <= monthLastStr)
+          .sort();
+
         if (missingDates.length > 0) {
           result.push({
             employeeId: emp.id,
@@ -433,6 +573,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "missing",
             missingDates,
+            unconfirmedBreakDays,
+            karenzOverrunDays,
           });
         } else {
           result.push({
@@ -440,6 +582,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeName: `${emp.firstName} ${emp.lastName}`,
             employeeNumber: emp.employeeNumber,
             status: "ready",
+            unconfirmedBreakDays,
+            karenzOverrunDays,
           });
         }
       }
@@ -1026,7 +1170,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         },
         orderBy: { periodStart: "desc" },
       });
-      const carryOverIn = prevSnapshot?.carryOver ?? 0;
+      // Phase 99 (OB-02) — chain-head seeds resolve through the one shared helper;
+      // identical to `?? 0` when the employee has no OpeningBalance.
+      const carryOverIn = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
 
       // Phase 76.31 (D-06): load Employee + active-Pattern bsSlot* overrides so
       // the pure core resolves per-MA / per-pattern slot amounts (null → fallback).
@@ -1115,6 +1261,37 @@ export async function overtimeRoutes(app: FastifyInstance) {
           gapDates: gaps.map((g) => g.date),
           requiresConfirmation: true,
         });
+      }
+
+      // Phase 104 (D-21): Für Karenztage-Überschreitungen gibt es hier BEWUSST kein Gegenstück.
+      // Der Befund ist ein Hinweis in GET /close-month/status, keine Blockade — und es gibt
+      // auch kein TenantConfig-Flag, das daraus eine machen könnte.
+      // Phase 92 (BREAK-05): hard block when the tenant has opted into BOTH the
+      // master gate (enforceBreakConfirmation) AND the block flag
+      // (blockMonthCloseOnUnconfirmedBreak) and unconfirmed AUTO Pflichtpause
+      // days exist. Doubly-gated by design — findUnconfirmedBreakDays returns []
+      // unless enforceBreakConfirmation is true, so an un-opted tenant is never
+      // blocked. NO override-and-proceed bypass field (unlike gaps' confirmGaps) —
+      // the block clears only by actually confirming/waiving the days via
+      // PATCH /:id/break-status.
+      // Read-only check — never mutates, audit-proof intact.
+      if (tenantConfig?.blockMonthCloseOnUnconfirmedBreak) {
+        const unconfirmedBreakDays = await findUnconfirmedBreakDays(app.prisma, {
+          employeeId,
+          monthFirstDay,
+          monthLastDay,
+          tz,
+          scheduleType,
+          enforceBreakConfirmation: tenantConfig?.enforceBreakConfirmation ?? false,
+        });
+        if (unconfirmedBreakDays.length > 0) {
+          return reply.code(409).send({
+            error: `${unconfirmedBreakDays.length} Tag${unconfirmedBreakDays.length === 1 ? "" : "e"} mit unbestätigter Pflichtpause. Bitte zuerst bestätigen oder „durchgearbeitet" erklären.`,
+            unconfirmedBreakCount: unconfirmedBreakDays.length,
+            unconfirmedBreakDays,
+            requiresBreakConfirmation: true,
+          });
+        }
       }
 
       // Alias effectiveCarryOverOut → effectiveCarryOver for the $transaction below
@@ -1393,6 +1570,18 @@ export async function overtimeRoutes(app: FastifyInstance) {
       const yearBalance = monthSnapshots.reduce((s, m) => s + m.balanceMinutes, 0);
 
       // Last month's carryOver = cumulative balance through year-end
+      //
+      // Phase 99 (OB-02) — YEARLY roll-up review item, resolved: this handler does NOT seed a
+      // chain head from a `?? 0` fallback and therefore does NOT call getCarryOverBase() here.
+      // `decemberSnapshot.carryOver` is an ALREADY-RESOLVED value from a MONTHLY SaldoSnapshot
+      // that was itself either a genuine mid-chain thread-forward (its own predecessor existed)
+      // or — if December happened to be this employee's very first month ever — was already
+      // seeded through getCarryOverBase() at ITS OWN close (overtime.ts manual close, or the
+      // auto-close-month.ts head seed). Re-consulting the opening balance here would either be
+      // a no-op (predecessor existed, so getCarryOverBase would just re-return the same value)
+      // or, worse, incorrectly re-apply it if some future refactor ever loosened the "only at
+      // the head" rule. The opening balance therefore reaches the yearly figure transitively
+      // through the monthly chain it aggregates, never directly.
       const decemberSnapshot = monthSnapshots[monthSnapshots.length - 1];
       const finalCarryOver = decemberSnapshot.carryOver;
 
@@ -1455,6 +1644,141 @@ export async function overtimeRoutes(app: FastifyInstance) {
       });
 
       return reply.code(201).send(snapshot);
+    },
+  });
+
+  // ── Eröffnungssaldo (OB-03) ───────────────────────────────────────────────────
+
+  // POST /api/v1/overtime/opening-balance – Eröffnungssaldo erfassen/korrigieren
+  // ADMIN only (locked decision D-05): an opening balance is an assertion about time
+  // before tracking began, not manager routine.
+  app.post("/opening-balance", {
+    schema: { tags: ["Überstunden"], security: [{ bearerAuth: [] }] },
+    preHandler: requireRole("ADMIN"),
+    handler: async (req, reply) => {
+      const {
+        employeeId,
+        minutes,
+        effectiveFrom,
+        reason,
+        evidenceRef,
+        approvedBy,
+        supersededReason,
+      } = openingBalanceSchema.parse(req.body);
+
+      const employee = await app.prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { tenantId: true, hireDate: true },
+      });
+
+      // Tenant isolation (mirrors leave.ts:1206-1216): fetch-then-compare via
+      // employee.tenantId, 404 (never 403 — which would confirm the id exists).
+      if (!employee || employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "OpeningBalance",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
+      const current = await app.prisma.openingBalance.findFirst({
+        where: { employeeId, superseded: false },
+      });
+
+      if (current && !supersededReason) {
+        return reply.code(400).send({
+          error:
+            "Für die Korrektur eines bestehenden Eröffnungssaldos ist eine Begründung erforderlich.",
+        });
+      }
+
+      const effectiveFromDate = new Date(`${effectiveFrom}T00:00:00Z`);
+
+      // ── ONE $transaction for the mutation + its audit (locked decision D-06) ──
+      // ORDER MATTERS: the partial unique index allows at most ONE superseded=false
+      // row per employee and is NOT deferrable — the old row must be deactivated
+      // BEFORE the new row is created, never the other way round, not even
+      // momentarily inside this transaction.
+      const created = await app.prisma.$transaction(async (tx) => {
+        if (current) {
+          await tx.openingBalance.update({
+            where: { id: current.id },
+            data: { superseded: true, supersededReason },
+          });
+        }
+
+        const row = await tx.openingBalance.create({
+          data: {
+            employeeId,
+            minutes,
+            effectiveFrom: effectiveFromDate,
+            reason,
+            evidenceRef: evidenceRef ?? null,
+            source: "ADMIN_ENTRY",
+            createdBy: req.user.sub,
+            // approvedBy/approvedAt are POPULATED but NOT ENFORCED (locked decision D-05):
+            // with a single admin in the real deployment, a mandatory second-person approval
+            // would either block the operation outright or degrade into a self-approval
+            // fiction. The columns stay for when a second admin exists. This is deliberately
+            // weaker than the leave-cancellation four-eyes rule, stated as such rather than
+            // left to look like an oversight.
+            approvedBy: approvedBy ?? null,
+            approvedAt: approvedBy ? new Date() : null,
+          },
+        });
+
+        if (current) {
+          await tx.openingBalance.update({
+            where: { id: current.id },
+            data: { supersededBy: row.id },
+          });
+        }
+
+        await app.audit({
+          userId: req.user.sub,
+          action: current ? "SUPERSEDE" : "CREATE",
+          entity: "OpeningBalance",
+          entityId: row.id,
+          oldValue: current ?? undefined,
+          newValue: row,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+          tx,
+        });
+
+        return row;
+      });
+
+      // Phase 99 (D-06). recalculateSnapshots() opens its OWN $transaction per snapshot
+      // and cannot join an external one, so this deliberately runs AFTER the commit above
+      // rather than inside it. The improvement over the Phase-94 precedent (leave.ts:1510)
+      // is NOT the transaction boundary — it is the absence of .catch(): a failed recalc
+      // must surface as a 5xx so the operator retries, never be logged and forgotten while
+      // the stored value and the chain disagree. recalculateSnapshots is documented
+      // idempotent, so a retry after a partial failure is safe.
+      //
+      // recalcFrom must be at/before the employee's FIRST snapshot, otherwise prevSnapshot
+      // is non-null and the opening balance is (correctly) ignored — the recalc would
+      // appear to do nothing. Taking the earlier of effectiveFrom and hireDate guarantees
+      // a full-history re-thread.
+      const recalcFrom = new Date(
+        Math.min(effectiveFromDate.getTime(), employee.hireDate.getTime()),
+      );
+      const { lockedMonthsSkipped } = await recalculateSnapshots(app, employeeId, recalcFrom);
+
+      const warning =
+        lockedMonthsSkipped.length > 0
+          ? `Der Eröffnungssaldo wurde gespeichert. ${lockedMonthsSkipped.length} abgeschlossene(r) Monat(e) wurden nicht neu berechnet (Abschluss ist unveränderbar) und müssen ggf. manuell geprüft werden.`
+          : undefined;
+
+      return reply.code(201).send({
+        openingBalance: created,
+        supersededId: current?.id ?? null,
+        lockedMonthsSkipped,
+        ...(warning ? { warning } : {}),
+      });
     },
   });
 

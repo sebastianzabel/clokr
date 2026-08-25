@@ -585,6 +585,46 @@ const CELLS: Cell[] = [
     },
     expectedRed: false,
   },
+  {
+    id: "fw-40-5-overlap",
+    scheduleType: "FIXED_SCHEDULE",
+    classification: "REGULAR",
+    situation:
+      "overlap (D-15/§9 BUrlG precursor) — APPROVED VACATION Mo-Fr + APPROVED SICK Mi-Do, same 2 days, deducted ONCE",
+    schedule: FW_40_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2024-01-01",
+    // 22 workdays in Jan 2026, minus the 5 distinct days covered by leave (Jan19-23) = 17 entries.
+    entries: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-19", "2026-01-20", "2026-01-21", "2026-01-22", "2026-01-23"].includes(d),
+      ),
+      480,
+    ),
+    // Two overlapping APPROVED LeaveRequests, written directly (mirrors Phase 104's
+    // fixture pattern — the leave.ts overlap guard this cell exercises the DOWNSTREAM
+    // saldo consequence of, not the guard itself): VACATION Mon19-Fri23, SICK Wed21-Thu22.
+    leave: [
+      { start: "2026-01-19", end: "2026-01-23" },
+      { start: "2026-01-21", end: "2026-01-22" },
+    ],
+    expected: {
+      // Derivation: contractSoll (22 workdays × 480) = 10560. D-15 dedup: 5 DISTINCT
+      // leave days (Jan19 Mon, 20 Tue, 21 Wed, 22 Thu, 23 Fri) × 480 = 2400, each
+      // counted exactly once even though Wed/Thu are each covered by BOTH APPROVED
+      // requests (D-15). expectedMinutes = 10560 - 2400 = 8160.
+      // Before Phase 104 this cell would have read expectedMinutes=7200 (10560 minus
+      // the doubled 5×480 + 2×480 = 3360 — Wed/Thu deducted twice) and
+      // balanceMinutes=+960 (a phantom day's worth of overtime from the double-deduction).
+      workedMinutes: 8160, // 17 non-leave workdays × 480
+      expectedMinutes: 8160,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
 
   // ── SHIFT_BASED (Round 1) ───────────────────────────────────────────────
   {
@@ -824,6 +864,55 @@ const CELLS: Cell[] = [
     expected: {
       workedMinutes: 0,
       expectedMinutes: 7200,
+      balanceMinutes: 0,
+      carryOver: 0,
+      overtimeHours: 0,
+    },
+    expectedRed: false,
+  },
+  {
+    id: "sb-40-5-overlap",
+    scheduleType: "SHIFT_BASED",
+    classification: "REGULAR",
+    situation:
+      "overlap (D-15/§9 BUrlG precursor) — APPROVED VACATION Mo-Fr + APPROVED SICK Mi-Do, same 2 days, deducted ONCE via Ø-Methode",
+    schedule: SB_40_5,
+    year: 2026,
+    month: 1,
+    hireDate: "2025-01-01",
+    // 17 non-leave workdays worked and rostered (leave days excluded from shifts via
+    // coveredDates, same as every other urlaub cell in this suite).
+    entries: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-19", "2026-01-20", "2026-01-21", "2026-01-22", "2026-01-23"].includes(d),
+      ),
+      480,
+    ),
+    shifts: rows(
+      JAN_MO_FR.filter(
+        (d) => !["2026-01-19", "2026-01-20", "2026-01-21", "2026-01-22", "2026-01-23"].includes(d),
+      ),
+      480,
+    ),
+    leave: [
+      { start: "2026-01-19", end: "2026-01-23" }, // VACATION Mon-Fri
+      { start: "2026-01-21", end: "2026-01-22" }, // SICK Wed-Thu (overlap)
+    ],
+    expected: {
+      // Derivation (Ø-Methode, avgWorkMinutesCore): contractSoll = 10560 (same 22
+      // workdays × 480 as the FIXED_SCHEDULE cells — identical schedule shape). D-15
+      // caps sbLeaveCredit at the 5 DISTINCT leave days × 480 = 2400 (VACATION
+      // Jan19-23 claims all 5 days first — both rows are full-day, VACATION starts
+      // earlier — so the overlapping SICK Jan21-22 row contributes 0 additional
+      // credit). C_net = max(0, 10560 - 2400) + bsExpectedMinutes(0) = 8160. R
+      // (rostered) = W (worked) = 8160 = C_net exactly, so the § 615 overtime clause
+      // (max(0, (W+bsWorked) − C_net)) evaluates to 0 on the CORRECTED C_net — the
+      // clause itself is untouched by D-15, only its C_net input is.
+      // Before Phase 104 this cell would have read expectedMinutes=7200 (C_net =
+      // 10560 minus the doubled sbLeaveCredit 3360) with a phantom overtime balance
+      // from R(8160) exceeding the deflated C_net(7200).
+      workedMinutes: 8160,
+      expectedMinutes: 8160,
       balanceMinutes: 0,
       carryOver: 0,
       overtimeHours: 0,

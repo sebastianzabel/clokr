@@ -392,3 +392,145 @@ describe("GET /api/v1/dashboard - overtime KPI is live (v1.8.24)", () => {
     expect(body.overtime.balanceHours).toBe(0);
   });
 });
+
+/**
+ * Phase 95 SHIFT-01 — a PENDING (not-yet-APPROVED) leave must surface as the distinct
+ * "requested" status in both team-week and my-week, instead of collapsing to "none"/"–"
+ * (team-week) or being mislabelled green "leave" (my-week). An APPROVED leave overlapping
+ * the same day still wins (shows "absent"/"leave", never "requested").
+ */
+describe("dashboard PENDING leave → 'requested' (Phase 95 SHIFT-01)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  // A leave range that spans the current week regardless of tenant timezone.
+  const rangeStart = new Date(Date.now() - 7 * 86400000);
+  const rangeEnd = new Date(Date.now() + 7 * 86400000);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "dashboard-requested");
+
+    // A single open (PENDING) leave for the regular employee, covering the whole week.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: rangeStart,
+        endDate: rangeEnd,
+        days: 5,
+        status: "PENDING",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("team-week surfaces status 'requested' for a PENDING leave day (not 'none')", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const emp = body.team.find((m: { id: string }) => m.id === data.employee.id);
+    expect(emp).toBeDefined();
+    const requestedDays = emp.days.filter((d: { status: string }) => d.status === "requested");
+    expect(requestedDays.length).toBeGreaterThan(0);
+    // Must NOT collapse to "none" on those days.
+    expect(emp.days.every((d: { status: string }) => d.status !== "none")).toBe(true);
+  });
+
+  it("my-week surfaces status 'requested' for a PENDING leave day (not 'leave')", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/my-week",
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const requestedDays = body.days.filter((d: { status: string }) => d.status === "requested");
+    expect(requestedDays.length).toBeGreaterThan(0);
+    // A PENDING leave must NOT be mislabelled as the green "leave" status.
+    expect(body.days.every((d: { status: string }) => d.status !== "leave")).toBe(true);
+  });
+});
+
+describe("dashboard APPROVED wins over PENDING on overlap (Phase 95 SHIFT-01)", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+
+  const rangeStart = new Date(Date.now() - 7 * 86400000);
+  const rangeEnd = new Date(Date.now() + 7 * 86400000);
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "dashboard-approved-wins");
+
+    // Both an APPROVED and a PENDING leave overlap every day of the current week.
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: rangeStart,
+        endDate: rangeEnd,
+        days: 5,
+        status: "APPROVED",
+      },
+    });
+    await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: rangeStart,
+        endDate: rangeEnd,
+        days: 5,
+        status: "PENDING",
+      },
+    });
+  });
+
+  afterAll(async () => {
+    try {
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  it("team-week shows APPROVED 'absent' (never 'requested') on an overlapping day", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/team-week",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const emp = body.team.find((m: { id: string }) => m.id === data.employee.id);
+    expect(emp).toBeDefined();
+    // APPROVED wins → no day may show "requested".
+    expect(emp.days.every((d: { status: string }) => d.status !== "requested")).toBe(true);
+    expect(emp.days.some((d: { status: string }) => d.status === "absent")).toBe(true);
+  });
+
+  it("my-week shows 'leave' (never 'requested') on an overlapping day", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/dashboard/my-week",
+      headers: { authorization: `Bearer ${data.empToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.days.every((d: { status: string }) => d.status !== "requested")).toBe(true);
+    expect(body.days.some((d: { status: string }) => d.status === "leave")).toBe(true);
+  });
+});

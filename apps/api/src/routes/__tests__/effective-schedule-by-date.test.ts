@@ -13,8 +13,11 @@
  *
  * Path B: prisma.workSchedule.findFirst({ where: { employeeId, validFrom: { lte: forDate } },
  *            orderBy: { validFrom: "desc" } })
- *   — the same query used by the module-private getEffectiveScheduleForDate in
- *     utils/recompute-snapshot.ts (and recalculate-snapshots-after-shift-soll-fix.ts).
+ *   — the same query inlined as the "getEffectiveSchedule equivalent" in
+ *     recalculate-snapshots-after-shift-soll-fix.ts (utils/recompute-snapshot.ts, which
+ *     defined this same query as a module-private getEffectiveScheduleForDate helper, was
+ *     removed in Phase 99 together with its only caller — see apps/api/scripts/README.md
+ *     "Removed scripts").
  *     This path is not exported, so we assert the underlying query directly.
  *     Once history exists, a past-month close for a week→shift switcher consumes
  *     the correct historical model through this same resolution rule.
@@ -139,14 +142,17 @@ describe("Effective schedule resolution across a week→shift switch boundary (D
     });
   });
 
-  // ── Path B: raw validFrom<=forDate query (mirrors getEffectiveScheduleForDate) ─
+  // ── Path B: raw validFrom<=forDate query (mirrors the getEffectiveSchedule-equivalent
+  //    inline query in recalculate-snapshots-after-shift-soll-fix.ts) ─
   //
-  // getEffectiveScheduleForDate in utils/recompute-snapshot.ts is module-private and
-  // cannot be imported. Its logic is a verbatim copy of the query below.
-  // By asserting this query we prove that a past-month close (which calls
-  // getEffectiveScheduleForDate with the midMonth date of the period) resolves the
-  // same historically-correct model once history rows exist.
-  // The same query shape is used by recalculate-snapshots-after-shift-soll-fix.ts.
+  // That script inlines this exact query (not exported, so we assert it directly here).
+  // By asserting this query we prove that a past-month close (which resolves the
+  // effective schedule via the midMonth date of the period) resolves the same
+  // historically-correct model once history rows exist.
+  // (utils/recompute-snapshot.ts defined the same query as a module-private
+  // getEffectiveScheduleForDate helper but was removed in Phase 99 together with its
+  // only caller, recalculate-snapshots-after-soll-fix.ts — see
+  // apps/api/scripts/README.md "Removed scripts".)
 
   describe("Path B — raw findFirst (mirrors getEffectiveScheduleForDate / past-month close)", () => {
     it("before-switch date → resolves the FIXED_SCHEDULE row (OLD model)", async () => {

@@ -17,6 +17,7 @@
 import type { PrismaClient, ScheduleType } from "@clokr/db";
 import { BS_DAILY_DEFAULT_MIN } from "./vocational-school-constants.js";
 import { buildSlotOverrideHierarchy, resolveBsTagSlot } from "./bs-slot-resolver";
+import { BS_PATTERN_ORDER_BY } from "./vocational-school-pattern-order.js";
 
 /**
  * Tenant-config fields this helper reads. Both are optional/nullable to fail-open
@@ -211,7 +212,7 @@ export async function getVocationalSchoolMinutesForDate(
       validFrom: { lte: dayStart },
       OR: [{ validUntil: null }, { validUntil: { gte: dayStart } }],
     },
-    orderBy: { validFrom: "desc" },
+    orderBy: BS_PATTERN_ORDER_BY,
     select: {
       bsSlotFirstLongDayMinutes: true,
       bsSlotSecondLongDayMinutes: true,
@@ -334,7 +335,7 @@ export async function bsUnterrichtsMinutesByDateForIsoWeek(
       validFrom: { lte: monday },
       OR: [{ validUntil: null }, { validUntil: { gte: monday } }],
     },
-    orderBy: { validFrom: "desc" },
+    orderBy: BS_PATTERN_ORDER_BY,
     select: { unterrichtsMinutenByDow: true },
   });
   const dowMap = normalizeUnterrichtsMinutenByDow(pattern?.unterrichtsMinutenByDow);

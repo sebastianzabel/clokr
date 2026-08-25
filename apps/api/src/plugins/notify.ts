@@ -1,5 +1,5 @@
 import fp from "fastify-plugin";
-import type { TenantConfig } from "@clokr/db";
+import { resolveEmailPolicy } from "../utils/notification-email-policy";
 
 interface NotifyParams {
   userId: string;
@@ -12,24 +12,32 @@ interface NotifyParams {
   relatedId?: string; // id of the related entity
 }
 
-/** Map notification types to TenantConfig email toggle field names. */
-const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
-  LEAVE_REQUEST: "emailOnLeaveRequest",
-  LEAVE_APPROVED: "emailOnLeaveDecision",
-  LEAVE_REJECTED: "emailOnLeaveDecision",
-  LEAVE_CANCELLED: "emailOnLeaveDecision",
-  OVERTIME_WARNING: "emailOnOvertimeWarning",
-  MISSING_ENTRY: "emailOnMissingEntries",
-  CLOCK_OUT_REMINDER: "emailOnClockOutReminder",
-  MONTH_CLOSED: "emailOnMonthClose",
-  GAP_WARNING_EMPLOYEE: "emailOnMissingEntries",
-  GAP_WARNING_MANAGER: "emailOnMissingEntries",
-};
+/**
+ * Escape HTML-significant characters before interpolating a value into the notification
+ * email body.
+ *
+ * Phase 104 code review WR-07: the body is built with raw template interpolation
+ * (`<p>${message}</p>`), and Phase 104 introduced the first USER-SUPPLIED free text into a
+ * message — the manager's § 9 rejection reason (`z.string().trim().min(1)`, no character
+ * restriction). A reason containing `<a href="https://evil.example">…</a>` or
+ * `<img src=x onerror=…>` was delivered as live HTML inside a Clokr-branded message: a
+ * manager→employee phishing primitive. The in-app bell was never affected (Svelte escapes),
+ * so this is an email-only exposure — but every interpolated value is escaped here now,
+ * including title/firstName/link, so no future emit site has to remember.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 declare module "fastify" {
   interface FastifyInstance {
     notify: (params: NotifyParams) => Promise<void>;
-    dismissByRelated: (relatedType: string, relatedId: string) => Promise<number>;
+    dismissByRelated: (relatedType: string, relatedId: string, type?: string) => Promise<number>;
   }
 }
 
@@ -59,9 +67,13 @@ export const notifyPlugin = fp(async (app) => {
     }
   }
 
-  async function dismissByRelated(relatedType: string, relatedId: string): Promise<number> {
+  async function dismissByRelated(
+    relatedType: string,
+    relatedId: string,
+    type?: string,
+  ): Promise<number> {
     const { count } = await app.prisma.notification.updateMany({
-      where: { relatedType, relatedId, dismissedAt: null },
+      where: { relatedType, relatedId, dismissedAt: null, ...(type ? { type } : {}) },
       data: { dismissedAt: new Date() },
     });
     return count;
@@ -77,13 +89,39 @@ export const notifyPlugin = fp(async (app) => {
   }: Required<Pick<NotifyParams, "userId" | "type" | "title" | "message" | "tenantId">> & {
     link?: string;
   }) {
+    // Fail-closed gate (quick-260825-k3g) — checked FIRST, ahead of the tenant master
+    // switch, so a missing registration surfaces even for tenants that have email
+    // switched off (that is where a new type is most likely to be added and least
+    // likely to be noticed). See apps/api/src/utils/notification-email-policy.ts —
+    // the single source of truth this resolves against.
+    const policy = resolveEmailPolicy(type);
+    if (!policy) {
+      app.log.warn(
+        { tenantId, type },
+        "Notification email suppressed: type has no entry in the email policy registry " +
+          "(fail-closed) — add one in apps/api/src/utils/notification-email-policy.ts",
+      );
+      return;
+    }
+    if (policy.email === "never") {
+      app.log.debug({ tenantId, type }, "Notification email skipped: policy is 'never'");
+      return;
+    }
+
     // Check tenant master switch
     const config = await app.prisma.tenantConfig.findUnique({ where: { tenantId } });
-    if (!config?.emailNotificationsEnabled) return;
+    if (!config?.emailNotificationsEnabled) {
+      // Observability: this is the most common reason a notification produces a
+      // bell entry but no email. Debug level, no PII (tenantId + type only).
+      app.log.debug(
+        { tenantId, type },
+        "Notification email skipped: emailNotificationsEnabled is off for tenant",
+      );
+      return;
+    }
 
     // Check per-type toggle
-    const toggleField = EMAIL_TYPE_MAP[type];
-    if (toggleField && !config[toggleField]) return;
+    if (policy.email === "toggle" && !config[policy.field]) return;
 
     // Check user opt-in
     const user = await app.prisma.user.findUnique({ where: { id: userId } });
@@ -91,7 +129,15 @@ export const notifyPlugin = fp(async (app) => {
 
     // Check SMTP configured
     const smtpConfig = await app.mailer.getSmtpConfig(tenantId);
-    if (!smtpConfig) return;
+    if (!smtpConfig) {
+      // Observability: master switch + toggles were on, but SMTP is not set up
+      // (neither per-tenant DB config nor SMTP_* env). Debug level, no PII.
+      app.log.debug(
+        { tenantId, type },
+        "Notification email skipped: SMTP not configured for tenant",
+      );
+      return;
+    }
 
     // Get user's name
     const employee = await app.prisma.employee.findFirst({ where: { userId } });
@@ -115,10 +161,10 @@ export const notifyPlugin = fp(async (app) => {
       subject: `${title} – Clokr`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#2563eb">${title}</h2>
-          <p>Hallo ${firstName},</p>
-          <p>${message}</p>
-          ${fullLink ? `<a href="${fullLink}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
+          <h2 style="color:#2563eb">${escapeHtml(title)}</h2>
+          <p>Hallo ${escapeHtml(firstName)},</p>
+          <p>${escapeHtml(message)}</p>
+          ${fullLink ? `<a href="${escapeHtml(fullLink)}" style="display:inline-block;margin:16px 0;padding:12px 24px;background:#2563eb;color:#fff;text-decoration:none;border-radius:6px;font-weight:600">Jetzt ansehen</a>` : ""}
           <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
           <p style="color:#9ca3af;font-size:12px">Diese E-Mail wurde automatisch von Clokr gesendet.</p>
         </div>`,

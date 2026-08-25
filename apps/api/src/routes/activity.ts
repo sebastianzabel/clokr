@@ -1,6 +1,7 @@
 import { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAuth } from "../middleware/auth";
+import { getTenantTimezone, timeStrInTz } from "../utils/timezone";
 
 /**
  * GET /api/v1/activity?limit=5
@@ -115,6 +116,10 @@ export async function activityRoutes(app: FastifyInstance) {
       if (employeeId) {
         const since = new Date();
         since.setDate(since.getDate() - 7);
+        // Clock-in/out times are @db.Timestamptz (UTC). The dashboard "Aktivität"
+        // widget must render them in the tenant timezone, not UTC — otherwise a
+        // Europe/Berlin tenant sees times ~1-2h too early. Use timeStrInTz.
+        const tz = await getTenantTimezone(app.prisma, tenantId);
         const entries = await app.prisma.timeEntry.findMany({
           where: {
             employeeId,
@@ -125,13 +130,13 @@ export async function activityRoutes(app: FastifyInstance) {
           take: fetchLimit,
         });
         for (const e of entries) {
-          const startHHMM = e.startTime.toISOString().substring(11, 16);
+          const startHHMM = timeStrInTz(e.startTime, tz);
           items.push({
             id: `te-${e.id}`,
             icon: "clock",
             who: "Du",
             what: e.endTime
-              ? `Ausstempeln um ${e.endTime.toISOString().substring(11, 16)}`
+              ? `Ausstempeln um ${timeStrInTz(e.endTime, tz)}`
               : `Einstempeln um ${startHHMM}`,
             when: e.createdAt.toISOString(),
             category: "time",
