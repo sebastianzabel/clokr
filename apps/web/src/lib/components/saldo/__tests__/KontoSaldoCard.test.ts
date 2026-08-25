@@ -55,21 +55,35 @@ describe("KontoSaldoCard — headline figure sign (deviation #3)", () => {
   });
 
   it('renders "+2:00" for a positive confirmed figure', () => {
-    renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: 120 }));
-    expect(screen.getByText("+2:00")).toBeInTheDocument();
+    // Stale since 1e289a32 ("Konto-Saldo-Zeile zeigt Gesamtsaldo statt Monatsanteil"): with
+    // openMonthMinutes defaulting to 0, the "inkl. laufendem Monat" row now also totals to
+    // "+2:00" (Bestätigt + 0), so screen.getByText was no longer unique in this card. Same
+    // remedy as the "±0:00" test above — assert on .ksc-figure to target the headline only.
+    const { container } = renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: 120 }));
+    const figure = container.querySelector(".ksc-figure");
+    expect(figure).toHaveTextContent("+2:00");
   });
 
   it('renders "−1:30" for a negative confirmed figure', () => {
-    renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: -90 }));
-    expect(screen.getByText("−1:30")).toBeInTheDocument();
+    // Stale since 1e289a32 — same ambiguity as above: openMonthMinutes defaults to 0, so the
+    // row also totals to "−1:30". Assert on .ksc-figure to target the headline unambiguously.
+    const { container } = renderWithTheme(KontoSaldoCard, baseProps({ confirmedMinutes: -90 }));
+    const figure = container.querySelector(".ksc-figure");
+    expect(figure).toHaveTextContent("−1:30");
   });
 });
 
 describe("KontoSaldoCard — 'inkl. laufendem Monat' row (deviation #2)", () => {
   it("renders the row value as a sign-toned figure, not a quiet 13px value", () => {
+    // Stale since 1e289a32: the row now renders Bestätigt + laufender Monat (the TOTAL), not
+    // the open-month delta alone. The original confirmedMinutes: 60 no longer isolates the
+    // open-month contribution — it shifts the total to −7:00, not the −8:00 this test still
+    // expects. Keep confirmedMinutes at 0 so the row is legibly "nothing confirmed yet, all
+    // forecast", which preserves both the original expected value and the test's intent (a
+    // negative total carries --bad and a real figure).
     const { container } = renderWithTheme(
       KontoSaldoCard,
-      baseProps({ confirmedMinutes: 60, openMonthMinutes: -480 }),
+      baseProps({ confirmedMinutes: 0, openMonthMinutes: -480 }),
     );
     const rowValue = container.querySelector(".ksc-row-value");
     expect(rowValue).toHaveClass("ksc-row-value--bad");
@@ -86,9 +100,14 @@ describe("KontoSaldoCard — 'inkl. laufendem Monat' row (deviation #2)", () => 
   });
 
   it("tones the row value muted at exactly zero", () => {
+    // Stale since 1e289a32: the row is now toned off the TOTAL (confirmed + open month), not
+    // the open-month delta alone. openMonthMinutes: 0 no longer means a zero row once
+    // confirmedMinutes is nonzero (60 + 0 = +1:00 → good, not muted). Pick a pair that cancels
+    // out so the TOTAL itself is zero, preserving the test's actual intent: "a zero row is
+    // muted".
     const { container } = renderWithTheme(
       KontoSaldoCard,
-      baseProps({ confirmedMinutes: 60, openMonthMinutes: 0 }),
+      baseProps({ confirmedMinutes: 60, openMonthMinutes: -60 }),
     );
     const rowValue = container.querySelector(".ksc-row-value");
     expect(rowValue).toHaveClass("ksc-row-value--muted");
