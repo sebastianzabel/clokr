@@ -192,4 +192,70 @@ describe("Notification email dispatch (notify.ts sendEmailNotification)", () => 
       spy.mockRestore();
     }
   });
+
+  // ── Phase 104 code review CR-02 — § 9 BUrlG types are in-app only ──────────
+  //
+  // Before the fix, absence from EMAIL_TYPE_MAP short-circuited the per-type gate
+  // (`if (toggleField && !config[toggleField]) return;`) and execution continued to
+  // the SMTP send — so all four § 9 types WERE emailed, against the documented
+  // Phase-104-05 decision to keep health-adjacent (Art. 9 DSGVO) payloads in-app.
+  describe("§ 9 BUrlG notification types are never emailed (CR-02)", () => {
+    const SECTION9_TYPES = [
+      "SECTION9_AU_PENDING_EMPLOYEE",
+      "SECTION9_AU_PENDING_MANAGER",
+      "SECTION9_CREDIT_CONFIRMED",
+      "SECTION9_CREDIT_REJECTED",
+    ] as const;
+
+    for (const type of SECTION9_TYPES) {
+      it(`${type} creates the in-app notification but sends NO email`, async () => {
+        // Every gate downstream is deliberately WIDE OPEN, so a send here can only
+        // come from the missing suppression.
+        await setConfig({
+          ...SMTP_CONFIGURED,
+          emailNotificationsEnabled: true,
+          emailOnLeaveRequest: true,
+          emailOnLeaveDecision: true,
+          emailOnMissingEntries: true,
+        });
+
+        await app.notify({
+          userId: data.adminUser.id,
+          type,
+          title: "§ 9 BUrlG",
+          message: "Krankmeldung während genehmigten Urlaubs (16.09.2026 – 17.09.2026)",
+          tenantId: data.tenant.id,
+        });
+
+        await flush();
+        expect(sendMailMock).not.toHaveBeenCalled();
+
+        // The in-app bell entry must still be created — suppression is email-only.
+        const inApp = await app.prisma.notification.findFirst({
+          where: { userId: data.adminUser.id, type },
+          orderBy: { createdAt: "desc" },
+        });
+        expect(inApp).not.toBeNull();
+      });
+    }
+
+    it("a NON-suppressed unmapped type still emails (the fix is a deny-list, not a default flip)", async () => {
+      // PENDING_LEAVE_REMINDER is also absent from EMAIL_TYPE_MAP. Its email path is
+      // load-bearing (v1.9.8 manager reminders) and must be untouched by CR-02.
+      await setConfig({
+        ...SMTP_CONFIGURED,
+        emailNotificationsEnabled: true,
+      });
+
+      await app.notify({
+        userId: data.adminUser.id,
+        type: "PENDING_LEAVE_REMINDER",
+        title: "Offene Urlaubsanträge",
+        message: "Es liegen offene Urlaubsanträge vor.",
+        tenantId: data.tenant.id,
+      });
+
+      await vi.waitFor(() => expect(sendMailMock).toHaveBeenCalledTimes(1));
+    });
+  });
 });

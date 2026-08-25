@@ -58,13 +58,49 @@ export const EMAIL_TYPE_MAP: Record<string, keyof TenantConfig> = {
   // notification still fires unconditionally for all four; a future phase can
   // add a dedicated toggle (e.g. emailOnRetroEntry) if email is desired.
   //
-  // Phase 104-05: SECTION9_AU_PENDING_EMPLOYEE / SECTION9_AU_PENDING_MANAGER
-  // (routes/leave.ts, § 9 BUrlG Krank-im-Urlaub) are the same judgement, made
-  // deliberately: no existing emailOn* toggle fits "§ 9 BUrlG credit outstanding",
-  // and — unlike Zeitnachtrag — this payload names a sickness period, so staying
-  // in-app-only also avoids sending health-adjacent data by email. The in-app
-  // notification fires unconditionally for both types.
+  // Phase 104-05: the four § 9 BUrlG (Krank im Urlaub) types are the same judgement,
+  // made deliberately — no existing emailOn* toggle fits "§ 9 BUrlG credit outstanding".
+  // Absence from THIS map is not enough to keep them in-app-only though (that was the
+  // Phase 104 review finding CR-02): an unmapped type falls THROUGH the toggle gate and
+  // IS emailed. The four types are therefore listed explicitly in
+  // EMAIL_SUPPRESSED_TYPES below, which is the mechanism that actually enforces it.
 };
+
+/**
+ * Notification types that must NEVER be emailed, regardless of tenant/user toggles.
+ *
+ * Phase 104 code review CR-02: the per-type gate below reads
+ * `EMAIL_TYPE_MAP[type]` and only blocks when a mapping EXISTS and its toggle is off.
+ * For an unmapped type the gate short-circuits and execution continues to the SMTP
+ * send — i.e. absence from the map is opt-IN by default, the opposite of what the
+ * Phase-104-05 comment above claimed. All four § 9 BUrlG types were therefore emailed
+ * to any tenant with `emailNotificationsEnabled = true`:
+ *
+ *   - SECTION9_AU_PENDING_EMPLOYEE — names the employee's own sickness period
+ *   - SECTION9_AU_PENDING_MANAGER  — fanned out to EVERY active ADMIN/MANAGER of the
+ *                                    tenant, with the same sick date range
+ *   - SECTION9_CREDIT_CONFIRMED    — confirms a sickness-during-leave credit
+ *   - SECTION9_CREDIT_REJECTED     — carries the manager's free-text rejection reason
+ *
+ * That is Art. 9 DSGVO (health) material leaving the system over SMTP against an
+ * explicitly documented decision that it would not. Suppression is an explicit
+ * allow-nothing list rather than a flip of the default, so the email behaviour of
+ * every other unmapped type (ACCOUNT_LOCKED, PENDING_LEAVE_REMINDER,
+ * CARRYOVER_EXPIRING, VACATION_EXPIRY, UPCOMING_ABSENCE, OPEN_ENTRY_INVALIDATED,
+ * RETRO_ENTRY_*) is unchanged by this fix.
+ *
+ * NOTE (open, owner decision): the RETRO_ENTRY_* types carry the same "no toggle fits"
+ * comment as § 9 and are currently emailed by the same fall-through. They are NOT
+ * suppressed here because — unlike § 9 — they carry no health-adjacent payload and
+ * suppressing them would silently disable a shipped v1.9.10 notification path. If the
+ * owner confirms they were never meant to be emailed, add them to this set.
+ */
+export const EMAIL_SUPPRESSED_TYPES: ReadonlySet<string> = new Set([
+  "SECTION9_AU_PENDING_EMPLOYEE",
+  "SECTION9_AU_PENDING_MANAGER",
+  "SECTION9_CREDIT_CONFIRMED",
+  "SECTION9_CREDIT_REJECTED",
+]);
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -129,6 +165,17 @@ export const notifyPlugin = fp(async (app) => {
       app.log.debug(
         { tenantId, type },
         "Notification email skipped: emailNotificationsEnabled is off for tenant",
+      );
+      return;
+    }
+
+    // Hard suppression (Phase 104 review CR-02) — must be checked BEFORE the toggle
+    // gate below, because that gate short-circuits for unmapped types and would let
+    // health-adjacent § 9 BUrlG payloads through to SMTP. See EMAIL_SUPPRESSED_TYPES.
+    if (EMAIL_SUPPRESSED_TYPES.has(type)) {
+      app.log.debug(
+        { tenantId, type },
+        "Notification email skipped: type is in-app only (EMAIL_SUPPRESSED_TYPES)",
       );
       return;
     }
