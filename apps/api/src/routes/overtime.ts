@@ -18,6 +18,7 @@ import {
   unconfirmedDaysFromEntries,
   findUnconfirmedBreakDays,
 } from "../utils/find-unconfirmed-break-days"; // Phase 92 — BREAK-05 unconfirmed Pflichtpause gate
+import { karenzOverrunFromRequests } from "../utils/find-karenz-overrun-days"; // Phase 104 (R4/D-21) — Karenztage-Überschreitung, Hinweis only
 import { loadBsSlotOverrides } from "../utils/load-bs-slot-overrides"; // Phase 76.31 — D-06 slot overrides
 import { computeMonthSaldo } from "../utils/month-saldo"; // §615 Team-Zeiten display fix
 import { getCarryOverBase } from "../utils/carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
@@ -412,6 +413,13 @@ export async function overtimeRoutes(app: FastifyInstance) {
         holidayDateStrings.add(dateStrInTz(h.date, tz));
       }
 
+      // Phase 104 (R4 / D-21): the Karenz detector reuses leaveByEmp (Q3, fetchCloseMonthData)
+      // — that query was extended with `include: { leaveType: true }` specifically so this
+      // does NOT need its own leaveRequest.findMany call (a second call would double-count
+      // against overtime-perf-n1.test.ts's per-model ≤1 assertion — PERF-V1814-01 discipline).
+      const monthFirstStr = dateStrInTz(monthFirstDay, tz);
+      const monthLastStr = dateStrInTz(monthLastDay, tz);
+
       const result: {
         employeeId: string;
         employeeName: string;
@@ -420,6 +428,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
         missingDates?: string[];
         snapshot?: Record<string, unknown>;
         unconfirmedBreakDays?: string[]; // Phase 92 (BREAK-05)
+        karenzOverrunDays?: string[]; // Phase 104 (R4/D-21) — Hinweis, kein Gate
       }[] = [];
 
       for (const emp of employees) {
@@ -458,6 +467,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
               closedBy: existingSnapshot.closedBy,
             },
             unconfirmedBreakDays: [], // Pitfall 1 — closed months are done, never actionable
+            karenzOverrunDays: [], // Phase 104 (D-21) — Pitfall 1: closed months are un-actionable
           });
           continue;
         }
@@ -474,6 +484,8 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays: [], // RESOLVED Q1 — no daily gate for flexible schedules
+            karenzOverrunDays: [], // Phase 104 (D-21) — Karenz is a documentation rule, not a
+            // daily-target rule; surfacing it for a Minijobber/flexible schedule would be noise.
           });
           continue;
         }
@@ -540,6 +552,20 @@ export async function overtimeRoutes(app: FastifyInstance) {
           enforceBreakConfirmation,
         );
 
+        // Phase 104 (R4 / D-21): Karenztage-Überschreitung ohne Attest als HINWEIS im
+        // Vollständigkeits-Check. Bewusst KEIN Gate: die eAU ist oft erst nach Tagen
+        // abrufbar, eine Blockade würde legitime Fälle verhindern und Umgehungen erzwingen.
+        // Additiv zu `status` — ein Mitarbeiter kann gap-`ready` sein und trotzdem einen
+        // offenen Attest-Nachweis haben.
+        const karenzOverrunDays = karenzOverrunFromRequests(
+          approvedLeave,
+          tz,
+          statusTenantConfig?.sickNoteRequiredAfterDays,
+        )
+          .flatMap((o) => o.days)
+          .filter((d) => d >= monthFirstStr && d <= monthLastStr)
+          .sort();
+
         if (missingDates.length > 0) {
           result.push({
             employeeId: emp.id,
@@ -548,6 +574,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             status: "missing",
             missingDates,
             unconfirmedBreakDays,
+            karenzOverrunDays,
           });
         } else {
           result.push({
@@ -556,6 +583,7 @@ export async function overtimeRoutes(app: FastifyInstance) {
             employeeNumber: emp.employeeNumber,
             status: "ready",
             unconfirmedBreakDays,
+            karenzOverrunDays,
           });
         }
       }
@@ -1235,6 +1263,9 @@ export async function overtimeRoutes(app: FastifyInstance) {
         });
       }
 
+      // Phase 104 (D-21): Für Karenztage-Überschreitungen gibt es hier BEWUSST kein Gegenstück.
+      // Der Befund ist ein Hinweis in GET /close-month/status, keine Blockade — und es gibt
+      // auch kein TenantConfig-Flag, das daraus eine machen könnte.
       // Phase 92 (BREAK-05): hard block when the tenant has opted into BOTH the
       // master gate (enforceBreakConfirmation) AND the block flag
       // (blockMonthCloseOnUnconfirmedBreak) and unconfirmed AUTO Pflichtpause
