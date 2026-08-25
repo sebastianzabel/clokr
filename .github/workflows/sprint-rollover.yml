@@ -1,0 +1,112 @@
+name: Sprint Rollover
+
+# Opens the sprint-change checklist issue at the start of every second week.
+#
+# TIMING
+# GitHub cron is UTC and has no timezone support, so the local hour drifts
+# with daylight saving: 05:00 UTC is 07:00 in Berlin during CEST (summer) and
+# 06:00 during CET (winter). The winter hour is accepted deliberately — this
+# job opens a checklist, nothing time-critical depends on the exact hour.
+#
+# CADENCE
+# Cron cannot express "every second week". The schedule fires every Monday
+# and the job itself decides whether this is a sprint week, by counting whole
+# weeks from a fixed anchor. Anchoring beats "is the ISO week number even?":
+# ISO years with 53 weeks put two odd weeks back to back, which would silently
+# skip a sprint once every few years.
+#
+# The anchor is the first iteration of the "Clokr Delivery" board.
+# If the board's iterations are ever rebuilt, move ANCHOR_MONDAY with them.
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays, 07:00 Europe/Berlin in summer / 06:00 in winter
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Open the issue even if this is not a sprint week"
+        type: boolean
+        default: false
+
+permissions:
+  issues: write
+
+jobs:
+  rollover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide whether this is a sprint week
+        id: cadence
+        env:
+          ANCHOR_MONDAY: "2026-08-31"
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          anchor=$(date -u -d "$ANCHOR_MONDAY" +%s)
+          now=$(date -u +%s)
+          weeks=$(( (now - anchor) / 604800 ))
+
+          if [ "$FORCE" = "true" ]; then
+            echo "manually forced"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$weeks" -lt 0 ]; then
+            echo "before the anchor ($ANCHOR_MONDAY) — nothing to do"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          elif [ $(( weeks % 2 )) -eq 0 ]; then
+            echo "week $weeks since anchor — sprint week"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "week $weeks since anchor — mid-sprint, skipping"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "kw=$(date -u +%V)" >> "$GITHUB_OUTPUT"
+          echo "kw_end=$(date -u -d '+13 days' +%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Open the sprint checklist
+        if: steps.cadence.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          KW: ${{ steps.cadence.outputs.kw }}
+          KW_END: ${{ steps.cadence.outputs.kw_end }}
+        run: |
+          set -euo pipefail
+          title="Sprint-Wechsel KW ${KW}"
+
+          # Never open a second copy: a re-run, or a manual dispatch on a day
+          # the schedule already fired, would otherwise duplicate the checklist.
+          existing=$(gh issue list --state open --label sprint \
+            --search "\"$title\" in:title" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "already open as #$existing — nothing to do"
+            exit 0
+          fi
+
+          cat > /tmp/body.md <<BODY
+          Sprint **KW ${KW}–${KW_END}**. Reihenfolge einhalten — jeder Schritt setzt den vorherigen voraus.
+
+          - [ ] **Inbox leeren** — jedes Issue: Work Type setzen, dann nach Backlog oder schließen
+          - [ ] **Max. 5 Issues** von Backlog nach Ready ziehen
+          - [ ] **Iteration + Milestone** auf genau diese 5 setzen
+          - [ ] **Branch Protection prüfen** — \`./scripts/apply-branch-protection.sh\`
+          - [ ] **release-please-PR** prüfen und mergen
+          - [ ] **Dependabot-Queue** durchgehen — läuft am Board vorbei und wächst sonst still
+          - [ ] \`/gsd:new-milestone\` in Claude Code, gefüttert mit den 5 Issues
+
+          ---
+
+          **Die Deckel-Regel:** 5 Issues, nicht 6. Kommt etwas Dringendes rein, muss etwas
+          anderes raus — zurück nach Backlog, nicht zusätzlich rein. Ein Sprint, der alles
+          aufnimmt, sagt nichts mehr darüber aus, was tatsächlich passiert.
+
+          \`Ready\` heißt: Akzeptanzkriterien vollständig, Work Type gesetzt, Iteration und
+          Milestone gesetzt. Ohne das fasst GSD das Issue nicht an.
+
+          [Board öffnen](https://github.com/users/sebastianzabel/projects/1) ·
+          [Prozess](https://github.com/${GH_REPO}/blob/main/docs/PROCESS.md)
+          BODY
+
+          url=$(gh issue create --title "$title" --label sprint --body-file /tmp/body.md)
+          echo "opened: $url"
+          echo "### Sprint-Wechsel KW ${KW} → $url" >> "$GITHUB_STEP_SUMMARY"
