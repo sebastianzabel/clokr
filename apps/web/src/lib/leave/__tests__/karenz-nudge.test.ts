@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { summarizeKarenzOverrun, karenzNudgeHref, KARENZ_NUDGE_EMPTY } from "../karenz-nudge";
+import {
+  summarizeKarenzOverrun,
+  karenzNudgeHref,
+  KARENZ_NUDGE_EMPTY,
+  hasNoOpenItems,
+} from "../karenz-nudge";
 
 describe("summarizeKarenzOverrun", () => {
   it("Test 1: counts distinct days, picks the earliest day and its owning request", () => {
@@ -71,5 +76,27 @@ describe("karenzNudgeHref", () => {
       }),
     ).toBe("/leave?request=r1");
     expect(karenzNudgeHref(KARENZ_NUDGE_EMPTY)).toBe("/leave");
+  });
+});
+
+describe("hasNoOpenItems (D-21 follow-up: dashboard empty-state fix)", () => {
+  it("Test 7: everything zero — the empty state is genuinely reachable", () => {
+    expect(hasNoOpenItems(0, 0, 0)).toBe(true);
+  });
+
+  it("Test 8: openItems.total is 0 but a Karenz overrun exists — must NOT report empty", () => {
+    expect(hasNoOpenItems(0, 1, 0)).toBe(false);
+  });
+
+  it("Test 9: openItems.total is 0 but unconfirmed break days exist — must NOT report empty (fixes the inherited Phase-92 gap)", () => {
+    expect(hasNoOpenItems(0, 0, 2)).toBe(false);
+  });
+
+  it("Test 10: openItems.total alone is non-zero — never reports empty, regardless of the nudges", () => {
+    expect(hasNoOpenItems(3, 0, 0)).toBe(false);
+  });
+
+  it("Test 11: a fail-safe zero Karenz count (API error path) does not block the empty state on its own", () => {
+    expect(hasNoOpenItems(0, 0, 0)).toBe(true);
   });
 });

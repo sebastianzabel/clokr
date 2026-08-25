@@ -55,3 +55,21 @@ export function summarizeKarenzOverrun(
 export function karenzNudgeHref(summary: KarenzNudgeSummary): string {
   return summary.targetRequestId ? `/leave?request=${summary.targetRequestId}` : "/leave";
 }
+
+/**
+ * Phase 104 gap closure (D-21, follow-up) — the dashboard's "Keine offenen Vorgänge" empty state
+ * must only render when there is genuinely nothing to show. `openItems.total` comes from
+ * `GET /dashboard/open-items` and has NO knowledge of either client-side nudge rendered below it
+ * in the same list (this Karenz nudge, and the pre-existing Phase-92 unconfirmed-break-days
+ * nudge) — an employee whose ONLY outstanding item is a Karenz overrun (or an unconfirmed break)
+ * would otherwise see the empty state while a nudge silently rendered underneath it, in a branch
+ * that never runs. Extracted here (rather than inlined in the page) so it stays unit-testable
+ * without mounting the heavy dashboard page.
+ */
+export function hasNoOpenItems(
+  openItemsTotal: number,
+  karenzCount: number,
+  unconfirmedBreakDays: number,
+): boolean {
+  return openItemsTotal === 0 && karenzCount === 0 && unconfirmedBreakDays === 0;
+}

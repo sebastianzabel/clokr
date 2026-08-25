@@ -33,6 +33,7 @@
   import {
     summarizeKarenzOverrun,
     karenzNudgeHref,
+    hasNoOpenItems,
     KARENZ_NUDGE_EMPTY,
     type KarenzOverrunResponse,
     type KarenzNudgeSummary,
@@ -218,6 +219,14 @@
   // Reiner Hinweis, keine Blockade — und ausdrücklich NICHT der § 9-BUrlG-Pfad
   // (Urlaubsgutschrift gibt es ausschließlich gegen ärztliches Zeugnis, R5/D-23).
   let karenzNudge = $state<KarenzNudgeSummary>(KARENZ_NUDGE_EMPTY);
+
+  // "Keine offenen Vorgänge" must only render when there is genuinely nothing to show —
+  // openItems.total (server-computed) has no knowledge of either client-side nudge rendered
+  // below it in the same list (this Karenz nudge, and the Phase-92 break-confirmation nudge).
+  // See hasNoOpenItems() in $lib/leave/karenz-nudge.ts for the rationale and its unit tests.
+  let showEmptyOpenItems = $derived(
+    hasNoOpenItems(openItems?.total ?? 0, karenzNudge.count, unconfirmedBreakDays),
+  );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   interface TodayEntry {
@@ -1441,7 +1450,7 @@
             {/snippet}
           </CardHeader>
           <div class="open-items-list">
-            {#if openItems.total === 0}
+            {#if showEmptyOpenItems}
               <p class="oi-empty">Keine offenen Vorgänge</p>
             {:else}
               {#if openItems.missingDays.length > 0}
