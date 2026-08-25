@@ -10,7 +10,11 @@
  *   D-02 — attestPresent stays a consequence-free display flag
  *   D-20 — the existing expiry-warning mechanism carries the notice duty (EuGH C-684/16)
  *   R3  — the audit entry states R3's exact required note text, verbatim (see Test below)
+ *   R5  — Karenztage (§ 5 EFZG) never affect the § 9 credit path (Phase 104-08, see the two
+ *         dedicated tests at the bottom of this file)
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
@@ -323,5 +327,87 @@ describe("§ 9 BUrlG legal invariants — Phase 104-06 Task 3", () => {
     expect(audit).not.toBeNull();
     const newValue = audit!.newValue as { note: string };
     expect(newValue.note).toBe("§ 9 BUrlG, nicht angerechnet");
+  });
+
+  // R5 (Owner-mandated, ROADMAP): Ein Tenant mit Karenz=3 darf nach zwei attestlosen Tagen
+  // KEINE Urlaubstage gutschreiben — das wäre rechtswidrig. § 5 EFZG regelt die
+  // Nachweispflicht, § 9 BUrlG die Anrechnung; sie sind unabhängig. Dies ist die ZWEITE von
+  // zwei Absicherungen; die erste ist die fehlende Import-Kante
+  // (utils/find-karenz-overrun-days.ts, D-23).
+  it("R5: Karenz=3 tenant with two attest-less days gets NO vacation credit", async () => {
+    await app.prisma.tenantConfig.update({
+      where: { tenantId: data.tenant.id },
+      data: { sickNoteRequiredAfterDays: 3 },
+    });
+
+    // Wed-Thu — exactly 2 calendar days, well inside the Karenz window (<=3), so no Attest is
+    // legally demandable yet. If Karenz and § 9 were ever wired together, this is precisely the
+    // scenario where a credit would wrongly fire.
+    const { sickId, creditId } = await vacAndSick(
+      ["2026-08-03", "2026-08-07"], // Mon-Fri vacation
+      ["2026-08-05", "2026-08-06"], // Wed-Thu sick, attestPresent: false (createRequest default)
+    );
+
+    const entitlementBefore = await app.prisma.leaveEntitlement.findFirstOrThrow({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year: 2026 },
+    });
+
+    // No confirm call is made — the point of R5 is that NOTHING credits vacation days
+    // automatically, regardless of the Karenz configuration.
+    const sickRow = await app.prisma.leaveRequest.findUniqueOrThrow({ where: { id: sickId } });
+    expect(sickRow.attestPresent).toBe(false);
+
+    const entitlementAfter = await app.prisma.leaveEntitlement.findFirstOrThrow({
+      where: { employeeId: data.employee.id, leaveTypeId: data.vacationType.id, year: 2026 },
+    });
+    expect(entitlementAfter.usedDays.toString()).toBe(entitlementBefore.usedDays.toString());
+
+    const credit = await app.prisma.section9Credit.findUniqueOrThrow({ where: { id: creditId } });
+    expect(credit.creditedDays).toBeNull();
+    expect(credit.status).toBe("AU_PENDING");
+
+    const confirmedAudit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SECTION9_CREDIT_CONFIRMED",
+        entity: "Section9Credit",
+        entityId: creditId,
+      },
+    });
+    expect(confirmedAudit).toBeNull();
+  });
+
+  // D-23 structural half: the R5 invariant is also enforced by construction — there must be no
+  // import edge, in EITHER direction, between the Karenz module and the § 9 credit path.
+  it("D-23: no import edge exists between the Karenz module and the § 9 credit path", () => {
+    const apiSrc = join(__dirname, "..");
+
+    const karenzSrc = readFileSync(join(apiSrc, "utils", "find-karenz-overrun-days.ts"), "utf-8");
+    expect(/^\s*import\s/m.test(karenzSrc)).toBe(false);
+
+    const section9DetectSrc = readFileSync(join(apiSrc, "utils", "section9-detect.ts"), "utf-8");
+    // Non-comment lines only — the module's own header docblock deliberately NAMES the
+    // Karenztage rule to document why it is never touched (same self-reference pattern as
+    // find-karenz-overrun-days.ts's own header). The invariant under test is that no CODE
+    // line imports it or reads the config field, not that the word never appears at all.
+    const section9DetectCodeLines = section9DetectSrc
+      .split("\n")
+      .filter((line) => !/^\s*(\*|\/\/)/.test(line));
+    const section9DetectCode = section9DetectCodeLines.join("\n");
+    expect(section9DetectCode).not.toContain("find-karenz-overrun-days");
+    expect(section9DetectCode).not.toContain("sickNoteRequiredAfterDays");
+    expect(section9DetectCode.toLowerCase()).not.toContain("karenz");
+
+    const leaveSrc = readFileSync(join(apiSrc, "routes", "leave.ts"), "utf-8");
+    const firstIdx = leaveSrc.indexOf('app.get("/section9');
+    const endMarker = leaveSrc.indexOf("async function autoCarryOver");
+    expect(firstIdx).toBeGreaterThan(-1);
+    expect(endMarker).toBeGreaterThan(firstIdx);
+    const section9Region = leaveSrc.slice(firstIdx, endMarker);
+    const section9RegionCode = section9Region
+      .split("\n")
+      .filter((line) => !/^\s*(\*|\/\/)/.test(line))
+      .join("\n");
+    expect(section9RegionCode).not.toContain("sickNoteRequiredAfterDays");
+    expect(section9RegionCode.toLowerCase()).not.toContain("karenz");
   });
 });

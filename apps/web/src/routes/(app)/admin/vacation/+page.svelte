@@ -824,16 +824,21 @@
           </label>
           <div class="inline-settings spaced-top-sm">
             <div class="form-group">
-              <label class="form-label" for="sick-note-days">AU-Pflicht nach (Tagen)</label>
+              <label class="form-label" for="sick-note-days">AU-Pflicht nach (Kalendertagen)</label>
               <input
                 id="sick-note-days"
                 type="number"
-                min="1"
-                max="30"
+                min="0"
+                max="3"
                 bind:value={sickNoteRequiredAfterDays}
                 class="form-input"
               />
-              <p class="form-hint">§ 5 EFZG — Standard: 3 Tage.</p>
+              <p class="form-hint">
+                § 5 Abs. 1 EFZG — „länger als drei Kalendertage". Standard: 3. 0 = ab dem ersten
+                Tag. Gilt nur für die Nachweis-Dokumentation. Auf die Urlaubsgutschrift bei
+                Krankheit im Urlaub (§ 9 BUrlG) hat dieser Wert keinen Einfluss — dort ist immer ein
+                ärztliches Zeugnis erforderlich.
+              </p>
             </div>
           </div>
         </div>

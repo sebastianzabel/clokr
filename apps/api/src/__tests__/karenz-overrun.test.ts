@@ -1,7 +1,7 @@
 /**
  * karenz-overrun.test.ts
  *
- * Phase 104 (R4 / D-21 / D-22 / D-23 / D-24) — the § 5 EFZG Karenztage detector.
+ * Phase 104 (R4 / R5 / D-21 / D-22 / D-23 / D-24) — the § 5 EFZG Karenztage detector.
  *
  * Test file structure:
  *  - "find-karenz-overrun-days — detector" describe: Tests 1-9 (Task 1) — pure funnel
@@ -9,7 +9,9 @@
  *  - "Monatsabschluss wiring" describe: Tests 1-7 (Task 2) — GET /close-month/status wiring,
  *    hint-only behaviour, auto-close non-interference, N+1 safety.
  *
- * The tenant config range (Task 3) is added to this file in a later commit.
+ *  - "tenant config range" describe: Tests 1-3 (Task 3) — the settings.ts 0-3 range + legacy
+ *    clamp on read.
+ *
  * R5's own explicitly-named test lives in section9-invariants.test.ts, NOT here (per the plan) —
  * this file covers the detector's mechanics, that file covers the phase's legal invariants.
  */
@@ -506,6 +508,76 @@ describe("Monatsabschluss wiring", () => {
         headers: { authorization: `Bearer ${fx.adminToken}` },
       });
       expect(res.statusCode).toBe(200);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+});
+
+// ── Task 3: tenant config range (settings.ts, D-22) ──────────────────────────
+
+describe("tenant config range — sickNoteRequiredAfterDays (D-22)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    await closeTestApp();
+  });
+
+  it("Test 1: accepts sickNoteRequiredAfterDays 0 and 3", async () => {
+    const fx = await seedKarenzFixture(app, "cfg1");
+    try {
+      for (const value of [0, 3]) {
+        const res = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings/work",
+          headers: { authorization: `Bearer ${fx.adminToken}` },
+          payload: { sickNoteRequiredAfterDays: value },
+        });
+        expect(res.statusCode).toBe(200);
+      }
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 2: rejects 4 and 30 with a 400", async () => {
+    const fx = await seedKarenzFixture(app, "cfg2");
+    try {
+      for (const value of [4, 30]) {
+        const res = await app.inject({
+          method: "PUT",
+          url: "/api/v1/settings/work",
+          headers: { authorization: `Bearer ${fx.adminToken}` },
+          payload: { sickNoteRequiredAfterDays: value },
+        });
+        expect(res.statusCode).toBe(400);
+      }
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 3: a legacy value above 3 still loads unmigrated and is clamped to 3 by normalizeKarenzDays", async () => {
+    const fx = await seedKarenzFixture(app, "cfg3");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 15 },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${fx.adminToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().sickNoteRequiredAfterDays).toBe(15); // read-side only, no forced write
+
+      expect(normalizeKarenzDays(res.json().sickNoteRequiredAfterDays)).toBe(3);
     } finally {
       await cleanupTestData(app, fx.tenant.id);
     }

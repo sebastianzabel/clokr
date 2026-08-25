@@ -70,7 +70,12 @@ const tenantConfigSchema = z
     vacationMaxAdvanceMonths: z.number().int().min(0).max(24).optional(),
     halfDayAllowed: z.boolean().optional(),
     sickSelfReport: z.boolean().optional(),
-    sickNoteRequiredAfterDays: z.number().int().min(1).max(30).optional(),
+    // Phase 104 (D-22 / R4): § 5 Abs. 1 EFZG spricht wörtlich von "länger als drei
+    // Kalendertage" — mehr als 3 ist kein zulässiger Schwellwert. Bereich daher 0-3
+    // (vorher 1-30). 0 = jeder Krankheitstag ist nachweispflichtig.
+    // Bestandszeilen mit Altwerten > 3 werden NICHT migriert (Revisionssicherheit) —
+    // sie werden beim Lesen von normalizeKarenzDays() auf 3 geklammert.
+    sickNoteRequiredAfterDays: z.number().int().min(0).max(3).optional(),
     // Part-time vacation
     autoCalcPartTimeVacation: z.boolean().optional(),
     fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
