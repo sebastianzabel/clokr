@@ -59,8 +59,11 @@ baseline has been migrated onto the Phase 99 `OpeningBalance` model — whicheve
 phase deliberately does not build it): a `cron.schedule(...)` task registered in an `onReady`
 hook, wrapped in `withAdvisoryLock(app.prisma, ADVISORY_LOCK_KEYS.<NEW_KEY>, ...)`, following the
 existing pattern in `apps/api/src/plugins/attendance-checker.ts`, fanning out findings via
-`app.notify()` to all tenant ADMINs (left unmapped in `EMAIL_TYPE_MAP` for a first cut, i.e.
-in-app only). Explicitly OUT of scope for Phase 98.
+`app.notify()` to all tenant ADMINs. Under the fail-closed email gate
+(`apps/api/src/utils/notification-email-policy.ts`), a type with no registry entry is not
+emailed at all — the "first cut" would need an explicit `never` (or `toggle`/`always`)
+entry there before it could ever reach SMTP, not merely an absent mapping. Explicitly OUT
+of scope for Phase 98.
 
 **In-product surfacing** (Admin → Audit & Log) is also deferred, and it raises a scope question
 worth writing down: persisting the audit's own findings as `AuditLog` rows would be the _only_

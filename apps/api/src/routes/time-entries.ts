@@ -2232,7 +2232,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       // 0-ing the break changes net worked time — every other break-mutating path recomputes.
       await updateOvertimeAccount(app, entry.employeeId);
 
-      // In-app manager alert (Phase 91: in-app only; EMAIL_TYPE_MAP entry deferred to Phase 92).
+      // Manager alert: also emails via the toggle field emailOnMissingEntries — see the
+      // explicit BREAK_COMPLIANCE_ALERT policy entry in
+      // apps/api/src/utils/notification-email-policy.ts (quick-260825-k3g).
       const managers = await app.prisma.employee.findMany({
         where: {
           tenantId: entry.employee.tenantId,
