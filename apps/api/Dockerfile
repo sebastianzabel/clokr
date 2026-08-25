@@ -34,9 +34,19 @@ COPY packages/db/ ./packages/db/
 COPY apps/api/ ./apps/api/
 
 # Generate Prisma client — ensure @prisma/client is resolvable from schema location
+#
+# `pnpm --filter @clokr/db exec prisma generate`, never a bare `npx` invocation: npx's
+# resolution can't see pnpm's isolated node_modules, so it silently fetches an arbitrary
+# version from the npm registry instead of the lockfile-pinned CLI. That is exactly what
+# broke this build (npm resolved prisma@8.0.0-rc.10, a Prisma 8 RC, against this project's
+# pinned Prisma 7.8.0 schema, and exited 2). `pnpm --filter @clokr/db exec` runs the
+# lockfile-pinned CLI already installed by `pnpm install --frozen-lockfile` above and never
+# touches the registry — the same invocation `.github/workflows/ci.yml` and CLAUDE.md use.
+# Do not "simplify" this back to npx; it silently reopens a supply-chain hole in the
+# production image.
 RUN mkdir -p /app/packages/db/node_modules/@prisma && \
     ln -sf /app/node_modules/.pnpm/node_modules/@prisma/client /app/packages/db/node_modules/@prisma/client && \
-    npx prisma generate --schema=packages/db/prisma/schema.prisma
+    pnpm --filter @clokr/db exec prisma generate
 
 # Build API
 RUN pnpm --filter @clokr/api build
