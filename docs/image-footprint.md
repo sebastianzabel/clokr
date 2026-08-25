@@ -557,3 +557,110 @@ not the size reduction.** The size numbers are real and worth recording (especia
 but on the metric this phase's own stated goal cares about most, it is the `.trivyignore` file that
 changed the most, and changed most honestly: not just shorter, but no longer resting on a claim
 that quietly stopped being true.
+
+---
+
+## IMG-05 — CVE-2026-73566 (node-tar, HIGH) Disposition (quick-260825-qx4)
+
+Last gate before release v1.9.18. Trivy 0.74.0, images built locally
+(`clokr-api:qx4-test`, `clokr-web:qx4-test`) from the Dockerfiles as modified by this quick task,
+2026-08-25.
+
+### The CVE
+
+`CVE-2026-73566` / `GHSA-r292-9mhp-454m` — uncontrolled recursion in `tar`'s `mapHas`/
+`filesFilter` allows an uncatchable stack-overflow `RangeError` DoS when `tar.t()`/`tar.x()` is
+called with a non-empty member-selection list against a crafted GNU-L/PAX-x long-path header.
+Severity high, `github_reviewed_at` 2026-07-24 (reviewed, not a candidate advisory), single clean
+range: vulnerable `<= 7.5.20`, `first_patched_version` `7.5.21` — confirmed directly from
+`api.github.com/advisories?cve_id=CVE-2026-73566`, not from Trivy's own title text.
+
+### Before this task (both images)
+
+Two independent copies of the vulnerable `tar@7.5.19` existed:
+
+| Copy                                                                                       | `clokr-web`                                | `clokr-api`       | Fix available?                                                  |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------ | ----------------- | --------------------------------------------------------------- |
+| `usr/local/lib/node_modules/npm/node_modules/tar` (npm's own bundle)                       | present, `7.5.19`                          | present, `7.5.19` | **Yes** — but only by removing npm, not updating it (see below) |
+| `root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/tar` (pnpm's own vendor copy) | absent (web never activates corepack/pnpm) | present, `7.5.19` | **No** on the pnpm 10.x line                                    |
+
+`npm install -g npm@latest` (both Dockerfiles, pre-existing, comment: "fixes bundled tar/
+minimatch CVEs") no longer achieves that for this CVE: reproduced directly — a fresh
+`node:24-alpine` container running `npm install -g npm@latest` resolves to npm `12.0.2`, which
+still bundles `tar@7.5.19`.
+
+### Fix-availability check, both directions
+
+- **npm**: not fixable by updating (`npm@latest` = `12.0.2`, still `tar@7.5.19`, confirmed above).
+  Fixable by **removal** — npm/npx are never invoked at runtime in either image (`apps/web`:
+  `CMD ["node", "apps/web/build/index.js"]`; `apps/api`: `docker-entrypoint.sh` has zero npm/npx
+  calls). Confirmed corepack has no dependency on npm (`corepack`'s own `package.json` lists none)
+  and `corepack enable && corepack prepare pnpm@10.34.5 --activate` succeeds unmodified in an
+  npm-free `node:24-alpine` container (reproduced directly).
+- **pnpm**: not fixable on the 10.x line. Registry check (`npm view pnpm versions`, semver-sorted,
+  not string-sorted — a naive string sort put `10.9.0` after `10.34.5`, which is wrong):
+  `10.34.5` is the newest published `10.x` release; `11.24.0` is the newest published `11.x`
+  release. Downloaded both tarballs directly (`npm pack pnpm@10.34.5` / `npm pack pnpm@11.24.0`)
+  and inspected `dist/node_modules/tar/package.json` in each: `10.34.5` bundles `tar@7.5.19`
+  (vulnerable), `11.24.0` bundles `tar@7.5.22` (exceeds the `7.5.21` threshold — fixed). Only a
+  pnpm **major** bump closes this on pnpm's side; out of scope here for the same reason as the
+  existing `CVE-2026-55697` entry (D-05, Phase 102): a pnpm 11 bump would disturb the
+  pnpm@10-specific Prisma hoisting in `apps/api/Dockerfile`'s runtime stage.
+
+### Runtime-exploitability check for the surviving pnpm copy (API image only)
+
+The vulnerable code path requires `tar.t()`/`tar.x()` to run with a non-empty member-selection
+list against attacker-supplied archive bytes — i.e. pnpm's package-install/extraction machinery
+processing an untrusted tarball. Checked directly against `clokr-api:qx4-test`, not assumed:
+
+1. `docker-entrypoint.sh` contains zero pnpm invocations of any kind (only a comment mentioning
+   "pnpm@10 hoists to root").
+2. The only pnpm invocation anywhere at runtime is `pnpm tsx scripts/anonymize-dump.ts`
+   (`charts/clokr-app/templates/cronjob-anonymizer.yaml:51`) — a **run** command against the
+   image's own already-installed, lockfile-frozen workspace, not an install/extract command
+   against an external tarball.
+3. **Dynamic verification** (not just static reasoning): attached a Node `Module._resolveFilename`
+   hook via `NODE_OPTIONS=--require <hook>.cjs` to a real `pnpm tsx --version` invocation inside
+   `clokr-api:qx4-test`, run from `/app/apps/api` (the exact working directory the CronJob uses).
+   The hook logged **842 real module-resolution calls** during that run — confirming the hook was
+   genuinely active and observing real work, not silently inert — and **zero** of them referenced
+   `tar` in any form (`grep -i tar` on the full log: no matches). `pnpm tsx --version` printed
+   correctly (`tsx v4.23.1`, `node v24.18.0`), confirming the command itself succeeded during the
+   same run the hook observed.
+
+### `.trivyignore` disposition
+
+| Verdict                      | Detail                                                                                                                                                                                             |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| npm's copy (both images)     | **REMOVED** (Task 1 of this quick task) — npm and npx deleted entirely from both runtime stages; not an ignore-file exception, the component is gone                                               |
+| pnpm's copy (API image only) | **KEEP, new entry** — `CVE-2026-73566` added to `.trivyignore`, scoped explicitly to the corepack/pnpm vendor copy only, with the fix-unavailability and runtime-non-exploitability evidence above |
+
+### Post-fix Trivy scan, both images, gated (the CI gate's own flags)
+
+```bash
+trivy image --severity CRITICAL,HIGH --scanners vuln --ignorefile .trivyignore --exit-code 1 <image>
+```
+
+| Image                | Before this task (CRITICAL+HIGH)                                                                                                                                 | After Task 1 (npm removed, before `.trivyignore` entry)                                                             | After Task 2 (`.trivyignore` entry added) | Exit code |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --------- |
+| `clokr-web:qx4-test` | 0 (npm's tar copy was below the CI gate's radar only because Trivy silently deduped identical findings — the underlying `tar@7.5.19` was present and vulnerable) | **0**                                                                                                               | **0**                                     | 0         |
+| `clokr-api:qx4-test` | 0 (same caveat)                                                                                                                                                  | **1** (`CVE-2026-73566`, `tar`, `7.5.19`, the pnpm corepack copy — npm's copy no longer present to compare against) | **0**                                     | 0         |
+
+Full-severity sanity check (scanner-is-genuinely-running proof, same method as IMG-04): an
+unfiltered scan (`trivy image --scanners vuln`, no severity filter) still returns non-zero findings
+at MEDIUM/LOW on both images post-fix, confirming the 0/0 CRITICAL+HIGH result is real and not a
+broken scan.
+
+### Functional proof the removal didn't break anything
+
+- **web**: `clokr-web:qx4-test` started as a container; `GET /login` returned HTTP 200; server log
+  showed `Listening on http://0.0.0.0:3000`.
+- **api**: `clokr-api:qx4-test` started with a deliberately unreachable `DATABASE_URL`; the
+  entrypoint script ran its normal `Waiting for database...` retry loop without crashing — proving
+  the process itself (Node, `su-exec`, the entrypoint shell script) boots correctly with npm gone.
+  `pnpm tsx --version` (the exact command shape the anonymizer CronJob uses, from the exact
+  working directory it uses) succeeded: `tsx v4.23.1` / `node v24.18.0`.
+- **both images**: `command -v npm` and `command -v npx` return nothing (confirmed empty) inside
+  running containers from both images.
+- Neither the running dev stack (`clokr-api-1`, `clokr-web-1`) nor its images were touched — all
+  builds and scans used distinct `qx4-test` tags, removed after this task completed.
