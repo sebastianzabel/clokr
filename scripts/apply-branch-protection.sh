@@ -30,7 +30,13 @@ REPO="${CLOKR_REPO:-sebastianzabel/clokr}"
 # is reopened.
 BRANCHES=(main)
 
-# The merge-blocking check set. Job names come from .github/workflows/ci.yml.
+# The merge-blocking check set. These are CHECK RUN names as GitHub reports
+# them, which is NOT always the job id in ci.yml: a matrix job reports one
+# check per matrix leg, named with the whole `include` entry. `docker` is a
+# matrix job, so no check named plain `docker` is ever produced — requiring
+# it would leave every PR pending forever. The runbook's payload asked for
+# exactly that, which is the likeliest reason main's list was found empty.
+# check_names_exist() below refuses to apply a context nobody reports.
 #
 # Deliberately NOT included:
 #   lighthouse, axe-scan     — run with continue-on-error by design; promotion
@@ -42,7 +48,13 @@ BRANCHES=(main)
 #                              the baselines are arm64-local vs amd64-CI and it
 #                              fails for reasons unrelated to the change under
 #                              review. Add it here once the baselines are fixed.
-REQUIRED_CHECKS=(test codeql secret-scan docker)
+REQUIRED_CHECKS=(
+  test
+  codeql
+  secret-scan
+  "docker (clokr-api, ./apps/api/Dockerfile, .)"
+  "docker (clokr-web, ./apps/web/Dockerfile, .)"
+)
 
 MODE="check"
 case "${1:-}" in
@@ -66,11 +78,33 @@ fetch_protection() {
   gh api "/repos/${REPO}/branches/${branch}/protection" 2>/dev/null || echo "null"
 }
 
+# Check-run names GitHub actually reported, unioned across several recent PRs.
+#
+# One commit is not a safe reference. A matrix job reports one check per leg
+# when it runs ("docker (clokr-api, ...)") but a single check under the bare
+# job name when it is skipped ("docker") — so a PR whose `test` failed shows
+# only the skipped form, and a PR that went green shows only the expanded
+# form. Sampling one commit would reject whichever set it happened to miss.
+observed_check_names() {
+  local shas
+  shas="$(gh pr list --state all --limit "${SAMPLE_PRS:-8}" --json headRefOid \
+    --jq '.[].headRefOid' 2>/dev/null || true)"
+  [ -z "$shas" ] && shas="$(gh api "/repos/${REPO}/commits/main" --jq .sha 2>/dev/null || true)"
+  [ -z "$shas" ] && return 0
+  while IFS= read -r sha; do
+    [ -z "$sha" ] && continue
+    gh api "/repos/${REPO}/commits/${sha}/check-runs" --paginate \
+      --jq '.check_runs[].name' 2>/dev/null || true
+  done <<<"$shas" | sort -u
+}
+
 # ── Check mode ────────────────────────────────────────────────────────
 
 drift=0
 
-export WANT_CHECKS="${REQUIRED_CHECKS[*]}"
+# Newline-delimited: check names contain spaces and commas (matrix legs).
+WANT_CHECKS="$(printf '%s\n' "${REQUIRED_CHECKS[@]}")"
+export WANT_CHECKS
 
 for branch in "${BRANCHES[@]}"; do
   current="$(fetch_protection "$branch")"
@@ -79,7 +113,7 @@ for branch in "${BRANCHES[@]}"; do
     printf '%s' "$current" | BRANCH="$branch" python3 -c '
 import json, sys, os
 
-want = os.environ["WANT_CHECKS"].split()
+want = [c for c in os.environ["WANT_CHECKS"].splitlines() if c.strip()]
 branch = os.environ["BRANCH"]
 raw = sys.stdin.read().strip()
 
@@ -142,6 +176,34 @@ fi
 # first and carries the non-check settings forward unchanged. This script
 # only ever asserts the required-check set — it never decides review counts
 # or admin enforcement on your behalf.
+#
+# Guard first: a required context that no workflow reports never resolves, so
+# the PR waits forever and the branch is effectively frozen. That failure mode
+# is invisible until someone opens the next PR, so refuse it up front.
+
+echo "Verifying every required context is actually reported ..."
+observed="$(observed_check_names)"
+if [ -z "$observed" ]; then
+  echo "  ! could not read any check runs — skipping verification" >&2
+else
+  unknown=0
+  for check in "${REQUIRED_CHECKS[@]}"; do
+    if ! printf '%s\n' "$observed" | grep -qxF "$check"; then
+      echo "  ✗ no workflow reports a check named: $check" >&2
+      unknown=1
+    fi
+  done
+  if [ "$unknown" -ne 0 ]; then
+    echo >&2
+    echo "  Contexts observed on the reference commit:" >&2
+    printf '%s\n' "$observed" | sed 's/^/    /' >&2
+    echo >&2
+    echo "  Refusing to apply. A required check that is never reported blocks" >&2
+    echo "  every pull request indefinitely. Fix REQUIRED_CHECKS in $0." >&2
+    exit 1
+  fi
+  echo "  all ${#REQUIRED_CHECKS[@]} contexts confirmed"
+fi
 
 echo
 for branch in "${BRANCHES[@]}"; do
@@ -151,7 +213,7 @@ for branch in "${BRANCHES[@]}"; do
     printf '%s' "$current" | python3 -c '
 import json, sys, os
 
-want = os.environ["WANT_CHECKS"].split()
+want = [c for c in os.environ["WANT_CHECKS"].splitlines() if c.strip()]
 raw = sys.stdin.read().strip()
 
 try:
