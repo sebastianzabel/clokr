@@ -21,7 +21,14 @@ set -euo pipefail
 REPO="${CLOKR_REPO:-sebastianzabel/clokr}"
 
 # Branches that carry releases and therefore must be protected.
-BRANCHES=(main release/1.9.x)
+#
+# `main` only: the 1.9.x patch line is retired. Development and tagging both
+# happen on main now (see docs/release-process.md). release/1.9.x is frozen
+# history — its release tags are independent objects and survive the branch,
+# and int pins a tag rather than tracking the branch, so nothing depends on
+# it staying protected. Re-add a branch here the moment a maintenance line
+# is reopened.
+BRANCHES=(main)
 
 # The merge-blocking check set. Job names come from .github/workflows/ci.yml.
 #

@@ -10,10 +10,11 @@ Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 > ./scripts/apply-branch-protection.sh --apply    # restore the intended state
 > ```
 >
-> The script covers `main` **and** `release/1.9.x`, asserts only the required-check set,
-> and carries every other protection setting forward unchanged. Prefer it over the raw
-> `gh api` calls below — those are kept for reference and for recovery when `gh` behaves
-> unexpectedly, but the check list in the script is the one that is actually verified.
+> The script covers `main` — the only protected branch now that the 1.9.x patch line is
+> retired — asserts only the required-check set, and carries every other protection
+> setting forward unchanged. Prefer it over the raw `gh api` calls below: those are kept
+> for reference and for recovery when `gh` behaves unexpectedly, but the check list in
+> the script is the one that is actually verified.
 >
 > **Why this exists:** on 2026-08-26 an audit found `main` with an _empty_ required-check
 > list and `release/1.9.x` with _no protection at all_, while this document still claimed
@@ -23,7 +24,7 @@ Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 
 This runbook documents the operational `gh api` commands for applying, auditing, and recovering from drift in `main` branch protection. Linked from `CLAUDE.md` § GSD Workflow Enforcement and from `docs/release-process.md`.
 
-Branch protection is now also relevant for `release/1.9.x` — the patch line (1.9.x) branches and tags there (see `docs/release-process.md`). The script applies to both; if you use the raw `gh api` commands instead, substitute the branch name.
+`release/1.9.x` is **retired** and no longer protected. It was found completely unprotected in the 2026-08-26 audit, which is moot now that it is frozen: its release tags are independent git objects that outlive the branch, and int pins a tag rather than tracking the branch. If a maintenance line is ever reopened, add it to `BRANCHES` in the script rather than protecting it by hand.
 
 ## Required checks (Phase 70 baseline)
 
