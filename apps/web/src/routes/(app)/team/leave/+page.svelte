@@ -222,21 +222,15 @@
     section9ConfirmCase = null;
   }
 
-  // D-26: the codebase's established raw-fetch upload pattern (settings/+page.svelte
-  // uploadAvatar) — `api.post` always JSON.stringifies its body and cannot carry
-  // multipart/form-data.
+  // D-26: `api.post` always JSON.stringifies its body and cannot carry multipart/form-data,
+  // so this goes through `api.upload` — which, unlike the previous raw fetch (Phase 104
+  // review IN-06), shares the client's 401-refresh-and-retry. That matters here more than
+  // elsewhere: the upload runs BEFORE the confirm call, so an expired access token used to
+  // abort the whole "AU liegt vor" flow with "Upload fehlgeschlagen (401)".
   async function uploadSection9Document(creditId: string, file: File): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
-    const res = await fetch(`/api/v1/section9-documents/${creditId}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${$authStore.accessToken}` },
-      body: formData,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(body?.error ?? `Upload fehlgeschlagen (${res.status})`);
-    }
+    await api.upload(`/section9-documents/${creditId}`, formData);
   }
 
   async function submitSection9Confirm() {
