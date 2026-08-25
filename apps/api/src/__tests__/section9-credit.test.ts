@@ -891,8 +891,12 @@ describe("confirm — Phase 104-06 Task 1", () => {
       },
     });
     expect(carryRow.carryOverReason).toBe("ILLNESS");
+    // Phase 104 review WR-09: the § 9 path now builds this deadline in UTC (Date.UTC), so the
+    // expectation is pinned in UTC too. Previously both sides used the local-time constructor,
+    // which is identical only because the containers run TZ=UTC — the assertion silently
+    // depended on the runner's timezone. 15 Monate nach Ende des Ursprungsjahres 2024.
     expect(carryRow.carryOverDeadline?.toISOString()).toBe(
-      new Date(2026, 2, 31, 23, 59, 59).toISOString(),
+      new Date(Date.UTC(2026, 2, 31, 23, 59, 59)).toISOString(),
     );
     expect(carryRow.carryOverNote).toContain("§ 9 BUrlG");
     expect(carryRow.carryOverNote).toContain("C-214/10");

@@ -2707,9 +2707,15 @@ export async function leaveRoutes(app: FastifyInstance) {
       // reverseVacationDays IGNORES totalDays in its cross-year branch and recomputes it with
       // halfDay=false. A half-day request whose credited range crosses a year boundary would
       // therefore be over-booked. Refuse loudly instead of mis-booking silently.
+      // Phase 104 review (WR-09): UTC accessors throughout the § 9 path. Every
+      // Section9Credit date column is @db.Date (UTC midnight) and the entitlement endpoint
+      // attributes credits to a year with getUTCFullYear(); using the LOCAL accessors here
+      // meant a 1 January credit would be attributed to the PREVIOUS year on any host with a
+      // negative UTC offset — the movement line would vanish from the entitlement row it was
+      // booked against, and the ILLNESS deadline would land on the wrong year's row.
       if (
         credit.vacationRequest.halfDay &&
-        credited.start.getFullYear() !== credited.end.getFullYear()
+        credited.start.getUTCFullYear() !== credited.end.getUTCFullYear()
       ) {
         return reply.code(400).send({
           error:
@@ -2752,7 +2758,7 @@ export async function leaveRoutes(app: FastifyInstance) {
         // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
         // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
         // diese Frist bei späteren Buchungen vor stillem Überschreiben.
-        const originYear = credited.start.getFullYear();
+        const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
         const carryRow = await tx.leaveEntitlement.findUnique({
           where: {
             employeeId_leaveTypeId_year: {
@@ -2769,7 +2775,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             data: {
               carryOverReason: "ILLNESS",
               // 15 Monate nach Ende des Ursprungsjahres = 31.03. des Jahres originYear + 2
-              carryOverDeadline: new Date(originYear + 2, 2, 31, 23, 59, 59),
+              carryOverDeadline: new Date(Date.UTC(originYear + 2, 2, 31, 23, 59, 59)),
               carryOverNote:
                 `§ 9 BUrlG: ${creditedDays} Tag(e) wegen Krankheit im Urlaub gutgeschrieben ` +
                 `(${credited.start.toISOString().split("T")[0]}–${credited.end.toISOString().split("T")[0]}). ` +
@@ -3159,8 +3165,13 @@ async function deductVacationDays(
   holidays: Set<string>,
   tenantId: string,
 ): Promise<void> {
-  const year1 = startDate.getFullYear();
-  const year2 = endDate.getFullYear();
+  // Phase 104 review (WR-09): UTC year attribution. LeaveRequest.startDate/endDate are
+  // @db.Date (UTC midnight) and the entitlement endpoint reads years with getUTCFullYear();
+  // the local accessors put a 1 January booking on the previous year's entitlement row on any
+  // host with a negative UTC offset. Changed together with reverseVacationDays() below so the
+  // two stay exactly symmetric — booking and un-booking must never disagree on the year.
+  const year1 = startDate.getUTCFullYear();
+  const year2 = endDate.getUTCFullYear();
   const isCrossYear = year1 !== year2;
 
   if (isCrossYear) {
@@ -3216,8 +3227,9 @@ async function reverseVacationDays(
   holidays: Set<string>,
   tenantId: string,
 ): Promise<void> {
-  const year1 = startDate.getFullYear();
-  const year2 = endDate.getFullYear();
+  // WR-09: UTC year attribution, symmetric with deductVacationDays() above.
+  const year1 = startDate.getUTCFullYear();
+  const year2 = endDate.getUTCFullYear();
   const isCrossYear = year1 !== year2;
 
   if (isCrossYear) {
