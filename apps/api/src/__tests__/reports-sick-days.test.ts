@@ -512,6 +512,71 @@ describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
     expect(body.section9Note).toBeUndefined();
   });
 
+  // Phase 104 code review WR-02: the subtraction from sickDaysWithoutAttest was clamped
+  // but the addition to sickDaysWithAttest was not. When the Krankmeldung already carries
+  // attestPresent (set independently via PATCH /requests/:id/attest, which D-02 keeps
+  // orthogonal to § 9), its days were counted by the sickLeaveRequests loop AND added
+  // again by the § 9 shift — a 2-day sickness reported 4 sick days in the legal
+  // Arbeitszeitnachweis.
+  it("Test 3 (WR-02): a § 9 confirm on a Krankmeldung that ALREADY has attestPresent does not inflate sickDays", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2026-07-06", // Monday
+      endDate: "2026-07-10", // Friday
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2026-07-08", // Wednesday
+      endDate: "2026-07-09", // Thursday — overlaps the vacation
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    // The pre-existing, § 9-independent attest toggle (D-02) covering BOTH sick days.
+    const attestRes = await app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${sickId}/attest`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: {
+        attestPresent: true,
+        attestValidFrom: "2026-07-08",
+        attestValidTo: "2026-07-09",
+      },
+    });
+    expect(attestRes.statusCode).toBe(200);
+
+    // Baseline BEFORE the § 9 confirm: both days already count as "mit Attest".
+    const beforeConfirm = await monthlyRow(2026, 7);
+    expect(beforeConfirm.row!.sickDaysWithAttest).toBe(2);
+    expect(beforeConfirm.row!.sickDaysWithoutAttest).toBe(0);
+    expect(beforeConfirm.row!.sickDays).toBe(2);
+
+    const credit = await creditFor(sickId);
+    const confirmRes = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-07-08",
+      attestValidTo: "2026-07-09",
+      reason: "AU für Mi/Do — Attest war am Antrag bereits vermerkt",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+
+    const { row } = await monthlyRow(2026, 7);
+    expect(row).toBeDefined();
+    // The sickness is 2 days and stays 2 days — the § 9 shift must not add them twice.
+    expect(row!.sickDaysWithAttest).toBe(2);
+    expect(row!.sickDaysWithoutAttest).toBe(0);
+    expect(row!.sickDays).toBe(2);
+    expect(row!.sickDays).toBe(row!.sickDaysWithAttest + row!.sickDaysWithoutAttest);
+    // The Urlaub side of the shift is unaffected by WR-02: 5-day vacation minus 2 credited.
+    expect(row!.vacationDays).toBe(3);
+    expect(row!.section9DaysThisMonth).toBe(2);
+  });
+
   it("Test 7: the report response carries an explanatory § 9 note only when a row is actually affected", async () => {
     // Re-uses Test 1's now-CONFIRMED credit (May 2026) — querying the SAME employee's
     // June report (Test 2's AU_PENDING month) must NOT carry the note.

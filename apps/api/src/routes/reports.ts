@@ -402,15 +402,22 @@ function computeEmployeeSummary(
   // days OUT of sickDaysWithoutAttest first, a credited day would count TWICE in the
   // sick total (once from the sickLeaveRequests loop above, once here) and break the
   // "sickDays = sickDaysWithAttest + sickDaysWithoutAttest" invariant this file's own
-  // tests assert. clamp to 0: if the request's attestPresent was already true (an
-  // independent, pre-existing display toggle — D-02), those days are already in
-  // sickDaysWithAttest and must not be subtracted a second time.
+  // tests assert.
+  //
+  // [Phase 104 review WR-02] The subtraction was clamped but the addition was not, so a
+  // Krankmeldung that ALREADY carries attestPresent (set independently via
+  // PATCH /requests/:id/attest, which D-02 keeps orthogonal to § 9) had its days counted
+  // in sickDaysWithAttest by the loop above AND added again here — a 2-day sickness with a
+  // full attest and both days § 9-confirmed reported sickDays = 4. Only days that were
+  // actually IN the without-attest bucket may be shifted, so the two buckets move as one
+  // transfer and their sum is invariant.
   const section9DaysThisMonth = section9Credits.reduce(
     (s, c) => s + daysInRange(c.creditedStart, c.creditedEnd),
     0,
   );
-  sickDaysWithoutAttest = Math.max(0, sickDaysWithoutAttest - section9DaysThisMonth);
-  sickDaysWithAttest += section9DaysThisMonth;
+  const section9DaysShiftedToAttest = Math.min(sickDaysWithoutAttest, section9DaysThisMonth);
+  sickDaysWithoutAttest -= section9DaysShiftedToAttest;
+  sickDaysWithAttest += section9DaysShiftedToAttest;
   vacationDays = Math.max(0, vacationDays - section9DaysThisMonth);
   totalAbsenceDays = Math.max(0, totalAbsenceDays - section9DaysThisMonth);
 
