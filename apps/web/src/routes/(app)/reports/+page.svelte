@@ -130,6 +130,11 @@
   let companyPdfRole = $state<"all" | "EMPLOYEE" | "MANAGER">("all");
   let companyPdfLoading = $state(false);
   let companyPdfError = $state("");
+  // § 9-Hinweis (Phase 104, D-30) — erklärt, warum im gewählten Monat Tage von Urlaub nach
+  // Krankheit gewandert sind. Kommt vom Server (GET /reports/monthly's section9Note field),
+  // wird NICHT clientseitig hergeleitet, und ist nur gesetzt, wenn der Monat tatsächlich
+  // bestätigte § 9-Tage trägt.
+  let companyPdfSection9Note = $state<string | null>(null);
 
   const months = [
     "Januar",
@@ -401,6 +406,14 @@
     if (isManager) void loadCarryoverAtRisk();
   });
 
+  // Der Monatsbericht-Hinweis hängt an der EIGENEN Periodenauswahl der Karte,
+  // nicht an selectedMonth/selectedYear der Team-Übersicht.
+  $effect(() => {
+    const _m = companyPdfMonth;
+    const _y = companyPdfYear;
+    if (isManager) void loadCompanyMonthlySection9Note();
+  });
+
   // ── onMount ────────────────────────────────────────────────────────────────
 
   onMount(async () => {
@@ -658,6 +671,19 @@
       leaveError = e instanceof Error ? e.message : "PDF-Download fehlgeschlagen";
     } finally {
       leaveLoading = false;
+    }
+  }
+
+  async function loadCompanyMonthlySection9Note() {
+    try {
+      const res = await api.get<{ section9Note?: string }>(
+        `/reports/monthly?year=${companyPdfYear}&month=${companyPdfMonth}`,
+      );
+      companyPdfSection9Note = res.section9Note ?? null;
+    } catch {
+      // Fail-safe: der Hinweis ist erklärend, nie blockierend — bei einem Fehler zeigen wir
+      // nichts an, statt eine Fehlermeldung in eine reine Downloadkarte zu schreiben.
+      companyPdfSection9Note = null;
     }
   }
 
@@ -1025,6 +1051,13 @@
           PDF herunterladen
         {/if}
       </button>
+
+      {#if companyPdfSection9Note}
+        <div class="alert alert-info" data-testid="report-section9-note">
+          <span aria-hidden="true">§</span>
+          <span>{companyPdfSection9Note}</span>
+        </div>
+      {/if}
 
       {#if companyPdfError}
         <div class="alert alert-error" role="alert">
