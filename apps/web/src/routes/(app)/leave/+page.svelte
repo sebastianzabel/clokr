@@ -20,6 +20,11 @@
     type CollisionSummary,
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
+  import {
+    mapVacationBalance,
+    type VacationBalance,
+    type VacationEntitlementRow,
+  } from "$lib/leave/vacation-balance";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -126,20 +131,10 @@
   let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
   // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
   // rendered verbatim (server-authored label), never re-derived on the client.
-  interface Section9Movement {
-    creditId: string;
-    days: number;
-    from: string | null;
-    to: string | null;
-    label: string;
-  }
-  let vacationBalance = $state<{
-    total: number;
-    used: number;
-    carryOver: number;
-    carryOverDeadline: string | null;
-    section9Movements: Section9Movement[];
-  } | null>(null);
+  // Types + the mapper live in $lib/leave/vacation-balance.ts (dev-pass fix, see that
+  // file's doc comment) so every call site maps `section9Movements` the same way and
+  // the mapping is unit-testable without mounting this page.
+  let vacationBalance = $state<VacationBalance | null>(null);
 
   // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
   let hoursPreview: number | null = $state(null);
@@ -466,30 +461,11 @@
     try {
       const year = new Date().getFullYear();
       const [entitlements, empData] = await Promise.all([
-        api.get<
-          Array<{
-            typeCode: string;
-            leaveType: { name: string };
-            totalDays: number;
-            usedDays: number;
-            carriedOverDays: number;
-            effectiveCarryOverDays: number;
-            carryOverDeadline: string | null;
-            section9Movements?: Section9Movement[];
-          }>
-        >(`/leave/entitlements/${userId}?year=${year}`),
+        api.get<VacationEntitlementRow[]>(`/leave/entitlements/${userId}?year=${year}`),
         api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
       ]);
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
-      vacationBalance = vac
-        ? {
-            total: Number(vac.totalDays),
-            used: Number(vac.usedDays),
-            carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
-            carryOverDeadline: vac.carryOverDeadline,
-            section9Movements: vac.section9Movements ?? [],
-          }
-        : null;
+      vacationBalance = mapVacationBalance(vac);
       viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
@@ -611,26 +587,11 @@
         const year = new Date().getFullYear();
         const userId = $authStore.user?.employeeId;
         if (!userId) return;
-        const entitlements = await api.get<
-          Array<{
-            typeCode: string;
-            leaveType: { name: string };
-            totalDays: number;
-            usedDays: number;
-            carriedOverDays: number;
-            effectiveCarryOverDays: number;
-            carryOverDeadline: string | null;
-          }>
-        >(`/leave/entitlements/${userId}?year=${year}`);
+        const entitlements = await api.get<VacationEntitlementRow[]>(
+          `/leave/entitlements/${userId}?year=${year}`,
+        );
         const vac = entitlements.find((e) => e.typeCode === "VACATION");
-        vacationBalance = vac
-          ? {
-              total: Number(vac.totalDays),
-              used: Number(vac.usedDays),
-              carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
-              carryOverDeadline: vac.carryOverDeadline,
-            }
-          : null;
+        vacationBalance = mapVacationBalance(vac);
       } catch {
         vacationBalance = null;
       }
@@ -1487,12 +1448,14 @@
                 <span class="balance-label">Verfügbar</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
               </div>
-              {#if vacationBalance.section9Movements.length}
+              {#if vacationBalance.section9Movements?.length}
                 <!-- Phase 104-10 (D-31): rendered verbatim from the server — never
                      re-derived on the client, so account line, notification and audit
-                     entry all say the same thing. -->
+                     entry all say the same thing. Optional chaining here is a second
+                     line of defense on top of mapVacationBalance() always populating
+                     the array — see the dev-pass fix note near VacationEntitlementRow. -->
                 <ul class="section9-movements">
-                  {#each vacationBalance.section9Movements as m (m.creditId)}
+                  {#each vacationBalance.section9Movements ?? [] as m (m.creditId)}
                     <li class="section9-movement" data-testid="section9-movement">{m.label}</li>
                   {/each}
                 </ul>
