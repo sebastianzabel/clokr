@@ -43,8 +43,14 @@ FROM node:24-alpine AS runtime
 # CVE-2026-28387/28388/28389/28390 + CVE-2026-45447 openssl; CVE-2026-40200 musl).
 RUN apk update && apk upgrade --no-cache \
     && apk add --no-cache "libcrypto3>=3.5.7-r0" "libssl3>=3.5.7-r0" "musl>=1.2.6-r2"
-# Update npm's bundled dependencies to fix CVEs in minimatch/tar
-RUN npm install -g npm@latest 2>/dev/null || true
+# npm (and npx) are removed entirely from the runtime image rather than updated. This image
+# never invokes npm/npx/pnpm at runtime at all (`CMD ["node", "apps/web/build/index.js"]`),
+# so npm here is a pure liability: its bundled `tar` copy carries CVE-2026-73566 (HIGH,
+# uncatchable stack-overflow DoS via a crafted long-path tar header) with NO upstream fix as
+# of npm 12.0.2 (still bundles tar@7.5.19; the CVE's own fix threshold is tar>=7.5.21) — the
+# "update npm's bundled dependencies" step below used to have exactly this CVE class as its
+# stated purpose and no longer achieves it, so the component is deleted instead of updated.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 
 # Copy ONLY the production-only dependency closure for @clokr/web (Stage 3) plus the
@@ -73,6 +79,12 @@ RUN test -z "$(find /app -maxdepth 6 \( -iname 'prisma' -o -iname '@prisma' \) -
     && test ! -e /app/packages/db \
     && test -z "$(find /app/node_modules -maxdepth 5 -type d \( -iname 'vite' -o -iname 'typescript' -o -iname 'svelte-check' -o -iname 'vitest' -o -iname 'jsdom' \) -print -quit)" \
     || (echo "FATAL: apps/web runtime image leaked build tooling (prisma, @prisma, packages/db, or a devDependency: vite/typescript/svelte-check/vitest/jsdom) -- check the 'pnpm deploy --prod --legacy' step (prod-deps stage) in apps/web/Dockerfile" >&2; exit 1)
+
+# ABSENCE gate: npm/npx must not be on PATH. npm's bundled tar carries CVE-2026-73566 with no
+# upstream fix as of npm 12.0.2 (see the removal comment above); this gate fails the BUILD if
+# a later edit above this line silently reintroduces it.
+RUN ! command -v npm >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1 \
+    || (echo "FATAL: npm/npx present in the apps/web runtime image -- its bundled tar carries CVE-2026-73566 with no fix as of npm 12.0.2; do not reinstall it (see the removal comment earlier in this Dockerfile)" >&2; exit 1)
 
 # PRESENCE gate — fail the BUILD if a genuine runtime external failed to resolve. This is
 # the IMG-03 risk this Dockerfile exists to guard against: a pruned image that boots but

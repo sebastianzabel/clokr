@@ -107,9 +107,25 @@ FROM node:24-alpine AS runtime
 # CVE-2026-28387/28388/28389/28390 + CVE-2026-45447 openssl; CVE-2026-40200 musl).
 RUN apk update && apk upgrade --no-cache \
     && apk add --no-cache su-exec "libcrypto3>=3.5.7-r0" "libssl3>=3.5.7-r0" "musl>=1.2.6-r2"
-# Update npm to latest (fixes bundled tar/minimatch CVEs) and clean old cache
-RUN npm install -g npm@latest 2>/dev/null || true \
-    && npm cache clean --force 2>/dev/null || true \
+# npm (and npx) are removed entirely from the runtime image rather than updated. Neither is
+# ever invoked here: docker-entrypoint.sh has zero npm/npx calls, and the sole
+# package-manager invocation anywhere at runtime is `pnpm tsx`
+# (charts/clokr-app/templates/cronjob-anonymizer.yaml:51, and every apps/api/scripts/*.ts
+# operator-script invocation). npm's own bundled `tar` copy carries CVE-2026-73566 (HIGH,
+# uncatchable stack-overflow DoS via a crafted long-path tar header) with NO upstream fix as
+# of npm 12.0.2 (still bundles tar@7.5.19; the CVE's own fix threshold is tar>=7.5.21) — the
+# "update to npm@latest" step below used to have this exact CVE class as its stated purpose
+# and no longer achieves it, so the component is deleted instead of updated. This does not
+# affect corepack: corepack has no dependency on npm (verified — corepack's own package.json
+# declares none, and `corepack enable && corepack prepare pnpm@... --activate` succeeds
+# unmodified in an npm-free node:24-alpine image). Do NOT reinstall npm to "fix" a corepack
+# issue if one ever appears — look elsewhere first; see the pnpm-specific `.trivyignore`
+# exception for the one tar copy that remains (corepack's own pnpm@10.34.5 vendor copy, not
+# npm's, and not exploitable via the API's runtime invocation pattern).
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+    /usr/local/lib/node_modules/corepack/shims/npm /usr/local/lib/node_modules/corepack/shims/npm.cmd \
+    /usr/local/lib/node_modules/corepack/shims/npm.ps1 /usr/local/lib/node_modules/corepack/shims/npx \
+    /usr/local/lib/node_modules/corepack/shims/npx.cmd /usr/local/lib/node_modules/corepack/shims/npx.ps1 \
     && rm -rf /tmp/* /root/.npm/_cacache
 RUN corepack enable && corepack prepare pnpm@10.34.5 --activate
 WORKDIR /app
@@ -179,7 +195,10 @@ RUN rm -f /app/apps/api/node_modules/typescript /app/apps/api/node_modules/.bin/
 # (the inherited symlink is what actually did the work, undisturbed) — see 102-03-SUMMARY.md.
 # `-n` (BusyBox ln: "don't dereference symlinks — treat like normal file") makes `-f` replace
 # LINK itself, matching what the line always intended to do.
-RUN pnpm rebuild sharp 2>/dev/null || npm rebuild sharp 2>/dev/null || true
+# No `npm rebuild sharp` fallback here (the pre-prune Dockerfile had one): npm is removed
+# from this image above, so an npm-based fallback would be silent dead code. `pnpm rebuild`
+# is the only rebuild path now; `|| true` keeps this best-effort as it always was.
+RUN pnpm rebuild sharp 2>/dev/null || true
 RUN mkdir -p /app/packages/db/node_modules/@prisma && \
     ln -sfn /app/node_modules/prisma /app/packages/db/node_modules/prisma && \
     ln -sfn /app/node_modules/@prisma/client /app/packages/db/node_modules/@prisma/client
@@ -212,6 +231,13 @@ RUN test -e /app/packages/db/node_modules/prisma && test -e /app/packages/db/nod
 # apps/web/Dockerfile's identical-purpose gate.
 RUN test -z "$(ls /app/node_modules/.pnpm 2>/dev/null | command grep -E "^(vite|typescript)@")" && test ! -e /app/apps/web \
     || (echo "FATAL: apps/api runtime image leaked build tooling (vite, typescript, or an apps/web tree) -- check the prod-deps/tooling-deps stages in apps/api/Dockerfile" >&2; exit 1)
+
+# ABSENCE gate: npm/npx must not be on PATH. npm's bundled tar carries CVE-2026-73566 with no
+# upstream fix as of npm 12.0.2 (see the removal comment above); this gate fails the BUILD if
+# a later edit above this line (e.g. an `apk add nodejs-npm` or an `npm install -g` step)
+# silently reintroduces it.
+RUN ! command -v npm >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1 \
+    || (echo "FATAL: npm/npx present in the apps/api runtime image -- its bundled tar carries CVE-2026-73566 with no fix as of npm 12.0.2; do not reinstall it (see the removal comment earlier in this Dockerfile and the pnpm-only .trivyignore exception)" >&2; exit 1)
 
 # Create non-root user
 RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001
