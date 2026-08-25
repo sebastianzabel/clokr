@@ -1061,6 +1061,21 @@ export async function settingsRoutes(app: FastifyInstance) {
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
 
+      // Phase 104 review (CR-01): tenant isolation guard, mirroring settings.ts work/:employeeId.
+      // Without it an ADMIN/MANAGER of tenant A could read another tenant's Urlaubsanspruch by
+      // UUID, because tenantId was derived from the FETCHED row instead of req.user. The 404 body
+      // is IDENTICAL to the not-found branch above so this cannot be used as a membership oracle.
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveEntitlement",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
+
       // Urlaub-LeaveType finden
       const vacationType = await app.prisma.leaveType.findFirst({
         where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
@@ -1092,6 +1107,21 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       const employee = await app.prisma.employee.findUnique({ where: { id: employeeId } });
       if (!employee) return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+
+      // Phase 104 review (CR-01): tenant isolation guard. This handler is the THIRD writer of
+      // carryOverDeadline (see the D-19/R9 note below) — the row a § 9 BUrlG credit extends under
+      // EuGH KHS C-214/10. A cross-tenant write here silently destroyed a legally protected
+      // deadline in a foreign tenant and attributed the audit row to the foreign actor.
+      if (employee.tenantId !== req.user.tenantId) {
+        await app.audit({
+          userId: req.user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "LeaveEntitlement",
+          entityId: employeeId,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
+      }
 
       const vacationType = await app.prisma.leaveType.findFirst({
         where: { tenantId: employee.tenantId, name: { contains: "Urlaub", mode: "insensitive" } },
