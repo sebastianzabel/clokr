@@ -75,6 +75,20 @@ export async function section9DocumentRoutes(app: FastifyInstance) {
         return reply.code(403).send({ error: "Keine Berechtigung" });
       }
 
+      // Phase 104 review (WR-06): once the Vorgang is DECIDED, the certificate it rests on
+      // is finalized evidence. Without this guard the employee who BENEFITS from the credit
+      // (isSelf) — or any manager — could upload a replacement afterwards, and a replacement
+      // with a different extension additionally destroyed the previous object. CLAUDE.md's
+      // "no silent overwrites" rule requires a correction entry rather than an in-place
+      // replacement of finalized evidence; the correction path here is reopen (D-11), which
+      // puts the Vorgang back into AU_PENDING and is itself audited (SECTION9_CREDIT_REOPENED).
+      if (credit.status !== "AU_PENDING") {
+        return reply.code(409).send({
+          error:
+            "Der Vorgang ist bereits entschieden — das Dokument kann nicht mehr ersetzt werden.",
+        });
+      }
+
       // throwFileSizeLimit: false — @fastify/multipart 10.x defaults to THROWING a 413
       // (RequestFileTooLargeError) out of toBuffer() once the fileSize limit is hit,
       // which would bypass our own German 400 message. Disabling it makes toBuffer()
@@ -102,8 +116,27 @@ export async function section9DocumentRoutes(app: FastifyInstance) {
       // Re-upload with a different extension: delete the stale object so it does not
       // become orphaned (invisible to the Art. 17 deletion loop, which only knows the
       // CURRENT documentPath).
+      //
+      // WR-06 asked whether the displaced object should be KEPT (timestamp-suffixed)
+      // instead. Deliberately not: there is no history column to store the extra path in,
+      // so a retained object would be invisible to the Art. 17 deletion loop forever — an
+      // undeletable Art. 9 health document is a worse compliance outcome than a replaced
+      // draft. The Revisionssicherheit requirement is met differently: replacement is now
+      // only possible while the Vorgang is undecided (guard above), and the displaced path
+      // is recorded in the SECTION9_DOCUMENT_UPLOADED audit row's oldValue below, so the
+      // displacement itself stays reconstructible.
+      //
+      // IN-02: never swallow the failure silently — an undeleted object here is exactly the
+      // orphan the Art. 17 loop can no longer find, and it must leave a trace.
       if (credit.documentPath && credit.documentPath !== path) {
-        await app.storage.delete(credit.documentPath).catch(() => {});
+        await app.storage
+          .delete(credit.documentPath)
+          .catch((err: unknown) =>
+            app.log.warn(
+              { err, path: credit.documentPath },
+              "§ 9: stale AU object delete failed — possible orphan in object storage",
+            ),
+          );
       }
 
       // No image-processing library involved — the certificate must be stored byte-for-byte
@@ -123,6 +156,9 @@ export async function section9DocumentRoutes(app: FastifyInstance) {
         action: "SECTION9_DOCUMENT_UPLOADED",
         entity: "Section9Credit",
         entityId: credit.id,
+        // WR-06: preserve the DISPLACED path — without it the audit row recorded that
+        // *a* replacement happened but not what it replaced.
+        oldValue: credit.documentPath ? { documentPath: credit.documentPath } : null,
         newValue: { documentPath: path, mimetype: data.mimetype, bytes: buffer.length },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });

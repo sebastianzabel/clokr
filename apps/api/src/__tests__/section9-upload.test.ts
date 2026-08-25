@@ -393,6 +393,84 @@ describe("Section9 document upload/retrieval — Phase 104-07 Task 1", () => {
     await expect(app.storage.getBuffer(firstPath)).rejects.toBeTruthy();
     const newBytes = await app.storage.getBuffer(secondPath);
     expect(Buffer.compare(newBytes, JPEG_BYTES)).toBe(0);
+
+    // Phase 104 review WR-06: the audit row recorded that *a* replacement happened but not
+    // WHAT it replaced — the displaced path was lost entirely. It is now in oldValue, so
+    // the displacement stays reconstructible even though the object itself is gone.
+    const audit = await app.prisma.auditLog.findFirst({
+      where: {
+        action: "SECTION9_DOCUMENT_UPLOADED",
+        entity: "Section9Credit",
+        entityId: credit.id,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(audit).not.toBeNull();
+    expect(audit!.oldValue).toMatchObject({ documentPath: firstPath });
+    expect(audit!.newValue).toMatchObject({ documentPath: secondPath });
+  });
+
+  // Phase 104 review WR-06: the upload had NO status guard. An employee (isSelf) — the very
+  // person who benefits from the credit — or any manager could replace the certificate a
+  // CONFIRMED § 9 credit rests on, and a replacement with a different extension destroyed
+  // the previous object outright. CLAUDE.md forbids silent overwrites of finalized evidence;
+  // the correction path is reopen (D-11), which is itself audited.
+  it("Test 9 (WR-06): a decided Vorgang refuses a replacement document and keeps the stored object", async () => {
+    const credit = await makeCredit("2027-02-22", "2027-02-26", "2027-02-23", "2027-02-24");
+
+    const first = buildMultipartBody("au.pdf", "application/pdf", PDF_BYTES);
+    const firstRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/section9-documents/${credit.id}`,
+      headers: { authorization: `Bearer ${data.adminToken}`, "content-type": first.contentType },
+      payload: first.body,
+    });
+    expect(firstRes.statusCode).toBe(200);
+    const storedPath = JSON.parse(firstRes.body).documentPath as string;
+
+    for (const decided of ["CONFIRMED", "REJECTED"] as const) {
+      await app.prisma.section9Credit.update({
+        where: { id: credit.id },
+        data: { status: decided },
+      });
+
+      // Both the benefiting employee and a manager are refused — this is not an authz
+      // question, the evidence is simply final.
+      for (const token of [data.empToken, data.adminToken]) {
+        const replacement = buildMultipartBody("neu.jpg", "image/jpeg", JPEG_BYTES);
+        const res = await app.inject({
+          method: "POST",
+          url: `/api/v1/section9-documents/${credit.id}`,
+          headers: { authorization: `Bearer ${token}`, "content-type": replacement.contentType },
+          payload: replacement.body,
+        });
+        expect(res.statusCode).toBe(409);
+        expect(JSON.parse(res.body).error).toContain("bereits entschieden");
+      }
+
+      // The row still points at the original certificate, and the object is untouched.
+      const row = await app.prisma.section9Credit.findUnique({ where: { id: credit.id } });
+      expect(row?.documentPath).toBe(storedPath);
+      const bytes = await app.storage.getBuffer(storedPath);
+      expect(Buffer.compare(bytes, PDF_BYTES)).toBe(0);
+    }
+
+    // Back in AU_PENDING (the D-11 reopen path), replacing is allowed again.
+    await app.prisma.section9Credit.update({
+      where: { id: credit.id },
+      data: { status: "AU_PENDING" },
+    });
+    const afterReopen = buildMultipartBody("neu.jpg", "image/jpeg", JPEG_BYTES);
+    const okRes = await app.inject({
+      method: "POST",
+      url: `/api/v1/section9-documents/${credit.id}`,
+      headers: {
+        authorization: `Bearer ${data.adminToken}`,
+        "content-type": afterReopen.contentType,
+      },
+      payload: afterReopen.body,
+    });
+    expect(okRes.statusCode).toBe(200);
   });
 });
 
