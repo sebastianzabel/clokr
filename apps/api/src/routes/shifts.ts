@@ -1333,10 +1333,48 @@ export async function shiftRoutes(app: FastifyInstance) {
         return weekHolidaysByState.get(fs) ?? new Set<string>();
       }
 
+      // Phase 104 (D-15, Tier 2): tagesbasierte Entdopplung für das Planungs-Soll.
+      // Seit R1 (§ 9 BUrlG) können zwei genehmigte Anträge denselben Tag abdecken. Ohne
+      // Entdopplung zöge das Planungs-Soll den Tag zweimal ab — und widerspräche damit dem
+      // Saldo-Soll, was Phase 76.23 (D-02, "kein driftendes zweites Soll") ausdrücklich
+      // ausschließt. Wir erweitern die bestehende, für die Feiertags-Ausschluss-Logik
+      // eingeführte excludeHolidays-Menge pro Mitarbeiter um die bereits belegten Tage;
+      // ein zweiter Mechanismus wäre genau die
+      // Doppelung, die dieser Plan behebt.
+      const claimedByEmp = new Map<string, Set<string>>();
+      function claimSetFor(employeeId: string): Set<string> {
+        let s = claimedByEmp.get(employeeId);
+        if (!s) {
+          s = new Set(getEmpHolidaySet(employeeId));
+          claimedByEmp.set(employeeId, s);
+        }
+        return s;
+      }
+      function claimWeekDays(employeeId: string, from: Date, to: Date): void {
+        const s = claimSetFor(employeeId);
+        for (let t = from.getTime(); t <= to.getTime(); t += 86400000) {
+          s.add(dateStrInTz(new Date(t), tenantTz));
+        }
+      }
+
+      // Sort ganztags vor halbtags, dann startDate — mirrors close-employee-month.ts's
+      // sortForDedup ordering (no `id` tiebreak: leaveForSoll/absencesForSoll select only
+      // {employeeId, startDate, endDate, halfDay}, matching 4 of Tier 1's 6 callers which
+      // also omit id).
+      function sortForSollDedup<
+        T extends { startDate: Date; endDate: Date; halfDay?: boolean | null },
+      >(rows: T[]): T[] {
+        return [...rows].sort(
+          (a, b) =>
+            (a.halfDay ? 1 : 0) - (b.halfDay ? 1 : 0) ||
+            a.startDate.getTime() - b.startDate.getTime(),
+        );
+      }
+
       const leaveMinutesByEmp: Record<string, number> = {};
       const absenceMinutesByEmp: Record<string, number> = {};
 
-      for (const lr of leaveForSoll) {
+      for (const lr of sortForSollDedup(leaveForSoll)) {
         const sched = scheduleByEmp.get(lr.employeeId);
         if (!sched) continue;
         const clip = clipToWeek(lr.startDate, lr.endDate);
@@ -1346,15 +1384,25 @@ export async function shiftRoutes(app: FastifyInstance) {
         // baseSoll (which already excludes holidays via empHolidaySet). Without this,
         // a leave spanning a Feiertag would count the holiday day as a work-day to
         // subtract, causing max(0, baseSoll − credit) to over-subtract by one day.
+        // Phase 104 (D-15): claimSetFor() extends that same excludeHolidays Set with
+        // days already claimed by an earlier-processed (sortForSollDedup order)
+        // overlapping request, so an overlapping day is deducted exactly once.
         const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
           halfDay: Boolean(lr.halfDay),
-          excludeHolidays: getEmpHolidaySet(lr.employeeId),
+          excludeHolidays: claimSetFor(lr.employeeId),
         });
+        claimWeekDays(lr.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         leaveMinutesByEmp[lr.employeeId] = (leaveMinutesByEmp[lr.employeeId] ?? 0) + minutes;
       }
 
-      for (const ab of absencesForSoll) {
+      // Phase 104 (D-15): absencesForSoll's own Prisma where-clause above already
+      // excludes VOCATIONAL_SCHOOL (type) and PATTERN (source) — Berufsschule rows never
+      // reach this loop at all, so there is no separate isBsAbsence()-style JS carve-out
+      // to add here; the v1.8.27/v1.8.28 subtract-then-recredit symmetry is preserved by
+      // construction, the same way close-employee-month.ts's isBsAbsence() predicate
+      // preserves it there explicitly.
+      for (const ab of sortForSollDedup(absencesForSoll)) {
         const sched = scheduleByEmp.get(ab.employeeId);
         if (!sched) continue;
         const clip = clipToWeek(ab.startDate, ab.endDate);
@@ -1363,8 +1411,9 @@ export async function shiftRoutes(app: FastifyInstance) {
         // WR-02 fix: pass excludeHolidays for the same reason as the leave loop above.
         const minutes = calcLeaveAbsenceMinutesTz(sched, clip.start, clip.end, tenantTz, {
           halfDay: Boolean(ab.halfDay),
-          excludeHolidays: getEmpHolidaySet(ab.employeeId),
+          excludeHolidays: claimSetFor(ab.employeeId),
         });
+        claimWeekDays(ab.employeeId, clip.start, clip.end);
         if (minutes <= 0) continue;
         absenceMinutesByEmp[ab.employeeId] = (absenceMinutesByEmp[ab.employeeId] ?? 0) + minutes;
       }
