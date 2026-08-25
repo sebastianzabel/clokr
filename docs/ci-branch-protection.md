@@ -3,19 +3,44 @@
 Last applied: 2026-06-04 (Phase 70 — `70-07`)
 Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 
+> **The executable source of truth is [`scripts/apply-branch-protection.sh`](../scripts/apply-branch-protection.sh).**
+>
+> ```bash
+> ./scripts/apply-branch-protection.sh            # read-only, non-zero exit on drift
+> ./scripts/apply-branch-protection.sh --apply    # restore the intended state
+> ```
+>
+> The script covers `main` **and** `release/1.9.x`, asserts only the required-check set,
+> and carries every other protection setting forward unchanged. Prefer it over the raw
+> `gh api` calls below — those are kept for reference and for recovery when `gh` behaves
+> unexpectedly, but the check list in the script is the one that is actually verified.
+>
+> **Why this exists:** on 2026-08-26 an audit found `main` with an _empty_ required-check
+> list and `release/1.9.x` with _no protection at all_, while this document still claimed
+> four blocking checks on both. Prose drifts silently; a script that exits non-zero does
+> not. `--check` runs as a fixed item on the sprint-rollover checklist
+> (see [`PROCESS.md`](PROCESS.md)), which bounds undetected drift to one sprint.
+
 This runbook documents the operational `gh api` commands for applying, auditing, and recovering from drift in `main` branch protection. Linked from `CLAUDE.md` § GSD Workflow Enforcement and from `docs/release-process.md`.
 
-Branch protection is now also relevant for `release/1.9.x` — the patch line (1.9.x) branches and tags there (see `docs/release-process.md`). Apply the same required-checks set to `release/1.9.x` by substituting the branch name in the `gh api` commands below.
+Branch protection is now also relevant for `release/1.9.x` — the patch line (1.9.x) branches and tags there (see `docs/release-process.md`). The script applies to both; if you use the raw `gh api` commands instead, substitute the branch name.
 
 ## Required checks (Phase 70 baseline)
 
-| Check               | Workflow | Job                 | Why required                                                                                                                                                                                                 |
-| ------------------- | -------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `test`              | ci.yml   | `test`              | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web     |
-| `codeql`            | ci.yml   | `codeql`            | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                          |
-| `secret-scan`       | ci.yml   | `secret-scan`       | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                     |
-| `docker`            | ci.yml   | `docker`            | Validates `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (matrix build, no push). Warms the GHA cache for the subsequent `build-push.yml` main-branch run.                                          |
-| `visual-regression` | ci.yml   | `visual-regression` | Playwright `toHaveScreenshot()` baseline gate — merge-blocking on PRs that touch `apps/web/**`, `apps/web/src/tokens.css`, or `apps/e2e/**` (path-filtered, D-06). See `docs/visual-regression-workflow.md`. |
+| Check         | Workflow | Job           | Why required                                                                                                                                                                                             |
+| ------------- | -------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test`        | ci.yml   | `test`        | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web |
+| `codeql`      | ci.yml   | `codeql`      | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                      |
+| `secret-scan` | ci.yml   | `secret-scan` | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                 |
+| `docker`      | ci.yml   | `docker`      | Validates `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (matrix build, no push). Warms the GHA cache for the subsequent `build-push.yml` main-branch run.                                      |
+
+Note: `visual-regression` was previously listed in this table as merge-blocking, but it was
+never present in the `gh api` payload below and is not in the script's check list — the table
+and the payload contradicted each other. It is **advisory**. The job is technically eligible
+(it always reports a status; only its _steps_ are path-filtered, so it never hangs as
+"pending"), but its baselines are recorded on arm64 locally and replayed on amd64 in CI, so
+it fails for reasons unrelated to the change under review. Promoting it to blocking is a
+baseline fix — see `docs/visual-regression-workflow.md` — not a protection change.
 
 Note: the `docker` PR-gate job is in `ci.yml`, not `build-push.yml`. `build-push.yml` runs ONLY on push to `main` (after merge) and is therefore not a PR-blocking candidate. Trivy container-scan results from `build-push.yml` are post-merge and surface via the GitHub Security tab.
 
