@@ -59,8 +59,13 @@ export const SUPERSEDED_REASON = "TZ-duplicate cleanup — 2026-06-08 prod inves
  * Limitation: a legitimate "no activity, zero carry" month satisfies carryOver==0
  * and is correctly excluded. A bridge with non-zero activity cannot be detected by
  * shape alone — an explicit schema column would be needed for that case (out of scope).
+ *
+ * Exported (2026-08 hardening, prod incident): recalculate-snapshots.ts's retroactive
+ * recalc loop also needs this predicate — it must skip bridge rows the same way
+ * auto-close-month.ts's SNAP-04 idempotency check does. This is the single source of
+ * truth; do not fork/copy the shape check elsewhere.
  */
-function isBridgeSnapshot(snap: {
+export function isBridgeSnapshot(snap: {
   expectedMinutes: number;
   workedMinutes: number;
   balanceMinutes: number;

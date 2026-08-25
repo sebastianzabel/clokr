@@ -19,6 +19,8 @@
  *     aggregate only their own leaveTypeId.
  *   - Idempotent: rows already in sync are NOT updated.
  *   - Mutates rows in place so callers can render the healed value directly.
+ *   - § 9 BUrlG credits (Section9Credit, status CONFIRMED) are subtracted from the raw sum;
+ *     AU_PENDING and REJECTED credits are ignored.
  *
  * Out of scope (preserve parity with the pre-refactor implementation):
  *   - app.audit() for the heal mutation (pre-existing gap, separate ticket).
@@ -27,6 +29,7 @@
  *     not do this and we keep parity.
  */
 import type { FastifyInstance } from "fastify";
+import { sumConfirmedSection9DaysByRequest } from "./section9-credit-days";
 
 /**
  * Minimal row shape the helper needs. Matches against either of:
@@ -48,6 +51,11 @@ export type LeaveEntitlementWithType = {
 export type VacationTypeMeta = {
   vacationNames: string[];
   allVacTypeIds: string[];
+  /**
+   * Phase 104 review (IN-03): carried so selfHealUsedDays() can pass a tenant scope into
+   * sumConfirmedSection9DaysByRequest() without changing every call site's signature.
+   */
+  tenantId: string;
 };
 
 /**
@@ -68,7 +76,7 @@ export async function loadVacationTypeMeta(
     where: { tenantId, name: { in: vacationNames } },
     select: { id: true },
   });
-  return { vacationNames, allVacTypeIds: rows.map((r) => r.id) };
+  return { vacationNames, allVacTypeIds: rows.map((r) => r.id), tenantId };
 }
 
 /**
@@ -82,7 +90,7 @@ export async function selfHealUsedDays(
   rows: LeaveEntitlementWithType[],
   ctx: VacationTypeMeta,
 ): Promise<void> {
-  const { vacationNames, allVacTypeIds } = ctx;
+  const { vacationNames, allVacTypeIds, tenantId } = ctx;
 
   for (const row of rows) {
     const isVacation = vacationNames.includes(row.leaveType.name);
@@ -100,7 +108,19 @@ export async function selfHealUsedDays(
         endDate: { lte: yearEnd },
       },
     });
-    const actualUsed = approved.reduce((s, r) => s + Number(r.days), 0);
+    // Phase 104 (Pitfall 2): subtract confirmed § 9 BUrlG credits. D-05 never touches
+    // LeaveRequest.days, so the raw sum below is the PRE-credit figure — writing it back
+    // would silently erase the credit on the next page load (leave.ts:2103) or report
+    // load (reports.ts:708). Attaching the subtraction to the SAME request set that was
+    // just summed keeps the existing year-bounds semantics intact (including the
+    // documented cross-year out-of-scope note above) — no separate year attribution.
+    const rawUsed = approved.reduce((s, r) => s + Number(r.days), 0);
+    const section9Credited = await sumConfirmedSection9DaysByRequest(
+      prisma,
+      approved.map((r) => r.id),
+      tenantId,
+    );
+    const actualUsed = Math.max(0, rawUsed - section9Credited);
 
     if (Number(row.usedDays) !== actualUsed) {
       await prisma.leaveEntitlement.update({

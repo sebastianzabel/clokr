@@ -20,25 +20,77 @@ COPY apps/web/ ./apps/web/
 
 RUN pnpm --filter @clokr/web build
 
-# ── Stage 3: Production runtime ────────────────────────────────────────────
+# ── Stage 3: Production-only dependency tree for @clokr/web ─────────────────
+# `pnpm deploy` walks ONLY @clokr/web's own `dependencies` (chart.js, date-fns,
+# svelte-dnd-action, @tanstack/svelte-query, @clokr/types) — unlike Stage 1's
+# `pnpm install`, which resolves the whole workspace: every app's devDependencies
+# plus the Prisma CLI. --prod excludes devDependencies.
+#
+# --legacy is required on this repo's default (isolated) node-linker: the modern
+# (non-legacy) deploy path refuses with ERR_PNPM_DEPLOY_NONINJECTED_WORKSPACE unless
+# "inject-workspace-packages=true" is set (confirmed empirically — see 102-01-SUMMARY.md).
+# Legacy deploy COPIES packages from Stage 1's already frozen-lockfile-resolved
+# content-addressable store into the target dir (build log shows "downloaded 0" — no
+# network fetch, no lockfile re-resolution, byte-identical versions to pnpm-lock.yaml).
+FROM deps AS prod-deps
+WORKDIR /app
+RUN pnpm --filter @clokr/web deploy --prod --legacy /app/web-deploy
+
+# ── Stage 4: Production runtime ────────────────────────────────────────────
 FROM node:24-alpine AS runtime
 # apk upgrade pulls the latest Alpine packages; the explicit min-version pins assert the
 # openssl/musl CVE fixes and bust any cached layer (CVE-2026-31789 CRIT heap overflow +
 # CVE-2026-28387/28388/28389/28390 + CVE-2026-45447 openssl; CVE-2026-40200 musl).
 RUN apk update && apk upgrade --no-cache \
     && apk add --no-cache "libcrypto3>=3.5.7-r0" "libssl3>=3.5.7-r0" "musl>=1.2.6-r2"
-# Update npm's bundled dependencies to fix CVEs in minimatch/tar
-RUN npm install -g npm@latest 2>/dev/null || true
+# npm (and npx) are removed entirely from the runtime image rather than updated. This image
+# never invokes npm/npx/pnpm at runtime at all (`CMD ["node", "apps/web/build/index.js"]`),
+# so npm here is a pure liability: its bundled `tar` copy carries CVE-2026-73566 (HIGH,
+# uncatchable stack-overflow DoS via a crafted long-path tar header) with NO upstream fix as
+# of npm 12.0.2 (still bundles tar@7.5.19; the CVE's own fix threshold is tar>=7.5.21) — the
+# "update npm's bundled dependencies" step below used to have exactly this CVE class as its
+# stated purpose and no longer achieves it, so the component is deleted instead of updated.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 
-# Copy full workspace (adapter-node needs external deps like date-fns)
-COPY --from=build /app/node_modules/ ./node_modules/
-COPY --from=build /app/apps/web/node_modules/ ./apps/web/node_modules/
+# Copy ONLY the production-only dependency closure for @clokr/web (Stage 3) plus the
+# adapter-node build output (Stage 2) — not the full workspace `node_modules`.
+#
+# Genuine runtime externals of the adapter-node build output — verified by scanning every
+# non-client .js file under apps/web/build/ (125 files) for real `import ... from`
+# statements, not comments — are `date-fns`, `date-fns/locale` and `chart.js`, all three
+# declared in @clokr/web's `dependencies`. A raw grep of the build output ALSO matches
+# `svelte`, `@sveltejs/kit`, `@standard-schema/spec` and `types`, but every one of those
+# hits lives inside a `/** @import {...} from '...' */` JSDoc comment (SvelteKit's own
+# bundled source carries these for editor/type tooling) — they are never evaluated by
+# Node and do not need to resolve at runtime. Do not restore the full workspace tree on
+# the strength of a bare grep hit against this file; confirm real-vs-JSDoc first (see the
+# scan method in 102-01-SUMMARY.md).
+COPY --from=prod-deps /app/web-deploy/node_modules/ ./node_modules/
+COPY --from=prod-deps /app/web-deploy/package.json ./apps/web/package.json
 COPY --from=build /app/apps/web/build/ ./apps/web/build/
-COPY --from=build /app/apps/web/package.json ./apps/web/
-COPY --from=build /app/package.json ./
-COPY --from=build /app/pnpm-workspace.yaml ./
-COPY --from=build /app/packages/types/package.json ./packages/types/
+
+# ABSENCE gate — fail the BUILD, not the container, if the pruned tree leaked Prisma,
+# packages/db, or a devDependency of @clokr/web. Modelled on apps/api/Dockerfile's
+# schema-engine presence gate (same `test -n`/`-z` + `find ... -print -quit` idiom).
+# Depth budget verified empirically: an installed package's own directory sits at
+# node_modules/.pnpm/<pkg>@<version>/node_modules/<pkg> — 4 segments under node_modules.
+RUN test -z "$(find /app -maxdepth 6 \( -iname 'prisma' -o -iname '@prisma' \) -print -quit)" \
+    && test ! -e /app/packages/db \
+    && test -z "$(find /app/node_modules -maxdepth 5 -type d \( -iname 'vite' -o -iname 'typescript' -o -iname 'svelte-check' -o -iname 'vitest' -o -iname 'jsdom' \) -print -quit)" \
+    || (echo "FATAL: apps/web runtime image leaked build tooling (prisma, @prisma, packages/db, or a devDependency: vite/typescript/svelte-check/vitest/jsdom) -- check the 'pnpm deploy --prod --legacy' step (prod-deps stage) in apps/web/Dockerfile" >&2; exit 1)
+
+# ABSENCE gate: npm/npx must not be on PATH. npm's bundled tar carries CVE-2026-73566 with no
+# upstream fix as of npm 12.0.2 (see the removal comment above); this gate fails the BUILD if
+# a later edit above this line silently reintroduces it.
+RUN ! command -v npm >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1 \
+    || (echo "FATAL: npm/npx present in the apps/web runtime image -- its bundled tar carries CVE-2026-73566 with no fix as of npm 12.0.2; do not reinstall it (see the removal comment earlier in this Dockerfile)" >&2; exit 1)
+
+# PRESENCE gate — fail the BUILD if a genuine runtime external failed to resolve. This is
+# the IMG-03 risk this Dockerfile exists to guard against: a pruned image that boots but
+# 500s on a real route because a real (non-JSDoc) import silently didn't make the cut.
+RUN node --input-type=module -e "await import('date-fns'); await import('date-fns/locale'); await import('chart.js'); console.log('deps resolved')" \
+    || (echo "FATAL: apps/web runtime image is missing a genuine external (date-fns, date-fns/locale, or chart.js) -- the prune removed something the adapter-node build output actually imports" >&2; exit 1)
 
 # Create non-root user
 RUN addgroup -g 1001 -S clokr && adduser -S clokr -u 1001

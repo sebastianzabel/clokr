@@ -2,12 +2,15 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { api } from "$api/client";
+  import { authStore } from "$stores/auth";
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
+  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-fkz
+  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-fkz
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -147,10 +150,22 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Quick 260824-cjd: Storno now requires a Begründung — confirm UI moved from an
+  // inline Ja/Nein span to a ReasonDialog; deleteConfirmId still tracks the target.
+  let deleteDialogOpen = $state(false);
   let absences: Absence[] = $state([]);
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   let bsAbsences: BsAbsence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
+  // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields from GET /overtime/:id,
+  // mirroring the employee's own /time-entries (97-01). undefined when the endpoint didn't
+  // return the split (older cached response / fail-safe branch) — the Gesamt-Saldo snippet
+  // falls back to the pre-existing single-value SaldoAnzeige rendering (via overtimeTotalHours)
+  // in that case.
+  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
+  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
+  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
   let teView = $state<"calendar" | "list">("calendar");
@@ -166,6 +181,9 @@
     expectedMinutes: number;
     balanceMinutes: number;
     closed: boolean;
+    // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
+    // (never a fabricated false), matching computeMonthSaldo's own contract.
+    rosterIncomplete?: boolean;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -202,6 +220,9 @@
     return Math.max(0, gross - formBreakTotal);
   });
   let formNote = $state("");
+  // Quick 260824-cjd: mandatory Begründung — required only when this is a
+  // Korrektur (editEntry set AND the manager is not the entry's own employee).
+  let formReason = $state("");
   let defaultBreakStart: string | null = $state(null);
 
   // ── Employee selector state ────────────────────────────────────────────────
@@ -254,6 +275,11 @@
       absences = [];
       bsAbsences = [];
       overtimeTotalHours = null;
+      // Phase 97-05 — reset the split fields alongside the legacy total.
+      overtimeConfirmedMinutes = undefined;
+      overtimeOpenMonthMinutes = undefined;
+      overtimeHasClosedMonth = undefined;
+      overtimeRosterIncomplete = undefined;
       hireDate = null;
       shiftMinByDate = new Map();
       monthSaldo = null;
@@ -281,7 +307,16 @@
         api
           .get<Absence[]>(`/leave/requests?status=APPROVED&employeeId=${empId}`)
           .catch(() => [] as Absence[]),
-        api.get<{ balanceHours: number }>(`/overtime/${empId}`).catch(() => null),
+        api
+          .get<{
+            balanceHours: number;
+            // Phase 97-05 (SALDO-DISP-01/03/04/07) — additive split fields.
+            confirmedMinutes?: number;
+            openMonthMinutes?: number | null;
+            hasClosedMonth?: boolean;
+            rosterIncomplete?: boolean;
+          }>(`/overtime/${empId}`)
+          .catch(() => null),
         api.get<{ hireDate?: string }>(`/employees/${empId}`).catch(() => null),
         api
           .get<{
@@ -304,6 +339,12 @@
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      // Phase 97-05 — split fields, undefined when the endpoint didn't return them (older
+      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
+      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
+      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
+      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
+      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
@@ -693,21 +734,10 @@
     return `${h}:${String(m).padStart(2, "0")}`;
   }
 
-  function fmtBalance(min: number): string {
-    if (min === 0) return "±0:00";
-    return (min > 0 ? "+" : "−") + fmtMin(Math.abs(min));
-  }
-
   function balClass(min: number): string {
     if (min > 0) return "pos";
     if (min < 0) return "neg";
     return "";
-  }
-
-  function balTone(min: number): "pos" | "neg" | undefined {
-    if (min > 0) return "pos";
-    if (min < 0) return "neg";
-    return undefined;
   }
 
   function absenceLabel(type: string): string {
@@ -803,6 +833,7 @@
       formBreaks = [];
     }
     formNote = entry.note ?? "";
+    formReason = "";
     saveError = "";
     modalOpen = true;
   }
@@ -812,6 +843,13 @@
     editEntry = null;
     deleteConfirmId = "";
   }
+
+  // Quick 260824-cjd: a manager editing ANOTHER employee's entry is a Korrektur
+  // and must supply a Begründung; editing their own entry is not (server parity —
+  // putIsCorrectionByManager in apps/api/src/routes/time-entries.ts).
+  let isCorrectionEdit = $derived(
+    !!editEntry && selectedEmployeeId !== ($authStore.user?.employeeId ?? null),
+  );
 
   // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
   // false directly via bind:open. Mirror closeModal's state reset so those
@@ -824,6 +862,12 @@
   });
 
   async function saveEntry() {
+    // Quick 260824-cjd: Begründung ist Pflicht bei einer echten Korrektur —
+    // client-seitig vorab geblockt, mit derselben Fehlermeldung wie die API.
+    if (isCorrectionEdit && !formReason.trim()) {
+      saveError = "Begründung ist erforderlich (revisionssicherheitspflichtig).";
+      return;
+    }
     saving = true;
     saveError = "";
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
@@ -845,6 +889,7 @@
           breaks: breaksPayload,
           note: formNote || null,
           source: "CORRECTION",
+          ...(isCorrectionEdit ? { reason: formReason.trim() } : {}),
         });
       } else {
         await api.post("/time-entries", {
@@ -871,9 +916,19 @@
     }
   }
 
-  async function deleteEntry(id: string) {
+  function openDeleteDialog(id: string) {
+    deleteConfirmId = id;
+    deleteDialogOpen = true;
+  }
+
+  async function confirmDeleteDialog(reason: string) {
+    if (!deleteConfirmId) return;
+    await deleteEntry(deleteConfirmId, reason);
+  }
+
+  async function deleteEntry(id: string, reason: string) {
     try {
-      await api.delete(`/time-entries/${id}`);
+      await api.delete(`/time-entries/${id}`, { reason });
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
@@ -896,11 +951,6 @@
 
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
-
-  // D-07: Set of date strings (yyyy-MM-dd) that have a locked entry — for calendar cell icons
-  let lockedDateSet = $derived(
-    new Set(entries.filter((e) => e.isLocked === true).map((e) => e.date.slice(0, 10))),
-  );
 
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
@@ -1013,68 +1063,84 @@
   // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
   // Non-SHIFT: fall through to the existing derived values (totalExpected, mBalance).
   let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
-  // Stat tiles for the MonthBar primitive — empty until an employee/schedule loads.
-  let monthBarStats: MonthBarStat[] = $derived.by(() => {
-    if (!selectedEmployee || !schedule) return [];
-    const stats: MonthBarStat[] = [];
+
+  // Quick 260820-fkz — replaces monthBarStats (formatted MonthBar tiles) with raw minutes for
+  // MonatSaldoCard/SollIstBar, mirroring /time-entries (commit d88cdcba, quick 260820-elk).
+  // Same branch structure and source expressions as the deleted monthBarStats derivation; only
+  // the output shape changes (minutes, not formatted strings — no saldo recomputation, just
+  // selecting among already-computed values). Two deliberate omissions vs. /time-entries (D-04):
+  //  - no `extraNote` — this page has no FLEXTIME "Woche Saldo" tile (verified: `weekExpectedMin`/
+  //    `weekWorkedMin`/"Woche" do not occur here), so there is nothing to carry.
+  //  - no `rosterIncomplete` — /time-entries sets it but MonatSaldoCard has no such prop (dead
+  //    field there); not replicated here.
+  type MonthMetrics = {
+    sollToDateMin: number;
+    istMin: number;
+    saldoMin: number | null; // null → no schedule / no Soll target
+    sollLabel: string;
+    closed: boolean;
+  };
+  let monthMetrics: MonthMetrics = $derived.by(() => {
+    if (!schedule) {
+      return {
+        sollToDateMin: 0,
+        istMin: 0,
+        saldoMin: null,
+        sollLabel: "Soll (bisher)",
+        closed: false,
+      };
+    }
 
     if (isShiftBased && monthSaldo) {
-      // §615 header — ALL three tiles come from the SAME computeMonthSaldo to-date result so they
-      // always reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells:
-      //   Soll (bisher) = expectedMinutes (roster-prorated to-date C_net, NOT full-month roster)
-      //   Ist           = workedMinutes   (to-date worked, same cutoff as the cells)
-      //   Monat-Saldo   = balanceMinutes  (§615 to-date balance)
-      stats.push({
-        label: "Soll (bisher)",
-        value: fmtMin(monthSaldo.expectedMinutes),
-        unit: "h",
-      });
-      stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
-      stats.push({
-        label: "Monat-Saldo",
-        value: fmtBalance(monthSaldo.balanceMinutes),
-        unit: "h",
-        tone: balTone(monthSaldo.balanceMinutes),
-      });
-    } else {
-      if (!isMonthlyHours || hasMonthlyTarget) {
-        stats.push({
-          // MONTHLY_HOURS(target) → flat full-month budget "Soll" (Item C, no working-day drift).
-          // FIXED_*/FLEXTIME → to-date "Soll (bisher)".
-          label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-          value: fmtMin(hasMonthlyTarget ? monthlyBudgetSoll : totalExpected),
-          unit: "h",
-        });
-      }
-      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
-      if (isMonthlyHours && !hasMonthlyTarget) {
-        stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
-      } else {
-        stats.push({
-          label: "Monat-Saldo",
-          value: fmtBalance(mBalance),
-          unit: "h",
-          tone: balTone(mBalance),
-        });
-      }
+      // §615 header — ALL figures from the SAME computeMonthSaldo to-date result so they
+      // always reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells.
+      return {
+        sollToDateMin: monthSaldo.expectedMinutes,
+        istMin: monthSaldo.workedMinutes,
+        saldoMin: monthSaldo.balanceMinutes,
+        sollLabel: "Soll (bisher)",
+        closed: monthSaldo.closed,
+      };
     }
 
-    // Gesamt-Saldo: the LIVE lifetime overtime balance (through windowEnd = yesterday when today is
-    // incomplete), sourced from GET /overtime/:id (now recomputed live via computeOvertimeBalanceHours).
-    // MONTH-INDEPENDENT by design — it is NOT bound to the viewed booking month, so navigating months
-    // does not change it. For the CURRENT month it still equals the last visible §615 cell (both derive
-    // from the same lifetime computation). For MONTHLY_HOURS(null/0) TRACK_ONLY the endpoint returns 0.
-    if (overtimeTotalHours !== null) {
-      const totalMin = Math.round(overtimeTotalHours * 60);
-      stats.push({
-        label: "Gesamt-Saldo",
-        value: fmtBalance(totalMin),
-        unit: "h",
-        tone: balTone(totalMin),
-      });
+    if (isMonthlyHours && !hasMonthlyTarget) {
+      // Genuinely no Soll to compare against — the real-world source of SollIstBar's
+      // sollToDateMin===0 branch. CLAUDE.md: MONTHLY_HOURS with monthlyHours null/0 is pure
+      // time tracking with NO Soll — do NOT compute a ratio here.
+      return {
+        sollToDateMin: 0,
+        istMin: totalWorked,
+        saldoMin: null,
+        sollLabel: "Soll",
+        closed: false,
+      };
     }
-    return stats;
+
+    if (hasMonthlyTarget) {
+      return {
+        sollToDateMin: monthlyBudgetSoll,
+        istMin: totalWorked,
+        saldoMin: mBalance,
+        sollLabel: "Soll",
+        closed: false,
+      };
+    }
+
+    // FIXED_*/FLEXTIME
+    return {
+      sollToDateMin: totalExpected,
+      istMin: totalWorked,
+      saldoMin: mBalance,
+      sollLabel: "Soll (bisher)",
+      closed: false,
+    };
   });
+  // Counts over already-loaded day/entry data — CONTEXT explicitly permits this (not a saldo
+  // computation).
+  let workdaysSoFar = $derived(
+    calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
+  );
+  let runningCount = $derived(entries.filter((e) => !e.endTime).length);
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
     if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
@@ -1104,6 +1170,46 @@
       if (warnings.length > 0) map.set(dateStr, warnings);
     }
     return map;
+  });
+
+  // Legend is derived from what the displayed month actually contains, and split by the
+  // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
+  // surface = Abwesenheit, mark = Hinweis.
+  const LEGEND_ABSENCE = [
+    { code: "VACATION", cls: "leg-abs-vacation", label: "Urlaub" },
+    { code: "SICK", cls: "leg-abs-sick", label: "Krank" },
+    { code: "SICK_CHILD", cls: "leg-abs-sick_child", label: "Kinderkrank" },
+    { code: "SPECIAL", cls: "leg-abs-special", label: "Sonderurlaub" },
+    { code: "OVERTIME_COMP", cls: "leg-abs-overtime_comp", label: "Freizeitausgl." },
+  ] as const;
+
+  let legendGroups = $derived.by(() => {
+    const days = calendarDays.filter((d) => d.isCurrentMonth);
+    const soll: { cls: string; label: string }[] = [];
+    if (days.some((d) => d.status === "ok" || d.status === "today-ok"))
+      soll.push({ cls: "leg-ok", label: "Soll erfüllt" });
+    if (days.some((d) => d.status === "partial" || d.status === "today-partial"))
+      soll.push({ cls: "leg-partial", label: "Teilweise" });
+    if (days.some((d) => d.status === "missing")) soll.push({ cls: "leg-missing", label: "Fehlt" });
+    if (days.some((d) => d.status === "noExpect" || d.status === "today-empty"))
+      soll.push({ cls: "leg-noexpect", label: "Kein Soll" });
+
+    const codes = new Set(days.map((d) => d.absenceType).filter(Boolean) as string[]);
+    const abwesenheit: { cls: string; label: string }[] = [];
+    for (const e of LEGEND_ABSENCE)
+      if (codes.has(e.code)) abwesenheit.push({ cls: e.cls, label: e.label });
+    // Absence codes outside the catalogue (e.g. EDUCATION, UNPAID) DO get a cell
+    // background from app.css's .cal-abs-* recipes, so they must not stay unexplained.
+    if ([...codes].some((c) => !LEGEND_ABSENCE.some((e) => e.code === c)))
+      abwesenheit.push({ cls: "leg-abs-other", label: "Sonstige Abwesenheit" });
+    if (days.some((d) => d.isVocationalSchool))
+      abwesenheit.push({ cls: "leg-abs-vocational_school", label: "Berufsschule" });
+
+    const hinweise: { cls: string; label: string }[] = [];
+    if (days.some((d) => arbzgDayMap.has(d.dateStr)))
+      hinweise.push({ cls: "leg-arbzg", label: "ArbZG-Hinweis" });
+
+    return { soll, abwesenheit, hinweise };
   });
 
   // All entries for the current month, sorted by date descending then start time descending.
@@ -1143,6 +1249,8 @@
 <PageHead eyebrow="Team" title="Team-Zeiten" accent="Zeiten">
   {#snippet actions()}
     {#if selectedEmployee}
+      <!-- quick 260820-fkz — Gesamt-Saldo moved OUT of the page head entirely, into the
+           quiet Konto card in the metrics row below (see KontoSaldoCard). -->
       <button class="btn btn-primary" onclick={() => openAdd()}>
         <span aria-hidden="true">＋</span> Eintrag hinzufügen
       </button>
@@ -1214,39 +1322,20 @@
   </div>
 </div>
 
-<!-- ── Combined Month-Bar (MonthBar primitive) ───────────────────────── -->
-{#snippet monthBar()}
-  <Card animate class="te-monthbar-card">
-    <MonthBar
-      eyebrow="Buchungsmonat"
-      date={calMonth}
-      stats={monthBarStats}
-      onPrev={() => gotoMonth(-1)}
-      onNext={() => gotoMonth(1)}
-      onToday={gotoToday}
-      onSelectMonth={gotoMonthYear}
-    >
-      {#snippet extraActions()}
-        {#if monthIsLocked}
-          <span class="te-lock-chip" title="Monat ist abgeschlossen">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              aria-hidden="true"
-            >
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
-            Abgeschlossen
-          </span>
-        {/if}
-      {/snippet}
-    </MonthBar>
-  </Card>
+<!-- ── Month navigation (quick 260820-fkz) ─────────────────────────────
+     Bare nav only — no stats/statRenders/extraActions, so MonthBar's tile cluster stays
+     empty (D-NAV). Used in TWO places: passed as MonatSaldoCard's monthNav slot when an
+     employee is selected, and rendered inside the existing .te-monthbar-card in the
+     no-employee branch, so month navigation keeps working before an employee is picked. -->
+{#snippet monthNavBar()}
+  <MonthBar
+    eyebrow="Buchungsmonat"
+    date={calMonth}
+    onPrev={() => gotoMonth(-1)}
+    onNext={() => gotoMonth(1)}
+    onToday={gotoToday}
+    onSelectMonth={gotoMonthYear}
+  />
 {/snippet}
 
 {#if selectedEmployee}
@@ -1272,7 +1361,32 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
-  {@render monthBar()}
+  <!-- Metrics row (design variant 1c "Fortschritt", quick 260820-fkz).
+       Mirrors /time-entries (commit d88cdcba). Rendered ONLY with an employee
+       selected (D-01); the no-employee branch keeps its own bare nav card. -->
+  <div class="te-metrics">
+    <MonatSaldoCard
+      sollToDateMin={monthMetrics.sollToDateMin}
+      istMin={monthMetrics.istMin}
+      saldoMin={monthMetrics.saldoMin}
+      sollLabel={monthMetrics.sollLabel}
+      {workdaysSoFar}
+      {runningCount}
+      isLocked={monthIsLocked || monthMetrics.closed}
+      {loading}
+      error={!!error && !loading}
+      onRetry={loadAll}
+      monthNav={monthNavBar}
+    />
+    <KontoSaldoCard
+      totalHours={overtimeTotalHours}
+      confirmedMinutes={overtimeConfirmedMinutes}
+      openMonthMinutes={overtimeOpenMonthMinutes}
+      hasClosedMonth={overtimeHasClosedMonth}
+      rosterIncomplete={overtimeRosterIncomplete}
+      {loading}
+    />
+  </div>
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
@@ -1307,7 +1421,6 @@
               class:cal-holiday={day.isHoliday && day.isCurrentMonth}
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
               disabled={day.isBeforeHire || !day.isCurrentMonth}
               title={day.isBeforeHire
                 ? "Vor Eintrittsdatum"
@@ -1321,6 +1434,15 @@
               onclick={() => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
+              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                <span
+                  class="cal-arbzg-mark"
+                  title={arbzgWarnings.map((w) => w.message).join("\n")}
+                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                  >⚠&#xFE0E;</span
+                >
+              {/if}
               {#if day.isHoliday && day.isCurrentMonth}
                 <span class="cal-holiday-label">{day.holidayName}</span>
               {:else if day.absenceType}
@@ -1333,23 +1455,6 @@
               {#if day.isBeforeHire}
                 <span class="day-before-hire">—</span>
               {:else if day.isCurrentMonth && day.hasEntries}
-                {#if lockedDateSet.has(day.dateStr)}
-                  <span class="cal-lock-icon" aria-label="Gesperrt">
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      style:color="var(--text-muted)"
-                      aria-hidden="true"
-                    >
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                    </svg>
-                  </span>
-                {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
                 {#if isShiftBased}
                   <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
@@ -1378,15 +1483,26 @@
 
       <!-- Legende -->
       <div class="cal-legend">
-        <span class="leg leg-ok">Soll erfüllt</span>
-        <span class="leg leg-partial">Teilweise</span>
-        <span class="leg leg-missing">Fehlt</span>
-        <span class="leg leg-noexpect">Kein Soll</span>
-        <span class="leg leg-abs-vacation">Urlaub</span>
-        <span class="leg leg-abs-sick">Krank</span>
-        <span class="leg leg-abs-special">Sonderurlaub</span>
-        <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
-        <span class="leg leg-abs-vocational_school">Berufsschule</span>
+        {#if legendGroups.soll.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Soll-Status</span>
+            {#each legendGroups.soll as e (e.cls)}<span class="leg {e.cls}">{e.label}</span>{/each}
+          </div>
+        {/if}
+        {#if legendGroups.abwesenheit.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Abwesenheit</span>
+            {#each legendGroups.abwesenheit as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
+        {#if legendGroups.hinweise.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Hinweise</span>
+            {#each legendGroups.hinweise as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1459,16 +1575,6 @@
                   <td class="action-cell">
                     {#if slot.isLocked}
                       <!-- locked entries are read-only; no actions shown (D-08) -->
-                    {:else if deleteConfirmId === slot.id}
-                      <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
-                        <button class="btn btn-sm btn-danger" onclick={() => deleteEntry(slot.id)}
-                          >Ja</button
-                        >
-                        <button class="btn btn-sm btn-ghost" onclick={() => (deleteConfirmId = "")}
-                          >Nein</button
-                        >
-                      </span>
                     {:else}
                       <span class="row-actions row-actions--visible">
                         <button class="btn-icon" onclick={() => openEdit(slot)} title="Bearbeiten"
@@ -1476,7 +1582,7 @@
                         >
                         <button
                           class="btn-icon btn-icon-danger"
-                          onclick={() => (deleteConfirmId = slot.id)}
+                          onclick={() => openDeleteDialog(slot.id)}
                           title="Löschen">🗑</button
                         >
                       </span>
@@ -1524,7 +1630,9 @@
     </div>
   {/if}
 {:else}
-  {@render monthBar()}
+  <Card animate class="te-monthbar-card">
+    {@render monthNavBar()}
+  </Card>
   <!-- Empty calendar when no employee selected -->
   {@const y = calMonth.getFullYear()}
   {@const m = calMonth.getMonth()}
@@ -1660,6 +1768,18 @@
       maxlength="200"
     />
   </div>
+  {#if isCorrectionEdit}
+    <div class="form-group">
+      <label class="form-label" for="f-reason">Begründung (Pflichtfeld) *</label>
+      <textarea
+        id="f-reason"
+        class="form-input"
+        rows="3"
+        bind:value={formReason}
+        placeholder="Bitte begründe die Korrektur."
+      ></textarea>
+    </div>
+  {/if}
   {#if formNetMin !== null}
     <div class="net-display">
       <span class="net-label">Netto</span>
@@ -1686,6 +1806,16 @@
   {/snippet}
 </Modal>
 
+<!-- ── Quick 260824-cjd: Storno-Begründung (Zeiteintrag löschen) ────────────── -->
+<ReasonDialog
+  bind:open={deleteDialogOpen}
+  title="Eintrag löschen?"
+  confirmLabel="Löschen"
+  danger
+  onConfirm={confirmDeleteDialog}
+  onCancel={() => (deleteConfirmId = "")}
+/>
+
 <style>
   /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
        same as .cal-monthbar — so header height matches /leave et al.) ──── */
@@ -1702,11 +1832,31 @@
 
   /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
-  /* D-07: Lock icon overlay in calendar cells */
-  .cal-lock-icon {
-    display: block;
-    line-height: 1;
-    margin-bottom: 1px;
+  /* ── Metrics row (quick 260820-fkz, mirrors /time-entries d88cdcba) ────
+       Month card (nav + progress bar) + quiet Konto card, side by side. */
+  .te-metrics {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: var(--s-4);
+    margin-bottom: 18px;
+    /* Load-bearing, not decoration: the month/year picker dropdown (now rendered
+       inside MonatSaldoCard's nav row) must escape .card's overflow:clip and lift
+       above the calendar card's own backdrop-filter stacking context. */
+    overflow: visible;
+    position: relative;
+    z-index: 30;
+  }
+
+  @media (max-width: 1000px) {
+    .te-metrics {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* MonthBar owns its 18px 24px inner padding by default; reset it here since it now
+     renders inside MonatSaldoCard's own padded card body. */
+  .te-metrics :global(.month-bar) {
+    padding: 0 0 var(--s-3);
   }
 
   /* ── View Tabs ───────────────────────────────────────── */
@@ -1749,8 +1899,8 @@
   }
 
   /* .cal-grid + .cal-cell base recipe inherited from app.css (v1.5 canonical).
-     Status modifiers (--ok, --partial, --missing, --arbzg-warn) and cell
-     content typography (.day-worked, .day-bal) also live in app.css.
+     Status modifiers (--ok, --partial, --missing), cell content typography
+     (.day-worked, .day-bal) and the ArbZG mark recipe also live in app.css.
      See CLAUDE.md UI Consistency Rules: per-page overrides forbidden. */
 
   .day-before-hire {
@@ -1784,9 +1934,23 @@
   /* Legende */
   .cal-legend {
     display: flex;
-    gap: 1rem;
+    gap: 0.75rem 1.75rem;
     padding: 0.875rem 1.25rem;
     flex-wrap: wrap;
+  }
+  .leg-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .leg-group-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    opacity: 0.7;
   }
   .leg {
     display: inline-flex;
@@ -1827,6 +1991,14 @@
     background: var(--leave-type-sick);
     border: none;
   }
+  .leg-abs-sick_child::before {
+    background: var(--leave-type-sick-child);
+    border: none;
+  }
+  .leg-abs-other::before {
+    background: var(--leave-type-default);
+    border: none;
+  }
   .leg-abs-special::before {
     background: var(--leave-type-special);
     border: none;
@@ -1841,6 +2013,21 @@
   .leg-abs-vocational_school::before {
     background: var(--brand);
     border: none;
+  }
+  /* The ArbZG entry shows the MARK itself, not a colour swatch — the legend must
+     depict the thing it explains (quick task 260820-1i7). */
+  .leg-arbzg::before {
+    content: "⚠\FE0E";
+    width: auto;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+    opacity: 0.8;
   }
 
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the
@@ -1966,11 +2153,6 @@
   tr:hover .row-actions {
     opacity: 1;
   }
-  .del-confirm {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
   .row-del td {
     background: var(--bad-soft);
   }
@@ -2024,10 +2206,6 @@
     color: var(--bad);
   }
 
-  /* Ensure delete confirmation button has white text on red background */
-  .del-confirm :global(.btn-danger) {
-    color: #fff !important;
-  }
   .btn-danger-sm {
     color: white;
     background: var(--bad);
@@ -2270,7 +2448,7 @@
   .employee-selector {
     margin-bottom: 0.75rem;
     position: relative;
-    z-index: 60; /* v1.8.8 — must beat sibling .te-monthbar-card (z=30) so dropdown is clickable */
+    z-index: 60; /* v1.8.8 — must beat sibling .te-monthbar-card / .te-metrics (z=30) so dropdown is clickable */
   }
 
   .emp-combobox {

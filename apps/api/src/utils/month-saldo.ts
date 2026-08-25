@@ -27,6 +27,7 @@
 import type { FastifyInstance } from "fastify";
 import { getTenantTimezone, dateStrInTz, monthRangeUtc, monthDayBounds } from "./timezone";
 import { getHolidays, STATE_MAP } from "./holidays";
+import { getCarryOverBase } from "./carry-over-base"; // Phase 99 (OB-02) — shared chain-head seed
 import { closeEmployeeMonth } from "./close-employee-month";
 import { loadBsSlotOverrides } from "./load-bs-slot-overrides";
 import { getEffectiveBreakDuration } from "./break-effective";
@@ -46,6 +47,12 @@ export type MonthSaldoResult = {
   balanceMinutes: number;
   /** true when a non-superseded MONTHLY SaldoSnapshot exists for this period */
   closed: boolean;
+  /** Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only: true when every EXISTING
+   *  shift for the remainder of the month already lies in the past (the roster itself is
+   *  incomplete, not merely open). Undefined — never a fabricated `false` — for every other
+   *  schedule type, for closed months, and for the zeroed early returns (missing employee,
+   *  exempt, no schedule). */
+  rosterIncomplete?: boolean;
   days: MonthSaldoDay[];
 };
 
@@ -219,7 +226,9 @@ export async function computeMonthSaldo(
     },
     orderBy: { periodStart: "desc" },
   });
-  const carryOverIn = prevSnapshot?.carryOver ?? 0;
+  // Phase 99 (OB-02) — chain-head seeds resolve through the one shared helper;
+  // identical to `?? 0` when the employee has no OpeningBalance.
+  const carryOverIn = await getCarryOverBase(app.prisma, employeeId, prevSnapshot);
 
   // BS slot overrides for this month
   const { employeeSlots, patternSlots, patternUnterrichtsMinutenByDow } = await loadBsSlotOverrides(
@@ -347,6 +356,11 @@ export async function computeMonthSaldo(
   // Track the LAST included day's partial result — this is the to-date §615 state the header
   // displays (single source of truth with the cells).
   let lastDayResult: ReturnType<typeof closeEmployeeMonth> | null = null;
+  // Phase 97-05 (SALDO-DISP-07): capture the last iteration's rosterProration + day string
+  // alongside lastDayResult — both already exist in memory at that point, so the
+  // rosterIncomplete computation below adds no query and no third roster summation.
+  let lastRosterProration: { rosterToDateMinutes: number; rosterPeriodMinutes: number } | undefined;
+  let lastDayStr: string | undefined;
 
   for (const dayStr of dayStrings) {
     const dayEnd = new Date(dayStr + "T00:00:00Z");
@@ -436,7 +450,37 @@ export async function computeMonthSaldo(
     });
 
     lastDayResult = dayResult;
+    lastRosterProration = rosterProration;
+    lastDayStr = dayStr;
   }
+
+  // Phase 97-05 (SALDO-DISP-07): the remainder of the month is unrostered when every EXISTING
+  // shift already lies in the past (the last iterated day consumed the entire known roster)
+  // while the month still has days remaining. The `rosterPeriodMinutes > 0` guard is
+  // load-bearing: without it the pre-existing "nothing rostered at all" zero-state (guarded
+  // separately in shift-based-saldo.ts, contribution 0) would collide with this state because
+  // 0 === 0. Undefined — never a fabricated `false` — for every non-SHIFT_BASED schedule and
+  // whenever no day was iterated at all (e.g. employee hired after windowEnd, or an all-future
+  // window).
+  //
+  // WR-01 (code review) — "days remaining" is anchored to `todayStr` (literal calendar today,
+  // already computed above), NOT `lastDayStr` (the day loop's own cursor, today-or-yesterday
+  // depending on whether today has a completed entry yet). This was previously anchored to
+  // `lastDayStr` on the reasoning that it's "the same to-date cursor the header/cells already
+  // use" — correct in isolation, but it silently disagreed with computeOvertimeBalanceBreakdown's
+  // sibling flag (time-entries.ts), which has always anchored to `todayStr`, on exactly one
+  // window: today is the LAST calendar day of the month and has no entry logged yet (so
+  // lastDayStr = yesterday, one day short of month-end, while todayStr already IS month-end).
+  // Both flags now anchor to `todayStr` — the flag answers "is there still unplanned roster
+  // ahead of *now*", which does not depend on whether today's own entry happens to be logged
+  // yet. See overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
+  // regression case this anchor choice is pinned against.
+  const rosterIncomplete: boolean | undefined =
+    scheduleType === "SHIFT_BASED" && lastRosterProration !== undefined && lastDayStr !== undefined
+      ? lastRosterProration.rosterPeriodMinutes > 0 &&
+        lastRosterProration.rosterToDateMinutes === lastRosterProration.rosterPeriodMinutes &&
+        todayStr < monthLastStr
+      : undefined;
 
   // Header numbers = last included day's to-date §615 state (single source of truth with cells).
   // If no days were included (e.g. employee hired after windowEnd, or an all-future window),
@@ -446,6 +490,7 @@ export async function computeMonthSaldo(
     expectedMinutes: lastDayResult?.expectedMinutes ?? 0,
     balanceMinutes: lastDayResult?.balanceMinutes ?? 0,
     closed: false,
+    rosterIncomplete,
     days,
   };
 }

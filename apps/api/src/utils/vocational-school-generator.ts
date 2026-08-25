@@ -18,11 +18,16 @@ import type { PrismaClient } from "@clokr/db";
 import { FederalState } from "@clokr/db";
 import type { FastifyInstance } from "fastify";
 import { cleanupShiftsForBSAbsence } from "./shift-cleanup";
+import { BS_PATTERN_ORDER_BY, findAmbiguousClaimDates } from "./vocational-school-pattern-order.js";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
 export interface GeneratorResult {
   created: number;
+  // Phase 103 Task 1 — orphan-sweep removals. Computed in BOTH modes now (mirrors
+  // `created`): a preview is a true dry run of both directions of the diff, not just
+  // the create side.
+  removed: number;
   skipped: {
     schoolHoliday: number; // Phase 67.2: date falls in SchoolHolidayPeriod for resolved BL
     existing: number; // BERSCH-08: an Absence already exists for (employeeId, date)
@@ -30,13 +35,29 @@ export interface GeneratorResult {
     preHire: number;
     postExit: number;
     outOfWindow: number; // beyond pattern.validFrom/validUntil
+    // Phase 103 Task 1 — orphan-sweep skip because the row's month is closed
+    // (SaldoSnapshot present). Was previously a silent `continue` with no counter and
+    // no details[] entry; kept as its own counter (not folded into `locked`, which is
+    // create-side) so both sides of the operation stay separately debuggable.
+    removalLocked: number;
+    // Phase 103 Task 2 — D-05/D-07: a non-deleted TimeEntry already exists for
+    // (employeeId, date). Skipped by default; overridable per-date via
+    // RunOpts.overrideDates (D-06).
+    timeEntryConflict: number;
   };
   details?: Array<{
     employeeId: string;
     date: string;
-    action: "created" | "skipped";
+    action: "created" | "removed" | "skipped";
     reason?: string;
   }>;
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — dates where two or more active
+  // patterns both structurally claim the same day, within the run's window. Only
+  // populated for retroactive runs (opts.windowStart !== undefined); undefined for
+  // the forward cron / on-demand PATTERN save, which take no extra work and keep a
+  // byte-identical result shape. Reported, never auto-resolved — see the union-site
+  // comment below for why collapsing to a single winner would be wrong.
+  ambiguousDates?: string[];
 }
 
 export interface RunOpts {
@@ -44,12 +65,38 @@ export interface RunOpts {
   weeksAhead?: number;
   now?: Date;
   dryRun?: boolean;
+  // Phase 103 — restrict the run to one employee's patterns. Undefined = tenant-wide
+  // (unchanged default behavior). Tenant scoping (`employee: { tenantId }`) is never
+  // replaced by this — both apply together (T-103-IDOR defense in depth).
+  employeeId?: string;
+  // Phase 103 — explicit window start. Default (undefined) preserves current behavior:
+  // `dateOnlyUtc(now)`. Passing this is what makes a run reach backward in time; it is
+  // NEVER derived from client input (see resolveRetroactiveWindow — T-103-WINDOW).
+  windowStart?: Date;
+  // Phase 103 — explicit window end. Default (undefined) preserves current behavior:
+  // windowStart plus the weeksAhead-derived forward span (see runOrPreview).
+  windowEnd?: Date;
+  // Phase 103 Task 2 — D-06: dates (YYYY-MM-DD) where a TimeEntry conflict is
+  // deliberately overridden ("übernehmen"). Has no effect on any other skip reason —
+  // it can never force a write into a closed month, outside the window, or on a date
+  // no active pattern claims (T-103-OVERRIDE).
+  overrideDates?: string[];
 }
 
 export interface PreviewOpts {
   tenantId: string;
   weeksAhead?: number;
   now?: Date;
+  // Phase 103 — see RunOpts.employeeId. Same default (tenant-wide).
+  employeeId?: string;
+  // Phase 103 — see RunOpts.windowStart. Same default (dateOnlyUtc(now)).
+  windowStart?: Date;
+  // Phase 103 — see RunOpts.windowEnd. Same default (windowStart + weeksAhead weeks).
+  windowEnd?: Date;
+  // Phase 103 Task 2 — see RunOpts.overrideDates. A dry run computed WITH an override
+  // list reports what apply would do with that same list (D-01 parity) — the wizard
+  // never needs a second preview round trip after the user toggles an override.
+  overrideDates?: string[];
 }
 
 // app.audit signature copy (see plugins/audit.ts) — kept loose to match the Fastify decorator type.
@@ -126,11 +173,20 @@ async function runOrPreview(
   // until the daily cron caught up. 13 weeks covers a full quarter forward.
   const weeksAhead = opts.weeksAhead ?? 13;
 
-  const windowStart = dateOnlyUtc(now);
-  const windowEnd = addDaysUtc(windowStart, weeksAhead * 7);
+  // Phase 103 — explicit window support (103-BEFUND.md root cause). Default (no
+  // windowStart/windowEnd passed) is byte-identical to before: windowStart = today,
+  // windowEnd = today + weeksAhead weeks. Once an explicit windowStart is passed
+  // (retroactive runs), the window is NEVER re-derived from `now` — `now` keeps its
+  // separate meaning as the operation timestamp used below for the shift-cleanup
+  // dispatch and the orphan-sweep's `deletedAt: now`.
+  const windowStart = opts.windowStart ? dateOnlyUtc(opts.windowStart) : dateOnlyUtc(now);
+  const windowEnd = opts.windowEnd
+    ? dateOnlyUtc(opts.windowEnd)
+    : addDaysUtc(windowStart, weeksAhead * 7);
 
   const result: GeneratorResult = {
     created: 0,
+    removed: 0,
     skipped: {
       schoolHoliday: 0,
       existing: 0,
@@ -138,9 +194,25 @@ async function runOrPreview(
       preHire: 0,
       postExit: 0,
       outOfWindow: 0,
+      removalLocked: 0,
+      timeEntryConflict: 0,
     },
     details: opts.dryRun ? [] : undefined,
   };
+
+  // Phase 103 Task 1 (Test 8) — degenerate window guard. A window end before its
+  // start (e.g. a caller-computed windowEnd from a stale/inconsistent window) performs
+  // no queries and no writes, returning the zero-initialised result as-is.
+  //
+  // Phase 103 Task 1 — windowDayCount replaces the old forward-only weeks-ahead-based
+  // multiplier as the day-iteration bound in BOTH loops below (the create loop and
+  // the orphan-sweep's intendedSet builder). This is the second half of the original
+  // defect: binding the loops to that forward-only multiplier instead of the actual
+  // window silently capped every retroactive run at the forward distance, even after
+  // windowStart/windowEnd were set correctly above. With no explicit window this
+  // still evaluates to the identical day count as before (Test 1 backward-compat pin).
+  const windowDayCount = Math.round((windowEnd.getTime() - windowStart.getTime()) / 86_400_000);
+  if (windowDayCount < 0) return result;
 
   // Phase 67.2 Plan 04 — Track newly-created Absence dates per employee so we can
   // invoke the Shift-Auto-Cleanup hook ONCE per employee at the end of the run
@@ -156,13 +228,29 @@ async function runOrPreview(
       employee: { tenantId: opts.tenantId },
       validFrom: { lte: windowEnd },
       OR: [{ validUntil: null }, { validUntil: { gte: windowStart } }],
+      // Phase 103 — optional single-employee scoping. `employee: { tenantId }` above is
+      // NEVER replaced by this — both filters apply together (T-103-IDOR defense in depth).
+      ...(opts.employeeId ? { employeeId: opts.employeeId } : {}),
     },
+    // Phase 103 Plan 05 — ordering only (no tie to break here: every row in this set
+    // participates in the additive union below, none is picked as a single winner).
+    // A stable order still matters so a double-claimed day's audit trail (details[])
+    // is reproducible across runs instead of depending on Postgres's incidental order.
+    orderBy: BS_PATTERN_ORDER_BY,
     include: {
       employee: { select: { id: true, hireDate: true, exitDate: true } },
     },
   });
 
   if (patterns.length === 0) return result;
+
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — surface overlapping active-pattern
+  // claims for a retroactive run. Only computed when an explicit windowStart was
+  // passed (retroactive runs); the forward cron and on-demand PATTERN save take no
+  // extra work and keep a byte-identical result shape.
+  if (opts.windowStart !== undefined) {
+    result.ambiguousDates = findAmbiguousClaimDates(patterns, windowStart, windowEnd);
+  }
 
   // Phase 67.2 — Load tenant federalState as default for school-holiday resolution
   // (overridable per-pattern via federalStateOverride).
@@ -200,6 +288,38 @@ async function runOrPreview(
   const lockedSet = new Set<string>(
     lockedSnapshots.map((s) => `${s.employeeId}::${toIsoDate(s.periodStart)}`),
   );
+
+  // 3.5. Phase 103 Task 2 (D-05/D-06/D-07) — Bulk-fetch non-deleted TimeEntry rows in
+  //      the window. A day already carrying recorded working time is reported as a
+  //      conflict and skipped by default (D-07); `overrideDates` bypasses ONLY this
+  //      check (D-06). `deletedAt: null` is mandatory (CLAUDE.md soft-delete rule).
+  //      Deliberately NOT filtered on `isInvalid`: an isInvalid row still occupies the
+  //      day's only slot (TimeEntry's unique constraint is per employeeId+date among
+  //      non-deleted rows) and still represents someone's claim of presence that day —
+  //      missing clock-out, pending Nachtrag, or leave-cancellation-pending. Treating
+  //      it as a non-conflict would risk stacking a §15 credit on top of recorded
+  //      minutes silently; the conservative (conflict) reading is also the reversible
+  //      one — a wrongly-flagged conflict is one click away from being overridden.
+  //      Skipped entirely when the window is forward-only (no explicit windowStart):
+  //      a TimeEntry for a future date does not occur, so the cron/on-demand/preview
+  //      paths take no extra query and stay behaviourally + performance-identical.
+  const conflictSet = new Set<string>();
+  if (opts.windowStart !== undefined) {
+    const conflictingEntries = await prisma.timeEntry.findMany({
+      where: {
+        employeeId: { in: employeeIds },
+        deletedAt: null,
+        date: { gte: windowStart, lte: windowEnd },
+      },
+      select: { employeeId: true, date: true },
+    });
+    for (const e of conflictingEntries) {
+      conflictSet.add(`${e.employeeId}::${toIsoDate(e.date)}`);
+    }
+  }
+  // Phase 103 Task 2 — dates where a TimeEntry conflict is deliberately overridden
+  // (D-06). Built once, outside the loops.
+  const overrideSet = new Set<string>(opts.overrideDates ?? []);
 
   // 4. Phase 67.2 — Bulk-fetch SchoolHolidayPeriods for every federal state we will
   //    consult (tenant.federalState + every distinct Pattern.federalStateOverride).
@@ -247,6 +367,19 @@ async function runOrPreview(
   }
 
   // 5. Iterate patterns × candidate dates, applying skip-conditions in order.
+  //
+  // Phase 103 Plan 05 (DISCRETION-MUSTERHISTORIE) — this loop is DELIBERATELY additive
+  // across patterns: every active pattern that claims a date contributes its own
+  // create/skip decision, and two patterns claiming the SAME day both run (the second
+  // one hits the `existing` skip once the first has created the row). Do NOT "fix"
+  // this into a single-winner pick. Two active patterns claiming the same day can mean
+  // two different things the data cannot distinguish: a legitimate weekday + block-week
+  // combination (union IS correct — both must create) or a superseded pattern that was
+  // never closed (union is wrong, but silently picking a winner would be worse — it
+  // would break the legitimate case for every tenant that uses it). The correct
+  // non-mutating move is to make the ambiguity VISIBLE (`ambiguousDates` above, shown
+  // by the wizard) and fix the root cause where intent actually exists — the PUT save
+  // that supersedes an old pattern (option B, see Task 2 of this plan).
   for (const pattern of patterns) {
     const employee = pattern.employee;
     const patternValidUntil = pattern.validUntil;
@@ -271,8 +404,11 @@ async function runOrPreview(
     const hasWeekday = weekdaySet.size > 0;
     const hasBlockWeeks = pattern.blockWeeks.length > 0 && pattern.blockYear != null;
 
-    // Iterate every day in the rolling window.
-    for (let i = 0; i <= weeksAhead * 7; i++) {
+    // Iterate every day in the rolling window. Phase 103 — bound is windowDayCount
+    // (see the guard above), not the old forward-only weeks-ahead multiplier; this is
+    // what lets a retroactive run actually reach backward instead of silently capping
+    // at the forward distance.
+    for (let i = 0; i <= windowDayCount; i++) {
       const date = addDaysUtc(windowStart, i);
 
       // (a) Pre-hire / post-exit guards — keyed on employee lifecycle.
@@ -399,6 +535,28 @@ async function runOrPreview(
         continue;
       }
 
+      // Phase 103 Task 2 (D-05/D-06/D-07) — TimeEntry conflict. Order is load-bearing
+      // (T-103-OVERRIDE, pinned by dedicated tests): this branch sits AFTER `existing`
+      // and `locked` above, so `overrideDates` can only ever bypass THIS check — a
+      // locked month or a day outside any pattern's claim still creates nothing
+      // regardless of being listed in `overrideDates`. Read-only in both directions:
+      // the recorded working time is the thing being protected (D-07), never
+      // reconciled — this code path must never mutate, invalidate, or soft-delete a
+      // TimeEntry.
+      const dateIso = toIsoDate(date);
+      if (conflictSet.has(existKey) && !overrideSet.has(dateIso)) {
+        result.skipped.timeEntryConflict++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: employee.id,
+            date: dateIso,
+            action: "skipped",
+            reason: "timeEntryConflict",
+          });
+        }
+        continue;
+      }
+
       // (d) CREATE (or record as dry-run "created").
       if (opts.dryRun) {
         result.created++;
@@ -491,6 +649,11 @@ async function runOrPreview(
             date: toIsoDate(date),
             type: "VOCATIONAL_SCHOOL",
             patternId: pattern.id,
+            // Phase 103 — marks rows created by an explicit retroactive run, mirroring
+            // the triggerSource: "PATTERN" | "MANUAL" precedent in shift-cleanup.ts.
+            // Byte-identical to before when no explicit windowStart was passed
+            // (T-103-AUDIT / backward-compat).
+            ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
           },
         });
         // Add to existingSet so a second pattern hitting the same day won't double-create
@@ -532,7 +695,13 @@ async function runOrPreview(
   // active pattern's daysOfWeek / blockWeeks intent and soft-deletes them.
   // Source=MANUAL rows are NEVER touched (user-curated, audit-proof). Locked
   // months are skipped (Revisionssicherheit / Phase 47.2 immutability).
-  if (!opts.dryRun) {
+  //
+  // Phase 103 Task 1 — this whole block now runs UNCONDITIONALLY (mirrors the
+  // create-loop's own dryRun shape above: compute unconditionally, gate only the
+  // terminal write). A preview is a true dry run of BOTH directions of the diff now,
+  // not just the create side — this is what makes D-02's "2 Tage entfallen, 1 Tag
+  // kommt hinzu" computable from a single preview response.
+  {
     const intendedSet = new Set<string>();
     for (const pattern of patterns) {
       const weekdaySet = new Set<number>(pattern.daysOfWeek);
@@ -550,7 +719,11 @@ async function runOrPreview(
       // orphaned in Ferien and continue to render in the Schichtplan.
       const patEffectiveFs: FederalState = pattern.federalStateOverride ?? tenant.federalState;
       const patSkipHolidayCheck = pattern.respectSchoolHolidays === false;
-      for (let i = 0; i <= weeksAhead * 7; i++) {
+      // Phase 103 — same windowDayCount bound as the create loop above. Without this,
+      // the orphan-sweep's intendedSet would still only reason about the old
+      // forward-only weeks-ahead range, wrongly treating every retroactively created
+      // day as "orphaned" and immediately soft-deleting it again.
+      for (let i = 0; i <= windowDayCount; i++) {
         const date = addDaysUtc(windowStart, i);
         // Respect the pattern's own validity window — outside it, the pattern
         // has no claim on this date and the existing-Absence is not its child.
@@ -595,9 +768,36 @@ async function runOrPreview(
     for (const a of orphanCandidates) {
       const key = `${a.employeeId}::${toIsoDate(a.startDate)}`;
       if (intendedSet.has(key)) continue;
-      // Skip locked-month rows (audit-proof).
+      // Skip locked-month rows (audit-proof). Phase 103 Task 1 — this branch was
+      // previously a bare `continue` with no counter and no details[] entry, which
+      // is what made D-04's "Juli ist abgeschlossen — 2 Tage bleiben unverändert"
+      // uncomputable. Kept as its own counter (removalLocked), not folded into the
+      // create-side `locked` counter — the wizard sums them client-side.
       const lockKey = `${a.employeeId}::${toIsoDate(monthStartUtc(a.startDate))}`;
-      if (lockedSet.has(lockKey)) continue;
+      if (lockedSet.has(lockKey)) {
+        result.skipped.removalLocked++;
+        if (opts.dryRun) {
+          result.details!.push({
+            employeeId: a.employeeId,
+            date: toIsoDate(a.startDate),
+            action: "skipped",
+            reason: "removalLocked",
+          });
+        }
+        continue;
+      }
+
+      // Phase 103 Task 1 — mirrors the create-loop's own dryRun branch: report and
+      // stop, no write, in preview mode.
+      if (opts.dryRun) {
+        result.removed++;
+        result.details!.push({
+          employeeId: a.employeeId,
+          date: toIsoDate(a.startDate),
+          action: "removed",
+        });
+        continue;
+      }
 
       await prisma.absence.update({
         where: { id: a.id },
@@ -618,9 +818,14 @@ async function runOrPreview(
           origin: "SYSTEM",
           deletedAt: now.toISOString(),
           reason: "orphaned_after_pattern_change",
+          // Phase 103 — marks removals performed by an explicit retroactive run,
+          // mirroring the create-loop's own triggerSource marker above. Byte-identical
+          // to before when no explicit windowStart was passed (backward-compat).
+          ...(opts.windowStart !== undefined ? { triggerSource: "RETROACTIVE" } : {}),
         },
         request: undefined,
       });
+      result.removed++;
     }
   }
 
@@ -689,6 +894,48 @@ export async function dispatchShiftCleanupForCreatedAbsences(
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/**
+ * Phase 103 — Resolve the server-derived retroactive window for one employee.
+ *
+ * THIS IS THE ONLY PLACE THE RETROACTIVE WINDOW IS DERIVED. It reads exclusively
+ * persisted server state (EmployeeVocationalSchoolPattern.validFrom) — no request
+ * field feeds it (threat T-103-WINDOW). Route handlers MUST call this rather than
+ * accept a client-supplied windowStart/windowEnd, or D-03's "validFrom is never
+ * silently shifted" guarantee would be a client-side promise only.
+ *
+ * windowEnd is always "today" (dateOnlyUtc(now)). windowStart is the earliest
+ * dateOnlyUtc(validFrom) across the employee's currently-active patterns that is
+ * strictly before windowEnd. Returns null when no active pattern has a past
+ * validFrom — i.e. there is nothing retroactive to do for this employee right now.
+ */
+export async function resolveRetroactiveWindow(
+  prisma: PrismaClient,
+  opts: { tenantId: string; employeeId: string; now?: Date },
+): Promise<{ windowStart: Date; windowEnd: Date } | null> {
+  const now = opts.now ?? new Date();
+  const windowEnd = dateOnlyUtc(now);
+
+  const patterns = await prisma.employeeVocationalSchoolPattern.findMany({
+    where: {
+      employeeId: opts.employeeId,
+      isActive: true,
+      employee: { tenantId: opts.tenantId },
+    },
+    select: { validFrom: true },
+  });
+
+  let windowStart: Date | null = null;
+  for (const p of patterns) {
+    const vf = dateOnlyUtc(p.validFrom);
+    if (vf < windowEnd && (windowStart === null || vf < windowStart)) {
+      windowStart = vf;
+    }
+  }
+
+  if (windowStart === null) return null;
+  return { windowStart, windowEnd };
+}
+
 export async function runVocationalSchoolGeneration(
   prisma: PrismaClient,
   audit: AuditFn,
@@ -697,6 +944,14 @@ export async function runVocationalSchoolGeneration(
   return runOrPreview(prisma, audit, { ...opts, dryRun: opts.dryRun ?? false });
 }
 
+/**
+ * Phase 103 Task 1 — a full dry run of BOTH directions of the diff: `created` /
+ * `details[].action === "created"` for what would be newly created, AND
+ * `removed` / `details[].action === "removed"` for orphaned PATTERN Absences that
+ * would be soft-deleted. Locked-month skips are reported on both sides
+ * (`skipped.locked` for the create side, `skipped.removalLocked` for the removal
+ * side). Nothing is ever written or audited in this mode.
+ */
 export async function previewVocationalSchoolGeneration(
   prisma: PrismaClient,
   opts: PreviewOpts,

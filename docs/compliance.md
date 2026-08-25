@@ -193,7 +193,7 @@ Implementiert in [`apps/api/src/plugins/audit.ts`](../apps/api/src/plugins/audit
 
 ## Migrations- und Datenintegrität
 
-- **Schema-Änderungen:** Versionierte Prisma-Migrationen (`prisma migrate dev` → `migrate deploy`), **nicht** `db push`. Siehe `docs/migrations.md`.
+- **Schema-Änderungen:** Versionierte Prisma-Migrationen (`prisma migrate diff` gegen eine Wegwerf-Shadow-DB → `migrate deploy`), **nicht** `db push` und **nicht** `prisma migrate dev` (setzt bei Drift die Zieldatenbank ohne Rückfrage zurück). Siehe `CLAUDE.md` und `docs/migrations.md`.
 - **CASCADE-Verhalten:** Critical Relations (`Employee → TimeEntry`, `Employee → LeaveRequest`, `Employee → Absence`) verwenden `onDelete: Restrict` — verhindert versehentlichen Cascade-Delete
 - **Soft-Delete-Queries:** ALLE Queries auf `TimeEntry`, `LeaveRequest`, `Absence` MÜSSEN `deletedAt: null` im `where` enthalten (Projektregel, enforced in Code-Reviews)
 

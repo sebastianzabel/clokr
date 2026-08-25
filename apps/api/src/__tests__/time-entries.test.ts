@@ -152,6 +152,7 @@ describe("Time Entries API", () => {
         payload: {
           startTime: "2026-02-05T08:00:00.000Z",
           endTime: "2026-02-05T16:00:00.000Z",
+          reason: "Korrektur nach Rückfrage",
         },
       });
 
@@ -227,7 +228,7 @@ describe("Time Entries API", () => {
     // ── Plan 76.19-06 Task 2: DB partial-unique index → P2002 → 409 ────────────
     // The partial-unique index (WHERE deletedAt IS NULL) catches a concurrent
     // same-day create that raced past the app-level one-per-day check. The DB
-    // constraint cannot be reproduced against the `db push` test schema (Prisma
+    // constraint cannot be reproduced against the `db push` test database (Prisma
     // cannot express partial unique indexes), so we simulate the driver-level
     // P2002 the index raises and assert the handler maps it to 409, not 500.
     it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {
@@ -422,7 +423,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${created.entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { breakMinutes: 45 },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
       });
 
       expect(updateRes.statusCode).toBe(200);
@@ -451,6 +452,7 @@ describe("Time Entries API", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${created.entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
 
       expect([200, 204]).toContain(deleteRes.statusCode);
@@ -523,6 +525,98 @@ describe("Time Entries API", () => {
     });
   });
 
+  // ── Phase 91 (BREAK-01): human break-edit flips AUTO -> CONFIRMED ────────
+  describe("COMPLIANCE: break-status AUTO -> CONFIRMED flip on human edit", () => {
+    const flipCleanupIds: string[] = [];
+
+    afterAll(async () => {
+      if (flipCleanupIds.length > 0) {
+        await app.prisma.break.deleteMany({ where: { timeEntryId: { in: flipCleanupIds } } });
+        await app.prisma.timeEntry.deleteMany({ where: { id: { in: flipCleanupIds } } });
+      }
+    });
+
+    async function createAutoStatusEntry(dateStr: string) {
+      const res = await app.prisma.timeEntry.create({
+        data: {
+          employeeId: data.employee.id,
+          date: new Date(dateStr),
+          startTime: new Date(`${dateStr}T07:00:00Z`),
+          endTime: new Date(`${dateStr}T15:30:00Z`),
+          breakMinutes: 30,
+          breakStatus: "AUTO",
+          source: "MANUAL",
+        },
+      });
+      flipCleanupIds.push(res.id);
+      return res;
+    }
+
+    it("PUT with body.breaks on an AUTO entry flips breakStatus to CONFIRMED", async () => {
+      const entry = await createAutoStatusEntry("2025-05-25");
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: {
+          breaks: [{ startTime: "2025-05-25T11:00:00Z", endTime: "2025-05-25T11:30:00Z" }],
+          reason: "Korrektur nach Rückfrage",
+        },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.entry.breakStatus).toBe("CONFIRMED");
+    });
+
+    it("PUT with only body.breakMinutes on an AUTO entry flips breakStatus to CONFIRMED", async () => {
+      const entry = await createAutoStatusEntry("2025-05-26");
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.entry.breakStatus).toBe("CONFIRMED");
+    });
+
+    it("PUT touching neither breaks nor breakMinutes leaves breakStatus AUTO unchanged", async () => {
+      const entry = await createAutoStatusEntry("2025-05-27");
+
+      const res = await app.inject({
+        method: "PUT",
+        url: `/api/v1/time-entries/${entry.id}`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { note: "nur eine Notiz", reason: "Korrektur nach Rückfrage" },
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = JSON.parse(res.body);
+      expect(body.entry.breakStatus).toBe("AUTO");
+    });
+
+    it("POST /:id/breaks append on an AUTO entry flips breakStatus to CONFIRMED", async () => {
+      const entry = await createAutoStatusEntry("2025-05-28");
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/time-entries/${entry.id}/breaks`,
+        headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { startTime: "2025-05-28T11:00:00Z", endTime: "2025-05-28T11:15:00Z" },
+      });
+
+      expect(res.statusCode).toBe(200);
+
+      const updated = await app.prisma.timeEntry.findUnique({ where: { id: entry.id } });
+      expect(updated?.breakStatus).toBe("CONFIRMED");
+    });
+  });
+
   // ── COMPLIANCE: Soft delete enforcement ──────────────────────────────────
   describe("COMPLIANCE: Soft delete enforcement", () => {
     const softDeleteCleanupIds: string[] = [];
@@ -557,6 +651,7 @@ describe("Time Entries API", () => {
         method: "DELETE",
         url: `/api/v1/time-entries/${entryId}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
+        payload: { reason: "Storno wegen Fehleingabe" },
       });
       expect([200, 204]).toContain(deleteRes.statusCode);
 
@@ -759,7 +854,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { date: "2026-02-16" },
+        payload: { date: "2026-02-16", reason: "Korrektur nach Rückfrage" },
       });
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.body).error).toContain("abgeschlossen");
@@ -800,7 +895,7 @@ describe("Time Entries API", () => {
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
         headers: { authorization: `Bearer ${data.adminToken}` },
-        payload: { breakMinutes: 45 },
+        payload: { breakMinutes: 45, reason: "Korrektur nach Rückfrage" },
       });
       expect(res.statusCode).toBe(200);
     });

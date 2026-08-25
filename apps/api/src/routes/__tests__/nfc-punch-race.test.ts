@@ -20,6 +20,12 @@ describe("TIME-V19-03 — NFC double-tap + clock-in race", () => {
     app = await getTestApp();
     data = await seedTestData(app, "race");
 
+    // nfcCardId is globally unique — release it from any leftover employee
+    // (residue from a prior run whose beforeAll threw partway) so setup is idempotent.
+    await app.prisma.employee.updateMany({
+      where: { nfcCardId: NFC_CARD_ID },
+      data: { nfcCardId: null },
+    });
     await app.prisma.employee.update({
       where: { id: data.employee.id },
       data: { nfcCardId: NFC_CARD_ID },

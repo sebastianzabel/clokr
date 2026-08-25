@@ -13,16 +13,57 @@
 - `pnpm dev` — start all dev servers
 - `pnpm --filter @clokr/api dev` — API only
 - `pnpm --filter @clokr/web dev` — Web only
-- `pnpm --filter @clokr/db exec prisma migrate dev --name <desc>` — create + apply a migration (dev)
 - `pnpm --filter @clokr/db exec prisma migrate deploy` — apply pending migrations (every env)
-- `pnpm --filter @clokr/db exec prisma generate` — regenerate Prisma client
-- Schema changes go through **versioned migrations**, not `db push`. Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
+- `pnpm --filter @clokr/db exec prisma generate` — regenerate Prisma client (`migrate deploy` does NOT do this, unlike `migrate dev`)
+- Schema changes go through **versioned migrations**, never `db push`.
+
+### Creating a migration — do NOT use `prisma migrate dev`
+
+**`migrate dev` is not the workflow on this project.** When it finds drift it resets the target
+database — drops it, recreates it, replays every migration — and in a non-interactive shell (i.e.
+any agent run) that happens **without a confirmation prompt**. It did exactly that on 2026-08-19 and
+destroyed all local fixture/demo data. This dev database has long-standing pre-existing index drift,
+so it is reset-prone on repeat, not just that once.
+
+Create migrations the way phases 85-01, 91-01, 96-01 and 104's quick tasks did — generate the SQL
+against a throwaway shadow DB, read it, then apply it:
+
+```bash
+# 1. throwaway shadow DB
+psql ... -c 'DROP DATABASE IF EXISTS clokr_shadow;' -c 'CREATE DATABASE clokr_shadow;'
+# 2. hand-create packages/db/prisma/migrations/$(date +%Y%m%d%H%M%S)_<snake_name>/
+# 3. generate the SQL — Prisma 7 takes the shadow URL from the ENV VAR, there is no CLI flag
+#    (see packages/db/prisma.config.ts and the drift check in .github/workflows/ci.yml)
+SHADOW_DATABASE_URL="postgresql://.../clokr_shadow" pnpm --filter @clokr/db exec prisma migrate diff \
+  --from-migrations ./prisma/migrations --to-schema ./prisma/schema.prisma --script \
+  > packages/db/prisma/migrations/<dir>/migration.sql
+# 4. READ migration.sql. Anything beyond your intended change is drift leaking in — stop, don't hand-edit.
+# 5. apply to dev AND clokr_test, then verify
+pnpm --filter @clokr/db exec prisma migrate deploy
+pnpm --filter @clokr/api run test:setup
+pnpm --filter @clokr/db exec prisma migrate status   # must report no drift
+# 6. drop clokr_shadow, run prisma generate
+```
+
+Flags that older Prisma docs use and that **fail** here: `--to-schema-datamodel` (removed, use
+`--to-schema`), `--shadow-database-url` (never a CLI flag in Prisma 7 — use `SHADOW_DATABASE_URL`).
+
+Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `docs/migrations.md`.
 - `docker compose up --build -d` — rebuild and restart all containers
 
 ## Path Aliases (SvelteKit)
 
 - `$stores` → `src/lib/stores/`
 - `$api` → `src/lib/api/`
+
+## Testing & Test Database Isolation
+
+- The `apps/api` integration suite runs against the separate database `clokr_test` — never the dev database `clokr`.
+- Provision it with `pnpm --filter @clokr/api run test:setup` (the `pretest`/`pretest:coverage`/`pretest:watch` hooks do this automatically).
+- Run the full suite with `pnpm --filter @clokr/api test`. For a single file: run `test:setup` first, then `pnpm --filter @clokr/api exec vitest run <path>` (`exec vitest run` skips `pretest`; `pnpm test -- <file>` does not work).
+- A startup guard aborts the run before any test executes if the target isn't the marked test database, naming the actual host/port/database found — fix the target, never work around the guard.
+- `?schema=` is a Prisma-only connection-string parameter that the `pg` driver silently ignores — it must never reappear in `TEST_DATABASE_URL`.
+- Full details, provisioning rationale, and the clean-slate procedure: `docs/testing.md`.
 
 ## Language
 
@@ -52,6 +93,7 @@ When an employee is "deleted" (DSGVO Art. 17), the system **anonymizes** instead
 - **User**: email → anonymized, passwordHash → "ANONYMIZED", isActive → false
 - **Notes**: All notes in TimeEntries, LeaveRequests, Absences are set to null
 - **Documents**: Absence documentPath → null
+- **§ 9-Vorgänge**: Section9Credit documentPath → null, reason → null (Zeilen bleiben erhalten — Korrektureintrag nach R7)
 - **Auth tokens**: Invitations, OTP, RefreshTokens are hard-deleted (not retention-relevant)
 - **Preserved**: TimeEntries, LeaveRequests, Absences, Schedules, OvertimeAccount (for retention compliance)
 - **AuditLog**: userId → null (anonymized, not deleted)
@@ -72,6 +114,23 @@ Legal retention periods (Germany):
 ## Saldo Calculation & Monatsabschluss
 
 Current: recalculated from hire date on every request (does not scale). Target architecture (SaldoSnapshot per month, Jahresübertrag, correction flow) — see GitHub issue #6.
+
+## Releases & Deployment
+
+**Read `docs/release-process.md` before cutting, tagging or deploying a release.** It is the
+canonical order and it is NOT reconstructible from the workflows alone.
+
+The two rules that get broken most often:
+
+- **Bump the version BEFORE the tag.** The version is baked into the image from `package.json`
+  (`apps/api/src/app.ts:59-65`); promotion is a digest-preserving re-tag with no rebuild, so tagging
+  a pre-bump image makes `/api/v1/version` report the old version.
+- **Never `kubectl set image` on int.** ArgoCD runs `selfHeal: true` and reverts it in seconds.
+  Change `image.tag` in `k8s-homelab/argocd-apps/clokr-app.yaml` instead.
+
+Environments: dev = local docker · int = k3s (ArgoCD) · prod = dmz-proxy (`/opt/awh-infra/.env`).
+Refreshing int from prod data requires `apps/api/scripts/pseudonymize-dump.ts` — never restore a raw
+prod dump to int.
 
 ## CVE / Security Vulnerability Handling
 
@@ -356,7 +415,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Section separators: `// ── Section Name ──────────────────` used throughout route files and app.ts to visually separate logical blocks
 - JSDoc-style comments for utility functions that have non-obvious behavior — see `apps/api/src/utils/timezone.ts`
 - German domain context comments where business rules apply: `// Einladung nur erstellen wenn kein Passwort gesetzt`
-- TODO comments for known future work: `// TODO: separate test DB for CI`
+- TODO comments for known future work: `// TODO(owner-gate): construct once the Phorest web-calendar URL format is pinned.`
 - Used sparingly — mainly on exported utility functions and plugin interfaces
 - Declare module augmentation blocks use JSDoc for plugin-decorated properties:
 

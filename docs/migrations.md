@@ -46,6 +46,44 @@ migrations automatically via `prisma migrate deploy` (run by the container entry
 > the same server). The local docker `clokr` superuser can do this out of the box.
 > `migrate dev` is **dev-only** — never run it against int/prod.
 
+### ⚠️ `migrate dev` can reset your local dev database — dump first
+
+`migrate dev` is not purely additive: when it detects drift between the live database and
+the migration history (or a previously-failed migration), Prisma's own remedy is to
+**reset the target database** — drop and recreate it, then replay every migration from
+scratch. On local dev this happens **without a confirmation prompt** in a non-interactive
+shell. This is not hypothetical: it happened on this project on 2026-08-19 (the timestamp
+also carried by the `20260819094159_add_opening_balance` migration folder) and took every
+piece of accumulated local fixture/demo data with it — no local backup existed at the
+time.
+
+**Take a dump before running `migrate dev` against local dev** (`backups/` is gitignored,
+see `.gitignore:71`):
+
+```bash
+docker compose exec -T postgres pg_dump -U clokr -Fc clokr > backups/clokr-dev-$(date +%F-%H%M).dump
+```
+
+Restore it with:
+
+```bash
+docker compose exec -T postgres pg_restore --clean --if-exists -U clokr -d clokr < backups/clokr-dev-<timestamp>.dump
+```
+
+**Since Phase 101, a test run no longer writes to the dev database** (see
+`docs/testing.md`) — `migrate dev` and other manual `packages/db` operations against a
+`DATABASE_URL` pointed at `clokr` are now the only things that put local dev data at risk.
+
+**In practice, this project mostly avoids `migrate dev` for exactly this reason.** Every
+recent schema-adding phase (STATE.md decisions 85-01, 91-01, 96-01) deliberately used
+`prisma migrate diff` against a throwaway shadow database (e.g. `clokr_shadow`) to generate
+the migration SQL, then applied it with `migrate deploy` — never `migrate dev` — because
+this project's local dev database has long-standing, pre-existing index drift that makes
+`migrate dev` reset-prone on repeat offense, not just on 2026-08-19. **Prefer `migrate
+diff` + `migrate deploy`** for any schema change once your local dev database has drifted
+even once; reserve plain `migrate dev` for a genuinely fresh, never-drifted local database,
+and take the dump above first regardless.
+
 Apply pending migrations manually (normally the entrypoint does this):
 
 ```bash

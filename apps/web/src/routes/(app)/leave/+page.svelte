@@ -9,8 +9,10 @@
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import Card from "$components/ui/Card.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-06
   import Modal from "$components/ui/Modal.svelte";
   import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import CollisionWarnBody from "$lib/phorest/CollisionWarnBody.svelte";
   import {
     checkAppointmentCollisions,
@@ -18,6 +20,11 @@
     type CollisionSummary,
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
+  import {
+    mapVacationBalance,
+    type VacationBalance,
+    type VacationEntitlementRow,
+  } from "$lib/leave/vacation-balance";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -50,6 +57,9 @@
     attestPresent: boolean;
     attestValidFrom: string | null;
     attestValidTo: string | null;
+    // Phase 104-10 (D-29): the § 9 case touching this request, if any.
+    section9Status?: "AU_PENDING" | "CONFIRMED" | "REJECTED" | null;
+    section9CreditId?: string | null;
   }
 
   interface OverlapEntry {
@@ -106,15 +116,33 @@
 
   // Überstunden- / Urlaubskontostand
   let overtimeBalance: number | null = $state(null);
-  let vacationBalance = $state<{
-    total: number;
-    used: number;
-    carryOver: number;
-    carryOverDeadline: string | null;
-  } | null>(null);
+  // Phase 97-06 (SALDO-DISP-01/04) — split fields from GET /leave/overtime-balance,
+  // alongside the pre-existing lifetime `overtimeBalance`. Default `undefined` (not
+  // null) so "not yet loaded" and "older cached response without the split fields"
+  // both read as `confirmedMinutes === undefined` — the same fallback-to-legacy
+  // check the dashboard's SaldoAnzeige tile already uses (97-04).
+  let confirmedMinutes: number | undefined = $state(undefined);
+  let openMonthMinutes: number | null | undefined = $state(undefined);
+  let hasClosedMonth = $state(false);
+  let rosterIncomplete: boolean | undefined = $state(undefined);
+  // Phase 100 (OTC-03) — resolved negative-balance tolerance, same
+  // `undefined`-default convention as the Phase-97 fields above.
+  let maxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
+  let isNegativeLimitExceeded: boolean | undefined = $state(undefined);
+  // Phase 104-10 (D-31): one movement per CONFIRMED § 9 credit in this entitlement year —
+  // rendered verbatim (server-authored label), never re-derived on the client.
+  // Types + the mapper live in $lib/leave/vacation-balance.ts (dev-pass fix, see that
+  // file's doc comment) so every call site maps `section9Movements` the same way and
+  // the mapping is unit-testable without mounting this page.
+  let vacationBalance = $state<VacationBalance | null>(null);
 
   // Stunden- und Tage-Vorschau (vom Server berechnet, Feiertage berücksichtigt)
   let hoursPreview: number | null = $state(null);
+  // Phase 100 (WR-03 code review fix) — exact integer minutes alongside the
+  // .toFixed(2)-rounded `hoursPreview`, so wouldBeRejected below can compare in the
+  // same unit the server gate uses instead of reconstructing it through two
+  // different rounding paths.
+  let minutesNeeded: number | null = $state(null);
   let serverDays: number | null = $state(null); // Feiertags-bereinigte Tage vom Server
   let hoursPreviewLoading = $state(false);
   let hoursPreviewTimer: ReturnType<typeof setTimeout> | null = null;
@@ -180,6 +208,10 @@
   const SICK_CODES: TypeCode[] = ["SICK", "SICK_CHILD"];
 
   // ── Kalender ──────────────────────────────────────────────────────────────
+  // Phase 104-10 (D-28/D-29): the § 9 marker the server computes per request — masked
+  // exactly like typeCode/typeName (null for a colleague without detail visibility).
+  type Section9Marker = "AU_PENDING" | "CONFIRMED" | "SUPERSEDED" | null;
+
   interface CalEntry {
     id: string;
     isOwn: boolean;
@@ -193,6 +225,8 @@
     halfDay: boolean;
     status: Status;
     isHoliday: boolean;
+    section9?: Section9Marker;
+    section9Days?: string[];
   }
 
   type View = "calendar" | "list";
@@ -427,40 +461,50 @@
     try {
       const year = new Date().getFullYear();
       const [entitlements, empData] = await Promise.all([
-        api.get<
-          Array<{
-            typeCode: string;
-            leaveType: { name: string };
-            totalDays: number;
-            usedDays: number;
-            carriedOverDays: number;
-            effectiveCarryOverDays: number;
-            carryOverDeadline: string | null;
-          }>
-        >(`/leave/entitlements/${userId}?year=${year}`),
+        api.get<VacationEntitlementRow[]>(`/leave/entitlements/${userId}?year=${year}`),
         api.get<{ exitDate: string | null }>(`/employees/${userId}`).catch(() => null),
       ]);
       const vac = entitlements.find((e) => e.typeCode === "VACATION");
-      vacationBalance = vac
-        ? {
-            total: Number(vac.totalDays),
-            used: Number(vac.usedDays),
-            carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
-            carryOverDeadline: vac.carryOverDeadline,
-          }
-        : null;
+      vacationBalance = mapVacationBalance(vac);
       viewedExitDate = empData?.exitDate ?? null;
     } catch {
       /* silent */
     }
   }
 
+  // Phase 97-06 — response shape widened additively; balanceHours keeps its
+  // existing meaning (lifetime total) for any consumer that still needs it.
+  interface OvertimeBalanceResponse {
+    balanceHours: number;
+    confirmedMinutes?: number;
+    openMonthMinutes?: number | null;
+    hasClosedMonth?: boolean;
+    rosterIncomplete?: boolean;
+    // Phase 100 (OTC-03/OTC-05) — resolved negative-balance tolerance, alongside
+    // the Phase-97 split fields above. Optional so an older cached response
+    // degrades to "unconfigured" (no Toleranz row, no warn hint).
+    maxNegativeBalanceMinutes?: number | null;
+    isNegativeLimitExceeded?: boolean;
+  }
+
   async function loadOvertimeBalance() {
     try {
-      const r = await api.get<{ balanceHours: number }>("/leave/overtime-balance");
+      const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
       overtimeBalance = r.balanceHours;
+      confirmedMinutes = r.confirmedMinutes;
+      openMonthMinutes = r.openMonthMinutes;
+      hasClosedMonth = r.hasClosedMonth ?? false;
+      rosterIncomplete = r.rosterIncomplete;
+      maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
+      isNegativeLimitExceeded = r.isNegativeLimitExceeded;
     } catch {
       overtimeBalance = null;
+      confirmedMinutes = undefined;
+      openMonthMinutes = undefined;
+      hasClosedMonth = false;
+      rosterIncomplete = undefined;
+      maxNegativeBalanceMinutes = undefined;
+      isNegativeLimitExceeded = undefined;
     }
   }
 
@@ -492,6 +536,7 @@
     if (hoursPreviewTimer) clearTimeout(hoursPreviewTimer);
     if (!formStart || !formEnd || formStart > formEnd) {
       hoursPreview = null;
+      minutesNeeded = null;
       serverDays = null;
       return;
     }
@@ -502,13 +547,15 @@
     if (!formStart || !formEnd) return;
     hoursPreviewLoading = true;
     try {
-      const r = await api.get<{ hours: number; days: number }>(
+      const r = await api.get<{ hours: number; days: number; minutesNeeded: number }>(
         `/leave/hours-preview?startDate=${formStart}&endDate=${formEnd}&halfDay=${formHalfDay}`,
       );
       hoursPreview = r.hours;
+      minutesNeeded = r.minutesNeeded;
       serverDays = r.days;
     } catch {
       hoursPreview = null;
+      minutesNeeded = null;
       serverDays = null;
     } finally {
       hoursPreviewLoading = false;
@@ -518,36 +565,33 @@
   async function loadBalanceForType(type: TypeCode) {
     if (type === "OVERTIME_COMP") {
       try {
-        const r = await api.get<{ balanceHours: number }>("/leave/overtime-balance");
+        const r = await api.get<OvertimeBalanceResponse>("/leave/overtime-balance");
         overtimeBalance = r.balanceHours;
+        confirmedMinutes = r.confirmedMinutes;
+        openMonthMinutes = r.openMonthMinutes;
+        hasClosedMonth = r.hasClosedMonth ?? false;
+        rosterIncomplete = r.rosterIncomplete;
+        maxNegativeBalanceMinutes = r.maxNegativeBalanceMinutes;
+        isNegativeLimitExceeded = r.isNegativeLimitExceeded;
       } catch {
         overtimeBalance = null;
+        confirmedMinutes = undefined;
+        openMonthMinutes = undefined;
+        hasClosedMonth = false;
+        rosterIncomplete = undefined;
+        maxNegativeBalanceMinutes = undefined;
+        isNegativeLimitExceeded = undefined;
       }
     } else if (type === "VACATION") {
       try {
         const year = new Date().getFullYear();
         const userId = $authStore.user?.employeeId;
         if (!userId) return;
-        const entitlements = await api.get<
-          Array<{
-            typeCode: string;
-            leaveType: { name: string };
-            totalDays: number;
-            usedDays: number;
-            carriedOverDays: number;
-            effectiveCarryOverDays: number;
-            carryOverDeadline: string | null;
-          }>
-        >(`/leave/entitlements/${userId}?year=${year}`);
+        const entitlements = await api.get<VacationEntitlementRow[]>(
+          `/leave/entitlements/${userId}?year=${year}`,
+        );
         const vac = entitlements.find((e) => e.typeCode === "VACATION");
-        vacationBalance = vac
-          ? {
-              total: Number(vac.totalDays),
-              used: Number(vac.usedDays),
-              carryOver: Number(vac.effectiveCarryOverDays ?? vac.carriedOverDays),
-              carryOverDeadline: vac.carryOverDeadline,
-            }
-          : null;
+        vacationBalance = mapVacationBalance(vac);
       } catch {
         vacationBalance = null;
       }
@@ -578,6 +622,7 @@
     formSpecialRuleId = "";
     overlapEntries = [];
     hoursPreview = null;
+    minutesNeeded = null;
     serverDays = null;
   }
 
@@ -710,12 +755,31 @@
   }
 
   // ── Antrag zurückziehen / Stornierung beantragen ──────────────────────────
-  async function cancelRequest(id: string) {
+  // Quick 260824-cjd: Storno now requires a Begründung — routed through a
+  // ReasonDialog rather than fired directly from the row buttons.
+  let cancelDialogOpen = $state(false);
+  let cancelDialogRequest: LeaveRequest | null = $state(null);
+  let cancelDialogTitle = $derived(
+    cancelDialogRequest?.status === "APPROVED" ? "Stornierung beantragen?" : "Antrag zurückziehen?",
+  );
+
+  function openCancelDialog(req: LeaveRequest) {
+    cancelDialogRequest = req;
+    cancelDialogOpen = true;
+  }
+
+  async function cancelRequest(id: string, reason: string) {
+    await api.delete(`/leave/requests/${id}`, { reason });
+    await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+  }
+
+  async function confirmCancelDialog(reason: string) {
+    if (!cancelDialogRequest) return;
     try {
-      await api.delete(`/leave/requests/${id}`);
-      await Promise.all([loadData(), loadCalendar(), loadVacationSummary()]);
+      await cancelRequest(cancelDialogRequest.id, reason);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : "Fehler";
+      throw e;
     }
   }
 
@@ -827,6 +891,39 @@
   let formDays = $derived(calcDays(formStart, formEnd, formHalfDay));
   let effectiveDays = $derived(serverDays ?? formDays); // Server-Wert bevorzugen (Feiertage)
   let hoursNeeded = $derived(hoursPreview ?? formDays * 8); // Fallback auf ×8 solange Preview lädt
+  // Phase 97-06 (SALDO-DISP-04) — the OVERTIME_COMP balance-box's affordability
+  // arithmetic (Guthaben/Verbleibend) uses the CONFIRMED figure, never the
+  // lifetime total (which still includes the unclaimable open-month forecast).
+  // Falls back to the lifetime total when confirmedMinutes hasn't loaded yet,
+  // matching the KPI tile's own degrade-not-blank convention below.
+  let confirmedHours = $derived(
+    confirmedMinutes !== undefined ? confirmedMinutes / 60 : (overtimeBalance ?? 0),
+  );
+  // Phase 100 (OTC-03) — resolved negative-balance tolerance in hours, for the
+  // Toleranz row display below.
+  let toleranceHours = $derived((maxNegativeBalanceMinutes ?? 0) / 60);
+  // Phase 100 (OTC-05, WR-03 code-review fix) — mirrors the server gate in leave.ts
+  // (`neededMinutes > availableMinutes`). Compares in MINUTES — the server's own unit —
+  // whenever both exact-minute values have loaded: `minutesNeeded` from GET
+  // /leave/hours-preview and `confirmedMinutes` from GET /leave/overtime-balance are both
+  // exact integers, so this branch can never disagree with the server.
+  //
+  // Previously this compared in HOURS: `hoursNeeded` (derived from the preview's
+  // .toFixed(2)-rounded `hours` field) against unrounded confirmedHours/toleranceHours.
+  // At a boundary whose true value isn't a whole number of minutes (e.g. needed =
+  // available = 241 minutes), the asymmetric rounding could disagree with the server's
+  // exact-minute gate and show a spurious warning/no-warning.
+  //
+  // Falls back to the (approximate, rounded-hours) comparison only in the brief
+  // (300ms-debounced) window before minutesNeeded/confirmedMinutes have loaded. This is
+  // display-only in both branches — the "⚠ Nicht genug Überstunden" hint never blocks
+  // the Antrag-Button (only `formSaving` does), and the server remains authoritative on
+  // submit regardless of which branch was active.
+  let wouldBeRejected = $derived(
+    minutesNeeded !== null && confirmedMinutes !== undefined
+      ? confirmedMinutes + (maxNegativeBalanceMinutes ?? 0) < minutesNeeded
+      : confirmedHours + toleranceHours - hoursNeeded < 0,
+  );
   let vacRemaining = $derived(
     vacationBalance
       ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used
@@ -1068,13 +1165,39 @@
     </Card>
 
     <Card animate class="kpi-card">
-      <KPIStat
-        label="Überstundenkonto"
-        value={overtimeBalance === null
-          ? "–"
-          : `${overtimeBalance >= 0 ? "+" : "−"}${fmtH(overtimeBalance)}`}
-        delta="aktueller Saldo"
-      />
+      <!-- Phase 97-06 (SALDO-DISP-02/05) — the split primitive replaces the inline
+           KPIStat markup outright (not wrapped), same as the dashboard tile:
+           KPIStat's pure-props string contract cannot express a two-figure tile.
+           Leads with "Bestätigt", subordinates "Laufender Monat (Prognose)". -->
+      <!-- IN-01 (code review) — `loading` (declared above) now reaches the primitive. Note:
+           this KPI's own data arrives via loadOvertimeBalance(), fired (not awaited) AFTER
+           `loading` already flips false in onMount — so this only narrows the "Kein
+           Stundenplan" flash window (covers loadData()'s own fetch), it does not close it
+           completely. A fully precise fix would need a dedicated loading flag for
+           loadOvertimeBalance() itself; not added here to keep this change minimal. `error` is
+           deliberately NOT wired — this page's `error` string is reused for unrelated
+           mutations (delete/iCal-download/etc.), so surfacing it here would mislabel an
+           unrelated failure as "saldo failed to load". -->
+      {#if confirmedMinutes !== undefined}
+        <SaldoAnzeige
+          variant="expanded"
+          label="Überstundenkonto"
+          confirmedMinutes={confirmedMinutes ?? 0}
+          openMonthMinutes={openMonthMinutes ?? null}
+          hasClosedMonth={hasClosedMonth ?? false}
+          {rosterIncomplete}
+          {loading}
+        />
+      {:else}
+        <!-- Fallback: an older cached response without the split fields — degrade
+             to the primitive's single-value rendering instead of blanking. -->
+        <SaldoAnzeige
+          variant="expanded"
+          label="Überstundenkonto"
+          saldoMinutes={overtimeBalance !== null ? Math.round(overtimeBalance * 60) : null}
+          {loading}
+        />
+      {/if}
     </Card>
 
     <Card animate class="kpi-card">
@@ -1196,8 +1319,53 @@
             <div class="balance-box">
               <div class="balance-row">
                 <span class="balance-label">Guthaben</span>
-                <span class="balance-value">{fmtH(overtimeBalance)}</span>
+                {#if !hasClosedMonth}
+                  <!-- Phase 97-06 (SALDO-DISP-04) — a confirmed value of 0 with no
+                       closed month yet must not read as a genuine 0h entitlement.
+                       Reuses SaldoAnzeige's own "noch kein Monatsabschluss" caption
+                       (state A3) rather than restating that copy locally here. -->
+                  <span class="balance-value">
+                    <SaldoAnzeige
+                      variant="compact"
+                      confirmedMinutes={confirmedMinutes ?? 0}
+                      hasClosedMonth={false}
+                    />
+                  </span>
+                {:else}
+                  <span class="balance-value">{fmtH(confirmedHours)}</span>
+                {/if}
               </div>
+              {#if toleranceHours > 0}
+                <div class="balance-row">
+                  <span class="balance-label">Toleranz</span>
+                  <span class="balance-value">+ {fmtH(toleranceHours)}</span>
+                </div>
+              {/if}
+              {#if isNegativeLimitExceeded === true}
+                <!-- Phase 100 (D-10) — warn tone, not the red hint below: this is
+                     a standing account-state signal, independent of any draft
+                     request. The red hint stays reserved for "this specific
+                     request would be rejected". -->
+                <p class="balance-hint-notice">
+                  ⚠ Guthaben übersteigt bereits die Toleranzgrenze ({fmtH(toleranceHours)})
+                </p>
+              {/if}
+              {#if typeof openMonthMinutes === "number"}
+                <!-- Muted, non-arithmetic — the forecast is shown for context but
+                     never enters the Verbleibend/warning arithmetic below, and is
+                     never presented as claimable (the whole point of this plan).
+                     Omitted entirely when openMonthMinutes is null (fail-safe
+                     shape) rather than showing a fabricated zero. -->
+                <div class="balance-row">
+                  <span class="balance-label">Laufender Monat (Prognose)</span>
+                  <span class="balance-value balance-value--muted"
+                    >{fmtH(openMonthMinutes / 60)}</span
+                  >
+                </div>
+                <p class="balance-hint-muted">
+                  Noch nicht abrufbar – wird mit dem Monatsabschluss zu „Bestätigt“.
+                </p>
+              {/if}
               {#if effectiveDays > 0 || formHalfDay}
                 <div class="balance-row">
                   <span class="balance-label">
@@ -1214,18 +1382,20 @@
                 <div class="balance-divider"></div>
                 <div class="balance-row">
                   <span class="balance-label">Verbleibend</span>
-                  <span
-                    class="balance-value {overtimeBalance - hoursNeeded < 0 ? 'balance-warn' : ''}"
-                  >
+                  <span class="balance-value {wouldBeRejected ? 'balance-warn' : ''}">
                     {#if hoursPreviewLoading}
                       <span class="text-muted">…</span>
                     {:else}
-                      {fmtH(overtimeBalance - hoursNeeded)}
+                      {fmtH(confirmedHours - hoursNeeded)}
                     {/if}
                   </span>
                 </div>
-                {#if !hoursPreviewLoading && overtimeBalance - hoursNeeded < 0}
-                  <p class="balance-hint-warn">⚠ Nicht genug Überstunden vorhanden</p>
+                {#if !hoursPreviewLoading && wouldBeRejected}
+                  <p class="balance-hint-warn">
+                    ⚠ Nicht genug Überstunden vorhanden{toleranceHours > 0
+                      ? " (auch mit Toleranz)"
+                      : ""}
+                  </p>
                 {/if}
               {/if}
             </div>
@@ -1278,6 +1448,18 @@
                 <span class="balance-label">Verfügbar</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
               </div>
+              {#if vacationBalance.section9Movements?.length}
+                <!-- Phase 104-10 (D-31): rendered verbatim from the server — never
+                     re-derived on the client, so account line, notification and audit
+                     entry all say the same thing. Optional chaining here is a second
+                     line of defense on top of mapVacationBalance() always populating
+                     the array — see the dev-pass fix note near VacationEntitlementRow. -->
+                <ul class="section9-movements">
+                  {#each vacationBalance.section9Movements ?? [] as m (m.creditId)}
+                    <li class="section9-movement" data-testid="section9-movement">{m.label}</li>
+                  {/each}
+                </ul>
+              {/if}
               {#if effectiveDays > 0 || formHalfDay}
                 <div class="balance-row">
                   <span class="balance-label">
@@ -1584,6 +1766,12 @@
                     {@const _isBarStart = day.dateStr === e.startDate || _dow === 1}
                     {@const _isBarEnd = day.dateStr === e.endDate || _dow === 0}
                     {@const _showLabel = day.dateStr === e.startDate || _dow === 1}
+                    <!-- Phase 104-10 (D-28/D-29): the § 9 marker only applies to the SPECIFIC
+                         days the server named in section9Days — a multi-day bar can be
+                         partially marked. -->
+                    {@const _section9OnDay = !!(
+                      e.section9 && e.section9Days?.includes(day.dateStr)
+                    )}
                     <div
                       class="cal-chip"
                       class:cal-chip--bar-start={_isBarStart && !_isBarEnd}
@@ -1592,6 +1780,8 @@
                       class:cal-chip--pending={e.status === "PENDING" ||
                         e.status === "CANCELLATION_REQUESTED"}
                       class:cal-chip--own={e.isOwn}
+                      class:cal-chip--section9-superseded={_section9OnDay &&
+                        e.section9 === "SUPERSEDED"}
                       style:background={typeColor(e.typeCode, e.status, e.isOwn)}
                       title="{e.firstName} {e.lastName}{e.isOwn && e.typeName
                         ? ' · ' + e.typeName
@@ -1604,6 +1794,23 @@
                         {:else}
                           <span class="cal-chip-type">abwesend</span>
                         {/if}
+                      {/if}
+                      {#if _section9OnDay && (e.section9 === "CONFIRMED" || e.section9 === "AU_PENDING")}
+                        {@const _isConfirmedSection9 = e.section9 === "CONFIRMED"}
+                        <span
+                          class="section9-chip-badge"
+                          class:section9-chip-badge--pending={!_isConfirmedSection9}
+                          data-testid="section9-cell-badge"
+                          title={_isConfirmedSection9
+                            ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet"
+                            : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet"}
+                        >
+                          <span class="sr-only"
+                            >{_isConfirmedSection9
+                              ? "§ 9 BUrlG — nicht auf den Jahresurlaub angerechnet: "
+                              : "AU ausstehend — ohne ärztliche Bescheinigung bleiben diese Urlaubstage angerechnet: "}</span
+                          >{_isConfirmedSection9 ? "§ 9" : "AU"}
+                        </span>
                       {/if}
                     </div>
                   {:else}
@@ -1806,6 +2013,23 @@
                         {req.attestPresent ? "Attest" : "Kein Attest"}
                       </span>
                     {/if}
+                    <!-- Phase 104-10 (D-29): § 9 status alongside the existing SICK badge —
+                         also shown on the overlapping VACATION row so a manager can see the
+                         case from either side. Text label carries the meaning, not colour
+                         alone (Phase-97 UAT lesson). -->
+                    {#if req.section9Status === "AU_PENDING"}
+                      <span class="badge badge-yellow" data-testid="section9-list-badge">
+                        AU ausstehend
+                      </span>
+                    {:else if req.section9Status === "CONFIRMED"}
+                      <span class="badge badge-gray" data-testid="section9-list-badge">
+                        § 9 gutgeschrieben
+                      </span>
+                    {:else if req.section9Status === "REJECTED"}
+                      <span class="badge badge-gray" data-testid="section9-list-badge">
+                        AU abgelehnt
+                      </span>
+                    {/if}
                   </td>
                   <td class="note-cell text-muted">
                     {#if req.status === "REJECTED" && req.reviewNote}
@@ -1824,14 +2048,14 @@
                       <button
                         data-testid={`leave-mine-row-${req.id}-withdraw`}
                         class="btn btn-sm btn-ghost text-red"
-                        onclick={() => cancelRequest(req.id)}>Zurückziehen</button
+                        onclick={() => openCancelDialog(req)}>Zurückziehen</button
                       >
                     {/if}
                     {#if isOwn && req.status === "APPROVED"}
                       <button
                         data-testid={`leave-mine-row-${req.id}-cancel`}
                         class="btn btn-sm btn-ghost text-red"
-                        onclick={() => cancelRequest(req.id)}>Stornieren</button
+                        onclick={() => openCancelDialog(req)}>Stornieren</button
                       >
                     {/if}
                   </td>
@@ -1923,6 +2147,15 @@
       {/snippet}
     </ConfirmDialog>
   {/if}
+
+  <!-- ── Quick 260824-cjd: Storno-Begründung (Zurückziehen / Stornierung) ────── -->
+  <ReasonDialog
+    bind:open={cancelDialogOpen}
+    title={cancelDialogTitle}
+    confirmLabel="Bestätigen"
+    danger
+    onConfirm={confirmCancelDialog}
+  />
 </div>
 
 <!-- /leave-page -->
@@ -2196,6 +2429,26 @@
     color: var(--bad);
     margin: 0.25rem 0 0;
   }
+  /* Phase 100 (D-10) — warn tone: a standing account-state signal ("your
+     confirmed balance already exceeds the configured tolerance"), distinct
+     from the --bad hint above ("this specific request would be rejected").
+     Do not merge these two or retone one into the other. */
+  .balance-hint-notice {
+    font-size: 0.8125rem;
+    color: var(--warn);
+    margin: 0.25rem 0 0;
+  }
+  /* Phase 97-06 (SALDO-DISP-04) — the "Laufender Monat (Prognose)" row: muted like
+     the forecast everywhere else in the app (never --good/--bad/--warn — colour
+     must never imply a certainty this figure doesn't have). */
+  .balance-value--muted {
+    color: var(--text-muted);
+  }
+  .balance-hint-muted {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    margin: 0.25rem 0 0;
+  }
 
   /* ── View Tabs ────────────────────────────────────────────────────── */
   /* view-tabs, view-tab, tab-badge → global in app.css */
@@ -2376,6 +2629,51 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Phase 104-10 (D-28): a confirmed § 9 credit overlays this vacation day — the entry
+     stays discoverable but visibly loses to the SICK entry (reduced emphasis, same
+     opacity idiom as .cal-chip--pending above, no new colour token). */
+  .cal-chip--section9-superseded {
+    opacity: 0.5;
+  }
+
+  /* Phase 104-10 (D-28/D-29): compact § 9 marker inside a calendar chip. Text label
+     ("§ 9" / "AU") carries the meaning — never colour/symbol alone (Phase-97 UAT lesson) —
+     the sr-only span above it spells out the full sentence for assistive tech. */
+  .section9-chip-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-left: auto;
+    padding: 0 3px;
+    border-radius: 3px;
+    font-size: 0.5625rem;
+    font-weight: 700;
+    line-height: 1.3;
+    background: rgba(255, 255, 255, 0.35);
+  }
+  .section9-chip-badge--pending {
+    background: var(--warn-soft);
+    color: var(--warn);
+    outline: 1px dashed var(--warn);
+    outline-offset: -1px;
+  }
+
+  /* Phase 104-10 (D-31): the Urlaubskonto movement list — one line per CONFIRMED § 9
+     credit, rendered verbatim from the server. */
+  .section9-movements {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .section9-movement {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
   }
 
   /* Legende */

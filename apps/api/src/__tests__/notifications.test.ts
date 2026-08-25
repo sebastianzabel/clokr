@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
+import { NOTIFICATION_EMAIL_POLICY } from "../utils/notification-email-policy";
 
 describe("Notifications API", () => {
   let app: FastifyInstance;
@@ -252,6 +253,9 @@ describe("Notifications API", () => {
           n.type === "LEAVE_REQUEST" && n.link?.includes(requestId),
       );
       expect(beforeNotif).toBeDefined();
+      // Manager-facing notification must deep-link to the approval surface
+      // (/team/leave honors ?request=), NOT the recipient's own /leave page.
+      expect(beforeNotif.link).toBe(`/team/leave?request=${requestId}`);
 
       // Admin approves the request
       const reviewRes = await app.inject({
@@ -274,6 +278,30 @@ describe("Notifications API", () => {
           n.type === "LEAVE_REQUEST" && n.link?.includes(requestId),
       );
       expect(afterNotif).toBeUndefined();
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Phase 92 (BREAK-06) email routing, migrated onto the exhaustive registry by
+  // quick-260825-k3g. Both break-related notification types ride the existing
+  // emailOnMissingEntries toggle (no dedicated emailOnBreak* toggle). The old
+  // per-type-toggle map export from notify.ts is gone — asserted directly against
+  // NOTIFICATION_EMAIL_POLICY instead, same intent.
+  // ────────────────────────────────────────────────────────────────────────────
+
+  describe("NOTIFICATION_EMAIL_POLICY — BREAK-06 email routing", () => {
+    it("BREAK_UNCONFIRMED maps to emailOnMissingEntries", () => {
+      expect(NOTIFICATION_EMAIL_POLICY.BREAK_UNCONFIRMED).toEqual({
+        email: "toggle",
+        field: "emailOnMissingEntries",
+      });
+    });
+
+    it("BREAK_COMPLIANCE_ALERT maps to emailOnMissingEntries", () => {
+      expect(NOTIFICATION_EMAIL_POLICY.BREAK_COMPLIANCE_ALERT).toEqual({
+        email: "toggle",
+        field: "emailOnMissingEntries",
+      });
     });
   });
 });

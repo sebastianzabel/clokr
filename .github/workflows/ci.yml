@@ -34,15 +34,28 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr
-      # apps/api tests connect to a separate `test` schema for isolation
-      # (mirrors apps/api/.env.test which is gitignored).
-      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr?schema=test
+      # apps/api tests connect to a separate `clokr_test` DATABASE (not a schema — D-01, Phase 101:
+      # `?schema=` is a Prisma-only parameter that `pg.Pool` silently ignored, so every run was
+      # actually hitting `clokr` above). Provisioned by the "Provision isolated test database" step
+      # below, which runs the SAME `pnpm --filter @clokr/api run test:setup` a local developer runs.
+      # apps/api/.env.test is TRACKED in git (see .gitignore) and MUST hold this same value.
+      TEST_DATABASE_URL: postgresql://clokr:password@localhost:5432/clokr_test
       JWT_SECRET: test-jwt-secret-min-32-characters-long
       JWT_REFRESH_SECRET: test-refresh-secret-min-32-characters
       JWT_EXPIRES_IN: 15m
       JWT_REFRESH_EXPIRES_IN: 7d
       ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
       NODE_ENV: test
+      # Object storage for the § 9 AU-document tests (Phase 104). Values match the
+      # "Start MinIO" step below and docker-compose.yml's dev service. Set EXPLICITLY rather than
+      # relying on apps/api/vitest.setup.ts's `MINIO_ENDPOINT ??= "localhost"` default, so this
+      # job's dependency on an object store is visible in the workflow itself.
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: clokr
+      MINIO_USE_SSL: "false"
 
     steps:
       - uses: actions/checkout@v6
@@ -56,10 +69,57 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Start MinIO (object storage for the § 9 AU-document tests)
+        # apps/api/src/__tests__/section9-upload.test.ts (Phase 104, D-26/R6) performs a REAL
+        # object-storage round-trip: upload -> byte-verbatim retrieval -> Art. 17 deletion. It is
+        # the only such test in the repo and it is deliberately NOT skippable — the § 9 AU document
+        # is an Art. 9 DSGVO health datum and "it is genuinely erasable again" has to be proven on
+        # every PR, not once on a developer laptop.
+        #
+        # Why a `docker run` step and not a `services:` container: GitHub Actions service containers
+        # cannot override a container's command, and minio/minio's default CMD is bare `minio`
+        # (no `server /data`), so a service-container MinIO exits immediately after printing usage.
+        # Verified via `docker inspect minio/minio:latest`. docker-compose.yml can use `services`
+        # only because compose supports `command:`.
+        #
+        # Same image as docker-compose.yml so dev and CI cannot drift.
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          echo "Waiting for MinIO to become ready…"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MinIO did not become ready within 60s"
+          docker logs minio
+          exit 1
+
       - name: Generate Prisma client
         run: pnpm --filter @clokr/db exec prisma generate
 
-      - name: Push schema to test DB
+      - name: Provision isolated test database
+        # Explicit step rather than relying solely on pnpm's pretest:coverage hook firing before
+        # `Run API tests with coverage` below. Phase 101 Task 1 empirically confirmed the hook DOES
+        # fire on this pnpm version even without a root .npmrc — this step stays anyway,
+        # deliberately redundant, so a future pnpm default change cannot silently un-provision CI.
+        # Runs the SAME script (apps/api/scripts/ensure-test-database.ts, via `test:setup`) a local
+        # developer runs, against the SAME target named in TEST_DATABASE_URL above.
+        run: pnpm --filter @clokr/api run test:setup
+
+      - name: Push schema to the dev-shaped reference database (clokr)
+        # `clokr` (DATABASE_URL above) is NOT the isolated test target anymore (D-01, Phase 101) —
+        # it is now (a) the database the drift-guard step below connects through via `psql` to
+        # create `prisma_migrate_shadow`, and (b) the READ-ONLY reference database
+        # ISOLATION_CHECK_DEV_DATABASE_URL points at, which src/__tests__/test-isolation.test.ts
+        # (the TI-01 proof) queries for `public."Tenant"`. That proof is non-vacuous only if this
+        # step has run, so do not remove it even though nothing calls it "the test DB" anymore.
         run: pnpm --filter @clokr/db exec prisma db push
 
       - name: Check migration drift (schema.prisma vs migrations history)
@@ -69,7 +129,7 @@ jobs:
         # `migrate diff --from-migrations` replays the migrations into a shadow
         # database, so it needs the postgres service above (Prisma 7 reads the
         # shadow URL from prisma.config.ts — there is NO CLI flag; it is env-gated
-        # via SHADOW_DATABASE_URL so it never affects the app/test schema).
+        # via SHADOW_DATABASE_URL so it never affects the app or test databases).
         # Exit code: 0 = no drift, 2 = drift (fail).
         env:
           SHADOW_DATABASE_URL: postgresql://clokr:password@localhost:5432/prisma_migrate_shadow

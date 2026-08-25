@@ -1,6 +1,6 @@
 {
   "name": "@clokr/web",
-  "version": "1.9.2",
+  "version": "1.9.18",
   "private": true,
   "type": "module",
   "scripts": {

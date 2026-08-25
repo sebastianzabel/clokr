@@ -33,6 +33,10 @@
     employeeNumber: string;
     status: "ready" | "missing" | "closed";
     missingDates?: string[];
+    /** Phase 104 (D-21): § 5 EFZG — Krankheitstage ohne Attest über die Karenzzeit hinaus.
+     *  Reiner Hinweis, KEIN Gate: der Abschluss bleibt in jedem Fall möglich. Für
+     *  abgeschlossene Monate und flexible Verträge liefert der Server bewusst []. */
+    karenzOverrunDays?: string[];
   }
 
   interface MonthDetailResponse {
@@ -280,8 +284,9 @@
         `/overtime/close-month/status?year=${selectedYear}&month=${month}`,
       );
       detailEmployees = res.employees;
-    } catch {
-      error = "Details konnten nicht geladen werden";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Details konnten nicht geladen werden";
     } finally {
       detailLoading = false;
     }
@@ -336,8 +341,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Fehler beim Monatsabschluss";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Fehler beim Monatsabschluss";
     } finally {
       closing = false;
       closingProgress = 0;
@@ -446,8 +452,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Abschluss fehlgeschlagen";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Abschluss fehlgeschlagen";
     } finally {
       closingEmployee = null;
     }
@@ -470,8 +477,9 @@
       if (expandedMonth === month) {
         await toggleMonthDetail(month);
       }
-    } catch {
-      error = "Entsperren fehlgeschlagen";
+    } catch (e) {
+      const apiErr = e as { data?: { error?: string }; message?: string };
+      error = apiErr?.data?.error ?? apiErr?.message ?? "Entsperren fehlgeschlagen";
     } finally {
       unlocking = null;
     }
@@ -707,6 +715,17 @@
                                           <span class="chip">
                                             <span class="dot"></span>
                                             Fehlend
+                                          </span>
+                                        {/if}
+                                        {#if emp.karenzOverrunDays && emp.karenzOverrunDays.length > 0}
+                                          <span
+                                            class="chip chip-warn karenz-chip"
+                                            data-testid="karenz-overrun-hint"
+                                            title="Krankheitstage ohne Attest über die Karenzzeit hinaus (§ 5 EFZG): {formatMissingShort(
+                                              emp.karenzOverrunDays,
+                                            )}"
+                                          >
+                                            Attest fehlt ({emp.karenzOverrunDays.length})
                                           </span>
                                         {/if}
                                       </td>
@@ -1124,6 +1143,11 @@
     font-size: 0.75rem;
     color: var(--text-muted);
     margin-left: 0.25rem;
+  }
+
+  /* Phase 104 (D-21) — second chip in the Status cell must not collide with the status chip. */
+  .karenz-chip {
+    margin-left: 0.375rem;
   }
 
   /* ─── Buttons ──────────────────────────────────────── */

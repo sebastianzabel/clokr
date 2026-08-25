@@ -5,10 +5,11 @@
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
   import PageHead from "$lib/components/layout/PageHead.svelte";
-  import Card from "$components/ui/Card.svelte";
   import MonthBar from "$components/ui/MonthBar.svelte";
-  import type { MonthBarStat } from "$components/ui/MonthBar.svelte";
+  import MonatSaldoCard from "$components/saldo/MonatSaldoCard.svelte"; // quick 260820-elk
+  import KontoSaldoCard from "$components/saldo/KontoSaldoCard.svelte"; // quick 260820-elk
   import Modal from "$components/ui/Modal.svelte";
+  import ReasonDialog from "$components/ui/ReasonDialog.svelte"; // Quick 260824-cjd
   import {
     format,
     startOfMonth,
@@ -45,6 +46,16 @@
     isInvalid?: boolean;
     invalidReason?: string | null;
     isLocked?: boolean;
+    // Phase 96 (RETRO-17) — set when this entry is the coupled pending Nachtrag
+    // of a RetroEntryRequest (entry-first flow, 96-02). Already present on the
+    // GET /time-entries response (plain scalar column, no select restriction).
+    // Used to target the withdraw affordance (DELETE /retro-entry-requests/:id).
+    retroRequestId?: string | null;
+    // Phase 93 (BREAK-07) — break-confirmation state (Phase-91 backend). Already
+    // present on the GET /time-entries response (Prisma include); dormant unless
+    // TenantConfig.enforceBreakConfirmation is on.
+    breakStatus?: "AUTO" | "CONFIRMED" | "WAIVED";
+    breakWaivedReason?: string | null;
   }
 
   interface WorkSchedule {
@@ -151,11 +162,31 @@
   let selectedDate = $state(todayStr);
 
   let deleteConfirmId = $state("");
+  // Quick 260824-cjd: Storno now requires a Begründung — deleteConfirmId still
+  // tracks the target row id, but the confirm UI moved from an inline Ja/Nein
+  // span to a ReasonDialog.
+  let deleteDialogOpen = $state(false);
+  // Phase 96 (RETRO-17) — confirm-step id for the "Zurückziehen" (withdraw)
+  // action on an own pending Nachtrag row, mirrors deleteConfirmId's pattern.
+  let withdrawConfirmId = $state("");
   let absences: Absence[] = $state([]);
   // 260611-ly6 — BS-Tage (Berufsschultage) merged into the list view client-side.
   // Self-scope is enforced server-side from req.user.employeeId.
   let bsAbsences: BsAbsence[] = $state([]);
   let overtimeTotalHours: number | null = $state(null);
+  // Phase 97-01 (TRACER, SALDO-DISP-01/03) — additive split fields from GET /overtime/:id.
+  // undefined when the endpoint didn't return the split (older cached response / fail-safe
+  // branch) — the Gesamt-Saldo snippet below falls back to the pre-existing single-value
+  // SaldoAnzeige rendering (via overtimeTotalHours) in that case.
+  let overtimeConfirmedMinutes: number | undefined = $state(undefined);
+  let overtimeOpenMonthMinutes: number | null | undefined = $state(undefined);
+  let overtimeHasClosedMonth: boolean | undefined = $state(undefined);
+  let overtimeRosterIncomplete: boolean | undefined = $state(undefined);
+  // Phase 100 (OTC-03) — additive tolerance fields from GET /overtime/:id, mirroring the
+  // Phase-97-01 split fields above: undefined on fetch failure / older cached response
+  // (via rawOvertime?.field below), which KontoSaldoCard renders as "unconfigured".
+  let overtimeNegativeLimitExceeded: boolean | undefined = $state(undefined);
+  let overtimeMaxNegativeBalanceMinutes: number | null | undefined = $state(undefined);
   let hireDate: string | null = $state(null); // YYYY-MM-DD oder null
   let shiftMinByDate: Map<string, number> = $state(new Map()); // v1.8.8 — SHIFT_BASED Soll per dateStr
 
@@ -169,6 +200,9 @@
     expectedMinutes: number;
     balanceMinutes: number;
     closed: boolean;
+    // Phase 97-05 (SALDO-DISP-07) — SHIFT_BASED open months only; undefined otherwise
+    // (never a fabricated false), matching computeMonthSaldo's own contract.
+    rosterIncomplete?: boolean;
     days: MonthSaldoDay[];
   }
   let monthSaldo: MonthSaldo | null = $state(null);
@@ -222,6 +256,35 @@
   });
   let formNote = $state("");
   let defaultBreakStart: string | null = $state(null);
+  // Phase 93 (BREAK-07) — tenant-configured break durations for the new-entry
+  // prefill. Sourced from GET /settings/work (defaultBreakOver6h/9h). These are
+  // the tenant DEFAULTS only; per-employee overrides (breakOver6hOverride /
+  // breakOver9hOverride) are backend-only and not exposed on this endpoint, so
+  // the prefill is a close approximation, not an exact mirror of the server.
+  let breakOver6h = $state(30);
+  let breakOver9h = $state(45);
+
+  // ── Phase 93 (BREAK-07) break-confirmation UI state ─────────────────────────
+  // Feature gate (fail-safe dormant). When false the badge + all action buttons
+  // are hidden entirely (no placeholder). Sourced from GET /settings/work.
+  let enforceBreakConfirmation = $state(false);
+  // In-flight guard shared by Bestätigen (confirm) and Durchgearbeitet (waive)
+  // PATCHes — disables the buttons + drives the .btn-spinner.
+  let breakActionPending = $state(false);
+  // Durchgearbeitet inline confirm panel (Task 2) + its optional reason.
+  let waivePanelOpen = $state(false);
+  let waiveReason = $state("");
+  // Anpassen (Task 2) reveals the existing break start/end editor.
+  let showBreakEditor = $state(false);
+  // Ref to the existing break editor so Anpassen can scroll it into view.
+  let breakEditorEl: HTMLElement | null = $state(null);
+
+  // Break-confirm controls only render in edit mode, when the feature is on, and
+  // when the entry is NOT in a locked month (Revisionssicherheit — badge stays,
+  // buttons vanish). AUTO is only ever set by the backend on a Pflichtpause day.
+  let showBreakConfirm = $derived(
+    !!editEntry && enforceBreakConfirmation && editEntry.isLocked !== true,
+  );
 
   const ownEmployeeId = $authStore.user?.employeeId ?? null;
 
@@ -268,7 +331,20 @@
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
         activeEmpId
-          ? api.get<{ balanceHours: number }>(`/overtime/${activeEmpId}`).catch(() => null)
+          ? api
+              .get<{
+                balanceHours: number;
+                // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — additive split fields.
+                confirmedMinutes?: number;
+                openMonthMinutes?: number | null;
+                hasClosedMonth?: boolean;
+                rosterIncomplete?: boolean;
+                // Phase 100 (OTC-03) — additive tolerance fields, already returned by the
+                // endpoint (overtime.ts:172-173); only the client-side type was missing them.
+                maxNegativeBalanceMinutes?: number | null;
+                isNegativeLimitExceeded?: boolean;
+              }>(`/overtime/${activeEmpId}`)
+              .catch(() => null)
           : Promise.resolve(null),
         activeEmpId
           ? api
@@ -282,7 +358,10 @@
           .get<{
             arbzgEnabled?: boolean;
             defaultBreakStart?: string | null;
+            defaultBreakOver6h?: number | null;
+            defaultBreakOver9h?: number | null;
             monthlyHoursHolidayDeduction?: boolean;
+            enforceBreakConfirmation?: boolean;
           }>("/settings/work")
           .catch(() => null),
         // 260611-ly6 / bs-tage-cross-employee-leak — own Berufsschultage (BS) for
@@ -309,6 +388,19 @@
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
       overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      // Phase 97-01 — split fields, undefined when the endpoint didn't return them (older
+      // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
+      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
+      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
+      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
+      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
+      overtimeNegativeLimitExceeded = rawOvertime?.isNegativeLimitExceeded;
+      overtimeMaxNegativeBalanceMinutes = rawOvertime?.maxNegativeBalanceMinutes;
+      // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
+      // unverplant" badge and stored this signal but never wired it into the snippet; fixed
+      // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
+      // signal there from scratch) for the same employee — see 97-05-SUMMARY.md Deviations.
       hireDate = rawEmployee?.hireDate ? rawEmployee.hireDate.split("T")[0] : null;
       // Phase 76.7 (D-16) — read isTimeTrackingExempt from the SAME fetch
       // (no extra round-trip). Fail-SAFE to false on missing field so a
@@ -317,7 +409,14 @@
       isExempt = rawEmployee?.isTimeTrackingExempt === true;
       arbzgEnabled = rawConfig?.arbzgEnabled !== false;
       defaultBreakStart = rawConfig?.defaultBreakStart ?? null;
+      // Phase 93 (BREAK-07) — tenant break-duration defaults for the prefill;
+      // fall back to the schema defaults (30/45) when absent/null.
+      breakOver6h = rawConfig?.defaultBreakOver6h ?? 30;
+      breakOver9h = rawConfig?.defaultBreakOver9h ?? 45;
       monthlyHoursHolidayDeduction = rawConfig?.monthlyHoursHolidayDeduction === true;
+      // Phase 93 (BREAK-07) — fail-safe dormant: only ON when the field is
+      // explicitly true (absent config row / missing field → break-confirm UI hidden).
+      enforceBreakConfirmation = rawConfig?.enforceBreakConfirmation === true;
       // v1.8.8 — fetch Shift rows for SHIFT_BASED so the calendar can render Soll.
       // EMPLOYEE role: no employeeId param — endpoint defaults to req.user.employeeId.
       // SHIFT_BASED removed from monthly-path shortcut: the workaround (monthly=true
@@ -709,12 +808,6 @@
     return "";
   }
 
-  function balTone(min: number): "pos" | "neg" | undefined {
-    if (min > 0) return "pos";
-    if (min < 0) return "neg";
-    return undefined;
-  }
-
   function absenceLabel(type: string): string {
     const labels: Record<string, string> = {
       VACATION: "Urlaub",
@@ -745,6 +838,34 @@
           : "Manuell";
   }
 
+  // Phase 96 (RETRO-17/D-13) — exact invalidReason string set by the backend's
+  // entry-first pendingRetroCreate branch (time-entries.ts). Distinguishes a
+  // pending Nachtrag from the OTHER isInvalid case (pending leave-cancellation,
+  // "Urlaubsstornierung ausstehend") so the withdraw affordance only ever
+  // targets a row that is actually coupled to a RetroEntryRequest.
+  const PENDING_NACHTRAG_REASON = "Nachtrag – Genehmigung ausstehend";
+  function isPendingNachtrag(e: TimeEntry): boolean {
+    return (
+      e.isInvalid === true && e.invalidReason === PENDING_NACHTRAG_REASON && !!e.retroRequestId
+    );
+  }
+
+  // ── Phase 93 (BREAK-07) — status-badge mapping (UI-SPEC color/copy contract) ─
+  function breakBadgeClass(status: TimeEntry["breakStatus"]): string {
+    return status === "CONFIRMED"
+      ? "badge-green"
+      : status === "WAIVED"
+        ? "badge-gray"
+        : "badge-yellow"; // AUTO — action required
+  }
+  function breakBadgeLabel(status: TimeEntry["breakStatus"]): string {
+    return status === "CONFIRMED"
+      ? "Pause bestätigt"
+      : status === "WAIVED"
+        ? "Durchgearbeitet"
+        : "Pause unbestätigt"; // AUTO
+  }
+
   function fmtBreaks(e: TimeEntry): string {
     if (e.breaks && e.breaks.length > 0) {
       return e.breaks.map((b) => `${fmtTime(b.startTime)}–${fmtTime(b.endTime)}`).join(", ");
@@ -770,6 +891,26 @@
     return `${String(nh).padStart(2, "0")}:${String(nm).padStart(2, "0")}`;
   }
 
+  // Phase 93 (BREAK-07, locked #7 / decision #8) — suggested break in minutes by
+  // gross Start→Ende, mirroring the backend getEffectiveBreakDuration thresholds
+  // (<=6h -> 0, >6h..<=9h, >9h). The threshold boundaries (6h/9h, strict >) match
+  // the server exactly; the durations use the tenant defaults (defaultBreakOver6h/
+  // defaultBreakOver9h) so non-default tenants agree with the backend for the
+  // tenant-default case. Per-employee overrides are backend-only (not exposed on
+  // /settings/work), so this is a close approximation, not an exact mirror — the
+  // backend re-derives the authoritative AUTO break on save. Invalid / end-not-set
+  // returns 0.
+  function suggestedBreakMinutes(startHHmm: string, endHHmm: string): number {
+    if (!startHHmm || !endHHmm) return 0;
+    const [sh, sm] = startHHmm.split(":").map(Number);
+    const [eh, em] = endHHmm.split(":").map(Number);
+    if ([sh, sm, eh, em].some((n) => Number.isNaN(n))) return 0;
+    const gross = eh * 60 + em - (sh * 60 + sm);
+    if (gross <= 360) return 0; // <= 6h — no Pflichtpause
+    if (gross <= 540) return breakOver6h; // > 6h and <= 9h — tenant default
+    return breakOver9h; // > 9h — tenant default
+  }
+
   function openAdd(forDate?: string) {
     const targetDate = forDate ?? selectedDate;
     // If an entry already exists for this day, open it for editing instead
@@ -783,8 +924,14 @@
     formStart = "09:00";
     formEnd = "17:00";
     formHasEnd = true;
-    if (defaultBreakStart) {
-      formBreaks = [{ start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, 30) }];
+    // Phase 93 (BREAK-07) — dynamic 0/30/45 prefill for NEW entries. <=6h yields
+    // no break row (no auto-break, no AUTO, no nudge). When defaultBreakStart is
+    // null, fall back to no prefilled row — do not invent a start time.
+    const suggested = suggestedBreakMinutes(formStart, formEnd);
+    if (suggested > 0 && defaultBreakStart) {
+      formBreaks = [
+        { start: defaultBreakStart, end: addMinutesToTime(defaultBreakStart, suggested) },
+      ];
     } else {
       formBreaks = [];
     }
@@ -821,6 +968,10 @@
     retroReason = "";
     retroReasonError = "";
     retroSubmitError = "";
+    // Phase 93 — reset break-confirm sub-panels so a reopened modal starts clean.
+    waivePanelOpen = false;
+    waiveReason = "";
+    showBreakEditor = false;
   }
 
   // The Modal primitive owns Escape/backdrop dismiss: it flips modalOpen to
@@ -835,21 +986,33 @@
       retroReason = "";
       retroReasonError = "";
       retroSubmitError = "";
+      // Phase 93 — mirror closeModal for Escape/backdrop dismiss paths.
+      waivePanelOpen = false;
+      waiveReason = "";
+      showBreakEditor = false;
     }
   });
 
-  async function saveEntry() {
-    saving = true;
-    saveError = "";
+  // Convert the current form state (formDate/formStart/formEnd/formHasEnd/
+  // formBreaks) into the ISO-timestamp fields POST/PUT /time-entries expects.
+  // Shared by saveEntry() and submitRetroRequest()'s entry-first branch
+  // (Phase 96 / RETRO-17) so both create paths build an identical payload.
+  function buildManualEntryFields() {
     const startISO = new Date(`${formDate}T${formStart}:00`).toISOString();
     const endISO = formHasEnd ? new Date(`${formDate}T${formEnd}:00`).toISOString() : null;
-    // Convert break slots to full ISO timestamps
     const breaksPayload = formBreaks
       .filter((b) => b.start && b.end)
       .map((b) => ({
         startTime: new Date(`${formDate}T${b.start}:00`).toISOString(),
         endTime: new Date(`${formDate}T${b.end}:00`).toISOString(),
       }));
+    return { startISO, endISO, breaksPayload };
+  }
+
+  async function saveEntry() {
+    saving = true;
+    saveError = "";
+    const { startISO, endISO, breaksPayload } = buildManualEntryFields();
     try {
       if (editEntry) {
         await api.put(`/time-entries/${editEntry.id}`, {
@@ -905,9 +1068,73 @@
     }
   }
 
-  async function deleteEntry(id: string) {
+  // ── Phase 93 (BREAK-07) — confirm the auto-inserted mandatory break ─────────
+  // Bestätigen → PATCH /:id/break-status { action: "confirm" } flips AUTO→CONFIRMED
+  // server-side (idempotent; server re-enforces tenant/authz/isLocked). Refetch so
+  // the badge reflects CONFIRMED, then close the modal.
+  async function confirmBreak() {
+    if (!editEntry) return;
+    breakActionPending = true;
     try {
-      await api.delete(`/time-entries/${id}`);
+      await api.patch(`/time-entries/${editEntry.id}/break-status`, { action: "confirm" });
+    } catch {
+      // Only a genuine PATCH failure toasts an error. A post-mutation refetch
+      // blip must NOT surface "action failed" after a committed mutation.
+      toasts.error("Pause konnte nicht bestätigt werden. Bitte erneut versuchen.");
+      breakActionPending = false;
+      return;
+    }
+    closeModal();
+    // Refetch is best-effort — the stale badge self-corrects on the next load.
+    await loadAll().catch(() => {});
+    breakActionPending = false;
+  }
+
+  // Anpassen → reveal + scroll to the EXISTING break start/end editor. Saving via
+  // the modal footer runs the existing PUT /:id path, which flips AUTO→CONFIRMED
+  // server-side (Phase 91) — no new endpoint, no duplicate editor.
+  function revealBreakEditor() {
+    showBreakEditor = true;
+    breakEditorEl?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  // Durchgearbeitet → PATCH /:id/break-status { action: "waive", reason? } zeros the
+  // break, sets WAIVED, alerts the manager (no approval). Optional reason omitted
+  // when empty. Refetch so the badge turns gray, then close.
+  async function waiveBreak() {
+    if (!editEntry) return;
+    breakActionPending = true;
+    const body: { action: "waive"; reason?: string } = { action: "waive" };
+    const trimmed = waiveReason.trim();
+    if (trimmed) body.reason = trimmed;
+    try {
+      await api.patch(`/time-entries/${editEntry.id}/break-status`, body);
+    } catch {
+      // Only a genuine PATCH failure toasts an error. A post-mutation refetch
+      // blip must NOT surface "action failed" after a committed mutation.
+      toasts.error("Aktion fehlgeschlagen. Bitte erneut versuchen.");
+      breakActionPending = false;
+      return;
+    }
+    closeModal();
+    // Refetch is best-effort — the stale badge self-corrects on the next load.
+    await loadAll().catch(() => {});
+    breakActionPending = false;
+  }
+
+  function openDeleteDialog(id: string) {
+    deleteConfirmId = id;
+    deleteDialogOpen = true;
+  }
+
+  async function confirmDeleteDialog(reason: string) {
+    if (!deleteConfirmId) return;
+    await deleteEntry(deleteConfirmId, reason);
+  }
+
+  async function deleteEntry(id: string, reason: string) {
+    try {
+      await api.delete(`/time-entries/${id}`, { reason });
       deleteConfirmId = "";
       await loadAll();
     } catch (e: unknown) {
@@ -940,25 +1167,77 @@
   }
 
   // ── Submit retro entry request ─────────────────────────────────────────────
+  // Phase 96 (RETRO-17/D-02) — branches on editEntry:
+  //  - editEntry === null: brand-new out-of-window entry, no existing row for
+  //    the day → entry-first (RETRO-10). The reason travels WITH the create in
+  //    a single POST /time-entries call so a pending entry never exists without
+  //    its audit reason (Revisionssicherheit). Backend creates the pending
+  //    TimeEntry (isInvalid=true) + coupled PENDING RetroEntryRequest
+  //    atomically (time-entries.ts pendingRetroCreate branch, 96-02).
+  //  - editEntry set: an EXISTING out-of-window entry is being edited/deleted
+  //    (correction case, D-02) → unchanged legacy correction-proposal POST
+  //    /retro-entry-requests. The existing valid entry stays untouched and
+  //    keeps counting in the saldo until a manager applies the correction.
   async function submitRetroRequest() {
     if (!retroReason.trim()) {
       retroReasonError = "Bitte gib eine Begründung an.";
+      return;
+    }
+    // Proposed times are required so the approver can review them.
+    if (!formStart || !formEnd) {
+      retroReasonError = "Bitte gib Von- und Bis-Uhrzeit an.";
       return;
     }
     retroReasonError = "";
     retroSubmitError = "";
     retroSubmitting = true;
     try {
-      await api.post("/retro-entry-requests", {
-        targetDate: formDate,
-        reason: retroReason,
-      });
-      closeModal();
-      toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
+      if (editEntry === null) {
+        const { startISO, endISO, breaksPayload } = buildManualEntryFields();
+        await api.post("/time-entries", {
+          date: formDate,
+          startTime: startISO,
+          endTime: endISO,
+          breakMinutes: formBreakTotal,
+          breaks: breaksPayload,
+          note: formNote || null,
+          reason: retroReason,
+        });
+        closeModal();
+        toasts.success("Eintrag gespeichert – wartet auf Genehmigung.");
+        await loadAll();
+      } else {
+        await api.post("/retro-entry-requests", {
+          targetDate: formDate,
+          reason: retroReason,
+          startTime: formStart,
+          endTime: formEnd,
+          breakMinutes: formBreakTotal > 0 ? formBreakTotal : undefined,
+        });
+        closeModal();
+        toasts.success("Antrag wurde eingereicht. Ein Manager wird deinen Antrag prüfen.");
+      }
     } catch (e: unknown) {
       retroSubmitError = e instanceof Error ? e.message : "Fehler beim Einreichen des Antrags.";
     } finally {
       retroSubmitting = false;
+    }
+  }
+
+  // ── Withdraw own pending Nachtrag ────────────────────────────────────────
+  // Phase 96 (RETRO-16/RETRO-17/D-11) — soft-deletes the coupled
+  // RetroEntryRequest + TimeEntry pair (audit-proof; server re-checks
+  // ownership/status/isLocked regardless of what the UI sends, T-96-19).
+  async function withdrawRetroRequest(entry: TimeEntry) {
+    if (!entry.retroRequestId) return;
+    try {
+      await api.delete(`/retro-entry-requests/${entry.retroRequestId}`);
+      withdrawConfirmId = "";
+      toasts.success("Zeitnachtrag zurückgezogen.");
+      await loadAll();
+    } catch (e: unknown) {
+      withdrawConfirmId = "";
+      error = e instanceof Error ? e.message : "Fehler beim Zurückziehen";
     }
   }
 
@@ -973,11 +1252,6 @@
 
   // D-06: Derive lock state from entry data already loaded — no extra API request
   let monthIsLocked = $derived(entries.some((e) => e.isLocked === true));
-
-  // D-07: Set of date strings (yyyy-MM-dd) that have a locked entry — for calendar cell icons
-  let lockedDateSet = $derived(
-    new Set(entries.filter((e) => e.isLocked === true).map((e) => e.date.slice(0, 10))),
-  );
 
   // ArbZG-Prüfung für den ausgewählten Tag (Frontend-seitig, sofort)
   function checkArbZGFrontend(slots: TimeEntry[]): ArbZGWarning[] {
@@ -1118,78 +1392,91 @@
   });
   // §615 SHIFT_BASED: Soll (bisher) + Monat-Saldo come from the §615 core (monthSaldo).
   let isShiftBased = $derived(schedule?.type === "SHIFT_BASED");
-  // Stat tiles for the MonthBar primitive — empty until a schedule loads.
-  let monthBarStats: MonthBarStat[] = $derived.by(() => {
-    if (!schedule) return [];
-    const stats: MonthBarStat[] = [];
+
+  // Quick 260820-elk — replaces monthBarStats (formatted MonthBar tiles) with raw minutes for
+  // MonatSaldoCard/SollIstBar. Same branch structure and source expressions as the deleted
+  // monthBarStats derivation; only the output shape changes (minutes, not formatted strings —
+  // no saldo recomputation, just selecting among already-computed values).
+  type MonthMetrics = {
+    sollToDateMin: number;
+    istMin: number;
+    saldoMin: number | null; // null → no schedule / no Soll target
+    sollLabel: string;
+    closed: boolean;
+    rosterIncomplete: boolean;
+    extraNote?: string;
+  };
+  let monthMetrics: MonthMetrics = $derived.by(() => {
+    if (!schedule) {
+      return {
+        sollToDateMin: 0,
+        istMin: 0,
+        saldoMin: null,
+        sollLabel: "Soll (bisher)",
+        closed: false,
+        rosterIncomplete: false,
+      };
+    }
 
     if (isShiftBased && monthSaldo) {
-      // §615 header — ALL three tiles from the SAME computeMonthSaldo to-date result so they always
-      // reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells:
-      //   Soll (bisher) = expectedMinutes (roster-prorated to-date C_net, NOT full-month roster)
-      //   Ist           = workedMinutes   (to-date worked, same cutoff as the cells)
-      //   Monat-Saldo   = balanceMinutes  (§615 to-date balance)
-      stats.push({
-        label: "Soll (bisher)",
-        value: fmtMin(monthSaldo.expectedMinutes),
-        unit: "h",
-      });
-      stats.push({ label: "Ist", value: fmtMin(monthSaldo.workedMinutes), unit: "h" });
-      stats.push({
-        label: "Monat-Saldo",
-        value: fmtBalance(monthSaldo.balanceMinutes),
-        unit: "h",
-        tone: balTone(monthSaldo.balanceMinutes),
-      });
-    } else {
-      if (!isMonthlyHours || hasMonthlyTarget) {
-        stats.push({
-          // MONTHLY_HOURS(target) → flat full-month budget "Soll" (Item C, no working-day drift).
-          // FIXED_*/FLEXTIME → to-date "Soll (bisher)".
-          label: hasMonthlyTarget ? "Soll" : "Soll (bisher)",
-          value: fmtMin(hasMonthlyTarget ? monthlyBudgetSoll : totalExpected),
-          unit: "h",
-        });
-      }
-      stats.push({ label: "Ist", value: fmtMin(totalWorked), unit: "h" });
-      // Phase 49.1 — FLEXTIME: show this week's worked vs expected diff in the bar
-      if (schedule.type === "FLEXTIME" && weekExpectedMin > 0) {
-        const weekDiff = weekWorkedMin - weekExpectedMin;
-        stats.push({
-          label: "Woche Saldo",
-          value: fmtBalance(weekDiff),
-          unit: "h",
-          tone: balTone(weekDiff),
-        });
-      }
-      if (isMonthlyHours && !hasMonthlyTarget) {
-        stats.push({ label: "Monat-Saldo", value: fmtMin(totalWorked), unit: "h" });
-      } else {
-        stats.push({
-          label: "Monat-Saldo",
-          value: fmtBalance(mBalance),
-          unit: "h",
-          tone: balTone(mBalance),
-        });
-      }
+      // §615 header — ALL figures from the SAME computeMonthSaldo to-date result so they
+      // always reconcile (Monat-Saldo = Ist − Soll (bisher)) and match the day cells.
+      return {
+        sollToDateMin: monthSaldo.expectedMinutes,
+        istMin: monthSaldo.workedMinutes,
+        saldoMin: monthSaldo.balanceMinutes,
+        sollLabel: "Soll (bisher)",
+        closed: monthSaldo.closed,
+        rosterIncomplete: monthSaldo.rosterIncomplete ?? false,
+      };
     }
 
-    // Gesamt-Saldo: the LIVE lifetime overtime balance (through windowEnd = yesterday when today is
-    // incomplete), sourced from GET /overtime/:id (now recomputed live via computeOvertimeBalanceHours).
-    // MONTH-INDEPENDENT — NOT bound to the viewed booking month, so navigating months does not change
-    // it. For the CURRENT month it still equals the last visible §615 cell (same lifetime computation).
-    // For MONTHLY_HOURS(null/0) TRACK_ONLY the endpoint returns 0.
-    if (overtimeTotalHours !== null) {
-      const totalMin = Math.round(overtimeTotalHours * 60);
-      stats.push({
-        label: "Gesamt-Saldo",
-        value: fmtBalance(totalMin),
-        unit: "h",
-        tone: balTone(totalMin),
-      });
+    if (isMonthlyHours && !hasMonthlyTarget) {
+      // Genuinely no Soll to compare against — the real-world source of SollIstBar's
+      // sollToDateMin===0 branch.
+      return {
+        sollToDateMin: 0,
+        istMin: totalWorked,
+        saldoMin: null,
+        sollLabel: "Soll",
+        closed: false,
+        rosterIncomplete: false,
+      };
     }
-    return stats;
+
+    if (hasMonthlyTarget) {
+      return {
+        sollToDateMin: monthlyBudgetSoll,
+        istMin: totalWorked,
+        saldoMin: mBalance,
+        sollLabel: "Soll",
+        closed: false,
+        rosterIncomplete: false,
+      };
+    }
+
+    // FIXED_*/FLEXTIME
+    // Phase 49.1 (D-WOCHE) — FLEXTIME preserves the "Woche Saldo" tile as an extra context line.
+    const extraNote =
+      schedule.type === "FLEXTIME" && weekExpectedMin > 0
+        ? "Woche " + fmtBalance(weekWorkedMin - weekExpectedMin) + " h"
+        : undefined;
+    return {
+      sollToDateMin: totalExpected,
+      istMin: totalWorked,
+      saldoMin: mBalance,
+      sollLabel: "Soll (bisher)",
+      closed: false,
+      rosterIncomplete: false,
+      extraNote,
+    };
   });
+  // Counts over already-loaded day/entry data — CONTEXT explicitly permits this (not a saldo
+  // computation).
+  let workdaysSoFar = $derived(
+    calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
+  );
+  let runningCount = $derived(entries.filter((e) => !e.endTime).length);
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
     if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
@@ -1219,6 +1506,46 @@
       if (warnings.length > 0) map.set(dateStr, warnings);
     }
     return map;
+  });
+
+  // Legend is derived from what the displayed month actually contains, and split by the
+  // three encoding channels — quick task 260820-1i7. Colour = Soll status (left edge),
+  // surface = Abwesenheit, mark = Hinweis.
+  const LEGEND_ABSENCE = [
+    { code: "VACATION", cls: "leg-abs-vacation", label: "Urlaub" },
+    { code: "SICK", cls: "leg-abs-sick", label: "Krank" },
+    { code: "SICK_CHILD", cls: "leg-abs-sick_child", label: "Kinderkrank" },
+    { code: "SPECIAL", cls: "leg-abs-special", label: "Sonderurlaub" },
+    { code: "OVERTIME_COMP", cls: "leg-abs-overtime_comp", label: "Freizeitausgl." },
+  ] as const;
+
+  let legendGroups = $derived.by(() => {
+    const days = calendarDays.filter((d) => d.isCurrentMonth);
+    const soll: { cls: string; label: string }[] = [];
+    if (days.some((d) => d.status === "ok" || d.status === "today-ok"))
+      soll.push({ cls: "leg-ok", label: "Soll erfüllt" });
+    if (days.some((d) => d.status === "partial" || d.status === "today-partial"))
+      soll.push({ cls: "leg-partial", label: "Teilweise" });
+    if (days.some((d) => d.status === "missing")) soll.push({ cls: "leg-missing", label: "Fehlt" });
+    if (days.some((d) => d.status === "noExpect" || d.status === "today-empty"))
+      soll.push({ cls: "leg-noexpect", label: "Kein Soll" });
+
+    const codes = new Set(days.map((d) => d.absenceType).filter(Boolean) as string[]);
+    const abwesenheit: { cls: string; label: string }[] = [];
+    for (const e of LEGEND_ABSENCE)
+      if (codes.has(e.code)) abwesenheit.push({ cls: e.cls, label: e.label });
+    // Absence codes outside the catalogue (e.g. EDUCATION, UNPAID) DO get a cell
+    // background from app.css's .cal-abs-* recipes, so they must not stay unexplained.
+    if ([...codes].some((c) => !LEGEND_ABSENCE.some((e) => e.code === c)))
+      abwesenheit.push({ cls: "leg-abs-other", label: "Sonstige Abwesenheit" });
+    if (days.some((d) => d.isVocationalSchool))
+      abwesenheit.push({ cls: "leg-abs-vocational_school", label: "Berufsschule" });
+
+    const hinweise: { cls: string; label: string }[] = [];
+    if (days.some((d) => arbzgDayMap.has(d.dateStr)))
+      hinweise.push({ cls: "leg-arbzg", label: "ArbZG-Hinweis" });
+
+    return { soll, abwesenheit, hinweise };
   });
 
   // All entries for the current month, sorted by date descending then start time descending.
@@ -1261,6 +1588,8 @@
     <!-- Phase 76.7 (D-16, UI-V19-04) — § 18 ArbZG-exempt users see no
          "+ Neuer Eintrag" CTA. Full HIDE, NOT disabled — don't teach
          exempt users to click a disabled control. -->
+    <!-- quick 260820-elk — Gesamt-Saldo moved OUT of the page head entirely, into the
+         quiet Konto card in the metrics row below (see KontoSaldoCard). -->
     {#if !isExempt}
       <button
         class="btn btn-primary btn-sm"
@@ -1296,42 +1625,47 @@
     <div class="alert alert-error" role="alert"><span>⚠</span><span>{error}</span></div>
   {/if}
 
-  <!-- ── Monat-Navigation + Mini-Stats (MonthBar primitive) ────────────────── -->
-  <Card animate class="te-monthbar-card">
-    <div data-testid="time-entries-summary">
-      <MonthBar
-        eyebrow="Buchungsmonat"
-        date={calMonth}
-        stats={monthBarStats}
-        onPrev={() => gotoMonth(-1)}
-        onNext={() => gotoMonth(1)}
-        onToday={gotoToday}
-        onSelectMonth={gotoMonthYear}
-        testIdPrefix="calendar-month-header"
-      >
-        {#snippet extraActions()}
-          {#if monthIsLocked}
-            <span class="te-lock-chip" title="Monat ist abgeschlossen">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                aria-hidden="true"
-              >
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              Abgeschlossen
-            </span>
-          {/if}
-        {/snippet}
-      </MonthBar>
-    </div>
-    <!-- /data-testid="time-entries-summary" -->
-  </Card>
+  <!-- ── Metrics row (design variant 1c "Fortschritt", quick 260820-elk) ───────
+       Month card (nav + progress bar) + quiet Konto card. The metrics have left the
+       month bar entirely — MonthBar is called WITHOUT `stats`/`statRenders` below, so it
+       renders as pure navigation (D-NAV): this stays the page's ONE AND ONLY month nav. -->
+  <div class="te-metrics" data-testid="time-entries-summary">
+    <MonatSaldoCard
+      sollToDateMin={monthMetrics.sollToDateMin}
+      istMin={monthMetrics.istMin}
+      saldoMin={monthMetrics.saldoMin}
+      sollLabel={monthMetrics.sollLabel}
+      extraNote={monthMetrics.extraNote}
+      {workdaysSoFar}
+      {runningCount}
+      isLocked={monthIsLocked || monthMetrics.closed}
+      {loading}
+      error={!!error && !loading}
+      onRetry={loadAll}
+    >
+      {#snippet monthNav()}
+        <MonthBar
+          eyebrow="Buchungsmonat"
+          date={calMonth}
+          onPrev={() => gotoMonth(-1)}
+          onNext={() => gotoMonth(1)}
+          onToday={gotoToday}
+          onSelectMonth={gotoMonthYear}
+          testIdPrefix="calendar-month-header"
+        />
+      {/snippet}
+    </MonatSaldoCard>
+    <KontoSaldoCard
+      totalHours={overtimeTotalHours}
+      confirmedMinutes={overtimeConfirmedMinutes}
+      openMonthMinutes={overtimeOpenMonthMinutes}
+      hasClosedMonth={overtimeHasClosedMonth}
+      rosterIncomplete={overtimeRosterIncomplete}
+      isNegativeLimitExceeded={overtimeNegativeLimitExceeded}
+      maxNegativeBalanceMinutes={overtimeMaxNegativeBalanceMinutes}
+      {loading}
+    />
+  </div>
 
   <!-- ── Kalender ─────────────────────────────────────────────────────────── -->
   {#if teView === "calendar"}
@@ -1367,7 +1701,6 @@
               class:cal-holiday={day.isHoliday && day.isCurrentMonth}
               class:cal-selected={day.dateStr === selectedDate && day.isCurrentMonth}
               class:cal-cell--disabled={day.isBeforeHire && day.isCurrentMonth}
-              class:cal-cell--arbzg-warn={arbzgDayMap.has(day.dateStr) && day.isCurrentMonth}
               disabled={day.isBeforeHire || !day.isCurrentMonth || isExempt}
               title={day.isBeforeHire
                 ? "Vor Eintrittsdatum"
@@ -1383,6 +1716,15 @@
               onclick={isExempt ? undefined : () => openAdd(day.dateStr)}
             >
               <span class="cal-day-num">{day.dayNum}</span>
+              {#if day.isCurrentMonth && arbzgDayMap.has(day.dateStr)}
+                {@const arbzgWarnings = arbzgDayMap.get(day.dateStr)!}
+                <span
+                  class="cal-arbzg-mark"
+                  title={arbzgWarnings.map((w) => w.message).join("\n")}
+                  aria-label="ArbZG-Hinweis: {arbzgWarnings.map((w) => w.message).join('; ')}"
+                  >⚠&#xFE0E;</span
+                >
+              {/if}
               {#if day.isHoliday && day.isCurrentMonth}
                 <span class="cal-holiday-label">{day.holidayName}</span>
               {:else if day.absenceType}
@@ -1395,23 +1737,6 @@
               {#if day.isBeforeHire}
                 <span class="day-before-hire">—</span>
               {:else if day.isCurrentMonth && day.hasEntries}
-                {#if lockedDateSet.has(day.dateStr)}
-                  <span class="cal-lock-icon" aria-label="Gesperrt">
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      style:color="var(--text-muted)"
-                      aria-hidden="true"
-                    >
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                    </svg>
-                  </span>
-                {/if}
                 <span class="day-worked">{fmtMin(day.workedMin)}&thinsp;h</span>
                 {#if isShiftBased}
                   <!-- SHIFT_BASED: show the CUMULATIVE §615 running saldo only when the API carried
@@ -1440,15 +1765,26 @@
 
       <!-- Legende -->
       <div class="cal-legend">
-        <span class="leg leg-ok">Soll erfüllt</span>
-        <span class="leg leg-partial">Teilweise</span>
-        <span class="leg leg-missing">Fehlt</span>
-        <span class="leg leg-noexpect">Kein Soll</span>
-        <span class="leg leg-abs-vacation">Urlaub</span>
-        <span class="leg leg-abs-sick">Krank</span>
-        <span class="leg leg-abs-special">Sonderurlaub</span>
-        <span class="leg leg-abs-overtime_comp">Freizeitausgl.</span>
-        <span class="leg leg-abs-vocational_school">Berufsschule</span>
+        {#if legendGroups.soll.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Soll-Status</span>
+            {#each legendGroups.soll as e (e.cls)}<span class="leg {e.cls}">{e.label}</span>{/each}
+          </div>
+        {/if}
+        {#if legendGroups.abwesenheit.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Abwesenheit</span>
+            {#each legendGroups.abwesenheit as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
+        {#if legendGroups.hinweise.length > 0}
+          <div class="leg-group">
+            <span class="leg-group-label">Hinweise</span>
+            {#each legendGroups.hinweise as e (e.cls)}<span class="leg {e.cls}">{e.label}</span
+              >{/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -1544,18 +1880,20 @@
                           data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
                         >
                       </span>
-                    {:else if deleteConfirmId === slot.id}
+                    {:else if withdrawConfirmId === slot.id}
+                      <!-- Phase 96 (RETRO-17) — withdraw confirm, mirrors the
+                           delete-confirm pattern above with its own label/testids. -->
                       <span class="del-confirm">
-                        <span class="text-muted" style="font-size:0.8rem;">Löschen?</span>
+                        <span class="text-muted" style="font-size:0.8rem;">Zurückziehen?</span>
                         <button
                           class="btn btn-sm btn-danger"
-                          onclick={() => deleteEntry(slot.id)}
-                          data-testid={`time-entry-row-${slot.id}-confirm-delete`}>Ja</button
+                          onclick={() => withdrawRetroRequest(slot)}
+                          data-testid={`time-entry-row-${slot.id}-confirm-withdraw`}>Ja</button
                         >
                         <button
                           class="btn btn-sm btn-ghost"
-                          onclick={() => (deleteConfirmId = "")}
-                          data-testid={`time-entry-row-${slot.id}-cancel-delete`}>Nein</button
+                          onclick={() => (withdrawConfirmId = "")}
+                          data-testid={`time-entry-row-${slot.id}-cancel-withdraw`}>Nein</button
                         >
                       </span>
                     {:else}
@@ -1566,12 +1904,26 @@
                           title="Bearbeiten"
                           data-testid={`time-entry-row-${slot.id}-edit`}>✏️</button
                         >
-                        <button
-                          class="btn-icon btn-icon-danger"
-                          onclick={() => (deleteConfirmId = slot.id)}
-                          title="Löschen"
-                          data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
-                        >
+                        {#if isPendingNachtrag(slot)}
+                          <!-- Phase 96 (RETRO-17/D-11) — a pending Nachtrag is
+                               withdrawn via DELETE /retro-entry-requests/:id
+                               (soft-deletes request + coupled entry), not the
+                               plain DELETE /time-entries/:id (which would
+                               re-run the retro-window guard and 403). -->
+                          <button
+                            class="btn-icon btn-icon-danger"
+                            onclick={() => (withdrawConfirmId = slot.id)}
+                            title="Zurückziehen"
+                            data-testid={`time-entry-row-${slot.id}-withdraw`}>↩️</button
+                          >
+                        {:else}
+                          <button
+                            class="btn-icon btn-icon-danger"
+                            onclick={() => openDeleteDialog(slot.id)}
+                            title="Löschen"
+                            data-testid={`time-entry-row-${slot.id}-delete`}>🗑</button
+                          >
+                        {/if}
                       </span>
                     {/if}
                   </td>
@@ -1681,7 +2033,12 @@
           />
         </div>
       </div>
-      <div class="breaks-section" data-testid="break-slots-editor">
+      <div
+        class="breaks-section"
+        class:break-editor-highlight={showBreakEditor}
+        bind:this={breakEditorEl}
+        data-testid="break-slots-editor"
+      >
         <span class="form-label">Pausen</span>
         {#if editEntry && !editEntry.breaks?.length && (editEntry.breakMinutes ?? 0) > 0 && formBreaks.length === 0}
           <div class="break-legacy">
@@ -1786,6 +2143,105 @@
         </div>
       {/if}
 
+      <!-- ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────── -->
+      <!-- Dormant unless enforceBreakConfirmation; badge renders in edit mode
+           whenever the entry carries a breakStatus. Locked entries show the
+           badge only (showBreakConfirm is false → no action row). -->
+      {#if editEntry && enforceBreakConfirmation && editEntry.breakStatus}
+        <div class="break-confirm-section" data-testid="break-status">
+          <span
+            class="badge break-status-badge {breakBadgeClass(editEntry.breakStatus)}"
+            data-testid="break-status-badge"
+          >
+            {breakBadgeLabel(editEntry.breakStatus)}
+          </span>
+
+          {#if showBreakConfirm && editEntry.breakStatus === "AUTO"}
+            {#if !waivePanelOpen}
+              <div class="break-actions" data-testid="break-actions">
+                <button
+                  class="btn btn-primary btn-sm"
+                  type="button"
+                  onclick={confirmBreak}
+                  disabled={breakActionPending}
+                  data-testid="break-confirm-btn"
+                >
+                  {#if breakActionPending}<span class="btn-spinner"></span>{/if}
+                  Bestätigen
+                </button>
+                <button
+                  class="btn btn-secondary btn-sm"
+                  type="button"
+                  onclick={revealBreakEditor}
+                  disabled={breakActionPending}
+                  data-testid="break-adjust-btn"
+                >
+                  Anpassen
+                </button>
+                <button
+                  class="btn btn-ghost btn-sm"
+                  type="button"
+                  onclick={() => (waivePanelOpen = true)}
+                  disabled={breakActionPending}
+                  data-testid="break-waive-btn"
+                >
+                  Durchgearbeitet
+                </button>
+              </div>
+            {:else}
+              <!-- Inline waive confirm (audited self-declaration — NOT a red
+                   destructive dialog; no --bad styling). -->
+              <div class="break-waive-panel" data-testid="break-waive-panel">
+                <h4 class="break-waive-heading">Ohne Pause durchgearbeitet?</h4>
+                <p class="break-waive-body">
+                  Die automatische Pause wird auf 0 Minuten gesetzt. Deine Führungskraft wird
+                  informiert.
+                </p>
+                <input
+                  type="text"
+                  class="form-input"
+                  placeholder="Grund (optional)"
+                  bind:value={waiveReason}
+                  maxlength="200"
+                  disabled={breakActionPending}
+                  data-testid="break-waive-reason"
+                />
+                <div class="break-actions">
+                  <button
+                    class="btn btn-ghost btn-sm"
+                    type="button"
+                    onclick={() => {
+                      waivePanelOpen = false;
+                      waiveReason = "";
+                    }}
+                    disabled={breakActionPending}
+                    data-testid="break-waive-cancel"
+                  >
+                    Abbrechen
+                  </button>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    onclick={waiveBreak}
+                    disabled={breakActionPending}
+                    data-testid="break-waive-confirm"
+                  >
+                    {#if breakActionPending}<span class="btn-spinner"></span>{/if}
+                    Durchgearbeitet bestätigen
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {/if}
+
+          {#if editEntry.breakStatus === "WAIVED" && editEntry.breakWaivedReason}
+            <p class="break-waived-reason" data-testid="break-waived-reason">
+              {editEntry.breakWaivedReason}
+            </p>
+          {/if}
+        </div>
+      {/if}
+
       <!-- ── Beyond-window retro request form (Surface 2) ─────────────────── -->
       <!-- Shown when save/delete returns 403 RETRO_WINDOW_EXCEEDED for own entries. -->
       {#if retroWindowExceeded}
@@ -1797,6 +2253,10 @@
               stelle einen Antrag auf rückwirkende Bearbeitung.
             </p>
           </div>
+          <p class="retro-times-hint text-muted">
+            Vorgeschlagene Zeiten: {formStart}–{formEnd}{#if formBreakTotal > 0}
+              · Pause: {formBreakTotal} Min.{/if}
+          </p>
           <div class="form-group">
             <label class="form-label" for="retro-reason-field">Begründung (Pflichtfeld) *</label>
             <textarea
@@ -1857,11 +2317,93 @@
       {/if}
     {/snippet}
   </Modal>
+
+  <!-- ── Quick 260824-cjd: Storno-Begründung (Zeiteintrag löschen) ────────────── -->
+  <ReasonDialog
+    bind:open={deleteDialogOpen}
+    title="Eintrag löschen?"
+    confirmLabel="Löschen"
+    danger
+    onConfirm={confirmDeleteDialog}
+    onCancel={() => (deleteConfirmId = "")}
+  />
 </div>
 
 <!-- /data-testid="time-entries-page" -->
 
 <style>
+  /* ── Phase 93 (BREAK-07) — break-confirmation status + actions ──────────── */
+  .break-confirm-section {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .break-status-badge {
+    font-weight: 500;
+  }
+  .break-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .break-waive-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background-color: var(--bg-subtle);
+  }
+  .break-waive-heading {
+    font-size: 1rem;
+    font-weight: 500;
+    line-height: 1.3;
+    margin: 0;
+    color: var(--text);
+  }
+  .break-waive-body {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    margin: 0;
+    color: var(--text-muted);
+  }
+  /* long-text backstop (UI-SPEC T-93-02): wrap free text, never overflow. */
+  .break-waived-reason {
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    margin: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  /* Anpassen highlight — draws the eye to the existing break editor. */
+  .break-editor-highlight {
+    outline: 2px solid var(--brand-soft);
+    outline-offset: 4px;
+    border-radius: var(--r-sm);
+    transition: outline-color 0.2s ease;
+  }
+  .btn-spinner {
+    display: inline-block;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    margin-right: 0.4rem;
+    vertical-align: -0.15rem;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
   /* ── Retro-window request section (Surface 2) ───────────────────────────── */
   .retro-request-section {
     display: flex;
@@ -1876,33 +2418,46 @@
     color: var(--bad);
     margin-top: 4px;
   }
+  .retro-times-hint {
+    font-size: 13px;
+    margin: 0;
+  }
   .retro-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
   }
 
-  /* ── MonthBar card spacing (primitive owns its 18px 24px inner padding,
-       same as .cal-monthbar — so header height matches /leave et al.) ──── */
-  :global(.te-monthbar-card) {
-    padding: 0;
+  /* ── Metrics row (quick 260820-elk, D-NAV consequence 4) ───────────────
+       Month card (nav + progress bar) + quiet Konto card, side by side. */
+  .te-metrics {
+    display: grid;
+    grid-template-columns: 1.55fr 1fr;
+    gap: var(--s-4);
     margin-bottom: 18px;
-    /* Allow month-picker dropdown to escape .card overflow:clip and lift
-       above sibling .card stacking contexts (each .card creates its own via
-       backdrop-filter). Without these three lines the dropdown is invisible. */
+    /* Inherited verbatim from the deleted .te-monthbar-card rule: the month-picker
+       dropdown inside MonthBar (now rendered inside MonatSaldoCard's nav row) must
+       escape .card's overflow:clip and lift above the sibling calendar card's
+       stacking context (each .card creates one via backdrop-filter). Without these
+       three lines the picker is invisible. */
     overflow: visible;
     position: relative;
     z-index: 30;
   }
 
-  /* MonthBar + mini-stats styles live in the MonthBar primitive. */
-
-  /* D-07: Lock icon overlay in calendar cells */
-  .cal-lock-icon {
-    display: block;
-    line-height: 1;
-    margin-bottom: 1px;
+  @media (max-width: 1000px) {
+    .te-metrics {
+      grid-template-columns: 1fr;
+    }
   }
+
+  /* MonthBar owns its 18px 24px inner padding by default (matches .cal-monthbar); reset
+     it here since it now renders inside MonatSaldoCard's own padded card body. */
+  .te-metrics :global(.month-bar) {
+    padding: 0 0 var(--s-3);
+  }
+
+  /* MonthBar + mini-stats styles live in the MonthBar primitive. */
 
   /* ── View Tabs ───────────────────────────────────────── */
   /* view-tabs, view-tab → global in app.css */
@@ -2004,21 +2559,6 @@
   .cal-cell--today-partial {
     border-left: 3px solid var(--warn);
   }
-  /* ArbZG over: border + warn glyph top-right via ::after */
-  :global(.cal-cell.cal-cell--arbzg-warn) {
-    border-color: var(--warn);
-  }
-  :global(.cal-cell.cal-cell--arbzg-warn::after) {
-    content: "⚠";
-    position: absolute;
-    top: 6px;
-    right: 6px;
-    font-size: 12px;
-    line-height: 1;
-    color: var(--warn);
-    pointer-events: none;
-  }
-
   /* Abwesenheitsfarben – allgemein (überschreiben Status-Farben) */
   /* Absence cell backgrounds → global in app.css (.cal-abs-*) */
 
@@ -2045,10 +2585,6 @@
     color: var(--text);
     line-height: 1;
   }
-  /* When the cell is ArbZG-over, the hour total turns red */
-  :global(.cal-cell--arbzg-warn .day-worked) {
-    color: var(--bad);
-  }
   .day-bal {
     font-size: 0.6875rem;
     font-family: var(--font-mono);
@@ -2070,9 +2606,23 @@
   /* Legende */
   .cal-legend {
     display: flex;
-    gap: 1rem;
+    gap: 0.75rem 1.75rem;
     padding: 0.875rem 1.25rem;
     flex-wrap: wrap;
+  }
+  .leg-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .leg-group-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    opacity: 0.7;
   }
   .leg {
     display: inline-flex;
@@ -2113,6 +2663,14 @@
     background: var(--leave-type-sick);
     border: none;
   }
+  .leg-abs-sick_child::before {
+    background: var(--leave-type-sick-child);
+    border: none;
+  }
+  .leg-abs-other::before {
+    background: var(--leave-type-default);
+    border: none;
+  }
   .leg-abs-special::before {
     background: var(--leave-type-special);
     border: none;
@@ -2127,6 +2685,21 @@
   .leg-abs-vocational_school::before {
     background: var(--brand);
     border: none;
+  }
+  /* The ArbZG entry shows the MARK itself, not a colour swatch — the legend must
+     depict the thing it explains (quick task 260820-1i7). */
+  .leg-arbzg::before {
+    content: "⚠\FE0E";
+    width: auto;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: none;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+    opacity: 0.8;
   }
 
   /* bs-tage-in-calendar — Berufsschultag cell background. Uses --brand at the

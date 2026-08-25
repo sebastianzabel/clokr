@@ -25,10 +25,19 @@
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
+  import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-04
   import PageHead from "$lib/components/layout/PageHead.svelte";
   import MyShiftsWeek from "$lib/components/dashboard/MyShiftsWeek.svelte";
   import MyWeekView from "$lib/components/dashboard/MyWeekView.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import {
+    summarizeKarenzOverrun,
+    karenzNudgeHref,
+    hasNoOpenItems,
+    KARENZ_NUDGE_EMPTY,
+    type KarenzOverrunResponse,
+    type KarenzNudgeSummary,
+  } from "$lib/leave/karenz-nudge";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -70,13 +79,30 @@
     // Phase 49.1 — schedule type for per-model widget branching
     scheduleType?: "FIXED_SCHEDULE" | "FLEXTIME" | "MONTHLY_HOURS" | "SHIFT_BASED";
     month?: { workedHours: number; targetHours: number };
-    overtime: { balanceHours: number };
+    // Phase 97-04 (SALDO-DISP-01/02/04) — additive confirmed/forecast split fields. Optional
+    // so an older cached response (or the API-only no-employeeId branch) still type-checks;
+    // the Überstundenkonto tile falls back to the single-value primitive when undefined.
+    overtime: {
+      balanceHours: number;
+      confirmedMinutes?: number;
+      openMonthMinutes?: number | null;
+      hasClosedMonth?: boolean;
+      rosterIncomplete?: boolean;
+    };
     vacation: { remaining: number; total: number; used: number };
   }
 
   interface TeamDay {
     date: string;
-    status: "present" | "absent" | "clocked_in" | "missing" | "scheduled" | "none" | "holiday";
+    status:
+      | "present"
+      | "absent"
+      | "clocked_in"
+      | "missing"
+      | "scheduled"
+      | "requested"
+      | "none"
+      | "holiday";
     workedHours: number;
     reason: string | null;
     shift?: { startTime: string; endTime: string; label: string | null; color: string | null };
@@ -174,6 +200,33 @@
     invalidEntries: number;
     total: number;
   } | null = $state(null);
+
+  // ── Pausen-Bestätigung Nudge (BREAK-07) ──────────────────────────────────────
+  // Self-service dashboard nudge: points the employee at their own unconfirmed
+  // AUTO break days on /time-entries. Sourced client-side from the self-scoped
+  // GET /time-entries (breakStatus === "AUTO" && !isLocked). Gated behind the
+  // tenant dormancy flag `enforceBreakConfirmation` (fail-safe false) so the
+  // feature stays invisible until the tenant enables it.
+  let enforceBreakConfirmation = $state(false);
+  let unconfirmedBreakDays = $state(0);
+  // Earliest (lexicographically smallest, i.e. oldest) unconfirmed AUTO day —
+  // used to deep-link the nudge straight to the most overdue day. null when
+  // there are no unconfirmed days.
+  let earliestUnconfirmedBreakDate = $state<string | null>(null);
+
+  // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
+  // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
+  // Reiner Hinweis, keine Blockade — und ausdrücklich NICHT der § 9-BUrlG-Pfad
+  // (Urlaubsgutschrift gibt es ausschließlich gegen ärztliches Zeugnis, R5/D-23).
+  let karenzNudge = $state<KarenzNudgeSummary>(KARENZ_NUDGE_EMPTY);
+
+  // "Keine offenen Vorgänge" must only render when there is genuinely nothing to show —
+  // openItems.total (server-computed) has no knowledge of either client-side nudge rendered
+  // below it in the same list (this Karenz nudge, and the Phase-92 break-confirmation nudge).
+  // See hasNoOpenItems() in $lib/leave/karenz-nudge.ts for the rationale and its unit tests.
+  let showEmptyOpenItems = $derived(
+    hasNoOpenItems(openItems?.total ?? 0, karenzNudge.count, unconfirmedBreakDays),
+  );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
   interface TodayEntry {
@@ -352,6 +405,60 @@
         }
       } catch {
         isExempt = false;
+      }
+
+      // Pausen-Bestätigung Nudge (BREAK-07) — self-service, employee-scoped.
+      // Read the tenant dormancy flag first; fail-safe to false so a network
+      // blip or a tenant without the feature never surfaces the nudge. Only
+      // when the flag is ON do we fetch the caller's own recent entries and
+      // count the DISTINCT dates that carry an unconfirmed AUTO break in a
+      // still-open (non-locked) month. Locked months self-exclude via isLocked.
+      try {
+        const workCfg = await api
+          .get<{ enforceBreakConfirmation?: boolean }>("/settings/work")
+          .catch(() => null);
+        enforceBreakConfirmation = workCfg?.enforceBreakConfirmation === true;
+
+        if (enforceBreakConfirmation) {
+          // Phase 93 (BREAK-07) — look back 12 months, not just to the 1st of last
+          // month. Phase 92-04 defers auto-close on unconfirmed AUTO breaks, so a
+          // still-open (non-locked) month can carry unconfirmed breaks well beyond
+          // last month; a narrow window would silently undercount the most overdue
+          // days this nudge exists to surface. Locked months self-exclude below.
+          const prev = subMonths(new Date(), 12);
+          const from = format(new Date(prev.getFullYear(), prev.getMonth(), 1), "yyyy-MM-dd");
+          const breakRows = await api
+            .get<
+              Array<{ date: string; breakStatus?: string; isLocked?: boolean }>
+            >(`/time-entries?from=${from}&to=${today}`)
+            .catch(() => [] as Array<{ date: string; breakStatus?: string; isLocked?: boolean }>);
+          const days = new Set<string>();
+          for (const row of breakRows) {
+            if (row.breakStatus === "AUTO" && row.isLocked !== true) days.add(row.date);
+          }
+          unconfirmedBreakDays = days.size;
+          // ISO yyyy-MM-dd sorts lexicographically, so the smallest string is
+          // the oldest (most overdue) day — the natural deep-link target.
+          earliestUnconfirmedBreakDate =
+            days.size > 0 ? [...days].reduce((a, b) => (a < b ? a : b)) : null;
+        } else {
+          unconfirmedBreakDays = 0;
+          earliestUnconfirmedBreakDate = null;
+        }
+      } catch {
+        enforceBreakConfirmation = false;
+        unconfirmedBreakDays = 0;
+        earliestUnconfirmedBreakDate = null;
+      }
+
+      // Karenztage-Hinweis (D-21) — self-scoped, fail-safe: any error renders nothing.
+      try {
+        const karenzRes = await api
+          .get<KarenzOverrunResponse>("/leave/karenz-overrun")
+          .catch(() => null);
+        karenzNudge = summarizeKarenzOverrun(karenzRes);
+      } catch {
+        karenzNudge = KARENZ_NUDGE_EMPTY;
       }
 
       // Today's entry breakdown (row 2 / col-7)
@@ -899,11 +1006,6 @@
     return `${h}:${String(m).padStart(2, "0")}h`;
   }
 
-  function fmtBalanceHours(hours: number): string {
-    if (hours === 0) return "±0:00";
-    return (hours > 0 ? "+" : "−") + fmtHours(hours);
-  }
-
   function greeting(): string {
     const h = new Date().getHours();
     if (h < 12) return "Guten Morgen";
@@ -1274,23 +1376,32 @@
             delta={`verbleibend${stats.vacation.used > 0 ? ` · ${stats.vacation.used} verbraucht` : ""}`}
           />
           <!-- Phase 76.7 (D-15, UI-V19-04): § 18 ArbZG-exempt employees see
-               an em-dash "—" instead of a numeric saldo + no delta cue. -->
+               an em-dash "—" instead of a numeric saldo + no delta cue. Unchanged by
+               Phase 97-04 — an exempt employee has no confirmed/forecast split to show. -->
           {#if isExempt}
             <KPIStat label="Überstundenkonto" value="—" delta="§ 18 ArbZG" deltaTone="neutral" />
-          {:else}
-            <KPIStat
+          {:else if stats.overtime.confirmedMinutes !== undefined}
+            <!-- Phase 97-04 (SALDO-DISP-02) — the split primitive replaces the inline KPIStat
+                 markup outright (not wrapped): KPIStat's pure-props string contract cannot
+                 express a two-figure tile. Leads with "Bestätigt", subordinates "Laufender
+                 Monat (Prognose)" — the deliberate hierarchy flip this phase exists to ship. -->
+            <SaldoAnzeige
+              variant="expanded"
               label="Überstundenkonto"
-              value={fmtBalanceHours(stats.overtime.balanceHours)}
-              delta={stats.overtime.balanceHours === 0
-                ? "ausgeglichen"
-                : stats.overtime.balanceHours > 0
-                  ? "↗ Guthaben"
-                  : "↘ offen"}
-              deltaTone={stats.overtime.balanceHours === 0
-                ? "neutral"
-                : stats.overtime.balanceHours > 0
-                  ? "good"
-                  : "warn"}
+              confirmedMinutes={stats.overtime.confirmedMinutes}
+              openMonthMinutes={stats.overtime.openMonthMinutes ?? null}
+              hasClosedMonth={stats.overtime.hasClosedMonth ?? false}
+              rosterIncomplete={stats.overtime.rosterIncomplete}
+            />
+          {:else}
+            <!-- Fallback: an older cached /dashboard response without the split fields —
+                 degrade to the primitive's single-value rendering instead of blanking. This
+                 also drops the page-local fmtBalanceHours "±0:00" zero convention in favour of
+                 the primitive's own formatter (SALDO-DISP-05 — one presentation, not three). -->
+            <SaldoAnzeige
+              variant="expanded"
+              label="Überstundenkonto"
+              saldoMinutes={Math.round(stats.overtime.balanceHours * 60)}
             />
           {/if}
           {#if stats.scheduleType === "FLEXTIME"}
@@ -1309,7 +1420,13 @@
           {/if}
         {:else}
           <KPIStat label="Urlaubstage" value="–" />
-          <KPIStat label="Überstundenkonto" value="–" />
+          <!-- IN-01 (code review) — SaldoAnzeige's loading/error props were built, tested, and
+               never actually reached by any consuming page. This IS a real loading/error
+               boundary: `loading` (declared above) brackets the exact same /dashboard fetch that
+               populates `stats`, so while it's true the request is still in flight, and once it
+               flips false with `stats` still null the request failed (see loadData()'s
+               Promise.allSettled — a rejected statsResult never reassigns `stats`). -->
+          <SaldoAnzeige variant="expanded" label="Überstundenkonto" {loading} error={!loading} />
         {/if}
       </Card>
 
@@ -1333,7 +1450,7 @@
             {/snippet}
           </CardHeader>
           <div class="open-items-list">
-            {#if openItems.total === 0}
+            {#if showEmptyOpenItems}
               <p class="oi-empty">Keine offenen Vorgänge</p>
             {:else}
               {#if openItems.missingDays.length > 0}
@@ -1372,6 +1489,35 @@
                 <a href="/time-entries" class="oi-row">
                   <span class="oi-dot oi-dot--fix"></span>
                   <span>{openItems.invalidEntries} zu korrigieren</span>
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
+                <a
+                  href={earliestUnconfirmedBreakDate
+                    ? `/time-entries?view=list&date=${earliestUnconfirmedBreakDate}`
+                    : "/time-entries?view=list"}
+                  class="oi-row"
+                  data-testid="dashboard-break-nudge"
+                >
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span
+                    >{unconfirmedBreakDays === 1
+                      ? "1 Tag: Pause bestätigen"
+                      : `${unconfirmedBreakDays} Tage: Pause bestätigen`}</span
+                  >
+                  <span class="oi-link">→</span>
+                </a>
+              {/if}
+              {#if karenzNudge.count > 0}
+                <a
+                  href={karenzNudgeHref(karenzNudge)}
+                  class="oi-row"
+                  data-testid="dashboard-karenz-nudge"
+                  title="Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG)"
+                >
+                  <span class="oi-dot oi-dot--warn"></span>
+                  <span>{karenzNudge.label}</span>
                   <span class="oi-link">→</span>
                 </a>
               {/if}
@@ -1609,6 +1755,13 @@
                             <span class="shift-time">{fmtHours(day.expectedHours)}</span>
                           {/if}
                         </span>
+                      {:else if day.status === "requested"}
+                        <span
+                          class="cell-badge cell-badge--requested"
+                          title={day.reason ?? "Antrag offen"}
+                        >
+                          <Icon name="clock" size={14} title="beantragt" />
+                        </span>
                       {:else}
                         <span class="cell-badge cell-badge--none" title="Frei">–</span>
                       {/if}
@@ -1657,6 +1810,10 @@
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--scheduled">9–17</span> Geplant
+          </span>
+          <span class="legend-item">
+            <span class="cell-badge cell-badge--requested"><Icon name="clock" size={12} /></span>
+            Beantragt
           </span>
           <span class="legend-item">
             <span class="cell-badge cell-badge--none">–</span> Keine Daten
@@ -2586,6 +2743,15 @@
     color: var(--text-muted);
     border: 1px dashed var(--border);
     font-size: 0.6875rem;
+  }
+
+  /* Open (pending) leave request — amber/warn tone signals "attention/awaiting decision",
+     distinct from the neutral "none"/Frei state and from approved (brand) leave. */
+  .cell-badge--requested {
+    background: var(--warn-soft);
+    color: var(--warn);
+    border: 1px solid var(--warn-soft);
+    font-size: 0.875rem;
   }
 
   .cell-badge--none {

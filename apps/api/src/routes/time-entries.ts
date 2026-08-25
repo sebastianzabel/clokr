@@ -10,6 +10,7 @@ import {
   getTenantTimezone,
   todayInTz,
   dateStrInTz,
+  timeStrInTz,
   monthRangeUtc,
   monthDayBounds,
   calcExpectedMinutesTz,
@@ -26,6 +27,7 @@ import {
   computeRetroLimitStr,
   computeEntryAgeInDays,
 } from "../utils/retro-config"; // Phase 76.29 — RETRO-01 window guard
+import { auditReasonSchema, AUDIT_REASON_REQUIRED } from "../utils/audit-reason"; // Quick 260824-cjd
 
 const nfcPunchSchema = z.object({
   nfcCardId: z.string().min(1),
@@ -61,9 +63,19 @@ const manualEntrySchema = z.object({
   source: z.nativeEnum(TimeEntrySource).default("MANUAL"),
   breaks: z.array(breakSlotSchema).optional(),
   grantId: z.string().uuid().optional(), // Phase 76.29 Plan 03: pre-approved RetroEntryRequest id
+  reason: z.string().trim().min(1).optional(), // Phase 96 (RETRO-10): entry-first Nachtrag reason
 });
 
 const idParamSchema = z.object({ id: z.string().uuid() });
+
+// Phase 91 (BREAK-03) — BAG 12.02.2025, 5 AZR 51/24: an automatically inserted break does not
+// prove the break was actually taken. `confirm` lets the employee/manager acknowledge it was
+// taken; `waive` ("durchgearbeitet") declares no break was taken — time is really worked and
+// therefore payable, so it requires NO manager approval (LOCKED Decision 5).
+const breakStatusSchema = z.object({
+  action: z.enum(["confirm", "waive"]),
+  reason: z.string().max(500).optional(), // only meaningful for waive ("durchgearbeitet")
+});
 
 const updateEntrySchema = z.object({
   date: z
@@ -78,6 +90,9 @@ const updateEntrySchema = z.object({
   type: z.string().optional(),
   breaks: z.array(breakSlotSchema).optional(),
   grantId: z.string().uuid().optional(), // Phase 76.29.1 Plan 02: pre-approved RetroEntryRequest id (PUT retro-correction)
+  // Quick 260824-cjd: optional at the Zod layer on purpose — required ONLY when the
+  // handler determines putIsCorrectionByManager, which cannot be decided pre-fetch.
+  reason: z.string().optional().nullable(),
 });
 
 // ── Pausen-Minuten aus Break-Slots berechnen ──────────────────────────────────
@@ -270,6 +285,11 @@ export async function validateTimeEntryInvariants(
     excludeEntryId?: string;
     isCorrectionByManager?: boolean; // skip retro-window guard for manager-on-behalf edits
     grantId?: string; // approved RetroEntryRequest id — Plan 03 wires consumption
+    // Phase 96 (RETRO-16/D-10): employee editing their OWN still-pending coupled
+    // Nachtrag entry (retroRequestId set, isInvalid=true, coupled request still
+    // PENDING) — exempt from the retro-window guard so a typo fix doesn't 403.
+    // PUT-only; POST never has an `existing` row to compute this from.
+    isOwnPendingEdit?: boolean;
     // Race fix (retro-grant-race-403-vs-409, 2026-07): the POST grant-consumption path
     // passes true here. Both the one-per-day check (step 1) AND the overlap check
     // (step 3) below are advisory pre-tx queries against the TimeEntry table — under
@@ -296,6 +316,7 @@ export async function validateTimeEntryInvariants(
     excludeEntryId,
     isCorrectionByManager,
     grantId,
+    isOwnPendingEdit,
     deferConflictChecksToTx,
   } = params;
 
@@ -330,7 +351,7 @@ export async function validateTimeEntryInvariants(
   // Fires when the entry date is older than the tenant's configured window AND neither
   // an approved manager correction nor a pre-validated retro grant is present.
   // Uses tenant-TZ date strings — never raw UTC arithmetic (C1 / DST-safety).
-  if (!isCorrectionByManager && !grantId) {
+  if (!isCorrectionByManager && !grantId && !isOwnPendingEdit) {
     const windowDays = await getRetroEntryWindowDays(app.prisma, tenantId);
     const todayStr = dateStrInTz(todayInTz(tz), tz);
     const retroLimitStr = computeRetroLimitStr(tz, windowDays);
@@ -530,9 +551,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                   endTime: breakEndTime,
                 },
               });
+              // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
               await app.prisma.timeEntry.update({
                 where: { id: clockedOutEntryId },
-                data: { breakMinutes: autoBreakMin },
+                data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
               });
             }
           }
@@ -766,9 +788,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
                   endTime: breakEndTime,
                 },
               });
+              // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
               await app.prisma.timeEntry.update({
                 where: { id: closedEntryId },
-                data: { breakMinutes: autoBreakMin },
+                data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
               });
             }
           }
@@ -878,7 +901,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const totalBreakMin = Math.round(calcBreakMinutes(allBreaks));
       await app.prisma.timeEntry.update({
         where: { id },
-        data: { breakMinutes: totalBreakMin },
+        // Phase 91 (BREAK-01): human appended a break -> CONFIRMED (runs after the isLocked
+        // gate above, so locked entries never reach this point).
+        data: { breakMinutes: totalBreakMin, breakStatus: "CONFIRMED" },
       });
 
       await app.audit({
@@ -1087,16 +1112,33 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         // validateTimeEntryInvariants. Re-run against `tx` after a successful flip.
         deferConflictChecksToTx: !!resolvedGrantId,
       });
+      // Phase 96 (RETRO-10) — fall-through discriminator: true only when the create is
+      // being allowed to proceed as a pending entry-first Nachtrag (see below).
+      let pendingRetroCreate = false;
+      // Phase 96 (RETRO-10) — entry-first Nachtrag: when the ONLY invariant failure is
+      // RETRO_WINDOW_EXCEEDED and the caller supplied a reason (and no grant), do NOT
+      // return 403 here. Set a flag and let control FALL THROUGH into the shared create
+      // path below (finalBreakMinutes/breakSlots, the checkJArbSchG minor-protection
+      // hard-block, checkArbZG, the generic CREATE audit) so a pending Nachtrag is
+      // gated exactly like a normal create — see the `pendingRetroCreate` branch inside
+      // the shared try/catch further down. Without a reason (or with a grantId), the
+      // response stays byte-identical to today.
       if (invariantError) {
         if (invariantError.error === "RETRO_WINDOW_EXCEEDED") {
-          return reply.code(403).send({
-            error: invariantError.error,
-            windowDays: invariantError.windowDays,
-            entryAgeInDays: invariantError.entryAgeInDays,
-          });
+          const retroReason = body.reason?.trim();
+          if (retroReason && !resolvedGrantId) {
+            pendingRetroCreate = true;
+          } else {
+            return reply.code(403).send({
+              error: invariantError.error,
+              windowDays: invariantError.windowDays,
+              entryAgeInDays: invariantError.entryAgeInDays,
+            });
+          }
+        } else {
+          const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
+          return reply.code(code).send({ error: invariantError.error });
         }
-        const code = invariantError.error.includes("abgeschlossen") ? 403 : 409;
-        return reply.code(code).send({ error: invariantError.error });
       }
 
       // Determine breakMinutes from break slots or body
@@ -1215,6 +1257,56 @@ export async function timeEntryRoutes(app: FastifyInstance) {
             return created;
           });
           entry = result;
+        } else if (pendingRetroCreate) {
+          // Phase 96 (RETRO-10) — entry-first Nachtrag: create the RetroEntryRequest
+          // and the coupled pending TimeEntry atomically in one transaction. The entry
+          // starts isInvalid=true and is only released (isInvalid=false) when a manager
+          // approves via PATCH /retro-entry-requests/:id/review (96-02 Task 2). No
+          // second CREATE audit here — the shared post-create tail below (unchanged)
+          // already writes the generic TimeEntry CREATE audit for every create path,
+          // including this one; this branch only owns the RETRO_ENTRY_REQUESTED audit
+          // for the request. Reuses the SAME try/catch as the plain path — a P2002 on
+          // the (employeeId,date) unique index maps to the existing 409 below.
+          const result = await app.prisma.$transaction(async (tx) => {
+            const request = await tx.retroEntryRequest.create({
+              data: {
+                employeeId,
+                targetDate: new Date(body.date),
+                reason: body.reason!.trim(),
+                startTime: timeStrInTz(newStart, tz),
+                endTime: newEnd ? timeStrInTz(newEnd, tz) : null,
+                breakMinutes: finalBreakMinutes || null,
+                status: "PENDING",
+              },
+            });
+            const created = await tx.timeEntry.create({
+              data: {
+                employeeId,
+                date: new Date(body.date),
+                startTime: newStart,
+                endTime: newEnd,
+                breakMinutes: finalBreakMinutes,
+                note: body.note,
+                source: "MANUAL",
+                createdBy: user.sub,
+                isInvalid: true,
+                invalidReason: "Nachtrag – Genehmigung ausstehend",
+                retroRequestId: request.id,
+              },
+            });
+
+            await app.audit({
+              tx,
+              userId: user.sub,
+              action: "RETRO_ENTRY_REQUESTED",
+              entity: "RetroEntryRequest",
+              entityId: request.id,
+              newValue: { ...request, timeEntryId: created.id },
+            });
+
+            return created;
+          });
+          entry = result;
         } else {
           entry = await app.prisma.timeEntry.create({
             data: {
@@ -1307,12 +1399,14 @@ export async function timeEntryRoutes(app: FastifyInstance) {
               },
             });
 
+            // Phase 91 (BREAK-02): Pflichtpause auto-inserted → mark AUTO for confirmation
             await app.prisma.timeEntry.update({
               where: { id: entry.id },
-              data: { breakMinutes: autoBreakMin },
+              data: { breakMinutes: autoBreakMin, breakStatus: "AUTO" },
             });
             // Update entry object for response
             entry.breakMinutes = autoBreakMin;
+            entry.breakStatus = "AUTO";
           }
         }
       }
@@ -1349,6 +1443,40 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         newValue: entryWithBreaks,
       });
 
+      // Phase 96 (RETRO-16/D-10) — submit-notify: tell the tenant's managers/admins
+      // a new pending Nachtrag is waiting for them (net-new call site, Pitfall 3;
+      // mirrors the BREAK_COMPLIANCE_ALERT manager-iteration precedent, :2042-2052,
+      // skipping the actor).
+      if (pendingRetroCreate && entry.retroRequestId) {
+        try {
+          const submitManagers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: targetEmployee.tenantId,
+              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            },
+            include: { user: { select: { id: true } } },
+          });
+          for (const mgr of submitManagers) {
+            if (mgr.user.id === targetEmployee.user.id) continue; // don't self-notify
+            await app.notify({
+              userId: mgr.user.id,
+              type: "RETRO_ENTRY_REQUESTED",
+              title: "Neuer Zeitnachtrag",
+              message: `${targetEmployee.firstName} ${targetEmployee.lastName} hat einen Zeitnachtrag für den ${entryDateStr} eingereicht und wartet auf Genehmigung.`,
+              link: "/inbox",
+              tenantId: targetEmployee.tenantId,
+              relatedType: "RetroEntryRequest",
+              relatedId: entry.retroRequestId,
+            });
+          }
+        } catch (err) {
+          app.log.warn(
+            { err, timeEntryId: entry.id },
+            "Failed to notify managers on Nachtrag submit",
+          );
+        }
+      }
+
       return reply.code(201).send({ entry: entryWithBreaks, warnings });
     },
   });
@@ -1365,7 +1493,13 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 
       const existing = await app.prisma.timeEntry.findUnique({
         where: { id },
-        include: { employee: { select: { tenantId: true } } },
+        include: {
+          employee: { select: { tenantId: true, userId: true, firstName: true, lastName: true } },
+          // Phase 96 (RETRO-16/D-10): loaded so the own-pending-edit exemption below can
+          // verify the coupled request is still PENDING (strictness, Pitfall 2) — not
+          // just that a retroRequestId happens to be set.
+          retroRequest: { select: { status: true } },
+        },
       });
       if (!existing) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
 
@@ -1469,6 +1603,32 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       const overlapTz = await getTenantTimezone(app.prisma, existing.employee.tenantId);
       const putIsCorrectionByManager = isManager && existing.employeeId !== user.employeeId;
 
+      // Quick 260824-cjd — a manager correcting ANOTHER employee's entry must supply a
+      // Begründung. Conditional (cannot be a plain Zod field, see updateEntrySchema
+      // comment) — enforced here, right after putIsCorrectionByManager is known and
+      // after the isLocked gate above, before any other guard runs.
+      let putAuditReason: string | undefined;
+      if (putIsCorrectionByManager) {
+        const putReasonCheck = auditReasonSchema.safeParse(body.reason ?? "");
+        if (!putReasonCheck.success) {
+          return reply.code(400).send({ error: AUDIT_REASON_REQUIRED });
+        }
+        putAuditReason = putReasonCheck.data;
+      }
+
+      // Phase 96 (RETRO-16/D-10) — employee editing their OWN still-pending coupled
+      // Nachtrag entry must not be re-blocked by the retro-window guard (Pitfall 2).
+      // Scoped tightly: retroRequestId set + isInvalid=true + the coupled request is
+      // still PENDING (verified via the retroRequest include above) + the entry
+      // belongs to the ACTOR themselves (a manager correcting a DIFFERENT employee's
+      // entry already has its own exemption via putIsCorrectionByManager above — this
+      // is specifically the self-edit case, regardless of role, matching C6 parity).
+      const isOwnPendingNachtragEdit =
+        !!existing.retroRequestId &&
+        existing.isInvalid &&
+        existing.retroRequest?.status === "PENDING" &&
+        existing.employeeId === user.employeeId;
+
       // Phase 76.29.1 Plan 02 — PUT grant pre-validation (mirrors POST ~:1001–1017).
       // If the caller supplies a grantId, verify an APPROVED RetroEntryRequest exists for
       // (existing.employeeId, effective targetDate) — keyed to the ENTRY's employee, not the
@@ -1505,6 +1665,7 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         excludeEntryId: id,
         isCorrectionByManager: putIsCorrectionByManager,
         grantId: putResolvedGrantId,
+        isOwnPendingEdit: isOwnPendingNachtragEdit,
       });
       if (invalid) {
         if (invalid.error === "RETRO_WINDOW_EXCEEDED") {
@@ -1564,12 +1725,25 @@ export async function timeEntryRoutes(app: FastifyInstance) {
       if ("endTime" in body) patch.endTime = body.endTime ? new Date(body.endTime as string) : null;
       if (body.breakMinutes !== undefined && !body.breaks) patch.breakMinutes = body.breakMinutes;
       if ("note" in body) patch.note = body.note ?? null;
+      // Phase 91 (BREAK-01): human edited the break -> CONFIRMED (runs after the isLocked
+      // gate above, so locked entries never reach this point).
+      if (body.breaks !== undefined || body.breakMinutes !== undefined) {
+        patch.breakStatus = "CONFIRMED";
+      }
 
       // Auto-revalidate: if endTime is now set and entry was invalid due to missing clock-out
       if (updatedEnd && existing.isInvalid && existing.invalidReason === "Ausstempeln fehlt") {
         patch.isInvalid = false;
         patch.invalidReason = null;
       }
+      // Phase 96 (RETRO-16/D-10): a pending Nachtrag edit (isOwnPendingNachtragEdit) is
+      // intentionally NOT auto-revalidated here — the string check above matches ONLY
+      // "Ausstempeln fehlt" (verified non-collision, Pitfall 2), never "Nachtrag –
+      // Genehmigung ausstehend". `isInvalid`/`retroRequestId` are never set in `patch`
+      // for this case, so the update preserves both — the entry stays pending until a
+      // manager decides via PATCH /retro-entry-requests/:id/review. Do not add an
+      // isInvalid-clearing branch here for the Nachtrag reason without going through
+      // that endpoint (Elevation-of-Privilege guard, T-96-12).
 
       // Handle break slots update (non-grant path: runs before the update, as before)
       // For the grant path, break-slots are handled inside the $transaction below.
@@ -1696,7 +1870,9 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
-        newValue: updated,
+        // Quick 260824-cjd: auditReason only on the MANAGER_CORRECTION branch — the
+        // plain self-edit UPDATE path never carries one.
+        newValue: putIsCorrectionByManager ? { ...updated, auditReason: putAuditReason } : updated,
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
@@ -1708,6 +1884,41 @@ export async function timeEntryRoutes(app: FastifyInstance) {
           app.log.warn(
             { err, timeEntryId: id },
             "Failed to auto-dismiss CLOCK_OUT_REMINDER on entry update",
+          );
+        }
+      }
+
+      // Phase 96 (RETRO-16/D-10) — re-notify the approver(s): editing an own
+      // still-pending Nachtrag stays pending, but the manager should learn the
+      // proposed times changed (net-new call site — no prior notify wiring existed
+      // for RetroEntryRequest, Pitfall 3). Mirrors the BREAK_COMPLIANCE_ALERT
+      // manager-iteration precedent (:2042-2052), skipping the actor.
+      if (isOwnPendingNachtragEdit && existing.retroRequestId) {
+        try {
+          const editManagers = await app.prisma.employee.findMany({
+            where: {
+              tenantId: existing.employee.tenantId,
+              user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+            },
+            include: { user: { select: { id: true } } },
+          });
+          for (const mgr of editManagers) {
+            if (mgr.user.id === user.sub) continue; // don't self-notify
+            await app.notify({
+              userId: mgr.user.id,
+              type: "RETRO_ENTRY_UPDATED",
+              title: "Zeitnachtrag geändert",
+              message: `${existing.employee.firstName} ${existing.employee.lastName} hat einen Zeitnachtrag geändert. Er wartet weiter auf Genehmigung.`,
+              link: "/inbox",
+              tenantId: existing.employee.tenantId,
+              relatedType: "RetroEntryRequest",
+              relatedId: existing.retroRequestId,
+            });
+          }
+        } catch (err) {
+          app.log.warn(
+            { err, timeEntryId: id },
+            "Failed to re-notify approvers on pending Nachtrag edit",
           );
         }
       }
@@ -1878,6 +2089,10 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         }
       }
 
+      // Quick 260824-cjd: parsed AFTER 404/403/isLocked/retro-window guards so a bad-
+      // reason 400 never leaks the existence of a foreign/locked/out-of-window entry.
+      const { reason } = z.object({ reason: auditReasonSchema }).parse(req.body);
+
       // Soft delete instead of hard delete
       await app.prisma.timeEntry.update({
         where: { id },
@@ -1891,10 +2106,157 @@ export async function timeEntryRoutes(app: FastifyInstance) {
         entity: "TimeEntry",
         entityId: id,
         oldValue: existing,
+        newValue: { auditReason: reason },
         request: { ip: req.ip, headers: req.headers as Record<string, string> },
       });
 
       return reply.code(204).send();
+    },
+  });
+
+  // PATCH /api/v1/time-entries/:id/break-status  (Phase 91 — BREAK-01/BREAK-03/BREAK-04)
+  // Confirm/waive an auto-inserted break (BAG 12.02.2025, 5 AZR 51/24 — an automatic break
+  // deduction alone does not prove the break was taken). `waive` ("durchgearbeitet") zeroes the
+  // break out and marks the time worked/payable — see the audit-proof guards below.
+  app.patch("/:id/break-status", {
+    schema: { tags: ["Zeiterfassung"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req, reply) => {
+      const { id } = idParamSchema.parse(req.params);
+      const { action, reason } = breakStatusSchema.parse(req.body);
+      const user = req.user;
+
+      const entry = await app.prisma.timeEntry.findFirst({
+        where: { id, deletedAt: null },
+        include: {
+          employee: { select: { tenantId: true, userId: true, firstName: true, lastName: true } },
+        },
+      });
+      if (!entry) return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+
+      // Tenant isolation (fetch-then-compare, existing idiom — no existence leak on 404).
+      if (entry.employee.tenantId !== user.tenantId) {
+        await app.audit({
+          userId: user.sub,
+          action: "CROSS_TENANT_ACCESS_DENIED",
+          entity: "TimeEntry",
+          entityId: id,
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        return reply.code(404).send({ error: "Eintrag nicht gefunden" });
+      }
+
+      // Owner or manager/admin.
+      const isManager = user.role === "MANAGER" || user.role === "ADMIN";
+      if (!isManager && entry.employeeId !== user.employeeId) {
+        return reply.code(403).send({ error: "Kein Zugriff" });
+      }
+
+      // Lock wins (Revisionssicherheit) — checked BEFORE any write, even for admins.
+      if (entry.isLocked) {
+        return reply
+          .code(409)
+          .send({ error: "Eintrag ist gesperrt und kann nicht bearbeitet werden" });
+      }
+
+      const oldStatus = entry.breakStatus;
+
+      if (action === "confirm") {
+        // Idempotent — allowed from any non-locked state.
+        const updated = await app.prisma.timeEntry.update({
+          where: { id },
+          data: { breakStatus: "CONFIRMED" },
+          include: { breaks: { orderBy: { startTime: "asc" } } },
+        });
+        await app.audit({
+          userId: user.sub,
+          action: "BREAK_CONFIRMED",
+          entity: "TimeEntry",
+          entityId: id,
+          oldValue: { breakStatus: oldStatus },
+          newValue: { breakStatus: "CONFIRMED" },
+          request: { ip: req.ip, headers: req.headers as Record<string, string> },
+        });
+        // Phase 92 (BREAK-06): clear the employee BREAK_UNCONFIRMED nudge for this entry.
+        // Type-scoped so the manager BREAK_COMPLIANCE_ALERT (same relatedId) is never touched.
+        await app.dismissByRelated("TimeEntry", id, "BREAK_UNCONFIRMED");
+        return { entry: updated };
+      }
+
+      // action === "waive" — "durchgearbeitet": no break taken, time is really worked and
+      // therefore payable. No manager approval required (LOCKED Decision 5).
+      //
+      // "Durchgearbeitet" answers the auto-inserted-break nudge (Decision 5); it may ONLY be
+      // declared for an AUTO entry. A CONFIRMED day already carries the employee's affirmed real
+      // breaks — the waive shortcut must not silently hard-delete those (Revisionssicherheit,
+      // WR-02). An already-WAIVED entry is likewise rejected (no repeat waive → no duplicate
+      // manager alerts).
+      if (oldStatus !== "AUTO") {
+        return reply.code(409).send({
+          error: "Durchgearbeitet kann nur für eine automatisch eingetragene Pause erklärt werden.",
+        });
+      }
+
+      // Capture the exact pre-waive break slots BEFORE deletion. Break is not a soft-delete model,
+      // so these rows are gone after deleteMany — the audit oldValue is the only reconstruction
+      // path for a later "durchgearbeitet" dispute (Revisionssicherheit, WR-01).
+      const priorBreaks = await app.prisma.break.findMany({
+        where: { timeEntryId: id },
+        select: { id: true, startTime: true, endTime: true },
+      });
+      await app.prisma.break.deleteMany({ where: { timeEntryId: id } });
+      const updated = await app.prisma.timeEntry.update({
+        where: { id },
+        data: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
+        include: { breaks: true },
+      });
+      await app.audit({
+        userId: user.sub,
+        action: "BREAK_WAIVED",
+        entity: "TimeEntry",
+        entityId: id,
+        oldValue: {
+          breakStatus: oldStatus,
+          breakMinutes: entry.breakMinutes,
+          breaks: priorBreaks,
+        },
+        newValue: { breakStatus: "WAIVED", breakMinutes: 0, breakWaivedReason: reason ?? null },
+        request: { ip: req.ip, headers: req.headers as Record<string, string> },
+      });
+
+      // Phase 92 (BREAK-06): clear the employee BREAK_UNCONFIRMED nudge for this entry.
+      // Type-scoped so it never dismisses the manager BREAK_COMPLIANCE_ALERT emitted below
+      // (this call's or any pre-existing one for the same entry).
+      await app.dismissByRelated("TimeEntry", id, "BREAK_UNCONFIRMED");
+
+      // 0-ing the break changes net worked time — every other break-mutating path recomputes.
+      await updateOvertimeAccount(app, entry.employeeId);
+
+      // Manager alert: also emails via the toggle field emailOnMissingEntries — see the
+      // explicit BREAK_COMPLIANCE_ALERT policy entry in
+      // apps/api/src/utils/notification-email-policy.ts (quick-260825-k3g).
+      const managers = await app.prisma.employee.findMany({
+        where: {
+          tenantId: entry.employee.tenantId,
+          user: { isActive: true, role: { in: ["ADMIN", "MANAGER"] } },
+        },
+        include: { user: { select: { id: true } } },
+      });
+      for (const mgr of managers) {
+        if (mgr.user.id === entry.employee.userId) continue; // don't self-notify
+        await app.notify({
+          userId: mgr.user.id,
+          type: "BREAK_COMPLIANCE_ALERT",
+          title: "Pause als „durchgearbeitet“ erklärt",
+          message: `${entry.employee.firstName} ${entry.employee.lastName} hat für einen Tag „durchgearbeitet – keine Pause“ erklärt.`,
+          link: `/time-entries?highlight=${id}`,
+          tenantId: entry.employee.tenantId,
+          relatedType: "TimeEntry",
+          relatedId: id,
+        });
+      }
+
+      return { entry: updated };
     },
   });
 }
@@ -1903,19 +2265,38 @@ export async function timeEntryRoutes(app: FastifyInstance) {
 // Nutzt den letzten SaldoSnapshot als Basis und rechnet nur den offenen Zeitraum
 // seit dem Snapshot neu. Ohne Snapshot: Fallback auf den aktuellen Monat.
 //
-// PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo in hours through the
+// PURE READ (no DB write). Returns the LIFETIME running Überstundensaldo breakdown through the
 // windowEnd cutoff (today only if today has completed entries, else yesterday — the same
 // hasTodayEntries convention the §615 calendar header/cells use). Handles all schedule types:
-//   - MONTHLY_HOURS TRACK_ONLY → 0 (tracked, not accumulated).
+//   - MONTHLY_HOURS TRACK_ONLY → totalHours 0, confirmedMinutes/openMonthMinutes both 0.
 //   - SHIFT_BASED / FIXED_* / FLEXTIME / MONTHLY_HOURS(target>0) → live lifetime saldo.
-// Lifetime-correct: the balance = last-snapshot carryOver (or full history from hireDate when no
+// Lifetime-correct: totalHours = last-snapshot carryOver (or full history from hireDate when no
 // snapshot) + Σ balances of ALL open months (complete + current partial) up to windowEnd. This is
 // the SAME value updateOvertimeAccount persists — it is the single source of truth; the writer
 // wraps this and upserts. Returns null for §18-exempt employees (caller: skip / no value).
-export async function computeOvertimeBalanceHours(
+//
+// Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — decomposes that SAME total into the
+// "Bestätigt" (confirmedMinutes, from the closed-month SaldoSnapshot chain — see
+// confirmed-saldo.ts) vs. "Laufender Monat (Prognose)" (openMonthMinutes) split, DERIVED
+// as total − confirmed (never computed independently, per 97-CONTEXT — one computation
+// path). `computeOvertimeBalanceHours` below is now a thin, signature-preserving wrapper
+// around this breakdown — it MUST stay byte-behaviour-identical for its three external
+// consumers (packages/mcp/src/index.ts, the `read:overtime` API-key scope, and
+// updateOvertimeAccount just below).
+export type OvertimeBalanceBreakdown = {
+  totalHours: number;
+  confirmedMinutes: number;
+  openMonthMinutes: number;
+  hasClosedMonth: boolean;
+  /** SHIFT_BASED only, and only when the current month has an open partial period —
+   *  undefined for every other schedule type/state (never a fabricated `false`). */
+  rosterIncomplete?: boolean;
+};
+
+export async function computeOvertimeBalanceBreakdown(
   app: FastifyInstance,
   employeeId: string,
-): Promise<number | null> {
+): Promise<OvertimeBalanceBreakdown | null> {
   const schedule = await getEffectiveSchedule(app, employeeId);
 
   // Tenant-Timezone laden + hireDate + federalState for holiday computation
@@ -1937,7 +2318,7 @@ export async function computeOvertimeBalanceHours(
   if (employee?.isTimeTrackingExempt) {
     app.log.info(
       { employeeId, exempt: true },
-      "computeOvertimeBalanceHours skipped (isTimeTrackingExempt)",
+      "computeOvertimeBalanceBreakdown skipped (isTimeTrackingExempt)",
     );
     return null;
   }
@@ -2339,6 +2720,12 @@ export async function computeOvertimeBalanceHours(
   // pre-fetched absences (with unterrichtsMinutes) + employeeSlots/patternSlots — no more
   // per-day getVocationalSchoolMinutesForDate DB calls.
 
+  // Phase 97-01 (SALDO-DISP-07) — set only inside the SHIFT_BASED branch below, right after
+  // rosterProration is assigned. Stays undefined for every non-SHIFT_BASED schedule AND
+  // whenever there is no open partial month at all (this whole block is skipped) — never a
+  // fabricated `false` for a schedule type that has no roster proration.
+  let rosterIncomplete: boolean | undefined;
+
   // effectiveEnd < currentMonthOpenStart → no open partial month (nothing to add).
   if (effectiveEnd >= currentMonthOpenStart) {
     const { firstDay: curMonthFirstDay, lastDay: curMonthLastDay } = monthDayBounds(
@@ -2413,6 +2800,28 @@ export async function computeOvertimeBalanceHours(
         rosterToDateMinutes: sumShiftNetto(curShiftsToDate, coveredToDate),
         rosterPeriodMinutes: sumShiftNetto(curMonthAllShifts, monthCovered),
       };
+
+      // Phase 97-01 (SALDO-DISP-07, 97-RESEARCH Q4 corrected signal) — the remainder of the
+      // roster is unplanned when every EXISTING shift already lies in the past (rosterToDate
+      // consumed the entire rosterPeriod) while today is still before the month's last day.
+      // The `rosterPeriodMinutes > 0` guard is load-bearing: without it the pre-existing
+      // "nothing rostered at all" zero-state (guarded separately in shift-based-saldo.ts,
+      // contribution 0) would collide with this state because 0 === 0.
+      //
+      // WR-01 (code review) — this "days remain in the month" clause is intentionally
+      // anchored to `todayStr` (literal calendar today), NOT `effectiveEnd`/windowEnd
+      // (today-or-yesterday, whichever has a completed entry). computeMonthSaldo's own
+      // rosterIncomplete (month-saldo.ts) is anchored to the SAME `todayStr` for the SAME
+      // reason: the flag answers "is there still unplanned roster ahead of *now*", which
+      // does not depend on whether today's own time entry happens to be logged yet. Using
+      // windowEnd would make the two flags disagree on the last calendar day of a month
+      // with no entry yet that day (windowEnd = yesterday, one day short of month-end) —
+      // see overtime-live-vs-monthsaldo-parity.test.ts's "WR-01" describe block for the
+      // regression case this anchor choice is pinned against.
+      rosterIncomplete =
+        rosterProration.rosterPeriodMinutes > 0 &&
+        rosterProration.rosterToDateMinutes === rosterProration.rosterPeriodMinutes &&
+        todayStr < dateStrInTz(curMonthLastDay, tz);
     }
 
     // Window-filtered holiday set (partial open window only — SNAP-01 guard).
@@ -2498,7 +2907,39 @@ export async function computeOvertimeBalanceHours(
     String(schedule.type) === "MONTHLY_HOURS" && schedule.overtimeMode === "TRACK_ONLY";
   const effectiveBalanceHours = isTrackOnly ? 0 : totalBalanceHours;
 
-  return effectiveBalanceHours;
+  // Phase 97-01 (SALDO-DISP-01/03) — confirmed/forecast decomposition of the SAME total.
+  // openMonthMinutes is ALWAYS total − confirmed (a subtraction, never a second call into the
+  // saldo core) — 97-CONTEXT's "one computation path" rule (Phase 98 exists precisely because a
+  // value once had two owners that diverged silently; do not repeat that shape here).
+  const hasClosedMonth = lastSnapshot !== null;
+  // TRACK_ONLY already forces the reported total to 0 above; force BOTH split figures to 0 too
+  // so a legacy non-zero snapshotCarryOver never surfaces as a phantom negative forecast
+  // (naive 0 − confirmedMinutes would go negative). hasClosedMonth still reports the truth.
+  const confirmedMinutes = isTrackOnly ? 0 : snapshotCarryOver;
+  const openMonthMinutes = isTrackOnly
+    ? 0
+    : Math.round(effectiveBalanceHours * 60) - confirmedMinutes;
+
+  return {
+    totalHours: effectiveBalanceHours,
+    confirmedMinutes,
+    openMonthMinutes,
+    hasClosedMonth,
+    rosterIncomplete,
+  };
+}
+
+// Thin, signature-preserving wrapper around computeOvertimeBalanceBreakdown (Phase 97-01) — MUST
+// stay byte-behaviour-identical to the pre-Phase-97 computeOvertimeBalanceHours for its three
+// external consumers (packages/mcp/src/index.ts, the `read:overtime` API-key scope, and
+// updateOvertimeAccount just below). Never add logic here; extend the breakdown instead.
+export async function computeOvertimeBalanceHours(
+  app: FastifyInstance,
+  employeeId: string,
+): Promise<number | null> {
+  const breakdown = await computeOvertimeBalanceBreakdown(app, employeeId);
+  if (breakdown === null) return null;
+  return breakdown.totalHours;
 }
 
 // ── Überstundensaldo berechnen UND persistieren (event-driven writer) ─────────

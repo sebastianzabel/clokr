@@ -170,15 +170,9 @@
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`/api/v1/avatars/${employeeId}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${$authStore.accessToken}` },
-        body: formData,
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error ?? `Upload fehlgeschlagen (${res.status})`);
-      }
+      // Phase 104 review (IN-06): via api.upload, so an expired access token is refreshed and
+      // the upload retried instead of surfacing as "Upload fehlgeschlagen (401)".
+      await api.upload(`/avatars/${employeeId}`, formData);
       bumpAvatarVersion();
       toasts.success("Avatar aktualisiert");
     } catch (e: unknown) {

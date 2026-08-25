@@ -12,7 +12,7 @@
  * now-netto math against each closed SHIFT_BASED snapshot and updates the
  * persisted numbers.
  *
- * Invariants (mirrors recalculate-snapshots-after-soll-fix.ts):
+ * Invariants (the shared invariants for this class of one-off recompute script):
  *   - NEVER hard-deletes rows (Revisionssicherheit per CLAUDE.md)
  *   - NEVER writes to locked-month snapshots on --apply. Locked rows appear in
  *     summary.skippedLocked for operator review. Force-recalc of locked months

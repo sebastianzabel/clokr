@@ -74,6 +74,7 @@ export async function syncPhorestShifts(
     unmappedStaff: [],
     skippedVocationalSchool: 0,
     replaced: 0,
+    protectedPendingLeave: 0,
   };
 
   try {
@@ -200,6 +201,34 @@ export async function syncPhorestShifts(
     );
     // Consumed below by the soft-cancel exclusion (D-07) and Task 3's replace pass (D-11b).
     const bsSkippedDays = new Set<string>();
+
+    // Phase 95 (SHIFT-02) — "pending-leave gewinnt": protect a Phorest-covered shift from the
+    // SS-04 PHOREST_REMOVED soft-cancel on any day the employee has an active, not-yet-APPROVED
+    // leave (PENDING | CANCELLATION_REQUESTED). Mirrors bsSet, with ONE critical difference: a
+    // LeaveRequest is a DATE RANGE, and — unlike a BS slot Phorest still returns — a protected
+    // leave day has NO fresh Phorest slot (the person is off in the rota, so the per-slot loop
+    // below never visits it). The set MUST therefore be built STANDALONE from the DB here and
+    // expanded PER-DAY, clipped to the window — never populated inside the per-slot workTimes loop.
+    const pendingLeaves = await app.prisma.leaveRequest.findMany({
+      where: {
+        employeeId: { in: mappedEmployeeIds }, // tenant-scoped (T-95-01): only mapped employees
+        deletedAt: null, // soft-delete rule (CLAUDE.md) — a soft-deleted leave never protects (T-95-02)
+        status: { in: ["PENDING", "CANCELLATION_REQUESTED"] }, // NOT APPROVED/REJECTED/CANCELLED (locked)
+        startDate: { lte: windowEndDate },
+        endDate: { gte: windowStartDate }, // range overlaps the forward sync window
+      },
+      select: { employeeId: true, startDate: true, endDate: true },
+    });
+    const pendingLeaveDays = new Set<string>();
+    for (const lr of pendingLeaves) {
+      // Clip the leave range to [windowStartDate, windowEndDate], iterate per UTC day (startDate/
+      // endDate are @db.Date = UTC midnight — mirror the bsSet key scheme exactly, no local-TZ math).
+      const from = lr.startDate > windowStartDate ? lr.startDate : windowStartDate;
+      const to = lr.endDate < windowEndDate ? lr.endDate : windowEndDate;
+      for (const d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
+        pendingLeaveDays.add(`${lr.employeeId}|${d.toISOString().slice(0, 10)}`);
+      }
+    }
 
     // Phase 85.1.1 (D-02) — bulk-load per-employee Phorest puffer overrides for all mapped
     // employees (mirrors the D-09 BS-absence bulk-load idiom directly above). One query, not N.
@@ -430,6 +459,8 @@ export async function syncPhorestShifts(
     // Phase 85.1 (D-07): a day deliberately skipped this run for "BS gewinnt" must NOT be treated
     // as "vanished from Phorest" — exclude every (employeeId, date) in bsSkippedDays. An empty NOT
     // array is a harmless Prisma no-op when no day was skipped.
+    // Phase 95 (SHIFT-02): additionally exclude every (employeeId, date) in pendingLeaveDays — a
+    // day with an active, not-yet-APPROVED leave is protected exactly like a BS day.
     const staleCandidates = await app.prisma.shift.findMany({
       where: {
         origin: "PHOREST",
@@ -437,12 +468,55 @@ export async function syncPhorestShifts(
         date: { gte: windowStartDate, lte: windowEndDate },
         externalId: { notIn: [...freshExternalIds] },
         employee: { tenantId },
-        NOT: [...bsSkippedDays].map((key) => {
+        NOT: [...bsSkippedDays, ...pendingLeaveDays].map((key) => {
           const [eid, d] = key.split("|");
           return { employeeId: eid, date: new Date(d) };
         }),
       },
     });
+
+    // Phase 95 (SHIFT-02) — Revisionssicherheit: audit every pending-leave day that ACTUALLY
+    // shielded a would-be-stale shift (no silent skip, T-95-03), and count it on the in-memory
+    // result. Protection is a pure upstream skip — the shift is NEVER updated/deleted here; these
+    // rows are simply the ones the NOT clause above removed from staleCandidates. Restricting to
+    // `externalId notIn freshExternalIds` counts only shifts that would otherwise have been
+    // soft-cancelled (a day Phorest still covers needs no protection). A day that is ALSO BS-skipped
+    // is already audited by the BS branch, so it is excluded here to avoid a double audit/count.
+    if (pendingLeaveDays.size > 0) {
+      const protectedShifts = await app.prisma.shift.findMany({
+        where: {
+          origin: "PHOREST",
+          deletedAt: null,
+          date: { gte: windowStartDate, lte: windowEndDate },
+          externalId: { notIn: [...freshExternalIds] },
+          employee: { tenantId },
+          OR: [...pendingLeaveDays].map((key) => {
+            const [eid, d] = key.split("|");
+            return { employeeId: eid, date: new Date(d) };
+          }),
+        },
+      });
+      for (const shift of protectedShifts) {
+        const dateStr = shift.date.toISOString().slice(0, 10);
+        if (bsSkippedDays.has(`${shift.employeeId}|${dateStr}`)) continue; // BS already audited it
+        result.protectedPendingLeave++;
+        // Mirror the BS-skip audit precedent (above): a pure protection skip carries NO entityId
+        // (the shift is never mutated), identity lives entirely in newValue. shiftId is included
+        // inside newValue for traceability without breaking the entityId=null skip convention.
+        await app.audit({
+          userId: opts.actorUserId,
+          action: "UPDATE",
+          entity: "Shift",
+          newValue: {
+            source: "Phorest",
+            skipped: "PENDING_LEAVE",
+            employeeId: shift.employeeId,
+            date: dateStr,
+            shiftId: shift.id,
+          },
+        });
+      }
+    }
 
     for (const stale of staleCandidates) {
       await app.prisma.shift.update({
@@ -478,6 +552,11 @@ export async function syncPhorestShifts(
     // alone. Scoped per Phorest-covered day only — never a tenant-wide delete (Pitfall 2).
     for (const key of freshCoveredDays) {
       if (bsSkippedDays.has(key)) continue;
+      // Phase 95 (SHIFT-02) defense-in-depth: keep the two protected sets symmetric. This is a
+      // no-op given the data flow (a protected pending-leave day has NO fresh Phorest slot, so it
+      // never enters freshCoveredDays), but mirrors the bsSkippedDays guard so a future change to
+      // freshCoveredDays cannot accidentally let the replace pass reach a protected day.
+      if (pendingLeaveDays.has(key)) continue;
       const [employeeId, dateStr] = key.split("|");
       const replaceCandidates = await app.prisma.shift.findMany({
         where: {
