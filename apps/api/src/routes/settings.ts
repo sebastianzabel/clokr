@@ -505,16 +505,26 @@ export async function settingsRoutes(app: FastifyInstance) {
       });
 
       // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
-      const { federalState, tenantName, applyToExisting, ...configBody } = body;
+      const {
+        federalState,
+        tenantName,
+        applyToExisting,
+        sickNoteRequiredAfterDays,
+        ...configBody
+      } = body;
 
       // Phase 104 review (WR-08): the Zod field now accepts an explicit null (Clokr frontends
       // send `x ? x : null`, and clearing the number input yields null via Svelte's
       // bind:value), but the column is `Int @default(3)` NOT NULL — passing the null straight
       // through to Prisma would trade the bare 400 for a 500. null means "cleared" and resets
       // to the documented default, which is what the form's hint ("Standard: 3") promises.
-      if (configBody.sickNoteRequiredAfterDays === null) {
-        configBody.sickNoteRequiredAfterDays = 3;
-      }
+      // An OMITTED key stays omitted, so an unrelated PUT never touches the value.
+      const configData = {
+        ...configBody,
+        ...(sickNoteRequiredAfterDays !== undefined
+          ? { sickNoteRequiredAfterDays: sickNoteRequiredAfterDays ?? 3 }
+          : {}),
+      };
 
       // Build tenant update data (name + federalState live on Tenant model)
       const tenantUpdate: Record<string, unknown> = {};
@@ -524,8 +534,8 @@ export async function settingsRoutes(app: FastifyInstance) {
       const [config] = await Promise.all([
         app.prisma.tenantConfig.upsert({
           where: { tenantId },
-          update: configBody,
-          create: { tenantId, ...configBody },
+          update: configData,
+          create: { tenantId, ...configData },
         }),
         Object.keys(tenantUpdate).length > 0
           ? app.prisma.tenant.update({
