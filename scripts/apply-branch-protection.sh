@@ -31,12 +31,18 @@ REPO="${CLOKR_REPO:-sebastianzabel/clokr}"
 BRANCHES=(main)
 
 # The merge-blocking check set. These are CHECK RUN names as GitHub reports
-# them, which is NOT always the job id in ci.yml: a matrix job reports one
-# check per matrix leg, named with the whole `include` entry. `docker` is a
-# matrix job, so no check named plain `docker` is ever produced — requiring
-# it would leave every PR pending forever. The runbook's payload asked for
-# exactly that, which is the likeliest reason main's list was found empty.
-# check_names_exist() below refuses to apply a context nobody reports.
+# them, which is not always the job id in ci.yml — a matrix job reports one
+# check per leg, named after the whole `include` entry.
+#
+# `docker-gate` rather than `docker` for exactly that reason: `docker` is a
+# matrix job and never reports a check under its bare name when it runs, so
+# requiring it would leave every PR waiting on a status that never arrives.
+# That is what the runbook's payload asked for, and the likeliest reason
+# main's list was found empty. docker-gate is a no-op job whose only purpose
+# is to be a stable context. See the comment on it in ci.yml.
+#
+# observed_check_names() below refuses to apply a context nobody reports, so
+# a new check must have run at least once before it can be required.
 #
 # Deliberately NOT included:
 #   lighthouse, axe-scan     — run with continue-on-error by design; promotion
@@ -52,8 +58,7 @@ REQUIRED_CHECKS=(
   test
   codeql
   secret-scan
-  "docker (clokr-api, ./apps/api/Dockerfile, .)"
-  "docker (clokr-web, ./apps/web/Dockerfile, .)"
+  docker-gate
 )
 
 MODE="check"
