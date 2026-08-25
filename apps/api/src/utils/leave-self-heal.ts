@@ -51,6 +51,11 @@ export type LeaveEntitlementWithType = {
 export type VacationTypeMeta = {
   vacationNames: string[];
   allVacTypeIds: string[];
+  /**
+   * Phase 104 review (IN-03): carried so selfHealUsedDays() can pass a tenant scope into
+   * sumConfirmedSection9DaysByRequest() without changing every call site's signature.
+   */
+  tenantId: string;
 };
 
 /**
@@ -71,7 +76,7 @@ export async function loadVacationTypeMeta(
     where: { tenantId, name: { in: vacationNames } },
     select: { id: true },
   });
-  return { vacationNames, allVacTypeIds: rows.map((r) => r.id) };
+  return { vacationNames, allVacTypeIds: rows.map((r) => r.id), tenantId };
 }
 
 /**
@@ -85,7 +90,7 @@ export async function selfHealUsedDays(
   rows: LeaveEntitlementWithType[],
   ctx: VacationTypeMeta,
 ): Promise<void> {
-  const { vacationNames, allVacTypeIds } = ctx;
+  const { vacationNames, allVacTypeIds, tenantId } = ctx;
 
   for (const row of rows) {
     const isVacation = vacationNames.includes(row.leaveType.name);
@@ -113,6 +118,7 @@ export async function selfHealUsedDays(
     const section9Credited = await sumConfirmedSection9DaysByRequest(
       prisma,
       approved.map((r) => r.id),
+      tenantId,
     );
     const actualUsed = Math.max(0, rawUsed - section9Credited);
 

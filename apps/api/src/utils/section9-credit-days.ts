@@ -11,13 +11,25 @@
  */
 import type { FastifyInstance } from "fastify";
 
+/**
+ * Phase 104 review (IN-03): `tenantId` is REQUIRED, not optional. The helper used to rely
+ * entirely on the caller having produced tenant-scoped ids. That holds for today's single
+ * caller (leave-self-heal.ts), but this module is documented as "the ONE place" and will
+ * attract more callers — a defence-in-depth predicate here matches the idiom the report
+ * path already uses (`employee: { tenantId }` in reports.ts) and cannot be forgotten.
+ */
 export async function sumConfirmedSection9DaysByRequest(
   prisma: FastifyInstance["prisma"],
   vacationRequestIds: string[],
+  tenantId: string,
 ): Promise<number> {
   if (vacationRequestIds.length === 0) return 0;
   const credits = await prisma.section9Credit.findMany({
-    where: { vacationRequestId: { in: vacationRequestIds }, status: "CONFIRMED" },
+    where: {
+      vacationRequestId: { in: vacationRequestIds },
+      status: "CONFIRMED",
+      employee: { tenantId },
+    },
     select: { creditedDays: true },
   });
   return credits.reduce((s, c) => s + Number(c.creditedDays ?? 0), 0);
