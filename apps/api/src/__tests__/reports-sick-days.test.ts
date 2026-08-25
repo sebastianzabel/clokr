@@ -359,3 +359,167 @@ describe("Reports: sick day double-count regression (WR-05)", () => {
     }
   });
 });
+
+// ── Phase 104 (D-30): § 9 attribution in the Monatsbericht ──────────────────────
+// A confirmed § 9 credit moves the credited days from Urlaub into "Krank mit
+// Attest" — a manager cannot confirm "AU liegt vor" without an actual certificate,
+// so the days count as attested even though the underlying SICK LeaveRequest's own
+// (D-02, independent, display-only) attestPresent flag is untouched.
+describe("Reports: § 9 BUrlG attribution in the Monatsbericht (D-30)", () => {
+  let app: FastifyInstance;
+  let d: Awaited<ReturnType<typeof seedTestData>>;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    d = await seedTestData(app, "rpt-s9");
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: d.employee.id } });
+      await cleanupTestData(app, d.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+    await closeTestApp();
+  });
+
+  async function createRequest(payload: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${d.empToken}` },
+      payload,
+    });
+  }
+
+  async function approve(id: string) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/review`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+  }
+
+  async function creditFor(sickId: string) {
+    return app.prisma.section9Credit.findFirstOrThrow({ where: { sickRequestId: sickId } });
+  }
+
+  async function confirmCredit(id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/confirm`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+      payload: body,
+    });
+  }
+
+  async function monthlyRow(year: number, month: number) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/reports/monthly?employeeId=${d.employee.id}&year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${d.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      section9Note?: string;
+      rows: Array<{
+        employeeId: string;
+        vacationDays: number;
+        sickDaysWithAttest: number;
+        sickDaysWithoutAttest: number;
+        sickDays: number;
+        totalAbsenceDays: number;
+        section9DaysThisMonth: number;
+      }>;
+    };
+    return { body, row: body.rows.find((r) => r.employeeId === d.employee.id) };
+  }
+
+  it("Test 1 (D-30): a confirmed § 9 day appears in sickDaysWithAttest and is removed from vacationDays — the day is reported as a Kranktag exactly once", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2026-05-04", // Monday
+      endDate: "2026-05-08", // Friday
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2026-05-06", // Wednesday
+      endDate: "2026-05-07", // Thursday — overlaps the vacation
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    const credit = await creditFor(sickId);
+    const confirmRes = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2026-05-06",
+      attestValidTo: "2026-05-07",
+      reason: "AU für Mi/Do eingereicht",
+    });
+    expect(confirmRes.statusCode).toBe(200);
+
+    const { row, body } = await monthlyRow(2026, 5);
+    expect(row).toBeDefined();
+    // 5-day vacation minus the 2 credited days -> 3.
+    expect(row!.vacationDays).toBe(3);
+    // The 2 credited days move to "mit Attest"; sickDaysWithoutAttest correspondingly
+    // drops back to 0 (both days were originally uncounted-attest via the plain SICK
+    // request) — no double-count, the "sickDays = with + without" invariant holds.
+    expect(row!.sickDaysWithAttest).toBe(2);
+    expect(row!.sickDaysWithoutAttest).toBe(0);
+    expect(row!.sickDays).toBe(row!.sickDaysWithAttest + row!.sickDaysWithoutAttest);
+    expect(row!.section9DaysThisMonth).toBe(2);
+    // D-30's explanatory legend note fires because this report has an affected row.
+    expect(body.section9Note).toContain("§ 9 BUrlG");
+  });
+
+  it("Test 2 (D-09): an AU_PENDING credit changes nothing — the day still counts as Urlaub", async () => {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: "2026-06-01", // Monday
+      endDate: "2026-06-05", // Friday
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: "2026-06-03", // Wednesday
+      endDate: "2026-06-04", // Thursday
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    // Deliberately NOT confirmed — the credit auto-created on sick approval (D-09)
+    // stays AU_PENDING.
+    const credit = await creditFor(sickId);
+    expect(credit.status).toBe("AU_PENDING");
+
+    const { row, body } = await monthlyRow(2026, 6);
+    expect(row).toBeDefined();
+    // Full 5-day vacation still charged — nothing moved yet.
+    expect(row!.vacationDays).toBe(5);
+    expect(row!.section9DaysThisMonth).toBe(0);
+    expect(body.section9Note).toBeUndefined();
+  });
+
+  it("Test 7: the report response carries an explanatory § 9 note only when a row is actually affected", async () => {
+    // Re-uses Test 1's now-CONFIRMED credit (May 2026) — querying the SAME employee's
+    // June report (Test 2's AU_PENDING month) must NOT carry the note.
+    const { body: mayBody } = await monthlyRow(2026, 5);
+    expect(mayBody.section9Note).toBe(
+      "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG).",
+    );
+    const { body: juneBody } = await monthlyRow(2026, 6);
+    expect(juneBody.section9Note).toBeUndefined();
+  });
+});

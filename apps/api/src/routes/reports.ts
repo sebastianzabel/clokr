@@ -121,6 +121,10 @@ function computeEmployeeSummary(
   end: Date,
   tz: string,
   holidayDeductionOpts?: { enabled: boolean; stateCode: string | null },
+  // Phase 104 (D-30): confirmed § 9 credits overlapping the report month, bulk-fetched
+  // ONCE by the caller (no per-employee query — T-104-09-N1) and pre-filtered to
+  // pre-filtered to CONFIRMED-only (T-104-09-PENDING: an AU_PENDING credit changes nothing).
+  section9Credits: Array<{ creditedStart: Date; creditedEnd: Date }> = [],
 ): {
   workedHours: number;
   targetHours: number;
@@ -136,6 +140,7 @@ function computeEmployeeSummary(
   maternityDays: number;
   parentalDays: number;
   totalAbsenceDays: number;
+  section9DaysThisMonth: number;
   entries: Array<{
     date: string;
     start: string;
@@ -376,16 +381,38 @@ function computeEmployeeSummary(
   // two overlapping non-sick requests is counted once in the aggregate figure too —
   // independent from, not shared with, the per-type calls (which must not lose a
   // day just because an unrelated type's call already saw it).
-  // `let`, not `const`: Task 2 (D-30) subtracts confirmed § 9 workdays from this.
-  const totalAbsenceDays = countDedupedDays(nonSickLeave);
-  // `let`, not `const`: Task 2 (D-30) subtracts confirmed § 9 workdays from this.
-  const vacationDays = daysForTypeName("Urlaub");
+  let totalAbsenceDays = countDedupedDays(nonSickLeave);
+  let vacationDays = daysForTypeName("Urlaub");
   const overtimeCompDays = daysForTypeName("Überstundenausgleich");
   const specialLeaveDays = daysForTypeName("Sonderurlaub");
   const educationDays = daysForTypeName("Bildungsurlaub");
   const unpaidDays = daysForTypeName("Unbezahlter Urlaub");
   const maternityDays = daysForTypeName("Mutterschutz");
   const parentalDays = daysForTypeName("Elternzeit");
+
+  // Phase 104 (D-30): gutgeschriebene § 9-Tage wandern von Urlaub nach Krank-mit-
+  // Attest. Sie sind per Definition attestiert — ohne ärztliches Zeugnis gäbe es die
+  // Gutschrift nicht (section9Credits is already CONFIRMED-only, filtered by the
+  // caller). daysInRange() clips each credit to the report month, mirroring the day
+  // rule the surrounding sick-day computation already uses (no third rule).
+  //
+  // [Rule 1 fix] D-02 keeps the underlying SICK LeaveRequest's own attestPresent flag
+  // untouched by a § 9 confirm — a manager confirms via the dedicated "AU liegt vor"
+  // flow, not the older PATCH /requests/:id/attest endpoint. Without shifting these
+  // days OUT of sickDaysWithoutAttest first, a credited day would count TWICE in the
+  // sick total (once from the sickLeaveRequests loop above, once here) and break the
+  // "sickDays = sickDaysWithAttest + sickDaysWithoutAttest" invariant this file's own
+  // tests assert. clamp to 0: if the request's attestPresent was already true (an
+  // independent, pre-existing display toggle — D-02), those days are already in
+  // sickDaysWithAttest and must not be subtracted a second time.
+  const section9DaysThisMonth = section9Credits.reduce(
+    (s, c) => s + daysInRange(c.creditedStart, c.creditedEnd),
+    0,
+  );
+  sickDaysWithoutAttest = Math.max(0, sickDaysWithoutAttest - section9DaysThisMonth);
+  sickDaysWithAttest += section9DaysThisMonth;
+  vacationDays = Math.max(0, vacationDays - section9DaysThisMonth);
+  totalAbsenceDays = Math.max(0, totalAbsenceDays - section9DaysThisMonth);
 
   // ── Time entries (formatted) ─────────────────────────────────────────────
   const entries = emp.timeEntries.map((e) => ({
@@ -414,6 +441,7 @@ function computeEmployeeSummary(
     sickDaysWithAttest,
     sickDaysWithoutAttest,
     vacationDays,
+    section9DaysThisMonth,
     overtimeCompDays,
     specialLeaveDays,
     educationDays,
@@ -514,6 +542,7 @@ async function resolveReportOvertimeHours(
 // TXT file (three INI sections: [Allgemein], [Satzbeschreibung], [Bewegungsdaten]).
 // Used by both the company-wide GET /datev and the per-employee GET /datev/employee.
 type DatevEmployee = {
+  id: string;
   employeeNumber: string;
   firstName: string;
   lastName: string;
@@ -533,8 +562,11 @@ function buildDatevLodas(params: {
   start: Date;
   end: Date;
   lna: { normal: number; urlaub: number; krank: number; sonderurlaub: number };
+  // Phase 104 (D-30): bestätigte § 9-Gutschriften je Mitarbeiter, bereits bulk-fetched
+  // und CONFIRMED-only gefiltert vom Aufrufer (T-104-09-N1/PENDING).
+  section9ByEmp?: Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>;
 }): Buffer {
-  const { employees, year: y, month: m, start, end, lna } = params;
+  const { employees, year: y, month: m, start, end, lna, section9ByEmp } = params;
   const CRLF = "\r\n";
   const lines: string[] = [];
 
@@ -617,11 +649,24 @@ function buildDatevLodas(params: {
     const maternityDays = daysForName(emp, "Mutterschutz");
     const parentalDays = daysForName(emp, "Elternzeit");
 
-    // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt)
+    // Phase 104 (D-30): § 9-Tage aus der Urlaubs-Lohnart heraus- und in die Krank-
+    // Lohnart hineinrechnen. Die Summe über beide Zeilen bleibt unverändert — es wird
+    // nichts erfunden und nichts verloren, nur richtig zugeordnet. Ohne diese
+    // Korrektur meldet der Export denselben Ausfalltag doppelt (T-104-09-PAYROLL).
+    const section9WorkDays = (section9ByEmp?.get(emp.id) ?? []).reduce(
+      (s, c) => s + workDaysInMonthRange(c.creditedStart, c.creditedEnd),
+      0,
+    );
+    const vacationDaysDatev = Math.max(0, vacationDays - section9WorkDays);
+    const sickDaysDatev = sickDays + section9WorkDays;
+
+    // DATEV-Zeilen (Format: 12 Felder, Semikolon-getrennt) — datevLine()'s own body is
+    // untouched by Phase 104; only the values fed into the Urlaub/Krank calls changed.
     lines.push(datevLine(pn, name, datum, "", lna.normal, workedHours, 0));
-    if (sickDays > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDays));
+    if (sickDaysDatev > 0) lines.push(datevLine(pn, name, datum, "K", lna.krank, 0, sickDaysDatev));
     if (sickChildDays > 0) lines.push(datevLine(pn, name, datum, "K", 201, 0, sickChildDays));
-    if (vacationDays > 0) lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDays));
+    if (vacationDaysDatev > 0)
+      lines.push(datevLine(pn, name, datum, "U", lna.urlaub, 0, vacationDaysDatev));
     if (overtimeCompDays > 0) lines.push(datevLine(pn, name, datum, "U", 301, 0, overtimeCompDays));
     if (specialDays > 0)
       lines.push(datevLine(pn, name, datum, "S", lna.sonderurlaub, 0, specialDays));
@@ -688,6 +733,69 @@ function buildEmployeeInclude(start: Date, end: Date) {
   } as const;
 }
 
+// Phase 104 (D-30): bestätigte § 9-Gutschriften für den Berichtsmonat, EINE Abfrage über
+// alle sichtbaren Mitarbeiter (T-104-09-N1 — kein Query pro Mitarbeiter), tenant-gescoped
+// (T-104-09-TENANT) und CONFIRMED-only gefiltert (T-104-09-PENDING — ein
+// AU_PENDING-Vorgang verändert keine gemeldete Zahl). Ein solcher Tag IST fachlich ein
+// Kranktag — der Urlaubsantrag bleibt zwar unverändert bestehen (D-05), aber angerechnet
+// wird er nicht mehr. Ohne diese Zuordnung würde derselbe Tag zweimal auftauchen: einmal
+// unter Urlaub (aus dem unveränderten LeaveRequest) und einmal unter Krankheit.
+async function fetchConfirmedSection9CreditsByEmp(
+  app: FastifyInstance,
+  tenantId: string,
+  start: Date,
+  end: Date,
+): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
+  const credits = await app.prisma.section9Credit.findMany({
+    where: {
+      status: "CONFIRMED",
+      employee: { tenantId },
+      creditedStart: { lte: end },
+      creditedEnd: { gte: start },
+    },
+    select: { employeeId: true, creditedStart: true, creditedEnd: true },
+  });
+  const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
+  for (const c of credits) {
+    if (c.creditedStart === null || c.creditedEnd === null) continue;
+    const arr = byEmp.get(c.employeeId) ?? [];
+    arr.push({ creditedStart: c.creditedStart, creditedEnd: c.creditedEnd });
+    byEmp.set(c.employeeId, arr);
+  }
+  return byEmp;
+}
+
+// Phase 104 (D-30): the same bulk-fetch shape as fetchConfirmedSection9CreditsByEmp above,
+// kept as its own function for the DATEV handlers (/datev, /datev/employee) — these two
+// handlers select a different Employee shape (no `leaveType`-scoped attest fields, DATEV
+// LODAS's own DatevEmployee type) than the Monatsbericht/PDF handlers, so they are treated
+// as their own call site rather than reused across shapes. Still ONE query per request
+// (T-104-09-N1), shared between both DATEV handlers.
+async function fetchConfirmedSection9CreditsForDatev(
+  app: FastifyInstance,
+  tenantId: string,
+  start: Date,
+  end: Date,
+): Promise<Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>> {
+  const credits = await app.prisma.section9Credit.findMany({
+    where: {
+      status: "CONFIRMED",
+      employee: { tenantId },
+      creditedStart: { lte: end },
+      creditedEnd: { gte: start },
+    },
+    select: { employeeId: true, creditedStart: true, creditedEnd: true },
+  });
+  const byEmp = new Map<string, Array<{ creditedStart: Date; creditedEnd: Date }>>();
+  for (const c of credits) {
+    if (c.creditedStart === null || c.creditedEnd === null) continue;
+    const arr = byEmp.get(c.employeeId) ?? [];
+    arr.push({ creditedStart: c.creditedStart, creditedEnd: c.creditedEnd });
+    byEmp.set(c.employeeId, arr);
+  }
+  return byEmp;
+}
+
 export async function reportRoutes(app: FastifyInstance) {
   // GET /api/v1/reports/monthly?employeeId=&year=&month=
   app.get("/monthly", {
@@ -736,8 +844,24 @@ export async function reportRoutes(app: FastifyInstance) {
         orderBy: { lastName: "asc" },
       })) as unknown as EmployeeWithIncludes[];
 
+      // Phase 104 (D-30): bulk-fetched once, keyed by employeeId — see the function's
+      // own doc block above for the tenant/status/N1 rationale.
+      const section9ByEmp = await fetchConfirmedSection9CreditsByEmp(
+        app,
+        req.user.tenantId,
+        start,
+        end,
+      );
+
       const rows = employees.map((emp) => {
-        const summary = computeEmployeeSummary(emp, start, end, tz, monthlyHolidayDeductionOpts);
+        const summary = computeEmployeeSummary(
+          emp,
+          start,
+          end,
+          tz,
+          monthlyHolidayDeductionOpts,
+          section9ByEmp.get(emp.id) ?? [],
+        );
         return {
           employeeId: emp.id,
           employeeName: `${emp.firstName} ${emp.lastName}`,
@@ -757,10 +881,17 @@ export async function reportRoutes(app: FastifyInstance) {
           maternityDays: summary.maternityDays,
           parentalDays: summary.parentalDays,
           totalAbsenceDays: summary.totalAbsenceDays,
+          section9DaysThisMonth: summary.section9DaysThisMonth,
         };
       });
 
-      return { month: parseInt(month), year: y, rows };
+      // D-30's "erklärender Hinweis in der Legende": emitted only when at least one
+      // employee's figures were actually touched, so unaffected reports are unchanged.
+      const section9Note = rows.some((r) => r.section9DaysThisMonth > 0)
+        ? "Tage mit bestätigter AU während genehmigten Urlaubs werden als Kranktage geführt und nicht auf den Jahresurlaub angerechnet (§ 9 BUrlG)."
+        : undefined;
+
+      return { month: parseInt(month), year: y, rows, ...(section9Note ? { section9Note } : {}) };
     },
   });
 
@@ -1036,7 +1167,22 @@ export async function reportRoutes(app: FastifyInstance) {
         sonderurlaub: datevConfig?.datevSonderurlaubNr ?? 302,
       };
 
-      const buf = buildDatevLodas({ employees, year: y, month: m, start, end, lna });
+      const section9ByEmpDatev = await fetchConfirmedSection9CreditsForDatev(
+        app,
+        req.user.tenantId,
+        start,
+        end,
+      );
+
+      const buf = buildDatevLodas({
+        employees,
+        year: y,
+        month: m,
+        start,
+        end,
+        lna,
+        section9ByEmp: section9ByEmpDatev,
+      });
 
       await app.audit({
         userId: req.user.sub,
@@ -1125,7 +1271,22 @@ export async function reportRoutes(app: FastifyInstance) {
         return reply.code(404).send({ error: "Mitarbeiter nicht gefunden" });
       }
 
-      const buf = buildDatevLodas({ employees: [emp], year: y, month: m, start, end, lna });
+      const section9ByEmpDatevSingle = await fetchConfirmedSection9CreditsForDatev(
+        app,
+        req.user.tenantId,
+        start,
+        end,
+      );
+
+      const buf = buildDatevLodas({
+        employees: [emp],
+        year: y,
+        month: m,
+        start,
+        end,
+        lna,
+        section9ByEmp: section9ByEmpDatevSingle,
+      });
 
       await app.audit({
         userId: req.user.sub,
@@ -1198,7 +1359,22 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Mitarbeiter nicht gefunden" };
       }
 
-      const summary = computeEmployeeSummary(emp, start, end, tz, pdfHolidayDeductionOpts);
+      // Phase 104 (D-30): the PDF (Arbeitszeitnachweis handed to the employee/auditor)
+      // must show the identical § 9 attribution as the JSON Monatsbericht.
+      const section9ByEmpPdf = await fetchConfirmedSection9CreditsByEmp(
+        app,
+        req.user.tenantId,
+        start,
+        end,
+      );
+      const summary = computeEmployeeSummary(
+        emp,
+        start,
+        end,
+        tz,
+        pdfHolidayDeductionOpts,
+        section9ByEmpPdf.get(emp.id) ?? [],
+      );
       // §615-correct Überstunden for the legal Stundennachweis (SHIFT_BASED / closed-month snapshot);
       // non-SHIFT open months keep summary.overtimeHours. Shape unchanged — only the number's source.
       // overtimeConfirmed is null (not a boolean) when labelled is false, so the PDF renderer can
@@ -1295,9 +1471,24 @@ export async function reportRoutes(app: FastifyInstance) {
         return { error: "Keine Mitarbeiter gefunden" };
       }
 
+      // Phase 104 (D-30): one bulk fetch for the whole company PDF, not per employee.
+      const section9ByEmpAll = await fetchConfirmedSection9CreditsByEmp(
+        app,
+        req.user.tenantId,
+        start,
+        end,
+      );
+
       const rows = await Promise.all(
         employees.map(async (emp) => {
-          const summary = computeEmployeeSummary(emp, start, end, tz, allPdfHolidayDeductionOpts);
+          const summary = computeEmployeeSummary(
+            emp,
+            start,
+            end,
+            tz,
+            allPdfHolidayDeductionOpts,
+            section9ByEmpAll.get(emp.id) ?? [],
+          );
           // §615-correct Überstunden (SHIFT_BASED / closed-month snapshot); non-SHIFT open months
           // keep summary.overtimeHours. Override AFTER the spread so the shape stays identical.
           // overtimeConfirmed is null when labelled is false (PDF omits the label for this row).
