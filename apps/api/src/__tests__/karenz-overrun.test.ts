@@ -582,4 +582,38 @@ describe("tenant config range — sickNoteRequiredAfterDays (D-22)", () => {
       await cleanupTestData(app, fx.tenant.id);
     }
   });
+
+  // Phase 104 code review WR-08: the field was .optional() but not .nullable(). Clokr
+  // frontends send `x ? x : null` and Svelte's bind:value yields null for a cleared number
+  // input, so an explicit null was reachable — and rejected the WHOLE ~40-field PUT with a
+  // bare "Validierungsfehler". The column is `Int @default(3)` NOT NULL, so the null must be
+  // normalized in the handler rather than passed through to Prisma (which would 500).
+  it("Test 4 (WR-08): an explicit null resets to the default 3 instead of failing the whole save", async () => {
+    const fx = await seedKarenzFixture(app, "cfg4");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 1 },
+      });
+
+      const res = await app.inject({
+        method: "PUT",
+        url: "/api/v1/settings/work",
+        headers: { authorization: `Bearer ${fx.adminToken}` },
+        // A realistic multi-field save from the admin form, with the number input cleared.
+        payload: { sickNoteRequiredAfterDays: null, vacationLeadTimeDays: 7 },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const cfg = await app.prisma.tenantConfig.findUniqueOrThrow({
+        where: { tenantId: fx.tenant.id },
+      });
+      expect(cfg.sickNoteRequiredAfterDays).toBe(3);
+      // The rest of the save landed — the point of the fix is that one cleared input no
+      // longer discards every other setting on the page.
+      expect(cfg.vacationLeadTimeDays).toBe(7);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
 });

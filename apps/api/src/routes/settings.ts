@@ -75,7 +75,12 @@ const tenantConfigSchema = z
     // (vorher 1-30). 0 = jeder Krankheitstag ist nachweispflichtig.
     // Bestandszeilen mit Altwerten > 3 werden NICHT migriert (Revisionssicherheit) —
     // sie werden beim Lesen von normalizeKarenzDays() auf 3 geklammert.
-    sickNoteRequiredAfterDays: z.number().int().min(0).max(3).optional(),
+    // Phase 104 review (WR-08): .nullable() as well as .optional(). Clokr frontends send
+    // `field: x ? x : null`, and a cleared number input yields null via Svelte's bind:value —
+    // with .optional() alone that null was a bare "Validierungsfehler" for the WHOLE page
+    // (CLAUDE.md's Zod gotcha). null is normalized to the default 3 in the handler below —
+    // the column is NOT NULL, so it must never reach Prisma as null.
+    sickNoteRequiredAfterDays: z.number().int().min(0).max(3).nullable().optional(),
     // Part-time vacation
     autoCalcPartTimeVacation: z.boolean().optional(),
     fullTimeWorkDaysPerWeek: z.number().int().min(1).max(7).optional(),
@@ -501,6 +506,15 @@ export async function settingsRoutes(app: FastifyInstance) {
 
       // federalState + tenantName gehören zum Tenant, nicht zur TenantConfig
       const { federalState, tenantName, applyToExisting, ...configBody } = body;
+
+      // Phase 104 review (WR-08): the Zod field now accepts an explicit null (Clokr frontends
+      // send `x ? x : null`, and clearing the number input yields null via Svelte's
+      // bind:value), but the column is `Int @default(3)` NOT NULL — passing the null straight
+      // through to Prisma would trade the bare 400 for a 500. null means "cleared" and resets
+      // to the documented default, which is what the form's hint ("Standard: 3") promises.
+      if (configBody.sickNoteRequiredAfterDays === null) {
+        configBody.sickNoteRequiredAfterDays = 3;
+      }
 
       // Build tenant update data (name + federalState live on Tenant model)
       const tenantUpdate: Record<string, unknown> = {};

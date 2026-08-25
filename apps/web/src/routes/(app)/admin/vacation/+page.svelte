@@ -154,6 +154,16 @@
   let vacationMaxAdvanceMonths = $state(0);
   let halfDayAllowed = $state(true);
   let sickSelfReport = $state(true);
+  /**
+   * Mirrors normalizeKarenzDays() in apps/api/src/utils/find-karenz-overrun-days.ts:
+   * § 5 Abs. 1 EFZG ("länger als drei Kalendertage") caps the threshold at 3; null/undefined
+   * (cleared input, or a tenant that never set it) falls back to the default 3.
+   */
+  function clampKarenzDays(raw: number | null | undefined): number {
+    if (raw === null || raw === undefined || Number.isNaN(Number(raw))) return 3;
+    return Math.min(3, Math.max(0, Math.trunc(Number(raw))));
+  }
+
   let sickNoteRequiredAfterDays = $state(3);
   let autoCalcPartTimeVacation = $state(true);
   let fullTimeWorkDaysPerWeek = $state(5);
@@ -212,7 +222,13 @@
       vacationMaxAdvanceMonths = cfg.vacationMaxAdvanceMonths ?? 0;
       halfDayAllowed = cfg.halfDayAllowed ?? true;
       sickSelfReport = cfg.sickSelfReport ?? true;
-      sickNoteRequiredAfterDays = cfg.sickNoteRequiredAfterDays ?? 3;
+      // Phase 104 review (WR-08): 104-08 narrowed the API range from 1-30 to 0-3 and
+      // deliberately did NOT migrate legacy rows (Revisionssicherheit) — they are clamped on
+      // the READ path by normalizeKarenzDays(). This form is a read path too: without the
+      // same clamp a tenant still carrying e.g. 14 loaded 14 into the input and the next save
+      // of ANY setting on this page was rejected with the global "Validierungsfehler", with no
+      // hint which of ~40 fields caused it.
+      sickNoteRequiredAfterDays = clampKarenzDays(cfg.sickNoteRequiredAfterDays);
       autoCalcPartTimeVacation = cfg.autoCalcPartTimeVacation ?? true;
       fullTimeWorkDaysPerWeek = cfg.fullTimeWorkDaysPerWeek ?? 5;
       const maxNegMinutes = cfg.maxNegativeBalanceMinutes;
@@ -284,7 +300,9 @@
         vacationMaxAdvanceMonths,
         halfDayAllowed,
         sickSelfReport,
-        sickNoteRequiredAfterDays,
+        // Clamped again on the way out: clearing the number input makes Svelte's bind:value
+        // yield null, and the API field is .optional() (not .nullable()).
+        sickNoteRequiredAfterDays: clampKarenzDays(sickNoteRequiredAfterDays),
         autoCalcPartTimeVacation,
         fullTimeWorkDaysPerWeek,
         enforceMinVacation,
