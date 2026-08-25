@@ -8,10 +8,14 @@ For **bug fixes and small improvements** — open a PR directly.
 
 For **larger features or breaking changes** — open an issue first so we can discuss approach before you invest time coding.
 
+Issues use forms with required fields; blank issues are off. A feature or chore needs
+**acceptance criteria** — without them it cannot be scheduled. How issues move from there is
+described in [docs/PROCESS.md](docs/PROCESS.md).
+
 ## Setup
 
 ```bash
-git clone https://github.com/the operatorZ84/clokr.git
+git clone https://github.com/sebastianzabel/clokr.git
 cd clokr
 pnpm install
 
@@ -21,8 +25,10 @@ docker compose up postgres redis minio -d
 # Configure
 cp .env.example .env
 
-# Push schema + seed demo data
-pnpm --filter @clokr/db exec prisma db push
+# Apply migrations + seed demo data
+# (never `prisma db push` and never `prisma migrate dev` — see CLAUDE.md)
+pnpm --filter @clokr/db exec prisma migrate deploy
+pnpm --filter @clokr/db exec prisma generate
 pnpm --filter @clokr/db seed
 
 # Start dev servers
@@ -51,7 +57,7 @@ fix(api): correct overtime calculation for MONTHLY_HOURS schedule
 refactor(ui): move shared calendar rules to app.css
 ```
 
-Types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `chore`, `ci`, `build`
 
 ## Pull requests
 
