@@ -286,7 +286,14 @@ async function seedKarenzFixture(app: FastifyInstance, suffix: string) {
   });
   const { accessToken: adminToken } = JSON.parse(loginRes.body);
 
-  return { tenant, adminEmployee, adminToken, employee, sickType };
+  const empLoginRes = await app.inject({
+    method: "POST",
+    url: "/api/v1/auth/login",
+    payload: { email: `karenz-emp-${suffix}@test.de`, password: "test1234" },
+  });
+  const { accessToken: empToken } = JSON.parse(empLoginRes.body);
+
+  return { tenant, adminEmployee, adminToken, employee, empToken, sickType };
 }
 
 async function approveSick(
@@ -612,6 +619,241 @@ describe("tenant config range — sickNoteRequiredAfterDays (D-22)", () => {
       // The rest of the save landed — the point of the fix is that one cleared input no
       // longer discards every other setting on the page.
       expect(cfg.vacationLeadTimeDays).toBe(7);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+});
+
+// ── Task 1 (gap closure, plan 104-11): GET /leave/karenz-overrun — self-service Hinweis (D-21) ──
+
+/** YYYY-MM-DD, `n` days before today (UTC). Keeps this suite free of date time bombs and away
+ *  from the documented 00:00-02:00 "today"-boundary flake window. */
+function daysAgo(n: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+describe("Self-service Hinweis (D-21)", () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+  });
+
+  afterAll(async () => {
+    await closeTestApp();
+  });
+
+  it("Test 1: an employee's own 5-day attest-less Krankmeldung is an overrun", async () => {
+    const fx = await seedKarenzFixture(app, "d21-1");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 3 },
+      });
+      const sickReq = await approveSick(
+        app,
+        fx.employee.id,
+        fx.sickType.id,
+        daysAgo(10),
+        daysAgo(6),
+      );
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.totalDays).toBe(5);
+      expect(body.overruns).toHaveLength(1);
+      expect(body.overruns[0].leaveRequestId).toBe(sickReq.id);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 2: an Attest on the request clears the overrun entirely", async () => {
+    const fx = await seedKarenzFixture(app, "d21-2");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 3 },
+      });
+      await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(6), true);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.totalDays).toBe(0);
+      expect(body.overruns).toEqual([]);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it('Test 3: exactly 3 calendar days with threshold 3 is NOT an overrun ("länger als")', async () => {
+    const fx = await seedKarenzFixture(app, "d21-3");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 3 },
+      });
+      await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(8));
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.totalDays).toBe(0);
+      expect(body.overruns).toEqual([]);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 4 (tenant/self isolation): employee A never sees employee B's overrun days", async () => {
+    const fx = await seedKarenzFixture(app, "d21-4");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 3 },
+      });
+
+      // Second employee, SAME tenant — the isolation must come from req.user.employeeId,
+      // not from tenant scoping alone.
+      const empBUser = await app.prisma.user.create({
+        data: {
+          email: "karenz-empb-d21-4@test.de",
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "EMPLOYEE",
+          isActive: true,
+        },
+      });
+      const employeeB = await app.prisma.employee.create({
+        data: {
+          tenantId: fx.tenant.id,
+          userId: empBUser.id,
+          employeeNumber: "KE-B-d21-4",
+          firstName: "KarenzB",
+          lastName: "d21-4",
+          hireDate: new Date("2026-06-01T00:00:00Z"),
+        },
+      });
+      await app.prisma.overtimeAccount.create({
+        data: { employeeId: employeeB.id, balanceHours: 0 },
+      });
+
+      const reqA = await approveSick(app, fx.employee.id, fx.sickType.id, daysAgo(10), daysAgo(6));
+      const reqB = await approveSick(app, employeeB.id, fx.sickType.id, daysAgo(10), daysAgo(6));
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      const ids = body.overruns.map((o: { leaveRequestId: string }) => o.leaveRequestId);
+      expect(ids).toContain(reqA.id);
+      expect(ids).not.toContain(reqB.id);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 5: graceDays is echoed back NORMALISED — a legacy stored 30 responds 3", async () => {
+    const fx = await seedKarenzFixture(app, "d21-5");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 30 },
+      });
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().graceDays).toBe(3);
+    } finally {
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 6: a caller with no linked employee record (bare ADMIN) gets 200 with an empty result, not a 500", async () => {
+    const fx = await seedKarenzFixture(app, "d21-6");
+    let bareAdminUserId: string | null = null;
+    try {
+      const bareAdminUser = await app.prisma.user.create({
+        data: {
+          email: "karenz-bare-admin-d21-6@test.de",
+          passwordHash: await bcrypt.hash("test1234", 10),
+          role: "ADMIN",
+          isActive: true,
+        },
+      });
+      bareAdminUserId = bareAdminUser.id;
+
+      const loginRes = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: bareAdminUser.email, password: "test1234" },
+      });
+      const { accessToken: bareToken } = JSON.parse(loginRes.body);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${bareToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.overruns).toEqual([]);
+      expect(body.totalDays).toBe(0);
+      expect(typeof body.graceDays).toBe("number");
+    } finally {
+      if (bareAdminUserId) {
+        // Not tied to any tenant/employee — cleanupTestData below only sweeps fx.tenant.id.
+        await app.prisma.user.delete({ where: { id: bareAdminUserId } }).catch(() => undefined);
+      }
+      await cleanupTestData(app, fx.tenant.id);
+    }
+  });
+
+  it("Test 7 (no time bomb): fixtures are seeded relative to today, so the 12-month window never expires the suite", async () => {
+    const fx = await seedKarenzFixture(app, "d21-7");
+    try {
+      await app.prisma.tenantConfig.update({
+        where: { tenantId: fx.tenant.id },
+        data: { sickNoteRequiredAfterDays: 3 },
+      });
+      const start = daysAgo(10);
+      const end = daysAgo(6);
+      await approveSick(app, fx.employee.id, fx.sickType.id, start, end);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v1/leave/karenz-overrun",
+        headers: { authorization: `Bearer ${fx.empToken}` },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.totalDays).toBe(5);
+      const days: string[] = body.overruns[0].days;
+      expect(days[0]).toBe(start);
+      expect(days[days.length - 1]).toBe(end);
     } finally {
       await cleanupTestData(app, fx.tenant.id);
     }

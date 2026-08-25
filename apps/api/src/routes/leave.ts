@@ -23,6 +23,7 @@ import { shiftNettoMinutes, sumShiftNettoMinutes } from "../utils/shift-netto"; 
 import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
+import { karenzOverrunFromRequests, normalizeKarenzDays } from "../utils/find-karenz-overrun-days"; // Phase 104 gap closure (D-21)
 
 // Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
 
@@ -2483,6 +2484,61 @@ export async function leaveRoutes(app: FastifyInstance) {
           })),
         };
       });
+    },
+  });
+
+  // ── GET /karenz-overrun — § 5 EFZG: Krankheitstage über die Karenzzeit ohne Attest ──────
+  // Phase 104 gap closure (D-21, Mitarbeiter-Seite). Das Gegenstück zum Manager-Hinweis in
+  // GET /overtime/close-month/status (dort: karenzOverrunDays[]), der ADMIN/MANAGER-only ist —
+  // ein Mitarbeiter hat sonst KEINEN Weg, den Befund zu sehen.
+  //
+  // STRENG selbstbezogen: kein employeeId-Query-Parameter, keine Manager-Sonderbehandlung.
+  // Krankheitstage sind Gesundheitsdaten (Art. 9 DSGVO) — die Manager-Sicht existiert bereits
+  // an ihrer eigenen, rollengeschützten Stelle und wird hier nicht dupliziert.
+  //
+  // D-21: reiner HINWEIS. Dieser Endpunkt blockiert nichts und wird von nichts als Gate gelesen.
+  // R5/D-23: die Regel wird NICHT hier neu implementiert, sondern aus find-karenz-overrun-days.ts
+  // importiert — dem einzigen Ort, an dem sie lebt.
+  app.get("/karenz-overrun", {
+    schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
+    preHandler: requireAuth,
+    handler: async (req) => {
+      const tz = await getTenantTimezone(app.prisma, req.user.tenantId);
+      const cfg = await app.prisma.tenantConfig.findUnique({
+        where: { tenantId: req.user.tenantId },
+        select: { sickNoteRequiredAfterDays: true },
+      });
+      const graceDays = normalizeKarenzDays(cfg?.sickNoteRequiredAfterDays);
+
+      const employeeId = req.user.employeeId;
+      if (!employeeId) return { graceDays, overruns: [], totalDays: 0 };
+
+      // Serverseitig abgeleitetes Fenster — kein Request-Feld kann es verschieben.
+      // 12 Monate zurück, exakt wie der Phase-92-Pausen-Nudge (BREAK-07): ein abgeschlossener
+      // Monat schließt den Nachweis NICHT aus (R7 — die AU darf auch später eintreffen).
+      const now = new Date();
+      const windowStart = new Date(
+        Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), 1, 0, 0, 0),
+      );
+
+      const rows = await app.prisma.leaveRequest.findMany({
+        where: {
+          employeeId,
+          employee: { tenantId: req.user.tenantId },
+          deletedAt: null,
+          status: "APPROVED",
+          endDate: { gte: windowStart },
+          startDate: { lte: now },
+        },
+        include: { leaveType: true },
+      });
+
+      const overruns = karenzOverrunFromRequests(rows, tz, graceDays).map((o) => ({
+        leaveRequestId: o.leaveRequestId,
+        days: [...o.days].sort(),
+      }));
+      const totalDays = new Set(overruns.flatMap((o) => o.days)).size;
+      return { graceDays, overruns, totalDays };
     },
   });
 
