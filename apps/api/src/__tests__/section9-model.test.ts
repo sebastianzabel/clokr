@@ -114,6 +114,32 @@ describe("Section9Credit — model shape (Phase 104 Plan 01)", () => {
     expect(credit.vacationRequestId).toBe(vacationRequestId);
   });
 
+  // Phase 104 code review WR-03: the detection path's duplicate guard is a
+  // findFirst/create pair that is NOT in a transaction — a check-then-create race that two
+  // concurrent approvals both pass. If both rows were later confirmed, reverseVacationDays()
+  // would run twice and sumConfirmedSection9DaysByRequest() would sum both; the double
+  // credit then SURVIVES selfHealUsedDays(), because the self-heal trusts the credit sum.
+  // Only @@unique([sickRequestId, vacationRequestId]) can rule it out.
+  it("Test 1b (WR-03): a second credit for the same (sickRequestId, vacationRequestId) pair is rejected by the database", async () => {
+    // The Test 1 row for exactly this pair still exists.
+    await expect(
+      app.prisma.section9Credit.create({
+        data: {
+          employeeId: data.employee.id,
+          sickRequestId,
+          vacationRequestId,
+          overlapStart: new Date("2026-08-12"),
+          overlapEnd: new Date("2026-08-13"),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "P2002" });
+
+    const rows = await app.prisma.section9Credit.findMany({
+      where: { sickRequestId, vacationRequestId },
+    });
+    expect(rows).toHaveLength(1);
+  });
+
   it("Test 2: deleting a linked LeaveRequest is rejected by the database (Restrict FK)", async () => {
     // The Test 1 row still exists and points at sickRequestId — proves the audit chain
     // (which LeaveRequest a credit references) cannot be broken by a delete.

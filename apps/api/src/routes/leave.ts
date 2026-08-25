@@ -1068,16 +1068,42 @@ export async function leaveRoutes(app: FastifyInstance) {
               where: { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
             });
             if (dupe) continue;
-            const credit = await app.prisma.section9Credit.create({
-              data: {
-                employeeId: existing.employeeId,
-                sickRequestId: existing.id,
-                vacationRequestId: ov.vacationRequestId,
-                overlapStart: ov.overlapStart,
-                overlapEnd: ov.overlapEnd,
-                // status defaults to AU_PENDING
-              },
-            });
+            // Phase 104 review (WR-03): the findFirst/create pair above is NOT in a
+            // transaction, so it is a check-then-create race — two concurrent approvals
+            // (double click, retry, a manager racing a cron path) both pass the guard.
+            // @@unique([sickRequestId, vacationRequestId]) now closes it in the DB; the
+            // loser of the race lands here as P2002 and is treated exactly like `dupe`:
+            // the Vorgang already exists, so skip it silently rather than 500 the whole
+            // approve. Without the constraint a second CONFIRMED row would double-credit
+            // the vacation, and the double credit SURVIVES selfHealUsedDays() because the
+            // self-heal trusts the credit sum.
+            let credit;
+            try {
+              credit = await app.prisma.section9Credit.create({
+                data: {
+                  employeeId: existing.employeeId,
+                  sickRequestId: existing.id,
+                  vacationRequestId: ov.vacationRequestId,
+                  overlapStart: ov.overlapStart,
+                  overlapEnd: ov.overlapEnd,
+                  // status defaults to AU_PENDING
+                },
+              });
+            } catch (err: unknown) {
+              if (
+                err &&
+                typeof err === "object" &&
+                "code" in err &&
+                (err as { code: unknown }).code === "P2002"
+              ) {
+                app.log.info(
+                  { sickRequestId: existing.id, vacationRequestId: ov.vacationRequestId },
+                  "§ 9: concurrent detection lost the race, Vorgang already exists",
+                );
+                continue;
+              }
+              throw err;
+            }
             await app.audit({
               userId: req.user.sub,
               action: "SECTION9_CREDIT_DETECTED",

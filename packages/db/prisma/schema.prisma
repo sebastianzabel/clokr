@@ -766,6 +766,15 @@ model Section9Credit {
   sickRequest     LeaveRequest @relation("Section9SickRequest", fields: [sickRequestId], references: [id], onDelete: Restrict)
   vacationRequest LeaveRequest @relation("Section9VacationRequest", fields: [vacationRequestId], references: [id], onDelete: Restrict)
 
+  // Phase 104 code review WR-03: exactly ONE § 9 Vorgang per (Krankmeldung, Urlaubsantrag)
+  // pair. The detection path guards with a findFirst/create pair that is NOT in a
+  // transaction, so two concurrent approvals of the same sick request (double click, retry,
+  // a manager racing a cron path) could create two AU_PENDING rows for the same overlap. If
+  // both were later confirmed, reverseVacationDays() would run twice and
+  // sumConfirmedSection9DaysByRequest() would sum both — a double credit that SURVIVES the
+  // self-heal, because self-heal trusts the credit sum. The DB is the only place this can
+  // be enforced.
+  @@unique([sickRequestId, vacationRequestId])
   @@index([employeeId])
   @@index([sickRequestId])
   @@index([vacationRequestId])
