@@ -218,6 +218,15 @@ const section9ReasonSchema = z.object({
   reason: z.string().trim().min(1, "Begründung ist erforderlich"),
 });
 
+// Phase 104 review (WR-04) — GET /section9?status=
+// The value was cast straight into the Prisma where clause (`status as never`). Any value
+// outside the enum made Prisma throw a PrismaClientValidationError, which the global handler
+// turns into a 500 echoing the full Prisma text (model name, field list, expected enum
+// members) back to the caller. Every other route in this file validates its query with Zod.
+const section9StatusQuerySchema = z.object({
+  status: z.enum(["AU_PENDING", "CONFIRMED", "REJECTED"]).optional(),
+});
+
 export async function leaveRoutes(app: FastifyInstance) {
   // ── POST /requests  – Antrag stellen ────────────────────────────────────
   app.post("/requests", {
@@ -2437,13 +2446,13 @@ export async function leaveRoutes(app: FastifyInstance) {
     schema: { tags: ["Abwesenheiten"], security: [{ bearerAuth: [] }] },
     preHandler: requireAuth,
     handler: async (req) => {
-      const { status } = req.query as { status?: string };
+      const { status } = section9StatusQuerySchema.parse(req.query);
       const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
       const rows = await app.prisma.section9Credit.findMany({
         where: {
           employee: { tenantId: req.user.tenantId },
           ...(isManager ? {} : { employeeId: req.user.employeeId ?? "__none__" }),
-          ...(status ? { status: status as never } : {}),
+          ...(status ? { status } : {}),
         },
         include: {
           employee: { select: { id: true, firstName: true, lastName: true } },

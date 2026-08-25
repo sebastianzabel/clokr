@@ -448,6 +448,25 @@ describe("Section9Credit notifications and listing — Phase 104-05 Task 3", () 
     expect(row!.overlapEnd).toBe("2031-02-06");
   });
 
+  // Phase 104 code review WR-04: `status` was cast into the Prisma where clause with
+  // `status as never` and never validated, so any value outside the enum made Prisma throw
+  // a PrismaClientValidationError → global handler → 500 echoing the full Prisma text
+  // (model name, field list, expected enum members) back to the caller.
+  it("Test 3b (WR-04): an unknown ?status= is a 400 Validierungsfehler, never a 500 leaking Prisma internals", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/section9?status=bogus",
+      headers: { authorization: `Bearer ${managerToken}` },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.parse(res.body) as { error: string };
+    expect(body.error).toBe("Validierungsfehler");
+    // No Prisma internals anywhere in the response.
+    expect(res.body).not.toContain("Section9Credit");
+    expect(res.body).not.toContain("prisma");
+    expect(res.body).not.toContain("Invalid `");
+  });
+
   it("Test 4: an EMPLOYEE calling GET /section9 receives only their own cases", async () => {
     const res = await app.inject({
       method: "GET",
