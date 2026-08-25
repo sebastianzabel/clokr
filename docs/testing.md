@@ -41,6 +41,37 @@ argument list (`vitest run -- <path>`, not `vitest run <path>`), and vitest does
 that as a path filter — it runs the entire suite instead, spinning up a fresh app instance
 per file exactly like a full run. Use the two-step form above.
 
+## Object storage (MinIO) — required by `section9-upload.test.ts`
+
+One suite, `apps/api/src/__tests__/section9-upload.test.ts` (12 tests, Phase 104), performs a
+**real** object-storage round-trip: it uploads a paper AU document, reads the bytes back verbatim,
+and proves the object is genuinely gone again after a DSGVO Art. 17 deletion. It is the only test
+in the repo that talks to MinIO for real — every other storage call in the suite is spied on
+(`anonymize-helper.test.ts`) or wrapped in a non-fatal `.catch()`.
+
+There is deliberately **no skip guard**. If the object store is unreachable these 12 tests fail
+with `ECONNREFUSED`. That is the intended behaviour: the § 9 AU document is an Art. 9 DSGVO health
+datum, and "it can be erased again" is a claim that has to be re-proven on every run, not silently
+skipped.
+
+**Locally:** `docker compose up -d minio` (see `docker-compose.yml`) publishes MinIO on
+`localhost:9000` with `minioadmin` / `minioadmin`. `apps/api/vitest.setup.ts` defaults
+`MINIO_ENDPOINT` to `localhost` (a `??=` default, so a shell value or `.env.test` still wins), so
+no further configuration is needed — the API container's own default of `minio` is a hostname that
+only resolves inside the compose network. The `clokr` bucket is created automatically on boot by
+`apps/api/src/plugins/storage.ts`; you do not need to create it.
+
+**In CI:** `.github/workflows/ci.yml`'s `test` job starts the same MinIO image with an explicit
+`docker run … server /data` step and waits for `GET /minio/health/live` before any test runs, then
+exports `MINIO_ENDPOINT` / `MINIO_PORT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` / `MINIO_BUCKET`.
+
+It is **not** a `services:` container, and that is not an oversight: GitHub Actions service
+containers cannot override a container's command, and `minio/minio`'s default `CMD` is bare
+`minio` with no `server /data` subcommand — verified with
+`docker inspect --format '{{json .Config.Cmd}}' minio/minio:latest` — so such a container exits
+immediately after printing usage. `docker-compose.yml` can use a service definition only because
+compose supports `command:`.
+
 ## Why a `pretest` script, not a `docker-entrypoint-initdb.d` mount
 
 Postgres's own convention for first-boot provisioning — dropping `.sql`/`.sh` files into
@@ -155,6 +186,10 @@ not make the suite hermetic. Be honest about what is and isn't fixed:
   tenant timezone; the two disagree for up to two hours depending on DST. See
   `.planning/phases/98-*/deferred-items.md`. Also unrelated, also not touched here — don't
   judge a red suite run between midnight and 02:00 local.
+- **The object-storage suite needs a live MinIO.** `section9-upload.test.ts` fails with
+  `ECONNREFUSED` when nothing is listening on `MINIO_ENDPOINT:MINIO_PORT` — by design, no skip
+  guard (see the object-storage section above). If those tests are the only red ones, start MinIO
+  before concluding anything about the code.
 
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
