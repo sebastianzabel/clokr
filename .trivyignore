@@ -79,6 +79,49 @@ CVE-2026-14257
 CVE-2026-13149
 CVE-2026-69152
 
+# tar: uncontrolled recursion in mapHas/filesFilter -> uncatchable stack-overflow DoS via a
+# crafted long-path GNU-L/PAX-x header, reachable only when tar.t()/tar.x() is called with a
+# non-empty member-selection list against an attacker-supplied archive (CVE-2026-73566,
+# GHSA-r292-9mhp-454m, high, github_reviewed_at 2026-07-24, single clean range: vulnerable
+# <= 7.5.20, first_patched 7.5.21).
+# This entry covers ONLY the corepack/pnpm vendor copy of tar. The other copy that used to
+# carry this CVE (npm's own bundled tar, present in both images before this quick task) is
+# GONE, not excepted: npm/npx are removed entirely from both runtime images (2026-08-25,
+# quick-260825-qx4) because neither is ever invoked at runtime and npm@latest (checked at
+# 12.0.2) still bundles the vulnerable tar@7.5.19 with no fix — updating npm no longer worked
+# as a mitigation, so the unused component was deleted instead.
+# Present (API image only): /root/.cache/node/corepack/v1/pnpm/10.34.5/dist/node_modules/tar
+# -> 7.5.19, confirmed via `find` inside clokr-api:qx4-test. Absent from the web image
+# entirely (`find / -path "*/node_modules/tar/package.json"` -> no hits) — web never runs
+# corepack/pnpm at all.
+# No fix exists on the pnpm 10.x line: pnpm 10.34.5 is the newest published 10.x release
+# (confirmed against the npm registry's full version list, semver-sorted: 10.34.5 is the
+# last entry before 11.0.0) and its own bundled tar is 7.5.19 (extracted directly from the
+# `pnpm@10.34.5` npm tarball's dist/node_modules/tar/package.json, not inferred). pnpm's own
+# 11.x line already carries the fix: pnpm@11.24.0 (the newest published 11.x release, same
+# registry check) bundles tar@7.5.22, which exceeds the 7.5.21 threshold. Only a pnpm MAJOR
+# bump (11.24.0+) would close this, which is out of scope here for the same reason as
+# CVE-2026-55697 above (D-05, Phase 102): it would disturb the pnpm@10-specific Prisma
+# hoisting in apps/api/Dockerfile's runtime stage.
+# Not exploitable via the API's own runtime path: the vulnerable code (tar.t()/tar.x() with a
+# non-empty member-selection list against untrusted archive bytes) requires pnpm's package-
+# install/extraction machinery to run against an attacker-supplied tarball. The production
+# runtime never does that — docker-entrypoint.sh has zero pnpm invocations at all, and the
+# only pnpm invocation anywhere at runtime is `pnpm tsx scripts/anonymize-dump.ts`
+# (charts/clokr-app/templates/cronjob-anonymizer.yaml:51), a run command against our own
+# already-installed, lockfile-frozen workspace — no install/extract step, no external
+# tarball. Verified dynamically, not just asserted: a Node `Module._resolveFilename` hook
+# (`NODE_OPTIONS=--require <hook>.cjs`) was attached to a real `pnpm tsx --version`
+# invocation inside clokr-api:qx4-test (same working directory as the CronJob,
+# /app/apps/api); it logged 842 real module-resolution calls during that run and zero of
+# them referenced `tar` in any form (confirmed the hook itself is live by first capturing
+# and inspecting the full call log, not just grepping for an expected miss).
+# Revisit: retire once pnpm publishes a 10.x release with tar>=7.5.21 (check the registry's
+# semver-sorted 10.x tail, not just the latest tag), or when the monorepo moves to
+# pnpm 11.24.0+ (D-05 territory — coordinate with the CVE-2026-55697 entry above, which has
+# the same blocker).
+CVE-2026-73566
+
 # ip-address: SSRF/parsing DoS via leading-zero octet decimal/octal confusion (CVE-2026-69192,
 # fixed >=10.3.1). The vulnerable copy (10.2.0) is present in npm's own bundle
 # (/usr/local/lib/node_modules/npm/node_modules/ip-address, pulled in via socks-proxy-agent) on
