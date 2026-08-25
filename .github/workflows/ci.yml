@@ -46,6 +46,16 @@ jobs:
       JWT_REFRESH_EXPIRES_IN: 7d
       ENCRYPTION_KEY: test-encryption-key-min-32-characters-long!!
       NODE_ENV: test
+      # Object storage for the § 9 AU-document tests (Phase 104). Values match the
+      # "Start MinIO" step below and docker-compose.yml's dev service. Set EXPLICITLY rather than
+      # relying on apps/api/vitest.setup.ts's `MINIO_ENDPOINT ??= "localhost"` default, so this
+      # job's dependency on an object store is visible in the workflow itself.
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: "9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: clokr
+      MINIO_USE_SSL: "false"
 
     steps:
       - uses: actions/checkout@v6
@@ -58,6 +68,38 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Start MinIO (object storage for the § 9 AU-document tests)
+        # apps/api/src/__tests__/section9-upload.test.ts (Phase 104, D-26/R6) performs a REAL
+        # object-storage round-trip: upload -> byte-verbatim retrieval -> Art. 17 deletion. It is
+        # the only such test in the repo and it is deliberately NOT skippable — the § 9 AU document
+        # is an Art. 9 DSGVO health datum and "it is genuinely erasable again" has to be proven on
+        # every PR, not once on a developer laptop.
+        #
+        # Why a `docker run` step and not a `services:` container: GitHub Actions service containers
+        # cannot override a container's command, and minio/minio's default CMD is bare `minio`
+        # (no `server /data`), so a service-container MinIO exits immediately after printing usage.
+        # Verified via `docker inspect minio/minio:latest`. docker-compose.yml can use `services`
+        # only because compose supports `command:`.
+        #
+        # Same image as docker-compose.yml so dev and CI cannot drift.
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          echo "Waiting for MinIO to become ready…"
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::MinIO did not become ready within 60s"
+          docker logs minio
+          exit 1
 
       - name: Generate Prisma client
         run: pnpm --filter @clokr/db exec prisma generate
