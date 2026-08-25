@@ -1141,3 +1141,314 @@ describe("reject and reopen — Phase 104-06 Task 2", () => {
     }
   });
 });
+
+describe("display surface — Phase 104-10 Task 1", () => {
+  let app: FastifyInstance;
+  let data: Awaited<ReturnType<typeof seedTestData>>;
+  let colleagueToken: string;
+
+  beforeAll(async () => {
+    app = await getTestApp();
+    data = await seedTestData(app, "s9ds");
+
+    // A second EMPLOYEE in the SAME tenant, neither the credit's owner nor a manager —
+    // the exact viewer shape Test 3's masking check needs (showDetails === false).
+    const s = "s9ds-col-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const colleagueUser = await app.prisma.user.create({
+      data: {
+        email: `col-${s}@test.de`,
+        passwordHash: await bcrypt.hash("test1234", 10),
+        role: "EMPLOYEE",
+        isActive: true,
+      },
+    });
+    await app.prisma.employee.create({
+      data: {
+        tenantId: data.tenant.id,
+        userId: colleagueUser.id,
+        employeeNumber: `COL-${s}`,
+        firstName: "Kolleg",
+        lastName: "Test",
+        hireDate: new Date("2024-01-01"),
+      },
+    });
+    const loginRes = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: `col-${s}@test.de`, password: "test1234" },
+    });
+    colleagueToken = JSON.parse(loginRes.body).accessToken as string;
+  });
+
+  afterAll(async () => {
+    try {
+      await app.prisma.section9Credit.deleteMany({ where: { employeeId: data.employee.id } });
+      await cleanupTestData(app, data.tenant.id);
+    } catch (err) {
+      console.error("Test cleanup failed:", err);
+    }
+  });
+
+  async function createRequest(payload: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.empToken}` },
+      payload,
+    });
+  }
+
+  async function approve(id: string) {
+    return app.inject({
+      method: "PATCH",
+      url: `/api/v1/leave/requests/${id}/review`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: { status: "APPROVED" },
+    });
+  }
+
+  async function confirmCredit(id: string, body: Record<string, unknown>) {
+    return app.inject({
+      method: "POST",
+      url: `/api/v1/leave/section9/${id}/confirm`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+      payload: body,
+    });
+  }
+
+  async function calendar(year: number, month: number, token: string) {
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/calendar?year=${year}&month=${month}`,
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.body) as Array<{
+      id: string;
+      typeCode: string | null;
+      section9?: string | null;
+      section9Days?: string[];
+    }>;
+  }
+
+  async function vacAndSick(vacRange: [string, string], sickRange: [string, string]) {
+    const vac = await createRequest({
+      type: "VACATION",
+      startDate: vacRange[0],
+      endDate: vacRange[1],
+    });
+    expect(vac.statusCode).toBe(201);
+    const vacId = JSON.parse(vac.body).id as string;
+    expect((await approve(vacId)).statusCode).toBe(200);
+
+    const sick = await createRequest({
+      type: "SICK",
+      startDate: sickRange[0],
+      endDate: sickRange[1],
+    });
+    expect(sick.statusCode).toBe(201);
+    const sickId = JSON.parse(sick.body).id as string;
+    expect((await approve(sickId)).statusCode).toBe(200);
+
+    const credit = await app.prisma.section9Credit.findFirstOrThrow({
+      where: { sickRequestId: sickId },
+    });
+    return { vacId, sickId, creditId: credit.id };
+  }
+
+  it("Test 1: a CONFIRMED credit marks the SICK entry section9=CONFIRMED and the VACATION entry section9=SUPERSEDED", async () => {
+    const { vacId, sickId, creditId } = await vacAndSick(
+      ["2033-03-02", "2033-03-06"],
+      ["2033-03-03", "2033-03-04"],
+    );
+    expect(
+      (
+        await confirmCredit(creditId, {
+          attestSource: "EAU",
+          attestValidFrom: "2033-03-03",
+          attestValidTo: "2033-03-04",
+          reason: "AU liegt vor",
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const entries = await calendar(2033, 3, data.adminToken);
+    const sickEntry = entries.find((e) => e.id === sickId);
+    const vacEntry = entries.find((e) => e.id === vacId);
+    expect(sickEntry?.section9).toBe("CONFIRMED");
+    expect(sickEntry?.section9Days).toEqual(["2033-03-03", "2033-03-04"]);
+    expect(vacEntry?.section9).toBe("SUPERSEDED");
+  });
+
+  it("Test 2: an AU_PENDING credit marks the SICK entry section9=AU_PENDING; the vacation entry is NOT superseded", async () => {
+    const { vacId, sickId } = await vacAndSick(
+      ["2033-04-04", "2033-04-08"],
+      ["2033-04-05", "2033-04-06"],
+    );
+
+    const entries = await calendar(2033, 4, data.adminToken);
+    const sickEntry = entries.find((e) => e.id === sickId);
+    const vacEntry = entries.find((e) => e.id === vacId);
+    expect(sickEntry?.section9).toBe("AU_PENDING");
+    expect(sickEntry?.section9Days).toEqual(["2033-04-05", "2033-04-06"]);
+    expect(vacEntry?.section9 ?? null).toBeNull();
+  });
+
+  it("Test 3: a colleague without detail visibility receives section9=null and section9Days=[] — masking mirrors typeCode", async () => {
+    const { sickId } = await vacAndSick(["2033-05-02", "2033-05-06"], ["2033-05-03", "2033-05-04"]);
+
+    const entries = await calendar(2033, 5, colleagueToken);
+    const sickEntry = entries.find((e) => e.id === sickId);
+    expect(sickEntry).toBeDefined();
+    expect(sickEntry?.typeCode).toBeNull();
+    expect(sickEntry?.section9 ?? null).toBeNull();
+    expect(sickEntry?.section9Days ?? []).toEqual([]);
+  });
+
+  it("Test 4: GET /leave/requests rows carry section9Status and section9CreditId", async () => {
+    const { vacId, sickId, creditId } = await vacAndSick(
+      ["2033-06-06", "2033-06-10"],
+      ["2033-06-07", "2033-06-08"],
+    );
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<{
+      id: string;
+      section9Status: string | null;
+      section9CreditId: string | null;
+    }>;
+    const sickRow = rows.find((r) => r.id === sickId);
+    const vacRow = rows.find((r) => r.id === vacId);
+    expect(sickRow?.section9Status).toBe("AU_PENDING");
+    expect(sickRow?.section9CreditId).toBe(creditId);
+    expect(vacRow?.section9Status).toBe("AU_PENDING");
+    expect(vacRow?.section9CreditId).toBe(creditId);
+  });
+
+  it("Test 5: GET /leave/entitlements/:employeeId returns section9Movements with creditId/days/from/to/label for a CONFIRMED credit", async () => {
+    // deductVacationDays only ever `updateMany`s an EXISTING LeaveEntitlement row — it never
+    // creates one — so a future year needs a pre-existing row before any request can book
+    // against it (same fixture requirement 104-06's own R9-positive test discovered).
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2036,
+        totalDays: 30,
+        usedDays: 0,
+      },
+    });
+    const { creditId } = await vacAndSick(
+      ["2036-04-06", "2036-04-10"],
+      ["2036-04-08", "2036-04-09"],
+    );
+    expect(
+      (
+        await confirmCredit(creditId, {
+          attestSource: "EAU",
+          attestValidFrom: "2036-04-08",
+          attestValidTo: "2036-04-09",
+          reason: "AU liegt vor",
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${data.employee.id}?year=2036`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<{
+      typeCode: string;
+      section9Movements: Array<{
+        creditId: string;
+        days: number;
+        from: string | null;
+        to: string | null;
+        label: string;
+      }>;
+    }>;
+    const vacRow = rows.find((r) => r.typeCode === "VACATION");
+    expect(vacRow?.section9Movements).toHaveLength(1);
+    expect(vacRow?.section9Movements[0]).toMatchObject({
+      creditId,
+      days: 2,
+      from: "2036-04-08",
+      to: "2036-04-09",
+    });
+    expect(vacRow?.section9Movements[0].label).toBe(
+      "+2 Tage gutgeschrieben (§ 9 BUrlG, Krankheit 08.04.–09.04.)",
+    );
+  });
+
+  it("Test 6: an entitlement year with no credits returns section9Movements: [] and every other field unchanged", async () => {
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2038,
+        totalDays: 30,
+        usedDays: 0,
+      },
+    });
+    const res = await app.inject({
+      method: "GET",
+      url: `/api/v1/leave/entitlements/${data.employee.id}?year=2038`,
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = JSON.parse(res.body) as Array<{
+      typeCode: string;
+      totalDays: number;
+      usedDays: number;
+      section9Movements: unknown[];
+    }>;
+    const vacRow = rows.find((r) => r.typeCode === "VACATION");
+    expect(vacRow).toBeDefined();
+    expect(vacRow?.section9Movements).toEqual([]);
+    expect(Number(vacRow?.totalDays)).toBe(30);
+    expect(Number(vacRow?.usedDays)).toBe(0);
+  });
+
+  it("Test 7: calendar and list additions cover multiple overlapping cases in one page load (bulk fetch, not per-row)", async () => {
+    // Three independent § 9 cases in the SAME month — if the implementation queried per row,
+    // this would still pass functionally, but a per-row implementation is exactly what the
+    // static acceptance check (no `await app.prisma` inside a `.map()`) forbids; this test
+    // proves the batch path produces correct, independent results for all three at once.
+    const case1 = await vacAndSick(["2033-07-05", "2033-07-09"], ["2033-07-06", "2033-07-06"]);
+    const case2 = await vacAndSick(["2033-07-12", "2033-07-16"], ["2033-07-13", "2033-07-13"]);
+    const case3 = await vacAndSick(["2033-07-19", "2033-07-23"], ["2033-07-20", "2033-07-20"]);
+    expect(
+      (
+        await confirmCredit(case1.creditId, {
+          attestSource: "EAU",
+          attestValidFrom: "2033-07-06",
+          attestValidTo: "2033-07-06",
+          reason: "AU liegt vor",
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    const entries = await calendar(2033, 7, data.adminToken);
+    expect(entries.find((e) => e.id === case1.sickId)?.section9).toBe("CONFIRMED");
+    expect(entries.find((e) => e.id === case1.vacId)?.section9).toBe("SUPERSEDED");
+    expect(entries.find((e) => e.id === case2.sickId)?.section9).toBe("AU_PENDING");
+    expect(entries.find((e) => e.id === case2.vacId)?.section9 ?? null).toBeNull();
+    expect(entries.find((e) => e.id === case3.sickId)?.section9).toBe("AU_PENDING");
+
+    const listRes = await app.inject({
+      method: "GET",
+      url: "/api/v1/leave/requests",
+      headers: { authorization: `Bearer ${data.adminToken}` },
+    });
+    const rows = JSON.parse(listRes.body) as Array<{ id: string; section9Status: string | null }>;
+    expect(rows.find((r) => r.id === case1.sickId)?.section9Status).toBe("CONFIRMED");
+    expect(rows.find((r) => r.id === case2.sickId)?.section9Status).toBe("AU_PENDING");
+    expect(rows.find((r) => r.id === case3.sickId)?.section9Status).toBe("AU_PENDING");
+  });
+});

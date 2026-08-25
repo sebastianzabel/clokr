@@ -24,6 +24,28 @@ import { auditReasonSchema } from "../utils/audit-reason"; // Quick 260824-cjd
 import { preserveIllnessDeadline } from "../utils/illness-carryover-guard"; // Phase 104
 import { isSickTypeName, findSection9Overlaps, intersectRanges } from "../utils/section9-detect"; // Phase 104-05/06
 
+// Phase 104-10 — § 9 display-surface helpers (calendar/list/entitlement markers, D-28/D-29/D-31).
+
+/** Inclusive list of ISO YYYY-MM-DD day strings between two Date-only values (UTC). */
+function daysBetweenInclusiveIso(start: Date, end: Date): string[] {
+  const days: string[] = [];
+  const cur = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()));
+  const last = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()));
+  while (cur.getTime() <= last.getTime()) {
+    days.push(cur.toISOString().split("T")[0]);
+    cur.setUTCDate(cur.getUTCDate() + 1);
+  }
+  return days;
+}
+
+/** Renders a Date as German "DD.MM." — used only in the § 9 entitlement movement label (D-31). */
+function formatDayMonth(d: Date | null | undefined): string {
+  if (!d) return "";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${dd}.${mm}.`;
+}
+
 /**
  * A Prisma client that may be either the top-level app.prisma or an interactive
  * transaction client (Prisma.TransactionClient). Entitlement/overtime helpers accept
@@ -665,6 +687,32 @@ export async function leaveRoutes(app: FastifyInstance) {
         orderBy: upcoming === "true" ? { startDate: "asc" } : { createdAt: "desc" },
       });
 
+      // Phase 104-10 (D-29): bulk-load § 9 status for the returned requests — ONE query,
+      // matching on BOTH FKs so a vacation row can also show that a § 9 case touches it.
+      const requestIds = rows.map((r) => r.id);
+      const section9Credits = requestIds.length
+        ? await app.prisma.section9Credit.findMany({
+            where: {
+              OR: [
+                { sickRequestId: { in: requestIds } },
+                { vacationRequestId: { in: requestIds } },
+              ],
+            },
+            select: { id: true, sickRequestId: true, vacationRequestId: true, status: true },
+          })
+        : [];
+      const rankSection9Status = (s: string) =>
+        s === "CONFIRMED" ? 2 : s === "AU_PENDING" ? 1 : 0;
+      const section9StatusByRequestId = new Map<string, { status: string; creditId: string }>();
+      for (const c of section9Credits) {
+        for (const reqId of [c.sickRequestId, c.vacationRequestId]) {
+          const existing = section9StatusByRequestId.get(reqId);
+          if (!existing || rankSection9Status(c.status) > rankSection9Status(existing.status)) {
+            section9StatusByRequestId.set(reqId, { status: c.status, creditId: c.id });
+          }
+        }
+      }
+
       return rows.map((r) => ({
         ...r,
         typeCode:
@@ -673,6 +721,8 @@ export async function leaveRoutes(app: FastifyInstance) {
         endDate: r.endDate.toISOString().split("T")[0],
         attestValidFrom: r.attestValidFrom?.toISOString().split("T")[0] ?? null,
         attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
+        section9Status: section9StatusByRequestId.get(r.id)?.status ?? null,
+        section9CreditId: section9StatusByRequestId.get(r.id)?.creditId ?? null,
       }));
     },
   });
@@ -1875,6 +1925,58 @@ export async function leaveRoutes(app: FastifyInstance) {
 
       const isManager = ["ADMIN", "MANAGER"].includes(req.user.role);
 
+      // Phase 104-10 (D-28/D-29): bulk-load § 9 credits overlapping the visible month — ONE
+      // query, scoped to the tenant, so the per-row masking below never needs a query inside
+      // `.map()`.
+      const section9Credits = await app.prisma.section9Credit.findMany({
+        where: {
+          employee: { tenantId: req.user.tenantId },
+          overlapStart: { lte: end },
+          overlapEnd: { gte: start },
+        },
+        select: {
+          sickRequestId: true,
+          vacationRequestId: true,
+          status: true,
+          overlapStart: true,
+          overlapEnd: true,
+          creditedStart: true,
+          creditedEnd: true,
+        },
+      });
+
+      // Per-REQUEST marker: the server decides which entry "wins" on a shared day so the
+      // client never re-derives the CONFIRMED > AU_PENDING > null ranking itself.
+      //   "AU_PENDING"  → Krankmeldung liegt vor, AU fehlt noch; Urlaubstage stehen auf dem Spiel
+      //   "CONFIRMED"   → Gutschrift erfolgt; an diesem Tag gewinnt Krank
+      //   "SUPERSEDED"  → dieser Urlaubseintrag ist an diesem Tag durch eine bestätigte
+      //                   Krankmeldung überlagert (der Antrag selbst bleibt unverändert, D-05)
+      const section9ByEntry = new Map<string, { marker: string; days: Set<string> }>();
+      const rankSection9Marker = (m: string) =>
+        m === "CONFIRMED" ? 2 : m === "AU_PENDING" ? 1 : 0;
+      const addSection9Marker = (id: string, marker: string, days: string[]) => {
+        const existing = section9ByEntry.get(id);
+        if (!existing) {
+          section9ByEntry.set(id, { marker, days: new Set(days) });
+          return;
+        }
+        days.forEach((d) => existing.days.add(d));
+        if (rankSection9Marker(marker) > rankSection9Marker(existing.marker)) {
+          existing.marker = marker;
+        }
+      };
+      for (const c of section9Credits) {
+        if (c.status === "CONFIRMED" && c.creditedStart && c.creditedEnd) {
+          const days = daysBetweenInclusiveIso(c.creditedStart, c.creditedEnd);
+          addSection9Marker(c.sickRequestId, "CONFIRMED", days);
+          addSection9Marker(c.vacationRequestId, "SUPERSEDED", days);
+        } else if (c.status === "AU_PENDING") {
+          // Vacation entry deliberately left unmarked — the days are still charged.
+          const days = daysBetweenInclusiveIso(c.overlapStart, c.overlapEnd);
+          addSection9Marker(c.sickRequestId, "AU_PENDING", days);
+        }
+      }
+
       const leaveEntries = rows.map((r) => {
         const isOwn = r.employee.userId === req.user.sub;
         const showDetails = isOwn || isManager;
@@ -1893,6 +1995,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           halfDay: r.halfDay,
           status: r.status,
           isHoliday: false,
+          // Sichtbarkeit folgt exakt showDetails — wer typeCode nicht sehen darf, sieht auch
+          // keine § 9-Markierung (sonst wäre die Krankheit indirekt ablesbar).
+          section9: showDetails ? (section9ByEntry.get(r.id)?.marker ?? null) : null,
+          section9Days: showDetails ? Array.from(section9ByEntry.get(r.id)?.days ?? []).sort() : [],
         };
       });
 
@@ -2238,6 +2344,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // Same logic the report endpoint now uses — see apps/api/src/utils/leave-self-heal.ts.
       await selfHealUsedDays(app.prisma, rows, vacMeta);
 
+      // Phase 104-10 (D-31): the credit appears as its own explained movement line in the
+      // leave account. ONE bulk query for the whole employee — independent of how many
+      // entitlement years are in `rows` — so no query is needed inside the rows.map() below.
+      const confirmedSection9Credits = await app.prisma.section9Credit.findMany({
+        where: { employeeId, status: "CONFIRMED" },
+        select: { id: true, creditedDays: true, creditedStart: true, creditedEnd: true },
+      });
+
       // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
       // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
       // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
@@ -2262,6 +2376,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           isVacationRow && employeeExitDate
             ? calculateProRataVacation(Number(r.totalDays), r.year, employeeExitDate)
             : Number(r.totalDays);
+        // D-31: only the vacation-account row carries movements — a credit only ever
+        // touches the VACATION LeaveEntitlement (reverseVacationDays' target), so a
+        // same-year non-vacation row (e.g. Sonderurlaub) must not repeat it.
+        const creditsForYear = isVacationRow
+          ? confirmedSection9Credits.filter((c) => c.creditedStart?.getUTCFullYear() === r.year)
+          : [];
         return {
           ...r,
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
@@ -2270,6 +2390,17 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // D-31: die Gutschrift erscheint als eigene, erklärte Bewegungszeile — ein
+          // stillschweigend höherer Restanspruch wirkt wie ein Fehler und erzeugt Rückfragen.
+          section9Movements: creditsForYear.map((c) => ({
+            creditId: c.id,
+            days: Number(c.creditedDays ?? 0),
+            from: c.creditedStart?.toISOString().split("T")[0] ?? null,
+            to: c.creditedEnd?.toISOString().split("T")[0] ?? null,
+            label:
+              `+${Number(c.creditedDays ?? 0)} Tage gutgeschrieben (§ 9 BUrlG, Krankheit ` +
+              `${formatDayMonth(c.creditedStart)}–${formatDayMonth(c.creditedEnd)})`,
+          })),
         };
       });
     },
