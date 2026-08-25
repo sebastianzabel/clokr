@@ -78,33 +78,30 @@ Go straight to the workflows page — it avoids hunting through menus:
 
 **<https://github.com/users/sebastianzabel/projects/1/workflows>**
 
-Each workflow is opened from the list, given its condition and its _Set value_, then saved with
+Open a workflow from the list, give it its condition and its _Set value_, then
 **Save and turn on workflow**.
 
-| Workflow                | Set value         | Why                                   |
-| ----------------------- | ----------------- | ------------------------------------- |
-| **Item closed**         | Status → **Done** | closing an issue should move the card |
-| **Pull request merged** | Status → **Done** | merging should move the card          |
+| #   | Workflow                  | Set value                                           | Purpose                         |
+| --- | ------------------------- | --------------------------------------------------- | ------------------------------- |
+| 7   | **Auto-add to project**   | filter `is:issue is:open repo:sebastianzabel/clokr` | puts new issues on the board    |
+| 6   | **Item added to project** | Status → **Inbox**                                  | files them where triage looks   |
+| 1   | **Item closed**           | Status → **Done**                                   | closing moves the card          |
+| 2   | **Pull request merged**   | Status → **Done**                                   | merging moves the card          |
+| —   | **Auto-archive items**    | filter `is:closed updated:<@today-30d`              | keeps Done from growing forever |
 
-Both are confirmed present on this board and currently disabled (queried via
-`ProjectV2.workflows`; they are workflow numbers 1 and 2).
+**Auto-add and "Item added to project" are two different workflows, and you need both.**
+Auto-add only puts the item on the board — it does not set a field. With auto-add on and
+"Item added to project" off, issues arrive with **no Status at all**: on the board, but
+invisible in every status-filtered view. That is worse than not being added, because nothing
+looks broken. Observed on issue #34, the first issue captured through this flow.
 
-### Auto-add and auto-archive
+> `ProjectV2.workflows` only lists a workflow once it has been configured — "Auto-add to
+> project" was absent from the API response until it was first set up. An empty-looking API
+> result is therefore not evidence that a workflow does not exist.
 
-These two are **not** returned by the `workflows` API field and are not in the same list as the
-item-event workflows above:
-
-| What                    | Intended setting                                                       |
-| ----------------------- | ---------------------------------------------------------------------- |
-| **Auto-add to project** | filter `is:issue is:open repo:sebastianzabel/clokr` → Status **Inbox** |
-| **Auto-archive items**  | filter `is:closed updated:<@today-30d`                                 |
-
-**Auto-add is the one that matters most** — without it, `capture.sh` files issues that never
-reach the board, and the Inbox stays empty while work piles up in the issue list.
-
-> Their exact location in the UI is **unverified**. The four item-event workflows were confirmed
-> via the API; these two were not, and the GitHub UI moves. Correct this section the first time
-> you actually click through it rather than trusting the description.
+The Inbox view is filtered defensively for the same reason: rather than `status:Inbox` it
+excludes the five later statuses, so an item arriving without a Status still shows up instead
+of vanishing. If a sixth status is ever added, add it to that exclusion list.
 
 ### Also manual: view grouping and sorting
 
