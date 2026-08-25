@@ -64,8 +64,8 @@ once, everything jammed, list cleared, prose left standing.
 The leg names are also brittle — editing a Dockerfile path changes the check name and
 silently breaks protection. `ci.yml` therefore carries a tiny `docker-gate` job whose only
 job is to be a stable context: it `needs: docker`, runs with `if: always()`, and fails
-unless the matrix succeeded. **Require `docker-gate`.** The reference payload below still
-shows the old, broken `docker` context — use the script instead.
+unless the matrix succeeded. **Require `docker-gate`.** The reference payload below has been
+corrected accordingly, but prefer the script — it verifies before it writes.
 
 The script enforces this: `--apply` compares every configured context against check names
 actually observed across recent PRs and refuses rather than freezing the branch. A
@@ -98,7 +98,7 @@ gh api \
       { "context": "test", "app_id": -1 },
       { "context": "codeql", "app_id": -1 },
       { "context": "secret-scan", "app_id": -1 },
-      { "context": "docker", "app_id": -1 }
+      { "context": "docker-gate", "app_id": -1 }
     ]
   },
   "enforce_admins": false,
@@ -129,6 +129,12 @@ If `required_pull_request_reviews` is non-null (it is in Phase 70 pre-state), co
 ## Audit command
 
 ```bash
+./scripts/apply-branch-protection.sh          # preferred — exits non-zero on drift
+```
+
+The raw equivalent:
+
+```bash
 gh api /repos/sebastianzabel/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | sort
 ```
@@ -137,10 +143,12 @@ Expected output (one per line, sorted):
 
 ```
 codeql
-docker
+docker-gate
 secret-scan
 test
 ```
+
+`docker-gate`, not `docker` — see "Never require `docker`" above.
 
 If output is empty or missing any of these → re-run the Apply command above.
 
@@ -186,7 +194,8 @@ If branch protection is accidentally deleted or reset to defaults:
 
 ## Files
 
-- `.github/workflows/ci.yml` — defines the required jobs (`test`, `codeql`, `secret-scan`, `docker`, and the path-filtered `visual-regression`) and 2 advisory jobs (`lighthouse`, `axe-scan`).
+- `.github/workflows/ci.yml` — defines the required jobs (`test`, `codeql`, `secret-scan`, `docker-gate`) plus the advisory `visual-regression`, `lighthouse` and `axe-scan`. The `docker` matrix job is required indirectly, through `docker-gate`.
+- `scripts/apply-branch-protection.sh` — the executable check list; `--check` audits, `--apply` restores.
 - `.github/workflows/build-push.yml` — runs post-merge on push to `main`; not a PR-gate candidate.
 - `docs/cve-handling.md` — companion runbook for `.trivyignore` exceptions surfaced by these gates.
 - `docs/release-process.md` — companion runbook for the release flow that depends on these gates being green.
