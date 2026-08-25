@@ -77,12 +77,20 @@
   });
 
   const openMonthAvailable = $derived(openMonthMinutes !== undefined && openMonthMinutes !== null);
-  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthMinutes ?? 0) : "—");
+  // quick 20260825-konto-saldo-gesamt — the row labelled "inkl. laufendem Monat" now shows the
+  // TOTAL (Bestätigt + laufender Monat), not the open month's own contribution. Owner override of
+  // 97-CONTEXT's split-only presentation, decided on user feedback: showing the open month alone
+  // under an "inkl." label read as a wrong grand total, and contradicted the calendar's last cell
+  // (which already renders the cumulative lifetime figure — e.g. +14:35 while this card said +8:06).
+  // The headline stays "Bestätigt" and keeps its visual primacy, so 97-CONTEXT's core intent —
+  // the confirmed figure leads, the forecast never looks claimable on its own — is preserved.
+  const openMonthTotalMin = $derived((figureMin ?? 0) + (openMonthMinutes ?? 0));
+  const openMonthText = $derived(openMonthAvailable ? fmtBalance(openMonthTotalMin) : "—");
   // 260820-elk follow-up (coordinator-measured deviation #2) — the row VALUE must read as a
   // figure (size + sign colour), not as quiet as its own label.
   const openMonthTone = $derived.by(() => {
     if (!openMonthAvailable) return "muted";
-    const v = openMonthMinutes ?? 0;
+    const v = openMonthTotalMin;
     if (v > 0) return "good";
     if (v < 0) return "bad";
     return "muted";
