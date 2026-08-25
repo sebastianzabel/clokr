@@ -2723,88 +2723,113 @@ export async function leaveRoutes(app: FastifyInstance) {
         });
       }
 
-      await app.prisma.$transaction(async (tx) => {
-        // D-18: Gutschrift ins URSPRUNGSJAHR des Urlaubstags — § 9 stellt den ursprünglichen
-        // Anspruch wieder her, er schafft keinen neuen. reverseVacationDays ist der
-        // symmetrische Gegenpart zu deductVacationDays und kann cross-year splitten.
-        await reverseVacationDays(
-          tx,
-          credit.employeeId,
-          credit.vacationRequest.leaveTypeId,
-          credited.start,
-          credited.end,
-          creditedDays,
-          holidays,
-          tenantId,
-        );
+      // Phase 104 review (IN-05): a credit whose origin year has no LeaveEntitlement row books
+      // NOTHING (updateMany affects 0 rows, and selfHealUsedDays does not create the row
+      // either) — yet the handler used to answer 200 { status: "CONFIRMED", creditedDays } and
+      // notify the employee "+N Tage gutgeschrieben". The transaction is aborted and answered
+      // with a 409 naming the year instead, so the Vorgang stays AU_PENDING and re-confirmable
+      // once the Urlaubsanspruch for that year exists.
+      let missingEntitlementYears: number[] = [];
 
-        await tx.section9Credit.update({
-          where: { id: credit.id },
-          data: {
-            status: "CONFIRMED",
-            attestSource: body.attestSource,
-            attestValidFrom: attestFrom,
-            attestValidTo: attestTo,
-            creditedStart: credited.start,
-            creditedEnd: credited.end,
+      await app.prisma
+        .$transaction(async (tx) => {
+          // D-18: Gutschrift ins URSPRUNGSJAHR des Urlaubstags — § 9 stellt den ursprünglichen
+          // Anspruch wieder her, er schafft keinen neuen. reverseVacationDays ist der
+          // symmetrische Gegenpart zu deductVacationDays und kann cross-year splitten.
+          const reversed = await reverseVacationDays(
+            tx,
+            credit.employeeId,
+            credit.vacationRequest.leaveTypeId,
+            credited.start,
+            credited.end,
             creditedDays,
-            reason: body.reason,
-            reviewedBy: req.user.sub,
-            reviewedAt: new Date(),
-          },
-        });
+            holidays,
+            tenantId,
+          );
+          if (reversed.missingYears.length > 0) {
+            missingEntitlementYears = reversed.missingYears;
+            throw new Section9MissingEntitlementError();
+          }
 
-        // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
-        // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
-        // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
-        // diese Frist bei späteren Buchungen vor stillem Überschreiben.
-        const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
-        const carryRow = await tx.leaveEntitlement.findUnique({
-          where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: credit.employeeId,
-              leaveTypeId: credit.vacationRequest.leaveTypeId,
-              year: originYear + 1,
-            },
-          },
-        });
-        const now = new Date();
-        if (carryRow?.carryOverDeadline && carryRow.carryOverDeadline < now) {
-          await tx.leaveEntitlement.update({
-            where: { id: carryRow.id },
+          await tx.section9Credit.update({
+            where: { id: credit.id },
             data: {
-              carryOverReason: "ILLNESS",
-              // 15 Monate nach Ende des Ursprungsjahres = 31.03. des Jahres originYear + 2
-              carryOverDeadline: new Date(Date.UTC(originYear + 2, 2, 31, 23, 59, 59)),
-              carryOverNote:
-                `§ 9 BUrlG: ${creditedDays} Tag(e) wegen Krankheit im Urlaub gutgeschrieben ` +
-                `(${credited.start.toISOString().split("T")[0]}–${credited.end.toISOString().split("T")[0]}). ` +
-                `Verlängerte Übertragsfrist nach EuGH KHS C-214/10.`,
+              status: "CONFIRMED",
+              attestSource: body.attestSource,
+              attestValidFrom: attestFrom,
+              attestValidTo: attestTo,
+              creditedStart: credited.start,
+              creditedEnd: credited.end,
+              creditedDays,
+              reason: body.reason,
+              reviewedBy: req.user.sub,
+              reviewedAt: new Date(),
             },
           });
-        }
 
-        await app.audit({
-          userId: req.user.sub,
-          action: "SECTION9_CREDIT_CONFIRMED",
-          entity: "Section9Credit",
-          entityId: credit.id,
-          oldValue: { status: credit.status },
-          newValue: {
-            status: "CONFIRMED",
-            sickRequestId: credit.sickRequestId,
-            vacationRequestId: credit.vacationRequestId,
-            creditedStart: credited.start.toISOString().split("T")[0],
-            creditedEnd: credited.end.toISOString().split("T")[0],
-            creditedDays,
-            attestSource: body.attestSource,
-            reason: body.reason,
-            note: "§ 9 BUrlG, nicht angerechnet",
-          },
-          request: { ip: req.ip, headers: req.headers as Record<string, string> },
-          tx,
+          // D-19 / R9: Ist die Übertragsfrist des Ursprungsjahres bereits abgelaufen, verfallen
+          // die Tage NICHT (EuGH KHS C-214/10 — 15 Monate). Wir markieren den Folgejahres-
+          // Übertrag als krankheitsbedingt; preserveIllnessDeadline (Phase 104-04) schützt
+          // diese Frist bei späteren Buchungen vor stillem Überschreiben.
+          const originYear = credited.start.getUTCFullYear(); // WR-09: @db.Date is UTC midnight
+          const carryRow = await tx.leaveEntitlement.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: credit.employeeId,
+                leaveTypeId: credit.vacationRequest.leaveTypeId,
+                year: originYear + 1,
+              },
+            },
+          });
+          const now = new Date();
+          if (carryRow?.carryOverDeadline && carryRow.carryOverDeadline < now) {
+            await tx.leaveEntitlement.update({
+              where: { id: carryRow.id },
+              data: {
+                carryOverReason: "ILLNESS",
+                // 15 Monate nach Ende des Ursprungsjahres = 31.03. des Jahres originYear + 2
+                carryOverDeadline: new Date(Date.UTC(originYear + 2, 2, 31, 23, 59, 59)),
+                carryOverNote:
+                  `§ 9 BUrlG: ${creditedDays} Tag(e) wegen Krankheit im Urlaub gutgeschrieben ` +
+                  `(${credited.start.toISOString().split("T")[0]}–${credited.end.toISOString().split("T")[0]}). ` +
+                  `Verlängerte Übertragsfrist nach EuGH KHS C-214/10.`,
+              },
+            });
+          }
+
+          await app.audit({
+            userId: req.user.sub,
+            action: "SECTION9_CREDIT_CONFIRMED",
+            entity: "Section9Credit",
+            entityId: credit.id,
+            oldValue: { status: credit.status },
+            newValue: {
+              status: "CONFIRMED",
+              sickRequestId: credit.sickRequestId,
+              vacationRequestId: credit.vacationRequestId,
+              creditedStart: credited.start.toISOString().split("T")[0],
+              creditedEnd: credited.end.toISOString().split("T")[0],
+              creditedDays,
+              attestSource: body.attestSource,
+              reason: body.reason,
+              note: "§ 9 BUrlG, nicht angerechnet",
+            },
+            request: { ip: req.ip, headers: req.headers as Record<string, string> },
+            tx,
+          });
+        })
+        .catch((err: unknown) => {
+          if (err instanceof Section9MissingEntitlementError) return "MISSING_ENTITLEMENT" as const;
+          throw err;
         });
-      });
+
+      if (missingEntitlementYears.length > 0) {
+        return reply.code(409).send({
+          error:
+            `Für ${missingEntitlementYears.join(", ")} existiert kein Urlaubsanspruch — ` +
+            `die Gutschrift kann nicht gebucht werden. Bitte zuerst den Urlaubsanspruch anlegen.`,
+        });
+      }
 
       // Outside the transaction: clear "AU nachreichen" nudges, notify the employee.
       await app.dismissByRelated("Section9Credit", credit.id);
@@ -3217,6 +3242,23 @@ async function deductVacationDays(
  * Single-Year-Decrement, damit ein jahresübergreifender Urlaub korrekt zurückgebucht
  * wird (T-94-07).
  */
+/**
+ * Thrown inside the § 9 confirm transaction to roll it back when the credit would book
+ * nothing because the target year has no LeaveEntitlement row (IN-05). Never escapes the
+ * handler — it is translated into a 409 with the missing year named.
+ */
+class Section9MissingEntitlementError extends Error {
+  constructor() {
+    super("SECTION9_MISSING_ENTITLEMENT");
+    this.name = "Section9MissingEntitlementError";
+  }
+}
+
+type ReverseVacationResult = {
+  /** Years whose LeaveEntitlement row does not exist, so the decrement booked nothing (IN-05). */
+  missingYears: number[];
+};
+
 async function reverseVacationDays(
   prisma: DbClient,
   employeeId: string,
@@ -3226,40 +3268,51 @@ async function reverseVacationDays(
   totalDays: number,
   holidays: Set<string>,
   tenantId: string,
-): Promise<void> {
+): Promise<ReverseVacationResult> {
   // WR-09: UTC year attribution, symmetric with deductVacationDays() above.
   const year1 = startDate.getUTCFullYear();
   const year2 = endDate.getUTCFullYear();
   const isCrossYear = year1 !== year2;
+  // Phase 104 review (IN-05): updateMany silently affects 0 rows when no entitlement exists
+  // for that year (e.g. a credit whose origin year predates the employee's first row), and
+  // selfHealUsedDays never creates a missing row either. Report the years that booked
+  // nothing so the caller can decide — the § 9 confirm path refuses rather than reporting
+  // "+N Tage gutgeschrieben" for a credit that landed nowhere.
+  const missingYears: number[] = [];
 
   if (isCrossYear) {
     const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
     const split = splitDaysAcrossYears(startDate, endDate, false, workDays, holidays);
 
     if (split.year1Days > 0) {
-      await prisma.leaveEntitlement.updateMany({
+      const { count } = await prisma.leaveEntitlement.updateMany({
         where: { employeeId, leaveTypeId, year: year1 },
         data: { usedDays: { decrement: split.year1Days } },
       });
+      if (count === 0) missingYears.push(year1);
     }
     if (split.year2Days > 0) {
-      await prisma.leaveEntitlement.updateMany({
+      const { count } = await prisma.leaveEntitlement.updateMany({
         where: { employeeId, leaveTypeId, year: year2 },
         data: { usedDays: { decrement: split.year2Days } },
       });
+      if (count === 0) missingYears.push(year2);
     }
 
     // Year 1 remaining changed → recompute year 2 carry-over
     await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year2);
   } else {
-    await prisma.leaveEntitlement.updateMany({
+    const { count } = await prisma.leaveEntitlement.updateMany({
       where: { employeeId, leaveTypeId, year: year1 },
       data: { usedDays: { decrement: totalDays } },
     });
+    if (count === 0) missingYears.push(year1);
 
     // Current year usage changed → recompute next year's carry-over
     await recalculateCarryOver(prisma, tenantId, employeeId, leaveTypeId, year1 + 1);
   }
+
+  return { missingYears };
 }
 
 /**

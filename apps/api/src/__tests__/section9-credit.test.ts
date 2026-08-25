@@ -1028,6 +1028,77 @@ describe("confirm — Phase 104-06 Task 1", () => {
     });
     expect(stillPending.status).toBe("AU_PENDING");
   });
+
+  // Phase 104 code review IN-05: reverseVacationDays books via updateMany, which affects 0
+  // rows when no LeaveEntitlement exists for the target year (e.g. an origin year predating
+  // the employee's first entitlement row) — and selfHealUsedDays never creates the missing
+  // row either. The handler still answered 200 { status: "CONFIRMED", creditedDays } and
+  // notified "+N Tage gutgeschrieben" although nothing was credited anywhere.
+  it("Test 13 (IN-05): confirming into a year without a LeaveEntitlement row is refused with 409, not silently booked", async () => {
+    const sickType = await app.prisma.leaveType.findFirstOrThrow({
+      where: { tenantId: data.tenant.id, name: "Krankmeldung" },
+    });
+
+    // 2029 deliberately has no entitlement row for this employee.
+    const noRow = await app.prisma.leaveEntitlement.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: data.employee.id,
+          leaveTypeId: data.vacationType.id,
+          year: 2029,
+        },
+      },
+    });
+    expect(noRow).toBeNull();
+
+    const vac = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        startDate: new Date("2029-03-05"), // Monday
+        endDate: new Date("2029-03-07"), // Wednesday
+        days: 3,
+        status: "APPROVED",
+      },
+    });
+    const sick = await app.prisma.leaveRequest.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: sickType.id,
+        startDate: new Date("2029-03-05"),
+        endDate: new Date("2029-03-07"),
+        days: 3,
+        status: "APPROVED",
+      },
+    });
+    const credit = await app.prisma.section9Credit.create({
+      data: {
+        employeeId: data.employee.id,
+        sickRequestId: sick.id,
+        vacationRequestId: vac.id,
+        overlapStart: new Date("2029-03-05"),
+        overlapEnd: new Date("2029-03-07"),
+      },
+    });
+
+    const res = await confirmCredit(credit.id, {
+      attestSource: "EAU",
+      attestValidFrom: "2029-03-05",
+      attestValidTo: "2029-03-07",
+      reason: "AU liegt vor, aber für 2029 existiert kein Urlaubsanspruch",
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.body).error).toContain("2029");
+
+    // The whole transaction rolled back: the Vorgang is still open and re-confirmable once
+    // the Urlaubsanspruch exists, and no entitlement row was conjured up.
+    const stillOpen = await app.prisma.section9Credit.findUniqueOrThrow({
+      where: { id: credit.id },
+    });
+    expect(stillOpen.status).toBe("AU_PENDING");
+    expect(stillOpen.creditedDays).toBeNull();
+    expect(stillOpen.reviewedAt).toBeNull();
+  });
 });
 
 describe("reject and reopen — Phase 104-06 Task 2", () => {
@@ -1262,6 +1333,23 @@ describe("display surface — Phase 104-10 Task 1", () => {
       payload: { email: `col-${s}@test.de`, password: "test1234" },
     });
     colleagueToken = JSON.parse(loginRes.body).accessToken as string;
+
+    // Phase 104 review IN-05 (deliberate fixture change, not a relaxed assertion): the confirm
+    // path now REFUSES to book a credit into a year that has no LeaveEntitlement row, instead
+    // of decrementing nothing and reporting success anyway. This suite's fixtures live in 2033
+    // 2033, which seedTestData does not provision — so before the fix these confirms were
+    // silently booking into thin air. Provision the row so the display assertions run against
+    // a state that is actually bookable. (2036 is provisioned by Test 5 itself, which already
+    // discovered the same fixture requirement.)
+    await app.prisma.leaveEntitlement.create({
+      data: {
+        employeeId: data.employee.id,
+        leaveTypeId: data.vacationType.id,
+        year: 2033,
+        totalDays: 30,
+        usedDays: 0,
+      },
+    });
   });
 
   afterAll(async () => {
