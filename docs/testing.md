@@ -237,8 +237,14 @@ NOT shift external, unshifted clocks the suite also talks to:
   against a DB-generated `createdAt` can produce a false positive/negative once the shift is large
   enough that the JS clock and the (unshifted) DB clock disagree about ordering
   (`presence-webhook.test.ts` REQ-10 hit this once during development of this harness, intermittently
-  depending on the exact shift/run-time combination). If you see this, name the exact test in your
-  summary — do not touch the assertion.
+  depending on the exact shift/run-time combination; `audit-trail.test.ts`'s "PUT
+  /api/v1/settings/work writes AuditLog with action UPDATE on TenantConfig" case hits the same
+  root cause deterministically at `CLOKR_TEST_FAKE_CLOCK=00:30` — the `beforeTs = new Date()`
+  cutoff is shifted into the past relative to the real, unshifted DB clock, so the `gte: beforeTs`
+  query matches every prior TenantConfig UPDATE audit log written during the run, and
+  `logs[0]` — unordered — can return one of those instead of this test's own entry; see Phase 106
+  plan 05's R7 section in `106-MEASUREMENTS.md` for the full four-way diagnosis). If you see this,
+  name the exact test in your summary — do not touch the assertion.
 
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
