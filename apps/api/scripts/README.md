@@ -23,6 +23,7 @@ classified by lifecycle.
 | migrate-opening-balances.ts                    | 2026-08-19 | Move documented opening balances out of SaldoSnapshot.carryOver onto the OpeningBalance model; dry-run default, per-employee zero-drift assertion, aborts writing nothing on any failure                                                                             | Migration artifact (Phase 99)         |
 | ensure-test-database.ts                        | 2026-08-21 | Idempotent `CREATE DATABASE "clokr_test"` + `COMMENT ON DATABASE` marker stamp; refuses any non-test target (wrong name, `?schema=` param, or NODE_ENV=production) before opening a connection                                                                       | Test infrastructure (Phase 101)       |
 | reset-test-databases.ts                        | 2026-08-26 | Drops and re-clones the N per-worker test databases from the migrated `clokr_test` template; the ONLY `DROP-DATABASE` statement in this repo, gated on marker possession AND the anchored worker-name pattern; excluded from the runtime image (Phase 106 D-07/D-08) | Test infrastructure (Phase 106)       |
+| check-worker-database-usage.ts                 | 2026-08-26 | Run-level R2 proof: reads `pg_stat_database.tup_inserted` for every `clokr_test_<n>` after a full run and exits non-zero if any worker database is missing or received no writes                                                                                     | Test infrastructure (Phase 106)       |
 
 ## Migration artifacts
 
