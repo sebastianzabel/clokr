@@ -17,10 +17,10 @@
     "stack:down": "docker compose -f ../../docker-compose.test.yml down -v"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
-    "@playwright/test": "1.60.0",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
-    "@typescript-eslint/parser": "^8.65.0",
-    "eslint": "^10.8.0"
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "1.62.1",
+    "@typescript-eslint/eslint-plugin": "^8.67.0",
+    "@typescript-eslint/parser": "^8.67.0",
+    "eslint": "^10.9.0"
   }
 }

@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@clokr/types": "workspace:*",
-    "@tanstack/svelte-query": "^6.1.38",
+    "@tanstack/svelte-query": "^6.1.40",
     "chart.js": "^4.5.1",
     "date-fns": "^4.4.0",
     "svelte-dnd-action": "^0.9.69"
@@ -29,15 +29,15 @@
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/svelte": "^5.4.2",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/coverage-v8": "^4.1.11",
     "autoprefixer": "^10.5.4",
     "jsdom": "^25.0.1",
-    "postcss": "^8.5.23",
+    "postcss": "^8.5.26",
     "svelte": "^5.55.7",
     "svelte-check": "^4.4.8",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "vite": "^8.1.5",
+    "vite": "^8.2.2",
     "vitest": "^4.1.10"
   }
 }
