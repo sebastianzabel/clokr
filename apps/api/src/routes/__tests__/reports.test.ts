@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import iconv from "iconv-lite";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { computeOvertimeBalanceHours } from "../time-entries";
+import { todayStr, utcMidnight, dowOf } from "../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 // Mirror of the module-private classifyOvertimeBalance thresholds in dashboard.ts (NORMAL |x|<=20,
@@ -637,11 +638,8 @@ describe("Reports API", () => {
       });
       managerToken = JSON.parse(mgrLogin.body).accessToken;
 
-      // Today (UTC midnight) for entry creation
-      const now = new Date();
-      const todayUtc = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-      );
+      // Today (tenant-TZ calendar day, UTC midnight) for entry creation
+      const todayUtc = utcMidnight(todayStr());
 
       // Helper to create a Mon-Fri schedule for an employee
       async function makeWorkSchedule(empId: string) {
@@ -928,8 +926,10 @@ describe("Reports API", () => {
     });
 
     it("Case 5: employee on workday with no entries or absences has status missing", async () => {
-      // Only valid for weekdays — skip on weekend
-      const dow = new Date().getUTCDay();
+      // Only valid for weekdays — skip on weekend. Weekday read off the tenant-TZ date
+      // string (dowOf), not local/UTC getDay(), since the endpoint resolves "today" in
+      // tenant TZ (#34).
+      const dow = dowOf(todayStr());
       if (dow === 0 || dow === 6) {
         // Saturday or Sunday — employee has Mon-Fri schedule → status would be "none"
         return;
@@ -1452,6 +1452,10 @@ describe("Reports API", () => {
   describe("GET /api/v1/reports/leave-overview — pendingDays (RPT-02)", () => {
     let pendingData: Awaited<ReturnType<typeof seedTestData>>;
     let tenantBData: Awaited<ReturnType<typeof seedTestData>>;
+    // Raw UTC/local year is correct here (not a tenant-TZ bug, #34): the endpoint's own
+    // `?year=` fallback is the identical `new Date().getFullYear()` call, and every
+    // assertion below passes `year=${currentYear}` explicitly — self-consistent with the
+    // seeded startDate/endDate, never compared against a tenant-TZ "today".
     const currentYear = new Date().getFullYear();
 
     beforeAll(async () => {

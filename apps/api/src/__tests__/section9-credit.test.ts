@@ -9,6 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import bcrypt from "bcryptjs";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { dbDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
@@ -88,8 +89,8 @@ describe("Section9Credit detection (AU_PENDING) — Phase 104-05", () => {
     expect(credits).toHaveLength(1);
     expect(credits[0].status).toBe("AU_PENDING");
     expect(credits[0].vacationRequestId).toBe(vacId);
-    expect(credits[0].overlapStart.toISOString().split("T")[0]).toBe("2026-06-03");
-    expect(credits[0].overlapEnd.toISOString().split("T")[0]).toBe("2026-06-04");
+    expect(dbDateStr(credits[0].overlapStart)).toBe("2026-06-03");
+    expect(dbDateStr(credits[0].overlapEnd)).toBe("2026-06-04");
   });
 
   it("Test 2: creating the credit does NOT change LeaveEntitlement.usedDays (D-09: effect-free)", async () => {

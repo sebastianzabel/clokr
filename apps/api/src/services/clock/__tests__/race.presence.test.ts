@@ -21,11 +21,14 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { createHash } from "crypto";
 import type { FastifyInstance } from "fastify";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../../__tests__/setup";
+import { todayStr, utcMidnight } from "../../../__tests__/test-dates";
 
-const TODAY = new Date();
-const TODAY_DATE_STR = TODAY.toISOString().slice(0, 10);
-const TODAY_UTC_MIDNIGHT = new Date(TODAY_DATE_STR + "T00:00:00Z");
-const NOW_ISO = TODAY.toISOString();
+// Today's calendar day resolved in the tenant timezone (Europe/Berlin) — not raw UTC —
+// so the shift covers "now" wall-clock correctly regardless of process clock skew (#34).
+const TODAY_DATE_STR = todayStr();
+const TODAY_UTC_MIDNIGHT = utcMidnight(TODAY_DATE_STR);
+// NOW_ISO is an instant capture (correct as-is), not a day derivation — leave untouched.
+const NOW_ISO = new Date().toISOString();
 
 const TEST_MAC_RAW = "AA:BB:CC:11:22:33";
 const TEST_MAC_NORMALIZED = "aa:bb:cc:11:22:33";

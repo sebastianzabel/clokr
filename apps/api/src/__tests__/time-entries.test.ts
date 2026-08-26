@@ -1,12 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { pastDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
-
-function pastDate(daysAgo: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split("T")[0];
-}
 
 describe("Time Entries API", () => {
   let app: FastifyInstance;
@@ -160,7 +155,7 @@ describe("Time Entries API", () => {
     });
 
     it("returns ArbZG warnings when daily hours exceed 10h", async () => {
-      const d = pastDate(5);
+      const d = pastDateStr(5);
       // Clean any existing entries for this day
       await app.prisma.timeEntry.deleteMany({
         where: { employeeId: data.employee.id, date: new Date(d + "T00:00:00Z") },
@@ -188,7 +183,7 @@ describe("Time Entries API", () => {
     });
 
     it("rejects entry with endTime before startTime", async () => {
-      const d = pastDate(4);
+      const d = pastDateStr(4);
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
@@ -206,7 +201,7 @@ describe("Time Entries API", () => {
     });
 
     it("employee can create their own entry", async () => {
-      const d = pastDate(10);
+      const d = pastDateStr(10);
       const res = await app.inject({
         method: "POST",
         url: "/api/v1/time-entries",
@@ -232,7 +227,7 @@ describe("Time Entries API", () => {
     // cannot express partial unique indexes), so we simulate the driver-level
     // P2002 the index raises and assert the handler maps it to 409, not 500.
     it("DATA-V1814-04: a P2002 unique-violation on create → 409 (not 500)", async () => {
-      const d = pastDate(40);
+      const d = pastDateStr(40);
       const createSpy = vi
         .spyOn(app.prisma.timeEntry, "create")
         .mockRejectedValueOnce(

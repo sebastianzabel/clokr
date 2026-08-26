@@ -16,14 +16,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { pastDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
-
-/** A past date string (days ago from real "now") — PUT rejects future endTime. */
-function pastDate(daysAgo: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split("T")[0];
-}
 
 describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints", () => {
   let app: FastifyInstance;
@@ -251,7 +245,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
     }
 
     it("without reason → 400 Begründung-required message", async () => {
-      const entry = await createEntry(pastDate(20));
+      const entry = await createEntry(pastDateStr(20));
       const res = await app.inject({
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
@@ -265,7 +259,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
     });
 
     it("with reason → 200 and MANAGER_CORRECTION AuditLog.newValue.auditReason is set", async () => {
-      const entry = await createEntry(pastDate(21));
+      const entry = await createEntry(pastDateStr(21));
       const res = await app.inject({
         method: "PUT",
         url: `/api/v1/time-entries/${entry.id}`,
@@ -284,7 +278,7 @@ describe("Quick 260824-cjd: mandatory Begründung on Korrektur/Storno endpoints"
     });
 
     it("regression guard: employee PUTs their OWN entry with no reason → 200, action UPDATE, no auditReason key", async () => {
-      const dateStr = pastDate(3);
+      const dateStr = pastDateStr(3);
       const entry = await app.prisma.timeEntry.create({
         data: {
           employeeId: data.employee.id,

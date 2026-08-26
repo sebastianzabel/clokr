@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
 import { getEffectiveSchedule } from "../time-entries";
+import { dbDateStr, mondayOfWeekStr } from "../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Work Schedule Versioning", () => {
@@ -26,7 +27,7 @@ describe("Work Schedule Versioning", () => {
 
       expect(schedule).toBeDefined();
       // The seed creates schedule with validFrom = 2024-01-01 (same as hireDate)
-      expect(schedule!.validFrom.toISOString().split("T")[0]).toBe("2024-01-01");
+      expect(dbDateStr(schedule!.validFrom)).toBe("2024-01-01");
     });
   });
 
@@ -255,12 +256,7 @@ describe("Work Schedule Versioning", () => {
     });
 
     it("GET /shifts/week includes workSchedules[0] per employee", async () => {
-      const today = new Date();
-      const dow = today.getUTCDay();
-      const mondayOffset = dow === 0 ? -6 : 1 - dow;
-      const monday = new Date(today);
-      monday.setUTCDate(today.getUTCDate() + mondayOffset);
-      const isoMonday = monday.toISOString().split("T")[0];
+      const isoMonday = mondayOfWeekStr();
 
       const res = await app.inject({
         method: "GET",

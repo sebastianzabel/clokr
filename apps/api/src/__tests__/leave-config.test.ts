@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { futureDateStr, nextWeekdayStr, monthsAheadStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Leave Config — Lead time, half-day, max advance, special leave", () => {
@@ -32,9 +33,7 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
 
   describe("Lead time validation", () => {
     it("rejects vacation request within lead time", async () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split("T")[0];
+      const dateStr = futureDateStr(1);
 
       const res = await app.inject({
         method: "POST",
@@ -48,9 +47,7 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
     });
 
     it("allows sick leave without lead time", async () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split("T")[0];
+      const dateStr = futureDateStr(1);
 
       const res = await app.inject({
         method: "POST",
@@ -64,11 +61,8 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
     });
 
     it("allows vacation request beyond lead time", async () => {
-      const future = new Date();
-      future.setDate(future.getDate() + 14);
-      // Ensure it's a weekday
-      while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
-      const dateStr = future.toISOString().split("T")[0];
+      // Ensure it's a weekday — weekday read off the tenant-TZ date string (dowOf), not local getDay().
+      const dateStr = nextWeekdayStr(futureDateStr(14));
 
       const res = await app.inject({
         method: "POST",
@@ -83,10 +77,7 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
 
   describe("Max advance months", () => {
     it("rejects vacation too far in advance", async () => {
-      const tooFar = new Date();
-      tooFar.setMonth(tooFar.getMonth() + 8);
-      while (tooFar.getDay() === 0 || tooFar.getDay() === 6) tooFar.setDate(tooFar.getDate() + 1);
-      const dateStr = tooFar.toISOString().split("T")[0];
+      const dateStr = nextWeekdayStr(monthsAheadStr(8));
 
       const res = await app.inject({
         method: "POST",
@@ -102,10 +93,8 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
 
   describe("Half-day toggle", () => {
     it("rejects half-day when globally disabled", async () => {
-      const future = new Date();
-      future.setDate(future.getDate() + 60); // far enough to avoid overlaps
-      while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
-      const dateStr = future.toISOString().split("T")[0];
+      // 60 days ahead — far enough to avoid overlaps
+      const dateStr = nextWeekdayStr(futureDateStr(60));
 
       const res = await app.inject({
         method: "POST",
@@ -173,10 +162,8 @@ describe("Leave Config — Lead time, half-day, max advance, special leave", () 
     });
 
     it("requires specialLeaveRuleId for SPECIAL type", async () => {
-      const future = new Date();
-      future.setDate(future.getDate() + 90); // avoid overlaps
-      while (future.getDay() === 0 || future.getDay() === 6) future.setDate(future.getDate() + 1);
-      const dateStr = future.toISOString().split("T")[0];
+      // 90 days ahead — avoid overlaps
+      const dateStr = nextWeekdayStr(futureDateStr(90));
 
       const res = await app.inject({
         method: "POST",

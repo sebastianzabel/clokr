@@ -1,16 +1,7 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { pastDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
-
-/**
- * Return a date string N days ago from today (YYYY-MM-DD).
- * Uses the local date (server TZ) to stay consistent with test expectations.
- */
-function pastDate(daysAgo: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  return d.toISOString().split("T")[0];
-}
 
 describe("Overtime Saldo Calculation", () => {
   let app: FastifyInstance;
@@ -41,7 +32,7 @@ describe("Overtime Saldo Calculation", () => {
     const balanceBefore = Number(JSON.parse(beforeRes.body).balanceHours);
 
     // Create a 10h time entry for 2 days ago via the API route (fires updateOvertimeAccount)
-    const targetDate = pastDate(2);
+    const targetDate = pastDateStr(2);
     // Clean up any existing entry for that day first
     await app.prisma.timeEntry.deleteMany({
       where: {
@@ -88,8 +79,8 @@ describe("Overtime Saldo Calculation", () => {
     // ignored, and the balance2 == balance1 assertion fails.
     vi.useFakeTimers({ now: new Date("2026-05-26T17:45:00.000Z"), toFake: ["Date"] });
     try {
-      const today = pastDate(0);
-      const yesterday = pastDate(1);
+      const today = pastDateStr(0);
+      const yesterday = pastDateStr(1);
 
       // Clean up entries for today and yesterday
       await app.prisma.timeEntry.deleteMany({
@@ -179,7 +170,7 @@ describe("Overtime Saldo Calculation", () => {
 
     it("GET overtime returns updated balance after adding a work entry", async () => {
       // Add a 10h entry for a recent weekday via API route (triggers updateOvertimeAccount)
-      const recentDate = pastDate(3);
+      const recentDate = pastDateStr(3);
       await app.prisma.timeEntry.deleteMany({
         where: {
           employeeId: data.employee.id,
@@ -435,7 +426,7 @@ describe("Overtime Saldo Calculation", () => {
     });
 
     // Create a work entry for yesterday so we have something to calculate
-    const yesterday = pastDate(1);
+    const yesterday = pastDateStr(1);
     await app.prisma.timeEntry.create({
       data: {
         employeeId: data.employee.id,
@@ -467,7 +458,7 @@ describe("Overtime Saldo Calculation", () => {
     // Since the leave is in 2025 and we're in 2026, it should have zero effect.
 
     // Create the same scenario but WITH leave in the current month
-    const twoDaysAgo = pastDate(2);
+    const twoDaysAgo = pastDateStr(2);
     await app.prisma.leaveRequest.create({
       data: {
         employeeId: data.employee.id,
@@ -553,7 +544,7 @@ describe("Overtime Saldo Calculation", () => {
       });
 
       // Create 10h entry for a past weekday (Monday 7 days ago)
-      const targetDate = pastDate(7);
+      const targetDate = pastDateStr(7);
       await app.prisma.timeEntry.deleteMany({
         where: { employeeId: data.employee.id, date: new Date(targetDate + "T00:00:00Z") },
       });
@@ -596,7 +587,7 @@ describe("Overtime Saldo Calculation", () => {
       });
 
       // Create a time entry well in excess of 10h monthly budget (20h entry)
-      const targetDate = pastDate(4);
+      const targetDate = pastDateStr(4);
       await app.prisma.timeEntry.deleteMany({
         where: { employeeId: data.employee.id, date: new Date(targetDate + "T00:00:00Z") },
       });
