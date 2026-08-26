@@ -58,11 +58,27 @@ Full workflow incl. the SAFETY-CRITICAL one-time int/prod baseline runbook: `doc
 
 ## Testing & Test Database Isolation
 
-- The `apps/api` integration suite runs against the separate database `clokr_test` — never the dev database `clokr`.
-- Provision it with `pnpm --filter @clokr/api run test:setup` (the `pretest`/`pretest:coverage`/`pretest:watch` hooks do this automatically).
-- Run the full suite with `pnpm --filter @clokr/api test`. For a single file: run `test:setup` first, then `pnpm --filter @clokr/api exec vitest run <path>` (`exec vitest run` skips `pretest`; `pnpm test -- <file>` does not work).
-- A startup guard aborts the run before any test executes if the target isn't the marked test database, naming the actual host/port/database found — fix the target, never work around the guard.
-- `?schema=` is a Prisma-only connection-string parameter that the `pg` driver silently ignores — it must never reappear in `TEST_DATABASE_URL`.
+- The `apps/api` integration suite runs against its own databases — the template `clokr_test` and
+  the per-worker `clokr_test_1`…`clokr_test_<N>` cloned from it — never the dev database `clokr`.
+- Provision with `pnpm --filter @clokr/api run test:setup`: it ensures the template, runs
+  `prisma migrate deploy` against it, then drops and re-clones all N worker databases. Every run
+  therefore starts from a clean database; leftover rows from a killed run cannot survive.
+- Run the full suite with `pnpm --filter @clokr/api test` — unchanged. Single file: `test:setup`
+  first, then `pnpm --filter @clokr/api exec vitest run <path>` (`exec vitest run` skips `pretest`;
+  `pnpm test -- <file>` does not work).
+- The worker count is pinned in `apps/api/src/utils/test-database.ts`
+  (`TEST_DATABASE_WORKER_COUNT`) — one number for CI and local. Changing it requires re-running
+  `test:setup`, because that is what provisions exactly that many databases.
+- `apps/api/src/utils/test-database.ts` is the ONLY place the test-database name pattern
+  (`^clokr_test(_\d+)?$`), the marker and the worker count may be stated. Never restate them.
+- A startup guard aborts before any test executes if a target is not a marked test database — it
+  verifies the template AND every worker database by name and by marker POSSESSION, and each worker
+  refuses to run if it cannot resolve its own database. Fix the target, never work around the guard.
+- `apps/api/scripts/reset-test-databases.ts` is the only script that may `DROP DATABASE`; it
+  requires marker possession AND a matching worker name, and an `apps/api/Dockerfile` build gate
+  fails if it ever reaches the runtime image.
+- `?schema=` is a Prisma-only connection-string parameter that the `pg` driver silently ignores —
+  it must never reappear in `TEST_DATABASE_URL`.
 - Full details, provisioning rationale, and the clean-slate procedure: `docs/testing.md`.
 
 ## Language
@@ -249,7 +265,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - @prisma/client 7.6.0 - Runtime client
 - @prisma/adapter-pg 7.6.0 - PostgreSQL adapter
 - PostgreSQL 18-alpine - Primary database
-- Vitest 4.1.2 - Unit/integration test runner
+- Vitest 4.1.10 - Unit/integration test runner
 - @vitest/coverage-v8 4.1.1 - Code coverage
 - @playwright/test 1.58.2 - End-to-end testing (apps/e2e)
 - @axe-core/playwright 4.11.1 - Accessibility testing
