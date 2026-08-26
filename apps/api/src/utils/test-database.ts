@@ -64,6 +64,23 @@ export function workerDatabaseName(index: number | string): string {
 }
 
 /**
+ * The pinned number of parallel Vitest workers, and therefore of per-worker test databases
+ * (Phase 106, D-02). ONE number, identical in CI and locally — never a percentage, never
+ * `os.availableParallelism()`. A machine with more cores deliberately leaves performance on the
+ * table so that CI and local runs are the same run.
+ *
+ * Derived in 106-MEASUREMENTS.md from the runner's MEASURED nproc and MEASURED memory headroom
+ * (D-10 forbids assuming the documented spec). Changing it requires re-running that measurement
+ * AND re-running `test:setup`, which provisions exactly this many databases.
+ */
+export const TEST_DATABASE_WORKER_COUNT = 4;
+
+/** `clokr_test_1` … `clokr_test_<TEST_DATABASE_WORKER_COUNT>`, in worker-index order. */
+export const WORKER_DATABASE_NAMES: readonly string[] = Object.freeze(
+  Array.from({ length: TEST_DATABASE_WORKER_COUNT }, (_, i) => workerDatabaseName(i + 1)),
+);
+
+/**
  * Stamped as a `COMMENT ON DATABASE` by ensure-test-database.ts. A database-level comment survives
  * `prisma db push` (which reconciles objects *inside* a schema, never `pg_shdescription`) and cannot
  * be confused with an application table — see the TI-03 guard in plan 02, which checks for its
