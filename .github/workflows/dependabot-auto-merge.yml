@@ -1,0 +1,68 @@
+name: Dependabot Auto-Merge
+
+# Patch and minor dependency bumps merge themselves once the four required
+# checks pass. Major bumps stay open and get labelled, so a breaking change is
+# always a decision someone made rather than something that slipped through.
+#
+# WHY THIS WAS REWRITTEN
+# The previous version tried to approve the PR first and died on it every single
+# time, from the day it was written:
+#
+#   failed to create review: GraphQL: GitHub Actions is not permitted to approve
+#   pull requests. (addPullRequestReview)
+#
+# The approve step ran before the merge step, so the merge was never reached and
+# the queue silently grew to 13 open PRs, the oldest over a month old. Worse, the
+# approval was never needed: `main` requires 0 approving reviews. The automation
+# failed on a step that did not have to exist.
+#
+# Approving is deliberately gone rather than fixed. Making it work would mean
+# turning on "Allow GitHub Actions to create and approve pull requests", which
+# lets any workflow in the repo self-approve — a real weakening of review
+# control, bought for a step this repo does not need.
+#
+# `--auto` queues the merge behind the required checks instead of merging
+# immediately, so a red build still blocks the bump. It needs `allow_auto_merge`
+# on the repository; without it this step fails loudly rather than merging
+# something unverified.
+
+on: pull_request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - name: Fetch update metadata
+        id: meta
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # For a grouped update, update-type is the HIGHEST bump in the group, so a
+      # group containing one major is treated as major. That is the intended
+      # reading — the risk of a group is its riskiest member.
+      - name: Queue patch and minor for auto-merge
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.update-type == 'version-update:semver-minor'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "update-type: ${{ steps.meta.outputs.update-type }} — queueing auto-merge"
+          gh pr merge --auto --squash "$PR_URL"
+
+      - name: Flag major updates for review
+        if: steps.meta.outputs.update-type == 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "update-type: major — leaving open for a human"
+          gh pr edit "$PR_URL" --add-label "major-update"
+          gh pr comment "$PR_URL" --body "Major version bump — not auto-merged. Picked up at the next sprint change (see \`docs/PROCESS.md\`)."
