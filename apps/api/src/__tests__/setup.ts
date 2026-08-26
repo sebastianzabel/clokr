@@ -27,6 +27,41 @@ export async function getTestApp(): Promise<FastifyInstance> {
   return app;
 }
 
+// Phase 106 (D-03): bcrypt at cost factor 10 is ~65ms of pure CPU per call, and seedTestData()
+// below calls it twice per invocation (admin + employee) for the SAME constant fixture password —
+// 338 raw call sites across the suite, measured (106-MEASUREMENTS.md § "Cost-driver profile"),
+// none of them varying the plaintext. The resulting hash is reusable — memoising it removes the
+// repeated work WITHOUT changing the cost factor, the stored hash shape, or anything
+// bcrypt.compare() sees (R6: not a weakened assertion — every auth test still verifies a real
+// bcrypt-produced digest at the same cost factor).
+//
+// A plain module-level Map only survives WITHIN one test file: Vitest's `isolate: true` rebuilds
+// this module's state fresh for every file, even inside the same forked worker process (measured
+// directly — this file's own `app` singleton above rebuilds once per file, not once per worker;
+// see 106-MEASUREMENTS.md's "S2 — app boot" section). `process.env` is the one primitive that DOES
+// survive that reset — it is how `vitest.worker-setup.ts`'s own `DATABASE_URL` assignment survives
+// across every file in a worker — so it backs this cache too, making it genuinely per WORKER
+// PROCESS rather than merely per file.
+const fixtureHashes = new Map<string, string>();
+const FIXTURE_HASH_ENV_PREFIX = "__CLOKR_TEST_FIXTURE_HASH__";
+
+async function fixturePasswordHash(plaintext: string): Promise<string> {
+  const cached = fixtureHashes.get(plaintext);
+  if (cached) return cached;
+
+  const envKey = FIXTURE_HASH_ENV_PREFIX + plaintext;
+  const fromEnv = process.env[envKey];
+  if (fromEnv) {
+    fixtureHashes.set(plaintext, fromEnv);
+    return fromEnv;
+  }
+
+  const hash = await bcrypt.hash(plaintext, 10);
+  fixtureHashes.set(plaintext, hash);
+  process.env[envKey] = hash;
+  return hash;
+}
+
 /**
  * Noop in test runs — the app instance is shared across suites.
  * Vitest handles cleanup when the process exits.
@@ -63,7 +98,7 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
   });
 
   // Create admin user
-  const adminPasswordHash = await bcrypt.hash("test1234", 10);
+  const adminPasswordHash = await fixturePasswordHash("test1234");
   const adminUser = await prisma.user.create({
     data: {
       email: `admin-${s}@test.de`,
@@ -105,7 +140,7 @@ export async function seedTestData(testApp: FastifyInstance, suffix = "") {
   });
 
   // Create regular employee user
-  const empPasswordHash = await bcrypt.hash("test1234", 10);
+  const empPasswordHash = await fixturePasswordHash("test1234");
   const empUser = await prisma.user.create({
     data: {
       email: `emp-${s}@test.de`,
