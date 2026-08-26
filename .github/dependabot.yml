@@ -10,8 +10,6 @@ updates:
       time: "06:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 10
-    reviewers:
-      - "the operatorZ84"
     labels:
       - "dependencies"
     # Group minor/patch updates to reduce PR noise
