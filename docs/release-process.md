@@ -9,15 +9,50 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
 
 ## Flow
 
-1. **Branch from current main.** `git checkout main && git pull && git checkout -b release/vX.Y.Z`.
-2. **Bump versions** in all three `package.json` files (root, `apps/api`, `apps/web`) to the same value `X.Y.Z`.
-3. **Open PR** with title `chore(release): vX.Y.Z`. Wait for `ci.yml` to pass.
-4. **Merge PR** to `main`. The merge commit is the release commit.
-5. **`build-push.yml` runs automatically** on the merge. It builds both images and pushes `ghcr.io/{owner}/clokr-api:sha-{SHA}` and `ghcr.io/{owner}/clokr-web:sha-{SHA}`. Trivy scans both.
-6. **Wait for `build-push.yml` to finish green.** Required — release promotion needs the `:sha-{SHA}` images on GHCR.
-7. **Cut a GitHub Release** with tag `vX.Y.Z`. **The tag MUST point at the merge commit** from step 4 (memory note `feedback_release_tag_on_main`).
-8. **`release.yml` runs automatically** on the published release. It runs `crane copy` for both `clokr-api` and `clokr-web`, tagging each with `:X.Y.Z`, `:X.Y`, and `:latest`. No rebuild.
-9. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The Sidebar in the web UI shows `vX.Y.Z` below the logout button.
+**Cutting a release is a merge, not a procedure.** `release-please` keeps a PR titled
+`chore(main): release X.Y.Z` permanently open against `main`, rewriting it on every push.
+
+1. **Check the release PR.** It shows the next version (derived from the Conventional Commit
+   history) and the `CHANGELOG.md` it will write. Nothing to bump by hand.
+2. **Merge it.** That single act:
+   - bumps the version in all three `package.json` files (root, `apps/api`, `apps/web`)
+   - commits `CHANGELOG.md`
+   - creates tag `vX.Y.Z` and publishes the GitHub Release
+3. **`build-push.yml`** runs on the merge, builds both images, pushes
+   `ghcr.io/{owner}/clokr-{api,web}:sha-{SHA}`, Trivy scans them.
+4. **`release.yml`** runs on the published Release. It **waits** for the `:sha-{SHA}` image to
+   appear (up to 30 min), then `crane copy`s it to `:X.Y.Z`, `:X.Y` and `:latest`. No rebuild —
+   the shipped image is bit-identical to the scanned one.
+5. **Write the German release notes by hand** on the GitHub Release, per
+   [`RELEASE_NOTES_TEMPLATE.md`](RELEASE_NOTES_TEMPLATE.md). The generated `CHANGELOG.md` is the
+   technical, English, commit-derived history; the release notes are the customer-facing,
+   thematically grouped document. Different audiences, different texts — the changelog does not
+   replace them.
+6. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The
+   Sidebar shows `vX.Y.Z` below the logout button.
+
+### Why release.yml waits for the image
+
+The bump-before-tag rule below still holds — it is just enforced by machinery now instead of by
+memory. But automation changed the timing: a human cut the Release only _after_ Build & Push was
+green, so the `:sha-` image was always already there. release-please publishes the Release the
+instant its PR merges — the same push that _starts_ the build. Promote now reliably arrives
+first, so it polls for the image rather than failing on a source tag that does not exist yet.
+The two runs are triggered by different events and cannot `needs:` one another.
+
+If that wait ever times out, Build & Push failed or never ran. Fix that; do not promote a
+different image.
+
+### Version scheme
+
+One shared version across root, `apps/api` and `apps/web` — release-please bumps the root and
+carries the other two via `extra-files` (`release-please-config.json`). The version is a
+_deployment_ fact here, not a package fact: it is baked into the image and asserted against the
+tag by the smoke test, so letting the three drift apart would break that check. `packages/db`,
+`packages/types` and `packages/mcp` are internal and keep their own fixed versions.
+
+Only `feat`, `fix`, `perf` and `refactor` appear in the changelog. `docs`, `test`, `chore`,
+`ci`, `build` and `style` are recorded in git and hidden from it.
 
 ## Patch releases — RETIRED (historical)
 

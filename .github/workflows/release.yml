@@ -68,6 +68,40 @@ jobs:
       - name: Install crane
         uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
+      # Wait for build-push.yml to publish the image for this commit.
+      #
+      # Until release-please landed, a human cut the GitHub Release only after
+      # Build & Push had gone green, so the `:sha-` image was always already
+      # there. release-please publishes the Release the instant its PR merges —
+      # the same push that STARTS the build — so promote now reliably arrives
+      # first and `crane copy` would fail on a source tag that does not exist yet.
+      #
+      # Polling rather than a workflow dependency: the two runs are triggered by
+      # different events (push vs release) and cannot `needs:` each other.
+      - name: Wait for the scanned image to exist
+        env:
+          OWNER: ${{ steps.meta.outputs.owner }}
+          IMAGE: ${{ matrix.image }}
+          SHA_TAG: ${{ steps.meta.outputs.sha }}
+        run: |
+          set -euo pipefail
+          SRC="${REGISTRY}/${OWNER}/${IMAGE}:sha-${SHA_TAG}"
+          # 60 × 30s = 30 min. A cold build of both images takes well under that;
+          # exceeding it means Build & Push failed or was never triggered, and
+          # promoting is then wrong anyway.
+          for attempt in $(seq 1 60); do
+            if crane manifest "${SRC}" >/dev/null 2>&1; then
+              echo "Found ${SRC} after ${attempt} attempt(s)."
+              exit 0
+            fi
+            echo "Attempt ${attempt}/60: ${SRC} not published yet, waiting 30s ..."
+            sleep 30
+          done
+          echo "::error title=Image never appeared::${SRC} did not exist after 30 minutes."
+          echo "Build & Push either failed or never ran for this commit. Check that"
+          echo "workflow before re-running this job — do NOT promote a different image."
+          exit 1
+
       - name: Promote ${{ matrix.image }}
         env:
           # WR-03 (Phase 76.14): hoist GitHub Actions expressions into env so the
