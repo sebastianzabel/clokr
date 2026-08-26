@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { TEST_DATABASE_WORKER_COUNT } from "./src/utils/test-database";
 
 export default defineConfig({
   test: {
@@ -6,8 +7,15 @@ export default defineConfig({
     environment: "node",
     root: "./",
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
-    // Integration tests share a DB, so run sequentially
-    fileParallelism: false,
+    // Phase 106 (D-01/D-02): every worker owns its own database (clokr_test_<VITEST_POOL_ID>,
+    // cloned from the migrated clokr_test template by scripts/reset-test-databases.ts), so the
+    // "integration tests share a DB" reason for running sequentially no longer exists.
+    fileParallelism: true,
+    // A literal integer, never a percentage and never os.availableParallelism(): D-02 requires the
+    // SAME worker count in CI and on every developer machine, because test:setup provisions exactly
+    // TEST_DATABASE_WORKER_COUNT databases. A machine with more cores deliberately leaves
+    // performance unused. Derived from the runner's MEASURED nproc/RAM — see 106-MEASUREMENTS.md.
+    maxWorkers: TEST_DATABASE_WORKER_COUNT,
     testTimeout: 30000,
     globalSetup: ["./vitest.setup.ts"],
     // TI-03 layer 2 (Phase 101 plan 02): re-asserts inside every worker, once per test file, that
