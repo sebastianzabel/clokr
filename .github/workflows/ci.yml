@@ -60,6 +60,28 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      # The API integration suite is 11 of this job's 14 minutes. It exercises
+      # Postgres, Prisma and MinIO, so a PR that touches only docs, workflows or
+      # scripts cannot change its outcome — and a large share of PRs here are
+      # exactly that.
+      #
+      # Same shape as `visual-regression` below and for the same reason: the JOB
+      # always runs and always reports, only its expensive STEPS are conditional.
+      # `test` is a required status check, and a required check that is skipped
+      # at job level never reports, which would leave every PR waiting forever.
+      - name: Detect changes that can affect the API suite
+        id: changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        with:
+          filters: |
+            api:
+              - 'apps/api/**'
+              - 'packages/**'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - 'package.json'
+              - '.github/workflows/ci.yml'
+
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -104,7 +126,13 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @clokr/db exec prisma generate
 
+      - name: Skip notice (no API-relevant changes)
+        if: steps.changes.outputs.api != 'true'
+        run: |
+          echo "::notice title=API suite skipped::No changes under apps/api/**, packages/**, the lockfile or ci.yml — the API integration suite cannot be affected by this PR, so its ~11 minutes are skipped. Lint, format, typecheck, builds and the security scans still ran."
+
       - name: Provision isolated test database
+        if: steps.changes.outputs.api == 'true'
         # Explicit step rather than relying solely on pnpm's pretest:coverage hook firing before
         # `Run API tests with coverage` below. Phase 101 Task 1 empirically confirmed the hook DOES
         # fire on this pnpm version even without a root .npmrc — this step stays anyway,
@@ -114,6 +142,7 @@ jobs:
         run: pnpm --filter @clokr/api run test:setup
 
       - name: Push schema to the dev-shaped reference database (clokr)
+        if: steps.changes.outputs.api == 'true'
         # `clokr` (DATABASE_URL above) is NOT the isolated test target anymore (D-01, Phase 101) —
         # it is now (a) the database the drift-guard step below connects through via `psql` to
         # create `prisma_migrate_shadow`, and (b) the READ-ONLY reference database
@@ -123,6 +152,7 @@ jobs:
         run: pnpm --filter @clokr/db exec prisma db push
 
       - name: Check migration drift (schema.prisma vs migrations history)
+        if: steps.changes.outputs.api == 'true'
         # OPS-V1814-01 drift guard: fails the build if schema.prisma has diverged
         # from the committed Prisma migrations history (e.g. someone edited the
         # schema without running `migrate dev`, or regenerated 0_init).
@@ -179,6 +209,7 @@ jobs:
 
       - name: Run API tests with coverage
         id: tests
+        if: steps.changes.outputs.api == 'true'
         run: pnpm --filter @clokr/api test:coverage
 
       - name: Run Web tests with coverage
