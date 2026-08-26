@@ -86,7 +86,7 @@ jobs:
           cat > /tmp/body.md <<BODY
           Sprint **KW ${KW}–${KW_END}**. Reihenfolge einhalten — jeder Schritt setzt den vorherigen voraus.
 
-          - [ ] **Inbox leeren** — jedes Issue: Work Type setzen, dann nach Backlog oder schließen
+          - [ ] **Inbox leeren** — jedes Issue: Label prüfen, dann nach Backlog oder schließen
           - [ ] **Max. 5 Issues** von Backlog nach Ready ziehen
           - [ ] **Iteration + Milestone** auf genau diese 5 setzen
           - [ ] **Branch Protection prüfen** — \`./scripts/apply-branch-protection.sh\`
@@ -100,7 +100,7 @@ jobs:
           anderes raus — zurück nach Backlog, nicht zusätzlich rein. Ein Sprint, der alles
           aufnimmt, sagt nichts mehr darüber aus, was tatsächlich passiert.
 
-          \`Ready\` heißt: Akzeptanzkriterien vollständig, Work Type gesetzt, Iteration und
+          \`Ready\` heißt: Akzeptanzkriterien vollständig, Iteration und
           Milestone gesetzt. Ohne das fasst GSD das Issue nicht an.
 
           [Board öffnen](https://github.com/users/sebastianzabel/projects/1) ·
