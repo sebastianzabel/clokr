@@ -29,6 +29,31 @@ happen, and the board becomes a second inbox.
 Chores do not count against the cap. Dependency bumps and doc fixes are not the reason a
 sprint fails.
 
+## Dependency updates
+
+Dependabot PRs deliberately stay **off the board**. They are pull requests, not tickets, and
+thirteen cards would drown an Inbox meant for thinking. They are handled by rule instead:
+
+| Update       | What happens                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------- |
+| patch, minor | auto-merged once the four required checks pass (`--auto`, so a red build still blocks it) |
+| major        | stays open, labelled `major-update`, commented — reviewed at the sprint change            |
+
+For a **grouped** update, the reported type is the highest bump in the group, so a group
+containing one major is treated as major. The risk of a group is its riskiest member.
+
+They also do not count against the five-issue cap: dependency bumps are not the reason a sprint
+fails, and making them compete with real work is what causes them to be skipped.
+
+> **History worth knowing.** This automation existed before and had never once worked. It tried
+> to approve the PR first and died every time on _"GitHub Actions is not permitted to approve
+> pull requests"_, so the merge step was never reached and the queue silently grew to thirteen
+> PRs over a month old. The approval was never needed — `main` requires zero reviews. It is now
+> removed rather than repaired: enabling it would let any workflow in the repo self-approve.
+>
+> The same audit found `reviewers: ["the operatorZ84"]` in `dependabot.yml` — a user that does
+> not exist, so review assignment had been failing silently too.
+
 ## Status definitions
 
 The board carries these as field descriptions too, so they are visible where they are used.
