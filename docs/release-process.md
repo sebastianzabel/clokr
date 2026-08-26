@@ -19,13 +19,27 @@ The shipping image is bit-identical to the image that passed the Trivy scan on m
 8. **`release.yml` runs automatically** on the published release. It runs `crane copy` for both `clokr-api` and `clokr-web`, tagging each with `:X.Y.Z`, `:X.Y`, and `:latest`. No rebuild.
 9. **Verify:** `curl https://{your-host}/api/v1/version` returns `{"version":"X.Y.Z"}`. The Sidebar in the web UI shows `vX.Y.Z` below the logout button.
 
-## Patch releases (1.9.x)
+## Patch releases — RETIRED (historical)
 
-The 1.9.x patch line does **not** merge to `main`. Instead:
+> **The 1.9.x patch line is retired as of 2026-08-26.** `main` was resynced to
+> `release/1.9.x` (PR #31) and is now the single line: patches, minors and majors all
+> branch from `main`, merge back to `main`, and are tagged there per the Flow above.
+> There is no separate patch branch to remember, and no second place for a release to
+> come from.
+>
+> `release/1.9.x` remains as frozen history. Its tags (`v1.9.0`…`v1.9.18`) are independent
+> git objects and stay valid — rollback via `crane copy` from any of them is unaffected.
+>
+> The old flow is kept below for reading releases cut before that date.
 
-1. The GitHub Release is tagged directly on `release/1.9.x` HEAD (no merge to main).
-2. `build-push.yml` runs on the `release/**` push and builds `:sha-<commit>` + `:release-1.9.x`.
-3. Cutting the GitHub Release then triggers `release.yml` (Promote & Publish), which `crane copy`s `:sha-<commit>` → `:X.Y.Z` / `:X.Y` / `:latest` (Trivy-scanned, digest-identical to the built image).
+The 1.9.x patch line did **not** merge to `main`. Instead:
+
+1. The GitHub Release was tagged directly on `release/1.9.x` HEAD (no merge to main).
+2. `build-push.yml` ran on the `release/**` push and built `:sha-<commit>` + `:release-1.9.x`.
+3. Cutting the GitHub Release then triggered `release.yml` (Promote & Publish), which `crane copy`d `:sha-<commit>` → `:X.Y.Z` / `:X.Y` / `:latest` (Trivy-scanned, digest-identical to the built image).
+
+`build-push.yml` still triggers on `release/**` pushes. That trigger is harmless and is left
+in place so a maintenance line can be reopened without a workflow change.
 
 ## What `release.yml` now does (previously "not yet")
 

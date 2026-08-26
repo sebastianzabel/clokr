@@ -3,21 +3,74 @@
 Last applied: 2026-06-04 (Phase 70 — `70-07`)
 Source-of-truth for which CI jobs MUST pass before a PR can merge to `main`.
 
+> **The executable source of truth is [`scripts/apply-branch-protection.sh`](../scripts/apply-branch-protection.sh).**
+>
+> ```bash
+> ./scripts/apply-branch-protection.sh            # read-only, non-zero exit on drift
+> ./scripts/apply-branch-protection.sh --apply    # restore the intended state
+> ```
+>
+> The script covers `main` — the only protected branch now that the 1.9.x patch line is
+> retired — asserts only the required-check set, and carries every other protection
+> setting forward unchanged. Prefer it over the raw `gh api` calls below: those are kept
+> for reference and for recovery when `gh` behaves unexpectedly, but the check list in
+> the script is the one that is actually verified.
+>
+> **Why this exists:** on 2026-08-26 an audit found `main` with an _empty_ required-check
+> list and `release/1.9.x` with _no protection at all_, while this document still claimed
+> four blocking checks on both. Prose drifts silently; a script that exits non-zero does
+> not. `--check` runs as a fixed item on the sprint-rollover checklist
+> (see [`PROCESS.md`](PROCESS.md)), which bounds undetected drift to one sprint.
+
 This runbook documents the operational `gh api` commands for applying, auditing, and recovering from drift in `main` branch protection. Linked from `CLAUDE.md` § GSD Workflow Enforcement and from `docs/release-process.md`.
 
-Branch protection is now also relevant for `release/1.9.x` — the patch line (1.9.x) branches and tags there (see `docs/release-process.md`). Apply the same required-checks set to `release/1.9.x` by substituting the branch name in the `gh api` commands below.
+`release/1.9.x` is **retired** and no longer protected. It was found completely unprotected in the 2026-08-26 audit, which is moot now that it is frozen: its release tags are independent git objects that outlive the branch, and int pins a tag rather than tracking the branch. If a maintenance line is ever reopened, add it to `BRANCHES` in the script rather than protecting it by hand.
 
 ## Required checks (Phase 70 baseline)
 
-| Check               | Workflow | Job                 | Why required                                                                                                                                                                                                 |
-| ------------------- | -------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `test`              | ci.yml   | `test`              | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web     |
-| `codeql`            | ci.yml   | `codeql`            | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                          |
-| `secret-scan`       | ci.yml   | `secret-scan`       | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                     |
-| `docker`            | ci.yml   | `docker`            | Validates `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (matrix build, no push). Warms the GHA cache for the subsequent `build-push.yml` main-branch run.                                          |
-| `visual-regression` | ci.yml   | `visual-regression` | Playwright `toHaveScreenshot()` baseline gate — merge-blocking on PRs that touch `apps/web/**`, `apps/web/src/tokens.css`, or `apps/e2e/**` (path-filtered, D-06). See `docs/visual-regression-workflow.md`. |
+| Check         | Workflow | Job           | Why required                                                                                                                                                                                                                                                   |
+| ------------- | -------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test`        | ci.yml   | `test`        | Pre-merge quality + security gate: ESLint API + Web, Prettier `--check`, UI primitives lint, tsc API + Web, Vitest coverage ≥ 40%, `pnpm audit --audit-level high`, Trivy FS scan, Build API + Build Web                                                       |
+| `codeql`      | ci.yml   | `codeql`      | SAST — CodeQL semantic vulnerability analysis (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                                                                            |
+| `secret-scan` | ci.yml   | `secret-scan` | gitleaks v3 scan of PR diff for leaked credentials (DEVOPS-V8-04). Uploads SARIF to GitHub Security tab.                                                                                                                                                       |
+| `docker-gate` | ci.yml   | `docker-gate` | Stable context for the `docker` matrix build, which validates that `apps/api/Dockerfile` and `apps/web/Dockerfile` compile (no push) and warms the GHA cache for the later `build-push.yml` run. See the caveat below — require `docker-gate`, never `docker`. |
+
+Note: `visual-regression` was previously listed in this table as merge-blocking, but it was
+never present in the `gh api` payload below and is not in the script's check list — the table
+and the payload contradicted each other. It is **advisory**. The job is technically eligible
+(it always reports a status; only its _steps_ are path-filtered, so it never hangs as
+"pending"), but its baselines are recorded on arm64 locally and replayed on amd64 in CI, so
+it fails for reasons unrelated to the change under review. Promoting it to blocking is a
+baseline fix — see `docs/visual-regression-workflow.md` — not a protection change.
 
 Note: the `docker` PR-gate job is in `ci.yml`, not `build-push.yml`. `build-push.yml` runs ONLY on push to `main` (after merge) and is therefore not a PR-blocking candidate. Trivy container-scan results from `build-push.yml` are post-merge and surface via the GitHub Security tab.
+
+### Never require `docker` — require `docker-gate`
+
+`docker` is a **matrix** job. GitHub does not report a check run under a matrix job's bare
+name when it runs; it reports one per leg, named after the entire `include` entry:
+
+```
+docker (clokr-api, ./apps/api/Dockerfile, .)
+docker (clokr-web, ./apps/web/Dockerfile, .)
+```
+
+A required context that is never reported never resolves — the PR sits at "Expected —
+waiting for status to be reported" indefinitely, and no amount of re-running fixes it.
+The `gh api` payload further down this page asked for the bare `docker`, which is the
+most likely reason the 2026-08-26 audit found `main` with an empty check list: applied
+once, everything jammed, list cleared, prose left standing.
+
+The leg names are also brittle — editing a Dockerfile path changes the check name and
+silently breaks protection. `ci.yml` therefore carries a tiny `docker-gate` job whose only
+job is to be a stable context: it `needs: docker`, runs with `if: always()`, and fails
+unless the matrix succeeded. **Require `docker-gate`.** The reference payload below has been
+corrected accordingly, but prefer the script — it verifies before it writes.
+
+The script enforces this: `--apply` compares every configured context against check names
+actually observed across recent PRs and refuses rather than freezing the branch. A
+consequence worth knowing: a newly added check must have run at least once before it can
+be required.
 
 ## NOT required (advisory in Phase 70)
 
@@ -45,7 +98,7 @@ gh api \
       { "context": "test", "app_id": -1 },
       { "context": "codeql", "app_id": -1 },
       { "context": "secret-scan", "app_id": -1 },
-      { "context": "docker", "app_id": -1 }
+      { "context": "docker-gate", "app_id": -1 }
     ]
   },
   "enforce_admins": false,
@@ -76,6 +129,12 @@ If `required_pull_request_reviews` is non-null (it is in Phase 70 pre-state), co
 ## Audit command
 
 ```bash
+./scripts/apply-branch-protection.sh          # preferred — exits non-zero on drift
+```
+
+The raw equivalent:
+
+```bash
 gh api /repos/sebastianzabel/clokr/branches/main/protection \
   --jq '.required_status_checks.checks[].context' | sort
 ```
@@ -84,10 +143,12 @@ Expected output (one per line, sorted):
 
 ```
 codeql
-docker
+docker-gate
 secret-scan
 test
 ```
+
+`docker-gate`, not `docker` — see "Never require `docker`" above.
 
 If output is empty or missing any of these → re-run the Apply command above.
 
@@ -133,7 +194,8 @@ If branch protection is accidentally deleted or reset to defaults:
 
 ## Files
 
-- `.github/workflows/ci.yml` — defines the required jobs (`test`, `codeql`, `secret-scan`, `docker`, and the path-filtered `visual-regression`) and 2 advisory jobs (`lighthouse`, `axe-scan`).
+- `.github/workflows/ci.yml` — defines the required jobs (`test`, `codeql`, `secret-scan`, `docker-gate`) plus the advisory `visual-regression`, `lighthouse` and `axe-scan`. The `docker` matrix job is required indirectly, through `docker-gate`.
+- `scripts/apply-branch-protection.sh` — the executable check list; `--check` audits, `--apply` restores.
 - `.github/workflows/build-push.yml` — runs post-merge on push to `main`; not a PR-gate candidate.
 - `docs/cve-handling.md` — companion runbook for `.trivyignore` exceptions surfaced by these gates.
 - `docs/release-process.md` — companion runbook for the release flow that depends on these gates being green.

@@ -617,3 +617,35 @@ jobs:
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # ── Stable gate for branch protection ────────────────────────────────
+  #
+  # `docker` above is a matrix job, so GitHub never reports a check run
+  # called "docker" when it runs — it reports one per leg, named after the
+  # whole `include` entry:
+  #
+  #     docker (clokr-api, ./apps/api/Dockerfile, .)
+  #     docker (clokr-web, ./apps/web/Dockerfile, .)
+  #
+  # Those names change whenever a leg is edited, and a required check that
+  # stops being reported leaves every PR waiting on a status that will
+  # never arrive. This job exists purely to give branch protection one
+  # stable context that survives any change to the matrix.
+  #
+  # `if: always()` is required: without it this job would be skipped
+  # whenever `docker` is skipped, and a required check that never reports
+  # blocks the PR — the exact failure mode it is here to prevent.
+  docker-gate:
+    name: docker-gate
+    needs: docker
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assert the docker matrix succeeded
+        if: needs.docker.result != 'success'
+        run: |
+          echo "::error title=Docker build gate::docker matrix result was '${{ needs.docker.result }}', expected 'success'."
+          exit 1
+
+      - name: Report
+        run: echo "docker matrix succeeded — both images build."

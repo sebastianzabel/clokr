@@ -604,6 +604,26 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 
 <!-- GSD:workflow-start source:GSD defaults -->
 
+## Delivery Process
+
+**Read `docs/PROCESS.md` before triaging issues, planning a milestone, or wondering where a
+piece of work should come from.** Short version:
+
+- `Capture → Inbox → Triage → Ready → GSD → Ship → Release`
+- Board: **Clokr Delivery** (https://github.com/users/sebastianzabel/projects/1), Status
+  `Inbox / Backlog / Ready / In Progress / In Review / Done`, 2-week iterations.
+- **GitHub Milestone = GSD Milestone. GitHub Issue = GSD Phase.** A plan is GSD-internal and
+  has no GitHub counterpart.
+- **Max. 5 issues per sprint.** New work in means old work out — back to Backlog, not
+  alongside. Chores do not count.
+- **`Ready` is a contract, not a mood:** acceptance criteria complete, Work Type + Iteration
+  + Milestone set. **Do not start a phase from an issue that is not Ready** — the acceptance
+  criteria are the input to `/gsd:discuss-phase`.
+- `main` is the only line. The 1.9.x patch line is retired; there are no release branches.
+
+`.planning/` is gitignored, so an issue can never link to a planning artifact. The commit
+scope (`fix(104-11): …`) is what ties issue and phase together in the history.
+
 ## GSD Workflow Enforcement
 
 Before using Edit, Write, or other file-changing tools, start work through a GSD command so planning artifacts and execution context stay in sync.
