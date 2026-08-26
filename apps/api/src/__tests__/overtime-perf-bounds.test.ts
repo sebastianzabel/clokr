@@ -14,19 +14,17 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
+import { pastDateStr, utcMidnight, dbDateStr } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 
-/** Returns a date string (YYYY-MM-DD) for N days ago in UTC. */
+/** Returns the UTC-midnight Date for N days ago, in the tenant timezone. */
 function daysAgo(n: number): Date {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
+  return utcMidnight(pastDateStr(n));
 }
 
 /** Returns ISO date string (YYYY-MM-DD) for use in date fields. */
 function isoDate(d: Date): string {
-  return d.toISOString().split("T")[0];
+  return dbDateStr(d);
 }
 
 describe("PERF-V1814-03 — bound/cap regression for list endpoints", () => {

@@ -27,21 +27,17 @@ import bcrypt from "bcryptjs";
 import { fromZonedTime } from "date-fns-tz";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import type { FastifyInstance } from "fastify";
-import { dateStrInTz } from "../utils/timezone";
+import { daysAgoStrInTz, dbDateStr, TEST_TZ } from "./test-dates";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-const TZ = "Europe/Berlin";
+const TZ = TEST_TZ;
 
 // Frozen "now" so all date arithmetic is deterministic (mirrors retro-approval-flow.test.ts).
 const FROZEN_NOW = new Date("2024-04-14T22:00:00.000Z"); // Berlin: 2024-04-15 00:00
 
 // TenantConfig.retroEntryWindowDays default (retro-config.ts DEFAULT_WINDOW_DAYS).
 const WINDOW_DAYS = 10;
-
-function daysAgoInTz(now: Date, n: number): string {
-  return dateStrInTz(new Date(now.getTime() - n * 24 * 60 * 60 * 1000), TZ);
-}
 
 /** Birthdate that makes an employee exactly `age` years old ON `dateStr` (UTC Y-M-D,
  * birthday-exactly-on-date = full age, mirrors jarbschg.ts's ageAtDate semantics). */
@@ -220,7 +216,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 3);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 3);
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/time-entries",
@@ -248,7 +244,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
         });
         expect(request, "coupled RetroEntryRequest must exist").not.toBeNull();
         expect(request?.status).toBe("PENDING");
-        expect(request?.targetDate.toISOString().split("T")[0]).toBe(targetDate);
+        expect(dbDateStr(request!.targetDate)).toBe(targetDate);
         expect(request?.reason).toBe("vergessen einzutragen");
         expect(request?.id, "request.id must equal entry.retroRequestId (1:1 coupling)").toBe(
           body.entry.retroRequestId,
@@ -262,7 +258,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 4);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 4);
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/time-entries",
@@ -295,7 +291,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 5);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 5);
         await app.prisma.employee.update({
           where: { id: azubiId },
           data: { birthDate: birthDateForAge(targetDate, 16) },
@@ -346,7 +342,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 6);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 6);
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/time-entries",
@@ -379,7 +375,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 7);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 7);
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/time-entries",
@@ -419,7 +415,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 8);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 8);
         const payload = {
           employeeId,
           date: targetDate,
@@ -463,7 +459,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 9);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 9);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -507,7 +503,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 10);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 10);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate, {
           isLocked: true,
         });
@@ -541,7 +537,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 11);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 11);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -614,7 +610,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 12);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 12);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -644,7 +640,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 13);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 13);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate, {
           isLocked: true,
         });
@@ -679,7 +675,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 14);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 14);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -731,7 +727,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 15);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 15);
         const { entry } = await seedCoupledPending(app, employeeId, targetDate, {
           isLocked: true,
         });
@@ -755,7 +751,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 16);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 16);
         const plain = await app.prisma.timeEntry.create({
           data: {
             employeeId,
@@ -790,7 +786,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 17);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 17);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -859,7 +855,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 18);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 18);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -884,7 +880,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 19);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 19);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
         await app.prisma.retroEntryRequest.update({
           where: { id: request.id },
@@ -909,7 +905,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 20);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 20);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate, {
           isLocked: true,
         });
@@ -937,7 +933,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 1);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 1);
         const { request } = await seedCoupledPending(app, crossEmployeeId, targetDate);
 
         const res = await app.inject({
@@ -972,7 +968,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 26);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 26);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const [approveRes, rejectRes] = await Promise.all([
@@ -1022,7 +1018,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 27);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 27);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const [withdrawRes, approveRes] = await Promise.all([
@@ -1078,7 +1074,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 21);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 21);
         // seedCoupledPending as-submitted defaults: 08:00-16:00, 30min break.
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
@@ -1147,7 +1143,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 22);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 22);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -1186,7 +1182,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 25);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 25);
         await app.prisma.employee.update({
           where: { id: azubiId },
           data: { birthDate: birthDateForAge(targetDate, 16) },
@@ -1261,7 +1257,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 23);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 23);
         const res = await app.inject({
           method: "POST",
           url: "/api/v1/time-entries",
@@ -1296,7 +1292,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(FROZEN_NOW);
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 24);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 24);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -1334,7 +1330,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.setSystemTime(FROZEN_NOW);
       const notifySpy = vi.spyOn(app, "notify").mockRejectedValueOnce(new Error("notify boom"));
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 28);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 28);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({
@@ -1368,7 +1364,7 @@ describe("Entry-first Zeitnachtrag tracer (96-02): RETRO-10/11/14", () => {
       vi.setSystemTime(FROZEN_NOW);
       const notifySpy = vi.spyOn(app, "notify").mockRejectedValueOnce(new Error("notify boom"));
       try {
-        const targetDate = daysAgoInTz(new Date(), WINDOW_DAYS + 29);
+        const targetDate = daysAgoStrInTz(new Date(), WINDOW_DAYS + 29);
         const { request, entry } = await seedCoupledPending(app, employeeId, targetDate);
 
         const res = await app.inject({

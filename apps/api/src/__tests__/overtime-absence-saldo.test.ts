@@ -9,13 +9,9 @@
 import { vi, describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, cleanupTestData } from "./setup";
 import { updateOvertimeAccount } from "../routes/time-entries";
+import { pastDateStr, dowOf, utcMidnight } from "./test-dates";
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
-
-// Today in YYYY-MM-DD (UTC)
-function todayStr(): string {
-  return new Date().toISOString().split("T")[0];
-}
 
 describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
   let app: FastifyInstance;
@@ -226,11 +222,13 @@ describe("Overtime Absence Saldo — pre-tracking absence coverage", () => {
     // Employee has a schedule of 8h/day Mo-Fr.
     // Entry: 8h worked. Expected for that single day: 8h (if weekday). Delta should be ≈ 0.
     // Find the most recent weekday that's at least 1 day in the past
-    const entryDate = new Date(Date.now() - 86400000); // start from yesterday
-    while (entryDate.getUTCDay() === 0 || entryDate.getUTCDay() === 6) {
-      entryDate.setUTCDate(entryDate.getUTCDate() - 1);
+    let daysBack = 1;
+    let entryDateStr = pastDateStr(daysBack);
+    while (dowOf(entryDateStr) === 0 || dowOf(entryDateStr) === 6) {
+      daysBack++;
+      entryDateStr = pastDateStr(daysBack);
     }
-    const entryDateStr = entryDate.toISOString().split("T")[0];
+    const entryDate = utcMidnight(entryDateStr);
 
     // Use a past time that's definitely in the past
     const startTime = `${entryDateStr}T06:00:00.000Z`;

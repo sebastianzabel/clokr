@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "../../__tests__/setup";
+import {
+  futureDateStr,
+  todayStr as sharedTodayStr,
+  pastDateStr,
+  utcMidnight,
+} from "../../__tests__/test-dates";
 import type { FastifyInstance } from "fastify";
 
 describe("Time Entry Validation Rules", () => {
@@ -18,9 +24,7 @@ describe("Time Entry Validation Rules", () => {
 
   describe("Future date blocking", () => {
     it("rejects POST /time-entries with a future date", async () => {
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split("T")[0];
+      const dateStr = futureDateStr(1);
 
       const res = await app.inject({
         method: "POST",
@@ -44,7 +48,7 @@ describe("Time Entry Validation Rules", () => {
   describe("Future endTime blocking", () => {
     it("rejects POST /time-entries with endTime > now+30min", async () => {
       const now = new Date();
-      const todayStr = now.toISOString().split("T")[0];
+      const todayDateStr = sharedTodayStr();
       // endTime = now + 2 hours (well beyond 30min tolerance)
       const futureEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
 
@@ -54,7 +58,7 @@ describe("Time Entry Validation Rules", () => {
         headers: { authorization: `Bearer ${data.adminToken}` },
         payload: {
           employeeId: data.employee.id,
-          date: todayStr,
+          date: todayDateStr,
           startTime: new Date(now.getTime() - 8 * 60 * 60 * 1000).toISOString(),
           endTime: futureEnd.toISOString(),
           breakMinutes: 0,
@@ -116,7 +120,7 @@ describe("Time Entry Validation Rules", () => {
     });
 
     it("blocks manual time entry when approved vacation exists", async () => {
-      const todayStr = new Date().toISOString().split("T")[0];
+      const todayDateStr = sharedTodayStr();
 
       // Create approved leave directly in DB
       const leaveType = await app.prisma.leaveType.findFirst({
@@ -138,8 +142,8 @@ describe("Time Entry Validation Rules", () => {
         data: {
           employeeId: data.employee.id,
           leaveTypeId: lt.id,
-          startDate: new Date(todayStr + "T00:00:00Z"),
-          endDate: new Date(todayStr + "T00:00:00Z"),
+          startDate: new Date(todayDateStr + "T00:00:00Z"),
+          endDate: new Date(todayDateStr + "T00:00:00Z"),
           days: 1,
           status: "APPROVED",
           reviewedBy: data.adminUser.id,
@@ -153,9 +157,9 @@ describe("Time Entry Validation Rules", () => {
         url: "/api/v1/time-entries",
         headers: { authorization: `Bearer ${data.empToken}` },
         payload: {
-          date: todayStr,
-          startTime: new Date(todayStr + "T08:00:00Z").toISOString(),
-          endTime: new Date(todayStr + "T12:00:00Z").toISOString(),
+          date: todayDateStr,
+          startTime: new Date(todayDateStr + "T08:00:00Z").toISOString(),
+          endTime: new Date(todayDateStr + "T12:00:00Z").toISOString(),
           breakMinutes: 0,
         },
       });
@@ -383,15 +387,14 @@ describe("Time Entry Validation Rules", () => {
   describe("Clock-in conflict check ignores invalid open entries", () => {
     it("allows POST /clock-in when only open entry is auto-invalidated (isInvalid: true)", async () => {
       // Simulate autoInvalidateOpenEntries: entry from yesterday with endTime null but isInvalid true
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayDate = new Date(yesterday.toISOString().split("T")[0] + "T00:00:00.000Z");
+      const yesterdayStr = pastDateStr(1);
+      const yesterdayDate = utcMidnight(yesterdayStr);
 
       const staleEntry = await app.prisma.timeEntry.create({
         data: {
           employeeId: data.employee.id,
           date: yesterdayDate,
-          startTime: new Date(yesterday.toISOString().split("T")[0] + "T08:00:00.000Z"),
+          startTime: new Date(yesterdayStr + "T08:00:00.000Z"),
           endTime: null,
           isInvalid: true,
           invalidReason: "Auto-invalidated open entry",

@@ -13,7 +13,12 @@ export default defineConfig({
     // TI-03 layer 2 (Phase 101 plan 02): re-asserts inside every worker, once per test file, that
     // the target globalSetup verified actually propagated there — a propagation check, not an
     // authorisation control. See vitest.worker-setup.ts's own header comment.
-    setupFiles: ["./vitest.worker-setup.ts"],
+    // Task 34: vitest.clock-setup.ts is a NEW first entry (opt-in fake-clock
+    // harness, no-op unless CLOKR_TEST_FAKE_CLOCK is set) — must run before
+    // vitest.worker-setup.ts and before any test module is imported, since
+    // several test files compute module-level constants like
+    // `const TODAY = new Date()` at import time.
+    setupFiles: ["./vitest.clock-setup.ts", "./vitest.worker-setup.ts"],
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
