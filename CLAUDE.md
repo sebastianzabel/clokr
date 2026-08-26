@@ -611,12 +611,13 @@ piece of work should come from.** Short version:
 
 - `Capture → Inbox → Triage → Ready → GSD → Ship → Release`
 - Board: **Clokr Delivery** (https://github.com/users/sebastianzabel/projects/1), Status
-  `Inbox / Backlog / Ready / In Progress / In Review / Done`, 2-week iterations.
+  `Inbox / Backlog / Ready / In Progress / In Review / Done`, 2-week iterations. Work type is
+  the `bug`/`feature`/`chore` **label**, not a board field.
 - **GitHub Milestone = GSD Milestone. GitHub Issue = GSD Phase.** A plan is GSD-internal and
   has no GitHub counterpart.
 - **Max. 5 issues per sprint.** New work in means old work out — back to Backlog, not
   alongside. Chores do not count.
-- **`Ready` is a contract, not a mood:** acceptance criteria complete, Work Type + Iteration
+- **`Ready` is a contract, not a mood:** acceptance criteria complete, Iteration
   + Milestone set. **Do not start a phase from an issue that is not Ready** — the acceptance
   criteria are the input to `/gsd:discuss-phase`.
 - `main` is the only line. The 1.9.x patch line is retired; there are no release branches.

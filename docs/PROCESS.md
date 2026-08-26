@@ -58,14 +58,20 @@ fails, and making them compete with real work is what causes them to be skipped.
 
 The board carries these as field descriptions too, so they are visible where they are used.
 
-| Status          | Means                                                                                                             |
-| --------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Inbox**       | Captured, not yet triaged. Everything new starts here.                                                            |
-| **Backlog**     | Triaged, Work Type set. Wanted in principle, not scheduled.                                                       |
-| **Ready**       | Acceptance criteria complete, Work Type + Iteration + Milestone set. **GSD does not touch an issue before this.** |
-| **In Progress** | A GSD phase is running. A branch exists.                                                                          |
-| **In Review**   | PR open, CI running or review pending.                                                                            |
-| **Done**        | Merged or closed. Auto-archived after 30 days.                                                                    |
+| Status          | Means                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------- |
+| **Inbox**       | Captured, not yet triaged. Everything new starts here.                                                |
+| **Backlog**     | Triaged, labelled. Wanted in principle, not scheduled.                                                |
+| **Ready**       | Acceptance criteria complete, Iteration + Milestone set. **GSD does not touch an issue before this.** |
+| **In Progress** | A GSD phase is running. A branch exists.                                                              |
+| **In Review**   | PR open, CI running or review pending.                                                                |
+| **Done**        | Merged or closed. Auto-archived after 30 days.                                                        |
+
+The type of work is carried by the **label** — `bug`, `feature` or `chore` — which the issue
+forms and `capture.sh` set automatically. There is deliberately no separate board field for it:
+a `Work Type` single-select existed briefly and duplicated the label while nothing populated it,
+so every issue arrived with it empty and `Ready` was unreachable without remembering a step
+nothing reminded you of. Group or filter by the built-in `Labels` field instead.
 
 **Ready is the only status with teeth.** Everything else describes where something is; Ready
 asserts that it is answerable. An issue whose acceptance criteria say "make it better" is not
