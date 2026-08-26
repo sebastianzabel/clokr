@@ -72,6 +72,30 @@ actually observed across recent PRs and refuses rather than freezing the branch.
 consequence worth knowing: a newly added check must have run at least once before it can
 be required.
 
+## Coupled setting: Actions may create pull requests
+
+`release-please` opens the standing release PR, which requires
+**Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"**.
+It was enabled on 2026-08-26 (`can_approve_pull_request_reviews: true`;
+`default_workflow_permissions` deliberately left at `read` — workflows declare their own
+permissions).
+
+GitHub bundles _create_ and _approve_ into that single toggle. There is no way to permit one
+without the other, so enabling it also lets any workflow in this repository approve a pull
+request.
+
+**That is acceptable only while `required_approving_review_count` is 0.** With zero required
+reviews a self-approving workflow gains nothing — there is no gate to bypass. The moment that
+count is raised, this toggle becomes a hole in the new requirement: a workflow could satisfy it
+without a human ever looking.
+
+> **If you ever require approving reviews on `main`, revisit this.** The alternative is a
+> fine-grained PAT or GitHub App token for release-please alone, which keeps the global toggle
+> off. Do not raise the review count and leave this enabled.
+
+The `Dependabot Auto-Merge` workflow deliberately does **not** approve, even though it now
+could — see its header comment.
+
 ## NOT required (advisory in Phase 70)
 
 | Check        | Workflow | Job          | Promotion path                                                                                                                                                         |

@@ -25,6 +25,11 @@ name: Release Please
 on:
   push:
     branches: [main]
+  # Manual re-run. The very first run failed on a repository setting rather than
+  # on anything in this config, and without a dispatch trigger the only way to
+  # retry was to wait for the next push to main. A release that cannot be
+  # retried on demand is a release that waits on unrelated work.
+  workflow_dispatch:
 
 permissions:
   contents: write
