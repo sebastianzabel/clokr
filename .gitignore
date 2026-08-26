@@ -26,6 +26,10 @@ packages/db/generated/
 # Test coverage
 coverage/
 
+# Vitest JSON reporter output (apps/api/vitest.config.ts outputFile.json) — input to
+# apps/api/scripts/check-test-completeness.mjs, regenerated on every test run
+apps/api/vitest-report.json
+
 # Playwright test artifacts
 apps/e2e/test-results/
 apps/e2e/playwright-report/

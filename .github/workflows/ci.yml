@@ -236,6 +236,15 @@ jobs:
         env:
           TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
 
+      - name: Test completeness floor (D-09 — protects R6)
+        # Phase 106, D-09: hard floor over the vitest JSON reporter output (apps/api/vitest.config.ts
+        # `outputFile.json`). Parallelisation can silently collect fewer files; every collected test
+        # would still pass and coverage could still clear the 40% line threshold, so R6 would be
+        # violated in effect with nothing else turning red. See
+        # apps/api/scripts/check-test-completeness.mjs for the floor values and the remedy text.
+        if: steps.changes.outputs.api == 'true'
+        run: node apps/api/scripts/check-test-completeness.mjs apps/api/vitest-report.json
+
       - name: Run Web tests with coverage
         id: tests_web
         run: pnpm --filter @clokr/web test:coverage
