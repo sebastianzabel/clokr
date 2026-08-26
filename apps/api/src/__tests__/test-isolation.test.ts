@@ -13,11 +13,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import pg from "pg";
 import { getTestApp, closeTestApp, seedTestData, cleanupTestData } from "./setup";
 import {
-  TEST_DATABASE_NAME,
   TEST_DATABASE_MARKER,
   parseDatabaseUrl,
   databaseNameOf,
   describeTarget,
+  isTestDatabaseName,
 } from "../utils/test-database";
 import type { FastifyInstance } from "fastify";
 
@@ -86,16 +86,30 @@ describe("Test database isolation (TI-01)", () => {
           `it was never schema-pushed, so this proof cannot be non-vacuous against it.`,
       ).not.toBeNull();
 
-      // (c) The app's OWN connection reports it is talking to clokr_test.
+      // (c) The app's OWN connection reports it is talking to a database in the test namespace,
+      // and specifically to the one DATABASE_URL names. Under Phase 106 that is a per-worker
+      // database (clokr_test_<VITEST_POOL_ID>), not the template — so an exact equality against
+      // TEST_DATABASE_NAME would now be wrong. The strength is unchanged: the dev database can
+      // never satisfy the namespace predicate, and (e)/(f) below still carry the real proof.
       const currentDbResult = await app.prisma.$queryRaw<
         { current_database: string }[]
       >`SELECT current_database()`;
+      const appDbName = currentDbResult[0]?.current_database ?? "";
+      const urlDbName = databaseNameOf(parseDatabaseUrl(process.env.DATABASE_URL, "DATABASE_URL"));
       expect(
-        currentDbResult[0]?.current_database,
-        `app.prisma is connected to "${currentDbResult[0]?.current_database}" ` +
-          `(expected via TEST_DATABASE_URL: ${describeTarget(testUrlRaw!)}), not "${TEST_DATABASE_NAME}".`,
-      ).toBe(TEST_DATABASE_NAME);
-      expect(testDbName, "TEST_DATABASE_URL itself must name clokr_test").toBe(TEST_DATABASE_NAME);
+        isTestDatabaseName(appDbName),
+        `app.prisma is connected to "${appDbName}", which is outside the test namespace ` +
+          `(expected clokr_test or clokr_test_<n>). Target: ${describeTarget(testUrlRaw!)}.`,
+      ).toBe(true);
+      expect(
+        appDbName,
+        `app.prisma is connected to "${appDbName}" but DATABASE_URL names "${urlDbName}".`,
+      ).toBe(urlDbName);
+      expect(appDbName, "the app must never connect to the dev database").not.toBe(devDbName);
+      expect(
+        isTestDatabaseName(testDbName),
+        "TEST_DATABASE_URL itself must name a database in the test namespace",
+      ).toBe(true);
 
       // (d) The sentinel slug the app just wrote is present in the test database.
       const inTestDb = await app.prisma.tenant.findUnique({ where: { slug: sentinelSlug } });

@@ -40,13 +40,49 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
     ).toThrow();
   });
 
-  it("throws when the database name is not exactly TEST_DATABASE_NAME", () => {
+  it("throws when the database name is outside the test namespace", () => {
     expect(() =>
       assertTestDatabaseUrlShape(
         "postgresql://clokr:password@localhost:5432/clokr",
         "TEST_DATABASE_URL",
       ),
     ).toThrow();
+  });
+
+  it("rejects every name outside the anchored namespace, including near-misses (D-06)", () => {
+    const rejected = [
+      "clokr",
+      "clokr_dev",
+      "clokr_testing",
+      "clokr_test_x",
+      "clokr_test_",
+      "clokr_test_kopie_von_prod", // the exact name D-06 cites for rejecting an UNANCHORED prefix
+      "clokr_test_1_prod",
+      "myclokr_test", // anchoring proof: the pattern is not a substring match
+      "postgres",
+    ];
+    for (const name of rejected) {
+      expect(
+        () =>
+          assertTestDatabaseUrlShape(
+            `postgresql://clokr:password@localhost:5432/${name}`,
+            "TEST_DATABASE_URL",
+          ),
+        `expected "${name}" to be refused`,
+      ).toThrow();
+    }
+  });
+
+  it("accepts the template and any per-worker database in the anchored namespace (D-06)", () => {
+    const accepted = ["clokr_test", "clokr_test_1", "clokr_test_4", "clokr_test_12"];
+    for (const name of accepted) {
+      const url = assertTestDatabaseUrlShape(
+        `postgresql://clokr:password@localhost:5432/${name}`,
+        "TEST_DATABASE_URL",
+      );
+      expect(url).toBeInstanceOf(URL);
+      expect(url.pathname).toBe(`/${name}`);
+    }
   });
 
   it("throws when a schema query parameter is present, even with the correct database name", () => {
@@ -91,6 +127,14 @@ describe("assertTestDatabaseUrlShape (TI-03 — pure, no I/O)", () => {
         `postgresql://clokr:password@localhost:5432/${TEST_DATABASE_NAME}?schema=test`,
         "TEST_DATABASE_URL",
       ],
+      ["postgresql://clokr:password@localhost:5432/clokr_dev", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_testing", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_x", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_kopie_von_prod", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/clokr_test_1_prod", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/myclokr_test", "TEST_DATABASE_URL"],
+      ["postgresql://clokr:password@localhost:5432/postgres", "TEST_DATABASE_URL"],
     ];
     for (const [raw, source] of cases) {
       let thrown: Error | undefined;
@@ -142,5 +186,10 @@ describe("assertTestDatabaseMarker (TI-03 — possession check, opens one connec
     }
     expect(thrown, "expected assertTestDatabaseMarker to reject").toBeDefined();
     expect(thrown!.message.toLowerCase()).not.toContain("password");
+  });
+
+  it("rejects a marked namespace database when an exact name is demanded and does not match", async () => {
+    const raw = process.env.TEST_DATABASE_URL as string;
+    await expect(assertTestDatabaseMarker(raw, "clokr_test_99")).rejects.toThrow();
   });
 });
