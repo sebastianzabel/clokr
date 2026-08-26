@@ -161,6 +161,31 @@ RUN test -n "$(find /app/node_modules -name 'schema-engine*' -type f -print -qui
     || (echo "FATAL: Prisma schema-engine binary missing in runtime node_modules" >&2; exit 1)
 
 COPY --from=build /app/apps/api/ ./apps/api/
+
+# ── D-08 (Phase 106): no DROP-capable tooling in the runtime image ────────────────────
+# apps/api/scripts/reset-test-databases.ts is the only script in this repo that issues a
+# DROP-DATABASE statement. apps/api/scripts/ensure-test-database.ts deliberately STAYS (its header
+# documents "It issues NO DROP / TRUNCATE / DELETE under any input, ever" — that promise is
+# why it is safe here). The COPY above brings the whole apps/api/ tree, so the removal has to
+# be explicit, and the gate below has to be behavioural rather than filename-based: it fails
+# the build if ANY file under scripts/ can issue a DROP-DATABASE statement, including a future one nobody
+# remembered to list here.
+RUN rm -f /app/apps/api/scripts/reset-test-databases.ts \
+ && test ! -e /app/apps/api/scripts/reset-test-databases.ts \
+ || (echo "FATAL: apps/api/scripts/reset-test-databases.ts is present in the runtime image — D-08 forbids shipping DROP-capable tooling" >&2; exit 1)
+# Pattern uses "DROP.DATABASE" (regex dot, not a literal space) so this gate's OWN source
+# line does not match itself once the Dockerfile is copied into the image below — the dot
+# still matches the single space every real DROP-DATABASE SQL statement uses.
+RUN if find /app/apps/api/scripts/ -type f \( -name "*.ts" -o -name "*.js" \) \
+      -exec grep -lI "DROP.DATABASE" {} \; 2>/dev/null | grep -q .; then \
+      echo "FATAL: a script under /app/apps/api/scripts/ can issue a DROP-DATABASE statement (D-08):" >&2; \
+      find /app/apps/api/scripts/ -type f \( -name "*.ts" -o -name "*.js" \) \
+        -exec grep -lI "DROP.DATABASE" {} \; >&2; \
+      exit 1; \
+    fi
+RUN test -e /app/apps/api/scripts/ensure-test-database.ts \
+ || (echo "FATAL: ensure-test-database.ts missing from the runtime image — it is expected to ship (see its header comment)" >&2; exit 1)
+
 COPY --from=build /app/packages/ ./packages/
 COPY --from=build /app/package.json ./
 COPY --from=build /app/pnpm-workspace.yaml ./
