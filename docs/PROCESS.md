@@ -120,6 +120,23 @@ Open a workflow from the list, give it its condition and its _Set value_, then
 | 2   | **Pull request merged**   | Status → **Done**                                   | only fires for PRs on the board — see below |
 | —   | **Auto-archive items**    | filter `is:closed updated:<@today-30d`              | keeps Done from growing forever             |
 
+### A PR that touches an issue without closing it must say so
+
+`Closes #NN` handles the finished case. The unfinished one needs a habit, because GitHub gives
+it almost no signal: a PR that merely mentions an issue produces a grey _"referenced this
+issue"_ line, identical whether the PR solved part of it, started it, or only cited it in
+passing. From the issue's side, one that three PRs have flowed past looks exactly like one
+nobody has touched.
+
+**So: a PR that addresses part of an issue leaves a comment on that issue — what it delivered,
+and what is still open.** One paragraph is enough. And the issue moves out of `Inbox`, because
+work has demonstrably begun on it.
+
+This is not hypothetical. #43 shipped a path filter that cut CI from 15 minutes to 3 for
+non-API PRs and named #42 in its description. #42 asks for something different — making the
+suite itself faster — and remained entirely open. With zero comments on it, the reasonable
+conclusion from the outside was that it had been solved.
+
 ### A merged PR does not move a card by itself
 
 Auto-add is filtered to `is:issue`, so pull requests never get a card. The **Pull request
