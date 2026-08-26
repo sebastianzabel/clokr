@@ -81,13 +81,34 @@ Go straight to the workflows page — it avoids hunting through menus:
 Open a workflow from the list, give it its condition and its _Set value_, then
 **Save and turn on workflow**.
 
-| #   | Workflow                  | Set value                                           | Purpose                         |
-| --- | ------------------------- | --------------------------------------------------- | ------------------------------- |
-| 7   | **Auto-add to project**   | filter `is:issue is:open repo:sebastianzabel/clokr` | puts new issues on the board    |
-| 6   | **Item added to project** | Status → **Inbox**                                  | files them where triage looks   |
-| 1   | **Item closed**           | Status → **Done**                                   | closing moves the card          |
-| 2   | **Pull request merged**   | Status → **Done**                                   | merging moves the card          |
-| —   | **Auto-archive items**    | filter `is:closed updated:<@today-30d`              | keeps Done from growing forever |
+| #   | Workflow                  | Set value                                           | Purpose                                     |
+| --- | ------------------------- | --------------------------------------------------- | ------------------------------------------- |
+| 7   | **Auto-add to project**   | filter `is:issue is:open repo:sebastianzabel/clokr` | puts new issues on the board                |
+| 6   | **Item added to project** | Status → **Inbox**                                  | files them where triage looks               |
+| 1   | **Item closed**           | Status → **Done**                                   | closing moves the card                      |
+| 2   | **Pull request merged**   | Status → **Done**                                   | only fires for PRs on the board — see below |
+| —   | **Auto-archive items**    | filter `is:closed updated:<@today-30d`              | keeps Done from growing forever             |
+
+### A merged PR does not move a card by itself
+
+Auto-add is filtered to `is:issue`, so pull requests never get a card. The **Pull request
+merged** workflow sets a field on the _pull request's own_ item — with no PR item, it never
+fires. Merging a PR therefore changes nothing on the board on its own. This was observed with
+PR #33: merged, board untouched.
+
+The path that actually closes the loop runs through the issue:
+
+```
+PR description contains "Closes #34"
+  → merging the PR closes issue #34
+  → the "Item closed" workflow fires
+  → Status = Done
+```
+
+**So every PR that finishes a ticket must name it with a closing keyword** (`Closes #NN`,
+`Fixes #NN`). Without that the issue stays open in `In Review` forever and the board slowly
+fills with work that is actually shipped. This is the one manual habit the process depends
+on — everything else is automated.
 
 **Auto-add and "Item added to project" are two different workflows, and you need both.**
 Auto-add only puts the item on the board — it does not set a field. With auto-add on and
