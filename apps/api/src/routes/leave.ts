@@ -6,7 +6,12 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
+import {
+  splitDaysAcrossYears,
+  calculateProRataVacation,
+  mondayOfWeekUtc,
+  countShiftBasedLeaveDays,
+} from "../utils/vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { calculateWorkDays } from "../utils/calculate-work-days";
 import { computeAffectedMonths } from "../utils/correction-lock";
@@ -3596,4 +3601,117 @@ async function getScheduledHours(
     cur.setDate(cur.getDate() + 1);
   }
   return total;
+}
+
+// ── Phase 107 (D-04/D-09): SHIFT_BASED-aware leave-day resolution ─────────────────────────
+
+/**
+ * Resolves an employee's contractual workday count (Phase 107, D-04).
+ *
+ * This is the ONLY place this resolution chain may exist — no other reader (not
+ * avgWorkMinutesCore, not any route handler, not a future shift resolver) may rebuild it
+ * inline; every caller either invokes this function or receives its result as a parameter.
+ *
+ * Resolution chain, in this exact order:
+ *   1. WorkSchedule.contractWorkDaysPerWeek, when non-null (the SHIFT_BASED contractual count,
+ *      D-01 — populated by the write path settings.ts/employees.ts own once a SHIFT_BASED row
+ *      is created or saved).
+ *   2. WorkSchedule.workDays.length, when non-empty (pre-107 legacy rows, and every other
+ *      schedule type).
+ *   3. TenantConfig.defaultWorkDays.length, when non-empty.
+ *   4. 5.
+ *
+ * Mirrors resolveWorkDays()'s shape verbatim (same Promise.all over the latest WorkSchedule and
+ * the TenantConfig row) — the two resolvers are deliberately parallel, not merged, because they
+ * answer different questions ("how many days" vs. "which days").
+ */
+async function resolveContractWorkDaysPerWeek(
+  prisma: DbClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<number> {
+  const [ws, cfg] = await Promise.all([
+    prisma.workSchedule.findFirst({
+      where: { employeeId },
+      orderBy: { validFrom: "desc" },
+    }),
+    prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  if (ws) {
+    if (ws.contractWorkDaysPerWeek != null) return ws.contractWorkDaysPerWeek;
+    if (ws.workDays && ws.workDays.length > 0) return ws.workDays.length;
+  }
+  if (cfg?.defaultWorkDays && cfg.defaultWorkDays.length > 0) return cfg.defaultWorkDays.length;
+  return 5;
+}
+
+/**
+ * Resolves how many leave days a period costs an employee (Phase 107, D-09's DB-fetching
+ * side). Branch-first dispatch, mirroring getScheduledHours()'s shape: SHIFT_BASED resolves the
+ * roster-aware calc and RETURNS EARLY; every other schedule type falls through to the existing
+ * calculateWorkDays() wrapper below, behaviour-identical to every current call site (AC-REG-02)
+ * — this function is a wrapper around that call, not a rewrite of it.
+ *
+ * `holidays` is the caller's already-computed Set (`getHolidayMap(...).keys()`, the same value
+ * every existing calculateWorkDays() call site already builds) — this function does not fetch
+ * holidays itself.
+ */
+async function resolveLeaveDays(
+  prisma: DbClient,
+  employeeId: string,
+  tenantId: string,
+  start: Date,
+  end: Date,
+  halfDay: boolean,
+  holidays: Set<string>,
+): Promise<{ days: number; provisional: boolean }> {
+  const ws = await prisma.workSchedule.findFirst({
+    where: { employeeId },
+    orderBy: { validFrom: "desc" },
+  });
+
+  if (ws?.type === "SHIFT_BASED") {
+    const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
+      prisma,
+      employeeId,
+      tenantId,
+    );
+
+    // Widen the shift query to the ENCLOSING ISO weeks of [start, end] — a fragment's
+    // weeksWithRoster answer must see shifts on days of that week outside the leave period too
+    // (D-05/D-06). Same Monday derivation countShiftBasedLeaveDays() itself uses.
+    const rangeStart = mondayOfWeekUtc(start);
+    const rangeEnd = mondayOfWeekUtc(end);
+    rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 6);
+
+    const shifts = await prisma.shift.findMany({
+      where: { employeeId, date: { gte: rangeStart, lte: rangeEnd }, deletedAt: null },
+      select: { date: true },
+    });
+
+    const rosteredDates = new Set<string>();
+    const weeksWithRoster = new Set<string>();
+    for (const shift of shifts) {
+      rosteredDates.add(shift.date.toISOString().split("T")[0]);
+      weeksWithRoster.add(mondayOfWeekUtc(shift.date).toISOString().split("T")[0]);
+    }
+
+    return countShiftBasedLeaveDays(
+      start,
+      end,
+      halfDay,
+      contractWorkDaysPerWeek,
+      rosteredDates,
+      holidays,
+      weeksWithRoster,
+    );
+  }
+
+  // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
+  const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
+  const days = calculateWorkDays(start, end, halfDay, workDays, holidays);
+  return { days, provisional: false };
 }
