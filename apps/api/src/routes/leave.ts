@@ -1009,6 +1009,43 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
+      const reviewTypeCode = TYPE_CODES.find(
+        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
+      );
+
+      // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
+      // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
+      // both land in the SAME write as the status flip — a second update() would leave a crash
+      // window where a request is APPROVED with stale days and no flag. Builds the holiday map
+      // once here and reuses it for deductVacationDays() further down. Every other type/branch
+      // is untouched: `daysProvisional` stays `null`.
+      let holidayMapForDeduct: Map<string, string> | null = null;
+      let shiftBasedApprovalRecompute: { days: number; provisional: boolean } | null = null;
+      if (body.status === "APPROVED" && reviewTypeCode === "VACATION") {
+        holidayMapForDeduct = await getHolidayMap(
+          app.prisma,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        const wsForApproval = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: existing.employeeId },
+          orderBy: { validFrom: "desc" },
+          select: { type: true },
+        });
+        if (wsForApproval?.type === "SHIFT_BASED") {
+          shiftBasedApprovalRecompute = await resolveLeaveDays(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            new Set(holidayMapForDeduct.keys()),
+          );
+        }
+      }
+
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
         data: {
@@ -1016,6 +1053,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           reviewedBy: req.user.sub,
           reviewedAt: new Date(),
           reviewNote: body.reviewNote,
+          ...(shiftBasedApprovalRecompute
+            ? {
+                days: shiftBasedApprovalRecompute.days,
+                daysProvisional: shiftBasedApprovalRecompute.provisional,
+              }
+            : {}),
         },
         include: {
           employee: { select: { firstName: true, lastName: true } },
@@ -1024,28 +1067,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       if (body.status === "APPROVED") {
-        const typeCode = TYPE_CODES.find(
-          (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-        );
+        const typeCode = reviewTypeCode;
 
         if (typeCode === "VACATION") {
           const empForDeduct = await app.prisma.employee.findUnique({
             where: { id: existing.employeeId },
           });
-          const holidayMapForDeduct = await getHolidayMap(
-            app.prisma,
-            empForDeduct?.tenantId ?? "",
-            existing.startDate,
-            existing.endDate,
-          );
           await deductVacationDays(
             app.prisma,
             existing.employeeId,
             existing.leaveTypeId,
             existing.startDate,
             existing.endDate,
-            Number(existing.days),
-            new Set(holidayMapForDeduct.keys()),
+            Number(updated.days),
+            new Set(holidayMapForDeduct!.keys()),
             empForDeduct?.tenantId ?? "",
           );
         }
