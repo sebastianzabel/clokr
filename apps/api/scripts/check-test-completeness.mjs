@@ -19,7 +19,7 @@
 import { readFileSync } from "node:fs";
 
 const MIN_FILES = 199; // see 106-MEASUREMENTS.md § "Suite size" (post-flip row); raise when adding files
-const MIN_TESTS = 2234; // see 106-MEASUREMENTS.md § "Suite size" (post-flip row); raise when adding tests
+const MIN_TESTS = 2239; // see 106-MEASUREMENTS.md § "Suite size" (post-flip row); raise when adding tests
 const REPORT = process.argv[2] ?? "apps/api/vitest-report.json";
 
 let raw;
