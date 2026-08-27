@@ -322,12 +322,35 @@ NOT shift external, unshifted clocks the suite also talks to:
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
 
-| Stage                                                          | Files   | Passed | Failed | Skipped |
-| -------------------------------------------------------------- | ------- | ------ | ------ | ------- |
-| Isolated DB, `db push`-provisioned (101-01, wave-1 baseline)   | 177/180 | 1929   | 4      | 3       |
-| Isolated DB, `migrate deploy`-provisioned (101-02, D-02 alone) | 180/180 | 1933   | **0**  | 3       |
-| + the TI-03 guard's own 14-case test file (101-02 final)       | 181/181 | 1947   | **0**  | 3       |
-| Phase 106 — parallel, N=4 databases (`fileParallelism: true`)  | 199/199 | 2231   | **0**  | 3       |
+| Stage                                                                                 | Files   | Passed | Failed | Skipped |
+| ------------------------------------------------------------------------------------- | ------- | ------ | ------ | ------- |
+| Isolated DB, `db push`-provisioned (101-01, wave-1 baseline)                          | 177/180 | 1929   | 4      | 3       |
+| Isolated DB, `migrate deploy`-provisioned (101-02, D-02 alone)                        | 180/180 | 1933   | **0**  | 3       |
+| + the TI-03 guard's own 14-case test file (101-02 final)                              | 181/181 | 1947   | **0**  | 3       |
+| Phase 106 — parallel, N=4 databases (`fileParallelism: true`)                         | 199/199 | 2231   | **0**  | 3       |
+| Phase 107 final — SHIFT_BASED Arbeitstage/Woche (feature phase, no test-infra change) | 204/204 | 2304   | **0**  | 3       |
+
+**Phase 107's own baseline reconciliation (107-08 Task 2), reported because it corrects the
+number above rather than merely restating it:** `107-VALIDATION.md` (written at Phase 107 plan
+time) cited "Phase 106 final = 2231" as the AC-REG-01 baseline. Re-measured empirically at
+Phase 107's actual branch point (`263ed0aa`, the merge-base with `main` — confirmed identical to
+`main`'s HEAD) by holding out every one of Phase 107's own new/extended test files
+(`workschedule-contract-workdays.test.ts`, `leave-provisional-approval.test.ts`,
+`shift-leave-recalc.test.ts`, `phorest-shift-leave-recalc.test.ts`,
+`leave-provisional-readside.test.ts`, and reverting `vacation-calc.test.ts` to its pre-phase
+content) while keeping Phase 107's source changes applied, the suite reports **199 files / 2236
+passed / 0 failed / 3 skipped** — 5 more than the cited 2231. A per-file diff between that run and
+the full Phase-107 run showed every one of the 199 pre-existing files reporting an IDENTICAL test
+count in both runs (only the 5 held-out files and `vacation-calc.test.ts` differed), so the +5 is
+not hidden growth inside any pre-existing file caused by this phase's source changes — it reflects
+`main` commits between "Phase 106 final" (the PR #60 merge) and `263ed0aa` (the later
+dependency-bump commit Phase 107 actually branched from) that are unrelated to Phase 107. Phase
+107's OWN test-file contribution is therefore exactly **+68** (2304 − 2236: 47 tests across five
+brand-new files + 21 new tests in `vacation-calc.test.ts`, verified via an isolated re-run of that
+file's pre-phase content — 32 tests — against its current 53), not the nominal +73 a naive
+`2304 − 2231` subtraction would suggest. The AC-REG-01 gate (`passed >= 2231`, `failed == 0`) is
+met either way; this note exists so Phase 108 starts from the correct **2304** figure instead of
+silently carrying the 5-test drift forward again.
 
 `test`-job CI wall clock, same job (`.github/workflows/ci.yml`'s `test` job), same runner
 shape: **BEFORE 1019s** (run `32994847691`, unmodified sequential config) → **FINAL 590s**
