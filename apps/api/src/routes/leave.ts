@@ -299,8 +299,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
+      // workDays (the array, not just the count) is still needed below for splitDaysAcrossYears.
       const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
+      // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
+      // only `.days` is used here, `.provisional` is deliberately discarded.
+      const { days } = await resolveLeaveDays(
+        app.prisma,
+        employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
 
       // Überschneidung mit eigenem Antrag prüfen.
       //
@@ -1503,8 +1515,16 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
+      const { days } = await resolveLeaveDays(
+        app.prisma,
+        existing.employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
 
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
@@ -1692,8 +1712,28 @@ export async function leaveRoutes(app: FastifyInstance) {
       const unionEnd = existing.endDate > end ? existing.endDate : end;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, unionStart, unionEnd);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09/D-10): roster-aware recompute of the corrected (NEW) range. Unlike
+      // POST /requests and the PENDING edit above, this path produces a new APPROVED value, so
+      // daysProvisional is also written below -- but only when the employee is actually
+      // SHIFT_BASED (a separate check, since resolveLeaveDays()'s `.provisional` is always
+      // `false` for every other type and would otherwise overwrite the column's `null` "not
+      // applicable" state with a misleading `false`).
+      const { days, provisional: correctionProvisional } = await resolveLeaveDays(
+        app.prisma,
+        existing.employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
+      const wsForCorrection = await app.prisma.workSchedule.findFirst({
+        where: { employeeId: existing.employeeId },
+        orderBy: { validFrom: "desc" },
+        select: { type: true },
+      });
+      const daysProvisionalForCorrection =
+        wsForCorrection?.type === "SHIFT_BASED" ? correctionProvisional : null;
 
       // Resolve the NEW leaveTypeId when the type changed (ensureLeaveType migrates
       // legacy names / creates the canonical type on demand).
@@ -1760,6 +1800,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             endDate: end,
             halfDay: body.halfDay,
             days,
+            daysProvisional: daysProvisionalForCorrection, // Phase 107 (D-10)
             note: body.note,
             leaveTypeId: newLeaveTypeId,
           },
@@ -2165,12 +2206,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
 
-      const [hours, days] = await Promise.all([
+      // Phase 107 (D-09): roster-aware live estimate, read-only, no persistence.
+      const [hours, leaveDaysPreview] = await Promise.all([
         getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
-        Promise.resolve(calculateWorkDays(start, end, isHalf, workDays, holidays)),
+        resolveLeaveDays(app.prisma, employeeId, tenantId, start, end, isHalf, holidays),
       ]);
+      const { days, provisional } = leaveDaysPreview;
 
       // WR-03 (code review) — exact integer minutes, computed with the SAME
       // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
@@ -2179,7 +2221,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // maxNegativeBalanceMinutes (already exact integer minutes from GET
       // /leave/overtime-balance) without reconstructing the server's exact-minute
       // gate through two different rounding paths.
-      return { hours: +hours.toFixed(2), days, minutesNeeded: Math.round(hours * 60) };
+      // `provisional` (Phase 107, D-09) additive: lets the request form show a
+      // "Vorläufig" hint before submission for a SHIFT_BASED period with no roster yet.
+      return {
+        hours: +hours.toFixed(2),
+        days,
+        provisional,
+        minutesNeeded: Math.round(hours * 60),
+      };
     },
   });
 
@@ -2813,15 +2862,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, credited.start, credited.end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, credit.employeeId, tenantId);
       // D-08: Halber Urlaubstag + ganztägige Krankheit → Gutschrift 0,5. Zurückgegeben wird
       // ausschließlich, was angerechnet war — der halfDay-Flag stammt daher vom URLAUBSantrag,
       // nicht von der Krankmeldung (halbe Kranktage sind systemweit verboten, leave.ts:239).
-      const creditedDays = calculateWorkDays(
+      // Phase 107 (D-09): the affected vacation can belong to a SHIFT_BASED employee, so the
+      // credit-back is routed through the same roster-aware resolver for consistency. `.days`
+      // only -- a credit-back is a REDUCTION of a prior deduction, never a new approved
+      // consumption, so no daysProvisional is written here.
+      const { days: creditedDays } = await resolveLeaveDays(
+        app.prisma,
+        credit.employeeId,
+        tenantId,
         credited.start,
         credited.end,
         credit.vacationRequest.halfDay,
-        workDays,
         holidays,
       );
       if (creditedDays <= 0) {
