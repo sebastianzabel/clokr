@@ -389,6 +389,11 @@ model WorkSchedule {
   // beim Anlegen neuer Mitarbeiter; pro MA überschreibbar via /admin/vacation.
   // Format: Array aus Wochentag-Nummern (0=So, 1=Mo, …, 6=Sa). Default: Mo-Fr.
   workDays                  Int[]        @default([1, 2, 3, 4, 5])
+  // Phase 107 (D-01): contractual workday count, SHIFT_BASED only. Null for
+  // FIXED_SCHEDULE / FLEXTIME / MONTHLY_HOURS by construction. The concrete weekdays
+  // for SHIFT_BASED come from the roster (Shift[]), never from this field or from
+  // workDays (which is frozen for SHIFT_BASED, see D-02).
+  contractWorkDaysPerWeek Int?
   // Phase 49.1 — FLEXTIME Kernarbeitszeit (optional; UI metadata only — does not affect calcExpectedMinutesTz)
   coreStart                 String? // HH:MM, FLEXTIME only
   coreEnd                   String? // HH:MM, FLEXTIME only
@@ -661,6 +666,11 @@ model LeaveRequest {
   endDate                 DateTime           @db.Date
   days                    Decimal            @db.Decimal(5, 2)
   halfDay                 Boolean            @default(false)
+  // Phase 107 (D-10/D-11): set at approval time only, server-derived, never accepted
+  // as client input. True means the stored `days` value was computed for at least one
+  // day without a roster (SHIFT_BASED only). Null on every pre-Phase-107 row and on
+  // every non-SHIFT_BASED request.
+  daysProvisional Boolean?
   status                  LeaveRequestStatus @default(PENDING)
   note                    String?
   reviewedBy              String?
