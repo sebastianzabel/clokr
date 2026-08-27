@@ -46,6 +46,7 @@
     coreEnd?: string | null;
     coreDays?: number[];
     workDays?: number[];
+    contractWorkDaysPerWeek?: number | null;
   }
 
   interface VacationEntitlement {
@@ -612,6 +613,8 @@
       ((sched as WorkSchedule & { workDays?: number[] })?.workDays?.length ?? 0) > 0
         ? [...((sched as WorkSchedule & { workDays?: number[] })?.workDays ?? [])]
         : [1, 2, 3, 4, 5];
+    // Phase 107 (D-01) — hydrate the vertragliche Anzahl alongside eWorkDays.
+    eContractWorkDays = sched?.contractWorkDaysPerWeek ?? null;
     eMon = sched ? Number(sched.mondayHours) : 8;
     eTue = sched ? Number(sched.tuesdayHours) : 8;
     eWed = sched ? Number(sched.wednesdayHours) : 8;
@@ -1242,6 +1245,9 @@
   let eCoreEnd = $state<string>("");
   let eCoreDays = $state<number[]>([]);
   let eWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
+  // Phase 107 (D-01/D-23) — vertragliche Anzahl Arbeitstage/Woche, SHIFT_BASED only.
+  // Writes EXCLUSIVELY contractWorkDaysPerWeek; never derives or touches eWorkDays.
+  let eContractWorkDays = $state<number | null>(null);
   let eMon = $state<number>(8);
   let eTue = $state<number>(8);
   let eWed = $state<number>(8);
@@ -1332,7 +1338,14 @@
       overtimeThreshold: eThreshold,
       allowOvertimePayout: ePayout,
       overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
-      workDays: eWorkDays,
+      // Phase 107 (D-02) — SHIFT_BASED never sends workDays; the server already
+      // freezes it (settings.ts), but omitting it here is defence in depth — a body
+      // that doesn't carry the value cannot express the old overwrite-by-guessing at
+      // all. Every other type keeps sending it unchanged.
+      ...(eType === "SHIFT_BASED" ? {} : { workDays: eWorkDays }),
+      // Phase 107 (D-01/D-23) — only meaningful for SHIFT_BASED; explicit null for
+      // every other type so a type switch away from SHIFT_BASED clears it server-side.
+      contractWorkDaysPerWeek: eType === "SHIFT_BASED" ? eContractWorkDays : null,
       validFrom: eValidFrom,
       ...extra,
     };
@@ -1905,36 +1918,36 @@
                 Schichtplan ist führend — Soll wird wöchentlich als Gesamtstunden erfasst.
               </p>
             </div>
-          {/if}
 
-          <!-- Arbeitstage/Woche (unabhängig vom AZ-Modell, Phase 49.5) -->
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="e-workdays">Arbeitstage/Woche</label>
-            <div class="input-suffix-wrap" style="max-width: 240px;">
-              <input
-                id="e-workdays"
-                type="number"
-                min="1"
-                max="7"
-                step="1"
-                class="form-input threshold-input"
-                value={eWorkDays.length}
-                oninput={(ev) => {
-                  const n = Math.max(
-                    1,
-                    Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
-                  );
-                  const canonical = [1, 2, 3, 4, 5, 6, 0];
-                  eWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
-                }}
-              />
-              <span class="input-suffix">Tage</span>
+            <!-- Phase 107 (D-22/D-23, issue #94) — writes EXCLUSIVELY
+                 contractWorkDaysPerWeek. The concrete weekdays come from the
+                 Schichtplan, not this field; eWorkDays is never read or written here. -->
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="e-contract-workdays">Arbeitstage/Woche</label>
+              <div class="input-suffix-wrap" style="max-width: 240px;">
+                <input
+                  id="e-contract-workdays"
+                  type="number"
+                  min="1"
+                  max="7"
+                  step="1"
+                  class="form-input threshold-input"
+                  value={eContractWorkDays}
+                  oninput={(ev) => {
+                    eContractWorkDays = Math.max(
+                      1,
+                      Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
+                    );
+                  }}
+                />
+                <span class="input-suffix">Tage</span>
+              </div>
+              <p class="form-hint">
+                Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind,
+                bestimmt der Schichtplan — nicht dieses Feld.
+              </p>
             </div>
-            <p class="form-hint">
-              Anzahl Arbeitstage pro Woche — unabhängig vom AZ-Modell. Quelle für Urlaubsverbrauch
-              und Pro-Rata-Urlaubsberechnung.
-            </p>
-          </div>
+          {/if}
 
           <!-- Threshold + Payout -->
           <div class="extra-row spaced-top-md">
