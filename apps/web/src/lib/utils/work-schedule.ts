@@ -165,6 +165,56 @@ export function countWorkingDaysInMonth(
  * @param holidayDeduction    the tenant monthlyHoursHolidayDeduction flag
  * @param holidayDateStrings  yyyy-MM-dd keys of public holidays (any range; filtered to this month)
  */
+// ── Phase 107 (D-22..D-26, issue #94) — Arbeitstage/Woche field decision ──
+//
+// The employee form (admin/employees/[id]/+page.svelte) renders exactly one
+// Arbeitstage/Woche variant per ScheduleType, inside that type's own {#if}
+// branch. This function is the single, pure, testable specification of that
+// mapping — the template's four branches (FIXED_SCHEDULE / FLEXTIME /
+// MONTHLY_HOURS / the SHIFT_BASED {:else} catch-all) must stay in sync with
+// it. Deliberately NOT wired into the template's {#if} conditions (Plan 02
+// Task 3): the four variants render entirely different markup (disabled
+// input / chip group / nothing / plain input), so routing the template
+// through this function would not reduce duplication, only add a layer —
+// its value here is a pinning test against regression, not reuse.
+export type ArbeitstageFieldVariant = "count" | "derived" | "chips" | "none";
+
+export function arbeitstageFieldVariant(
+  type: WorkScheduleLike["type"] | undefined,
+): ArbeitstageFieldVariant {
+  switch (type) {
+    case "FIXED_SCHEDULE":
+      return "derived"; // D-24: disabled, count of {day}Hours > 0
+    case "FLEXTIME":
+      return "chips"; // D-25: Mo-So weekday selector, writes workDays
+    case "MONTHLY_HOURS":
+      return "none"; // D-26: no field at all
+    case "SHIFT_BASED":
+    default:
+      return "count"; // D-23 (mirrors the template's own {:else} catch-all default)
+  }
+}
+
+/**
+ * Phase 107 (D-02/D-23) — the exact workDays/contractWorkDaysPerWeek slice of
+ * buildSchedulePayload() (admin/employees/[id]/+page.svelte's PUT body
+ * builder), extracted so it is unit-testable without mounting the component
+ * and so the component itself consumes the tested implementation rather than
+ * a parallel copy. SHIFT_BASED omits workDays entirely from the payload
+ * (defence in depth — the server freezes it regardless, D-02) and is the
+ * only type that ever sends a non-null contractWorkDaysPerWeek.
+ */
+export function buildContractWorkDaysPayload(
+  type: WorkScheduleLike["type"] | undefined,
+  workDays: number[],
+  contractWorkDaysPerWeek: number | null,
+): { workDays?: number[]; contractWorkDaysPerWeek: number | null } {
+  return {
+    ...(type === "SHIFT_BASED" ? {} : { workDays }),
+    contractWorkDaysPerWeek: type === "SHIFT_BASED" ? contractWorkDaysPerWeek : null,
+  };
+}
+
 export function monthlyBudgetSollMinutes(
   schedule: WorkScheduleLike | null | undefined,
   monthStart: Date,

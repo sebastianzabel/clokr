@@ -12,11 +12,16 @@
 // not the test. Investigate root cause — do not silently weaken.
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import {
   isWorkDay,
   getDayExpectedHours,
   countWorkingDaysInMonth,
   monthlyBudgetSollMinutes,
+  arbeitstageFieldVariant,
+  buildContractWorkDaysPayload,
   type WorkScheduleLike,
 } from "../work-schedule";
 
@@ -207,5 +212,83 @@ describe("monthlyBudgetSollMinutes — MONTHLY_HOURS flat budget (Item C)", () =
     const july = new Date(2026, 6, 1);
     expect(monthlyBudgetSollMinutes(nils(), july, 0, false, [])).toBe(0);
     expect(monthlyBudgetSollMinutes(null, july, BUDGET, false, [])).toBe(0);
+  });
+});
+
+// Phase 107 (D-22..D-26, issue #94) — Arbeitstage/Woche field decision. Pure,
+// standalone specification of which variant the employee form
+// (admin/employees/[id]/+page.svelte) renders per ScheduleType. See the
+// function's own doc comment for why this is deliberately NOT wired into the
+// template's {#if} branches (each variant renders entirely different
+// markup, so routing through this function would not reduce duplication).
+describe("arbeitstageFieldVariant (Phase 107 D-22..D-26)", () => {
+  it("SHIFT_BASED → 'count' (D-23: plain number input writing contractWorkDaysPerWeek)", () => {
+    expect(arbeitstageFieldVariant("SHIFT_BASED")).toBe("count");
+  });
+
+  it("FIXED_SCHEDULE → 'derived' (D-24: disabled, derived-count display)", () => {
+    expect(arbeitstageFieldVariant("FIXED_SCHEDULE")).toBe("derived");
+  });
+
+  it("FLEXTIME → 'chips' (D-25: Mo-So weekday selector writing workDays)", () => {
+    expect(arbeitstageFieldVariant("FLEXTIME")).toBe("chips");
+  });
+
+  it("MONTHLY_HOURS → 'none' (D-26: field absent entirely)", () => {
+    expect(arbeitstageFieldVariant("MONTHLY_HOURS")).toBe("none");
+  });
+
+  it("undefined type falls back to 'count', matching the template's own {:else} catch-all default", () => {
+    expect(arbeitstageFieldVariant(undefined)).toBe("count");
+  });
+});
+
+// Phase 107 (D-02/D-23) — the workDays/contractWorkDaysPerWeek slice of
+// buildSchedulePayload(), extracted and wired back into the component (not a
+// parallel copy) so this test exercises the real PUT-body-building code path.
+describe("buildContractWorkDaysPayload (Phase 107 D-02/D-23)", () => {
+  it("SHIFT_BASED: omits workDays entirely and emits the submitted contractWorkDaysPerWeek", () => {
+    const payload = buildContractWorkDaysPayload("SHIFT_BASED", [1, 2, 3, 4, 5], 4);
+    expect(payload).not.toHaveProperty("workDays");
+    expect(payload.contractWorkDaysPerWeek).toBe(4);
+  });
+
+  it("SHIFT_BASED with contractWorkDaysPerWeek=null (not yet hydrated) still omits workDays", () => {
+    const payload = buildContractWorkDaysPayload("SHIFT_BASED", [2, 3, 4, 5], null);
+    expect(payload).not.toHaveProperty("workDays");
+    expect(payload.contractWorkDaysPerWeek).toBeNull();
+  });
+
+  it.each(["FIXED_SCHEDULE", "FLEXTIME", "MONTHLY_HOURS"] as const)(
+    "%s: sends workDays unchanged and forces contractWorkDaysPerWeek to null",
+    (type) => {
+      const payload = buildContractWorkDaysPayload(type, [1, 2, 3, 4, 5], 4);
+      expect(payload.workDays).toEqual([1, 2, 3, 4, 5]);
+      expect(payload.contractWorkDaysPerWeek).toBeNull();
+    },
+  );
+});
+
+// Phase 107 (AC-FE-01, issue #94) — the 2026-06-04-style regression guard for
+// THIS bug: reads the route file's actual source off disk (precedent:
+// KontoSaldoCard.test.ts's COMPONENT_SOURCE) so a reintroduction of the
+// canonical-order weekday guess fails this suite even though it lives in
+// markup, not in a unit under test elsewhere in this file.
+describe("employee form source — canonical.slice absence (Phase 107 AC-FE-01)", () => {
+  const ROUTE_SOURCE = readFileSync(
+    path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../../routes/(app)/admin/employees/[id]/+page.svelte",
+    ),
+    "utf-8",
+  );
+
+  it("the employee form no longer derives a weekday set from a number via canonical.slice", () => {
+    expect(ROUTE_SOURCE).not.toContain("canonical.slice");
+  });
+
+  it("the old shared 'Arbeitstage/Woche' field id is gone; the SHIFT_BASED variant writes eContractWorkDays", () => {
+    expect(ROUTE_SOURCE).not.toContain('id="e-workdays"');
+    expect(ROUTE_SOURCE).toContain("eContractWorkDays");
   });
 });

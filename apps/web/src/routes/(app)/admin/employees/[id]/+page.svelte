@@ -21,7 +21,7 @@
     applyDefaults,
     isOverridden,
   } from "$lib/employee-classification";
-  import { isWorkDay } from "$lib/utils/work-schedule";
+  import { isWorkDay, buildContractWorkDaysPayload } from "$lib/utils/work-schedule";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -1338,14 +1338,13 @@
       overtimeThreshold: eThreshold,
       allowOvertimePayout: ePayout,
       overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
-      // Phase 107 (D-02) — SHIFT_BASED never sends workDays; the server already
-      // freezes it (settings.ts), but omitting it here is defence in depth — a body
-      // that doesn't carry the value cannot express the old overwrite-by-guessing at
-      // all. Every other type keeps sending it unchanged.
-      ...(eType === "SHIFT_BASED" ? {} : { workDays: eWorkDays }),
-      // Phase 107 (D-01/D-23) — only meaningful for SHIFT_BASED; explicit null for
-      // every other type so a type switch away from SHIFT_BASED clears it server-side.
-      contractWorkDaysPerWeek: eType === "SHIFT_BASED" ? eContractWorkDays : null,
+      // Phase 107 (D-02/D-23) — SHIFT_BASED never sends workDays (the server already
+      // freezes it in settings.ts; omitting it here is defence in depth — a body that
+      // doesn't carry the value cannot express the old overwrite-by-guessing at all)
+      // and is the only type that sends a non-null contractWorkDaysPerWeek. Extracted
+      // to a pure helper (apps/web/src/lib/utils/work-schedule.ts) so this exact slice
+      // is unit-testable without mounting the component.
+      ...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),
       validFrom: eValidFrom,
       ...extra,
     };
