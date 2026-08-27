@@ -1759,6 +1759,27 @@
                 <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
               </div>
             </div>
+
+            <!-- Phase 107 (D-22/D-24, issue #94) — read-only: structurally cannot
+                 overwrite workDays. Shows the same derived count normalizeWorkDays()
+                 computes server-side; disabled (not readonly, app.css has no
+                 :read-only rule) so it visibly reads as a consequence, not an input. -->
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="e-fixed-workdays">Arbeitstage/Woche</label>
+              <div class="input-suffix-wrap" style="max-width: 240px;">
+                <input
+                  id="e-fixed-workdays"
+                  type="number"
+                  class="form-input threshold-input"
+                  value={eWorkingDays}
+                  disabled
+                />
+                <span class="input-suffix">Tage</span>
+              </div>
+              <p class="form-hint">
+                Ergibt sich automatisch aus den oben eingetragenen Tagesstunden.
+              </p>
+            </div>
           {:else if eType === "FLEXTIME"}
             <div class="form-group">
               <label class="form-label" for="e-weekly-flex">Wochenstunden-Soll</label>
@@ -1823,6 +1844,31 @@
                   >
                 {/each}
               </div>
+            </div>
+
+            <!-- Phase 107 (D-22/D-25, issue #94) — bei FLEXTIME sind die Arbeitstage
+                 eine echte, vom Admin gepflegte Menge (Owner: "bei flextime legen wir
+                 ja die arbeitstage im ma fest"), keine geratene Ableitung. Klon des
+                 Kerntage-Chip-Musters oben, gebunden an workDays statt coreDays. -->
+            <div class="form-group">
+              <label class="form-label">Arbeitstage</label>
+              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
+                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                  <button
+                    type="button"
+                    class="wd-chip"
+                    class:wd-chip--active={eWorkDays.includes(day.value)}
+                    onclick={() => {
+                      if (eWorkDays.includes(day.value)) {
+                        eWorkDays = eWorkDays.filter((d) => d !== day.value);
+                      } else {
+                        eWorkDays = [...eWorkDays, day.value];
+                      }
+                    }}>{day.label}</button
+                  >
+                {/each}
+              </div>
+              <p class="form-hint">Wählen Sie die vertraglich festgelegten Arbeitstage aus.</p>
             </div>
           {:else if eType === "MONTHLY_HOURS"}
             <div class="form-group">
