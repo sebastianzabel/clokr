@@ -13,12 +13,21 @@
  * connection blocking the drop is a LOUD failure naming the database and the holding
  * backend(s), never a silent fallback to reuse.
  *
- * D-07/D-08: this script — and only this script — may drop a database, and only when the target
- * carries the `TEST_DATABASE_MARKER` (possession, the actual mechanism) AND its name is a worker
- * database in the anchored namespace (convenience, see `isWorkerDatabaseName`). The dev database
- * `clokr` carries no marker and is therefore STRUCTURALLY undroppable here, not merely excluded
- * by a naming convention. The template `clokr_test` is excluded too — `isWorkerDatabaseName` is
- * false for it, so the migrated template survives every reset. This file must NOT reach the
+ * D-07/D-08: this script — and only this script — may drop a database. It contains exactly two
+ * `DROP DATABASE` statements, and BOTH are gated:
+ *
+ *   1. The reset drop (`mayDropDatabase`) requires the target to carry the `TEST_DATABASE_MARKER`
+ *      (possession, the actual mechanism) AND to have a worker-namespace name (convenience, see
+ *      `isWorkerDatabaseName`).
+ *   2. The marker-stamp rollback (`mayRollbackDrop`) removes an orphan that — by construction —
+ *      has no marker yet, so possession cannot authorize it. It requires the worker-namespace name
+ *      AND membership in `WORKER_DATABASE_NAMES`, i.e. the exact set this run derived from the
+ *      template.
+ *
+ * The dev database `clokr` carries no marker, has a non-worker name, and is not in
+ * `WORKER_DATABASE_NAMES` — it is therefore STRUCTURALLY undroppable on both paths, not merely
+ * excluded by a naming convention. The template `clokr_test` is excluded too: `isWorkerDatabaseName`
+ * is false for it, so the migrated template survives every reset. This file must NOT reach the
  * production runtime image; apps/api/Dockerfile removes it from the runtime stage and asserts
  * its absence (D-08 gate).
  *
@@ -57,6 +66,21 @@ export function mayDropDatabase(name: string, marker: string | null): boolean {
 function fatal(message: string): never {
   console.error(message);
   process.exit(1);
+}
+
+/**
+ * Backstop for the ONE drop that cannot go through `mayDropDatabase` (WR-01): rolling back a
+ * freshly cloned worker database whose marker stamp failed. That orphan carries no marker by
+ * construction, so possession — the normal mechanism — is unavailable to authorize its removal.
+ *
+ * The name gate still applies, and membership in `WORKER_DATABASE_NAMES` is required on top of it,
+ * so the target is provably one of the N names THIS run derived from the template. The dev database
+ * `clokr` and the template `clokr_test` are absent from that set and fail `isWorkerDatabaseName`
+ * besides. Without this, reachability was the only thing standing between that statement and a
+ * non-worker database — a correct argument, but not an enforced one.
+ */
+export function mayRollbackDrop(name: string): boolean {
+  return isWorkerDatabaseName(name) && WORKER_DATABASE_NAMES.includes(name);
 }
 
 /** Escape single quotes for a `COMMENT ON DATABASE ... IS '<literal>'` statement. */
@@ -227,6 +251,13 @@ async function main(): Promise<void> {
         await workerClient.query(`COMMENT ON DATABASE "${name}" IS '${escaped}'`);
       } catch (err) {
         await workerClient.end().catch(() => {});
+        if (!mayRollbackDrop(name)) {
+          fatal(
+            `reset-test-databases: REFUSED to roll back "${name}" — it is not one of the ` +
+              `${WORKER_DATABASE_NAMES.length} worker databases this run derived from the ` +
+              `template, so it must not be dropped.\n  target: ${target}`,
+          );
+        }
         await maint.query(`DROP DATABASE "${name}" WITH (FORCE)`).catch(() => {});
         fatal(
           `reset-test-databases: FATAL — stamping the marker on "${name}" failed: ` +
