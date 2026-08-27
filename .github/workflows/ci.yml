@@ -126,6 +126,19 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @clokr/db exec prisma generate
 
+      - name: Runner capacity (Phase 106 / D-10 — measure, never assume)
+        # CONTEXT.md D-10 forbids assuming the documented 4 vCPU / 16 GB standard-runner spec.
+        # apps/api/vitest.config.ts pins a FIXED worker count derived from these numbers, so if
+        # GitHub ever changes the runner shape this step is the record that says so. Unconditional
+        # on purpose: the capacity record must exist even on runs where the API suite is skipped.
+        run: |
+          echo "nproc:              $(nproc)"
+          free -g
+          df -h /
+          echo "cgroup mem.max:     $(cat /sys/fs/cgroup/memory.max 2>/dev/null || echo 'n/a')"
+          echo "postgres max_connections:"
+          PGPASSWORD=password psql -h localhost -U clokr -d clokr -tAc 'SHOW max_connections'
+
       - name: Skip notice (no API-relevant changes)
         if: steps.changes.outputs.api != 'true'
         run: |
@@ -211,6 +224,26 @@ jobs:
         id: tests
         if: steps.changes.outputs.api == 'true'
         run: pnpm --filter @clokr/api test:coverage
+
+      - name: Prove every worker database was used (R2)
+        # Phase 106, D-02/T-106-19: run-level complement to
+        # src/__tests__/worker-database-isolation.test.ts (which can only prove isolation for the
+        # ONE worker its own test file happens to run in). Reads pg_stat_database's own write
+        # counters for every clokr_test_<n> — fails the job if any is missing or received zero
+        # writes, which would mean fewer than N workers actually ran.
+        if: steps.changes.outputs.api == 'true'
+        run: pnpm --filter @clokr/api exec tsx scripts/check-worker-database-usage.ts
+        env:
+          TEST_DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+      - name: Test completeness floor (D-09 — protects R6)
+        # Phase 106, D-09: hard floor over the vitest JSON reporter output (apps/api/vitest.config.ts
+        # `outputFile.json`). Parallelisation can silently collect fewer files; every collected test
+        # would still pass and coverage could still clear the 40% line threshold, so R6 would be
+        # violated in effect with nothing else turning red. See
+        # apps/api/scripts/check-test-completeness.mjs for the floor values and the remedy text.
+        if: steps.changes.outputs.api == 'true'
+        run: node apps/api/scripts/check-test-completeness.mjs apps/api/vitest-report.json
 
       - name: Run Web tests with coverage
         id: tests_web

@@ -8,17 +8,24 @@
  *
  * REFUSES, with a non-zero exit and BEFORE opening any connection, unless:
  *   - `TEST_DATABASE_URL` parses as a valid postgres:// URL,
- *   - its database name is EXACTLY `clokr_test` (test-database.ts's `TEST_DATABASE_NAME`),
+ *   - its database name is IN THE TEST NAMESPACE (test-database.ts's `TEST_DATABASE_NAME_PATTERN`
+ *     — the template `clokr_test` or a worker database `clokr_test_<n>`, Phase 106 D-06),
  *   - the URL carries no `schema` query parameter (the retired Prisma-only isolation mechanism, D-01),
  *   - and `NODE_ENV` is not `"production"`.
  * This refusal is what makes it safe to ship inside the runtime image — apps/api/Dockerfile copies
  * the whole `apps/api/` directory (see `:34`/`:81`), so this script IS present there.
  *
+ * Phase 106: this script now owns provisioning the template only (`clokr_test`) — but it accepts
+ * (and provisions) whatever namespace database it is pointed at, since `reset-test-databases.ts`'s
+ * clone phase (D-08) reuses the identical stamp-a-marker mechanism against each freshly-cloned
+ * worker database rather than restating it. Dropping and cloning the per-worker databases lives
+ * exclusively in `reset-test-databases.ts` (D-08) — never here.
+ *
  * On an accepted target: connects to the *maintenance* database (same URL, pathname swapped to
- * `/postgres`), creates `clokr_test` only if `pg_database` doesn't already list it (Postgres has no
- * `CREATE DATABASE IF NOT EXISTS` — a create failure is left fatal, never swallowed), then connects
- * to `clokr_test` itself and unconditionally (re-)stamps a `COMMENT ON DATABASE` marker so a re-run
- * repairs a missing comment. It issues NO DROP / TRUNCATE / DELETE under any input, ever.
+ * `/postgres`), creates the target database only if `pg_database` doesn't already list it (Postgres
+ * has no `CREATE DATABASE IF NOT EXISTS` — a create failure is left fatal, never swallowed), then
+ * connects to the target itself and unconditionally (re-)stamps a `COMMENT ON DATABASE` marker so a
+ * re-run repairs a missing comment. It issues NO DROP / TRUNCATE / DELETE under any input, ever.
  *
  * See apps/api/scripts/README.md for the inventory entry (classified: test infrastructure).
  *
@@ -33,6 +40,7 @@ import pg from "pg";
 import {
   TEST_DATABASE_NAME,
   TEST_DATABASE_MARKER,
+  isTestDatabaseName,
   parseDatabaseUrl,
   databaseNameOf,
   describeTarget,
@@ -62,10 +70,11 @@ async function main(): Promise<void> {
   if (process.env.NODE_ENV === "production") {
     refuse('NODE_ENV is "production" — this script must never run against production.', target);
   }
-  if (dbName !== TEST_DATABASE_NAME) {
+  if (!isTestDatabaseName(dbName)) {
     refuse(
-      `database name is "${dbName}", not the required "${TEST_DATABASE_NAME}". Refusing to ` +
-        `provision or touch any database other than the dedicated test target.`,
+      `database name is "${dbName}", which is outside the test namespace ` +
+        `("${TEST_DATABASE_NAME}" — the template — or "${TEST_DATABASE_NAME}_<n>"). Refusing to ` +
+        `provision or touch any database other than a dedicated test target.`,
       target,
     );
   }
@@ -86,12 +95,14 @@ async function main(): Promise<void> {
   try {
     await maintClient.connect();
     const existing = await maintClient.query("SELECT 1 FROM pg_database WHERE datname = $1", [
-      TEST_DATABASE_NAME,
+      dbName,
     ]);
     if (existing.rowCount === 0) {
-      // CREATE DATABASE cannot take a parameterised identifier. TEST_DATABASE_NAME is the fixed
-      // module constant "clokr_test" (never user input), so building the statement directly is safe.
-      await maintClient.query(`CREATE DATABASE "${TEST_DATABASE_NAME}"`);
+      // CREATE DATABASE cannot take a parameterised identifier. dbName has already passed the
+      // anchored namespace pattern (isTestDatabaseName above), so it can contain only
+      // "clokr_test" optionally followed by "_" and digits — no quoting hazard, and never user
+      // input in the sense of an arbitrary string.
+      await maintClient.query(`CREATE DATABASE "${dbName}"`);
       created = true;
     }
   } finally {
@@ -106,9 +117,10 @@ async function main(): Promise<void> {
       `${TEST_DATABASE_MARKER} — provisioned by apps/api/scripts/ensure-test-database.ts ` +
       `(Phase 101). Contents are disposable.`;
     // COMMENT ON DATABASE cannot take a parameterised literal either; escape single quotes
-    // defensively even though the marker text is a fixed constant, never user input.
+    // defensively even though the marker text is a fixed constant, never user input. dbName is
+    // interpolated for the same reason as the CREATE DATABASE statement above.
     const escaped = comment.replace(/'/g, "''");
-    await testClient.query(`COMMENT ON DATABASE "${TEST_DATABASE_NAME}" IS '${escaped}'`);
+    await testClient.query(`COMMENT ON DATABASE "${dbName}" IS '${escaped}'`);
   } finally {
     await testClient.end();
   }

@@ -1,10 +1,12 @@
 # API integration test database
 
 The `apps/api` integration suite (`pnpm --filter @clokr/api test`) connects to its own,
-genuinely separate PostgreSQL database — `clokr_test` — never the local dev database
-`clokr`. This document explains the arrangement, how to run the suite, how the database
-is provisioned, how to reset it, what the startup guard's abort means, and what flakiness
-is (and isn't) fixed by any of this. See
+genuinely separate PostgreSQL databases — never the local dev database `clokr`. As of
+Phase 106 the suite runs its test files in parallel, and each Vitest worker connects to its
+own database (`clokr_test_1` … `clokr_test_<n>`), cloned from a migrated template
+(`clokr_test`) — see "Worker databases" below. This document explains the arrangement, how
+to run the suite, how the databases are provisioned, how to reset them, what the startup
+guard's abort means, and what flakiness is (and isn't) fixed by any of this. See
 `.planning/phases/101-testisolation-integrationstests-schreiben-in-die-dev-datenbank/`
 for the full history (Phase 101, D-01/D-02).
 
@@ -34,6 +36,12 @@ pnpm --filter @clokr/api exec vitest run <path>
 
 `exec vitest run` bypasses pnpm's script lifecycle entirely, so it **skips `pretest`** —
 that's why `test:setup` has to be run first, by hand, for a targeted subset.
+
+The suite now runs `TEST_DATABASE_WORKER_COUNT` (`apps/api/src/utils/test-database.ts`, pinned
+at 4) test files in parallel — `apps/api/vitest.config.ts` sets `fileParallelism: true` and
+`maxWorkers: TEST_DATABASE_WORKER_COUNT` — with each worker connected to its own database
+(`clokr_test_1` … `clokr_test_<n>`). The commands above are unchanged; that is deliberate (see
+"Worker databases" below).
 
 **`pnpm --filter @clokr/api test -- <path>` does not work as a single-file filter.**
 Confirmed empirically, not assumed: the `--` is forwarded literally into vitest's own
@@ -93,47 +101,93 @@ property is what makes it a better fit here than an init-time-only mount.
 
 ## How provisioning works (D-02: `migrate deploy`, not `db push`)
 
-`test:setup` does two things, chained with `&&` (never `;` — an unset/empty
-`TEST_DATABASE_URL` must abort before the second command can fall through to any default):
+`test:setup` does three things now, chained with `&&` (never `;` — an unset/empty
+`TEST_DATABASE_URL` must abort before the next command can fall through to any default). The
+order is not negotiable — each step depends on the previous one having actually committed:
 
-1. `apps/api/scripts/ensure-test-database.ts` — creates the `clokr_test` database if it
-   doesn't already exist, and stamps a `COMMENT ON DATABASE` marker
+1. `apps/api/scripts/ensure-test-database.ts` — creates the `clokr_test` TEMPLATE database if
+   it doesn't already exist, and stamps a `COMMENT ON DATABASE` marker
    (`apps/api/src/utils/test-database.ts`'s `TEST_DATABASE_MARKER`) that the TI-03 startup
-   guard later checks for. Refuses (non-zero exit, before any connection) on a wrong
-   database name, a `?schema=` parameter, or `NODE_ENV=production`. Never issues
+   guard later checks for. Refuses (non-zero exit, before any connection) on a database name
+   outside the test namespace, a `?schema=` parameter, or `NODE_ENV=production`. Never issues
    `DROP`/`TRUNCATE`/`DELETE`.
-2. `prisma migrate deploy` against `clokr_test` — replays the committed migration history
-   (`packages/db/prisma/migrations/`), the same command `apps/api/docker-entrypoint.sh`
-   uses for every real environment. This **replaced** `prisma db push --accept-data-loss`
-   in Phase 101 plan 02 (D-02), because `db push` generates its schema from
-   `schema.prisma` alone and cannot express the project's hand-authored **partial** unique
-   indexes (`WHERE`-filtered — Prisma's schema DSL has no `WHERE` syntax). Those indexes
-   exist only as raw SQL inside specific migrations; `clokr_test` was silently missing all
-   three of them under `db push`, which masked real constraint-violation bugs behind
-   false-negative test passes. `migrate deploy` produces a byte-for-byte-correct replica
-   of what every other environment actually runs. See `docs/migrations.md` for the general
-   `migrate deploy` mechanics (P3005, the fresh-vs-baselined distinction) — the same rules
-   apply here.
+2. `prisma migrate deploy` against the TEMPLATE `clokr_test` — replays the committed
+   migration history (`packages/db/prisma/migrations/`), the same command
+   `apps/api/docker-entrypoint.sh` uses for every real environment. This **replaced**
+   `prisma db push --accept-data-loss` in Phase 101 plan 02 (D-02), because `db push`
+   generates its schema from `schema.prisma` alone and cannot express the project's
+   hand-authored **partial** unique indexes (`WHERE`-filtered — Prisma's schema DSL has no
+   `WHERE` syntax). Those indexes exist only as raw SQL inside specific migrations;
+   `clokr_test` was silently missing all three of them under `db push`, which masked real
+   constraint-violation bugs behind false-negative test passes. `migrate deploy` produces a
+   byte-for-byte-correct replica of what every other environment actually runs. See
+   `docs/migrations.md` for the general `migrate deploy` mechanics (P3005, the
+   fresh-vs-baselined distinction) — the same rules apply here. This step MUST run against the
+   template, not a worker database — see "Worker databases" below for why.
+3. `apps/api/scripts/reset-test-databases.ts` — drops and re-clones the N per-worker
+   databases (`clokr_test_1` … `clokr_test_<n>`) from the now-migrated template via
+   `CREATE DATABASE ... TEMPLATE`, and stamps each clone with the marker individually (Phase
+   106, D-04/D-05). This is the step that makes D-04 safe and cheap: because a `TEMPLATE` copy
+   is byte-for-byte, every worker database carries those three hand-authored partial indexes
+   too, and the "migrations replay cleanly from zero" property from step 2 is paid **once**
+   per `test:setup`, not once per worker.
 
-## Clean slate — resetting `clokr_test`
+## Worker databases
 
-Neither `db push` nor `migrate deploy` truncates data — they only sync schema. A killed
-test run, or simply enough accumulated local runs over time, leaves rows behind in
-`clokr_test`; the next run's `beforeAll` can then collide with a leftover row (e.g. a
-unique-constraint error on a fixture that assumes a clean table).
+- The TEMPLATE is `clokr_test` — migrated once per `test:setup`, never directly connected to
+  by a running test.
+- The workers are `clokr_test_1` … `clokr_test_<N>` (N = `TEST_DATABASE_WORKER_COUNT`,
+  currently 4), each a `CREATE DATABASE ... TEMPLATE` clone of the template.
+- The anchored namespace pattern is `^clokr_test(_\d+)?$` (Phase 106, D-06), and it lives in
+  exactly one place: `apps/api/src/utils/test-database.ts`'s `TEST_DATABASE_NAME_PATTERN`.
+  Nothing else in the repository restates it.
+- The name is convenience; the marker is still the actual authorization mechanism, exactly as
+  in Phase 101. A `TEMPLATE` copy does **not** inherit `COMMENT ON DATABASE` — it lives in
+  `pg_shdescription`, keyed to the database OID, not to anything schema- or data-level — which
+  is why `reset-test-databases.ts` stamps every worker database individually, immediately
+  after its own `CREATE DATABASE ... TEMPLATE`.
+- `apps/api/scripts/reset-test-databases.ts` is the only script in this repository that may
+  issue `DROP DATABASE`, and it is excluded from the production runtime image by an
+  `apps/api/Dockerfile` build gate (named-file removal plus a behavioural absence check).
 
-The reset for this project's docker stack — drop and recreate:
+## Clean slate — resetting the test databases
+
+Neither `db push` nor `migrate deploy` truncates data — they only sync schema. But as of Phase
+106, `reset-test-databases.ts` runs as the third link of every `test:setup` invocation and
+unconditionally drops and re-clones all N worker databases from the template — so residue in a
+worker database cannot survive a run (D-05). **Running `pnpm --filter @clokr/api run
+test:setup` is the routine remedy now**; the hand-rolled `DROP DATABASE` recipe below is no
+longer the everyday tool. It is still needed for two narrower cases:
+
+**(a) The TEMPLATE itself needs recreating** — e.g. a pre-Phase-101 `clokr_test` with no
+`_prisma_migrations` bookkeeping table (see the P3005 paragraph below):
 
 ```bash
 docker exec clokr-postgres-1 psql -U clokr -d postgres -c 'DROP DATABASE IF EXISTS clokr_test WITH (FORCE)'
 pnpm --filter @clokr/api run test:setup
 ```
 
-The Prisma-native alternative is `prisma db push --force-reset`, which Prisma itself gates
-behind the `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` environment variable (it refuses
-to run without it) — safe here since `clokr_test`'s contents are explicitly disposable (see
-its own marker comment). The `DROP DATABASE` form above is still preferred, because it also
-clears out any leftover `_prisma_migrations` history inconsistency, not just the app
+**(b) An unmarked worker database was left behind by a crashed run** — `reset-test-databases.ts`
+refuses to drop a database that is in the worker namespace but does not carry the marker (it
+cannot prove its own tooling created it), and prints the exact remedy, naming the database:
+
+```
+reset-test-databases: REFUSED to drop "clokr_test_1" — it is in the test namespace but does not
+  carry the "clokr-test-database:v1" marker, so this tooling cannot prove it created it.
+  ...
+  Remedy (destructive, do it deliberately):
+    docker exec clokr-postgres-1 psql -U clokr -d postgres -c 'DROP DATABASE "clokr_test_1" WITH (FORCE)'
+  then re-run: pnpm --filter @clokr/api run test:setup
+```
+
+This usually means a previous run died between `CREATE DATABASE` and the marker stamp — see
+`apps/api/scripts/reset-test-databases.ts`'s own header comment for the full rationale.
+
+The Prisma-native alternative for case (a) is `prisma db push --force-reset`, which Prisma
+itself gates behind the `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` environment variable (it
+refuses to run without it) — safe here since the template's contents are explicitly disposable
+(see its own marker comment). The `DROP DATABASE` form above is still preferred, because it
+also clears out any leftover `_prisma_migrations` history inconsistency, not just the app
 tables.
 
 **Before Phase 101, this force-reset advice was pointed at the wrong target and could not
@@ -154,30 +208,49 @@ predates Phase 101 plan 02 (i.e. it was provisioned by the old `db push`-based
 `test:setup`), it has the app's tables but no `_prisma_migrations` bookkeeping table —
 `migrate deploy` will refuse to run against it (`P3005: the database schema is not
 empty`), the same failure mode `docs/migrations.md` describes for int/prod's one-time
-baseline. The fix is the same drop-and-recreate above. This is never needed in CI, which
-always starts from a fresh Postgres service container, so it exercises the "migrations
+baseline. The fix is the same drop-and-recreate above (case (a)). This is never needed in CI,
+which always starts from a fresh Postgres service container, so it exercises the "migrations
 apply cleanly from zero" property on every run already.
 
 ## The startup guard (TI-03)
 
-Before any test file executes, `apps/api/vitest.setup.ts`'s `globalSetup` requires
-possession of the marker `ensure-test-database.ts` stamps
+Before any test file executes, `apps/api/vitest.setup.ts`'s `globalSetup` requires possession
+of the marker `ensure-test-database.ts`/`reset-test-databases.ts` stamp
 (`apps/api/scripts/test-database-guard.ts`'s `assertTestDatabaseMarker`) — not merely a
-matching database name. A wrong target aborts the entire run with zero tests executed and
-a message naming the actual host/port/database it found instead. A second, cheaper layer
-(`apps/api/vitest.worker-setup.ts`) re-checks inside every worker that the verified target
-actually propagated there. Neither layer can be bypassed by an environment variable or
-flag — see the guard's own header comment for the full rationale.
+matching database name — and, as of Phase 106, does so for the TEMPLATE **and every one of
+the N per-worker databases** by exact name, all in the parent process before a single worker
+is spawned. A wrong or missing target aborts the entire run with zero tests executed and a
+message naming the actual host/port/database it found instead. `globalSetup` deliberately
+assigns no `DATABASE_URL` itself.
+
+A second, per-worker layer (`apps/api/vitest.worker-setup.ts`, a `setupFiles` entry, so it
+runs once per test file inside every worker) now does two things: it re-checks that the
+verified target actually propagated into this worker's `process.env`, and it MAPS
+`VITEST_POOL_ID` to this worker's own database (`clokr_test_<n>`) — it is the single owner of
+the `DATABASE_URL` assignment in the whole harness. An unset or out-of-range pool id is a hard
+error, never a fallback to worker 1 or to the template. The reason this matters concretely: in
+CI, the fallback value that a silent default would resolve to is the `test` job's own
+`DATABASE_URL` — the dev-shaped reference database — so this layer is deliberately fail-closed
+rather than fail-open. Neither layer can be bypassed by an environment variable or flag — see
+each guard's own header comment for the full rationale.
 
 ## Known remaining flakiness
 
 Removing dev-data contamination removes **one** source of cross-run interference — it does
 not make the suite hermetic. Be honest about what is and isn't fixed:
 
-- **Suites still share one database within a single run.** `apps/api/vitest.config.ts`
-  pins `fileParallelism: false`, and cleanup between suites is per-suite (`afterAll`
-  /`afterEach` in each file), not a transaction rollback or a fresh database per file. A
-  test that leaks state can still affect a later test in the same run.
+- **Fixed by Phase 106: cross-suite interference across the whole run, and residue
+  surviving between runs.** As of Phase 106, `apps/api/vitest.config.ts` sets
+  `fileParallelism: true`; each of the N Vitest workers connects to its own database
+  (`clokr_test_1` … `clokr_test_<n>`, see "Worker databases" above), and `test:setup`
+  drops and re-clones every worker database from the migrated template on every
+  invocation (D-05) — so a test run always starts from a clean database, and a file can no
+  longer leak state into a file running in a _different_ worker. **Not fixed:** files that
+  land in the _same_ worker (roughly `199 / N` of them) still share that one worker's
+  database sequentially, with cleanup still per-suite (`afterAll`/`afterEach` in each
+  file), not a transaction rollback or a fresh database per file — a test that leaks state
+  can still affect a later test scheduled onto the same worker in the same run.
+  Per-test-file database isolation remains deferred.
 - **Hardcoded-date "time-bomb" tests.** Some fixtures use literal future dates that
   eventually become the past (e.g. a Phase-43 shift-override test hit this in 2026-08).
   Unrelated failure class, not touched by Phase 101.
@@ -237,8 +310,14 @@ NOT shift external, unshifted clocks the suite also talks to:
   against a DB-generated `createdAt` can produce a false positive/negative once the shift is large
   enough that the JS clock and the (unshifted) DB clock disagree about ordering
   (`presence-webhook.test.ts` REQ-10 hit this once during development of this harness, intermittently
-  depending on the exact shift/run-time combination). If you see this, name the exact test in your
-  summary — do not touch the assertion.
+  depending on the exact shift/run-time combination; `audit-trail.test.ts`'s "PUT
+  /api/v1/settings/work writes AuditLog with action UPDATE on TenantConfig" case hits the same
+  root cause deterministically at `CLOKR_TEST_FAKE_CLOCK=00:30` — the `beforeTs = new Date()`
+  cutoff is shifted into the past relative to the real, unshifted DB clock, so the `gte: beforeTs`
+  query matches every prior TenantConfig UPDATE audit log written during the run, and
+  `logs[0]` — unordered — can return one of those instead of this test's own entry; see Phase 106
+  plan 05's R7 section in `106-MEASUREMENTS.md` for the full four-way diagnosis). If you see this,
+  name the exact test in your summary — do not touch the assertion.
 
 **Measured effect of this phase** — reported as data, not as "fixed", taken directly from
 the plan 01/02 SUMMARYs:
@@ -248,6 +327,15 @@ the plan 01/02 SUMMARYs:
 | Isolated DB, `db push`-provisioned (101-01, wave-1 baseline)   | 177/180 | 1929   | 4      | 3       |
 | Isolated DB, `migrate deploy`-provisioned (101-02, D-02 alone) | 180/180 | 1933   | **0**  | 3       |
 | + the TI-03 guard's own 14-case test file (101-02 final)       | 181/181 | 1947   | **0**  | 3       |
+| Phase 106 — parallel, N=4 databases (`fileParallelism: true`)  | 199/199 | 2231   | **0**  | 3       |
+
+`test`-job CI wall clock, same job (`.github/workflows/ci.yml`'s `test` job), same runner
+shape: **BEFORE 1019s** (run `32994847691`, unmodified sequential config) → **FINAL 590s**
+(run `33014113453`, parallel + the one applied cost lever) — a genuine 429s / 42%
+improvement, but **NOT MET** against R1's 360s (6 min) target; the remaining driver (Vitest's
+own per-file `isolate: true` bootstrap cost, ~446s of the FINAL run) is named, not hidden, in
+`.planning/phases/106-.../106-MEASUREMENTS.md` § "R1 FINAL", with its two prerequisite fixes
+explicitly placed outside this phase's scope.
 
 No "before" run against the old shared-dev-database arrangement was ever performed
 deliberately — doing so would mean writing a test run into the dev database again, exactly
