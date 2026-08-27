@@ -770,6 +770,46 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 107-07 (D-19/D-20/D-21, read side): the persistent "Angepasst" marker on a
+      // request row. Sourced from the LEAVE_DAYS_ADJUSTED audit trail the shift-leave-recalc
+      // resolver writes (apps/api/src/utils/shift-leave-recalc-resolver.ts) — deliberately NOT
+      // a new persisted column, so there is exactly one trail (see 107-07-PLAN.md's own
+      // <design_decision>). ONE bulk query for the whole response, mirroring the
+      // section9Credits query above, reduced below to the latest row per entityId (orderBy
+      // desc + first-hit-wins); skipped entirely for an empty list so it costs zero extra
+      // queries. `daysProvisional` itself needs no extra query — it is already a plain scalar
+      // column on LeaveRequest and this handler's `include` (no `select`) already returns it.
+      const daysAdjustments = requestIds.length
+        ? await app.prisma.auditLog.findMany({
+            where: {
+              entity: "LeaveRequest",
+              entityId: { in: requestIds },
+              action: "LEAVE_DAYS_ADJUSTED",
+            },
+            orderBy: { createdAt: "desc" },
+            select: { entityId: true, oldValue: true, newValue: true, createdAt: true },
+          })
+        : [];
+      const lastDaysAdjustmentByRequestId = new Map<
+        string,
+        { oldDays: number; newDays: number; direction: "up" | "down"; at: string }
+      >();
+      for (const row of daysAdjustments) {
+        if (!row.entityId || lastDaysAdjustmentByRequestId.has(row.entityId)) continue; // desc order — first hit per id is already the latest
+        // Only oldValue.days/newValue.days are ever projected onto the response — never the
+        // whole audit JSON, never userId/ipAddress/userAgent (T-107-30).
+        const oldValue = row.oldValue as { days?: number } | null;
+        const newValue = row.newValue as { days?: number } | null;
+        const oldDays = Number(oldValue?.days ?? 0);
+        const newDays = Number(newValue?.days ?? 0);
+        lastDaysAdjustmentByRequestId.set(row.entityId, {
+          oldDays,
+          newDays,
+          direction: newDays > oldDays ? "up" : "down",
+          at: row.createdAt.toISOString(),
+        });
+      }
+
       return rows.map((r) => ({
         ...r,
         typeCode:
@@ -780,6 +820,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
         section9Status: section9StatusByRequestId.get(r.id)?.status ?? null,
         section9CreditId: section9StatusByRequestId.get(r.id)?.creditId ?? null,
+        // Phase 107-07 (D-19): the request's own persistent adjustment marker — the latest
+        // roster-triggered recompute only, `null` when the request was never adjusted.
+        lastDaysAdjustment: lastDaysAdjustmentByRequestId.get(r.id) ?? null,
       }));
     },
   });
@@ -2522,6 +2565,19 @@ export async function leaveRoutes(app: FastifyInstance) {
         select: { id: true, creditedDays: true, creditedStart: true, creditedEnd: true },
       });
 
+      // Phase 107-07 (D-12/D-13, read side): a SHIFT_BASED provisional VACATION request's
+      // `days` already counts at full value inside `usedDays` (selfHealUsedDays above sums
+      // every APPROVED request regardless of daysProvisional) — this query isolates just the
+      // provisional PORTION of that sum so the frontend can render it as its own,
+      // separately-labelled "Verbraucht (vorläufig)" row without touching usedDays/available
+      // itself. ONE bulk query for the whole employee, mirroring confirmedSection9Credits
+      // above — no query inside rows.map() below. `deletedAt: null` per CLAUDE.md's soft-delete
+      // rule (LeaveRequest is soft-deletable).
+      const provisionalLeaveRequests = await app.prisma.leaveRequest.findMany({
+        where: { employeeId, status: "APPROVED", daysProvisional: true, deletedAt: null },
+        select: { id: true, days: true, startDate: true, endDate: true, leaveTypeId: true },
+      });
+
       // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
       // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
       // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
@@ -2552,6 +2608,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         const creditsForYear = isVacationRow
           ? confirmedSection9Credits.filter((c) => c.creditedStart?.getUTCFullYear() === r.year)
           : [];
+        // Phase 107-07: matched on leaveTypeId (not just isVacationRow/year, unlike
+        // creditsForYear above) because daysProvisional can in principle be set on a
+        // non-VACATION SHIFT_BASED request too (see shift-leave-recalc-resolver.ts's own
+        // VACATION_LEAVE_TYPE_NAME docblock) — the exact leaveTypeId match keeps such a
+        // request's days out of an unrelated entitlement row's provisional sum.
+        const provisionalUsedDays = provisionalLeaveRequests
+          .filter((p) => p.leaveTypeId === r.leaveTypeId && p.startDate.getUTCFullYear() === r.year)
+          .reduce((sum, p) => sum + Number(p.days), 0);
         return {
           ...r,
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
@@ -2560,6 +2624,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // Phase 107-07 (D-12): the provisional portion of `usedDays` for this year — see the
+          // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
+          // provisional requests; every other field on this response is unchanged.
+          provisionalUsedDays,
           // D-31: die Gutschrift erscheint als eigene, erklärte Bewegungszeile — ein
           // stillschweigend höherer Restanspruch wirkt wie ein Fehler und erzeugt Rückfragen.
           section9Movements: creditsForYear.map((c) => ({
