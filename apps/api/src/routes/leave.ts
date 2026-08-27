@@ -3359,8 +3359,14 @@ function getEffectiveCarryOver(
 /**
  * Zieht Urlaubstage vom Entitlement ab: Resturlaub (sofern nicht verfallen) zuerst,
  * danach reguläre Tage.
+ *
+ * Exported (Phase 107, D-14): the shift-leave-recalc resolver
+ * (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) reuses this verbatim for its own
+ * VACATION-entitlement delta correction rather than reinventing the year/type resolution —
+ * `shifts.ts` imports it and passes it in as part of the resolver's `RecalcDeps`. Behaviour
+ * unchanged for every existing call site in this file.
  */
-async function deductVacationDays(
+export async function deductVacationDays(
   prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
@@ -3434,12 +3440,15 @@ class Section9MissingEntitlementError extends Error {
   }
 }
 
-type ReverseVacationResult = {
+export type ReverseVacationResult = {
   /** Years whose LeaveEntitlement row does not exist, so the decrement booked nothing (IN-05). */
   missingYears: number[];
 };
 
-async function reverseVacationDays(
+// Exported (Phase 107, D-14): reused verbatim by the shift-leave-recalc resolver for the
+// downward half of its VACATION-entitlement delta correction — see deductVacationDays()'s
+// export note above.
+export async function reverseVacationDays(
   prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
@@ -3498,9 +3507,15 @@ async function reverseVacationDays(
 /**
  * Gibt eine Map<dateStr, holidayName> für den angegebenen Zeitraum zurück.
  * Berücksichtigt das Bundesland des Tenants sowie manuell eingetragene Feiertage.
+ *
+ * Exported + widened to `DbClient` (Phase 107, D-14): the shift-leave-recalc resolver calls
+ * this through the SAME `tx` as its shift mutation (D-15), so the parameter type was widened
+ * from the stricter `FastifyInstance["prisma"]` to the `DbClient` union already used
+ * throughout this file — every existing call site (all pass `app.prisma`, one arm of the
+ * union) is behaviour-identical.
  */
-async function getHolidayMap(
-  prisma: FastifyInstance["prisma"],
+export async function getHolidayMap(
+  prisma: DbClient,
   tenantId: string,
   start: Date,
   end: Date,
@@ -3747,8 +3762,14 @@ async function resolveContractWorkDaysPerWeek(
  * `holidays` is the caller's already-computed Set (`getHolidayMap(...).keys()`, the same value
  * every existing calculateWorkDays() call site already builds) — this function does not fetch
  * holidays itself.
+ *
+ * Exported (Phase 107, D-14): this is the D-04 resolution chain's DB-fetching wrapper. The
+ * shift-leave-recalc resolver (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) calls this
+ * SAME function (via `shifts.ts`, which imports it and passes it in as part of `RecalcDeps`) to
+ * recompute a provisional request's days after a roster change — no second implementation of
+ * the count/day resolution chain is allowed to exist (D-04).
  */
-async function resolveLeaveDays(
+export async function resolveLeaveDays(
   prisma: DbClient,
   employeeId: string,
   tenantId: string,
