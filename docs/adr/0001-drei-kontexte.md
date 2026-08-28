@@ -12,7 +12,7 @@ Aussage muss es nicht.
 
 ## Kontext
 
-Clokr ist über mehrere Jahre als geschichteter Monolith gewachsen: `routes/`, `utils/`, `plugins/`,
+Clokr ist über mehrere Monate als geschichteter Monolith gewachsen: `routes/`, `utils/`, `plugins/`,
 `middleware/`, ein einziges Prisma-Schema mit 41 Modellen, ein zentrales Migrationsverzeichnis.
 Fachliche Grenzen existieren im Schema nur als Kommentartrenner (`// ZEITERFASSUNG`, `// URLAUB`,
 `// ABWESENHEITEN` in `packages/db/prisma/schema.prisma`).
