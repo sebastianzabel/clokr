@@ -269,20 +269,38 @@ describe("buildContractWorkDaysPayload (Phase 107 D-02/D-23)", () => {
   );
 });
 
+// Phase 107 gap closure (G-01/G-02, issue #94 follow-up, 107-UAT.md) — hoisted
+// to module scope so this ONE disk read is shared by the AC-FE-01 guard below
+// and the new G-01/G-02 blocks appended at the end of this file. Do not add a
+// second reader.
+const ROUTE_SOURCE = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../routes/(app)/admin/employees/[id]/+page.svelte",
+  ),
+  "utf-8",
+);
+
+// Phase 107 gap closure (G-01/G-02) — assertions are scoped to ONE schedule-type
+// branch each, because after this plan BOTH the FLEXTIME and the MONTHLY_HOURS
+// branch legitimately carry aria-label="Arbeitstage" (same concept, only one
+// branch renders at a time — see 107-09-PLAN.md <terminology_decision>). A
+// whole-file indexOf would silently assert against whichever comes first.
+const FLEXTIME_BRANCH = ROUTE_SOURCE.slice(
+  ROUTE_SOURCE.indexOf('{:else if eType === "FLEXTIME"}'),
+  ROUTE_SOURCE.indexOf('{:else if eType === "MONTHLY_HOURS"}'),
+);
+const MONTHLY_HOURS_BRANCH = ROUTE_SOURCE.slice(
+  ROUTE_SOURCE.indexOf('{:else if eType === "MONTHLY_HOURS"}'),
+  ROUTE_SOURCE.indexOf("<!-- SHIFT_BASED -->"),
+);
+
 // Phase 107 (AC-FE-01, issue #94) — the 2026-06-04-style regression guard for
 // THIS bug: reads the route file's actual source off disk (precedent:
 // KontoSaldoCard.test.ts's COMPONENT_SOURCE) so a reintroduction of the
 // canonical-order weekday guess fails this suite even though it lives in
 // markup, not in a unit under test elsewhere in this file.
 describe("employee form source — canonical.slice absence (Phase 107 AC-FE-01)", () => {
-  const ROUTE_SOURCE = readFileSync(
-    path.join(
-      path.dirname(fileURLToPath(import.meta.url)),
-      "../../../routes/(app)/admin/employees/[id]/+page.svelte",
-    ),
-    "utf-8",
-  );
-
   it("the employee form no longer derives a weekday set from a number via canonical.slice", () => {
     expect(ROUTE_SOURCE).not.toContain("canonical.slice");
   });
@@ -290,5 +308,133 @@ describe("employee form source — canonical.slice absence (Phase 107 AC-FE-01)"
   it("the old shared 'Arbeitstage/Woche' field id is gone; the SHIFT_BASED variant writes eContractWorkDays", () => {
     expect(ROUTE_SOURCE).not.toContain('id="e-workdays"');
     expect(ROUTE_SOURCE).toContain("eContractWorkDays");
+  });
+});
+
+describe("employee form — FLEXTIME Arbeitstage vs. Kerntage (Phase 107 gap G-01)", () => {
+  it("branch slice is non-empty (sanity — a renamed branch marker must fail loudly, not silently assert against an empty string)", () => {
+    expect(FLEXTIME_BRANCH.length).toBeGreaterThan(0);
+  });
+
+  it('carries exactly one aria-label="Arbeitstage" group', () => {
+    const matches = FLEXTIME_BRANCH.match(/aria-label="Arbeitstage"/g) ?? [];
+    expect(matches).toHaveLength(1);
+  });
+
+  it("Arbeitstage renders BEFORE the Kernarbeitszeit (optional) heading — the authoritative control is no longer nested inside it", () => {
+    expect(FLEXTIME_BRANCH.indexOf('aria-label="Arbeitstage"')).toBeLessThan(
+      FLEXTIME_BRANCH.indexOf("Kernarbeitszeit (optional)"),
+    );
+  });
+
+  it("Kerntage stays inside the Kernarbeitszeit (optional) section", () => {
+    expect(FLEXTIME_BRANCH.indexOf("Kernarbeitszeit (optional)")).toBeLessThan(
+      FLEXTIME_BRANCH.indexOf('aria-label="Kerntage"'),
+    );
+  });
+
+  it("Arbeitstage carries a hint naming its two consequences", () => {
+    expect(FLEXTIME_BRANCH).toContain(
+      "Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Soll-Verteilung.",
+    );
+  });
+
+  it("Kerntage carries a hint stating it affects neither Soll nor Urlaub, placed after the Kerntage chips", () => {
+    const hint = "Nur zur Information — wirkt sich weder auf das Soll noch auf den Urlaub aus.";
+    expect(FLEXTIME_BRANCH).toContain(hint);
+    expect(FLEXTIME_BRANCH.indexOf(hint)).toBeGreaterThan(
+      FLEXTIME_BRANCH.indexOf('aria-label="Kerntage"'),
+    );
+  });
+
+  it("the old do-what-not-why hint is gone", () => {
+    expect(FLEXTIME_BRANCH).not.toContain(
+      "Wählen Sie die vertraglich festgelegten Arbeitstage aus.",
+    );
+  });
+});
+
+describe("employee form — MONTHLY_HOURS Arbeitstage (Phase 107 gap G-02)", () => {
+  it("branch slice is non-empty (sanity — a renamed branch marker must fail loudly, not silently assert against an empty string)", () => {
+    expect(MONTHLY_HOURS_BRANCH.length).toBeGreaterThan(0);
+  });
+
+  it("the string 'Feste Arbeitstage' no longer exists anywhere in the route source", () => {
+    expect(ROUTE_SOURCE).not.toContain("Feste Arbeitstage");
+  });
+
+  it("the chip row is labelled Arbeitstage (not Feste Arbeitstage)", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain('<span class="form-label">Arbeitstage</span>');
+  });
+
+  it("the chip group is a labelled role=group, structurally identical to the FLEXTIME one", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain('aria-label="Arbeitstage"');
+    expect(MONTHLY_HOURS_BRANCH).toContain('role="group"');
+  });
+
+  it("carries a hint naming Urlaubsverbrauch and Urlaubsanspruch as its consequences (closes D-27 for the fourth type)", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain(
+      "Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Urlaubsanspruch.",
+    );
+  });
+
+  it("the Stunden/Monat hint no longer claims 'Keine festen Wochentage', which the chip row below it contradicts", () => {
+    expect(MONTHLY_HOURS_BRANCH).not.toContain("Keine festen Wochentage");
+  });
+
+  it("the Stunden/Monat hint keeps only the true half: no daily targets", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain(
+      "Soll wird monatlich berechnet — es gibt keine Tagesziele.",
+    );
+  });
+});
+
+// G-01/G-02 are presentation-only. The MONTHLY_HOURS chips write workDays
+// INDIRECTLY: they set mondayHours…sundayHours to 1/0, and the server derives
+// workDays from exactly those via normalizeWorkDays() (apps/api/src/routes/
+// settings.ts:1034). Changing the write path here would silently rewrite every
+// existing MONTHLY_HOURS employee's workDays — their Urlaubsverbrauch
+// (calculateWorkDays) and their Pro-Rata-Anspruch (countWorkDaysPerWeek). These
+// assertions are the guard. If one of them ever fails, the change is wrong; do
+// not relax the assertion.
+describe("employee form — schedule payload is unchanged by the G-01/G-02 presentation fix", () => {
+  it("all seven day-hours ternaries in buildSchedulePayload() are byte-identical", () => {
+    expect(ROUTE_SOURCE).toContain(
+      'mondayHours: eType === "FIXED_SCHEDULE" ? eMon : eMonWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'tuesdayHours: eType === "FIXED_SCHEDULE" ? eTue : eTueWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'wednesdayHours: eType === "FIXED_SCHEDULE" ? eWed : eWedWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'thursdayHours: eType === "FIXED_SCHEDULE" ? eThu : eThuWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'fridayHours: eType === "FIXED_SCHEDULE" ? eFri : eFriWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'saturdayHours: eType === "FIXED_SCHEDULE" ? eSat : eSatWd ? 1 : 0,',
+    );
+    expect(ROUTE_SOURCE).toContain(
+      'sundayHours: eType === "FIXED_SCHEDULE" ? eSun : eSunWd ? 1 : 0,',
+    );
+  });
+
+  it("the buildContractWorkDaysPayload spread is unchanged", () => {
+    expect(ROUTE_SOURCE).toContain(
+      "...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),",
+    );
+  });
+
+  it("the relabelled MONTHLY_HOURS chips still write the same seven booleans", () => {
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eMonWd = !eMonWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eTueWd = !eTueWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eWedWd = !eWedWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eThuWd = !eThuWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eFriWd = !eFriWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eSatWd = !eSatWd)");
+    expect(MONTHLY_HOURS_BRANCH).toContain("(eSunWd = !eSunWd)");
   });
 });
