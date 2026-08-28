@@ -1893,7 +1893,7 @@
                 />
                 <span class="input-suffix">Stunden</span>
               </div>
-              <p class="form-hint">Keine festen Wochentage – Soll wird monatlich berechnet.</p>
+              <p class="form-hint">Soll wird monatlich berechnet — es gibt keine Tagesziele.</p>
             </div>
 
             <div class="form-group">
@@ -1904,9 +1904,18 @@
               </select>
             </div>
 
+            <!-- Phase 107 gap G-02 (UAT 2026-08-28) — these chips DO set workDays, just
+                 indirectly: buildSchedulePayload() sends them as mondayHours…sundayHours =
+                 1/0 and the server derives workDays from exactly those via
+                 normalizeWorkDays() (apps/api/src/routes/settings.ts:1034). D-26's decision
+                 to hide the redundant NUMERIC count stands — the chips express the set
+                 exactly — but its stated reason ("kennt keine Tagesziele, das Feld wäre
+                 irreführend") was wrong about workDays. The write path is deliberately
+                 untouched: changing it would rewrite every existing MONTHLY_HOURS
+                 employee's workDays, and with it their Urlaubsverbrauch and Anspruch. -->
             <div class="form-group">
-              <span class="form-label">Feste Arbeitstage</span>
-              <div class="weekday-chips">
+              <span class="form-label">Arbeitstage</span>
+              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
                 <button
                   type="button"
                   class="wd-chip"
@@ -1950,6 +1959,9 @@
                   onclick={() => (eSunWd = !eSunWd)}>So</button
                 >
               </div>
+              <p class="form-hint">
+                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Urlaubsanspruch.
+              </p>
             </div>
           {:else}
             <!-- SHIFT_BASED -->
