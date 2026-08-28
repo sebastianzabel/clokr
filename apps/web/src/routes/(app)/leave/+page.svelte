@@ -1446,17 +1446,32 @@
                   <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
                 </div>
               {/if}
+              <!-- Phase 107 gap G-03: the label is CONDITIONAL on purpose. "(bestätigt)" is a
+                   qualifier that only means something next to the "Verbraucht (vorläufig)" row
+                   below, which renders only for SHIFT_BASED provisional consumption. At
+                   provisionalUsed === 0 that row is absent, so the qualifier would pose a
+                   contrast the card never resolves — we fall back to "Genommen", the pre-107
+                   wording still used by this page's own summary strip, admin/employees/[id]
+                   and reports. Same predicate as the #if guard below, so the pair is always
+                   rendered together or not at all. Do NOT collapse this back to a constant. -->
               <div class="balance-row">
-                <span class="balance-label">Verbraucht (bestätigt)</span>
+                <span class="balance-label"
+                  >{vacationBalance.provisionalUsed > 0
+                    ? "Verbraucht (bestätigt)"
+                    : "Genommen"}</span
+                >
                 <span class="balance-value"
                   >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
                 >
               </div>
               {#if vacationBalance.provisionalUsed > 0}
-                <!-- Phase 107-07 (D-12): omitted entirely at zero — a reader with no
-                     SHIFT_BASED provisional consumption must see a card indistinguishable
-                     from before this phase. Muted like Phase 97's "Laufender Monat
-                     (Prognose)" row (same class, same "true today, may change" meaning). -->
+                <!-- Phase 107-07 (D-12): omitted entirely at zero — that omission plus the
+                     conditional label above (gap G-03) is what makes the card indistinguishable
+                     from before this phase for a reader with no SHIFT_BASED provisional
+                     consumption; dropping this row alone would leave a dangling "(bestätigt)"
+                     qualifier up there with nothing to contrast against. Muted like Phase 97's
+                     "Laufender Monat (Prognose)" row (same class, same "true today, may change"
+                     meaning). -->
                 <div class="balance-row">
                   <span class="balance-label">Verbraucht (vorläufig)</span>
                   <span class="balance-value balance-value--muted"
