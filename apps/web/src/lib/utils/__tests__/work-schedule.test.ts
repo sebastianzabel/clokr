@@ -438,3 +438,18 @@ describe("employee form — schedule payload is unchanged by the G-01/G-02 prese
     expect(MONTHLY_HOURS_BRANCH).toContain("(eSunWd = !eSunWd)");
   });
 });
+
+// Phase 107 Plan 10 (deferred-items.md item 2) — all five chip/segment groups
+// on this tab (Arbeitszeitmodell, FLEXTIME Arbeitstage, FLEXTIME Kerntage,
+// MONTHLY_HOURS Arbeitstage, BS-Modus) now share one markup shape.
+describe("employee form — group controls carry no orphan <label> (deferred-items item 2)", () => {
+  it('no bare <label class="form-label"> (without a for attribute) remains in the route', () => {
+    // A <label> may only reference a form control. Every chip/segment group on
+    // this tab is a set of <button>s inside a role-carrying container, so the
+    // accessible name lives on the container's aria-label and the visible text
+    // is a <span>. Re-adding a bare <label class="form-label"> here reintroduces
+    // the a11y_label_has_associated_control finding recorded in deferred-items.md
+    // item 2.
+    expect(ROUTE_SOURCE).not.toContain('<label class="form-label">');
+  });
+});

@@ -1649,7 +1649,7 @@
 
           <!-- Type picker -->
           <div class="form-group">
-            <label class="form-label">Arbeitszeitmodell</label>
+            <span class="form-label">Arbeitszeitmodell</span>
             <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
               {#each [{ value: "FIXED_SCHEDULE", label: "Fester Stundenplan", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden (Minijob)", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Schichtplan", tooltip: "Schichtplan ist führend. Wochenstunden als Soll-Target." }] as seg (seg.value)}
                 <button
@@ -1805,7 +1805,7 @@
                  under a heading that says "(optional)". Placement is the fix; the chips
                  themselves are unchanged. -->
             <div class="form-group">
-              <label class="form-label">Arbeitstage</label>
+              <span class="form-label">Arbeitstage</span>
               <div class="weekday-chips" role="group" aria-label="Arbeitstage">
                 {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
                   <button
@@ -1857,7 +1857,7 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">Kerntage</label>
+              <span class="form-label">Kerntage</span>
               <div class="weekday-chips" role="group" aria-label="Kerntage">
                 {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
                   <button
@@ -2271,7 +2271,7 @@
                          Arbeitszeitmodell widget above so the BS section visually fits
                          the rest of the Arbeitszeit tab. -->
                     <div class="form-group">
-                      <label class="form-label">BS-Modus</label>
+                      <span class="form-label">BS-Modus</span>
                       <div class="schedule-type-picker" role="radiogroup" aria-label="BS-Modus">
                         <button
                           type="button"
