@@ -8,6 +8,10 @@
 // tests, no component mount, because vacation-balance.ts is a pure, dependency-free
 // module by design.
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 import {
   mapVacationBalance,
@@ -204,5 +208,106 @@ describe("resolveAdjustmentBadge", () => {
       at: "2026-03-01T09:15:00.000Z",
     })!;
     expect(fromDateOnly.tooltip).toBe(fromDateTime.tooltip);
+  });
+});
+
+// ── Phase 107 gap G-03 — Urlaubskonto label ─────────────────────────────────
+// The label lives in markup this suite never mounts, so pin it by reading the
+// route source off disk (precedent: work-schedule.test.ts's ROUTE_SOURCE).
+// Deliberately NOT solved by exporting a label helper from vacation-balance.ts:
+// the mapper does not and must not know about UI copy.
+const LEAVE_ROUTE_SOURCE = readFileSync(
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../routes/(app)/leave/+page.svelte",
+  ),
+  "utf-8",
+);
+
+// Scoped to the VACATION Urlaubskonto card only: this page has a SECOND
+// `balance-box` (the OVERTIME_COMP one) above it and a summary strip with its
+// own "Genommen" (`vac-stat-label`) below it — a whole-file indexOf would
+// assert against the wrong occurrence.
+const URLAUBSKONTO_START = LEAVE_ROUTE_SOURCE.indexOf("<!-- Urlaubssaldo-Info -->");
+const URLAUBSKONTO_END = LEAVE_ROUTE_SOURCE.indexOf("Anmerkung (optional)");
+const URLAUBSKONTO_BLOCK = LEAVE_ROUTE_SOURCE.slice(URLAUBSKONTO_START, URLAUBSKONTO_END);
+
+// The block's own comments legitimately QUOTE both label strings while
+// explaining the G-03 rule, so occurrence counts are taken on markup only —
+// otherwise the counts would measure prose, not what the card renders.
+const URLAUBSKONTO_MARKUP = URLAUBSKONTO_BLOCK.replace(/<!--[\s\S]*?-->/g, "");
+
+// Prettier (printWidth 100) wraps the ternary across three source lines, so the
+// text pins below run against a whitespace-collapsed copy. Collapsing whitespace
+// does not weaken them: predicate, both branch strings and the ternary structure
+// are still asserted as one contiguous expression.
+const URLAUBSKONTO_MARKUP_FLAT = URLAUBSKONTO_MARKUP.replace(/\s+/g, " ");
+
+const LABEL_TERNARY = 'vacationBalance.provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen"';
+const VORLAEUFIG_GUARD = "{#if vacationBalance.provisionalUsed > 0}";
+
+/** Occurrence count without regex escaping (the labels contain parentheses). */
+function countOf(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+describe("leave route source — Urlaubskonto confirmed-consumption label (Phase 107 G-03)", () => {
+  it("finds both slice markers, so a rename fails loudly instead of asserting on an empty string", () => {
+    expect(URLAUBSKONTO_START).toBeGreaterThanOrEqual(0);
+    expect(URLAUBSKONTO_END).toBeGreaterThan(URLAUBSKONTO_START);
+    expect(URLAUBSKONTO_BLOCK.length).toBeGreaterThan(0);
+  });
+
+  it("renders each of the two label strings exactly once in the card's markup", () => {
+    expect(countOf(URLAUBSKONTO_MARKUP, "Genommen")).toBe(1);
+    expect(countOf(URLAUBSKONTO_MARKUP, "Verbraucht (bestätigt)")).toBe(1);
+  });
+
+  it("pins BOTH branches to a single ternary on provisionalUsed", () => {
+    expect(URLAUBSKONTO_MARKUP_FLAT).toContain(LABEL_TERNARY);
+  });
+
+  it("uses the identical predicate as the vorläufig row's guard (the pair invariant)", () => {
+    // If these two ever diverge, "(bestätigt)" can render without the
+    // "Verbraucht (vorläufig)" row it contrasts against — that is exactly bug
+    // G-03. Same predicate string = pair renders together or not at all.
+    expect(URLAUBSKONTO_MARKUP).toContain(VORLAEUFIG_GUARD);
+    expect(LABEL_TERNARY.startsWith("vacationBalance.provisionalUsed > 0")).toBe(true);
+    expect(VORLAEUFIG_GUARD).toContain("vacationBalance.provisionalUsed > 0");
+  });
+
+  it("places the label ternary above the vorläufig row", () => {
+    expect(URLAUBSKONTO_MARKUP_FLAT.indexOf(LABEL_TERNARY)).toBeLessThan(
+      URLAUBSKONTO_MARKUP_FLAT.indexOf(VORLAEUFIG_GUARD),
+    );
+  });
+
+  it("leaves the confirmed-days value expression untouched", () => {
+    expect(URLAUBSKONTO_MARKUP).toContain(
+      "{vacationBalance.used - vacationBalance.provisionalUsed}",
+    );
+  });
+});
+
+/** Local mirror of the template's ternary — deliberately NOT imported from
+ * vacation-balance.ts (the mapper does not and must not know about labels). The
+ * source pin above is what keeps this mirror honest: it asserts the real
+ * template expression, so this table cannot silently drift from what renders. */
+const labelFor = (provisionalUsed: number) =>
+  provisionalUsed > 0 ? "Verbraucht (bestätigt)" : "Genommen";
+
+describe("Urlaubskonto label rule — UAT fixtures (Phase 107 G-03)", () => {
+  it.each([
+    // Observed in the Phase 107 UAT browser pass (107-UAT.md test 3):
+    [0, "Genommen"], // 3-row card: 12 / −3 / 9, no vorläufig row
+    [5, "Verbraucht (bestätigt)"], // 4-row card: 30 / −6 / −5 muted / 19
+    [8, "Verbraucht (bestätigt)"], // 4-row card: 24 / −0 / −8 muted / 16
+  ])("provisionalUsed=%i renders the label %s", (provisionalUsed, expected) => {
+    expect(labelFor(provisionalUsed as number)).toBe(expected);
+  });
+
+  it("cannot outlive a copy change in the template", () => {
+    expect(URLAUBSKONTO_MARKUP).toContain(labelFor(0));
+    expect(URLAUBSKONTO_MARKUP).toContain(labelFor(1));
   });
 });
