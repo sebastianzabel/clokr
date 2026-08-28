@@ -1796,6 +1796,37 @@
               </div>
             </div>
 
+            <!-- Phase 107 gap G-01 (UAT 2026-08-28) — Arbeitstage belongs to the
+                 contract data ABOVE the Kernarbeitszeit heading, not inside it. It is
+                 authoritative for Urlaubsverbrauch (calculateWorkDays), Pro-Rata-Anspruch
+                 (countWorkDaysPerWeek) and, since v1.9.12, the Soll distribution — the
+                 exact opposite of the Kerntage chips below, which the schema documents as
+                 "UI metadata only". Two identical-looking chip rows must not sit adjacent
+                 under a heading that says "(optional)". Placement is the fix; the chips
+                 themselves are unchanged. -->
+            <div class="form-group">
+              <label class="form-label">Arbeitstage</label>
+              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
+                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                  <button
+                    type="button"
+                    class="wd-chip"
+                    class:wd-chip--active={eWorkDays.includes(day.value)}
+                    onclick={() => {
+                      if (eWorkDays.includes(day.value)) {
+                        eWorkDays = eWorkDays.filter((d) => d !== day.value);
+                      } else {
+                        eWorkDays = [...eWorkDays, day.value];
+                      }
+                    }}>{day.label}</button
+                  >
+                {/each}
+              </div>
+              <p class="form-hint">
+                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Soll-Verteilung.
+              </p>
+            </div>
+
             <h3 class="modal-section-heading">Kernarbeitszeit (optional)</h3>
             <p class="form-hint">
               Zeitfenster, in dem alle Mitarbeiter anwesend sein müssen. Leer lassen für reine
@@ -1843,31 +1874,9 @@
                   >
                 {/each}
               </div>
-            </div>
-
-            <!-- Phase 107 (D-22/D-25, issue #94) — bei FLEXTIME sind die Arbeitstage
-                 eine echte, vom Admin gepflegte Menge (Owner: "bei flextime legen wir
-                 ja die arbeitstage im ma fest"), keine geratene Ableitung. Klon des
-                 Kerntage-Chip-Musters oben, gebunden an workDays statt coreDays. -->
-            <div class="form-group">
-              <label class="form-label">Arbeitstage</label>
-              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
-                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
-                  <button
-                    type="button"
-                    class="wd-chip"
-                    class:wd-chip--active={eWorkDays.includes(day.value)}
-                    onclick={() => {
-                      if (eWorkDays.includes(day.value)) {
-                        eWorkDays = eWorkDays.filter((d) => d !== day.value);
-                      } else {
-                        eWorkDays = [...eWorkDays, day.value];
-                      }
-                    }}>{day.label}</button
-                  >
-                {/each}
-              </div>
-              <p class="form-hint">Wählen Sie die vertraglich festgelegten Arbeitstage aus.</p>
+              <p class="form-hint">
+                Nur zur Information — wirkt sich weder auf das Soll noch auf den Urlaub aus.
+              </p>
             </div>
           {:else if eType === "MONTHLY_HOURS"}
             <div class="form-group">
