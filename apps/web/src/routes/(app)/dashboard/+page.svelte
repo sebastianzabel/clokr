@@ -24,6 +24,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-04
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -892,6 +893,11 @@
 
   async function confirmReopen(): Promise<void> {
     if (clockLoading) return;
+    // The 5 s poll can change the day underneath an open dialog. Re-check before sending.
+    if (!canReopenFinishedDay(day)) {
+      reopenDialogOpen = false;
+      return;
+    }
     clockLoading = true;
     try {
       await performClockIn();
@@ -1358,6 +1364,17 @@
             </div>
           {/if}
         </Card>
+        <!-- Phase 115 (issue #118): the ONLY route from the hero card back into a REOPEN.
+             Inside {#if !isExempt} on purpose — a § 18 ArbZG-exempt user has no clock card
+             and must not gain one through this dialog either (Phase 76.7, D-15). -->
+        <ConfirmDialog
+          bind:open={reopenDialogOpen}
+          title="Erneut einstempeln?"
+          description={reopenDialogText}
+          confirmLabel="Erneut einstempeln"
+          cancelLabel="Abbrechen"
+          onConfirm={confirmReopen}
+        />
       {/if}
       <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
 
