@@ -188,7 +188,13 @@
     day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
   );
 
-  let loading = $state(false);
+  // Phase 116 (issue #119) — starts TRUE. `onMount` (:339) awaits `loadData()` unconditionally and
+  // `loadData` is `loading = true` → try → `finally { loading = false }` with no early return, so
+  // the page cannot be stranded. This also removes the only real defect at the single consumer
+  // below (:1540): `<SaldoAnzeige {loading} error={!loading} />` renders in the `stats === null`
+  // branch, so with `loading` starting false the FIRST frame claimed a failed fetch before any
+  // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
+  let loading = $state(true);
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
