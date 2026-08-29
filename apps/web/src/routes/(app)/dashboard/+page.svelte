@@ -48,7 +48,9 @@
   import {
     resolveDayState,
     upsertDayEntry,
+    primaryClockLabel,
     canReopenFinishedDay,
+    reopenGapStartLabel,
     type ClockDayEntry,
   } from "$lib/dashboard/day-state";
   import { format, subMonths } from "date-fns";
@@ -1112,6 +1114,26 @@
   let entryBreakLabel = $derived(todayEntry ? fmtHm(entryBreakMin) : "—");
   let entryNetLabel = $derived(todayEntry ? fmtHm(entryWorkedMin) : "—");
 
+  // Phase 115 (issue #118) — the hero card's three-state view model.
+  let primaryLabel = $derived(primaryClockLabel(day)); // null on a finished day
+  let reopenGapLabel = $derived(reopenGapStartLabel(day)); // "17:46" on a finished day
+  // Phase 115 (issue #118), acceptance criterion #4: the Rückfrage must NAME the consequence.
+  // These are the three things services/clock/resolver.ts:124-137 actually does on REOPEN —
+  // a Break from the old endTime to now, endTime = null, and breakMinutes recomputed from ALL
+  // Break rows. Stated as fact, not as a warning.
+  let reopenDialogText = $derived(
+    `Der Zeitraum ${reopenGapLabel ?? ""}–jetzt wird als Pause erfasst. ` +
+      `Der heutige Eintrag wird dadurch wieder geöffnet, seine Netto-Arbeitszeit sinkt und der Pausenwert wird neu berechnet.`,
+  );
+  // The big HH:MM:SS readout for a finished day: the entry's own net time, not a live counter.
+  let finishedNetClock = $derived.by(() => {
+    const total = Math.max(0, Math.round(entryWorkedMin * 60));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  });
+
   // Timeline progress: % of 12h window from 07:00 start anchor
   let entryProgressPct = $derived.by(() => {
     if (!todayEntry) return 0;
@@ -1211,15 +1233,25 @@
            controls. -->
       {#if !isExempt}
         <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-          <div class="timer-hd">
+          <div class="timer-hd" data-day-state={day.kind}>
             <div>
               <div class="timer-hd-title">
-                {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+                {#if day.kind === "running"}
+                  Du arbeitest gerade
+                {:else if day.kind === "finished"}
+                  Tag abgeschlossen
+                {:else}
+                  Noch nicht eingestempelt
+                {/if}
               </div>
               <div class="timer-status">
-                {#if clockedIn && clockStart}
+                {#if day.kind === "running" && clockStart}
                   <span class="live-dot" aria-hidden="true"></span>
                   <span>gestartet um {format(clockStart, "HH:mm")}</span>
+                {:else if day.kind === "finished"}
+                  <span class="timer-status-idle">
+                    {entryStartHHMM} – {entryEndHHMM} · {entryNetLabel} erfasst
+                  </span>
                 {:else}
                   <span class="timer-status-idle">Bereit zum Einstempeln</span>
                 {/if}
@@ -1236,9 +1268,20 @@
           </div>
 
           <div class="clock timer-display">
-            {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
+            {#if day.kind === "running" && clockStart}
+              {formatElapsed(clockStart, currentTime)}
+            {:else if day.kind === "finished"}
+              {finishedNetClock}
+            {:else}
+              00:00:00
+            {/if}
           </div>
-          {#if stats?.scheduleType === "FIXED_SCHEDULE"}
+          {#if day.kind === "finished"}
+            <!-- No Tagesziel bar on a finished day: pctTarget derives from elapsedMs, which is 0
+                 when not clocked in, so a FIXED_SCHEDULE employee would see a 0 % bar on a
+                 completed 8:21 h day — the same lie this phase removes, one size smaller. -->
+            <div class="timer-sub">Erfasste Arbeitszeit heute</div>
+          {:else if stats?.scheduleType === "FIXED_SCHEDULE"}
             <div class="timer-sub">
               {clockedIn
                 ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
@@ -1261,15 +1304,17 @@
           {/if}
 
           <div class="card-foot timer-foot">
-            <button
-              onclick={handleClock}
-              disabled={clockLoading}
-              class="btn btn-primary timer-cta-primary"
-              type="button"
-            >
-              {#if clockLoading}<span class="btn-spinner"></span>{/if}
-              {clockedIn ? "Ausstempeln" : "Einstempeln"}
-            </button>
+            {#if primaryLabel}
+              <button
+                onclick={handleClock}
+                disabled={clockLoading}
+                class="btn btn-primary timer-cta-primary"
+                type="button"
+              >
+                {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                {primaryLabel}
+              </button>
+            {/if}
             {#if clockedIn}
               <button
                 type="button"
@@ -1284,6 +1329,24 @@
                 {#if breakLoading}<span class="btn-spinner"></span>{/if}
                 {breakStartedAt ? "Pause beenden" : "Pause starten"}
               </button>
+            {/if}
+            {#if day.kind === "finished"}
+              {#if canReopenFinishedDay(day) && reopenGapLabel}
+                <button
+                  type="button"
+                  class="btn btn-ghost timer-cta-ghost"
+                  disabled={clockLoading}
+                  onclick={openReopenDialog}
+                  title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                >
+                  {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                  Erneut einstempeln
+                </button>
+              {:else}
+                <span class="timer-status-idle">
+                  Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
+                </span>
+              {/if}
             {/if}
           </div>
 
