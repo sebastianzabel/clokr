@@ -1665,6 +1665,17 @@
        to. Above BOTH views: the page is reachable from the nav and from the calendar, and
        the explanation is equally relevant there. Renders nothing when there is no overrun. -->
   <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
+  <!-- Phase 117 (issue #122, D-03) — while the entitlement figures for the selected year are in
+       flight, the strip shows a skeleton, never the numbers of the year we just left. Same rule
+       and same recipe as Phase 116's /time-entries list skeleton: the global `.skeleton` shimmer
+       from app.css, aria-hidden, only the geometry is page-scoped. Four tiles is the strip's
+       usual width; the two Übertrag tiles are conditional, so the placeholder count is
+       deliberately approximate — it is a shimmer, not a claim. -->
+  {#snippet vacStatsSkeleton()}
+    <div class="vac-summary-skeleton" data-testid="vac-summary-skeleton" aria-hidden="true">
+      {#each Array(4) as _, i (i)}<div class="skeleton vac-summary-skel-tile"></div>{/each}
+    </div>
+  {/snippet}
   {#snippet vacStats()}
     <div class="vac-stats">
       <div class="vac-stat">
@@ -1796,7 +1807,11 @@
         <button class="btn btn-ghost btn-sm cal-monthbar-today" onclick={gotoToday}>Heute</button>
       </div>
       {#if showVacSummary}
-        {@render vacStats()}
+        {#if vacSummaryLoading}
+          {@render vacStatsSkeleton()}
+        {:else}
+          {@render vacStats()}
+        {/if}
       {/if}
     </div>
 
@@ -2015,7 +2030,11 @@
         </button>
       </div>
       {#if showVacSummary}
-        {@render vacStats()}
+        {#if vacSummaryLoading}
+          {@render vacStatsSkeleton()}
+        {:else}
+          {@render vacStats()}
+        {/if}
       {/if}
     </div>
 
@@ -2491,6 +2510,22 @@
     align-items: flex-end;
     gap: 28px;
     flex-wrap: wrap;
+  }
+
+  /* Phase 117 (issue #122, D-03) — Ladezustand der Kachelleiste. Reuses the global .skeleton
+     shimmer (app.css:883); only the geometry is page-scoped, same split as Phase 116's
+     .list-skeleton on /time-entries. Mirrors .vac-stats' own flex row + 28px gap so the strip
+     does not jump when the numbers arrive. */
+  .vac-summary-skeleton {
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    flex-wrap: wrap;
+  }
+  .vac-summary-skel-tile {
+    width: 72px;
+    height: 38px;
+    border-radius: var(--r-sm);
   }
 
   .vac-stat {
