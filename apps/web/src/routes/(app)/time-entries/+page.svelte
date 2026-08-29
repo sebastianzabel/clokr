@@ -31,6 +31,16 @@
     countWorkingDaysInMonth,
     monthlyBudgetSollMinutes,
   } from "$lib/utils/work-schedule";
+  // Phase 116 (GitHub issue #119) — the four-state list answer + the fetch sentinel that
+  // stops a 500 from being rendered as "dieser Monat hat kein Soll".
+  import {
+    SKIPPED,
+    settled,
+    valueOr,
+    anyFailed,
+    resolveMonthListState,
+    resolveSaldoCardState,
+  } from "$lib/time-entries/month-view-state";
 
   interface Break {
     id?: string;
@@ -150,8 +160,16 @@
   let schedule: WorkSchedule | null = $state(null);
   let holidays: Map<string, string> = $state(new Map()); // dateStr → name
   let calendarDays: CalDay[] = $state([]);
-  let loading = $state(false);
+  // Phase 116 (issue #119) — starts TRUE. `onMount` fires AFTER the component is mounted, so with
+  // `false` the very first painted frame was "loaded and empty" by construction. Safe because
+  // `loadAll()` is the only writer, it is `loading = true` → try → `finally { loading = false }`
+  // with no early return, and `onMount` awaits it unconditionally.
+  let loading = $state(true);
   let error = $state("");
+  // Phase 116 (issue #119) — true when GET /settings/work/:id, /overtime/:id or
+  // /overtime/month-saldo/:id FAILED (as opposed to legitimately returning nothing). Routes into
+  // MonatSaldoCard's existing error branch instead of being rendered as "noch keine Sollzeit".
+  let saldoFetchFailed = $state(false);
   let saving = $state(false);
   let saveError = $state("");
   let arbzgEnabled = $state(true);
@@ -318,7 +336,13 @@
     !!editEntry && enforceBreakConfirmation && editEntry.isLocked !== true,
   );
 
-  const ownEmployeeId = $authStore.user?.employeeId ?? null;
+  // Phase 116 (issue #119, Lösungsvorschlag #4) — was a `const` snapshot taken once at component
+  // init. `$authStore.user` is hydrated synchronously from localStorage at module init
+  // (stores/auth.ts:23-31) and only rewritten by login()/logout(), so in practice a null here means
+  // the account genuinely has no linked Employee row (AuthUser.employeeId is `string | null`) —
+  // NOT a race. Making it `$derived` removes the latent trap and lets `hasEmployeeLink` below be
+  // reactive, which is what the banner needs.
+  let ownEmployeeId = $derived($authStore.user?.employeeId ?? null);
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -359,6 +383,7 @@
   async function loadAll() {
     loading = true;
     error = "";
+    saldoFetchFailed = false;
     try {
       const year = calMonth.getFullYear();
       const activeEmpId = ownEmployeeId;
@@ -374,8 +399,8 @@
       ] = await Promise.all([
         api.get<TimeEntry[]>(`/time-entries?from=${fromDate}&to=${toDate}`),
         activeEmpId
-          ? api.get<WorkSchedule>(`/settings/work/${activeEmpId}`).catch(() => null)
-          : Promise.resolve(null),
+          ? settled(api.get<WorkSchedule>(`/settings/work/${activeEmpId}`))
+          : Promise.resolve(SKIPPED),
         api.get<PublicHoliday[]>(`/holidays?year=${year}`).catch(() => [] as PublicHoliday[]),
         activeEmpId
           ? api
@@ -383,8 +408,8 @@
               .catch(() => [] as Absence[])
           : Promise.resolve([] as Absence[]),
         activeEmpId
-          ? api
-              .get<{
+          ? settled(
+              api.get<{
                 balanceHours: number;
                 // Phase 97-01 (TRACER, SALDO-DISP-01/03/07) — additive split fields.
                 confirmedMinutes?: number;
@@ -395,9 +420,9 @@
                 // endpoint (overtime.ts:172-173); only the client-side type was missing them.
                 maxNegativeBalanceMinutes?: number | null;
                 isNegativeLimitExceeded?: boolean;
-              }>(`/overtime/${activeEmpId}`)
-              .catch(() => null)
-          : Promise.resolve(null),
+              }>(`/overtime/${activeEmpId}`),
+            )
+          : Promise.resolve(SKIPPED),
         activeEmpId
           ? api
               .get<{
@@ -435,20 +460,25 @@
           : Promise.resolve([] as BsAbsence[]),
       ]);
       entries = rawEntries;
-      schedule = rawSchedule;
+      schedule = valueOr(rawSchedule, null);
       holidays = new Map(rawHolidays.map((h) => [h.date.split("T")[0], h.name]));
       absences = rawAbsences;
       bsAbsences = rawBsAbsences;
-      overtimeTotalHours = rawOvertime ? Number(rawOvertime.balanceHours) : null;
+      const overtimeValue = valueOr(rawOvertime, null);
+      overtimeTotalHours = overtimeValue ? Number(overtimeValue.balanceHours) : null;
       // Phase 97-01 — split fields, undefined when the endpoint didn't return them (older
       // cached response / fail-safe branch); the Gesamt-Saldo snippet falls back accordingly.
-      overtimeConfirmedMinutes = rawOvertime?.confirmedMinutes;
-      overtimeOpenMonthMinutes = rawOvertime?.openMonthMinutes;
-      overtimeHasClosedMonth = rawOvertime?.hasClosedMonth;
-      overtimeRosterIncomplete = rawOvertime?.rosterIncomplete;
+      overtimeConfirmedMinutes = overtimeValue?.confirmedMinutes;
+      overtimeOpenMonthMinutes = overtimeValue?.openMonthMinutes;
+      overtimeHasClosedMonth = overtimeValue?.hasClosedMonth;
+      overtimeRosterIncomplete = overtimeValue?.rosterIncomplete;
       // Phase 100 (OTC-03) — same undefined-on-failure contract as the siblings above.
-      overtimeNegativeLimitExceeded = rawOvertime?.isNegativeLimitExceeded;
-      overtimeMaxNegativeBalanceMinutes = rawOvertime?.maxNegativeBalanceMinutes;
+      overtimeNegativeLimitExceeded = overtimeValue?.isNegativeLimitExceeded;
+      overtimeMaxNegativeBalanceMinutes = overtimeValue?.maxNegativeBalanceMinutes;
+      // Phase 116 (issue #119) — a 500 here used to become `schedule = null`, which monthMetrics
+      // turns into `sollToDateMin: 0`, which SollIstBar prints as "noch keine Sollzeit in diesem
+      // Monat". Now it reaches MonatSaldoCard's error branch instead.
+      saldoFetchFailed = anyFailed(rawSchedule, rawOvertime);
       // Phase 97-05 — now consumed by gesamtSaldoStat below. 97-01/97-03 built the "Restmonat
       // unverplant" badge and stored this signal but never wired it into the snippet; fixed
       // here so this page renders identically to Team-Zeiten (97-05 Task 3 wires the same
@@ -479,11 +509,16 @@
       // sourced from here (it must be month-INDEPENDENT — bound to the live lifetime GET /overtime/:id),
       // so non-SHIFT types no longer need this fetch.
       if (schedule?.type === "SHIFT_BASED" && activeEmpId) {
-        monthSaldo = await api
-          .get<MonthSaldo>(
+        // Phase 116 (issue #119) — for SHIFT_BASED this endpoint is THE source of every figure
+        // MonatSaldoCard shows. On failure monthMetrics silently fell through to the
+        // FIXED_*/FLEXTIME branch and rendered a DIFFERENT, wrong number as fact.
+        const rawMonthSaldo = await settled(
+          api.get<MonthSaldo>(
             `/overtime/month-saldo/${activeEmpId}?year=${calMonth.getFullYear()}&month=${calMonth.getMonth() + 1}`,
-          )
-          .catch(() => null);
+          ),
+        );
+        monthSaldo = valueOr(rawMonthSaldo, null);
+        if (anyFailed(rawMonthSaldo)) saldoFetchFailed = true;
       } else {
         monthSaldo = null;
       }
@@ -1513,6 +1548,17 @@
     calendarDays.filter((d) => d.isCurrentMonth && !d.isFuture && d.workedMin > 0).length,
   );
   let runningCount = $derived(entries.filter((e) => !e.endTime).length);
+  // Phase 116 (issue #119) — the account's link to an Employee row. `false` means every
+  // employee-scoped fetch in loadAll() was replaced by Promise.resolve(...) and never attempted.
+  let hasEmployeeLink = $derived(ownEmployeeId !== null);
+  let saldoCardState = $derived(
+    resolveSaldoCardState({
+      loading,
+      hasEmployeeLink,
+      fetchFailed: saldoFetchFailed,
+      pageError: !!error,
+    }),
+  );
   // ArbZG live check for the modal: existing entries for formDate + current form values
   let modalWarnings = $derived.by(() => {
     if (!arbzgEnabled || !modalOpen || !formHasEnd || !formStart || !formEnd) return [];
@@ -1610,6 +1656,15 @@
       return 0;
     });
   });
+
+  // Phase 116 (issue #119) — the ONE answer to "what does the list render right now".
+  // See $lib/time-entries/month-view-state.ts for the precedence and why it is load-bearing.
+  // Declared AFTER `allEntries` on purpose: `$derived(expr)` takes its expression eagerly in
+  // source order as far as tsc is concerned, so a forward reference would be a use-before-
+  // declaration error even though the Svelte compiler wraps it in a thunk.
+  let listState = $derived(
+    resolveMonthListState({ loading, hasEmployeeLink, rowCount: allEntries.length }),
+  );
 </script>
 
 <svelte:head><title>Zeiterfassung – Clokr</title></svelte:head>
