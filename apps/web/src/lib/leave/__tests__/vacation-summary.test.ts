@@ -19,7 +19,14 @@
 import { describe, it, expect } from "vitest";
 
 import type { VacationBalance } from "../vacation-balance";
-import { deriveVacationSummary, type VacationSummary } from "../vacation-summary";
+import {
+  deriveVacationSummary,
+  vacationCardDelta,
+  vacationCardLabel,
+  VAC_CARD_LABEL,
+  VAC_CARD_LABEL_WITH_PENDING,
+  type VacationSummary,
+} from "../vacation-summary";
 
 /** Build a `VacationBalance` from the four numbers that actually drive the arithmetic.
  *  `provisionalUsed`, `carryOverDeadline` and `section9Movements` play no part in any of the
@@ -204,5 +211,65 @@ describe("deriveVacationSummary — purity", () => {
     const before: VacationBalance = JSON.parse(JSON.stringify(b));
     deriveVacationSummary(b, 3);
     expect(b).toEqual(before);
+  });
+});
+
+// ── Urlaubskonto-Karte: deutsche Beschriftung ──────────────────────────────────────────────
+// Exact-string assertions on purpose. These four strings ARE the fix for issue #117 — a
+// `toContain` would let a future edit reintroduce the ambiguity the phase removed.
+
+describe("vacationCardLabel", () => {
+  it("is plain `Resturlaub` when nothing is beantragt", () => {
+    // At planned === 0 the card's number and the strip's `Verbleibend` are the SAME number,
+    // so a qualifier would advertise a difference that does not exist (Phase 107 G-03's rule).
+    expect(vacationCardLabel(0)).toBe("Resturlaub");
+    expect(vacationCardLabel(0)).toBe(VAC_CARD_LABEL);
+  });
+
+  it("adds `(ohne beantragte)` as soon as there IS a pending request", () => {
+    expect(vacationCardLabel(3)).toBe("Resturlaub (ohne beantragte)");
+    expect(vacationCardLabel(3)).toBe(VAC_CARD_LABEL_WITH_PENDING);
+  });
+
+  it("treats half a beantragten Tag as beantragt too", () => {
+    expect(vacationCardLabel(0.5)).toBe("Resturlaub (ohne beantragte)");
+  });
+
+  it("NEVER names the Übertrag — the card's label means the balance and nothing else", () => {
+    // This is the assertion that catches a future edit re-merging the two meanings that
+    // issue #117 reported as colliding under one heading.
+    for (const planned of [0, 0.5, 3, 99]) {
+      expect(vacationCardLabel(planned)).not.toContain("Übertrag");
+    }
+  });
+});
+
+describe("vacationCardDelta", () => {
+  it("breaks the sum down when there is a Vorjahresübertrag (RU-04)", () => {
+    expect(vacationCardDelta(24, 14)).toBe("von 38 gesamt (24 Anspruch + 14 Übertrag Vorjahr)");
+  });
+
+  it("stays a plain total when there is no Übertrag — nothing to break down", () => {
+    expect(vacationCardDelta(24, 0)).toBe("von 24 gesamt");
+  });
+
+  it("renders half-days as plain JS numbers (no formatter is introduced)", () => {
+    expect(vacationCardDelta(25.5, 2.5)).toBe(
+      "von 28 gesamt (25.5 Anspruch + 2.5 Übertrag Vorjahr)",
+    );
+  });
+
+  it("NEVER says `verfügbar` — that word labelled the 38 while the card's own value was 7", () => {
+    expect(vacationCardDelta(24, 14)).not.toContain("verfügbar");
+    expect(vacationCardDelta(24, 0)).not.toContain("verfügbar");
+    expect(vacationCardDelta(25.5, 2.5)).not.toContain("verfügbar");
+  });
+
+  it("shows Anspruch and Übertrag as SEPARATE numbers whenever the Übertrag is > 0 (RU-03)", () => {
+    // „Genommen 31 bei Anspruch 24" must resolve without the reader doing arithmetic.
+    const delta = vacationCardDelta(24, 14);
+    expect(delta).toContain(String(24));
+    expect(delta).toContain(String(14));
+    expect(delta).toContain("Übertrag Vorjahr");
   });
 });
