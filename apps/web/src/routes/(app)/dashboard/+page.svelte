@@ -35,6 +35,7 @@
     karenzNudgeHref,
     hasNoOpenItems,
     KARENZ_NUDGE_EMPTY,
+    KARENZ_NUDGE_TOOLTIP,
     type KarenzOverrunResponse,
     type KarenzNudgeSummary,
   } from "$lib/leave/karenz-nudge";
@@ -1506,7 +1507,7 @@
                   href={karenzNudgeHref(karenzNudge)}
                   class="oi-row"
                   data-testid="dashboard-karenz-nudge"
-                  title="Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG)"
+                  title={KARENZ_NUDGE_TOOLTIP}
                 >
                   <span class="oi-dot oi-dot--warn"></span>
                   <span>{karenzNudge.label}</span>
