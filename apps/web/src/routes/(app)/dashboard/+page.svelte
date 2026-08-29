@@ -45,6 +45,12 @@
     BREAK_NUDGE_EMPTY,
     type BreakNudgeSummary,
   } from "$lib/breaks/break-nudge";
+  import {
+    resolveDayState,
+    upsertDayEntry,
+    canReopenFinishedDay,
+    type ClockDayEntry,
+  } from "$lib/dashboard/day-state";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -156,14 +162,28 @@
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let clockedIn = $state(false);
-  let activeEntryId = $state<string | null>(null);
+  // ── Clock state (Phase 115, GitHub issue #118) ────────────────────────────
+  // ONE source: today's rows exactly as GET /api/v1/time-entries returned them.
+  // Everything the hero card and the "Heutiger Eintrag" card show derives from it,
+  // so the two cards cannot contradict each other the way they did in issue #118.
+  let todayEntries = $state<ClockDayEntry[]>([]);
+  let day = $derived(resolveDayState(todayEntries));
+  // DERIVED alias, never assigned — kept for the nine existing readers.
+  let clockedIn = $derived(day.kind === "running");
+  let activeEntryId = $derived(day.kind === "running" ? (day.entry?.id ?? null) : null);
+  // Issue #118 Lösungsvorschlag 3: the running timer must start at the ENTRY's own
+  // startTime. A REOPEN returns the ORIGINAL entry (08:55 in the report), not a fresh
+  // one — deriving this instead of assigning `new Date()` makes that correct by
+  // construction, for START and REOPEN alike.
+  let clockStart = $derived(
+    day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
+  );
+
   let loading = $state(false);
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
-  let clockStart: Date | null = $state(null);
 
   // ── Open break (dashboard pause toggle) ──────────────────────────────────
   // Open breaks are not persisted on the server (Break records are always
@@ -238,13 +258,9 @@
   );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
-  interface TodayEntry {
-    id: string;
-    startTime: string; // ISO
-    endTime: string | null;
-    breakMinutes: number;
-  }
-  let todayEntry = $state<TodayEntry | null>(null);
+  // The "Heutiger Eintrag" card reads the SAME entry the hero card describes
+  // (Phase 115, issue #118 — the two used to be derived independently and disagreed).
+  let todayEntry = $derived(day.entry);
 
   // ── Aktivität (row 2 col-5) ───────────────────────────────────────────────
   interface ActivityItem {
@@ -334,29 +350,12 @@
 
       // Parallel laden — allSettled so a stats failure doesn't break clock state
       const [entriesResult, statsResult] = await Promise.allSettled([
-        api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-          `/time-entries?from=${today}&to=${today}`,
-        ),
+        api.get<ClockDayEntry[]>(`/time-entries?from=${today}&to=${today}`),
         api.get<DashboardStats>("/dashboard"),
       ]);
 
       if (entriesResult.status === "fulfilled") {
-        const entries = entriesResult.value;
-        const openEntry = entries.find((e) => !e.endTime);
-        if (openEntry) {
-          clockedIn = true;
-          activeEntryId = openEntry.id;
-          clockStart = new Date(openEntry.startTime);
-          // Restore any in-progress break that was started in a previous page
-          // load (localStorage). Stale entries (different entryId) are cleared.
-          restoreOpenBreak();
-        } else {
-          clockedIn = false;
-          activeEntryId = null;
-          clockStart = null;
-          breakStartedAt = null;
-          clearStoredOpenBreak();
-        }
+        todayEntries = entriesResult.value;
       } else {
         console.error("Failed to load time entries:", entriesResult.reason);
         toasts.error("Zeiteinträge konnten nicht geladen werden");
@@ -460,26 +459,7 @@
         karenzNudge = KARENZ_NUDGE_EMPTY;
       }
 
-      // Today's entry breakdown (row 2 / col-7)
-      if (entriesResult.status === "fulfilled") {
-        const all = entriesResult.value as unknown as Array<{
-          id: string;
-          startTime: string;
-          endTime: string | null;
-          breakMinutes: number;
-        }>;
-        // Prefer the open entry; fall back to first entry of the day
-        const openEntry = all.find((e) => !e.endTime);
-        const ref = openEntry ?? all[0] ?? null;
-        todayEntry = ref
-          ? {
-              id: ref.id,
-              startTime: ref.startTime,
-              endTime: ref.endTime,
-              breakMinutes: ref.breakMinutes ?? 0,
-            }
-          : null;
-      }
+      // Today's entry (row 2 / col-7) derives from todayEntries — see the clock-state block above (issue #118).
 
       // Activity feed (row 2 / col-5) — role-gated server-side
       try {
@@ -506,27 +486,7 @@
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
-      const entries = await api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-        `/time-entries?from=${today}&to=${today}`,
-      );
-      const openEntry = entries.find((e) => !e.endTime);
-      if (openEntry) {
-        const wasSameEntry = activeEntryId === openEntry.id;
-        clockedIn = true;
-        activeEntryId = openEntry.id;
-        clockStart = new Date(openEntry.startTime);
-        // If the active entry changed underneath us (rare — e.g. clock-out
-        // happened in another tab), an in-memory open break is stale. Clear it.
-        if (!wasSameEntry) {
-          restoreOpenBreak();
-        }
-      } else {
-        clockedIn = false;
-        activeEntryId = null;
-        clockStart = null;
-        breakStartedAt = null;
-        clearStoredOpenBreak();
-      }
+      todayEntries = await api.get<ClockDayEntry[]>(`/time-entries?from=${today}&to=${today}`);
     } catch (err) {
       console.error("Failed to poll clock status:", err);
     }
@@ -987,6 +947,22 @@
       clearStoredOpenBreak();
     }
   }
+
+  // Phase 115 (issue #118): activeEntryId is derived now, so the open-break restore that
+  // used to sit inside loadData()/pollDashboard() reacts to the id instead. `lastSeenEntryId`
+  // is a PLAIN let on purpose — making it $state would make this effect re-trigger itself.
+  let lastSeenEntryId: string | null = null;
+  $effect(() => {
+    const id = activeEntryId;
+    if (id === lastSeenEntryId) return;
+    lastSeenEntryId = id;
+    if (id) {
+      restoreOpenBreak();
+    } else {
+      breakStartedAt = null;
+      clearStoredOpenBreak();
+    }
+  });
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function formatElapsed(start: Date | null, now: Date): string {
