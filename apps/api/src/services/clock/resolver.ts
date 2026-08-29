@@ -40,14 +40,25 @@ export async function resolveClockEvent(
       return { kind: "CONFLICT", reason: "LEAVE_APPROVED" } as const;
     }
 
-    // Current state lookup (filtered deletedAt + endTime + isInvalid per CLAUDE.md contracts)
+    // Current state lookup. Gefiltert wird `deletedAt: null` (CLAUDE.md, Pflicht fuer
+    // soft-delete-faehige Modelle) und `endTime` — bewusst NICHT `isInvalid`.
+    //
+    // Phase 118 (D-01): `isInvalid` ist eine fachliche Markierung am Eintrag, kein
+    // Clock-State. Der Schreibpfad erzeugt `isInvalid`-Zeilen selbst (:82-91 bei
+    // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` nach
+    // `autoDeleteOpenHours`). Der Tages-Eindeutigkeitsindex
+    // `TimeEntry_employeeId_date_unique_not_deleted` ist partiell auf `deletedAt IS NULL`
+    // und kennt `isInvalid` NICHT — es gibt pro Mitarbeiter und Tag also hoechstens EINE
+    // nicht-geloeschte Zeile. Diese Zeile vor dem Resolver zu verstecken erzeugte beide
+    // Haelften von Issue #124 gleichzeitig: den ewig offenen Eintrag (OUT → NOT_CLOCKED_IN
+    // → 409 "Bereits ausgestempelt") und den P2002 beim naechsten IN (→ 500).
+    // Diesen Filter NICHT wieder einfuehren.
     const openEntry = await tx.timeEntry.findFirst({
       where: {
         employeeId: event.employeeId,
         deletedAt: null,
         date: event.date,
         endTime: null,
-        isInvalid: false,
       },
     });
 
@@ -60,11 +71,45 @@ export async function resolveClockEvent(
             deletedAt: null,
             date: event.date,
             endTime: { not: null },
-            isInvalid: false,
           },
           orderBy: { endTime: "desc" },
         })
       : null;
+
+    // Phase 118 (D-02/D-03): eine an einen noch PENDING Zeitnachtrag gekoppelte Zeile
+    // (Phase 96, `TimeEntry.retroRequestId @unique`) ist ein ANTRAG, keine Stempelung.
+    // Sie ist geschlossen (startTime+endTime aus dem Antrag) und wuerde oben als
+    // CLOSED_SAME_DAY_ENTRY gelesen — ein Tap wuerde sie per REOPEN auf `endTime: null`
+    // setzen und der Genehmigungs-Flow gaebe anschliessend einen kaputten Eintrag frei.
+    // Real erreichbar: `createRetroRequestSchema` (retro-entry-requests.ts:20-42) hat keine
+    // Vergangenheitsgrenze, `targetDate = heute` wird akzeptiert.
+    //
+    // Qualifiziert auf "Antrag noch PENDING": der Approve-Zweig
+    // (retro-entry-requests.ts:363-365) setzt `isInvalid` auf `false`, laesst `retroRequestId`
+    // aber gesetzt — eine freigegebene Nachtrag-Zeile ist ein ganz normaler geschlossener
+    // Eintrag und muss weiter per REOPEN benutzbar bleiben. Der Reject-Zweig (:466-473)
+    // soft-loescht die Zeile; sie faellt schon durch `deletedAt: null` heraus.
+    const retroCandidate = openEntry ?? closedEntry;
+    if (retroCandidate?.retroRequestId) {
+      const pendingRetro = await tx.retroEntryRequest.findFirst({
+        where: { id: retroCandidate.retroRequestId, status: "PENDING", deletedAt: null },
+        select: { id: true },
+      });
+      if (pendingRetro) {
+        app.log.warn(
+          {
+            employeeId: event.employeeId,
+            source: event.source,
+            intent: event.intent,
+            entryId: retroCandidate.id,
+            retroRequestId: retroCandidate.retroRequestId,
+            reason: "RETRO_PENDING",
+          },
+          "clock_event_conflict",
+        );
+        return { kind: "CONFLICT", reason: "RETRO_PENDING" } as const;
+      }
+    }
 
     const state: ClockState = openEntry
       ? { kind: "OPEN_ENTRY", entryId: openEntry.id, source: openEntry.source }
@@ -160,9 +205,15 @@ export async function resolveClockEvent(
       }
 
       case "STOP": {
-        // WR-01/WR-02 fix: reuse `openEntry` from the state lookup (already filtered with
-        // deletedAt: null and isInvalid: false). The previous redundant findUnique omitted
-        // the deletedAt filter — replaced by direct reference to the already-locked row.
+        // WR-01/WR-02: `openEntry` aus dem State-Lookup wiederverwenden (bereits mit
+        // `deletedAt: null` geladen und ueber den FOR-UPDATE-Lock auf Employee geschuetzt).
+        // Ein frueheres redundantes findUnique ohne deletedAt-Filter wurde dadurch ersetzt.
+        // Phase 118 (D-01/D-04): dieser Eintrag KANN `isInvalid: true` sein — genau das ist
+        // der Fall aus Issue #124. Der Clock-Pfad schliesst ihn und laesst
+        // `isInvalid`/`invalidReason` unangetastet: die Invaliditaet gehoert ihrem Erzeuger
+        // (die Stornierungs-Genehmigung revalidiert automatisch — CLAUDE.md § 8 BUrlG; der
+        // Attendance-Checker setzt sie). Stilles Revalidieren beim Ausstempeln waere ein
+        // "silent overwrite" im Sinne der Revisionssicherheits-Regeln.
         const target = openEntry!;
         // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
         // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.
