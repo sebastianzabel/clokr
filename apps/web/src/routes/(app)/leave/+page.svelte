@@ -36,7 +36,11 @@
     type VacationEntitlementRow,
     type LastDaysAdjustment,
   } from "$lib/leave/vacation-balance";
-  import { deriveVacationSummary } from "$lib/leave/vacation-summary";
+  import {
+    deriveVacationSummary,
+    vacationCardDelta,
+    vacationCardLabel,
+  } from "$lib/leave/vacation-summary";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -1141,12 +1145,19 @@
   <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
   <div class="kpi-row" data-testid="leave-balance">
     <Card animate class="kpi-card">
+      <!-- Phase 114 (RU-01/02/04): `Resturlaub` = der verfügbare Saldo, genau diese eine
+           Bedeutung auf /leave. Der Vorjahresübertrag heißt „Übertrag Vorjahr" (Strip +
+           Delta-Zeile), nie mehr „Resturlaub". Das „(ohne beantragte)" im Label ist
+           ABSICHTLICH bedingt — bei 0 beantragten Tagen zeigen Karte und Leiste dieselbe
+           Zahl und der Zusatz würde einen Unterschied behaupten, den es nicht gibt (gleiche
+           Begründung wie Phase 107 G-03 im Panel unten). Die Entscheidung liegt in
+           vacationCardLabel(), damit sie getestet ist. -->
       <KPIStat
-        label="Resturlaub"
+        label={vacationCardLabel(vacSummaryPlanned)}
         value={vacRemaining === null ? "–" : String(vacRemaining)}
         unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
         delta={vacationBalance
-          ? `von ${vacationBalance.total + vacationBalance.carryOver} verfügbar`
+          ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
           : undefined}
       />
     </Card>
@@ -1417,7 +1428,7 @@
               {#if vacationBalance.carryOver > 0}
                 <div class="balance-row">
                   <span class="balance-label">
-                    Resturlaub Vorjahr
+                    Übertrag Vorjahr
                     {#if vacationBalance.carryOverDeadline}
                       <span class="balance-meta"
                         >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
@@ -1460,8 +1471,11 @@
                   >
                 </div>
               {/if}
+              <!-- Phase 114: dieselbe Größe wie die Urlaubskonto-Karte (vacRemaining) und
+                   deshalb dasselbe Wort. „Verfügbar" ist entfallen — es hat vorher in der
+                   Karte die 38 und hier die 7 bezeichnet. -->
               <div class="balance-row">
-                <span class="balance-label">Verfügbar</span>
+                <span class="balance-label">Resturlaub</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
               </div>
               {#if vacationBalance.section9Movements?.length}
