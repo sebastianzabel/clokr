@@ -25,242 +25,124 @@ export async function resolveClockEvent(
     "clock_event_received",
   );
 
-  return app.prisma.$transaction(async (tx) => {
-    // FIRST statement: pessimistic per-employee row lock (sub-req C — generalizes 76.1's
-    // pattern to all 4 routes). Lock released at commit/rollback.
-    await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${event.employeeId} FOR UPDATE`;
+  try {
+    return await app.prisma.$transaction(async (tx) => {
+      // FIRST statement: pessimistic per-employee row lock (sub-req C — generalizes 76.1's
+      // pattern to all 4 routes). Lock released at commit/rollback.
+      await tx.$queryRaw`SELECT id FROM "Employee" WHERE id = ${event.employeeId} FOR UPDATE`;
 
-    // § 8 BUrlG leave check (single call site replacing 2 per-route copies)
-    const leaveCheck = await hasApprovedLeaveOnDate(tx, event.employeeId, event.dateStr);
-    if (leaveCheck?.status === "APPROVED") {
-      app.log.warn(
-        { employeeId: event.employeeId, date: event.dateStr, reason: "LEAVE_APPROVED" },
-        "clock_event_conflict",
-      );
-      return { kind: "CONFLICT", reason: "LEAVE_APPROVED" } as const;
-    }
-
-    // Current state lookup. Filters on `deletedAt: null` (CLAUDE.md — mandatory for
-    // soft-delete-capable models) and `endTime` — deliberately NOT `isInvalid`.
-    //
-    // Phase 118 (D-01): `isInvalid` is a business-domain flag on the row, not a
-    // clock state. The write path creates `isInvalid` rows itself (:82-91 for
-    // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` after
-    // `autoDeleteOpenHours`). The day-uniqueness index
-    // `TimeEntry_employeeId_date_unique_not_deleted` is partial on `deletedAt IS NULL`
-    // and does NOT know about `isInvalid` — there can be at most ONE non-deleted row
-    // per employee per day. Hiding that row from the resolver produced both halves
-    // of issue #124 at once: the permanently open entry (OUT → NOT_CLOCKED_IN →
-    // 409 "already clocked out") and the P2002 on the next IN (→ 500).
-    // Do not reintroduce this filter.
-    const openEntry = await tx.timeEntry.findFirst({
-      where: {
-        employeeId: event.employeeId,
-        deletedAt: null,
-        date: event.date,
-        endTime: null,
-      },
-    });
-
-    // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
-    // Query WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
-    const closedEntry = !openEntry
-      ? await tx.timeEntry.findFirst({
-          where: {
-            employeeId: event.employeeId,
-            deletedAt: null,
-            date: event.date,
-            endTime: { not: null },
-          },
-          orderBy: { endTime: "desc" },
-        })
-      : null;
-
-    // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
-    // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
-    // It is closed (startTime+endTime come from the request) and would be read
-    // above as CLOSED_SAME_DAY_ENTRY — a tap would REOPEN it to `endTime: null`
-    // and the approval flow would then release a corrupted entry. This is
-    // genuinely reachable: `createRetroRequestSchema` (retro-entry-requests.ts:20-42)
-    // has no past-date limit, `targetDate = today` is accepted.
-    //
-    // Qualified on "request still PENDING": the approve branch
-    // (retro-entry-requests.ts:363-365) sets `isInvalid` to `false` but leaves
-    // `retroRequestId` set — an approved Nachtrag row is a perfectly ordinary
-    // closed entry and must remain usable via REOPEN. The reject branch (:466-473)
-    // soft-deletes the row; it already falls out via `deletedAt: null`.
-    const retroCandidate = openEntry ?? closedEntry;
-    if (retroCandidate?.retroRequestId) {
-      const pendingRetro = await tx.retroEntryRequest.findFirst({
-        where: { id: retroCandidate.retroRequestId, status: "PENDING", deletedAt: null },
-        select: { id: true },
-      });
-      if (pendingRetro) {
+      // § 8 BUrlG leave check (single call site replacing 2 per-route copies)
+      const leaveCheck = await hasApprovedLeaveOnDate(tx, event.employeeId, event.dateStr);
+      if (leaveCheck?.status === "APPROVED") {
         app.log.warn(
-          {
-            employeeId: event.employeeId,
-            source: event.source,
-            intent: event.intent,
-            entryId: retroCandidate.id,
-            retroRequestId: retroCandidate.retroRequestId,
-            reason: "RETRO_PENDING",
-          },
+          { employeeId: event.employeeId, date: event.dateStr, reason: "LEAVE_APPROVED" },
           "clock_event_conflict",
         );
-        return { kind: "CONFLICT", reason: "RETRO_PENDING" } as const;
-      }
-    }
-
-    const state: ClockState = openEntry
-      ? { kind: "OPEN_ENTRY", entryId: openEntry.id, source: openEntry.source }
-      : closedEntry
-        ? {
-            kind: "CLOSED_SAME_DAY_ENTRY",
-            entryId: closedEntry.id,
-            endTime: closedEntry.endTime!,
-            isLocked: closedEntry.isLocked,
-          }
-        : { kind: "NO_OPEN_ENTRY" };
-
-    const decision = decide(state, event.intent, event.source);
-
-    switch (decision.kind) {
-      case "START": {
-        const entry = await tx.timeEntry.create({
-          data: {
-            employeeId: event.employeeId,
-            date: event.date,
-            startTime: event.timestamp,
-            source: event.source as never, // widened at boundary; DB enforces enum
-            isInvalid: leaveCheck?.status === "CANCELLATION_REQUESTED",
-            invalidReason: leaveCheck ? "Urlaubsstornierung ausstehend" : null,
-            note: event.note,
-          },
-        });
-        const audit = await emitClockAudit(tx, {
-          action: "CLOCK_IN",
-          entity: "TimeEntry",
-          entityId: entry.id,
-          newValue: entry,
-          actor: event.actor,
-          req,
-        });
-        app.log.info(
-          {
-            employeeId: event.employeeId,
-            source: event.source,
-            kind: "CLOCKED_IN",
-            entryId: entry.id,
-          },
-          "clock_event_resolved",
-        );
-        return { kind: "CLOCKED_IN", entry, audit } as const;
+        return { kind: "CONFLICT", reason: "LEAVE_APPROVED" } as const;
       }
 
-      case "REOPEN": {
-        // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
-        if (closedEntry!.isLocked) {
+      // Current state lookup. Filters on `deletedAt: null` (CLAUDE.md — mandatory for
+      // soft-delete-capable models) and `endTime` — deliberately NOT `isInvalid`.
+      //
+      // Phase 118 (D-01): `isInvalid` is a business-domain flag on the row, not a
+      // clock state. The write path creates `isInvalid` rows itself (:82-91 for
+      // CANCELLATION_REQUESTED, § 8 BUrlG; `attendance-checker.ts:296-303` after
+      // `autoDeleteOpenHours`). The day-uniqueness index
+      // `TimeEntry_employeeId_date_unique_not_deleted` is partial on `deletedAt IS NULL`
+      // and does NOT know about `isInvalid` — there can be at most ONE non-deleted row
+      // per employee per day. Hiding that row from the resolver produced both halves
+      // of issue #124 at once: the permanently open entry (OUT → NOT_CLOCKED_IN →
+      // 409 "already clocked out") and the P2002 on the next IN (→ 500).
+      // Do not reintroduce this filter.
+      const openEntry = await tx.timeEntry.findFirst({
+        where: {
+          employeeId: event.employeeId,
+          deletedAt: null,
+          date: event.date,
+          endTime: null,
+        },
+      });
+
+      // D-01: when no open entry, look for a closed non-deleted same-day entry to potentially reopen.
+      // Query WITHOUT isLocked filter so the REOPEN branch can return explicit MONTH_LOCKED CONFLICT.
+      const closedEntry = !openEntry
+        ? await tx.timeEntry.findFirst({
+            where: {
+              employeeId: event.employeeId,
+              deletedAt: null,
+              date: event.date,
+              endTime: { not: null },
+            },
+            orderBy: { endTime: "desc" },
+          })
+        : null;
+
+      // Phase 118 (D-02/D-03): a row coupled to a still-PENDING Zeitnachtrag
+      // (Phase 96, `TimeEntry.retroRequestId @unique`) is a REQUEST, not a punch.
+      // It is closed (startTime+endTime come from the request) and would be read
+      // above as CLOSED_SAME_DAY_ENTRY — a tap would REOPEN it to `endTime: null`
+      // and the approval flow would then release a corrupted entry. This is
+      // genuinely reachable: `createRetroRequestSchema` (retro-entry-requests.ts:20-42)
+      // has no past-date limit, `targetDate = today` is accepted.
+      //
+      // Qualified on "request still PENDING": the approve branch
+      // (retro-entry-requests.ts:363-365) sets `isInvalid` to `false` but leaves
+      // `retroRequestId` set — an approved Nachtrag row is a perfectly ordinary
+      // closed entry and must remain usable via REOPEN. The reject branch (:466-473)
+      // soft-deletes the row; it already falls out via `deletedAt: null`.
+      const retroCandidate = openEntry ?? closedEntry;
+      if (retroCandidate?.retroRequestId) {
+        const pendingRetro = await tx.retroEntryRequest.findFirst({
+          where: { id: retroCandidate.retroRequestId, status: "PENDING", deletedAt: null },
+          select: { id: true },
+        });
+        if (pendingRetro) {
           app.log.warn(
-            { employeeId: event.employeeId, entryId: closedEntry!.id, reason: "MONTH_LOCKED" },
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              intent: event.intent,
+              entryId: retroCandidate.id,
+              retroRequestId: retroCandidate.retroRequestId,
+              reason: "RETRO_PENDING",
+            },
             "clock_event_conflict",
           );
-          return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+          return { kind: "CONFLICT", reason: "RETRO_PENDING" } as const;
         }
-        const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
-        // 1. Create Break for the gap (old endTime → new START timestamp)
-        const breakRow = await tx.break.create({
-          data: {
-            timeEntryId: decision.entryId,
-            startTime: gapBreakStart,
-            endTime: event.timestamp,
-          },
-        });
-        // 2. Recompute breakMinutes from ALL Break rows, then reopen + update in one round-trip
-        const allBreaks = await tx.break.findMany({ where: { timeEntryId: decision.entryId } });
-        const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
-        const reopened = await tx.timeEntry.update({
-          where: { id: decision.entryId },
-          data: { endTime: null, breakMinutes: totalBreakMins },
-        });
-        // D-01c: audit the reopen with the dedicated CLOCK_REOPEN action
-        const audit = await emitClockAudit(tx, {
-          action: "CLOCK_REOPEN",
-          entity: "TimeEntry",
-          entityId: reopened.id,
-          oldValue: { endTime: gapBreakStart.toISOString() },
-          newValue: { endTime: null, gapBreakId: breakRow.id, breakMinutes: totalBreakMins },
-          actor: event.actor,
-          req,
-        });
-        app.log.info(
-          {
-            employeeId: event.employeeId,
-            source: event.source,
-            kind: "REOPENED",
-            entryId: reopened.id,
-          },
-          "clock_event_resolved",
-        );
-        return { kind: "CLOCKED_IN", entry: reopened, audit } as const;
       }
 
-      case "STOP": {
-        // WR-01/WR-02: reuse `openEntry` from the state lookup (already loaded with
-        // `deletedAt: null` and protected by the FOR-UPDATE lock on Employee).
-        // Replaces an earlier redundant findUnique that omitted the deletedAt filter.
-        // Phase 118 (D-01/D-04): this entry CAN be `isInvalid: true` — exactly the
-        // case from issue #124. The clock path closes it and leaves
-        // `isInvalid`/`invalidReason` untouched: invalidity belongs to whoever set
-        // it (the cancellation approval auto-revalidates — CLAUDE.md § 8 BUrlG; the
-        // attendance checker sets it). Silently revalidating on clock-out would be
-        // a "silent overwrite" per the Revisionssicherheit rules.
-        const target = openEntry!;
-        // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
-        // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.
-        const gapMs = event.timestamp.getTime() - target.startTime.getTime();
-        if (gapMs < 60_000) {
-          app.log.info(
-            { entryId: target.id, gapMs, source: event.source, reason: "DEBOUNCE_NOOP" },
-            "clock_event_noop",
-          );
-          return { kind: "DEBOUNCE_NOOP" } as const;
-        }
-        if (target.isLocked) {
-          app.log.warn(
-            { employeeId: event.employeeId, entryId: target.id, reason: "MONTH_LOCKED" },
-            "clock_event_conflict",
-          );
-          return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
-        }
+      const state: ClockState = openEntry
+        ? { kind: "OPEN_ENTRY", entryId: openEntry.id, source: openEntry.source }
+        : closedEntry
+          ? {
+              kind: "CLOSED_SAME_DAY_ENTRY",
+              entryId: closedEntry.id,
+              endTime: closedEntry.endTime!,
+              isLocked: closedEntry.isLocked,
+            }
+          : { kind: "NO_OPEN_ENTRY" };
 
-        const updated = await tx.timeEntry.update({
-          where: { id: decision.entryId },
-          data: { endTime: event.timestamp },
-        });
+      const decision = decide(state, event.intent, event.source);
 
-        // Cross-source consolidation (sub-req B). Read tenant-specific gap window.
-        const tenantConfig = await tx.tenantConfig.findUnique({
-          where: { tenantId: event.tenantId },
-        });
-        const gapHoursMax = tenantConfig?.consolidationGapHours ?? 4;
-
-        const merge = await consolidateSameDayEntries(tx, updated, gapHoursMax, app.log);
-
-        if (merge.merged) {
-          const audit = await emitClockAudit(tx, {
-            action: "CLOCK_OUT",
-            entity: "TimeEntry",
-            entityId: merge.targetEntryId,
-            oldValue: merge.before,
-            newValue: merge.after,
-            actor: event.actor,
-            req,
+      switch (decision.kind) {
+        case "START": {
+          const entry = await tx.timeEntry.create({
+            data: {
+              employeeId: event.employeeId,
+              date: event.date,
+              startTime: event.timestamp,
+              source: event.source as never, // widened at boundary; DB enforces enum
+              isInvalid: leaveCheck?.status === "CANCELLATION_REQUESTED",
+              invalidReason: leaveCheck ? "Urlaubsstornierung ausstehend" : null,
+              note: event.note,
+            },
           });
-          await emitClockAudit(tx, {
-            action: "DELETE",
+          const audit = await emitClockAudit(tx, {
+            action: "CLOCK_IN",
             entity: "TimeEntry",
-            entityId: merge.deletedEntryId,
-            oldValue: merge.deletedEntryBefore,
+            entityId: entry.id,
+            newValue: entry,
             actor: event.actor,
             req,
           });
@@ -268,68 +150,217 @@ export async function resolveClockEvent(
             {
               employeeId: event.employeeId,
               source: event.source,
-              kind: "CONSOLIDATED",
-              targetEntryId: merge.targetEntryId,
+              kind: "CLOCKED_IN",
+              entryId: entry.id,
             },
             "clock_event_resolved",
           );
-          return {
-            kind: "CONSOLIDATED",
-            entry: merge.after,
-            breakId: merge.breakId,
-            audit,
-          } as const;
+          return { kind: "CLOCKED_IN", entry, audit } as const;
         }
 
-        const audit = await emitClockAudit(tx, {
-          action: "CLOCK_OUT",
-          entity: "TimeEntry",
-          entityId: updated.id,
-          oldValue: { ...target, endTime: null },
-          newValue: updated,
-          actor: event.actor,
-          req,
-        });
-        app.log.info(
-          {
-            employeeId: event.employeeId,
-            source: event.source,
-            kind: "CLOCKED_OUT",
-            entryId: updated.id,
-          },
-          "clock_event_resolved",
-        );
-        return { kind: "CLOCKED_OUT", entry: updated, audit } as const;
-      }
+        case "REOPEN": {
+          // D-01b: locked-month guard (mirrors STOP branch — never mutate a locked entry)
+          if (closedEntry!.isLocked) {
+            app.log.warn(
+              { employeeId: event.employeeId, entryId: closedEntry!.id, reason: "MONTH_LOCKED" },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+          }
+          const gapBreakStart = closedEntry!.endTime!; // old endTime = start of gap break
+          // 1. Create Break for the gap (old endTime → new START timestamp)
+          const breakRow = await tx.break.create({
+            data: {
+              timeEntryId: decision.entryId,
+              startTime: gapBreakStart,
+              endTime: event.timestamp,
+            },
+          });
+          // 2. Recompute breakMinutes from ALL Break rows, then reopen + update in one round-trip
+          const allBreaks = await tx.break.findMany({ where: { timeEntryId: decision.entryId } });
+          const totalBreakMins = Math.round(calcBreakMinutesLocal(allBreaks));
+          const reopened = await tx.timeEntry.update({
+            where: { id: decision.entryId },
+            data: { endTime: null, breakMinutes: totalBreakMins },
+          });
+          // D-01c: audit the reopen with the dedicated CLOCK_REOPEN action
+          const audit = await emitClockAudit(tx, {
+            action: "CLOCK_REOPEN",
+            entity: "TimeEntry",
+            entityId: reopened.id,
+            oldValue: { endTime: gapBreakStart.toISOString() },
+            newValue: { endTime: null, gapBreakId: breakRow.id, breakMinutes: totalBreakMins },
+            actor: event.actor,
+            req,
+          });
+          app.log.info(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              kind: "REOPENED",
+              entryId: reopened.id,
+            },
+            "clock_event_resolved",
+          );
+          return { kind: "CLOCKED_IN", entry: reopened, audit } as const;
+        }
 
-      case "CONFIRM": {
-        const audit = await emitClockAudit(tx, {
-          action: "WIFI_PRESENCE_CONFIRMED",
-          entity: "TimeEntry",
-          entityId: decision.entryId,
-          newValue: { source: event.source, timestamp: event.timestamp.toISOString() },
-          actor: event.actor,
-          req,
-        });
-        app.log.info(
-          {
-            employeeId: event.employeeId,
-            source: event.source,
-            kind: "CONFIRMED",
-            entryId: decision.entryId,
-          },
-          "clock_event_resolved",
-        );
-        return { kind: "CONFIRMED", entryId: decision.entryId, audit } as const;
-      }
+        case "STOP": {
+          // WR-01/WR-02: reuse `openEntry` from the state lookup (already loaded with
+          // `deletedAt: null` and protected by the FOR-UPDATE lock on Employee).
+          // Replaces an earlier redundant findUnique that omitted the deletedAt filter.
+          // Phase 118 (D-01/D-04): this entry CAN be `isInvalid: true` — exactly the
+          // case from issue #124. The clock path closes it and leaves
+          // `isInvalid`/`invalidReason` untouched: invalidity belongs to whoever set
+          // it (the cancellation approval auto-revalidates — CLAUDE.md § 8 BUrlG; the
+          // attendance checker sets it). Silently revalidating on clock-out would be
+          // a "silent overwrite" per the Revisionssicherheit rules.
+          const target = openEntry!;
+          // D-02: 60s server double-tap debounce. A STOP within 60s of START is an accidental
+          // double-tap → NO-OP: leave the entry open, produce no zero/near-zero-duration row.
+          const gapMs = event.timestamp.getTime() - target.startTime.getTime();
+          if (gapMs < 60_000) {
+            app.log.info(
+              { entryId: target.id, gapMs, source: event.source, reason: "DEBOUNCE_NOOP" },
+              "clock_event_noop",
+            );
+            return { kind: "DEBOUNCE_NOOP" } as const;
+          }
+          if (target.isLocked) {
+            app.log.warn(
+              { employeeId: event.employeeId, entryId: target.id, reason: "MONTH_LOCKED" },
+              "clock_event_conflict",
+            );
+            return { kind: "CONFLICT", reason: "MONTH_LOCKED" } as const;
+          }
 
-      case "CONFLICT": {
-        app.log.warn(
-          { employeeId: event.employeeId, source: event.source, reason: decision.reason },
-          "clock_event_conflict",
-        );
-        return { kind: "CONFLICT", reason: decision.reason } as const;
+          const updated = await tx.timeEntry.update({
+            where: { id: decision.entryId },
+            data: { endTime: event.timestamp },
+          });
+
+          // Cross-source consolidation (sub-req B). Read tenant-specific gap window.
+          const tenantConfig = await tx.tenantConfig.findUnique({
+            where: { tenantId: event.tenantId },
+          });
+          const gapHoursMax = tenantConfig?.consolidationGapHours ?? 4;
+
+          const merge = await consolidateSameDayEntries(tx, updated, gapHoursMax, app.log);
+
+          if (merge.merged) {
+            const audit = await emitClockAudit(tx, {
+              action: "CLOCK_OUT",
+              entity: "TimeEntry",
+              entityId: merge.targetEntryId,
+              oldValue: merge.before,
+              newValue: merge.after,
+              actor: event.actor,
+              req,
+            });
+            await emitClockAudit(tx, {
+              action: "DELETE",
+              entity: "TimeEntry",
+              entityId: merge.deletedEntryId,
+              oldValue: merge.deletedEntryBefore,
+              actor: event.actor,
+              req,
+            });
+            app.log.info(
+              {
+                employeeId: event.employeeId,
+                source: event.source,
+                kind: "CONSOLIDATED",
+                targetEntryId: merge.targetEntryId,
+              },
+              "clock_event_resolved",
+            );
+            return {
+              kind: "CONSOLIDATED",
+              entry: merge.after,
+              breakId: merge.breakId,
+              audit,
+            } as const;
+          }
+
+          const audit = await emitClockAudit(tx, {
+            action: "CLOCK_OUT",
+            entity: "TimeEntry",
+            entityId: updated.id,
+            oldValue: { ...target, endTime: null },
+            newValue: updated,
+            actor: event.actor,
+            req,
+          });
+          app.log.info(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              kind: "CLOCKED_OUT",
+              entryId: updated.id,
+            },
+            "clock_event_resolved",
+          );
+          return { kind: "CLOCKED_OUT", entry: updated, audit } as const;
+        }
+
+        case "CONFIRM": {
+          const audit = await emitClockAudit(tx, {
+            action: "WIFI_PRESENCE_CONFIRMED",
+            entity: "TimeEntry",
+            entityId: decision.entryId,
+            newValue: { source: event.source, timestamp: event.timestamp.toISOString() },
+            actor: event.actor,
+            req,
+          });
+          app.log.info(
+            {
+              employeeId: event.employeeId,
+              source: event.source,
+              kind: "CONFIRMED",
+              entryId: decision.entryId,
+            },
+            "clock_event_resolved",
+          );
+          return { kind: "CONFIRMED", entryId: decision.entryId, audit } as const;
+        }
+
+        case "CONFLICT": {
+          app.log.warn(
+            { employeeId: event.employeeId, source: event.source, reason: decision.reason },
+            "clock_event_conflict",
+          );
+          return { kind: "CONFLICT", reason: decision.reason } as const;
+        }
       }
+    });
+  } catch (err: unknown) {
+    // Phase 118 (D-06): the partial day-uniqueness index
+    // `TimeEntry_employeeId_date_unique_not_deleted` catches a concurrent same-day
+    // create that slipped past the resolver's FOR-UPDATE lock (e.g.
+    // POST /api/v1/time-entries). A business conflict, not a server error.
+    // Pattern mirrored from time-entries.ts:1336-1347.
+    //
+    // The catch deliberately sits OUTSIDE the transaction callback: once a
+    // statement inside a Postgres transaction fails, the transaction is aborted;
+    // any further query on the same `tx` (e.g. emitClockAudit) would also fail.
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      (err as { code: unknown }).code === "P2002"
+    ) {
+      app.log.warn(
+        {
+          employeeId: event.employeeId,
+          source: event.source,
+          intent: event.intent,
+          reason: "ALREADY_CLOCKED_IN",
+          cause: "P2002",
+        },
+        "clock_event_conflict",
+      );
+      return { kind: "CONFLICT", reason: "ALREADY_CLOCKED_IN" } as const;
     }
-  });
+    throw err;
+  }
 }
