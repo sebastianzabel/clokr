@@ -1852,7 +1852,20 @@
                     {#if slot.endTime}{fmtTime(slot.endTime)}
                     {:else}<span class="badge badge-green">Aktiv</span>{/if}
                   </td>
-                  <td>{fmtBreaks(slot)}</td>
+                  <td>
+                    {fmtBreaks(slot)}
+                    {#if enforceBreakConfirmation && isUnconfirmedBreak(slot)}
+                      <!-- Phase 112 — only AUTO is badged here. breakStatus is @default(CONFIRMED)
+                           in the schema, so badging every state would put a pill on every row of
+                           every month and destroy the signal. The modal still shows all three. -->
+                      <span
+                        class="badge {breakBadgeClass(slot.breakStatus)} break-cell-badge"
+                        data-testid={`time-entry-row-${slot.id}-break-badge`}
+                        title="Automatisch eingetragene Pflichtpause nach § 4 ArbZG — bitte bestätigen"
+                        >{breakBadgeLabel(slot.breakStatus)}</span
+                      >
+                    {/if}
+                  </td>
                   <td class="font-mono font-medium">{slotNet(slot)}</td>
                   {#if isShiftBased && monthSaldo}
                     {@const cum = monthSaldoDayMap.get(slotDate)}
@@ -2849,6 +2862,12 @@
   }
   .row-del td {
     background: var(--bad-soft);
+  }
+
+  /* Phase 112 — status pill inside the Pause cell; wraps under the times on narrow screens. */
+  .break-cell-badge {
+    margin-left: 0.375rem;
+    white-space: nowrap;
   }
 
   /* Phase 112 — the row an arriving deep link points at. Ring, not a background swap, so it
