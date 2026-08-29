@@ -15,6 +15,13 @@ import {
 import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { NOT_ANONYMIZED_EMPLOYEE_WHERE } from "../utils/anonymize";
 import { updateOvertimeAccount } from "./time-entries";
+import { mondayOfWeekUtc } from "../utils/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive as :709-718
+import {
+  recalcProvisionalLeaveForShiftChange,
+  type RecalcDeps,
+  type AdjustmentRecord,
+} from "../utils/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16)
+import { resolveLeaveDays, getHolidayMap, deductVacationDays, reverseVacationDays } from "./leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
 // ARBZG_MARKER_47_4_01
 
 const templateSchema = z.object({
@@ -495,7 +502,88 @@ async function assertArbZGRestPeriod(
   return worst;
 }
 
+// ── Phase 107 (D-14) — shift-leave-recalc wiring shared by all seven write paths below ───────
+
+// Built once, at module scope, from the leave.ts functions D-14 requires every roster mutation
+// to reuse rather than reinvent (see each export's own "Exported (Phase 107, D-14)" docblock
+// note in leave.ts). `deps.audit` is bound per-call below (it needs the route's own `app`).
+const recalcDepsBase = { resolveLeaveDays, getHolidayMap, deductVacationDays, reverseVacationDays };
+
+/**
+ * Monday (UTC midnight) + Sunday of the ISO week containing `date` — the `(employeeId, week)`
+ * pair every call site below reports to `recalcProvisionalLeaveForShiftChange()`. Wraps
+ * `mondayOfWeekUtc()` (`utils/vacation-calc.ts`), itself already a mirror of the inline
+ * Monday-cutting block `GET /week` uses below (:709-718 pre-Phase-107) — "do not introduce a
+ * third week-cutting implementation" (Phase 107 interfaces note).
+ */
+function affectedWeekBounds(date: Date): { weekStart: Date; weekEnd: Date } {
+  const weekStart = mondayOfWeekUtc(date);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  return { weekStart, weekEnd };
+}
+
+/**
+ * Phase 107 (D-18/D-19/D-21) — sends the "Urlaubsverbrauch angepasst" notification to both the
+ * affected employee and the approving manager for every adjustment record
+ * `recalcProvisionalLeaveForShiftChange()` returned, AFTER the shift transaction that produced
+ * them has already committed. Skips a recipient that equals the acting user (the same
+ * "except the actor" convention Phase 91's break-compliance alert uses, `time-entries.ts`).
+ *
+ * Failures are logged, never rethrown: D-15 couples the roster recompute to the shift
+ * mutation's own transaction, NOT to this notification step, which runs after that transaction
+ * has already committed and cannot be rolled back by a delivery failure here.
+ */
+async function notifyLeaveDaysAdjusted(
+  app: FastifyInstance,
+  adjustments: AdjustmentRecord[],
+  tenantId: string,
+  actorUserId: string,
+): Promise<void> {
+  for (const adj of adjustments) {
+    const von = formatDateDe(adj.startDate.toISOString().slice(0, 10));
+    const bis = formatDateDe(adj.endDate.toISOString().slice(0, 10));
+    const message =
+      adj.direction === "down"
+        ? `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
+        : `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
+
+    const recipients: Array<{ userId: string; link: string }> = [
+      { userId: adj.employeeUserId, link: "/leave" },
+      // v1.9.8 manager deep-link convention: /leave lands a manager on their OWN requests.
+      ...(adj.approverUserId
+        ? [{ userId: adj.approverUserId, link: `/team/leave?request=${adj.leaveRequestId}` }]
+        : []),
+    ];
+
+    for (const recipient of recipients) {
+      if (recipient.userId === actorUserId) continue; // Phase-91 idiom: never notify the actor
+      try {
+        await app.notify({
+          userId: recipient.userId,
+          type: "LEAVE_DAYS_ADJUSTED",
+          title: "Urlaubsverbrauch angepasst",
+          message,
+          link: recipient.link,
+          tenantId,
+          relatedType: "LeaveRequest",
+          relatedId: adj.leaveRequestId,
+        });
+      } catch (err) {
+        app.log.error(
+          { err, leaveRequestId: adj.leaveRequestId, userId: recipient.userId },
+          "Failed to send LEAVE_DAYS_ADJUSTED notification",
+        );
+      }
+    }
+  }
+}
+
 export async function shiftRoutes(app: FastifyInstance) {
+  // Phase 107 (D-14): binds `app.audit` for this app instance; the other four dependencies are
+  // pure imported functions, identical across every call below.
+  const recalcDeps: RecalcDeps = { ...recalcDepsBase, audit: app.audit.bind(app) };
+
   app.addHook("preHandler", requireAuth);
 
   // ── Templates ──────────────────────────────────────────────
@@ -1859,22 +1947,44 @@ export async function shiftRoutes(app: FastifyInstance) {
         if (tpl) label = tpl.name;
       }
 
-      const shift = await app.prisma.shift.create({
-        data: {
-          employeeId: body.employeeId,
-          templateId: body.templateId,
-          date: new Date(body.date),
-          startTime: body.startTime,
-          endTime: body.endTime,
-          label,
-          note: body.note,
-          createdBy: req.user.sub,
-        },
-        include: {
-          employee: { select: { id: true, firstName: true, lastName: true } },
-          template: { select: { name: true, color: true } },
-        },
+      // Phase 107 (D-15): the shift write and the leave-recalc call share ONE new
+      // transaction — fail-closed. The saldo-refresh hook and the audit calls below stay
+      // exactly where they were (outside, non-transactional, plain-awaited with no error
+      // handling of their own): D-15 concerns only the shift-mutation/leave-recalc coupling,
+      // not those pre-existing, deliberately separate side effects. Do NOT wrap the resolver
+      // call in a `.catch()` — unlike that neighbouring saldo-refresh hook, whose failure
+      // today does NOT undo an already-committed shift write, a leave-recalc failure MUST roll
+      // the shift write back, not just log and continue.
+      const { weekStart, weekEnd } = affectedWeekBounds(new Date(body.date));
+      const { shift, adjustments } = await app.prisma.$transaction(async (tx) => {
+        const shift = await tx.shift.create({
+          data: {
+            employeeId: body.employeeId,
+            templateId: body.templateId,
+            date: new Date(body.date),
+            startTime: body.startTime,
+            endTime: body.endTime,
+            label,
+            note: body.note,
+            createdBy: req.user.sub,
+          },
+          include: {
+            employee: { select: { id: true, firstName: true, lastName: true } },
+            template: { select: { name: true, color: true } },
+          },
+        });
+        const adjustments = await recalcProvisionalLeaveForShiftChange(
+          tx,
+          recalcDeps,
+          body.employeeId,
+          req.user.tenantId,
+          weekStart,
+          weekEnd,
+          req.user.sub,
+        );
+        return { shift, adjustments };
       });
+      await notifyLeaveDaysAdjusted(app, adjustments, req.user.tenantId, req.user.sub);
 
       // Standard create audit + special force-override audit
       await app.audit({
@@ -2130,25 +2240,64 @@ export async function shiftRoutes(app: FastifyInstance) {
         }
       }
 
-      const updated = await app.prisma.shift.update({
-        where: { id },
-        data: {
-          ...(body.employeeId !== undefined ? { employeeId: body.employeeId } : {}),
-          ...(body.templateId !== undefined ? { templateId: body.templateId || null } : {}),
-          ...(body.date ? { date: new Date(body.date) } : {}),
-          ...(body.startTime ? { startTime: body.startTime } : {}),
-          ...(body.endTime ? { endTime: body.endTime } : {}),
-          ...(body.label !== undefined ? { label: body.label || null } : {}),
-          ...(body.note !== undefined ? { note: body.note || null } : {}),
-          // If the user is force-saving on top of a conflict, clear any stale flag
-          // (a manager has actively decided this shift stays).
-          ...(force && conflict ? { conflictsWithLeave: false } : {}),
-        },
-        include: {
-          employee: { select: { id: true, firstName: true, lastName: true, employeeNumber: true } },
-          template: { select: { name: true, color: true } },
-        },
+      // Phase 107 (D-15): report BOTH the old and the new (employeeId, week) pair when either
+      // changed — the same "recompute for old AND new" rule the saldo-refresh hook a few lines
+      // below already follows. Deduped by week-start key so an unchanged employeeId+date (the
+      // common case) triggers exactly one resolver call, not two identical ones.
+      const affectedPairs = new Map<
+        string,
+        { employeeId: string; weekStart: Date; weekEnd: Date }
+      >();
+      const addAffectedPair = (empId: string, d: Date) => {
+        const { weekStart, weekEnd } = affectedWeekBounds(d);
+        affectedPairs.set(`${empId}::${weekStart.toISOString()}`, {
+          employeeId: empId,
+          weekStart,
+          weekEnd,
+        });
+      };
+      addAffectedPair(existing.employeeId, existing.date);
+      addAffectedPair(effEmployeeId, new Date(effDateIso + "T00:00:00Z"));
+
+      const { updated, adjustments } = await app.prisma.$transaction(async (tx) => {
+        const updated = await tx.shift.update({
+          where: { id },
+          data: {
+            ...(body.employeeId !== undefined ? { employeeId: body.employeeId } : {}),
+            ...(body.templateId !== undefined ? { templateId: body.templateId || null } : {}),
+            ...(body.date ? { date: new Date(body.date) } : {}),
+            ...(body.startTime ? { startTime: body.startTime } : {}),
+            ...(body.endTime ? { endTime: body.endTime } : {}),
+            ...(body.label !== undefined ? { label: body.label || null } : {}),
+            ...(body.note !== undefined ? { note: body.note || null } : {}),
+            // If the user is force-saving on top of a conflict, clear any stale flag
+            // (a manager has actively decided this shift stays).
+            ...(force && conflict ? { conflictsWithLeave: false } : {}),
+          },
+          include: {
+            employee: {
+              select: { id: true, firstName: true, lastName: true, employeeNumber: true },
+            },
+            template: { select: { name: true, color: true } },
+          },
+        });
+        const adjustments: AdjustmentRecord[] = [];
+        for (const pair of affectedPairs.values()) {
+          adjustments.push(
+            ...(await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              pair.employeeId,
+              req.user.tenantId,
+              pair.weekStart,
+              pair.weekEnd,
+              req.user.sub,
+            )),
+          );
+        }
+        return { updated, adjustments };
       });
+      await notifyLeaveDaysAdjusted(app, adjustments, req.user.tenantId, req.user.sub);
 
       await app.audit({
         userId: req.user.sub,
@@ -2512,7 +2661,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Commit mode — write everything in one transaction
-      const created = await app.prisma.$transaction(async (tx) => {
+      const { rows: created, adjustments } = await app.prisma.$transaction(async (tx) => {
         const rows = [];
         for (const c of toCreate) {
           const row = await tx.shift.create({
@@ -2528,8 +2677,29 @@ export async function shiftRoutes(app: FastifyInstance) {
           });
           rows.push(row);
         }
-        return rows;
+        // Phase 107 (D-14/D-15): inserted INSIDE this existing transaction, before it returns
+        // — NOT bolted on beside the settle-and-report saldo refresh below, which swallows
+        // per-employee failures. Every row created above shares the SAME target week, so one
+        // resolver call per unique employee is enough.
+        const { weekStart, weekEnd } = affectedWeekBounds(monday);
+        const uniqueEmployeeIds = Array.from(new Set(rows.map((r) => r.employeeId)));
+        const adjustments: AdjustmentRecord[] = [];
+        for (const employeeId of uniqueEmployeeIds) {
+          adjustments.push(
+            ...(await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              employeeId,
+              tenantId,
+              weekStart,
+              weekEnd,
+              req.user.sub,
+            )),
+          );
+        }
+        return { rows, adjustments };
       });
+      await notifyLeaveDaysAdjusted(app, adjustments, tenantId, req.user.sub);
 
       // Audit log per created shift
       for (const row of created) {
@@ -2816,7 +2986,7 @@ export async function shiftRoutes(app: FastifyInstance) {
       }
 
       // Commit mode — write everything in one transaction
-      const created = await app.prisma.$transaction(async (tx) => {
+      const { rows: created, adjustments } = await app.prisma.$transaction(async (tx) => {
         const rows: Array<Awaited<ReturnType<typeof tx.shift.create>> & { sourceShiftId: string }> =
           [];
         for (const c of toCreate) {
@@ -2834,8 +3004,28 @@ export async function shiftRoutes(app: FastifyInstance) {
           });
           rows.push({ ...row, sourceShiftId: c.sourceShiftId });
         }
-        return rows;
+        // Phase 107 (D-14/D-15): inserted INSIDE this existing transaction, before it returns.
+        // Every row created above lands in the TARGET week, so one resolver call per unique
+        // employee is enough.
+        const { weekStart, weekEnd } = affectedWeekBounds(targetMonday);
+        const uniqueEmployeeIds = Array.from(new Set(rows.map((r) => r.employeeId)));
+        const adjustments: AdjustmentRecord[] = [];
+        for (const employeeId of uniqueEmployeeIds) {
+          adjustments.push(
+            ...(await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              employeeId,
+              tenantId,
+              weekStart,
+              weekEnd,
+              req.user.sub,
+            )),
+          );
+        }
+        return { rows, adjustments };
       });
+      await notifyLeaveDaysAdjusted(app, adjustments, tenantId, req.user.sub);
 
       // Audit log per copied shift (SHIFT_COPIED is distinct from CREATE so the
       // audit trail records the copy provenance — see Phase 43-05 spec).
@@ -2905,9 +3095,15 @@ export async function shiftRoutes(app: FastifyInstance) {
     handler: async (req, reply) => {
       const { shifts: shiftDefs } = bulkShiftSchema.parse(req.body);
 
-      const created = await app.prisma.$transaction(
-        shiftDefs.map((s) =>
-          app.prisma.shift.create({
+      // Phase 107 (D-14/D-15): converted from the batch `$transaction([...])` form to the
+      // interactive `$transaction(async (tx) => ...)` form — required to insert the resolver
+      // call inside the SAME transaction as the creates (the batch form has no callback body
+      // to insert into). Still one atomic transaction; sequential `tx.shift.create()` calls in
+      // a loop is the same idiom `generate-week`/`copy-week` already use for this reason.
+      const { created, adjustments } = await app.prisma.$transaction(async (tx) => {
+        const rows = [];
+        for (const s of shiftDefs) {
+          const row = await tx.shift.create({
             data: {
               employeeId: s.employeeId,
               templateId: s.templateId,
@@ -2918,9 +3114,40 @@ export async function shiftRoutes(app: FastifyInstance) {
               note: s.note,
               createdBy: req.user.sub,
             },
-          }),
-        ),
-      );
+          });
+          rows.push(row);
+        }
+        // Unlike generate-week/copy-week, /bulk shifts can span multiple employees AND
+        // multiple weeks in one call — dedupe by (employeeId, weekStart) pair.
+        const affectedPairs = new Map<
+          string,
+          { employeeId: string; weekStart: Date; weekEnd: Date }
+        >();
+        for (const s of shiftDefs) {
+          const { weekStart, weekEnd } = affectedWeekBounds(new Date(s.date));
+          affectedPairs.set(`${s.employeeId}::${weekStart.toISOString()}`, {
+            employeeId: s.employeeId,
+            weekStart,
+            weekEnd,
+          });
+        }
+        const adjustments: AdjustmentRecord[] = [];
+        for (const pair of affectedPairs.values()) {
+          adjustments.push(
+            ...(await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              pair.employeeId,
+              req.user.tenantId,
+              pair.weekStart,
+              pair.weekEnd,
+              req.user.sub,
+            )),
+          );
+        }
+        return { created: rows, adjustments };
+      });
+      await notifyLeaveDaysAdjusted(app, adjustments, req.user.tenantId, req.user.sub);
 
       // Phase 76.5 (D-03, D-04) — saldo refresh per unique employee.
       // D-04: No p-limit cap — POOL_MAX=10 implicit bound; revisit if /bulk regresses >10%.
@@ -2963,7 +3190,23 @@ export async function shiftRoutes(app: FastifyInstance) {
         });
       }
 
-      await app.prisma.shift.delete({ where: { id } });
+      // Phase 107 (D-15): the delete and the leave-recalc call share ONE new transaction.
+      const { weekStart, weekEnd } = affectedWeekBounds(existing.date);
+      const { adjustments } = await app.prisma.$transaction(async (tx) => {
+        await tx.shift.delete({ where: { id } });
+        const adjustments = await recalcProvisionalLeaveForShiftChange(
+          tx,
+          recalcDeps,
+          existing.employeeId,
+          req.user.tenantId,
+          weekStart,
+          weekEnd,
+          req.user.sub,
+        );
+        return { adjustments };
+      });
+      await notifyLeaveDaysAdjusted(app, adjustments, req.user.tenantId, req.user.sub);
+
       await app.audit({
         userId: req.user.sub,
         action: "DELETE",
@@ -3095,10 +3338,27 @@ export async function shiftRoutes(app: FastifyInstance) {
             ? { conflictsWithLeave: false }
             : {};
 
-      const updated = await app.prisma.shift.update({
-        where: { id },
-        data: updateData,
+      // Phase 107 (D-15): the restore write and the leave-recalc call share ONE new
+      // transaction — restoring a shift re-adds a workday to the roster, the same category of
+      // roster change as a create.
+      const { weekStart, weekEnd } = affectedWeekBounds(shift.date);
+      const { updated, adjustments } = await app.prisma.$transaction(async (tx) => {
+        const updated = await tx.shift.update({
+          where: { id },
+          data: updateData,
+        });
+        const adjustments = await recalcProvisionalLeaveForShiftChange(
+          tx,
+          recalcDeps,
+          shift.employeeId,
+          req.user.tenantId,
+          weekStart,
+          weekEnd,
+          req.user.sub,
+        );
+        return { updated, adjustments };
       });
+      await notifyLeaveDaysAdjusted(app, adjustments, req.user.tenantId, req.user.sub);
 
       await app.audit({
         userId: req.user.sub,

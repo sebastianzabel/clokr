@@ -22,8 +22,10 @@
   import { toasts } from "$stores/toast";
   import {
     mapVacationBalance,
+    resolveAdjustmentBadge,
     type VacationBalance,
     type VacationEntitlementRow,
+    type LastDaysAdjustment,
   } from "$lib/leave/vacation-balance";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
@@ -60,6 +62,10 @@
     // Phase 104-10 (D-29): the § 9 case touching this request, if any.
     section9Status?: "AU_PENDING" | "CONFIRMED" | "REJECTED" | null;
     section9CreditId?: string | null;
+    // Phase 107-07 (D-12/D-19): set at approval time, server-derived only — see
+    // GET /leave/requests' own doc comment for both fields.
+    daysProvisional?: boolean | null;
+    lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
   interface OverlapEntry {
@@ -1440,10 +1446,39 @@
                   <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
                 </div>
               {/if}
+              <!-- Phase 107 gap G-03: the label is CONDITIONAL on purpose. "(bestätigt)" is a
+                   qualifier that only means something next to the "Verbraucht (vorläufig)" row
+                   below, which renders only for SHIFT_BASED provisional consumption. At
+                   provisionalUsed === 0 that row is absent, so the qualifier would pose a
+                   contrast the card never resolves — we fall back to "Genommen", the pre-107
+                   wording still used by this page's own summary strip, admin/employees/[id]
+                   and reports. Same predicate as the #if guard below, so the pair is always
+                   rendered together or not at all. Do NOT collapse this back to a constant. -->
               <div class="balance-row">
-                <span class="balance-label">Genommen</span>
-                <span class="balance-value">− {vacationBalance.used} Tage</span>
+                <span class="balance-label"
+                  >{vacationBalance.provisionalUsed > 0
+                    ? "Verbraucht (bestätigt)"
+                    : "Genommen"}</span
+                >
+                <span class="balance-value"
+                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
+                >
               </div>
+              {#if vacationBalance.provisionalUsed > 0}
+                <!-- Phase 107-07 (D-12): omitted entirely at zero — that omission plus the
+                     conditional label above (gap G-03) is what makes the card indistinguishable
+                     from before this phase for a reader with no SHIFT_BASED provisional
+                     consumption; dropping this row alone would leave a dangling "(bestätigt)"
+                     qualifier up there with nothing to contrast against. Muted like Phase 97's
+                     "Laufender Monat (Prognose)" row (same class, same "true today, may change"
+                     meaning). -->
+                <div class="balance-row">
+                  <span class="balance-label">Verbraucht (vorläufig)</span>
+                  <span class="balance-value balance-value--muted"
+                    >− {vacationBalance.provisionalUsed} Tage</span
+                  >
+                </div>
+              {/if}
               <div class="balance-row">
                 <span class="balance-label">Verfügbar</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
@@ -2004,6 +2039,35 @@
                       data-testid={`leave-mine-row-${req.id}-status-badge`}
                       >{statusLabel(req.status)}</span
                     >
+                    {#if req.lastDaysAdjustment}
+                      {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                      <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
+                           bell-notification's read/dismissed state, always the latest
+                           adjustment only. Reading order: status, then this, then Vorläufig
+                           (UI-SPEC §Visual Hierarchy — this reports something that
+                           happened, Vorläufig only a standing condition). -->
+                      <span
+                        class={adjBadge.badgeClass}
+                        data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
+                        title={adjBadge.tooltip}
+                      >
+                        {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                          ? "+"
+                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
+                          >{:else}{adjBadge.delta}{/if} Tag(e)
+                      </span>
+                    {/if}
+                    {#if req.daysProvisional}
+                      <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
+                           provisional request is fully valid and payable today. -->
+                      <span
+                        class="badge badge-yellow"
+                        data-testid={`leave-mine-row-${req.id}-provisional-badge`}
+                        title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                      >
+                        Vorläufig
+                      </span>
+                    {/if}
                     {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                       <span
                         class="badge badge-attest {req.attestPresent

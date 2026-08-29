@@ -152,6 +152,16 @@ function isLiteralMoFr(arr: number[]): boolean {
  * that sends `workDays: [1,2,3,4,5]` (the schema default) AND
  * `mondayHours: 0` is interpreted as "caller didn't think about workDays,
  * derive from hours" rather than "caller wants Mo-Fr counted as workdays".
+ *
+ * SHIFT_BASED exemption (Phase 107, D-02/D-30): this function is still reachable from every
+ * WorkSchedule write path, but as of Phase 107 no write path routes a SHIFT_BASED row's
+ * `workDays` through it any more — a SHIFT_BASED employee's contractual quantity lives in
+ * `WorkSchedule.contractWorkDaysPerWeek` instead (see `resolveContractWorkDaysPerWeek()` in
+ * `apps/api/src/routes/leave.ts` and CLAUDE.md §"Schedule Types"). Do NOT read this function's
+ * output as governing SHIFT_BASED `workDays` — for that type the `{day}Hours` columns are
+ * placeholders (`getScheduledHours()`, Phase 100 / OTC-04) and a value derived here has no
+ * authority. Existing divergent SHIFT_BASED rows are deliberately left alone (evidence for
+ * Phase 108 / GitHub issue #95), not something this function is expected to correct.
  */
 export function normalizeWorkDays(
   explicit: number[] | undefined,

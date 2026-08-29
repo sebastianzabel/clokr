@@ -39,6 +39,18 @@ import type { FastifyInstance } from "fastify";
 import { decryptSafe } from "../../utils/crypto";
 import { todayInTz, dateStrInTz } from "../../utils/timezone";
 import { applyPrepWrapup } from "../../utils/time-arithmetic";
+import { mondayOfWeekUtc } from "../../utils/vacation-calc"; // Phase 107 (D-14) — same Monday-cutting primitive routes/shifts.ts:709-718 / affectedWeekBounds() use
+import {
+  recalcProvisionalLeaveForShiftChange,
+  type RecalcDeps,
+  type AdjustmentRecord,
+} from "../../utils/shift-leave-recalc-resolver"; // Phase 107 (D-14/D-15/D-16) — the eighth write path
+import {
+  resolveLeaveDays,
+  getHolidayMap,
+  deductVacationDays,
+  reverseVacationDays,
+} from "../../routes/leave"; // Phase 107 (D-14) — reused verbatim, see each export's own docblock note in leave.ts
 import { phorestFetch } from "./client";
 import {
   phorestShiftKey,
@@ -53,6 +65,174 @@ import {
 const DEFAULT_BASE_URL = "https://api-gateway-eu.phorest.com/third-party-api-server";
 // Safety cap on the pagination loop so a misbehaving next-link can't spin forever.
 const MAX_WTT_PAGES = 100;
+
+// ── Phase 107 (D-14) — shift-leave-recalc wiring, the Phorest sync's own thin adapter ────────
+//
+// The eighth D-14 write path (107-CONTEXT.md D-14: "plus der Phorest-Sync"). Mirrors
+// routes/shifts.ts's own "recalcDepsBase / affectedWeekBounds / notifyLeaveDaysAdjusted" trio
+// rather than reinventing them, with three differences forced by this call site's own shape
+// (107-06-SUMMARY.md records the reasoning in full):
+//   1. Per-SHIFT transactions, not one transaction for the whole multi-employee sync run
+//      (RESEARCH.md Assumption A3 / Open Question 1, resolved) — each of the four mutation sites
+//      below wraps ONLY its own shift write + its own resolver call, never the surrounding fetch
+//      loop. Holding one Postgres transaction across the outbound Phorest HTTP calls above, or
+//      letting one employee's failure roll back every other employee's sync, would both be
+//      directly contrary to D-16's "enger Umfang, überschaubare Laufzeit" rationale.
+//   2. No request-scoped human actor exists on the unattended cron path. `PHOREST_SYNC_ACTOR_ID`
+//      only ever satisfies the resolver's own required `actorUserId: string` parameter and the
+//      local "skip the acting user" notification check below — it is a sentinel, never written
+//      to a database row. `buildPhorestSafeAudit()` strips it back to `undefined` before it can
+//      reach `AuditLog.userId` (a real FK to `User`, `onDelete: SetNull` — no `User` row with id
+//      "SYSTEM" exists in this data model; see vocational-school-generator.ts's own documented
+//      convention for exactly this situation, reused here rather than inventing a second one).
+//      The MANUAL trigger (routes/integrations.ts `POST /phorest/sync-shifts`) already carries a
+//      real `opts.actorUserId` (`req.user.sub`) — that value flows straight through unmodified,
+//      so a manual re-sync gets the same real-actor audit trail and "except the actor"
+//      notification skip routes/shifts.ts's own human-triggered call sites already have.
+//   3. A per-RUN de-dup `Set` around the notification fan-out only (never around the DB write):
+//      several of the four mutation sites can touch the SAME (employeeId, week) inside one run
+//      (e.g. two different WORKING slots created for the same employee's same week), and each
+//      would independently produce a genuine AdjustmentRecord — several notices for ONE sync run
+//      is noise, not signal (D-17 accepts repeated notices ACROSS separate runs). Every genuine
+//      adjustment still writes its own LeaveRequest.days / entitlement delta / audit row
+//      regardless — this gate only ever suppresses the notification.
+const recalcDepsBase = { resolveLeaveDays, getHolidayMap, deductVacationDays, reverseVacationDays };
+
+/** See point 2 above — never written to `AuditLog.userId` directly. */
+const PHOREST_SYNC_ACTOR_ID = "SYSTEM";
+
+/**
+ * Monday (UTC midnight) + Sunday of the ISO week containing `date` — mirrors
+ * `routes/shifts.ts`'s own private `affectedWeekBounds()` (itself a thin wrapper around
+ * `mondayOfWeekUtc()`, `utils/vacation-calc.ts`) verbatim. Not imported from `shifts.ts` — route
+ * files export a single `xxxRoutes(app)` function (CONVENTIONS.md), nothing else — so this tiny
+ * 4-line wrapper is duplicated here, not the underlying Monday-cutting primitive itself ("do not
+ * add a third week-cutting implementation", 107-06-PLAN.md interfaces note).
+ */
+function affectedWeekBounds(date: Date): { weekStart: Date; weekEnd: Date } {
+  const weekStart = mondayOfWeekUtc(date);
+  const weekEnd = new Date(weekStart);
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 6);
+  return { weekStart, weekEnd };
+}
+
+/** Format a YYYY-MM-DD ISO string to DD.MM.YYYY for German user-facing messages. Mirrors
+ *  routes/shifts.ts's own private copy of the same helper (small enough that duplicating it is
+ *  the established precedent — see e.g. routes/leave.ts's own separate copy — rather than
+ *  promoting it to a shared utils/ export). */
+function formatDateDe(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+/**
+ * Wraps `app.audit` so the cron sentinel (`PHOREST_SYNC_ACTOR_ID`) can never reach
+ * `AuditLog.userId` (see point 2 above). Every OTHER caller — a real `opts.actorUserId` from the
+ * manual trigger — passes straight through unmodified; this wrapper is a no-op for that path.
+ */
+function buildPhorestSafeAudit(app: FastifyInstance): FastifyInstance["audit"] {
+  return async (params) => {
+    if (params.userId !== PHOREST_SYNC_ACTOR_ID) {
+      return app.audit(params);
+    }
+    const newValue =
+      params.newValue && typeof params.newValue === "object" && !Array.isArray(params.newValue)
+        ? { ...(params.newValue as Record<string, unknown>), origin: "SYSTEM" }
+        : params.newValue;
+    return app.audit({ ...params, userId: undefined, newValue });
+  };
+}
+
+/**
+ * D-18/D-19/D-21 for the Phorest sync — mirrors `routes/shifts.ts`'s own
+ * `notifyLeaveDaysAdjusted()` (same "Urlaubsverbrauch angepasst" copy, same recipient rule, same
+ * per-recipient try/catch-and-log so a delivery failure never surfaces as a run failure), plus
+ * the per-run de-dup described in point 3 above. `seenThisRun` is owned by the CALLER (one `Set`
+ * for the whole `syncPhorestShifts()` invocation, shared across all four mutation sites) so the
+ * gate is genuinely per-RUN, not per-site.
+ */
+async function notifyLeaveDaysAdjustedOnce(
+  app: FastifyInstance,
+  adjustments: AdjustmentRecord[],
+  tenantId: string,
+  actorUserId: string,
+  weekStart: Date,
+  seenThisRun: Set<string>,
+): Promise<void> {
+  if (adjustments.length === 0) return;
+  // Every AdjustmentRecord returned from ONE recalcProvisionalLeaveForShiftChange() call shares
+  // the SAME employeeId (the call itself is scoped to a single employee) — safe to key off the
+  // first entry.
+  const dedupeKey = `${adjustments[0].employeeId}|${weekStart.toISOString().slice(0, 10)}`;
+  if (seenThisRun.has(dedupeKey)) return;
+  seenThisRun.add(dedupeKey);
+
+  for (const adj of adjustments) {
+    const von = formatDateDe(adj.startDate.toISOString().slice(0, 10));
+    const bis = formatDateDe(adj.endDate.toISOString().slice(0, 10));
+    const message =
+      adj.direction === "down"
+        ? `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage — der Schichtplan für diesen Zeitraum steht.`
+        : `Ihr Urlaub vom ${von} bis ${bis} verbraucht jetzt ${adj.newDays} statt ${adj.oldDays} Tage. Grund: der Schichtplan für diesen Zeitraum steht.`;
+
+    const recipients: Array<{ userId: string; link: string }> = [
+      { userId: adj.employeeUserId, link: "/leave" },
+      // v1.9.8 manager deep-link convention: /leave lands a manager on their OWN requests.
+      ...(adj.approverUserId
+        ? [{ userId: adj.approverUserId, link: `/team/leave?request=${adj.leaveRequestId}` }]
+        : []),
+    ];
+
+    for (const recipient of recipients) {
+      if (recipient.userId === actorUserId) continue; // Phase-91 idiom; a no-op on the cron path
+      try {
+        await app.notify({
+          userId: recipient.userId,
+          type: "LEAVE_DAYS_ADJUSTED",
+          title: "Urlaubsverbrauch angepasst",
+          message,
+          link: recipient.link,
+          tenantId,
+          relatedType: "LeaveRequest",
+          relatedId: adj.leaveRequestId,
+        });
+      } catch (err) {
+        app.log.error(
+          { err, leaveRequestId: adj.leaveRequestId, userId: recipient.userId },
+          "Failed to send LEAVE_DAYS_ADJUSTED notification (Phorest sync)",
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Runs one shift mutation together with its own D-14/D-15 leave-recalc call inside ONE
+ * transaction (per-shift, not per-run — see point 1 above and 107-06-SUMMARY.md's resolved
+ * reading of D-15 for this call site). ANY failure inside `fn` — the shift write OR the recalc —
+ * rolls back together (fail-closed, same as every routes/shifts.ts call site); this wrapper only
+ * decides what the REST of the sync run does about that failure: increment the run's own failure
+ * counter, log it structurally, and let the caller's loop move on to the next shift instead of
+ * aborting the whole run (T-107-27).
+ */
+async function isolateShiftFailure<T>(
+  app: FastifyInstance,
+  result: SyncResult,
+  runId: string,
+  context: { employeeId: string; date: string },
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    result.leaveRecalcFailures++;
+    app.log.error(
+      { err, runId, ...context },
+      "Phorest sync: per-shift transaction failed (shift write or leave-recalc) — shift skipped, sync continues",
+    );
+    return null;
+  }
+}
 
 export async function syncPhorestShifts(
   app: FastifyInstance,
@@ -75,6 +255,7 @@ export async function syncPhorestShifts(
     skippedVocationalSchool: 0,
     replaced: 0,
     protectedPendingLeave: 0,
+    leaveRecalcFailures: 0,
   };
 
   try {
@@ -88,6 +269,14 @@ export async function syncPhorestShifts(
     const biz = cfg.phorestBusinessId;
     const branch = cfg.phorestBranchId;
     const tz = cfg.timezone ?? "Europe/Berlin";
+
+    // Phase 107 (D-14) — the eighth shift-leave-recalc write path. `actorUserId` is the real
+    // manual-trigger user when present, else the never-persisted SYSTEM sentinel (see the
+    // header note above `PHOREST_SYNC_ACTOR_ID`). `notifiedThisRun` is the per-run notification
+    // de-dup Set, shared across all four mutation sites below.
+    const actorUserId = opts.actorUserId ?? PHOREST_SYNC_ACTOR_ID;
+    const recalcDeps: RecalcDeps = { ...recalcDepsBase, audit: buildPhorestSafeAudit(app) };
+    const notifiedThisRun = new Set<string>();
 
     // Window: today .. today + phorestSyncWindowDays (tenant TZ), overridable per opts (SS-06).
     const windowDays = cfg.phorestSyncWindowDays ?? 7;
@@ -339,18 +528,45 @@ export async function syncPhorestShifts(
       });
 
       if (occupant && occupant.externalId !== externalId) {
-        const adopted = await app.prisma.shift.update({
-          where: { id: occupant.id },
-          data: {
-            origin: "PHOREST",
-            externalId,
-            label: occupant.label ?? "Phorest",
-            // Phase 85.1 (D-02): an adopted legacy row's STORED time is padded too, same as a
-            // fresh create/update — only the occupant WHERE lookup above stays on raw times.
-            startTime: paddedStart,
-            endTime: paddedEnd,
-          },
-        });
+        const { weekStart, weekEnd } = affectedWeekBounds(new Date(date));
+        // Phase 107 (D-14/D-15): the shift write and the leave-recalc call share ONE small
+        // transaction — per shift, not per run (see the header note above this function).
+        const outcome = await isolateShiftFailure(app, result, run.id, { employeeId, date }, () =>
+          app.prisma.$transaction(async (tx) => {
+            const adopted = await tx.shift.update({
+              where: { id: occupant.id },
+              data: {
+                origin: "PHOREST",
+                externalId,
+                label: occupant.label ?? "Phorest",
+                // Phase 85.1 (D-02): an adopted legacy row's STORED time is padded too, same as a
+                // fresh create/update — only the occupant WHERE lookup above stays on raw times.
+                startTime: paddedStart,
+                endTime: paddedEnd,
+              },
+            });
+            const adjustments = await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              employeeId,
+              tenantId,
+              weekStart,
+              weekEnd,
+              actorUserId,
+            );
+            return { adopted, adjustments };
+          }),
+        );
+        if (!outcome) continue;
+        const { adopted, adjustments } = outcome;
+        await notifyLeaveDaysAdjustedOnce(
+          app,
+          adjustments,
+          tenantId,
+          actorUserId,
+          weekStart,
+          notifiedThisRun,
+        );
         result.updated++;
         freshCoveredDays.add(`${employeeId}|${date}`);
         await app.audit({
@@ -367,28 +583,59 @@ export async function syncPhorestShifts(
       // No conflicting occupant → canonical upsert by externalId (create or update).
       const existing = await app.prisma.shift.findUnique({ where: { externalId } });
 
-      const shift = await app.prisma.shift.upsert({
-        where: { externalId },
-        create: {
-          employeeId,
-          date: new Date(date),
-          startTime: paddedStart,
-          endTime: paddedEnd,
-          label: "Phorest",
-          origin: "PHOREST",
-          externalId,
-          createdBy: opts.actorUserId,
-        },
-        update: {
-          employeeId,
-          date: new Date(date),
-          startTime: paddedStart,
-          endTime: paddedEnd,
-          // A re-appearing entry revives a previously soft-cancelled shift (idempotent, self-healing).
-          deletedAt: null,
-          deletedReason: null,
-        },
-      });
+      const { weekStart, weekEnd } = affectedWeekBounds(new Date(date));
+      // Phase 107 (D-14/D-15): see the adopt-on-match branch above — same per-shift transaction shape.
+      const upsertOutcome = await isolateShiftFailure(
+        app,
+        result,
+        run.id,
+        { employeeId, date },
+        () =>
+          app.prisma.$transaction(async (tx) => {
+            const shift = await tx.shift.upsert({
+              where: { externalId },
+              create: {
+                employeeId,
+                date: new Date(date),
+                startTime: paddedStart,
+                endTime: paddedEnd,
+                label: "Phorest",
+                origin: "PHOREST",
+                externalId,
+                createdBy: opts.actorUserId,
+              },
+              update: {
+                employeeId,
+                date: new Date(date),
+                startTime: paddedStart,
+                endTime: paddedEnd,
+                // A re-appearing entry revives a previously soft-cancelled shift (idempotent, self-healing).
+                deletedAt: null,
+                deletedReason: null,
+              },
+            });
+            const adjustments = await recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              employeeId,
+              tenantId,
+              weekStart,
+              weekEnd,
+              actorUserId,
+            );
+            return { shift, adjustments };
+          }),
+      );
+      if (!upsertOutcome) continue;
+      const { shift, adjustments: upsertAdjustments } = upsertOutcome;
+      await notifyLeaveDaysAdjustedOnce(
+        app,
+        upsertAdjustments,
+        tenantId,
+        actorUserId,
+        weekStart,
+        notifiedThisRun,
+      );
 
       if (existing) result.updated++;
       else result.created++;
@@ -519,10 +766,41 @@ export async function syncPhorestShifts(
     }
 
     for (const stale of staleCandidates) {
-      await app.prisma.shift.update({
-        where: { id: stale.id },
-        data: { deletedAt: new Date(), deletedReason: "PHOREST_REMOVED" },
-      });
+      const staleDateStr = stale.date.toISOString().slice(0, 10);
+      const { weekStart: staleWeekStart, weekEnd: staleWeekEnd } = affectedWeekBounds(stale.date);
+      // Phase 107 (D-14/D-15): see the adopt-on-match branch above — same per-shift transaction
+      // shape. A soft-cancel is a roster change too (D-14 applies to "jede Schichtmutation").
+      const cancelAdjustments = await isolateShiftFailure(
+        app,
+        result,
+        run.id,
+        { employeeId: stale.employeeId, date: staleDateStr },
+        () =>
+          app.prisma.$transaction(async (tx) => {
+            await tx.shift.update({
+              where: { id: stale.id },
+              data: { deletedAt: new Date(), deletedReason: "PHOREST_REMOVED" },
+            });
+            return recalcProvisionalLeaveForShiftChange(
+              tx,
+              recalcDeps,
+              stale.employeeId,
+              tenantId,
+              staleWeekStart,
+              staleWeekEnd,
+              actorUserId,
+            );
+          }),
+      );
+      if (cancelAdjustments === null) continue;
+      await notifyLeaveDaysAdjustedOnce(
+        app,
+        cancelAdjustments,
+        tenantId,
+        actorUserId,
+        staleWeekStart,
+        notifiedThisRun,
+      );
       result.cancelled++;
       // Audit-proof: soft-delete only (never hard delete), one DELETE audit row per cancel.
       await app.audit({
@@ -571,10 +849,42 @@ export async function syncPhorestShifts(
         },
       });
       for (const dup of replaceCandidates) {
-        await app.prisma.shift.update({
-          where: { id: dup.id },
-          data: { deletedAt: new Date(), deletedReason: "PHOREST_REPLACED" },
-        });
+        const { weekStart: dupWeekStart, weekEnd: dupWeekEnd } = affectedWeekBounds(
+          new Date(dateStr),
+        );
+        // Phase 107 (D-14/D-15): see the adopt-on-match branch above — same per-shift
+        // transaction shape. A Phorest-master replace is a roster change too.
+        const replaceAdjustments = await isolateShiftFailure(
+          app,
+          result,
+          run.id,
+          { employeeId, date: dateStr },
+          () =>
+            app.prisma.$transaction(async (tx) => {
+              await tx.shift.update({
+                where: { id: dup.id },
+                data: { deletedAt: new Date(), deletedReason: "PHOREST_REPLACED" },
+              });
+              return recalcProvisionalLeaveForShiftChange(
+                tx,
+                recalcDeps,
+                employeeId,
+                tenantId,
+                dupWeekStart,
+                dupWeekEnd,
+                actorUserId,
+              );
+            }),
+        );
+        if (replaceAdjustments === null) continue;
+        await notifyLeaveDaysAdjustedOnce(
+          app,
+          replaceAdjustments,
+          tenantId,
+          actorUserId,
+          dupWeekStart,
+          notifiedThisRun,
+        );
         result.replaced++;
         await app.audit({
           userId: opts.actorUserId,
@@ -606,6 +916,7 @@ export async function syncPhorestShifts(
         updated: result.updated,
         cancelled: result.cancelled,
         unmapped: result.unmapped,
+        leaveRecalcFailures: result.leaveRecalcFailures,
       },
       "Phorest sync finished",
     );

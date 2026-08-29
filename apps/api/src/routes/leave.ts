@@ -6,7 +6,12 @@ import { getHolidays, STATE_MAP } from "../utils/holidays";
 import { getTenantTimezone, monthRangeUtc } from "../utils/timezone";
 import { generateICal, addOneDay, type ICalEvent } from "../utils/ical";
 import { recalculateSnapshots } from "../utils/recalculate-snapshots";
-import { splitDaysAcrossYears, calculateProRataVacation } from "../utils/vacation-calc";
+import {
+  splitDaysAcrossYears,
+  calculateProRataVacation,
+  mondayOfWeekUtc,
+  countShiftBasedLeaveDays,
+} from "../utils/vacation-calc"; // Phase 107 (D-04/D-09)
 import { selfHealUsedDays, loadVacationTypeMeta } from "../utils/leave-self-heal";
 import { calculateWorkDays } from "../utils/calculate-work-days";
 import { computeAffectedMonths } from "../utils/correction-lock";
@@ -294,8 +299,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
+      // workDays (the array, not just the count) is still needed below for splitDaysAcrossYears.
       const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09): roster-aware estimate from creation onward, so the number does not
+      // visibly jump at approval. daysProvisional itself stays null until approval (D-10) --
+      // only `.days` is used here, `.provisional` is deliberately discarded.
+      const { days } = await resolveLeaveDays(
+        app.prisma,
+        employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
 
       // Überschneidung mit eigenem Antrag prüfen.
       //
@@ -753,6 +770,46 @@ export async function leaveRoutes(app: FastifyInstance) {
         }
       }
 
+      // Phase 107-07 (D-19/D-20/D-21, read side): the persistent "Angepasst" marker on a
+      // request row. Sourced from the LEAVE_DAYS_ADJUSTED audit trail the shift-leave-recalc
+      // resolver writes (apps/api/src/utils/shift-leave-recalc-resolver.ts) — deliberately NOT
+      // a new persisted column, so there is exactly one trail (see 107-07-PLAN.md's own
+      // <design_decision>). ONE bulk query for the whole response, mirroring the
+      // section9Credits query above, reduced below to the latest row per entityId (orderBy
+      // desc + first-hit-wins); skipped entirely for an empty list so it costs zero extra
+      // queries. `daysProvisional` itself needs no extra query — it is already a plain scalar
+      // column on LeaveRequest and this handler's `include` (no `select`) already returns it.
+      const daysAdjustments = requestIds.length
+        ? await app.prisma.auditLog.findMany({
+            where: {
+              entity: "LeaveRequest",
+              entityId: { in: requestIds },
+              action: "LEAVE_DAYS_ADJUSTED",
+            },
+            orderBy: { createdAt: "desc" },
+            select: { entityId: true, oldValue: true, newValue: true, createdAt: true },
+          })
+        : [];
+      const lastDaysAdjustmentByRequestId = new Map<
+        string,
+        { oldDays: number; newDays: number; direction: "up" | "down"; at: string }
+      >();
+      for (const row of daysAdjustments) {
+        if (!row.entityId || lastDaysAdjustmentByRequestId.has(row.entityId)) continue; // desc order — first hit per id is already the latest
+        // Only oldValue.days/newValue.days are ever projected onto the response — never the
+        // whole audit JSON, never userId/ipAddress/userAgent (T-107-30).
+        const oldValue = row.oldValue as { days?: number } | null;
+        const newValue = row.newValue as { days?: number } | null;
+        const oldDays = Number(oldValue?.days ?? 0);
+        const newDays = Number(newValue?.days ?? 0);
+        lastDaysAdjustmentByRequestId.set(row.entityId, {
+          oldDays,
+          newDays,
+          direction: newDays > oldDays ? "up" : "down",
+          at: row.createdAt.toISOString(),
+        });
+      }
+
       return rows.map((r) => ({
         ...r,
         typeCode:
@@ -763,6 +820,9 @@ export async function leaveRoutes(app: FastifyInstance) {
         attestValidTo: r.attestValidTo?.toISOString().split("T")[0] ?? null,
         section9Status: section9StatusByRequestId.get(r.id)?.status ?? null,
         section9CreditId: section9StatusByRequestId.get(r.id)?.creditId ?? null,
+        // Phase 107-07 (D-19): the request's own persistent adjustment marker — the latest
+        // roster-triggered recompute only, `null` when the request was never adjusted.
+        lastDaysAdjustment: lastDaysAdjustmentByRequestId.get(r.id) ?? null,
       }));
     },
   });
@@ -1004,6 +1064,43 @@ export async function leaveRoutes(app: FastifyInstance) {
       }
 
       // ── Normaler Antrag (PENDING) ────────────────────────────────────────────
+      const reviewTypeCode = TYPE_CODES.find(
+        (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
+      );
+
+      // Phase 107 (D-07/D-10, T-107-20): for an APPROVED SHIFT_BASED vacation request, recompute
+      // `days` from the roster and determine `daysProvisional` BEFORE the update() call below, so
+      // both land in the SAME write as the status flip — a second update() would leave a crash
+      // window where a request is APPROVED with stale days and no flag. Builds the holiday map
+      // once here and reuses it for deductVacationDays() further down. Every other type/branch
+      // is untouched: `daysProvisional` stays `null`.
+      let holidayMapForDeduct: Map<string, string> | null = null;
+      let shiftBasedApprovalRecompute: { days: number; provisional: boolean } | null = null;
+      if (body.status === "APPROVED" && reviewTypeCode === "VACATION") {
+        holidayMapForDeduct = await getHolidayMap(
+          app.prisma,
+          existing.employee.tenantId,
+          existing.startDate,
+          existing.endDate,
+        );
+        const wsForApproval = await app.prisma.workSchedule.findFirst({
+          where: { employeeId: existing.employeeId },
+          orderBy: { validFrom: "desc" },
+          select: { type: true },
+        });
+        if (wsForApproval?.type === "SHIFT_BASED") {
+          shiftBasedApprovalRecompute = await resolveLeaveDays(
+            app.prisma,
+            existing.employeeId,
+            existing.employee.tenantId,
+            existing.startDate,
+            existing.endDate,
+            existing.halfDay,
+            new Set(holidayMapForDeduct.keys()),
+          );
+        }
+      }
+
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
         data: {
@@ -1011,6 +1108,12 @@ export async function leaveRoutes(app: FastifyInstance) {
           reviewedBy: req.user.sub,
           reviewedAt: new Date(),
           reviewNote: body.reviewNote,
+          ...(shiftBasedApprovalRecompute
+            ? {
+                days: shiftBasedApprovalRecompute.days,
+                daysProvisional: shiftBasedApprovalRecompute.provisional,
+              }
+            : {}),
         },
         include: {
           employee: { select: { firstName: true, lastName: true } },
@@ -1019,28 +1122,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       });
 
       if (body.status === "APPROVED") {
-        const typeCode = TYPE_CODES.find(
-          (c) => LEAVE_TYPE_DEFS[c].name === existing.leaveType.name,
-        );
+        const typeCode = reviewTypeCode;
 
         if (typeCode === "VACATION") {
           const empForDeduct = await app.prisma.employee.findUnique({
             where: { id: existing.employeeId },
           });
-          const holidayMapForDeduct = await getHolidayMap(
-            app.prisma,
-            empForDeduct?.tenantId ?? "",
-            existing.startDate,
-            existing.endDate,
-          );
           await deductVacationDays(
             app.prisma,
             existing.employeeId,
             existing.leaveTypeId,
             existing.startDate,
             existing.endDate,
-            Number(existing.days),
-            new Set(holidayMapForDeduct.keys()),
+            Number(updated.days),
+            new Set(holidayMapForDeduct!.keys()),
             empForDeduct?.tenantId ?? "",
           );
         }
@@ -1463,8 +1558,16 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09): roster-aware recompute of this still-PENDING request's own edit.
+      const { days } = await resolveLeaveDays(
+        app.prisma,
+        existing.employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
 
       const updated = await app.prisma.leaveRequest.update({
         where: { id },
@@ -1652,8 +1755,28 @@ export async function leaveRoutes(app: FastifyInstance) {
       const unionEnd = existing.endDate > end ? existing.endDate : end;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, unionStart, unionEnd);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, existing.employeeId, tenantId);
-      const days = calculateWorkDays(start, end, body.halfDay, workDays, holidays);
+      // Phase 107 (D-09/D-10): roster-aware recompute of the corrected (NEW) range. Unlike
+      // POST /requests and the PENDING edit above, this path produces a new APPROVED value, so
+      // daysProvisional is also written below -- but only when the employee is actually
+      // SHIFT_BASED (a separate check, since resolveLeaveDays()'s `.provisional` is always
+      // `false` for every other type and would otherwise overwrite the column's `null` "not
+      // applicable" state with a misleading `false`).
+      const { days, provisional: correctionProvisional } = await resolveLeaveDays(
+        app.prisma,
+        existing.employeeId,
+        tenantId,
+        start,
+        end,
+        body.halfDay,
+        holidays,
+      );
+      const wsForCorrection = await app.prisma.workSchedule.findFirst({
+        where: { employeeId: existing.employeeId },
+        orderBy: { validFrom: "desc" },
+        select: { type: true },
+      });
+      const daysProvisionalForCorrection =
+        wsForCorrection?.type === "SHIFT_BASED" ? correctionProvisional : null;
 
       // Resolve the NEW leaveTypeId when the type changed (ensureLeaveType migrates
       // legacy names / creates the canonical type on demand).
@@ -1720,6 +1843,7 @@ export async function leaveRoutes(app: FastifyInstance) {
             endDate: end,
             halfDay: body.halfDay,
             days,
+            daysProvisional: daysProvisionalForCorrection, // Phase 107 (D-10)
             note: body.note,
             leaveTypeId: newLeaveTypeId,
           },
@@ -2125,12 +2249,13 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, start, end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, employeeId, tenantId);
 
-      const [hours, days] = await Promise.all([
+      // Phase 107 (D-09): roster-aware live estimate, read-only, no persistence.
+      const [hours, leaveDaysPreview] = await Promise.all([
         getScheduledHours(app.prisma, employeeId, start, end, isHalf, holidays),
-        Promise.resolve(calculateWorkDays(start, end, isHalf, workDays, holidays)),
+        resolveLeaveDays(app.prisma, employeeId, tenantId, start, end, isHalf, holidays),
       ]);
+      const { days, provisional } = leaveDaysPreview;
 
       // WR-03 (code review) — exact integer minutes, computed with the SAME
       // Math.round(hoursNeeded * 60) formula the POST /requests OVERTIME_COMP gate
@@ -2139,7 +2264,14 @@ export async function leaveRoutes(app: FastifyInstance) {
       // maxNegativeBalanceMinutes (already exact integer minutes from GET
       // /leave/overtime-balance) without reconstructing the server's exact-minute
       // gate through two different rounding paths.
-      return { hours: +hours.toFixed(2), days, minutesNeeded: Math.round(hours * 60) };
+      // `provisional` (Phase 107, D-09) additive: lets the request form show a
+      // "Vorläufig" hint before submission for a SHIFT_BASED period with no roster yet.
+      return {
+        hours: +hours.toFixed(2),
+        days,
+        provisional,
+        minutesNeeded: Math.round(hours * 60),
+      };
     },
   });
 
@@ -2433,6 +2565,19 @@ export async function leaveRoutes(app: FastifyInstance) {
         select: { id: true, creditedDays: true, creditedStart: true, creditedEnd: true },
       });
 
+      // Phase 107-07 (D-12/D-13, read side): a SHIFT_BASED provisional VACATION request's
+      // `days` already counts at full value inside `usedDays` (selfHealUsedDays above sums
+      // every APPROVED request regardless of daysProvisional) — this query isolates just the
+      // provisional PORTION of that sum so the frontend can render it as its own,
+      // separately-labelled "Verbraucht (vorläufig)" row without touching usedDays/available
+      // itself. ONE bulk query for the whole employee, mirroring confirmedSection9Credits
+      // above — no query inside rows.map() below. `deletedAt: null` per CLAUDE.md's soft-delete
+      // rule (LeaveRequest is soft-deletable).
+      const provisionalLeaveRequests = await app.prisma.leaveRequest.findMany({
+        where: { employeeId, status: "APPROVED", daysProvisional: true, deletedAt: null },
+        select: { id: true, days: true, startDate: true, endDate: true, leaveTypeId: true },
+      });
+
       // EuGH C-684/16: batch-fetch which entitlements have a documented warning so the
       // synchronous rows.map() can call getEffectiveCarryOver with the hinweisIssued flag.
       // A single query covers all entitlement ids — no N+1 (rows per employee+year are bounded).
@@ -2463,6 +2608,14 @@ export async function leaveRoutes(app: FastifyInstance) {
         const creditsForYear = isVacationRow
           ? confirmedSection9Credits.filter((c) => c.creditedStart?.getUTCFullYear() === r.year)
           : [];
+        // Phase 107-07: matched on leaveTypeId (not just isVacationRow/year, unlike
+        // creditsForYear above) because daysProvisional can in principle be set on a
+        // non-VACATION SHIFT_BASED request too (see shift-leave-recalc-resolver.ts's own
+        // VACATION_LEAVE_TYPE_NAME docblock) — the exact leaveTypeId match keeps such a
+        // request's days out of an unrelated entitlement row's provisional sum.
+        const provisionalUsedDays = provisionalLeaveRequests
+          .filter((p) => p.leaveTypeId === r.leaveTypeId && p.startDate.getUTCFullYear() === r.year)
+          .reduce((sum, p) => sum + Number(p.days), 0);
         return {
           ...r,
           typeCode: (Object.entries(LEAVE_TYPE_DEFS).find(
@@ -2471,6 +2624,10 @@ export async function leaveRoutes(app: FastifyInstance) {
           effectiveCarryOverDays: getEffectiveCarryOver(r, now, warnedEntitlementIds.has(r.id)),
           carryOverDeadline: r.carryOverDeadline?.toISOString().split("T")[0] ?? null,
           effectiveEntitlementDays,
+          // Phase 107-07 (D-12): the provisional portion of `usedDays` for this year — see the
+          // `provisionalLeaveRequests` query above. Always 0 for an employee/year with no
+          // provisional requests; every other field on this response is unchanged.
+          provisionalUsedDays,
           // D-31: die Gutschrift erscheint als eigene, erklärte Bewegungszeile — ein
           // stillschweigend höherer Restanspruch wirkt wie ein Fehler und erzeugt Rückfragen.
           section9Movements: creditsForYear.map((c) => ({
@@ -2773,15 +2930,20 @@ export async function leaveRoutes(app: FastifyInstance) {
       const tenantId = req.user.tenantId;
       const holidayMap = await getHolidayMap(app.prisma, tenantId, credited.start, credited.end);
       const holidays = new Set(holidayMap.keys());
-      const workDays = await resolveWorkDays(app.prisma, credit.employeeId, tenantId);
       // D-08: Halber Urlaubstag + ganztägige Krankheit → Gutschrift 0,5. Zurückgegeben wird
       // ausschließlich, was angerechnet war — der halfDay-Flag stammt daher vom URLAUBSantrag,
       // nicht von der Krankmeldung (halbe Kranktage sind systemweit verboten, leave.ts:239).
-      const creditedDays = calculateWorkDays(
+      // Phase 107 (D-09): the affected vacation can belong to a SHIFT_BASED employee, so the
+      // credit-back is routed through the same roster-aware resolver for consistency. `.days`
+      // only -- a credit-back is a REDUCTION of a prior deduction, never a new approved
+      // consumption, so no daysProvisional is written here.
+      const { days: creditedDays } = await resolveLeaveDays(
+        app.prisma,
+        credit.employeeId,
+        tenantId,
         credited.start,
         credited.end,
         credit.vacationRequest.halfDay,
-        workDays,
         holidays,
       );
       if (creditedDays <= 0) {
@@ -3265,8 +3427,14 @@ function getEffectiveCarryOver(
 /**
  * Zieht Urlaubstage vom Entitlement ab: Resturlaub (sofern nicht verfallen) zuerst,
  * danach reguläre Tage.
+ *
+ * Exported (Phase 107, D-14): the shift-leave-recalc resolver
+ * (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) reuses this verbatim for its own
+ * VACATION-entitlement delta correction rather than reinventing the year/type resolution —
+ * `shifts.ts` imports it and passes it in as part of the resolver's `RecalcDeps`. Behaviour
+ * unchanged for every existing call site in this file.
  */
-async function deductVacationDays(
+export async function deductVacationDays(
   prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
@@ -3340,12 +3508,15 @@ class Section9MissingEntitlementError extends Error {
   }
 }
 
-type ReverseVacationResult = {
+export type ReverseVacationResult = {
   /** Years whose LeaveEntitlement row does not exist, so the decrement booked nothing (IN-05). */
   missingYears: number[];
 };
 
-async function reverseVacationDays(
+// Exported (Phase 107, D-14): reused verbatim by the shift-leave-recalc resolver for the
+// downward half of its VACATION-entitlement delta correction — see deductVacationDays()'s
+// export note above.
+export async function reverseVacationDays(
   prisma: DbClient,
   employeeId: string,
   leaveTypeId: string,
@@ -3404,9 +3575,15 @@ async function reverseVacationDays(
 /**
  * Gibt eine Map<dateStr, holidayName> für den angegebenen Zeitraum zurück.
  * Berücksichtigt das Bundesland des Tenants sowie manuell eingetragene Feiertage.
+ *
+ * Exported + widened to `DbClient` (Phase 107, D-14): the shift-leave-recalc resolver calls
+ * this through the SAME `tx` as its shift mutation (D-15), so the parameter type was widened
+ * from the stricter `FastifyInstance["prisma"]` to the `DbClient` union already used
+ * throughout this file — every existing call site (all pass `app.prisma`, one arm of the
+ * union) is behaviour-identical.
  */
-async function getHolidayMap(
-  prisma: FastifyInstance["prisma"],
+export async function getHolidayMap(
+  prisma: DbClient,
   tenantId: string,
   start: Date,
   end: Date,
@@ -3596,4 +3773,123 @@ async function getScheduledHours(
     cur.setDate(cur.getDate() + 1);
   }
   return total;
+}
+
+// ── Phase 107 (D-04/D-09): SHIFT_BASED-aware leave-day resolution ─────────────────────────
+
+/**
+ * Resolves an employee's contractual workday count (Phase 107, D-04).
+ *
+ * This is the ONLY place this resolution chain may exist — no other reader (not
+ * avgWorkMinutesCore, not any route handler, not a future shift resolver) may rebuild it
+ * inline; every caller either invokes this function or receives its result as a parameter.
+ *
+ * Resolution chain, in this exact order:
+ *   1. WorkSchedule.contractWorkDaysPerWeek, when non-null (the SHIFT_BASED contractual count,
+ *      D-01 — populated by the write path settings.ts/employees.ts own once a SHIFT_BASED row
+ *      is created or saved).
+ *   2. WorkSchedule.workDays.length, when non-empty (pre-107 legacy rows, and every other
+ *      schedule type).
+ *   3. TenantConfig.defaultWorkDays.length, when non-empty.
+ *   4. 5.
+ *
+ * Mirrors resolveWorkDays()'s shape verbatim (same Promise.all over the latest WorkSchedule and
+ * the TenantConfig row) — the two resolvers are deliberately parallel, not merged, because they
+ * answer different questions ("how many days" vs. "which days").
+ */
+async function resolveContractWorkDaysPerWeek(
+  prisma: DbClient,
+  employeeId: string,
+  tenantId: string,
+): Promise<number> {
+  const [ws, cfg] = await Promise.all([
+    prisma.workSchedule.findFirst({
+      where: { employeeId },
+      orderBy: { validFrom: "desc" },
+    }),
+    prisma.tenantConfig.findUnique({
+      where: { tenantId },
+      select: { defaultWorkDays: true },
+    }),
+  ]);
+  if (ws) {
+    if (ws.contractWorkDaysPerWeek != null) return ws.contractWorkDaysPerWeek;
+    if (ws.workDays && ws.workDays.length > 0) return ws.workDays.length;
+  }
+  if (cfg?.defaultWorkDays && cfg.defaultWorkDays.length > 0) return cfg.defaultWorkDays.length;
+  return 5;
+}
+
+/**
+ * Resolves how many leave days a period costs an employee (Phase 107, D-09's DB-fetching
+ * side). Branch-first dispatch, mirroring getScheduledHours()'s shape: SHIFT_BASED resolves the
+ * roster-aware calc and RETURNS EARLY; every other schedule type falls through to the existing
+ * calculateWorkDays() wrapper below, behaviour-identical to every current call site (AC-REG-02)
+ * — this function is a wrapper around that call, not a rewrite of it.
+ *
+ * `holidays` is the caller's already-computed Set (`getHolidayMap(...).keys()`, the same value
+ * every existing calculateWorkDays() call site already builds) — this function does not fetch
+ * holidays itself.
+ *
+ * Exported (Phase 107, D-14): this is the D-04 resolution chain's DB-fetching wrapper. The
+ * shift-leave-recalc resolver (`apps/api/src/utils/shift-leave-recalc-resolver.ts`) calls this
+ * SAME function (via `shifts.ts`, which imports it and passes it in as part of `RecalcDeps`) to
+ * recompute a provisional request's days after a roster change — no second implementation of
+ * the count/day resolution chain is allowed to exist (D-04).
+ */
+export async function resolveLeaveDays(
+  prisma: DbClient,
+  employeeId: string,
+  tenantId: string,
+  start: Date,
+  end: Date,
+  halfDay: boolean,
+  holidays: Set<string>,
+): Promise<{ days: number; provisional: boolean }> {
+  const ws = await prisma.workSchedule.findFirst({
+    where: { employeeId },
+    orderBy: { validFrom: "desc" },
+  });
+
+  if (ws?.type === "SHIFT_BASED") {
+    const contractWorkDaysPerWeek = await resolveContractWorkDaysPerWeek(
+      prisma,
+      employeeId,
+      tenantId,
+    );
+
+    // Widen the shift query to the ENCLOSING ISO weeks of [start, end] — a fragment's
+    // weeksWithRoster answer must see shifts on days of that week outside the leave period too
+    // (D-05/D-06). Same Monday derivation countShiftBasedLeaveDays() itself uses.
+    const rangeStart = mondayOfWeekUtc(start);
+    const rangeEnd = mondayOfWeekUtc(end);
+    rangeEnd.setUTCDate(rangeEnd.getUTCDate() + 6);
+
+    const shifts = await prisma.shift.findMany({
+      where: { employeeId, date: { gte: rangeStart, lte: rangeEnd }, deletedAt: null },
+      select: { date: true },
+    });
+
+    const rosteredDates = new Set<string>();
+    const weeksWithRoster = new Set<string>();
+    for (const shift of shifts) {
+      rosteredDates.add(shift.date.toISOString().split("T")[0]);
+      weeksWithRoster.add(mondayOfWeekUtc(shift.date).toISOString().split("T")[0]);
+    }
+
+    return countShiftBasedLeaveDays(
+      start,
+      end,
+      halfDay,
+      contractWorkDaysPerWeek,
+      rosteredDates,
+      holidays,
+      weeksWithRoster,
+    );
+  }
+
+  // Every other schedule type: byte-identical to today's five call sites (AC-REG-02).
+  const workDays = await resolveWorkDays(prisma, employeeId, tenantId);
+  const days = calculateWorkDays(start, end, halfDay, workDays, holidays);
+  return { days, provisional: false };
 }
