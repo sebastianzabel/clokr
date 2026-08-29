@@ -2221,6 +2221,18 @@
             {breakBadgeLabel(editEntry.breakStatus)}
           </span>
 
+          {#if editEntry.breakStatus === "AUTO"}
+            <!-- Phase 112 — the explanation lives where the three verbs live. Wording mirrors the
+                 BREAK_UNCONFIRMED notification (attendance-checker.ts) so the employee reads the
+                 same sentence in the mail/bell and here. Deliberately OUTSIDE the showBreakConfirm
+                 guard: a locked entry shows the badge without the buttons, and why the badge is
+                 there is still the right thing to read. -->
+            <p class="break-auto-explain" data-testid="break-auto-explain">
+              Diese Pflichtpause wurde nach § 4 ArbZG automatisch eingetragen, weil keine Pause
+              erfasst wurde. Bitte bestätigen – oder den Tag als „durchgearbeitet“ erklären.
+            </p>
+          {/if}
+
           {#if showBreakConfirm && editEntry.breakStatus === "AUTO"}
             {#if !waivePanelOpen}
               <div class="break-actions" data-testid="break-actions">
@@ -2408,6 +2420,13 @@
   }
   .break-status-badge {
     font-weight: 500;
+  }
+  /* Phase 112 — why the badge is there, next to the three verbs. */
+  .break-auto-explain {
+    margin: 0.375rem 0 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    color: var(--text-muted);
   }
   .break-actions {
     display: flex;
