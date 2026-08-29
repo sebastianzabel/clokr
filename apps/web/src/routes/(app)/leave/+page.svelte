@@ -20,11 +20,27 @@
     type CollisionSummary,
   } from "$lib/phorest/appointmentCollisions";
   import { toasts } from "$stores/toast";
+  import KarenzAttestPanel from "$lib/components/leave/KarenzAttestPanel.svelte";
+  import {
+    summarizeKarenzOverrun,
+    karenzOverrunDays,
+    KARENZ_NUDGE_EMPTY,
+    KARENZ_BADGE_TOOLTIP,
+    type KarenzOverrunResponse,
+    type KarenzNudgeSummary,
+  } from "$lib/leave/karenz-nudge";
   import {
     mapVacationBalance,
+    resolveAdjustmentBadge,
     type VacationBalance,
     type VacationEntitlementRow,
+    type LastDaysAdjustment,
   } from "$lib/leave/vacation-balance";
+  import {
+    deriveVacationSummary,
+    vacationCardDelta,
+    vacationCardLabel,
+  } from "$lib/leave/vacation-summary";
 
   // ── Typen ─────────────────────────────────────────────────────────────────
   type Status = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED" | "CANCELLATION_REQUESTED";
@@ -60,6 +76,10 @@
     // Phase 104-10 (D-29): the § 9 case touching this request, if any.
     section9Status?: "AU_PENDING" | "CONFIRMED" | "REJECTED" | null;
     section9CreditId?: string | null;
+    // Phase 107-07 (D-12/D-19): set at approval time, server-derived only — see
+    // GET /leave/requests' own doc comment for both fields.
+    daysProvisional?: boolean | null;
+    lastDaysAdjustment?: LastDaysAdjustment | null;
   }
 
   interface OverlapEntry {
@@ -152,17 +172,12 @@
   let overlapLoading = $state(false);
   let overlapTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Attest-Modal (für bereits genehmigte Krankmeldungen) — Modal primitive owns Escape/backdrop/focus-trap.
-  let attestModal: LeaveRequest | null = $state(null);
-  let attestOpen = $state(false);
-  let attestPresent = $state(false);
-  let attestFrom = $state("");
-  let attestTo = $state("");
-  let attestSaving = $state(false);
-  let attestError = $state("");
-
   // Highlighted request (from notification deep-link)
   let highlightRequestId: string | null = $state(null);
+
+  // Karenztage-Hinweis (Phase 113, issue #116) — see loadKarenzOverrun().
+  let karenzSummary = $state<KarenzNudgeSummary>(KARENZ_NUDGE_EMPTY);
+  let karenzDays = $state<string[]>([]);
 
   // Drag-to-select date range in calendar
   let dragStart: string | null = $state(null);
@@ -416,6 +431,7 @@
     loadCalendar();
     loadVacationSummary();
     loadOvertimeBalance();
+    loadKarenzOverrun();
 
     // Deep-link: highlight a specific request from notification
     const requestId = $page.url.searchParams.get("request");
@@ -452,6 +468,23 @@
       error = e instanceof Error ? e.message : "Fehler beim Laden";
     } finally {
       loading = false;
+    }
+  }
+
+  // ── Karenztage-Hinweis (Phase 113, issue #116) ────────────────────────────
+  // Fed from GET /leave/karenz-overrun (self-scoped, server-derived 12-month window) and
+  // NOT from `myRequests`: that list is filtered to ONE calYear server-side
+  // (leave.ts:734-737) and paginated at 10 rows, so a January visitor's overrun from the
+  // previous year would silently vanish from the explanation. Fail-safe: any error renders
+  // nothing, exactly like the dashboard nudge (dashboard/+page.svelte:452-460).
+  async function loadKarenzOverrun() {
+    try {
+      const res = await api.get<KarenzOverrunResponse>("/leave/karenz-overrun");
+      karenzSummary = summarizeKarenzOverrun(res);
+      karenzDays = karenzOverrunDays(res);
+    } catch {
+      karenzSummary = KARENZ_NUDGE_EMPTY;
+      karenzDays = [];
     }
   }
 
@@ -795,42 +828,6 @@
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  // ── Attest-Modal (für bereits genehmigte Krankmeldungen) ─────────────────
-  function openAttestModal(req: LeaveRequest) {
-    attestModal = req;
-    attestPresent = req.attestPresent ?? false;
-    attestFrom = req.attestValidFrom ?? "";
-    attestTo = req.attestValidTo ?? "";
-    attestError = "";
-    attestOpen = true;
-  }
-
-  function closeAttestModal() {
-    if (attestSaving) return;
-    attestOpen = false;
-    attestModal = null;
-  }
-
-  async function saveAttest() {
-    if (!attestModal) return;
-    attestSaving = true;
-    attestError = "";
-    try {
-      await api.patch(`/leave/requests/${attestModal.id}/attest`, {
-        attestPresent,
-        attestValidFrom: attestPresent && attestFrom ? attestFrom : null,
-        attestValidTo: attestPresent && attestTo ? attestTo : null,
-      });
-      attestOpen = false;
-      attestModal = null;
-      await loadData();
-    } catch (e: unknown) {
-      attestError = e instanceof Error ? e.message : "Fehler";
-    } finally {
-      attestSaving = false;
-    }
-  }
-
   // ── Helfer ────────────────────────────────────────────────────────────────
   function fmtDate(iso: string): string {
     if (!iso) return "";
@@ -924,11 +921,9 @@
       ? confirmedMinutes + (maxNegativeBalanceMinutes ?? 0) < minutesNeeded
       : confirmedHours + toleranceHours - hoursNeeded < 0,
   );
-  let vacRemaining = $derived(
-    vacationBalance
-      ? vacationBalance.total + vacationBalance.carryOver - vacationBalance.used
-      : null,
-  );
+  // Phase 114: `vacSummary.remaining` is `number | null` — the null branch is what makes the
+  // Urlaubskonto-Karte render "–" instead of a fake "0". Do NOT add `?? 0`.
+  let vacRemaining = $derived(vacSummary.remaining);
   let vacAfter = $derived(vacRemaining !== null ? vacRemaining - effectiveDays : null);
   // ── Lane assignment: stable gantt-style rows across calendar days ────────
   // Returns a Map<absenceId, laneIndex> so that a multi-day absence always
@@ -997,14 +992,17 @@
       )
       .reduce((sum, r) => sum + Number(r.days), 0),
   );
-  let vacSummaryTotal = $derived(vacationBalance?.total ?? 0);
-  let vacSummaryCarryOver = $derived(vacationBalance?.carryOver ?? 0);
-  let vacSummaryUsed = $derived(vacationBalance?.used ?? 0);
-  let vacSummaryPlanned = $derived(pendingVacDays);
-  let vacSummaryCarryOverRemaining = $derived(Math.max(0, vacSummaryCarryOver - vacSummaryUsed));
-  let vacSummaryLeft = $derived(
-    vacSummaryTotal + vacSummaryCarryOver - vacSummaryUsed - vacSummaryPlanned,
-  );
+  // Phase 114 — every Urlaubs-Größe on this page comes from ONE pinned pure function
+  // (apps/web/src/lib/leave/vacation-summary.ts). The formulas are a verbatim copy of the
+  // inline $derived expressions that used to live here; a legacy-oracle test asserts they
+  // still produce identical numbers. Do not re-inline them.
+  let vacSummary = $derived(deriveVacationSummary(vacationBalance, pendingVacDays));
+  let vacSummaryTotal = $derived(vacSummary.total);
+  let vacSummaryCarryOver = $derived(vacSummary.carryOver);
+  let vacSummaryUsed = $derived(vacSummary.used);
+  let vacSummaryPlanned = $derived(vacSummary.planned);
+  let vacSummaryCarryOverRemaining = $derived(vacSummary.carryOverRemaining);
+  let vacSummaryLeft = $derived(vacSummary.left);
   let showVacSummary = $state(true);
 
   // ── Austrittsdatum für pro-rata Warnung ──────────────────────────────────
@@ -1109,13 +1107,6 @@
   $effect(() => {
     if (!showForm) resetFormFields();
   });
-  // When attest modal closes (Escape/backdrop), clear state.
-  $effect(() => {
-    if (!attestOpen) {
-      attestModal = null;
-      attestError = "";
-    }
-  });
 </script>
 
 <svelte:head>
@@ -1154,12 +1145,19 @@
   <!-- ── KPI-Zeile (Resturlaub, Überstundenkonto, Krankheitstage) ───────────── -->
   <div class="kpi-row" data-testid="leave-balance">
     <Card animate class="kpi-card">
+      <!-- Phase 114 (RU-01/02/04): `Resturlaub` = der verfügbare Saldo, genau diese eine
+           Bedeutung auf /leave. Der Vorjahresübertrag heißt „Übertrag Vorjahr" (Strip +
+           Delta-Zeile), nie mehr „Resturlaub". Das „(ohne beantragte)" im Label ist
+           ABSICHTLICH bedingt — bei 0 beantragten Tagen zeigen Karte und Leiste dieselbe
+           Zahl und der Zusatz würde einen Unterschied behaupten, den es nicht gibt (gleiche
+           Begründung wie Phase 107 G-03 im Panel unten). Die Entscheidung liegt in
+           vacationCardLabel(), damit sie getestet ist. -->
       <KPIStat
-        label="Resturlaub"
+        label={vacationCardLabel(vacSummaryPlanned)}
         value={vacRemaining === null ? "–" : String(vacRemaining)}
         unit={(vacRemaining ?? 0) === 1 ? "Tag" : "Tage"}
         delta={vacationBalance
-          ? `von ${vacationBalance.total + vacationBalance.carryOver} verfügbar`
+          ? vacationCardDelta(vacationBalance.total, vacationBalance.carryOver)
           : undefined}
       />
     </Card>
@@ -1430,7 +1428,7 @@
               {#if vacationBalance.carryOver > 0}
                 <div class="balance-row">
                   <span class="balance-label">
-                    Resturlaub Vorjahr
+                    Übertrag Vorjahr
                     {#if vacationBalance.carryOverDeadline}
                       <span class="balance-meta"
                         >(verfällt {fmtDate(vacationBalance.carryOverDeadline)})</span
@@ -1440,12 +1438,44 @@
                   <span class="balance-value">+ {vacationBalance.carryOver} Tage</span>
                 </div>
               {/if}
+              <!-- Phase 107 gap G-03: the label is CONDITIONAL on purpose. "(bestätigt)" is a
+                   qualifier that only means something next to the "Verbraucht (vorläufig)" row
+                   below, which renders only for SHIFT_BASED provisional consumption. At
+                   provisionalUsed === 0 that row is absent, so the qualifier would pose a
+                   contrast the card never resolves — we fall back to "Genommen", the pre-107
+                   wording still used by this page's own summary strip, admin/employees/[id]
+                   and reports. Same predicate as the #if guard below, so the pair is always
+                   rendered together or not at all. Do NOT collapse this back to a constant. -->
               <div class="balance-row">
-                <span class="balance-label">Genommen</span>
-                <span class="balance-value">− {vacationBalance.used} Tage</span>
+                <span class="balance-label"
+                  >{vacationBalance.provisionalUsed > 0
+                    ? "Verbraucht (bestätigt)"
+                    : "Genommen"}</span
+                >
+                <span class="balance-value"
+                  >− {vacationBalance.used - vacationBalance.provisionalUsed} Tage</span
+                >
               </div>
+              {#if vacationBalance.provisionalUsed > 0}
+                <!-- Phase 107-07 (D-12): omitted entirely at zero — that omission plus the
+                     conditional label above (gap G-03) is what makes the card indistinguishable
+                     from before this phase for a reader with no SHIFT_BASED provisional
+                     consumption; dropping this row alone would leave a dangling "(bestätigt)"
+                     qualifier up there with nothing to contrast against. Muted like Phase 97's
+                     "Laufender Monat (Prognose)" row (same class, same "true today, may change"
+                     meaning). -->
+                <div class="balance-row">
+                  <span class="balance-label">Verbraucht (vorläufig)</span>
+                  <span class="balance-value balance-value--muted"
+                    >− {vacationBalance.provisionalUsed} Tage</span
+                  >
+                </div>
+              {/if}
+              <!-- Phase 114: dieselbe Größe wie die Urlaubskonto-Karte (vacRemaining) und
+                   deshalb dasselbe Wort. „Verfügbar" ist entfallen — es hat vorher in der
+                   Karte die 38 und hier die 7 bezeichnet. -->
               <div class="balance-row">
-                <span class="balance-label">Verfügbar</span>
+                <span class="balance-label">Resturlaub</span>
                 <span class="balance-value">{vacRemaining} Tage</span>
               </div>
               {#if vacationBalance.section9Movements?.length}
@@ -1586,6 +1616,10 @@
       nötig ist.
     </div>
   {/if}
+  <!-- Phase 113 (issue #116) — the destination explanation the „Attest"-Hinweis deep-links
+       to. Above BOTH views: the page is reachable from the nav and from the calendar, and
+       the explanation is equally relevant there. Renders nothing when there is no overrun. -->
+  <KarenzAttestPanel label={karenzSummary.label} days={karenzDays} />
   {#snippet vacStats()}
     <div class="vac-stats">
       <div class="vac-stat">
@@ -1593,8 +1627,21 @@
         <div class="vac-stat-value">{vacSummaryTotal}<span class="vac-stat-unit">T</span></div>
       </div>
       {#if vacSummaryCarryOver > 0}
-        <div class="vac-stat">
-          <div class="vac-stat-label">Resturlaub</div>
+        <!-- Phase 114 (RU-01/RU-03): zwei Kacheln statt einer. Der BRUTTO-Übertrag war bisher
+             nirgends als Zahl sichtbar — nur eingerechnet — weshalb „Genommen 31 bei Anspruch 24"
+             unerklärt blieb. Die zweite Kachel ist die frühere Kachel „Resturlaub": sie meint
+             ausschließlich den ungenutzten REST des Übertrags. Beide stehen bewusst
+             nebeneinander; getrennt wäre „(Rest) 0" wieder eine verwaiste Zahl. Kein Jahr im
+             Label — die Entitlement-Zahlen kommen immer aus dem laufenden Jahr, unabhängig vom
+             angezeigten calYear (siehe deferred-items.md). -->
+        <div class="vac-stat" data-testid="vac-stat-carryover">
+          <div class="vac-stat-label">Übertrag Vorjahr</div>
+          <div class="vac-stat-value vac-stat-carry">
+            +{vacSummaryCarryOver}<span class="vac-stat-unit">T</span>
+          </div>
+        </div>
+        <div class="vac-stat" data-testid="vac-stat-carryover-rest">
+          <div class="vac-stat-label">Übertrag Vorjahr (Rest)</div>
           <div class="vac-stat-value {vacSummaryCarryOverRemaining === 0 ? '' : 'vac-stat-carry'}">
             {vacSummaryCarryOverRemaining === 0 ? "0" : "+" + vacSummaryCarryOverRemaining}<span
               class="vac-stat-unit">T</span
@@ -1608,7 +1655,7 @@
       </div>
       {#if vacSummaryPlanned > 0}
         <div class="vac-stat">
-          <div class="vac-stat-label">Geplant</div>
+          <div class="vac-stat-label">Beantragt</div>
           <div class="vac-stat-value vac-stat-planned">
             {vacSummaryPlanned}<span class="vac-stat-unit">T</span>
           </div>
@@ -2004,11 +2051,41 @@
                       data-testid={`leave-mine-row-${req.id}-status-badge`}
                       >{statusLabel(req.status)}</span
                     >
+                    {#if req.lastDaysAdjustment}
+                      {@const adjBadge = resolveAdjustmentBadge(req.lastDaysAdjustment)!}
+                      <!-- Phase 107-07 (D-19/D-21): persistent — NOT tied to the triggering
+                           bell-notification's read/dismissed state, always the latest
+                           adjustment only. Reading order: status, then this, then Vorläufig
+                           (UI-SPEC §Visual Hierarchy — this reports something that
+                           happened, Vorläufig only a standing condition). -->
+                      <span
+                        class={adjBadge.badgeClass}
+                        data-testid={`leave-mine-row-${req.id}-adjustment-badge`}
+                        title={adjBadge.tooltip}
+                      >
+                        {adjBadge.icon} Angepasst: {adjBadge.direction === "up"
+                          ? "+"
+                          : "−"}{#if adjBadge.bold}<strong>{adjBadge.delta}</strong
+                          >{:else}{adjBadge.delta}{/if} Tag(e)
+                      </span>
+                    {/if}
+                    {#if req.daysProvisional}
+                      <!-- Phase 107-07 (D-12): --warn tone, NOT --bad/row-invalid — a
+                           provisional request is fully valid and payable today. -->
+                      <span
+                        class="badge badge-yellow"
+                        data-testid={`leave-mine-row-${req.id}-provisional-badge`}
+                        title="Verbrauch vorläufig geschätzt — wird angepasst, sobald der Schichtplan für diesen Zeitraum steht."
+                      >
+                        Vorläufig
+                      </span>
+                    {/if}
                     {#if SICK_CODES.includes(req.typeCode) && req.status === "APPROVED"}
                       <span
                         class="badge badge-attest {req.attestPresent
                           ? 'badge-green'
                           : 'badge-gray'}"
+                        title={req.attestPresent ? "Attest liegt vor." : KARENZ_BADGE_TOOLTIP}
                       >
                         {req.attestPresent ? "Attest" : "Kein Attest"}
                       </span>
@@ -2072,65 +2149,6 @@
       {/if}
     {/if}
   {/if}<!-- Ende Liste -->
-
-  <!-- ── Attest-Modal ─────────────────────────────────────────────────────────── -->
-  {#if attestModal}
-    <Modal
-      bind:open={attestOpen}
-      eyebrow="Krankmeldung"
-      title={`Attest: ${attestModal.employee.firstName} ${attestModal.employee.lastName}`}
-    >
-      <p class="text-muted" style="font-size:0.875rem;margin-bottom:1rem;">
-        {fmtDate(attestModal.startDate)} – {fmtDate(attestModal.endDate)} · {typeName(
-          attestModal.typeCode,
-        )}
-      </p>
-      <div class="attest-box">
-        <label class="toggle-label">
-          <input type="checkbox" bind:checked={attestPresent} class="toggle-cb" />
-          <span>Attest liegt vor</span>
-        </label>
-        {#if attestPresent}
-          <div class="attest-dates">
-            <div class="form-group">
-              <label class="form-label" for="a-from">Gültig von</label>
-              <input
-                id="a-from"
-                type="date"
-                bind:value={attestFrom}
-                class="form-input"
-                style="max-width:160px"
-              />
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="a-to">Gültig bis</label>
-              <input
-                id="a-to"
-                type="date"
-                bind:value={attestTo}
-                class="form-input"
-                style="max-width:160px"
-              />
-            </div>
-          </div>
-        {/if}
-      </div>
-      {#if attestError}
-        <div class="alert alert-error" role="alert" style="margin-top:0.75rem">
-          <span>⚠</span><span>{attestError}</span>
-        </div>
-      {/if}
-
-      {#snippet footer()}
-        <button class="btn btn-ghost" onclick={closeAttestModal} disabled={attestSaving}
-          >Abbrechen</button
-        >
-        <button class="btn btn-primary" onclick={saveAttest} disabled={attestSaving}>
-          {attestSaving ? "Speichern…" : "Speichern"}
-        </button>
-      {/snippet}
-    </Modal>
-  {/if}
 
   <!-- ── Phase 87: Terminkollision-Warnung (Urlaub anlegen) ──────────────────── -->
   {#if collisionSummary}
@@ -2280,40 +2298,6 @@
     font-family: var(--font-mono);
     font-size: 0.875rem;
     margin-left: auto;
-  }
-
-  /* ── Attest ───────────────────────────────────────────────────────── */
-  .attest-box {
-    background: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    padding: 0.875rem 1rem;
-  }
-  .attest-title {
-    font-size: 0.8125rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 0.625rem;
-  }
-  .attest-dates {
-    display: flex;
-    gap: 1rem;
-    flex-wrap: wrap;
-    margin-top: 0.75rem;
-  }
-  .toggle-label {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-weight: 500;
-  }
-  .toggle-cb {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--brand);
   }
 
   /* ── Table ────────────────────────────────────────────────────────── */

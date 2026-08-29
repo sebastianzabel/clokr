@@ -21,7 +21,7 @@
     applyDefaults,
     isOverridden,
   } from "$lib/employee-classification";
-  import { isWorkDay } from "$lib/utils/work-schedule";
+  import { isWorkDay, buildContractWorkDaysPayload } from "$lib/utils/work-schedule";
 
   // ── Types ──────────────────────────────────────────────────────────────────
   type Role = "ADMIN" | "MANAGER" | "EMPLOYEE";
@@ -46,6 +46,7 @@
     coreEnd?: string | null;
     coreDays?: number[];
     workDays?: number[];
+    contractWorkDaysPerWeek?: number | null;
   }
 
   interface VacationEntitlement {
@@ -612,6 +613,8 @@
       ((sched as WorkSchedule & { workDays?: number[] })?.workDays?.length ?? 0) > 0
         ? [...((sched as WorkSchedule & { workDays?: number[] })?.workDays ?? [])]
         : [1, 2, 3, 4, 5];
+    // Phase 107 (D-01) — hydrate the vertragliche Anzahl alongside eWorkDays.
+    eContractWorkDays = sched?.contractWorkDaysPerWeek ?? null;
     eMon = sched ? Number(sched.mondayHours) : 8;
     eTue = sched ? Number(sched.tuesdayHours) : 8;
     eWed = sched ? Number(sched.wednesdayHours) : 8;
@@ -1242,6 +1245,9 @@
   let eCoreEnd = $state<string>("");
   let eCoreDays = $state<number[]>([]);
   let eWorkDays = $state<number[]>([1, 2, 3, 4, 5]);
+  // Phase 107 (D-01/D-23) — vertragliche Anzahl Arbeitstage/Woche, SHIFT_BASED only.
+  // Writes EXCLUSIVELY contractWorkDaysPerWeek; never derives or touches eWorkDays.
+  let eContractWorkDays = $state<number | null>(null);
   let eMon = $state<number>(8);
   let eTue = $state<number>(8);
   let eWed = $state<number>(8);
@@ -1332,7 +1338,13 @@
       overtimeThreshold: eThreshold,
       allowOvertimePayout: ePayout,
       overtimeMode: eType === "MONTHLY_HOURS" ? eOvertimeMode : "CARRY_FORWARD",
-      workDays: eWorkDays,
+      // Phase 107 (D-02/D-23) — SHIFT_BASED never sends workDays (the server already
+      // freezes it in settings.ts; omitting it here is defence in depth — a body that
+      // doesn't carry the value cannot express the old overwrite-by-guessing at all)
+      // and is the only type that sends a non-null contractWorkDaysPerWeek. Extracted
+      // to a pure helper (apps/web/src/lib/utils/work-schedule.ts) so this exact slice
+      // is unit-testable without mounting the component.
+      ...buildContractWorkDaysPayload(eType, eWorkDays, eContractWorkDays),
       validFrom: eValidFrom,
       ...extra,
     };
@@ -1637,7 +1649,7 @@
 
           <!-- Type picker -->
           <div class="form-group">
-            <label class="form-label">Arbeitszeitmodell</label>
+            <span class="form-label">Arbeitszeitmodell</span>
             <div class="schedule-type-picker" role="group" aria-label="Arbeitszeitmodell">
               {#each [{ value: "FIXED_SCHEDULE", label: "Fester Stundenplan", tooltip: "Per-Tag-Stunden festgelegt — z.B. Mo–Fr je 8h." }, { value: "FLEXTIME", label: "Gleitzeit", tooltip: "Wochenstundensoll mit freier Tagesverteilung. Optional Kernarbeitszeit." }, { value: "MONTHLY_HOURS", label: "Monatsstunden (Minijob)", tooltip: "Monatsstunden-Budget — z.B. 15h/Monat für Minijobber." }, { value: "SHIFT_BASED", label: "Schichtplan", tooltip: "Schichtplan ist führend. Wochenstunden als Soll-Target." }] as seg (seg.value)}
                 <button
@@ -1746,6 +1758,27 @@
                 <span class="weekly-total">{eWeekly.toFixed(1)}&thinsp;h</span>
               </div>
             </div>
+
+            <!-- Phase 107 (D-22/D-24, issue #94) — read-only: structurally cannot
+                 overwrite workDays. Shows the same derived count normalizeWorkDays()
+                 computes server-side; disabled (not readonly, app.css has no
+                 :read-only rule) so it visibly reads as a consequence, not an input. -->
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="e-fixed-workdays">Arbeitstage/Woche</label>
+              <div class="input-suffix-wrap" style="max-width: 240px;">
+                <input
+                  id="e-fixed-workdays"
+                  type="number"
+                  class="form-input threshold-input"
+                  value={eWorkingDays}
+                  disabled
+                />
+                <span class="input-suffix">Tage</span>
+              </div>
+              <p class="form-hint">
+                Ergibt sich automatisch aus den oben eingetragenen Tagesstunden.
+              </p>
+            </div>
           {:else if eType === "FLEXTIME"}
             <div class="form-group">
               <label class="form-label" for="e-weekly-flex">Wochenstunden-Soll</label>
@@ -1761,6 +1794,37 @@
                 />
                 <span class="input-suffix">h/Woche</span>
               </div>
+            </div>
+
+            <!-- Phase 107 gap G-01 (UAT 2026-08-28) — Arbeitstage belongs to the
+                 contract data ABOVE the Kernarbeitszeit heading, not inside it. It is
+                 authoritative for Urlaubsverbrauch (calculateWorkDays), Pro-Rata-Anspruch
+                 (countWorkDaysPerWeek) and, since v1.9.12, the Soll distribution — the
+                 exact opposite of the Kerntage chips below, which the schema documents as
+                 "UI metadata only". Two identical-looking chip rows must not sit adjacent
+                 under a heading that says "(optional)". Placement is the fix; the chips
+                 themselves are unchanged. -->
+            <div class="form-group">
+              <span class="form-label">Arbeitstage</span>
+              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
+                {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
+                  <button
+                    type="button"
+                    class="wd-chip"
+                    class:wd-chip--active={eWorkDays.includes(day.value)}
+                    onclick={() => {
+                      if (eWorkDays.includes(day.value)) {
+                        eWorkDays = eWorkDays.filter((d) => d !== day.value);
+                      } else {
+                        eWorkDays = [...eWorkDays, day.value];
+                      }
+                    }}>{day.label}</button
+                  >
+                {/each}
+              </div>
+              <p class="form-hint">
+                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Soll-Verteilung.
+              </p>
             </div>
 
             <h3 class="modal-section-heading">Kernarbeitszeit (optional)</h3>
@@ -1793,7 +1857,7 @@
             </div>
 
             <div class="form-group">
-              <label class="form-label">Kerntage</label>
+              <span class="form-label">Kerntage</span>
               <div class="weekday-chips" role="group" aria-label="Kerntage">
                 {#each [{ value: 1, label: "Mo" }, { value: 2, label: "Di" }, { value: 3, label: "Mi" }, { value: 4, label: "Do" }, { value: 5, label: "Fr" }, { value: 6, label: "Sa" }, { value: 0, label: "So" }] as day (day.value)}
                   <button
@@ -1810,6 +1874,9 @@
                   >
                 {/each}
               </div>
+              <p class="form-hint">
+                Nur zur Information — wirkt sich weder auf das Soll noch auf den Urlaub aus.
+              </p>
             </div>
           {:else if eType === "MONTHLY_HOURS"}
             <div class="form-group">
@@ -1826,7 +1893,7 @@
                 />
                 <span class="input-suffix">Stunden</span>
               </div>
-              <p class="form-hint">Keine festen Wochentage – Soll wird monatlich berechnet.</p>
+              <p class="form-hint">Soll wird monatlich berechnet — es gibt keine Tagesziele.</p>
             </div>
 
             <div class="form-group">
@@ -1837,9 +1904,18 @@
               </select>
             </div>
 
+            <!-- Phase 107 gap G-02 (UAT 2026-08-28) — these chips DO set workDays, just
+                 indirectly: buildSchedulePayload() sends them as mondayHours…sundayHours =
+                 1/0 and the server derives workDays from exactly those via
+                 normalizeWorkDays() (apps/api/src/routes/settings.ts:1034). D-26's decision
+                 to hide the redundant NUMERIC count stands — the chips express the set
+                 exactly — but its stated reason ("kennt keine Tagesziele, das Feld wäre
+                 irreführend") was wrong about workDays. The write path is deliberately
+                 untouched: changing it would rewrite every existing MONTHLY_HOURS
+                 employee's workDays, and with it their Urlaubsverbrauch and Anspruch. -->
             <div class="form-group">
-              <span class="form-label">Feste Arbeitstage</span>
-              <div class="weekday-chips">
+              <span class="form-label">Arbeitstage</span>
+              <div class="weekday-chips" role="group" aria-label="Arbeitstage">
                 <button
                   type="button"
                   class="wd-chip"
@@ -1883,6 +1959,9 @@
                   onclick={() => (eSunWd = !eSunWd)}>So</button
                 >
               </div>
+              <p class="form-hint">
+                Vertraglich festgelegte Arbeitstage. Steuern Urlaubsverbrauch und Urlaubsanspruch.
+              </p>
             </div>
           {:else}
             <!-- SHIFT_BASED -->
@@ -1905,36 +1984,36 @@
                 Schichtplan ist führend — Soll wird wöchentlich als Gesamtstunden erfasst.
               </p>
             </div>
-          {/if}
 
-          <!-- Arbeitstage/Woche (unabhängig vom AZ-Modell, Phase 49.5) -->
-          <div class="form-group" style="margin-top: 1rem;">
-            <label class="form-label" for="e-workdays">Arbeitstage/Woche</label>
-            <div class="input-suffix-wrap" style="max-width: 240px;">
-              <input
-                id="e-workdays"
-                type="number"
-                min="1"
-                max="7"
-                step="1"
-                class="form-input threshold-input"
-                value={eWorkDays.length}
-                oninput={(ev) => {
-                  const n = Math.max(
-                    1,
-                    Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
-                  );
-                  const canonical = [1, 2, 3, 4, 5, 6, 0];
-                  eWorkDays = canonical.slice(0, n).sort((a, b) => a - b);
-                }}
-              />
-              <span class="input-suffix">Tage</span>
+            <!-- Phase 107 (D-22/D-23, issue #94) — writes EXCLUSIVELY
+                 contractWorkDaysPerWeek. The concrete weekdays come from the
+                 Schichtplan, not this field; eWorkDays is never read or written here. -->
+            <div class="form-group" style="margin-top: 1rem;">
+              <label class="form-label" for="e-contract-workdays">Arbeitstage/Woche</label>
+              <div class="input-suffix-wrap" style="max-width: 240px;">
+                <input
+                  id="e-contract-workdays"
+                  type="number"
+                  min="1"
+                  max="7"
+                  step="1"
+                  class="form-input threshold-input"
+                  value={eContractWorkDays}
+                  oninput={(ev) => {
+                    eContractWorkDays = Math.max(
+                      1,
+                      Math.min(7, Number((ev.target as HTMLInputElement).value) || 0),
+                    );
+                  }}
+                />
+                <span class="input-suffix">Tage</span>
+              </div>
+              <p class="form-hint">
+                Vertragliche Anzahl Arbeitstage pro Woche. Welche Wochentage das konkret sind,
+                bestimmt der Schichtplan — nicht dieses Feld.
+              </p>
             </div>
-            <p class="form-hint">
-              Anzahl Arbeitstage pro Woche — unabhängig vom AZ-Modell. Quelle für Urlaubsverbrauch
-              und Pro-Rata-Urlaubsberechnung.
-            </p>
-          </div>
+          {/if}
 
           <!-- Threshold + Payout -->
           <div class="extra-row spaced-top-md">
@@ -2192,7 +2271,7 @@
                          Arbeitszeitmodell widget above so the BS section visually fits
                          the rest of the Arbeitszeit tab. -->
                     <div class="form-group">
-                      <label class="form-label">BS-Modus</label>
+                      <span class="form-label">BS-Modus</span>
                       <div class="schedule-type-picker" role="radiogroup" aria-label="BS-Modus">
                         <button
                           type="button"

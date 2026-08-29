@@ -24,6 +24,7 @@
   import Pagination from "$components/ui/Pagination.svelte";
   import Card from "$components/ui/Card.svelte";
   import CardHeader from "$components/ui/CardHeader.svelte";
+  import ConfirmDialog from "$components/ui/ConfirmDialog.svelte";
   import KPIStat from "$components/ui/KPIStat.svelte";
   import SaldoAnzeige from "$components/saldo/SaldoAnzeige.svelte"; // Phase 97-04
   import PageHead from "$lib/components/layout/PageHead.svelte";
@@ -35,9 +36,24 @@
     karenzNudgeHref,
     hasNoOpenItems,
     KARENZ_NUDGE_EMPTY,
+    KARENZ_NUDGE_TOOLTIP,
     type KarenzOverrunResponse,
     type KarenzNudgeSummary,
   } from "$lib/leave/karenz-nudge";
+  import {
+    summarizeUnconfirmedBreaks,
+    breakNudgeHref,
+    BREAK_NUDGE_EMPTY,
+    type BreakNudgeSummary,
+  } from "$lib/breaks/break-nudge";
+  import {
+    resolveDayState,
+    upsertDayEntry,
+    primaryClockLabel,
+    canReopenFinishedDay,
+    reopenGapStartLabel,
+    type ClockDayEntry,
+  } from "$lib/dashboard/day-state";
   import { format, subMonths } from "date-fns";
   import { de } from "date-fns/locale";
   import {
@@ -126,12 +142,18 @@
 
   // Phase 76.2 (ARCH-V19-01) — D-03 unified clock response shapes.
   // Backend adapters land in Plans 2 (/clock-in) + 3 (/:id/clock-out).
-  // Successful /clock-in responses always carry resolution.kind === "CLOCKED_IN";
   // CONFLICT branches surface as thrown ApiError (HTTP 409) and never reach here.
+  //
+  // Phase 115 (issue #118): the resolver's REOPEN branch (services/clock/resolver.ts:115-142)
+  // ALSO resolves to kind "CLOCKED_IN" — but it returns the EXISTING entry with endTime
+  // nulled and breakMinutes recomputed from all Break rows, NOT a fresh row. The comment
+  // that used to stand here claimed a fresh entry was guaranteed, and that assumption is
+  // what made the timer restart at `new Date()` on a reopened day. It has been retired:
+  // `entry` is the full TimeEntry row in both cases.
   type ClockInResponse = {
     resolution: {
       kind: "CLOCKED_IN";
-      entry: { id: string; employeeId: string; source: string; startTime: string };
+      entry: ClockDayEntry & { employeeId: string; source: string };
     };
     audit?: { id: string };
   };
@@ -149,14 +171,34 @@
   };
 
   // ── State ──────────────────────────────────────────────────────────────────
-  let clockedIn = $state(false);
-  let activeEntryId = $state<string | null>(null);
-  let loading = $state(false);
+  // ── Clock state (Phase 115, GitHub issue #118) ────────────────────────────
+  // ONE source: today's rows exactly as GET /api/v1/time-entries returned them.
+  // Everything the hero card and the "Heutiger Eintrag" card show derives from it,
+  // so the two cards cannot contradict each other the way they did in issue #118.
+  let todayEntries = $state<ClockDayEntry[]>([]);
+  let day = $derived(resolveDayState(todayEntries));
+  // DERIVED alias, never assigned — kept for the nine existing readers.
+  let clockedIn = $derived(day.kind === "running");
+  let activeEntryId = $derived(day.kind === "running" ? (day.entry?.id ?? null) : null);
+  // Issue #118 Lösungsvorschlag 3: the running timer must start at the ENTRY's own
+  // startTime. A REOPEN returns the ORIGINAL entry (08:55 in the report), not a fresh
+  // one — deriving this instead of assigning `new Date()` makes that correct by
+  // construction, for START and REOPEN alike.
+  let clockStart = $derived(
+    day.kind === "running" && day.entry ? new Date(day.entry.startTime) : null,
+  );
+
+  // Phase 116 (issue #119) — starts TRUE. `onMount` (:339) awaits `loadData()` unconditionally and
+  // `loadData` is `loading = true` → try → `finally { loading = false }` with no early return, so
+  // the page cannot be stranded. This also removes the only real defect at the single consumer
+  // below (:1540): `<SaldoAnzeige {loading} error={!loading} />` renders in the `stats === null`
+  // branch, so with `loading` starting false the FIRST frame claimed a failed fetch before any
+  // request had been made. `error={!loading}` itself is correct in that branch and is left alone.
+  let loading = $state(true);
   let chartsLoading = $state(true);
   let clockLoading = $state(false);
   let breakMinutes = $state(0);
   let currentTime = $state(new Date());
-  let clockStart: Date | null = $state(null);
 
   // ── Open break (dashboard pause toggle) ──────────────────────────────────
   // Open breaks are not persisted on the server (Break records are always
@@ -207,12 +249,14 @@
   // GET /time-entries (breakStatus === "AUTO" && !isLocked). Gated behind the
   // tenant dormancy flag `enforceBreakConfirmation` (fail-safe false) so the
   // feature stays invisible until the tenant enables it.
+  //
+  // Phase 112 (issue #115): the count, the German label AND the deep-link URL all come from
+  // $lib/breaks/break-nudge.ts. They used to be built inline here, and the inline version
+  // forwarded the API's full ISO instant into the URL, which crashed the destination.
   let enforceBreakConfirmation = $state(false);
-  let unconfirmedBreakDays = $state(0);
-  // Earliest (lexicographically smallest, i.e. oldest) unconfirmed AUTO day —
-  // used to deep-link the nudge straight to the most overdue day. null when
-  // there are no unconfirmed days.
-  let earliestUnconfirmedBreakDate = $state<string | null>(null);
+  let breakNudge = $state<BreakNudgeSummary>(BREAK_NUDGE_EMPTY);
+  // Kept as a separate name because hasNoOpenItems() and the {#if} below read it.
+  let unconfirmedBreakDays = $derived(breakNudge.count);
 
   // ── Karenztage-Hinweis (Phase 104, D-21) ────────────────────────────────────
   // § 5 EFZG: Krankheitstage über die tenant-konfigurierte Karenzzeit hinaus ohne Attest.
@@ -229,13 +273,9 @@
   );
 
   // ── Heutiger Eintrag (row 2 col-7) ────────────────────────────────────────
-  interface TodayEntry {
-    id: string;
-    startTime: string; // ISO
-    endTime: string | null;
-    breakMinutes: number;
-  }
-  let todayEntry = $state<TodayEntry | null>(null);
+  // The "Heutiger Eintrag" card reads the SAME entry the hero card describes
+  // (Phase 115, issue #118 — the two used to be derived independently and disagreed).
+  let todayEntry = $derived(day.entry);
 
   // ── Aktivität (row 2 col-5) ───────────────────────────────────────────────
   interface ActivityItem {
@@ -325,29 +365,12 @@
 
       // Parallel laden — allSettled so a stats failure doesn't break clock state
       const [entriesResult, statsResult] = await Promise.allSettled([
-        api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-          `/time-entries?from=${today}&to=${today}`,
-        ),
+        api.get<ClockDayEntry[]>(`/time-entries?from=${today}&to=${today}`),
         api.get<DashboardStats>("/dashboard"),
       ]);
 
       if (entriesResult.status === "fulfilled") {
-        const entries = entriesResult.value;
-        const openEntry = entries.find((e) => !e.endTime);
-        if (openEntry) {
-          clockedIn = true;
-          activeEntryId = openEntry.id;
-          clockStart = new Date(openEntry.startTime);
-          // Restore any in-progress break that was started in a previous page
-          // load (localStorage). Stale entries (different entryId) are cleared.
-          restoreOpenBreak();
-        } else {
-          clockedIn = false;
-          activeEntryId = null;
-          clockStart = null;
-          breakStartedAt = null;
-          clearStoredOpenBreak();
-        }
+        todayEntries = entriesResult.value;
       } else {
         console.error("Failed to load time entries:", entriesResult.reason);
         toasts.error("Zeiteinträge konnten nicht geladen werden");
@@ -432,23 +455,13 @@
               Array<{ date: string; breakStatus?: string; isLocked?: boolean }>
             >(`/time-entries?from=${from}&to=${today}`)
             .catch(() => [] as Array<{ date: string; breakStatus?: string; isLocked?: boolean }>);
-          const days = new Set<string>();
-          for (const row of breakRows) {
-            if (row.breakStatus === "AUTO" && row.isLocked !== true) days.add(row.date);
-          }
-          unconfirmedBreakDays = days.size;
-          // ISO yyyy-MM-dd sorts lexicographically, so the smallest string is
-          // the oldest (most overdue) day — the natural deep-link target.
-          earliestUnconfirmedBreakDate =
-            days.size > 0 ? [...days].reduce((a, b) => (a < b ? a : b)) : null;
+          breakNudge = summarizeUnconfirmedBreaks(breakRows);
         } else {
-          unconfirmedBreakDays = 0;
-          earliestUnconfirmedBreakDate = null;
+          breakNudge = BREAK_NUDGE_EMPTY;
         }
       } catch {
         enforceBreakConfirmation = false;
-        unconfirmedBreakDays = 0;
-        earliestUnconfirmedBreakDate = null;
+        breakNudge = BREAK_NUDGE_EMPTY;
       }
 
       // Karenztage-Hinweis (D-21) — self-scoped, fail-safe: any error renders nothing.
@@ -461,26 +474,7 @@
         karenzNudge = KARENZ_NUDGE_EMPTY;
       }
 
-      // Today's entry breakdown (row 2 / col-7)
-      if (entriesResult.status === "fulfilled") {
-        const all = entriesResult.value as unknown as Array<{
-          id: string;
-          startTime: string;
-          endTime: string | null;
-          breakMinutes: number;
-        }>;
-        // Prefer the open entry; fall back to first entry of the day
-        const openEntry = all.find((e) => !e.endTime);
-        const ref = openEntry ?? all[0] ?? null;
-        todayEntry = ref
-          ? {
-              id: ref.id,
-              startTime: ref.startTime,
-              endTime: ref.endTime,
-              breakMinutes: ref.breakMinutes ?? 0,
-            }
-          : null;
-      }
+      // Today's entry (row 2 / col-7) derives from todayEntries — see the clock-state block above (issue #118).
 
       // Activity feed (row 2 / col-5) — role-gated server-side
       try {
@@ -507,27 +501,7 @@
     // Also refresh clock-in status
     try {
       const today = format(new Date(), "yyyy-MM-dd");
-      const entries = await api.get<{ id: string; endTime: string | null; startTime: string }[]>(
-        `/time-entries?from=${today}&to=${today}`,
-      );
-      const openEntry = entries.find((e) => !e.endTime);
-      if (openEntry) {
-        const wasSameEntry = activeEntryId === openEntry.id;
-        clockedIn = true;
-        activeEntryId = openEntry.id;
-        clockStart = new Date(openEntry.startTime);
-        // If the active entry changed underneath us (rare — e.g. clock-out
-        // happened in another tab), an in-memory open break is stale. Clear it.
-        if (!wasSameEntry) {
-          restoreOpenBreak();
-        }
-      } else {
-        clockedIn = false;
-        activeEntryId = null;
-        clockStart = null;
-        breakStartedAt = null;
-        clearStoredOpenBreak();
-      }
+      todayEntries = await api.get<ClockDayEntry[]>(`/time-entries?from=${today}&to=${today}`);
     } catch (err) {
       console.error("Failed to poll clock status:", err);
     }
@@ -834,24 +808,45 @@
   }
 
   // ── Clock In/Out ───────────────────────────────────────────────────────────
+  // Phase 115 (issue #118): the single POST /clock-in call site. Used by the primary
+  // "Einstempeln" action on a not-started day AND by the confirmed "Erneut einstempeln"
+  // action on a finished day. The server decides which of the two it is — START or
+  // REOPEN (services/clock/state-machine.ts:18-22) — and we simply adopt the entry it
+  // returns, which is what makes the timer correct in both cases.
+  async function performClockIn(): Promise<void> {
+    const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
+      source: "MOBILE",
+    });
+    // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
+    // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
+    // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
+    // check guards against any unexpected resolver shape drift.
+    if (res.resolution.kind !== "CLOCKED_IN") {
+      throw new Error("Unerwartete Antwort beim Einstempeln");
+    }
+    const entry = res.resolution.entry;
+    // Optimistic: adopt the SERVER's row so `day`, `activeEntryId` and `clockStart`
+    // all follow from it before loadData() returns. upsertDayEntry replaces by id,
+    // so a REOPEN updates the same row instead of appending a phantom second one.
+    todayEntries = upsertDayEntry(todayEntries, entry);
+    // A REOPEN arrives with breakMinutes already recomputed from ALL Break rows
+    // (resolver.ts:130-136). Adopting it keeps the value we later send on clock-out
+    // equal to what the server already stored.
+    breakMinutes = entry.breakMinutes ?? 0;
+  }
+
   async function handleClock() {
     if (clockLoading) return; // D-02a: idempotency guard — touch events can fire before disabled={clockLoading} applies
+    // Phase 115 (issue #118): a FINISHED day has no primary clock action. Reopening it is
+    // a separate, confirmed path (openReopenDialog / confirmReopen) — never this one.
+    // This is a usability guard, NOT an authorisation control: a crafted POST /clock-in
+    // still reaches REOPEN by design (the Umfangsgrenze forbids a server-side gate, and
+    // REOPEN is a deliberate NFC/WIFI fix). Do not mistake it for security.
+    if (day.kind === "finished") return;
     clockLoading = true;
     try {
       if (!clockedIn) {
-        const res = await api.post<ClockInResponse>("/time-entries/clock-in", {
-          source: "MOBILE",
-        });
-        // Phase 76.2 D-03 unified shape — reads from res.resolution.entry
-        // (the legacy `res.entry` shape is gone, see Plan 2 SUMMARY).
-        // CONFLICT branches reach us as thrown ApiError (HTTP 409) — defensive
-        // check guards against any unexpected resolver shape drift.
-        if (res.resolution.kind !== "CLOCKED_IN") {
-          throw new Error("Unerwartete Antwort beim Einstempeln");
-        }
-        activeEntryId = res.resolution.entry.id;
-        clockedIn = true;
-        clockStart = new Date();
+        await performClockIn();
       } else if (activeEntryId) {
         // If a break is open, close it first so the time gets recorded before
         // we ask the server to clock out (otherwise the time would silently
@@ -870,9 +865,9 @@
         await api.post<ClockOutResponse>(`/time-entries/${activeEntryId}/clock-out`, {
           breakMinutes,
         });
-        clockedIn = false;
-        activeEntryId = null;
-        clockStart = null;
+        // Phase 115 (issue #118): clockedIn / activeEntryId / clockStart are $derived now.
+        // They resolve to the closed state on their own once loadData() returns the closed
+        // row, and the open-break $effect then clears breakStartedAt.
         breakMinutes = 0;
         clearStoredOpenBreak();
       }
@@ -881,6 +876,40 @@
       toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
       // D-02a: if the request succeeded but the response was lost, re-sync so clockedIn reflects
       // the server and the user cannot fire a spurious second clock-in.
+      try {
+        await loadData();
+      } catch {
+        /* ignore reload error */
+      }
+    } finally {
+      clockLoading = false;
+    }
+  }
+
+  // ── Deliberate re-clock-in on a finished day (Phase 115, issue #118) ──────
+  // The server maps this to REOPEN (state-machine.ts:18-22) — the gap since the recorded
+  // clock-out becomes a Break row. That consequence is named in the dialog before anything
+  // is sent; it is never reachable from the card's primary action.
+  let reopenDialogOpen = $state(false);
+
+  function openReopenDialog() {
+    if (!canReopenFinishedDay(day) || clockLoading) return;
+    reopenDialogOpen = true;
+  }
+
+  async function confirmReopen(): Promise<void> {
+    if (clockLoading) return;
+    // The 5 s poll can change the day underneath an open dialog. Re-check before sending.
+    if (!canReopenFinishedDay(day)) {
+      reopenDialogOpen = false;
+      return;
+    }
+    clockLoading = true;
+    try {
+      await performClockIn();
+      await loadData();
+    } catch (err) {
+      toasts.error(err instanceof Error ? err.message : "Fehler beim Stempeln");
       try {
         await loadData();
       } catch {
@@ -989,6 +1018,22 @@
     }
   }
 
+  // Phase 115 (issue #118): activeEntryId is derived now, so the open-break restore that
+  // used to sit inside loadData()/pollDashboard() reacts to the id instead. `lastSeenEntryId`
+  // is a PLAIN let on purpose — making it $state would make this effect re-trigger itself.
+  let lastSeenEntryId: string | null = null;
+  $effect(() => {
+    const id = activeEntryId;
+    if (id === lastSeenEntryId) return;
+    lastSeenEntryId = id;
+    if (id) {
+      restoreOpenBreak();
+    } else {
+      breakStartedAt = null;
+      clearStoredOpenBreak();
+    }
+  });
+
   // ── Helpers ────────────────────────────────────────────────────────────────
   function formatElapsed(start: Date | null, now: Date): string {
     if (!start) return "–";
@@ -1080,6 +1125,26 @@
   }
   let entryBreakLabel = $derived(todayEntry ? fmtHm(entryBreakMin) : "—");
   let entryNetLabel = $derived(todayEntry ? fmtHm(entryWorkedMin) : "—");
+
+  // Phase 115 (issue #118) — the hero card's three-state view model.
+  let primaryLabel = $derived(primaryClockLabel(day)); // null on a finished day
+  let reopenGapLabel = $derived(reopenGapStartLabel(day)); // "17:46" on a finished day
+  // Phase 115 (issue #118), acceptance criterion #4: the Rückfrage must NAME the consequence.
+  // These are the three things services/clock/resolver.ts:124-137 actually does on REOPEN —
+  // a Break from the old endTime to now, endTime = null, and breakMinutes recomputed from ALL
+  // Break rows. Stated as fact, not as a warning.
+  let reopenDialogText = $derived(
+    `Der Zeitraum ${reopenGapLabel ?? ""}–jetzt wird als Pause erfasst. ` +
+      `Der heutige Eintrag wird dadurch wieder geöffnet, seine Netto-Arbeitszeit sinkt und der Pausenwert wird neu berechnet.`,
+  );
+  // The big HH:MM:SS readout for a finished day: the entry's own net time, not a live counter.
+  let finishedNetClock = $derived.by(() => {
+    const total = Math.max(0, Math.round(entryWorkedMin * 60));
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  });
 
   // Timeline progress: % of 12h window from 07:00 start anchor
   let entryProgressPct = $derived.by(() => {
@@ -1180,15 +1245,25 @@
            controls. -->
       {#if !isExempt}
         <Card animate class="timer-card col-7 timer-card-wrap" style="--card-idx: 0;">
-          <div class="timer-hd">
+          <div class="timer-hd" data-day-state={day.kind}>
             <div>
               <div class="timer-hd-title">
-                {clockedIn ? "Du arbeitest gerade" : "Noch nicht eingestempelt"}
+                {#if day.kind === "running"}
+                  Du arbeitest gerade
+                {:else if day.kind === "finished"}
+                  Tag abgeschlossen
+                {:else}
+                  Noch nicht eingestempelt
+                {/if}
               </div>
               <div class="timer-status">
-                {#if clockedIn && clockStart}
+                {#if day.kind === "running" && clockStart}
                   <span class="live-dot" aria-hidden="true"></span>
                   <span>gestartet um {format(clockStart, "HH:mm")}</span>
+                {:else if day.kind === "finished"}
+                  <span class="timer-status-idle">
+                    {entryStartHHMM} – {entryEndHHMM} · {entryNetLabel} erfasst
+                  </span>
                 {:else}
                   <span class="timer-status-idle">Bereit zum Einstempeln</span>
                 {/if}
@@ -1205,9 +1280,20 @@
           </div>
 
           <div class="clock timer-display">
-            {clockedIn && clockStart ? formatElapsed(clockStart, currentTime) : "00:00:00"}
+            {#if day.kind === "running" && clockStart}
+              {formatElapsed(clockStart, currentTime)}
+            {:else if day.kind === "finished"}
+              {finishedNetClock}
+            {:else}
+              00:00:00
+            {/if}
           </div>
-          {#if stats?.scheduleType === "FIXED_SCHEDULE"}
+          {#if day.kind === "finished"}
+            <!-- No Tagesziel bar on a finished day: pctTarget derives from elapsedMs, which is 0
+                 when not clocked in, so a FIXED_SCHEDULE employee would see a 0 % bar on a
+                 completed 8:21 h day — the same lie this phase removes, one size smaller. -->
+            <div class="timer-sub">Erfasste Arbeitszeit heute</div>
+          {:else if stats?.scheduleType === "FIXED_SCHEDULE"}
             <div class="timer-sub">
               {clockedIn
                 ? `Noch ${fmtHours(remainingTargetHours)} bis zum Tagesziel`
@@ -1230,15 +1316,17 @@
           {/if}
 
           <div class="card-foot timer-foot">
-            <button
-              onclick={handleClock}
-              disabled={clockLoading}
-              class="btn btn-primary timer-cta-primary"
-              type="button"
-            >
-              {#if clockLoading}<span class="btn-spinner"></span>{/if}
-              {clockedIn ? "Ausstempeln" : "Einstempeln"}
-            </button>
+            {#if primaryLabel}
+              <button
+                onclick={handleClock}
+                disabled={clockLoading}
+                class="btn btn-primary timer-cta-primary"
+                type="button"
+              >
+                {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                {primaryLabel}
+              </button>
+            {/if}
             {#if clockedIn}
               <button
                 type="button"
@@ -1254,6 +1342,24 @@
                 {breakStartedAt ? "Pause beenden" : "Pause starten"}
               </button>
             {/if}
+            {#if day.kind === "finished"}
+              {#if canReopenFinishedDay(day) && reopenGapLabel}
+                <button
+                  type="button"
+                  class="btn btn-ghost timer-cta-ghost"
+                  disabled={clockLoading}
+                  onclick={openReopenDialog}
+                  title="Wieder einstempeln — der Zeitraum seit dem Ausstempeln wird als Pause erfasst"
+                >
+                  {#if clockLoading}<span class="btn-spinner"></span>{/if}
+                  Erneut einstempeln
+                </button>
+              {:else}
+                <span class="timer-status-idle">
+                  Monat abgeschlossen — der Eintrag kann nicht mehr geändert werden.
+                </span>
+              {/if}
+            {/if}
           </div>
 
           {#if todayShift}
@@ -1264,6 +1370,17 @@
             </div>
           {/if}
         </Card>
+        <!-- Phase 115 (issue #118): the ONLY route from the hero card back into a REOPEN.
+             Inside {#if !isExempt} on purpose — a § 18 ArbZG-exempt user has no clock card
+             and must not gain one through this dialog either (Phase 76.7, D-15). -->
+        <ConfirmDialog
+          bind:open={reopenDialogOpen}
+          title="Erneut einstempeln?"
+          description={reopenDialogText}
+          confirmLabel="Erneut einstempeln"
+          cancelLabel="Abbrechen"
+          onConfirm={confirmReopen}
+        />
       {/if}
       <!-- /timer-card (Phase 76.7: wrapped in {#if !isExempt}) -->
 
@@ -1494,18 +1611,12 @@
               {/if}
               {#if enforceBreakConfirmation && unconfirmedBreakDays > 0}
                 <a
-                  href={earliestUnconfirmedBreakDate
-                    ? `/time-entries?view=list&date=${earliestUnconfirmedBreakDate}`
-                    : "/time-entries?view=list"}
+                  href={breakNudgeHref(breakNudge)}
                   class="oi-row"
                   data-testid="dashboard-break-nudge"
                 >
                   <span class="oi-dot oi-dot--warn"></span>
-                  <span
-                    >{unconfirmedBreakDays === 1
-                      ? "1 Tag: Pause bestätigen"
-                      : `${unconfirmedBreakDays} Tage: Pause bestätigen`}</span
-                  >
+                  <span>{breakNudge.label}</span>
                   <span class="oi-link">→</span>
                 </a>
               {/if}
@@ -1514,7 +1625,7 @@
                   href={karenzNudgeHref(karenzNudge)}
                   class="oi-row"
                   data-testid="dashboard-karenz-nudge"
-                  title="Krankheitstage über die Karenzzeit hinaus ohne Attest (§ 5 EFZG)"
+                  title={KARENZ_NUDGE_TOOLTIP}
                 >
                   <span class="oi-dot oi-dot--warn"></span>
                   <span>{karenzNudge.label}</span>

@@ -108,6 +108,10 @@ const createEmployeeSchema = z.object({
   coreDays: z.array(z.number().int().min(0).max(6)).optional(),
   // Phase 49.5 — Arbeitstage/Woche (optional; fällt auf TenantConfig.defaultWorkDays zurück)
   workDays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
+  // Phase 107 (D-01, issue #94) — vertragliche Anzahl Arbeitstage/Woche, NUR für
+  // SHIFT_BASED befüllt. .optional().nullable(): see settings.ts's identical field
+  // for the rationale (Svelte forms send `field: x ? x : null`).
+  contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
   // Phase 64 — Pausendauer Override (D-08, BREAK-02, BREAK-04):
   // nullable Int — null clears override → fall back to TenantConfig defaults.
   // Floor enforces ArbZG §4 Pflichtpause; cap is a sane upper bound.
@@ -418,6 +422,13 @@ export async function employeeRoutes(app: FastifyInstance) {
               coreEnd: body.scheduleType === "FLEXTIME" ? (body.coreEnd ?? null) : null,
               coreDays: body.scheduleType === "FLEXTIME" ? (body.coreDays ?? []) : [],
               workDays: resolvedWorkDays,
+              // Phase 107 (D-01, issue #94) — mirrors the weeklyHours SHIFT_BASED
+              // default-if-omitted convention above. Initial schedule on employee
+              // creation is a contract START (not a contract CHANGE), so workDays
+              // above is still allowed to resolve/derive normally — only the D-02
+              // freeze on the settings.ts re-save path is exempted from this.
+              contractWorkDaysPerWeek:
+                body.scheduleType === "SHIFT_BASED" ? (body.contractWorkDaysPerWeek ?? 5) : null,
               validFrom: new Date(body.hireDate),
             },
           });

@@ -320,6 +320,12 @@ export const employeeScheduleSchema = z
       .min(1, "Mindestens ein Arbeitstag muss aktiv sein")
       .max(7)
       .optional(),
+    // Phase 107 (D-01, issue #94) — vertragliche Anzahl Arbeitstage/Woche, NUR für
+    // SHIFT_BASED befüllt. .optional().nullable() (not bare .optional()): this
+    // project's Svelte forms send `field: x ? x : null`, and a bare .optional() 400s
+    // the whole payload on an explicit null (documented Zod gotcha). Bounds mirror
+    // fullTimeWorkDaysPerWeek above verbatim.
+    contractWorkDaysPerWeek: z.number().int().min(1).max(7).optional().nullable(),
     validFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -985,6 +991,50 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       // ── end Phase 49.3 ────────────────────────────────────────────────────
 
+      // Check if a schedule with the exact same validFrom exists
+      const existing = await app.prisma.workSchedule.findFirst({
+        where: { employeeId, validFrom },
+      });
+
+      // Phase 76.24 (D-01) — same-month type-change collision guard.
+      // A type change requires a CLEAN month boundary (no existing row at
+      // validFrom with a differing type). If a row exists with a different
+      // type, reject with MODEL_SWITCH_SAME_MONTH_ERROR. A pure hours-only
+      // edit (existing.type === body.type) keeps the update-in-place path (D-01a).
+      if (existing && existing.type !== body.type) {
+        return reply.code(400).send({ error: MODEL_SWITCH_SAME_MONTH_ERROR });
+      }
+
+      // Phase 107 (D-01/D-02, issue #94) — SHIFT_BASED freeze: workDays is never
+      // derived (guessed) for this type again. Update-in-place reuses the existing
+      // row's own workDays verbatim; a brand-new validFrom row inherits the most
+      // recent PRIOR row's workDays (the schedule this new period continues from),
+      // falling back to the schema default only when no prior row exists at all.
+      // normalizeWorkDays() (the Phase 61 per-day-hours guesser) is never invoked on
+      // this branch — that is what makes the freeze structural, not a matter of care.
+      // contractWorkDaysPerWeek is written ONLY for SHIFT_BASED and explicitly `null`
+      // for every other type, so the column stays self-describing (D-01) and a type
+      // switch away from SHIFT_BASED clears any stale count.
+      let workDaysForWrite: number[];
+      let contractWorkDaysPerWeekForWrite: number | null;
+      if (body.type === "SHIFT_BASED") {
+        if (existing) {
+          workDaysForWrite = existing.workDays;
+        } else {
+          const priorForWorkDays = await app.prisma.workSchedule.findFirst({
+            where: { employeeId, validFrom: { lt: validFrom } },
+            orderBy: { validFrom: "desc" },
+            select: { workDays: true },
+          });
+          workDaysForWrite = priorForWorkDays?.workDays ?? [1, 2, 3, 4, 5];
+        }
+        contractWorkDaysPerWeekForWrite =
+          body.contractWorkDaysPerWeek ?? existing?.contractWorkDaysPerWeek ?? 5;
+      } else {
+        workDaysForWrite = normalizeWorkDays(body.workDays, body as PerDayHours);
+        contractWorkDaysPerWeekForWrite = null;
+      }
+
       const scheduleData = {
         type: body.type,
         weeklyHours: body.weeklyHours,
@@ -1013,27 +1063,10 @@ export async function settingsRoutes(app: FastifyInstance) {
         coreStart: body.coreStart ?? null,
         coreEnd: body.coreEnd ?? null,
         coreDays: body.coreDays ?? [],
-        // Phase 61 (v1.6.5) — derive workDays from per-day-hours when the
-        // caller either omitted workDays or sent the literal Mo-Fr default
-        // alongside per-day-hours that disagree. Closes an employee's
-        // class of bug (mondayHours=0 but workDays=[1,2,3,4,5]).
-        workDays: normalizeWorkDays(body.workDays, body as PerDayHours),
+        workDays: workDaysForWrite,
+        contractWorkDaysPerWeek: contractWorkDaysPerWeekForWrite,
         validFrom,
       };
-
-      // Check if a schedule with the exact same validFrom exists
-      const existing = await app.prisma.workSchedule.findFirst({
-        where: { employeeId, validFrom },
-      });
-
-      // Phase 76.24 (D-01) — same-month type-change collision guard.
-      // A type change requires a CLEAN month boundary (no existing row at
-      // validFrom with a differing type). If a row exists with a different
-      // type, reject with MODEL_SWITCH_SAME_MONTH_ERROR. A pure hours-only
-      // edit (existing.type === body.type) keeps the update-in-place path (D-01a).
-      if (existing && existing.type !== body.type) {
-        return reply.code(400).send({ error: MODEL_SWITCH_SAME_MONTH_ERROR });
-      }
 
       let schedule;
       const old = existing;

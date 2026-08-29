@@ -50,7 +50,12 @@
   const currentDay = now.getDate();
 
   let selectedYear = $state(currentYear);
-  let loading = $state(false);
+  // Phase 116 (issue #119) — starts TRUE for intent, not for behaviour: `loadYearStatus()` is
+  // invoked from the <script> body (:496, there is no onMount) and sets `loading = true`
+  // synchronously before the first paint, so this page never had the "loaded and empty" frame.
+  // Its markup is already `{#if loading} … {:else if loaded}` with `loaded` starting false.
+  // Safe: loadYearStatus is `loading = true` → try → `finally { loading = false }`, no early return.
+  let loading = $state(true);
   let error = $state("");
   let success = $state("");
   let monthStatuses: MonthStatus[] = $state([]);

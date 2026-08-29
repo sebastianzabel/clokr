@@ -98,6 +98,10 @@ Clokr MUST be audit-proof (revisionssicher). All data relevant to working time, 
 - **No silent overwrites**: Any correction to a locked/finalized entry must create a new correction entry with reference to the original, not modify it in place
 - **Traceability**: It must always be possible to reconstruct who changed what, when, and why
 - **CASCADE = Restrict**: Critical relations (Employee→TimeEntry/LeaveRequest/Absence) use `onDelete: Restrict` to prevent silent cascade deletion
+- **`LEAVE_DAYS_ADJUSTED` audit action** (Phase 107, D-20): written whenever roster planning
+  recomputes a `SHIFT_BASED` employee's approved, provisional leave-day count for a period that
+  overlaps the changed roster week; carries `oldValue`/`newValue` (`{days, daysProvisional}`) and
+  a `Roster-Planung` trigger note — same pattern as `LEAVE_CORRECTED` (Phase 94).
 
 These rules apply to ALL code changes touching time entries, leave, overtime, and employee data. When in doubt, prefer creating an audit log entry over skipping it.
 
@@ -204,11 +208,48 @@ BUrlG §3/§7, EuGH carry-over rules, cross-year splitting, dynamic recalc, FIFO
   - No daily targets, no daily +/- display in calendar
   - Holiday/absence deductions do NOT apply (flexible schedule)
 - `WorkSchedule.validFrom` MUST be the 1st of a calendar month for every contract CHANGE (PUT `/api/v1/settings/work/:employeeId` and tenant-config bulk apply). Non-1st dates are rejected with HTTP 400 + German message `"Vertragswechsel sind nur zum Monats-1. erlaubt."` (see `apps/api/src/utils/month-first-date.ts` for the canonical constant `MONTH_FIRST_ERROR`). The initial schedule on employee creation (POST `/api/v1/employees`) is exempt — `validFrom = hireDate` may be any day, because contract START is not a contract CHANGE. Existing non-1st rows (pre-Phase-60) are preserved for audit-trail purposes; surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workschedule-non-month1.ts`. See GitHub issue #220.
-- `WorkSchedule.workDays` MUST be the set of weekday indices (0=Sun..6=Sat) where the corresponding `{day}Hours` value is > 0. The invariant is enforced server-side on every create/update path (POST `/api/v1/employees`, PUT `/api/v1/settings/work/:employeeId` regular + cancelOrphanShifts branches, PUT `/api/v1/settings/work` applyToExisting bulk-apply) via `normalizeWorkDays()` in `apps/api/src/utils/calculate-work-days.ts`. Legacy rows that pre-date this enforcement may still diverge — surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts`. Existing divergent rows are NOT auto-migrated (Revisionssicherheit). See Phase 61 audit `.planning/phases/61-calculate-work-days-audit/61-AUDIT.md`.
+- `WorkSchedule.workDays` MUST be the set of weekday indices (0=Sun..6=Sat) where the corresponding `{day}Hours` value is > 0. The invariant is enforced server-side on every create/update path (POST `/api/v1/employees`, PUT `/api/v1/settings/work/:employeeId` regular + cancelOrphanShifts branches, PUT `/api/v1/settings/work` applyToExisting bulk-apply) via `normalizeWorkDays()` in `apps/api/src/utils/calculate-work-days.ts`. Legacy rows that pre-date this enforcement may still diverge — surface them via `pnpm --filter @clokr/api exec tsx scripts/audit-workdays-vs-day-hours.ts`. Existing divergent rows are NOT auto-migrated (Revisionssicherheit). The audit that established this invariant was Phase 61; its artefacts were archived with the milestone and are not in the repo.
+- **`SHIFT_BASED` is an exception to the invariant above (Phase 107, D-30).** For this type the
+  contractual quantity is a COUNT, stored in `WorkSchedule.contractWorkDaysPerWeek Int?` (D-01) —
+  not a weekday set. The concrete weekdays a `SHIFT_BASED` employee actually works come from the
+  roster (`Shift`), never from `workDays`. The `{day}Hours` columns are placeholders for this type
+  and are NOT authoritative (`getScheduledHours()` in `apps/api/src/routes/leave.ts`, Phase 100 /
+  OTC-04; `apps/api/src/utils/shift-based-saldo.ts:53-57`), so the "`workDays` = days with
+  `{day}Hours > 0`" equality above does not govern `SHIFT_BASED` rows — it remains true and
+  enforced only for `FIXED_SCHEDULE`, `FLEXTIME` and `MONTHLY_HOURS`. Since Phase 107 (D-02), no
+  form write path touches `workDays` for `SHIFT_BASED` any more, so no NEW divergence between
+  `workDays` and reality can be created; existing divergent rows are deliberately preserved as
+  evidence for Phase 108 / GitHub issue #95, which needs them to distinguish *guessed* from
+  *correct* — do NOT "fix" them on sight. Consequently, the `audit-workdays-vs-day-hours.ts`
+  findings for `SHIFT_BASED` rows (script referenced above) are EXPECTED, not a bug.
+- `resolveContractWorkDaysPerWeek()` in `apps/api/src/routes/leave.ts` is the ONLY place the
+  `SHIFT_BASED` contractual-count fallback chain lives (`contractWorkDaysPerWeek` →
+  `workDays.length` → `TenantConfig.defaultWorkDays.length` → `5`, Phase 107 D-04) — it mirrors
+  `resolveWorkDays()`'s shape but answers a different question ("how many days" vs. "which days").
+  No other reader may rebuild this chain inline.
+- `WorkSchedule.contractWorkDaysPerWeek Int?` — the `SHIFT_BASED` employee's contractual weekly
+  workday count; `null` for every other schedule type (Phase 107, D-01).
+- `LeaveRequest.daysProvisional Boolean?` — server-derived, set only at approval time; `true` when
+  any day of a `SHIFT_BASED` leave request's period had no roster at calculation time (Phase 107,
+  D-10/D-11). Never set by a client.
 
 ## UI Consistency Rules
 
-Token namespace v1.5 (banned legacy `--color-*` / `--glass-*` / `--radius-*` / `--gray-*`), card surfaces, calendar-cell recipe, page wrapper, section stacking, summary bars, entrance animations — **the single source of truth is `.planning/UI_STYLE_GUIDE.md`**. Read it before modifying any page in `apps/web`. Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes`.
+Read these before modifying any page in `apps/web` — they are checked in, unlike anything under
+`.planning/`, which is gitignored and therefore unreadable for anyone else:
+
+| Source | What it governs |
+| --- | --- |
+| `apps/web/src/tokens.css` | The canonical v1.5 token set — every colour, radius and surface variable |
+| `apps/web/.lintrc-tokens.txt` | The banned legacy patterns (`--color-*` / `--glass-*` / `--radius-*` / `--gray-*`) plus a replacement cheat sheet |
+| `apps/web/src/app.css` | The shared class recipes — card surfaces, `.badge`, `.callout`, calendar cells, page wrapper, section stacking, summary bars, entrance animations |
+| `apps/web/scripts/lint-ui-classes.mjs` | Which class names are allowed in the scoped primitive directories, and where that scope ends |
+
+Reuse an existing recipe from `app.css` before inventing a class or a token.
+
+Verify with `pnpm --filter @clokr/web lint:tokens` + `lint:ui-classes`. Note that `lint:ui-classes`
+only scans `lib/components/ui/` and `lib/components/layout/` — components elsewhere (`lib/components/saldo/`,
+`calendar/`, `breaks/`, …) are outside that gate and need their own mounted test instead.
 
 ## Svelte 5 Gotchas
 
@@ -521,7 +562,7 @@ Clokr is a German-language, audit-proof time tracking and leave management SaaS 
 - Used by: End users (employees, managers, admins) via browser
 - Purpose: Prisma schema, generated client, seed data
 - Location: `packages/db/`
-- Contains: `prisma/schema.prisma`, generated Prisma client, seed script
+- Contains: `packages/db/prisma/schema.prisma`, generated Prisma client, seed script
 - Depends on: PostgreSQL (via `@prisma/adapter-pg`)
 - Used by: API server (imports `@clokr/db` for all DB access)
 - Purpose: Shared TypeScript type definitions between API and web
