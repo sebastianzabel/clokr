@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { page } from "$app/stores";
+  import { normalizeDateParam, resolveFocusTarget } from "$lib/breaks/deep-link";
   import { api } from "$api/client";
   import { authStore } from "$stores/auth";
   import { toasts } from "$stores/toast";
@@ -161,6 +162,10 @@
   // Ausgewählter Tag
   let selectedDate = $state(todayStr);
 
+  // Phase 112 — the row the arriving deep link points at (?highlight=<entryId>, or the first
+  // entry of ?date=<day>). Null when the page was not deep-linked or the target is not loaded.
+  let focusedEntryId = $state<string | null>(null);
+
   let deleteConfirmId = $state("");
   // Quick 260824-cjd: Storno now requires a Begründung — deleteConfirmId still
   // tracks the target row id, but the confirm UI moved from an inline Ja/Nein
@@ -290,18 +295,38 @@
 
   // ── Laden ─────────────────────────────────────────────────────────────────
   onMount(async () => {
-    // Read URL params
+    // Read URL params. Both are untrusted text: a malformed `date` must NEVER reach `calMonth`,
+    // because MonthBar's Intl.DateTimeFormat(...).format() throws RangeError on an invalid Date
+    // and apps/web/src has no <svelte:boundary> to surface it (issue #115).
     const viewParam = $page.url.searchParams.get("view");
     if (viewParam === "list") teView = "list";
-    const dateParam = $page.url.searchParams.get("date");
-    if (dateParam) {
-      selectedDate = dateParam;
-      calMonth = new Date(dateParam + "T12:00:00");
+
+    const highlightParam = $page.url.searchParams.get("highlight");
+    // The BREAK_UNCONFIRMED notification links with `highlight` and no `view`; the calendar
+    // cannot point at a single entry, so an entry-targeted arrival opens the list.
+    if (highlightParam) teView = "list";
+
+    const dayParam = normalizeDateParam($page.url.searchParams.get("date"));
+    if (dayParam) {
+      selectedDate = dayParam;
+      calMonth = new Date(`${dayParam}T12:00:00`);
       fromDate = format(startOfMonth(calMonth), "yyyy-MM-dd");
       toDate = format(endOfMonth(calMonth), "yyyy-MM-dd");
     }
 
     await loadAll();
+
+    if (highlightParam || dayParam) {
+      const target = resolveFocusTarget(entries, highlightParam, dayParam);
+      if (target.day) selectedDate = target.day;
+      focusedEntryId = target.entryId;
+      if (target.entryId) {
+        await tick();
+        document
+          .querySelector(`[data-testid="time-entry-row-${target.entryId}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
   });
 
   async function loadAll() {
@@ -1814,7 +1839,12 @@
               {#if slot.kind === "TE"}
                 {@const slotDate = (slot.date ?? slot.startTime).split("T")[0]}
                 {@const slotArbzg = arbzgDayMap.get(slotDate)}
-                <tr class:row-invalid={slot.isInvalid} data-testid={`time-entry-row-${slot.id}`}>
+                <tr
+                  class:row-invalid={slot.isInvalid}
+                  class:row-focus={slot.id === focusedEntryId}
+                  class:row-day-focus={slotDate === selectedDate && slot.id !== focusedEntryId}
+                  data-testid={`time-entry-row-${slot.id}`}
+                >
                   <td class="font-mono"
                     >{new Date(slot.startTime).toLocaleDateString("de-DE", {
                       day: "2-digit",
@@ -2832,6 +2862,17 @@
   }
   .row-del td {
     background: var(--bad-soft);
+  }
+
+  /* Phase 112 — the row an arriving deep link points at. Ring, not a background swap, so it
+     composes with .row-invalid instead of fighting it. */
+  .data-table tbody tr.row-focus {
+    outline: 2px solid var(--brand);
+    outline-offset: -2px;
+    background: var(--brand-soft);
+  }
+  .data-table tbody tr.row-day-focus {
+    background: var(--bg-subtle);
   }
 
   .row-invalid {
